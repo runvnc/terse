@@ -1,7 +1,9 @@
-//! `terse key` and `terse feed` (NETWORK 4).
+//! `terse key`, `terse feed`, `terse profile`, `terse find` and `terse
+//! relay` (NETWORK 4, 5).
 //!
-//! The identity (`identity.key`) and the subscription list (`subscriptions`)
-//! live in the config directory, `--config` (default `$XDG_CONFIG_HOME/terse`,
+//! The identity (`identity.key`), the subscription list (`subscriptions`),
+//! the nicknames (`nicknames`) and the relay list (`relays`) live in the
+//! config directory, `--config` (default `$XDG_CONFIG_HOME/terse`,
 //! else `~/.config/terse`). Feed entries are kept with the blobs, in
 //! `<store>/feeds`.
 
@@ -11,20 +13,21 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terse_net::entry::{self, MAX_TITLE};
 use terse_net::identity::valid_feed_key;
-use terse_net::relay::DEFAULT_TIMEOUT;
+use terse_net::profile::{self, Nicknames};
+use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS};
 use terse_net::{
     Article, ContentService, Done, Draft, Entry, FeedEvent, FeedKey, Identity, Node, Subscriptions,
     default_config_dir, parse_hex, to_hex,
 };
 
-use crate::{Args, USAGE, read, relay_url};
+use crate::{Args, USAGE, read, relay_urls};
 
 /// `feed sync` without `--watch` gives up if not caught up (NETWORK 4.3)
 /// after this long.
 pub const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Every `key` and `feed` command accepts these, used or not.
-const OPTIONS: [&str; 3] = ["--config", "--relay", "--store"];
+const OPTIONS: [&str; 4] = ["--config", "--relay", "--store", "--no-feed-relays"];
 
 fn known(args: &Args, extra: &[&str]) -> Result<(), String> {
     args.check_known(&[&OPTIONS[..], extra].concat())
@@ -50,11 +53,16 @@ pub fn load_subscriptions(args: &Args) -> Result<Subscriptions, String> {
     Subscriptions::load(config_dir(args)?.join("subscriptions"))
 }
 
-/// A node on `--store` and `relay` with the saved subscriptions.
-fn open_node(args: &Args, relay: Option<&str>) -> Result<Node, String> {
-    let store = args.get("--store").map(PathBuf::from);
-    let mut node = Node::open(store, relay, DEFAULT_TIMEOUT)?;
+pub fn load_nicknames(args: &Args) -> Result<Nicknames, String> {
+    Nicknames::load_from_config(&config_dir(args)?)
+}
+
+/// A node on `--store` and `relays` with the saved subscriptions and
+/// nicknames.
+fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
+    let mut node = crate::open_node(args, relays)?;
     node.set_subscriptions(load_subscriptions(args)?);
+    node.set_nicknames(load_nicknames(args)?);
     if let Some(n) = args.get("--auto-download") {
         node.set_auto_download_limit(n.parse().map_err(|_| format!("bad byte count {n}"))?);
     }
@@ -95,38 +103,67 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
         "sync" => sync(rest),
         "list" => list(rest),
         "read" => read_article(rest),
+        "nickname" => nickname(rest),
         _ => Err(USAGE.into()),
     }
 }
 
-/// `terse relay set <url>` / `terse relay show`: the relay named in the
-/// config directory's `relay` file.
+/// `terse relay add|remove|set <url>`, `terse relay list|show`: the
+/// relay list in the config directory's `relays` file (NETWORK 5).
 pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;
     known(&args, &[])?;
     let config = config_dir(&args)?;
+    let mut list = terse_net::local::read_relays(&config)?.map(|(l, _)| l).unwrap_or_default();
+    let save = |list: &[String]| -> Result<(), String> {
+        let path = terse_net::local::write_relays(&config, list)?;
+        eprintln!("terse: relays saved in {}", path.display());
+        Ok(())
+    };
     match (command.as_str(), args.positional.as_slice()) {
         ("set", [url]) => {
-            let path = terse_net::local::write_relay_file(&config, url)?;
-            eprintln!("terse: relay saved in {}", path.display());
+            save(std::slice::from_ref(url))?;
             println!("{url}");
         }
-        ("show", []) => match terse_net::local::read_relay_file(&config)? {
-            Some(url) => println!("{url}"),
-            None => {
-                let port = terse_net::local::local_port();
-                eprintln!(
-                    "terse: no relay set in {}; commands use {} if a relay runs there",
-                    config.join(terse_net::local::RELAY_FILE).display(),
-                    terse_net::local::local_url(port)
-                );
-                return Ok(ExitCode::from(1));
+        ("add", [url]) => {
+            if list.contains(url) {
+                return Err(format!("{url} is already in the list"));
             }
-        },
+            list.push(url.clone());
+            save(&list)?;
+        }
+        ("remove", [url]) => {
+            let before = list.len();
+            list.retain(|u| u != url);
+            if list.len() == before {
+                return Err(format!("{url} is not in the list"));
+            }
+            save(&list)?;
+        }
+        ("list" | "show", []) if list.is_empty() => {
+            let port = terse_net::local::local_port();
+            eprintln!(
+                "terse: no relays listed in {}; commands use {} if a relay runs there",
+                config.join(terse_net::local::RELAYS_FILE).display(),
+                terse_net::local::local_url(port)
+            );
+            return Ok(ExitCode::from(1));
+        }
+        ("list" | "show", []) => {
+            for url in &list {
+                println!("{url}");
+            }
+        }
         _ => return Err(USAGE.into()),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The name to show beside a feed key: the nickname, else the declared
+/// name (NETWORK 4.6), with control characters replaced.
+fn name_of(node: &Node, key: &FeedKey) -> Option<String> {
+    node.display_name(key).map(|(n, _)| printable(&n, false))
 }
 
 fn now() -> u32 {
@@ -149,20 +186,19 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
     let identity = load_identity(&args)?;
-    let relay = relay_url(&args, true)?;
-    let mut node = Node::open(args.get("--store").map(PathBuf::from), relay.as_deref(), DEFAULT_TIMEOUT)?;
-    node.set_subscriptions(load_subscriptions(&args)?);
+    let relays = relay_urls(&args, true)?;
+    let mut node = open_node(&args, &relays)?;
     node.set_identity(identity);
     match node.publish_article(&Draft { data, title, reply_to, time: now() }) {
         Done::Published { seq, blob } => {
-            if relay.is_none() {
+            if relays.is_empty() {
                 eprintln!("terse: no relay: stored locally only");
             }
             println!("seq {seq} blob {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relay refused the entry (does it already hold a different entry with this seq?)".into()),
-        _ => Err("publish failed (store error, or the relay did not answer)".into()),
+        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }
 
@@ -187,11 +223,12 @@ fn subscriptions(args: &[String]) -> Result<ExitCode, String> {
     if !args.positional.is_empty() {
         return Err(USAGE.into());
     }
-    let node = open_node(&args, None)?;
+    let node = open_node(&args, &[])?;
     for key in node.subscriptions().feeds() {
         let seqs = node.feed_store().seqs(key).map_err(|e| e.to_string())?;
         let latest = seqs.last().map_or("-".into(), |s| format!("#{s}"));
-        println!("{}  {} entries held, latest {latest}", to_hex(key), seqs.len());
+        let name = name_of(&node, key).map_or(String::new(), |n| format!("{n}  "));
+        println!("{}  {name}{} entries held, latest {latest}", to_hex(key), seqs.len());
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -230,17 +267,20 @@ fn utc(time: u32) -> String {
     format!("{year:04}-{month:02}-{day:02} {:02}:{:02}", secs / 3600, secs / 60 % 60)
 }
 
-/// One line per entry: time (UTC), feed key prefix, seq, size, article
-/// state, title.
-fn entry_line(entry: &Entry, article: Option<Article>) -> String {
+/// One line per entry: time (UTC), feed key prefix (and the feed's name,
+/// if known), seq, size, article state, title (a profile entry's title is
+/// marked as the name it declares).
+fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> String {
+    let title = printable(&entry.title, false);
     format!(
-        "{}  {}  #{:<4} {:>8} B  {:<13} {}",
+        "{}  {}{}  #{:<4} {:>8} B  {:<13} {}",
         utc(entry.time),
         &to_hex(&entry.feed)[..8],
+        name.map_or(String::new(), |n| format!(" ({n})")),
         entry.seq,
         entry.size,
         article_label(article),
-        printable(&entry.title, false)
+        if entry.kind == terse_net::entry::KIND_PROFILE { format!("[profile: {title}]") } else { title }
     )
 }
 
@@ -251,9 +291,12 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
         return Err(USAGE.into());
     }
     let watch = args.has("--watch");
-    let relay = relay_url(&args, true)?
-        .ok_or("no relay: give --relay, name one with `terse relay set <url>`, or start terse-relay on this machine")?;
-    let node = open_node(&args, Some(&relay))?;
+    let relays = relay_urls(&args, true)?;
+    if relays.is_empty() {
+        return Err("no relay: give --relay, add one with `terse relay add <url>`, or start terse-relay on this machine".into());
+    }
+    let relay = relays.join(" ");
+    let node = open_node(&args, &relays)?;
     if node.subscriptions().is_empty() {
         return Err("no subscriptions (add one with `terse feed subscribe <key>`)".into());
     }
@@ -269,21 +312,22 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
             continue;
         };
         match event {
-            FeedEvent::Entry { entry, article } => println!("{}", entry_line(&entry, Some(article))),
+            FeedEvent::Entry { entry, article } => println!("{}", entry_line(&entry, Some(article), None)),
             // Every feed caught up and every download done.
             FeedEvent::Settled if !watch => return Ok(ExitCode::SUCCESS),
             FeedEvent::Settled | FeedEvent::Busy => {}
-            FeedEvent::Connected => {
+            FeedEvent::Connected(url) => {
                 if lost {
-                    eprintln!("terse: reconnected to {relay}");
+                    eprintln!("terse: connected to {url}");
                 }
             }
-            FeedEvent::Disconnected { retry_in } => {
-                if !watch {
-                    return Err(format!("{relay}: cannot reach the relay, or the connection was lost"));
-                }
+            FeedEvent::Unreachable if !watch => {
+                return Err(format!("{relay}: cannot reach any relay, or the connections were lost"));
+            }
+            FeedEvent::Unreachable => {}
+            FeedEvent::Disconnected { url, retry_in } => {
                 lost = true;
-                eprintln!("terse: {relay}: not connected; retrying in {} s", retry_in.as_secs());
+                eprintln!("terse: {url}: not connected; retrying in {} s", retry_in.as_secs());
             }
             FeedEvent::SubscribeRefused(key) => eprintln!("terse: the relay refused a subscription to {}", to_hex(&key)),
             FeedEvent::Subscribed(_) | FeedEvent::Published { .. } | FeedEvent::PublishFailed(_) => {}
@@ -294,7 +338,7 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
 fn list(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     known(&args, &[])?;
-    let node = Node::open(args.get("--store").map(PathBuf::from), None, DEFAULT_TIMEOUT)?;
+    let node = open_node(&args, &[])?;
     let feeds = match args.positional.as_slice() {
         [] => node.feed_store().feeds().map_err(|e| e.to_string())?,
         [key] => vec![parse_feed_key(key)?],
@@ -306,8 +350,9 @@ fn list(args: &[String]) -> Result<ExitCode, String> {
     }
     // Newest first: by the authors' claimed times, then by seq.
     entries.sort_by(|a, b| (b.time, b.seq, b.feed).cmp(&(a.time, a.seq, a.feed)));
+    let names: std::collections::HashMap<FeedKey, Option<String>> = feeds.iter().map(|f| (*f, name_of(&node, f))).collect();
     for entry in &entries {
-        println!("{}", entry_line(entry, node.held_article(entry)));
+        println!("{}", entry_line(entry, node.held_article(entry), names[&entry.feed].as_deref()));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -318,8 +363,8 @@ fn read_article(args: &[String]) -> Result<ExitCode, String> {
     let [key, seq] = args.positional.as_slice() else { return Err(USAGE.into()) };
     let key = parse_feed_key(key)?;
     let seq: u32 = seq.trim_start_matches('#').parse().map_err(|_| format!("bad seq {seq}"))?;
-    let relay = relay_url(&args, true)?;
-    let mut node = Node::open(args.get("--store").map(PathBuf::from), relay.as_deref(), DEFAULT_TIMEOUT)?;
+    let relays = relay_urls(&args, true)?;
+    let mut node = open_node(&args, &relays)?;
     let bytes = node.feed_store().get(&key, seq).map_err(|e| e.to_string())?;
     let entry = bytes
         .and_then(|b| entry::decode(&b).ok())
@@ -341,6 +386,142 @@ fn read_article(args: &[String]) -> Result<ExitCode, String> {
         text.push('\n');
     }
     print!("{text}");
+    Ok(ExitCode::SUCCESS)
+}
+
+const BAD_NAME: &str = "is not a valid name (1 to 48 bytes, no control characters, no space at either end)";
+
+/// `terse feed nickname <key> [<name>]`: sets or (without a name) removes
+/// the local nickname of a feed (NETWORK 4.6).
+fn nickname(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    known(&args, &[])?;
+    let (key, name) = match args.positional.as_slice() {
+        [key] => (key, None),
+        [key, name] => (key, Some(name.as_str())),
+        _ => return Err(USAGE.into()),
+    };
+    let key = parse_feed_key(key)?;
+    if let Some(n) = name.filter(|n| !profile::valid_name(n)) {
+        return Err(format!("\"{}\" {BAD_NAME}", printable(n, false)));
+    }
+    let mut nicknames = load_nicknames(&args)?;
+    let changed = nicknames.set(key, name).map_err(|e| e.to_string())?;
+    match (name, changed) {
+        (Some(n), _) => println!("{}  {n}", to_hex(&key)),
+        (None, true) => println!("{}  nickname removed", to_hex(&key)),
+        (None, false) => return Err(format!("no nickname for {}", to_hex(&key))),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `terse profile set|show` (NETWORK 4.6).
+pub fn profile(args: &[String]) -> Result<ExitCode, String> {
+    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    match command.as_str() {
+        "set" => profile_set(rest),
+        "show" => profile_show(rest),
+        _ => Err(USAGE.into()),
+    }
+}
+
+fn profile_set(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &["--listed", "--unlisted"])?;
+    known(&args, &["--name", "--listed", "--unlisted", "--description"])?;
+    if !args.positional.is_empty() || (args.has("--listed") && args.has("--unlisted")) {
+        return Err(USAGE.into());
+    }
+    let name = args.require("--name")?;
+    if !profile::valid_name(name) {
+        return Err(format!("\"{}\" {BAD_NAME}", printable(name, false)));
+    }
+    let description = match args.get("--description") {
+        Some(path) => Some(String::from_utf8(read(path)?).map_err(|_| format!("{path}: not UTF-8"))?),
+        None => None,
+    };
+    let identity = load_identity(&args)?;
+    let relays = relay_urls(&args, true)?;
+    let mut node = open_node(&args, &relays)?;
+    let current = node.profile(&identity.feed_key()).and_then(|(_, d)| d);
+    let listed = args.has("--listed") || (!args.has("--unlisted") && current.as_ref().is_some_and(|d| d.listed));
+    node.set_identity(identity);
+    match node.publish_profile(name, listed, description, now()) {
+        Done::Published { seq, blob } => {
+            if relays.is_empty() {
+                eprintln!("terse: no relay: stored locally only");
+            }
+            println!("seq {seq} blob {} ({})", to_hex(&blob), if listed { "listed" } else { "unlisted" });
+            Ok(ExitCode::SUCCESS)
+        }
+        Done::Refused => Err("the relays refused the profile entry".into()),
+        _ => Err("publishing the profile failed (store error, or no relay accepted it)".into()),
+    }
+}
+
+fn profile_show(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    known(&args, &[])?;
+    let node = open_node(&args, &[])?;
+    let key = match args.positional.as_slice() {
+        [] => load_identity(&args)?.feed_key(),
+        [key] => parse_feed_key(key)?,
+        _ => return Err(USAGE.into()),
+    };
+    println!("feed:        {}", to_hex(&key));
+    if let Some(n) = node.nicknames().get(&key) {
+        println!("nickname:    {}", printable(n, false));
+    }
+    let Some((entry, doc)) = node.profile(&key) else {
+        println!("profile:     none held (subscribe to the feed and run `terse feed sync`)");
+        return Ok(ExitCode::SUCCESS);
+    };
+    println!("name:        {}", printable(&entry.title, false));
+    println!("profile:     #{} of {}, blob {}", entry.seq, utc(entry.time), to_hex(&entry.blob));
+    match doc {
+        None => println!("document:    not held, or not a profile document"),
+        Some(d) => {
+            println!("listed:      {}", if d.listed { "yes" } else { "no" });
+            for r in &d.relays {
+                println!("relay:       {}", printable(r, false));
+            }
+            if !d.description.is_empty() {
+                println!("\n{}", printable(&d.description, true).trim_end());
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `terse find [--entries] <text>`: asks every relay (NETWORK 4.7).
+pub fn find(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &["--entries"])?;
+    known(&args, &["--entries"])?;
+    let text = args.one_positional()?;
+    if !(1..=profile::MAX_NAME).contains(&text.len()) {
+        return Err("the text to find is 1 to 48 bytes".into());
+    }
+    let relays = relay_urls(&args, true)?;
+    if relays.is_empty() {
+        return Err("no relay to ask: give --relay, or add one with `terse relay add <url>`".into());
+    }
+    let mut node = open_node(&args, &relays)?;
+    let scope = if args.has("--entries") { SCOPE_ENTRIES } else { SCOPE_FEEDS };
+    let Done::Found(found) = node.find(scope, text.as_bytes()) else {
+        return Err("no relay answered".into());
+    };
+    for s in &found {
+        if scope == SCOPE_FEEDS {
+            let nick = node.nicknames().get(&s.entry.feed);
+            let nick = nick.map_or(String::new(), |n| format!("  (your nickname: {})", printable(n, false)));
+            println!("{}  {}{nick}", to_hex(&s.entry.feed), printable(&s.entry.title, false));
+        } else {
+            let name = name_of(&node, &s.entry.feed);
+            println!("{}", entry_line(&s.entry, node.held_article(&s.entry), name.as_deref()));
+        }
+    }
+    if found.is_empty() {
+        eprintln!("terse: nothing found");
+    }
     Ok(ExitCode::SUCCESS)
 }
 

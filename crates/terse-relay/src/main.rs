@@ -8,10 +8,11 @@ use terse_net::BlobStore;
 use terse_relay::{DEFAULT_FEED_CAP, MIN_FEED_CAP, Relay};
 
 const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [--max-store-bytes N] [--feed-entries N]
+                   [--peer <ws://host:port>]...
   --listen defaults to 127.0.0.1:7878 (loopback only)
+  --peer: another relay to mirror (NETWORK.md section 5); repeatable
   --feed-entries: entries kept per feed, at least 256 (default 1024)
   Feed entries are kept in <dir>/feeds.";
-
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -26,12 +27,20 @@ fn main() -> ExitCode {
 fn run(args: Vec<String>) -> Result<(), String> {
     let default_listen = terse_net::local::local_addr(terse_net::local::DEFAULT_PORT).to_string();
     let (mut listen, mut store, mut limit, mut cap) = (default_listen, None, None, DEFAULT_FEED_CAP);
+    let mut peers = Vec::new();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or(format!("{a} needs a value\n{USAGE}"));
         match a.as_str() {
             "--listen" => listen = value()?,
             "--store" => store = Some(value()?),
+            "--peer" => {
+                let url = value()?;
+                if !terse_net::local::valid_url(&url) {
+                    return Err(format!("--peer {url}: not a ws:// URL"));
+                }
+                peers.push(url);
+            }
             "--max-store-bytes" => {
                 let n = value()?;
                 limit = Some(n.parse::<u64>().map_err(|_| format!("bad byte count {n}"))?);
@@ -50,5 +59,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     // Printed on stdout so scripts and tests can find an ephemeral port.
     println!("listening on ws://{addr}");
     eprintln!("terse-relay: store {dir} ({} bytes used)", store.used_bytes());
-    terse_relay::serve(listener, Arc::new(Relay::new(store, cap))).map_err(|e| e.to_string())
+    let relay = Arc::new(Relay::new(store, cap));
+    terse_relay::connect_peers(relay.clone(), peers);
+    terse_relay::serve(listener, relay).map_err(|e| e.to_string())
 }

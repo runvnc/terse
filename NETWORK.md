@@ -1,8 +1,9 @@
 # Terse network — v0 (draft)
 
 Status: the first, deliberately minimal step. It moves immutable blobs between
-hosts through a relay and carries signed feeds of small articles. There are
-no names, messages or peer-to-peer links yet.
+hosts through relays, carries signed feeds of small articles with
+self-declared names, lets relays mirror each other and answers simple
+searches. There are no messages or peer-to-peer links between hosts yet.
 
 Programs never see this protocol. They use the content device (SPEC.md
 section 9); the host speaks the protocol on their behalf.
@@ -17,11 +18,12 @@ blob, so an image ID is a blob ID.
 
 - A host keeps a local blob store (a cache). A get is answered from the store
   when possible.
-- Otherwise the host asks its relays. In v0 it fetches the whole blob, checks
+- Otherwise the host asks its relays (section 5). In v0 it fetches the whole blob, checks
   that its BLAKE3-256 hash equals the requested ID, stores it, and only then
   delivers the requested range to the program. A blob that fails the check is
   discarded and treated as not found on that relay.
-- A put stores the blob locally and sends it to the host's relays.
+- A put stores the blob locally and sends it to every relay the host is
+  connected to (section 5).
 - A host may start a program by image ID: it gets the blob, validates it as an
   image (SPEC.md section 2) and runs it.
 
@@ -42,10 +44,17 @@ order.
 Status: `1` done, `2` not found, `3` refused (too large, empty, store full,
 or malformed request).
 
+Message types `01h`–`07h` are requests, `81h`–`86h` replies and `90h` a
+pushed entry (sections 4.3, 4.7, 5).
+
 - The relay computes the ID of a put itself; the client does not send it.
 - A relay must refuse blobs larger than 1,048,576 bytes and may impose a
   total store limit.
-- A relay closes the connection on a message it cannot parse.
+- A relay closes the connection on a message of a known type that it cannot
+  parse, or on a text message. It ignores a message whose type it does not
+  know, and a reply or pushed entry from a connection that is not a peer
+  (section 5). (Relays before this revision closed the connection on an
+  unknown type.)
 
 Clients do not trust relays: every blob is verified against its ID on
 receipt.
@@ -70,7 +79,7 @@ see secret keys.
 | 0 | 32 | Feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing by 1 |
 | 36 | 4 | Time: Unix seconds, as claimed by the author |
-| 40 | 1 | Kind: `1` = article |
+| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6) |
 | 41 | 3 | Size of the blob in bytes |
 | 44 | 32 | Blob ID |
 | 76 | 32 | Reply-to: the blob ID this entry responds to, or all zeros |
@@ -83,8 +92,10 @@ bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
 An entry is valid if `n` is at most 120, its length matches `n`, the
 signature verifies under the feed key (strict verification: small-order keys
-and non-canonical signatures are rejected), `seq` is at least 1, the kind is known, the size is 1 to 1,048,576
-and the title is valid UTF-8. Hosts and relays discard invalid entries.
+and non-canonical signatures are rejected), `seq` is at least 1, the kind is
+known, the size is 1 to 1,048,576 (1 to 4,096 for a profile), the title is
+valid UTF-8, and, for a profile, the title is a valid display name (section
+4.6). Hosts and relays discard invalid entries.
 
 If two different valid entries have the same feed key and `seq`, the one
 received first is kept.
@@ -114,14 +125,16 @@ received first is kept.
 - Publish, subscribe and unsubscribe replies use status `1` (done) or `3`
   (refused). Unsubscribing from a feed that was not subscribed succeeds.
 - `seq` values need not be consecutive, and the time is not checked.
-- A relay may keep only the most recent entries of a feed (at least 256).
+- A relay may keep only the most recent entries of a feed (at least 256),
+  but always keeps the feed's latest profile entry (the one with the highest
+  `seq`, section 4.6), however old.
 
 ### 4.4 Host behaviour
 
 - The host keeps a list of subscribed feeds and every valid entry it has
   received for them.
 - When connected to a relay it subscribes to each feed with `after` set to
-  the highest `seq` it holds.
+  the highest `seq` it holds (with several relays, on each: section 5).
 - **Subscribing** (by the user, or by a program with the user's consent:
   SPEC.md section 9.5) adds the feed to the list and, when connected,
   subscribes to it at once the same way; for a feed the host holds nothing
@@ -130,12 +143,13 @@ received first is kept.
   removes the feed from the list and unsubscribes on the connection.
 - **Automatic download:** when the host receives an entry for a subscribed
   feed whose size is at most 16,384 bytes (the user may change this limit),
-  it gets the blob without being asked. If the blob's length differs from the
-  entry's size, the blob is not associated with the entry. Larger blobs are
-  fetched only on request.
+  it gets the blob without being asked. This applies to profile entries
+  too. If the blob's length differs from the entry's size, the blob is not
+  associated with the entry. Larger blobs are fetched only on request.
 - **Arrival order:** the host records the order in which it first stored
   each entry, and keeps that record across restarts. This is the order of
-  the timeline that programs read (SPEC.md section 9.5). Unsubscribing
+  the timeline that programs read (SPEC.md section 9.5), which holds only
+  article entries (kind 1), not profiles. Unsubscribing
   removes a feed's entries from the timeline but not from the record;
   subscribing again puts them back where they were.
 - Publishing an article (by the user, or by a program with the user's
@@ -245,7 +259,133 @@ The path string is SVG path data with two additions:
 Drawing is clipped to the figure's box. A reader may scale a figure that
 is wider than its column down to fit, uniformly (widths included).
 
-## 5. Not yet specified
+### 4.6 Profiles and nicknames
+
+A **profile** is an entry of kind `2` in a feed. Its title is the feed's
+**display name**; its blob is the **profile document**. The profile in
+force for a feed is its valid profile entry with the highest `seq`.
+
+A **display name** is 1 to 48 bytes of UTF-8 with no control characters
+(U+0000–U+001F, U+007F–U+009F) and no whitespace (the Unicode White_Space
+property: U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A,
+U+2028, U+2029, U+202F, U+205F, U+3000) as its first or last character. A
+profile entry whose title is not a display name is invalid (section 4.2).
+
+The **profile document** is UTF-8 text of at most 4,096 bytes. Lines end
+with `0Ah`. It starts with header lines `field: value` (the field, a colon,
+one space, the value), then optionally an empty line and a free-text
+description, which is the rest of the document. A header line without `: `
+makes the document invalid. Fields in v0:
+
+| Field | Value |
+|---|---|
+| `listed` | `yes`: the name may be found by search (section 4.7). Any other value, or no `listed` line, means not listed. |
+| `relay` | A `ws://` or `wss://` URL of a relay where the author publishes. Zero to four lines; readers take the first four that are URLs and skip other values. |
+
+Unknown fields are ignored. A host that writes a profile for its user puts
+a `relay` line for each of its relays that is not a loopback address.
+
+Names are self-declared and **not unique**: anyone can declare any name.
+Anything shown to a user that names a feed shows the feed key (or a short
+form of it, for example its first and last six hex digits) beside the name.
+
+A **nickname** is a name the user gives a feed (the same rules as a display
+name). The host keeps nicknames in its own configuration and never sends
+them anywhere. When showing a feed, a nickname takes precedence over the
+declared name.
+
+### 4.7 Search
+
+| Direction | Message | Layout |
+|---|---|---|
+| client → relay | Find | `06h`, `req` (4), `scope` (1), `n` (1), query (`n` bytes) |
+| relay → client | Find reply | `86h`, `req` (4), `status` (1), `count` (1), then `count` times: `length` (2), entry (`length` bytes, complete with its signature) |
+
+- `scope` `1` searches feeds by display name; `2` searches article titles.
+  The query is 1 to 48 bytes of UTF-8. A find with another scope or a bad
+  query is refused (status `3`, `count` 0).
+- **Matching:** the query must occur as a contiguous run of bytes in the
+  name or title, after the ASCII letters A–Z are changed to a–z on both
+  sides. Nothing else is folded.
+- **Scope 1** returns the profile in force of each feed whose profile
+  document says `listed: yes` and whose display name matches: names that
+  start with the query (same folding) first, then the others, each group in
+  increasing order of feed key.
+- **Scope 2** returns article entries (kind 1) of feeds with a listed
+  profile in force whose title matches, newest first: by the claimed time,
+  higher first, then by feed key, increasing, then by `seq`, higher first.
+- At most 16 results. A relay answers from what it holds; it needs the
+  profile document to know `listed`, so a profile whose document it does
+  not hold, or cannot parse, counts as not listed.
+- **Clients** ask all their relays and merge the replies: they verify every
+  returned entry and drop invalid ones, ones of the wrong kind and ones that
+  do not match the query; they keep one entry per feed and `seq` (for scope
+  1, only the highest `seq` of each feed), order the merged list by the same
+  rules and keep the first 16.
+
+## 5. Several relays
+
+### 5.1 Hosts
+
+A host's relays are those it is configured with (at most eight) and, for
+each subscribed feed whose profile in force has `relay` lines, up to two of
+those (the first two that are not already among the host's own relays);
+**feed relays** may be turned off. A host keeps at most 16 relay
+connections. It ignores a `relay` line whose host is `localhost`, a name
+under `.localhost`, or an address that is loopback, unspecified, private
+(10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or
+link-local (169.254.0.0/16, fe80::/10), and does not connect if a host
+name resolves to such an address. A host connects to all its relays and,
+when a connection fails or drops, tries again after 1 s, doubling the wait
+up to 30 s.
+
+- **Put and publish** go to every connected relay. They succeed when at
+  least one relay accepts. When publishing an article, the entry is
+  published once a relay has accepted the blob.
+- **Subscribe** goes to every connected relay that serves the feed (all of
+  the host's own relays, and the feed relays named in the feed's profile),
+  each with `after` set to the highest `seq` the host holds. An entry
+  received from several relays is stored once (the first received of a
+  `seq` wins, section 4.2).
+- **Get** asks the connected relays in turn: first the feed relays named in
+  the profile in force of a feed with an entry pointing at the blob, then
+  the rest, two at a time. The blob is not found only when every connected
+  relay has said so or failed.
+- **Find** asks every connected relay (section 4.7).
+
+### 5.2 Relays that mirror each other
+
+| Direction | Message | Layout |
+|---|---|---|
+| relay → relay | Peer | `07h` (no body, no reply) |
+
+A relay may be given other relays as **peers**. It connects to each, sends
+Peer, and keeps the connection, reconnecting after 1 s, doubling up to
+30 s. A relay that receives Peer marks that connection as a peer link. On
+a peer link both sides may send requests and replies; requests use the
+ordinary messages.
+
+- Every entry the relay newly stores (from a client or from a peer) is
+  sent with Publish to every peer except the one it came from. So is every
+  blob up to 16,384 bytes it newly stores, with Put. Larger blobs are not
+  pushed. Peers are not sent the pushed-entry message (`90h`) for new
+  entries.
+- When a client (not a peer) subscribes to a feed, the relay subscribes to
+  it on each peer, once per peer link, with `after` set to its own highest
+  `seq` for the feed, so the peer's backlog flows in; entries a peer pushes
+  are stored and passed on like published ones. A new peer link is
+  subscribed to every feed clients are subscribed to.
+- A get from a client that the relay cannot serve from its store is asked
+  of every peer at once; the first reply with a blob that matches the ID
+  wins and is stored (if the store has room) and served. If every peer
+  says not found or fails, or none answers within 3 s, the reply is "not
+  found". A get from a peer is answered from the relay's store only.
+- Find is answered from the relay's own index only.
+
+Because a relay passes on only what it newly stores, an entry crosses each
+peer link at most once in each direction.
+
+## 6. Not yet specified
 
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
@@ -253,8 +393,12 @@ is wider than its column down to fit, uniformly (widths included).
 - Key rotation and several feeds per identity.
 - Inline markup in articles (emphasis, inline code, link text), images
   that are not drawn from paths, and arcs in figure paths.
-- Names: signed, versioned pointers from a public key and a name to a blob.
+- Named pointers: signed, versioned pointers from a public key and a name
+  to a blob (not the display names of section 4.6).
 - Messages and topics.
-- Relay discovery (a host is told which relay to use, or finds one on its
-  own machine), relay-to-relay exchange and direct links between hosts.
-- Abuse limits beyond blob size.
+- Sharding content among relays by hash, so that each relay holds only part
+  of it.
+- Relay discovery beyond configuration, the local relay and the `relay`
+  lines of profiles.
+- Direct connections between hosts.
+- Abuse limits beyond blob size: on publishing, on searches, on peers.

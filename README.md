@@ -43,14 +43,22 @@ Enter does nothing. While the prompt is up, the keyboard goes to the host,
 not to the program, and the program can neither see nor draw over the
 prompt. Several requests are asked about one at a time.
 
-**Which relay.** Without `--relay`, `terse-host` uses, in this order: the URL
-in the file `relay` in the config directory (`terse relay set <url>` writes
-it); a relay already accepting connections on `ws://127.0.0.1:7878`; or one
-it starts itself on that port, for as long as it runs, with its store in
-`~/.local/share/terse/relay` (`$XDG_DATA_HOME/terse/relay`). It prints one
-line on stderr saying which. `--relay none` runs without a network. The
-`terse` commands that use a relay (`put`, `get`, `info`, `feed publish`,
-`feed sync`, `feed read`) look for one the same way, but never start one.
+**Which relays.** Without `--relay`, `terse-host` uses, in this order: the
+URLs listed in the file `relays` in the config directory, one per line
+(`terse relay add <url>` writes it; an older single-URL `relay` file is read
+if there is no list); a relay already accepting connections on
+`ws://127.0.0.1:7878`; or one it starts itself on that port, for as long as
+it runs, with its store in `~/.local/share/terse/relay`
+(`$XDG_DATA_HOME/terse/relay`). It prints one line on stderr saying which.
+`--relay` may be given several times; `--relay none` runs without a network.
+The host connects to all its relays (at most 8): puts and publishes go to
+each, subscriptions are made on each, and a blob is asked of them in turn.
+A dropped connection is retried after 1 s, doubling up to 30 s. For a feed
+whose profile names relays (NETWORK.md section 4.6), the host also follows
+it on up to two of those, unless `--no-feed-relays`. The `terse` commands
+that use relays (`put`, `get`, `info`, `feed publish`, `feed sync`, `feed
+read`, `profile set`, `find`) look for them the same way, but never start
+one.
 
 **Sharing with someone else.** One of you runs a relay that the other can
 reach, listening on all interfaces (it listens on loopback only by default),
@@ -60,7 +68,7 @@ before starting `terse-host`, which then finds it on port 7878:
 
 The other names it once, then runs the reader as usual:
 
-    cargo run --release -p terse-cli --bin terse -- relay set ws://their-host:7878
+    cargo run --release -p terse-cli --bin terse -- relay add ws://their-host:7878
     cargo run --release -p terse-host
 
 Exchange feed keys (press ? in the reader to see yours in full; read it out
@@ -115,7 +123,7 @@ images were built with clang and LLD 23.1.4.
   with `--relay`, `run` first syncs them until caught up (NETWORK 4.3; a warning and
   the local entries if that fails within 60 s), then keeps following them while the
   machine runs; an entry stored during frame N is announced by a feeds-updated event
-  in frame N + 1. A program's requests to subscribe, unsubscribe or publish (SPEC 9.5)
+  in frame N + 1. A program's requests to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5)
   cannot be asked about headless: `--consent` says how they are answered (default
   `deny`: status Refused). `run` uses a relay only with `--relay`.
   `--hash` prints the machine's state hash ([STATE.md](STATE.md)) after the last
@@ -138,22 +146,27 @@ images were built with clang and LLD 23.1.4.
   find a relay as [Getting started](#getting-started) says when `--relay` is not given.
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
-- `key new|show` and `feed …`: feeds, see [Feeds](#feeds).
-- `relay set <ws://host:port>` writes the relay URL to `<config>/relay`; `relay show`
-  prints it (exit status 1 if there is none).
+- `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
+  [Feeds](#feeds).
+- `relay add <ws://host:port>` and `relay remove <url>` change the relay list in
+  `<config>/relays` (starting from an older `<config>/relay` file if there is no
+  list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
+  prints it (exit status 1 if it is empty).
 
-An `<id>` is 64 hex digits, looked up in the blob store and then on the relay;
+An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
 `$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Only `ws://` relays
-are supported. The arrival order of entries (the timeline, SPEC 9.5) is kept in
+are supported. `--relay` may be given several times, and every command that takes it
+also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]`
+`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--store <dir>] [--config <dir>]`
 opens a window and runs the image at 60 frames/s of virtual time; with no image it
 runs the reader, which is built into the binary (`programs/reader/reader.terse`), and
 with `--demo` it first sets up the sample articles ([Getting started](#getting-started)).
-The relay is found or started as Getting started says. `--consent` answers the
-program's requests to subscribe, unsubscribe and publish: `ask` (the default) shows the
+The relays are found or started as Getting started says. `--consent` answers the
+program's requests to subscribe, unsubscribe, publish, set its profile and set a
+nickname: `ask` (the default) shows the
 host's prompt, `allow` and `deny` answer every one without asking. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the program as text events (SPEC 5),
 newlines kept and other control characters dropped, fed in only as fast as the event
@@ -188,11 +201,16 @@ afterglow is built up over the last 600 frames, as in the window.
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
 ignored), and prints timings: see [Conformance image](#conformance-image).
 
-`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N]`
-serves a blob store and feeds over WebSocket (NETWORK.md sections 3 and 4.3), one
+`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws://host:port>]...`
+serves a blob store and feeds over WebSocket (NETWORK.md sections 3, 4.3 and 4.7), one
 thread per connection. It keeps the newest `--feed-entries` entries of each feed
-(default 1024, at least 256) in `<dir>/feeds`, and listens on loopback unless told
-otherwise; `--listen 127.0.0.1:0` picks a free port and prints it.
+(default 1024, at least 256), and always each feed's latest profile, in `<dir>/feeds`,
+and listens on loopback unless told otherwise; `--listen 127.0.0.1:0` picks a free port
+and prints it. With `--peer` (repeatable) it mirrors other relays (NETWORK.md section
+5): it keeps a connection to each, sends them every entry and every blob up to 16,384
+bytes it newly stores, follows on them the feeds its clients follow, and asks them for
+a blob a client wants that it does not hold. Two relays only need one of them to name
+the other. It answers searches (`terse find`) from what it holds.
 
 ## Trying the relay locally
 
@@ -214,7 +232,8 @@ to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
 `feed` commands take `--relay`, `--store` and `--config`:
 
 - `--config <dir>` holds the secret key (`identity.key`, mode 0600, never printed),
-  the subscription list (`subscriptions`) and the relay URL (`relay`). Default
+  the subscription list (`subscriptions`), your nicknames for feeds (`nicknames`) and
+  the relay list (`relays`). Default
   `$XDG_CONFIG_HOME/terse`, else `~/.config/terse`. A host creates the identity
   itself when a program first publishes.
 - Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`.
@@ -225,7 +244,22 @@ Commands:
   `key show` prints it again.
 - `feed publish <file> --title <t> [--reply-to <blob id>]` puts the article and
   publishes the next entry of your feed; prints `seq N blob <id>`.
-- `feed subscribe <key>`, `feed unsubscribe <key>`, `feed subscriptions`.
+- `feed subscribe <key>`, `feed unsubscribe <key>`, `feed subscriptions` (each feed's
+  key, then its name if known: your nickname, else the name its profile declares).
+- `feed nickname <key> [<name>]` sets your own name for a feed, kept only in
+  `<config>/nicknames`; without a name it removes it. It is shown instead of the
+  declared name.
+- `profile set --name <n> [--listed|--unlisted] [--description <file>]` publishes your
+  profile (NETWORK.md section 4.6): a display name (1 to 48 bytes, no control
+  characters, no space at either end), whether search may find it (default: as your
+  current profile says, else not), a description (default: the current one), and a
+  `relay` line for each of your relays (the `--relay` options, else your list) that is
+  not a loopback address. `profile show [<key>]` prints a profile held locally (yours
+  by default). Names are self-declared and not unique: every listing shows the key
+  beside the name.
+- `find <text>` asks your relays for listed feeds whose name contains the text
+  (ASCII letters match either case; names starting with it first) and prints key
+  and name; `find --entries <text>` finds articles of listed feeds by title.
 - `feed sync [--watch] [--auto-download <bytes>]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
   articles up to 16,384 bytes (or `--auto-download`). One line per new entry:
@@ -238,7 +272,8 @@ Commands:
   after 60 s.
   With `--watch` it stays connected and prints entries as the relay pushes them,
   reconnecting (1 s backoff, doubling to 30 s) if the connection drops.
-- `feed list [<key>]` lists entries held locally, newest first.
+- `feed list [<key>]` lists entries held locally, newest first, with the feed's name
+  after the key prefix when known; a profile entry shows as `[profile: <name>]`.
 - `feed read <key> <seq>` prints the article, fetching it from `--relay` if it
   is not in the store. Control characters are replaced on output.
 
@@ -277,11 +312,14 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          bytes, controllers, content completions) are passed in.
     crates/terse-net/    host side of device 4 and feeds: blob store, identities, entries,
                          feed store, relay protocol, relay client (behind a small
-                         Transport trait), content service thread (with the consent
-                         policy and the queue of requests waiting for an answer),
-                         local.rs (finding a relay: the config file, the local port)
-    crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay (a library too:
-                         `terse-host` runs one in-process when it finds none)
+                         Transport trait), node.rs (several relays, feed relays, search),
+                         profile.rs (display names, profile documents, nicknames), content
+                         service thread (with the consent policy and the queue of requests
+                         waiting for an answer), local.rs (finding relays: the config
+                         file, the local port)
+    crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay, with peers and
+                         search (a library too: `terse-host` runs one in-process when it
+                         finds none)
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
                          conform.rs)

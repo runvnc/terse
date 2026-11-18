@@ -1,42 +1,57 @@
-//! Host behaviour (NETWORK 2, 4.4): gets are answered from the local store,
-//! else fetched whole from the relay, verified and stored; puts are stored
-//! locally and sent to the relay. With subscriptions, the node keeps a relay
-//! connection, subscribes to each feed after the highest `seq` it holds,
-//! verifies and stores pushed entries, and downloads small articles.
+//! Host behaviour (NETWORK 2, 4.4, 4.6, 4.7, 5): gets are answered from the
+//! local store, else fetched whole from the relays, verified and stored;
+//! puts are stored locally and sent to every connected relay. With
+//! subscriptions, the node subscribes on each relay after the highest `seq`
+//! it holds, verifies and stores pushed entries (the first received of a
+//! `seq` wins, whichever relay it came from), and downloads small articles
+//! and profiles.
 //!
-//! Reconnecting: when the connection is lost (or cannot be made) while there
-//! are subscriptions, the node retries after 1 s, doubling up to 30 s, and
-//! subscribes again on every new connection.
+//! Relays: the host's own (at most eight, [`crate::local::MAX_RELAYS`]) and,
+//! unless turned off, feed relays: for each subscribed feed whose profile in
+//! force names relays, up to two of them, used for that feed's subscription
+//! and for gets (at most [`MAX_LINKS`] connections in all).
 //!
-//! Caught up (NETWORK 4.3): a feed is caught up once the entry whose `seq`
-//! equals the `highest` of the subscribe reply has arrived (valid or not:
-//! an invalid entry is still the relay's last), or at once if `highest` is
-//! not above `after`. The node is settled when every feed is caught up and
-//! no automatic download is running.
+//! Reconnecting: a relay whose connection is lost (or cannot be made) is
+//! tried again after 1 s, doubling up to 30 s, and the subscriptions are
+//! renewed on every new connection.
+//!
+//! Caught up (NETWORK 4.3): a feed is caught up on a connection once the
+//! entry whose `seq` equals the `highest` of the subscribe reply has arrived
+//! (valid or not: an invalid entry is still the relay's last), or at once if
+//! `highest` is not above `after`. The node is settled when every feed is
+//! caught up on every connected relay and no automatic download is running.
 //!
 //! The node also answers the content device's feed operations (SPEC 9.5):
 //! every new entry it stores is appended to the arrival log
 //! ([`crate::timeline::Arrivals`]); the timeline is that log, newest first,
-//! restricted to the feeds subscribed to now.
+//! restricted to the article entries of the feeds subscribed to now.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::blob::{BlobId, blob_id, to_hex, valid_size};
-use crate::entry::{self, Entry, MAX_TITLE, SignedEntry};
+use crate::entry::{self, Entry, KIND_ARTICLE, KIND_PROFILE, MAX_TITLE, SignedEntry};
 use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
-use crate::relay::{RelayClient, RelayReply};
+use crate::profile::{self, Document, Nicknames};
+use crate::protocol::{MAX_FIND_RESULTS, SCOPE_ENTRIES, SCOPE_FEEDS};
+use crate::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use crate::store::{BlobStore, default_store_dir};
 use crate::timeline::{self, Arrivals};
 
 /// Identifies an operation started on a [`Node`]; chosen by the caller.
 pub type Token = u64;
 
-/// Articles up to this size are downloaded as soon as their entry arrives
-/// (NETWORK 4.4).
+/// Articles (and profiles) up to this size are downloaded as soon as their
+/// entry arrives (NETWORK 4.4).
 pub const AUTO_DOWNLOAD_LIMIT: u32 = 16_384;
+/// Most relay connections: the host's relays and feed relays (NETWORK 5).
+pub const MAX_LINKS: usize = 16;
+/// Feed relays taken from one profile.
+pub const FEED_RELAYS_PER_FEED: usize = 2;
+/// Relays asked at once for a blob.
+const GET_FANOUT: usize = 2;
 
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const MAX_RETRY: Duration = Duration::from_secs(30);
@@ -46,13 +61,15 @@ const MAX_RETRY: Duration = Duration::from_secs(30);
 pub enum Done {
     /// The whole blob, verified against its ID.
     Got(Vec<u8>),
-    /// The blob is stored (and accepted by the relay, if there is one).
+    /// The blob is stored (and accepted by a relay, if there is one).
     Put(BlobId),
-    /// An article and its entry are stored (and accepted by the relay, if
-    /// there is one).
+    /// An article (or profile) and its entry are stored (and accepted by a
+    /// relay, if there is one).
     Published { seq: u32, blob: BlobId },
+    /// A search's merged, verified results (NETWORK 4.7).
+    Found(Vec<SignedEntry>),
     NotFound,
-    /// The relay refused an entry (for example, a different entry already
+    /// Every relay refused an entry (for example, a different entry already
     /// has its `seq`).
     Refused,
     Failed,
@@ -82,22 +99,25 @@ pub enum Article {
     SizeMismatch,
 }
 
-/// What happened to the node's feeds; see [`Node::take_feed_events`].
+/// What happened to the node's feeds and relays; see
+/// [`Node::take_feed_events`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedEvent {
     /// A new valid entry for a subscribed feed is stored. Reported once any
     /// automatic download has finished.
     Entry { entry: Entry, article: Article },
-    /// The relay accepted a subscription; entries it holds follow.
+    /// A relay accepted a subscription; entries it holds follow.
     Subscribed(FeedKey),
     SubscribeRefused(FeedKey),
-    /// Connected to the relay; subscriptions are being renewed.
-    Connected,
-    /// Could not connect, or the connection was lost; the next attempt is
-    /// in `retry_in`.
-    Disconnected { retry_in: Duration },
-    /// Every feed is caught up on this connection (NETWORK 4.3) and no
-    /// automatic download is in progress.
+    /// Connected to this relay; subscriptions are being renewed.
+    Connected(String),
+    /// Could not connect to this relay, or the connection was lost; the
+    /// next attempt is in `retry_in`.
+    Disconnected { url: String, retry_in: Duration },
+    /// None of the host's own relays is connected.
+    Unreachable,
+    /// Every feed is caught up on every connected relay (NETWORK 4.3) and
+    /// no automatic download is in progress.
     Settled,
     /// A subscription or download started after `Settled`; `Settled` follows
     /// when it is done.
@@ -107,38 +127,88 @@ pub enum FeedEvent {
     PublishFailed(Done),
 }
 
+/// What a relay request belongs to.
 enum Waiting {
-    Get(Token, BlobId),
-    Put(Token, BlobId),
-    /// An article's blob is on its way to the relay; its entry (`seq` not
-    /// yet assigned) is published next.
-    ArticleBlob(Token, Entry),
-    Entry(Token, SignedEntry),
+    Op(u64),
     /// A subscribe sent with this `after`.
     Subscribe(FeedKey, u32),
     Unsubscribe,
-    /// The automatic download of a new entry's article.
-    AutoGet(Entry),
 }
 
-/// Relay connection state for subscriptions.
-struct Follow {
-    /// The relay connection on which every subscription was sent (0: none).
+/// Why a blob is fetched.
+enum GetFor {
+    Token(Token),
+    /// The automatic download of a new entry's blob.
+    Auto(Entry),
+}
+
+/// An operation that may involve several relays.
+enum Op {
+    /// Relays still to ask, in order; at most [`GET_FANOUT`] asked at once.
+    Get { purpose: GetFor, id: BlobId, queue: VecDeque<u64>, in_flight: usize, not_found: bool },
+    /// Done at the first relay that accepts.
+    Put { token: Token, id: BlobId, in_flight: usize },
+    /// An article's (or profile's) blob on its way; its entry (`seq` not yet
+    /// assigned) is published once a relay has it.
+    PublishBlob { token: Token, entry: Entry, in_flight: usize },
+    Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool },
+    Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, answered: bool, found: Vec<SignedEntry> },
+}
+
+/// One relay connection.
+struct Link {
+    url: String,
+    client: RelayClient,
+    /// `None`: one of the host's own relays, used for every subscribed feed.
+    /// `Some`: a feed relay (NETWORK 5), used for these feeds.
+    feeds: Option<BTreeSet<FeedKey>>,
+    /// The connection generation the subscriptions were sent on (0: none).
     generation: u64,
-    connected: bool,
+    was_connected: bool,
     retry_at: Option<Instant>,
     retry_in: Duration,
-    settled: bool,
+    /// Feeds subscribed on this connection and not yet caught up, with the
+    /// `highest` their subscribe reply gave.
+    catching_up: HashMap<FeedKey, u32>,
 }
+
+impl Link {
+    fn new(url: String, client: RelayClient, feeds: Option<BTreeSet<FeedKey>>) -> Self {
+        Link {
+            url,
+            client,
+            feeds,
+            generation: 0,
+            was_connected: false,
+            retry_at: None,
+            retry_in: FIRST_RETRY,
+            catching_up: HashMap::new(),
+        }
+    }
+
+    fn serves(&self, feed: &FeedKey) -> bool {
+        self.feeds.as_ref().is_none_or(|f| f.contains(feed))
+    }
+
+    fn ready(&self) -> bool {
+        self.client.connected() && self.client.generation() == self.generation
+    }
+}
+
+type FeedConnector = Box<dyn Fn(&str) -> RelayClient + Send>;
 
 pub struct Node {
     store: BlobStore,
-    relay: Option<RelayClient>,
-    /// Operations waiting for the relay, by relay request number.
-    waiting: HashMap<u32, Waiting>,
+    links: BTreeMap<u64, Link>,
+    next_link: u64,
+    /// Relay requests by link and request number.
+    waiting: HashMap<(u64, u32), Waiting>,
+    ops: HashMap<u64, Op>,
+    next_op: u64,
     ready: Vec<(Token, Done)>,
     feeds: FeedStore,
     subscriptions: Subscriptions,
+    nicknames: Nicknames,
     identity: Option<Identity>,
     /// Where the identity is kept, so one can be created when first needed.
     identity_path: Option<PathBuf>,
@@ -146,46 +216,108 @@ pub struct Node {
     /// The last `seq` given to an own entry, so publishes in flight do not
     /// reuse one.
     last_seq: u32,
-    follow: Follow,
+    settled: bool,
+    /// No own relay is connected (and `Unreachable` was reported).
+    unreachable: bool,
     events: Vec<FeedEvent>,
-    /// Feeds subscribed on this connection and not yet caught up, with the
-    /// `highest` their subscribe reply gave.
-    catching_up: HashMap<FeedKey, u32>,
     arrivals: Arrivals,
     /// Verified stored entries (`None`: invalid on disk), by feed and `seq`;
     /// stored entries never change.
     verified: HashMap<(FeedKey, u32), Option<(Entry, Vec<u8>)>>,
+    /// A feed with an entry pointing at a blob, for choosing relays.
+    blob_feeds: HashMap<BlobId, FeedKey>,
+    /// Feed relays (NETWORK 5) in use.
+    feed_relays: bool,
+    /// The feed relays must be worked out again (a profile or the
+    /// subscriptions changed).
+    feed_relays_dirty: bool,
+    /// Also take loopback and private addresses from profiles (tests).
+    feed_relays_unrestricted: bool,
+    connect_feed_relay: FeedConnector,
 }
 
 impl Node {
     /// A node on `store` (feed entries are kept beside its blobs) with no
-    /// subscriptions and no identity.
+    /// subscriptions and no identity, and at most one relay.
     pub fn new(store: BlobStore, relay: Option<RelayClient>) -> Self {
-        Node {
+        let mut node = Node {
             feeds: FeedStore::beside_blobs(store.dir()),
             arrivals: Arrivals::beside_blobs(store.dir()),
             store,
-            relay,
+            links: BTreeMap::new(),
+            next_link: 0,
             waiting: HashMap::new(),
+            ops: HashMap::new(),
+            next_op: 0,
             ready: Vec::new(),
             subscriptions: Subscriptions::default(),
+            nicknames: Nicknames::in_memory(),
             identity: None,
             identity_path: None,
             auto_limit: AUTO_DOWNLOAD_LIMIT,
             last_seq: 0,
-            follow: Follow { generation: 0, connected: false, retry_at: None, retry_in: FIRST_RETRY, settled: false },
+            settled: false,
+            unreachable: false,
             events: Vec::new(),
-            catching_up: HashMap::new(),
             verified: HashMap::new(),
+            blob_feeds: HashMap::new(),
+            feed_relays: true,
+            feed_relays_dirty: true,
+            feed_relays_unrestricted: false,
+            connect_feed_relay: Box::new(|url| RelayClient::websocket_checked(url, DEFAULT_TIMEOUT, true)),
+        };
+        if let Some(client) = relay {
+            node.add_relay("relay", client);
         }
+        node
     }
 
-    /// A node on `store_dir` (default: [`default_store_dir`]) and an optional
-    /// `ws://` relay.
-    pub fn open(store_dir: Option<PathBuf>, relay_url: Option<&str>, timeout: Duration) -> Result<Self, String> {
+    /// A node on `store_dir` (default: [`default_store_dir`]) and `ws://`
+    /// relays.
+    pub fn open(store_dir: Option<PathBuf>, relays: &[String], timeout: Duration) -> Result<Self, String> {
         let dir = store_dir.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
         let store = BlobStore::open(&dir, None).map_err(|e| format!("{}: {e}", dir.display()))?;
-        Ok(Node::new(store, relay_url.map(|url| RelayClient::websocket(url, timeout))))
+        let mut node = Node::new(store, None);
+        for url in relays.iter().take(crate::local::MAX_RELAYS) {
+            node.add_relay(url, RelayClient::websocket(url, timeout));
+        }
+        node.connect_feed_relay = Box::new(move |url| RelayClient::websocket_checked(url, timeout, true));
+        Ok(node)
+    }
+
+    /// Adds one of the host's own relays.
+    pub fn add_relay(&mut self, url: &str, client: RelayClient) {
+        self.add_link(Link::new(url.to_string(), client, None));
+    }
+
+    fn add_link(&mut self, link: Link) -> u64 {
+        self.next_link += 1;
+        self.links.insert(self.next_link, link);
+        self.next_link
+    }
+
+    /// Whether to use feed relays (NETWORK 5); on by default.
+    pub fn set_feed_relays(&mut self, on: bool) {
+        self.feed_relays = on;
+        self.feed_relays_dirty = true;
+    }
+
+    /// Takes feed relays at loopback and private addresses too, connecting
+    /// with `connect` (for tests, where every relay is on loopback).
+    pub fn set_feed_relays_unrestricted(&mut self, connect: FeedConnector) {
+        self.feed_relays_unrestricted = true;
+        self.connect_feed_relay = connect;
+        self.feed_relays_dirty = true;
+    }
+
+    /// The URLs of the connected relays, own and feed relays.
+    pub fn connected_relays(&self) -> Vec<String> {
+        self.links.values().filter(|l| l.client.connected()).map(|l| l.url.clone()).collect()
+    }
+
+    /// The URLs of the host's own relays.
+    pub fn relay_urls(&self) -> Vec<String> {
+        self.links.values().filter(|l| l.feeds.is_none()).map(|l| l.url.clone()).collect()
     }
 
     pub fn store(&self) -> &BlobStore {
@@ -203,7 +335,24 @@ impl Node {
     pub fn set_subscriptions(&mut self, subscriptions: Subscriptions) {
         self.subscriptions = subscriptions;
         // Subscribe to the new list on the next poll.
-        self.follow.generation = 0;
+        for link in self.links.values_mut() {
+            link.generation = 0;
+        }
+        self.feed_relays_dirty = true;
+    }
+
+    pub fn nicknames(&self) -> &Nicknames {
+        &self.nicknames
+    }
+
+    pub fn set_nicknames(&mut self, nicknames: Nicknames) {
+        self.nicknames = nicknames;
+    }
+
+    /// Sets or (with `None` or an empty name) removes a nickname; false if
+    /// it already was as asked.
+    pub fn set_nickname(&mut self, feed: FeedKey, name: Option<&str>) -> std::io::Result<bool> {
+        self.nicknames.set(feed, name)
     }
 
     /// The identity whose feed `publish_article` writes to.
@@ -242,6 +391,37 @@ impl Node {
         self.auto_limit = bytes;
     }
 
+    /// The profile in force for a feed (NETWORK 4.6) and its document, if
+    /// the document is in the store and parses.
+    pub fn profile(&self, feed: &FeedKey) -> Option<(Entry, Option<Document>)> {
+        let signed = self.feeds.latest_profile(feed).ok()??;
+        let doc = match self.store.read(&signed.entry.blob) {
+            Ok(Some(bytes)) if blob_id(&bytes) == signed.entry.blob => Document::parse(&bytes),
+            _ => None,
+        };
+        Some((signed.entry, doc))
+    }
+
+    /// The name to show for a feed: its nickname (`true`), else the display
+    /// name of its profile in force (`false`).
+    pub fn display_name(&self, feed: &FeedKey) -> Option<(String, bool)> {
+        if let Some(n) = self.nicknames.get(feed) {
+            return Some((n.to_string(), true));
+        }
+        self.profile(feed).map(|(e, _)| (e.title, false))
+    }
+
+    fn new_op(&mut self, op: Op) -> u64 {
+        self.next_op += 1;
+        self.ops.insert(self.next_op, op);
+        self.next_op
+    }
+
+    /// The connected relays, in link order.
+    fn connected_links(&self) -> Vec<u64> {
+        self.links.iter().filter(|(_, l)| l.client.connected()).map(|(&id, _)| id).collect()
+    }
+
     /// Starts fetching the whole blob `id`.
     pub fn start_get(&mut self, token: Token, id: BlobId) {
         match self.store.read(&id) {
@@ -253,12 +433,47 @@ impl Node {
             Ok(None) => {}
             Err(_) => return self.ready.push((token, Done::Failed)),
         }
-        match &mut self.relay {
-            Some(relay) => {
-                let req = relay.get(&id);
-                self.waiting.insert(req, Waiting::Get(token, id));
+        if self.links.is_empty() {
+            return self.ready.push((token, Done::NotFound));
+        }
+        self.maintain();
+        self.fetch_from_relays(GetFor::Token(token), id);
+    }
+
+    /// Asks the connected relays for `id`: first the relays named in the
+    /// profile of a feed with an entry pointing at it, then the rest, two
+    /// at a time (NETWORK 5).
+    fn fetch_from_relays(&mut self, purpose: GetFor, id: BlobId) {
+        let preferred: Vec<String> = self
+            .blob_feeds
+            .get(&id)
+            .and_then(|feed| self.profile(feed))
+            .and_then(|(_, doc)| doc)
+            .map(|d| d.relays)
+            .unwrap_or_default();
+        let mut queue: Vec<u64> = self.connected_links();
+        queue.sort_by_key(|lid| preferred.iter().position(|u| *u == self.links[lid].url).unwrap_or(usize::MAX));
+        let op = self.new_op(Op::Get { purpose, id, queue: queue.into(), in_flight: 0, not_found: false });
+        self.advance_get(op);
+    }
+
+    /// Sends a get's next requests, or finishes it.
+    fn advance_get(&mut self, op_id: u64) {
+        let Some(Op::Get { id, queue, in_flight, .. }) = self.ops.get_mut(&op_id) else { return };
+        let id = *id;
+        while *in_flight < GET_FANOUT {
+            let Some(lid) = queue.pop_front() else { break };
+            let Some(link) = self.links.get_mut(&lid).filter(|l| l.client.connected()) else { continue };
+            let req = link.client.get(&id);
+            self.waiting.insert((lid, req), Waiting::Op(op_id));
+            *in_flight += 1;
+        }
+        if *in_flight == 0 {
+            let Some(Op::Get { purpose, not_found, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+            match purpose {
+                GetFor::Token(token) => self.ready.push((token, if not_found { Done::NotFound } else { Done::Failed })),
+                GetFor::Auto(entry) => self.downloaded(entry, None),
             }
-            None => self.ready.push((token, Done::NotFound)),
         }
     }
 
@@ -268,12 +483,31 @@ impl Node {
             Ok(id) => id,
             Err(_) => return self.ready.push((token, Done::Failed)),
         };
-        match &mut self.relay {
-            Some(relay) => {
-                let req = relay.put(data);
-                self.waiting.insert(req, Waiting::Put(token, id));
+        if self.links.is_empty() {
+            return self.ready.push((token, Done::Put(id)));
+        }
+        self.maintain();
+        let op = self.new_op(Op::Put { token, id, in_flight: 0 });
+        self.send_put(op, data);
+    }
+
+    /// Sends a put to every connected relay for `op`, or fails it.
+    fn send_put(&mut self, op_id: u64, data: &[u8]) {
+        let mut sent = 0;
+        for lid in self.connected_links() {
+            let req = self.links.get_mut(&lid).unwrap().client.put(data);
+            self.waiting.insert((lid, req), Waiting::Op(op_id));
+            sent += 1;
+        }
+        match self.ops.get_mut(&op_id) {
+            Some(Op::Put { in_flight, .. } | Op::PublishBlob { in_flight, .. }) => *in_flight = sent,
+            _ => {}
+        }
+        if sent == 0 {
+            match self.ops.remove(&op_id) {
+                Some(Op::Put { token, .. } | Op::PublishBlob { token, .. }) => self.ready.push((token, Done::Failed)),
+                _ => {}
             }
-            None => self.ready.push((token, Done::Put(id))),
         }
     }
 
@@ -281,17 +515,50 @@ impl Node {
     /// and publishes an entry with the next `seq` of the identity's feed.
     pub fn start_publish_article(&mut self, token: Token, draft: &Draft) {
         let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
-        if draft.title.len() > MAX_TITLE || self.store.put(&draft.data).is_err() {
+        if draft.title.len() > MAX_TITLE {
             return self.ready.push((token, Done::Failed));
         }
         let entry = Entry::article(identity.feed_key(), 0, draft.time, &draft.data, draft.reply_to, &draft.title);
-        match &mut self.relay {
-            Some(relay) => {
-                let req = relay.put(&draft.data);
-                self.waiting.insert(req, Waiting::ArticleBlob(token, entry));
-            }
-            None => self.publish_entry(token, entry),
+        self.start_publish(token, &draft.data, entry);
+    }
+
+    /// Starts publishing a profile (NETWORK 4.6) for the identity's feed
+    /// (created if need be): display name `name`, `listed`, the description
+    /// of the profile in force if there is one, and the host's relays that
+    /// are not loopback addresses.
+    pub fn start_publish_profile(&mut self, token: Token, name: &str, listed: bool, time: u32) {
+        let description = self.ensure_identity().ok().map(|key| {
+            self.profile(&key).and_then(|(_, doc)| doc).map(|d| d.description).unwrap_or_default()
+        });
+        self.start_publish_profile_with(token, name, listed, description, time);
+    }
+
+    /// [`Self::start_publish_profile`] with a given description (`None`: no
+    /// identity could be had, which fails).
+    pub fn start_publish_profile_with(&mut self, token: Token, name: &str, listed: bool, description: Option<String>, time: u32) {
+        let (Some(description), Some(identity)) = (description, &self.identity) else {
+            return self.ready.push((token, Done::Failed));
+        };
+        if !profile::valid_name(name) {
+            return self.ready.push((token, Done::Failed));
         }
+        let relays = self.relay_urls().into_iter().filter(|u| !profile::loopback_url(u)).collect();
+        let data = Document { listed, relays, description }.build();
+        let entry = Entry::profile(identity.feed_key(), 0, time, &data, name);
+        self.start_publish(token, &data, entry);
+    }
+
+    /// Puts `data` and then publishes `entry` (its `seq` still to assign).
+    fn start_publish(&mut self, token: Token, data: &[u8], entry: Entry) {
+        if self.store.put(data).is_err() {
+            return self.ready.push((token, Done::Failed));
+        }
+        if self.links.is_empty() {
+            return self.publish_entry(token, entry);
+        }
+        self.maintain();
+        let op = self.new_op(Op::PublishBlob { token, entry, in_flight: 0 });
+        self.send_put(op, data);
     }
 
     /// Starts publishing blob `id`, which must be in the local store, as the
@@ -315,20 +582,25 @@ impl Node {
         entry.seq = highest.max(self.last_seq) + 1;
         let Ok(signed) = entry.sign(identity) else { return self.ready.push((token, Done::Failed)) };
         self.last_seq = signed.entry.seq;
-        match &mut self.relay {
-            Some(relay) => {
-                let req = relay.publish(&signed.bytes);
-                self.waiting.insert(req, Waiting::Entry(token, signed));
-            }
-            None => self.store_own_entry(token, &signed),
+        if self.links.is_empty() {
+            return self.store_own_entry(token, &signed);
+        }
+        let targets = self.connected_links();
+        if targets.is_empty() {
+            return self.ready.push((token, Done::Failed));
+        }
+        let op = self.new_op(Op::Entry { token, signed: signed.clone(), in_flight: targets.len(), refused: false });
+        for lid in targets {
+            let req = self.links.get_mut(&lid).unwrap().client.publish(&signed.bytes);
+            self.waiting.insert((lid, req), Waiting::Op(op));
         }
     }
 
     fn store_own_entry(&mut self, token: Token, signed: &SignedEntry) {
         let done = match self.insert(signed) {
             Ok(insert @ (Insert::New | Insert::Duplicate)) => {
-                // A new entry of a subscribed feed, like one from the relay
-                // (its article is in the store).
+                // A new entry of a subscribed feed, like one from a relay
+                // (its blob is in the store).
                 if insert == Insert::New && self.subscriptions.contains(&signed.entry.feed) {
                     self.events.push(FeedEvent::Entry { entry: signed.entry.clone(), article: Article::Local });
                 }
@@ -345,49 +617,85 @@ impl Node {
         if insert == Insert::New {
             // A failure only leaves the entry at the old end of the timeline.
             let _ = self.arrivals.record(&signed.entry.feed, signed.entry.seq);
+            self.blob_feeds.insert(signed.entry.blob, signed.entry.feed);
+            if signed.entry.kind == KIND_PROFILE {
+                self.feed_relays_dirty = true;
+            }
         }
         Ok(insert)
     }
 
+    /// Starts a search (NETWORK 4.7) on every connected relay: `scope` 1
+    /// (feeds) or 2 (entries). Fails if no relay could be asked.
+    pub fn start_find(&mut self, token: Token, scope: u8, query: &[u8]) {
+        if !(scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES) || !(1..=profile::MAX_NAME).contains(&query.len()) {
+            return self.ready.push((token, Done::Failed));
+        }
+        self.maintain();
+        let targets = self.connected_links();
+        if targets.is_empty() {
+            return self.ready.push((token, Done::Failed));
+        }
+        let op = self.new_op(Op::Find {
+            token,
+            scope,
+            query: query.to_vec(),
+            in_flight: targets.len(),
+            answered: false,
+            found: Vec::new(),
+        });
+        for lid in targets {
+            let req = self.links.get_mut(&lid).unwrap().client.find(scope, query);
+            self.waiting.insert((lid, req), Waiting::Op(op));
+        }
+    }
+
     /// Adds a feed to the subscriptions (saved if they are backed by a file)
-    /// and subscribes on the current connection.
+    /// and subscribes on the current connections.
     pub fn subscribe(&mut self, feed: FeedKey) -> std::io::Result<()> {
         if self.subscriptions.add(feed)? {
-            if let Some(relay) = self.relay.as_mut().filter(|r| r.connected())
-                && relay.generation() == self.follow.generation
-            {
-                let after = self.feeds.highest(&feed).unwrap_or(0);
-                let req = relay.subscribe(&feed, after);
-                self.waiting.insert(req, Waiting::Subscribe(feed, after));
+            let after = self.feeds.highest(&feed).unwrap_or(0);
+            for (&lid, link) in self.links.iter_mut().filter(|(_, l)| l.ready() && l.serves(&feed)) {
+                let req = link.client.subscribe(&feed, after);
+                self.waiting.insert((lid, req), Waiting::Subscribe(feed, after));
             }
+            self.feed_relays_dirty = true;
         }
         Ok(())
     }
 
     pub fn unsubscribe(&mut self, feed: &FeedKey) -> std::io::Result<()> {
-        self.catching_up.remove(feed);
-        if self.subscriptions.remove(feed)?
-            && let Some(relay) = self.relay.as_mut().filter(|r| r.connected())
-        {
-            let req = relay.unsubscribe(feed);
-            self.waiting.insert(req, Waiting::Unsubscribe);
+        if self.subscriptions.remove(feed)? {
+            for (&lid, link) in self.links.iter_mut() {
+                link.catching_up.remove(feed);
+                if link.client.connected() && link.serves(feed) {
+                    let req = link.client.unsubscribe(feed);
+                    self.waiting.insert((lid, req), Waiting::Unsubscribe);
+                }
+            }
+            self.feed_relays_dirty = true;
         }
         Ok(())
     }
 
-    /// Whether any operation is waiting for the relay.
+    /// Whether any operation is waiting for a relay.
     pub fn busy(&self) -> bool {
         !self.waiting.is_empty()
     }
 
-    /// Whether the node has subscriptions and a relay, so it must be polled
-    /// even when not busy.
+    /// Whether the node has subscriptions and a relay, so it follows feeds.
     pub fn following(&self) -> bool {
-        self.relay.is_some() && !self.subscriptions.is_empty()
+        !self.links.is_empty() && !self.subscriptions.is_empty()
+    }
+
+    /// Whether the node has relays, so it must be polled (to reconnect)
+    /// even when not busy.
+    pub fn has_relays(&self) -> bool {
+        !self.links.is_empty()
     }
 
     pub fn connected(&self) -> bool {
-        self.relay.as_ref().is_some_and(RelayClient::connected)
+        self.links.values().any(|l| l.client.connected())
     }
 
     /// Feed events since the last call.
@@ -413,11 +721,26 @@ impl Node {
         (feeds.len() as u32, timeline::fill(records, length as usize))
     }
 
-    /// The stored entries of the subscribed feeds, newest arrival first
-    /// (SPEC 9.5). Entries of feeds no longer subscribed are left out (and
-    /// come back in place if the feed is subscribed again); entries stored
-    /// without an arrival record (by an older version) come last, highest
-    /// `seq` first. Entries that fail verification are left out.
+    /// The names records from index `offset` that fit in `length` bytes,
+    /// and how many exist (SPEC 9.5): one per subscribed feed in key order.
+    pub fn name_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
+        let feeds: Vec<&FeedKey> = self.subscriptions.feeds().collect();
+        let records = feeds.iter().skip(offset as usize).map(|feed| {
+            let declared = self.feeds.latest_profile(feed).ok().flatten().map(|p| p.entry.title);
+            let nickname = self.nicknames.get(feed);
+            let flags = nickname.is_some() as u8 | (declared.is_some() as u8) << 1;
+            let name = nickname.map(str::to_string).or(declared).unwrap_or_default();
+            timeline::name_record(feed, flags, name.as_bytes())
+        });
+        (feeds.len() as u32, timeline::fill(records, length as usize))
+    }
+
+    /// The stored article entries of the subscribed feeds, newest arrival
+    /// first (SPEC 9.5). Entries of feeds no longer subscribed are left out
+    /// (and come back in place if the feed is subscribed again); entries
+    /// stored without an arrival record (by an older version) come last,
+    /// highest `seq` first. Entries that fail verification and profile
+    /// entries are left out.
     pub fn timeline(&mut self) -> Vec<(FeedKey, u32)> {
         let mut held: HashMap<FeedKey, BTreeSet<u32>> = self
             .subscriptions
@@ -434,21 +757,26 @@ impl Node {
             held.into_iter().flat_map(|(feed, seqs)| seqs.into_iter().map(move |seq| (feed, seq))).collect();
         rest.sort_by(|a, b| (b.1, b.0).cmp(&(a.1, a.0)));
         out.extend(rest);
-        out.retain(|&(feed, seq)| self.verified_entry(feed, seq).is_some());
+        out.retain(|&(feed, seq)| self.verified_entry(feed, seq).is_some_and(|(e, _)| e.kind == KIND_ARTICLE));
         out
     }
 
     /// A stored entry and its bytes without the signature, verified once.
     fn verified_entry(&mut self, feed: FeedKey, seq: u32) -> Option<&(Entry, Vec<u8>)> {
         let feeds = &self.feeds;
-        self.verified
+        let found = self
+            .verified
             .entry((feed, seq))
             .or_insert_with(|| {
                 let signed = entry::decode(&feeds.get(&feed, seq).ok()??).ok()?;
                 let unsigned = signed.bytes[..signed.bytes.len() - entry::SIGNATURE_LEN].to_vec();
                 (signed.entry.feed == feed && signed.entry.seq == seq).then_some((signed.entry, unsigned))
             })
-            .as_ref()
+            .as_ref();
+        if let Some((e, _)) = found {
+            self.blob_feeds.entry(e.blob).or_insert(feed);
+        }
+        found
     }
 
     /// The timeline records from index `offset` that fit in `length` bytes,
@@ -469,61 +797,148 @@ impl Node {
         (list.len() as u32, records.concat())
     }
 
-    /// Connects and renews subscriptions when needed (NETWORK 4.4).
+    /// Search results as records (SPEC 9.5): the timeline record of each,
+    /// as many as fit in `length` bytes, and how many there are.
+    pub fn find_records(&self, found: &[SignedEntry], length: u16) -> (u32, Vec<u8>) {
+        let records = found.iter().map(|s| {
+            let unsigned = &s.bytes[..s.bytes.len() - entry::SIGNATURE_LEN];
+            timeline::timeline_record(unsigned, self.held_article(&s.entry) == Some(Article::Local))
+        });
+        (found.len() as u32, timeline::fill(records, length as usize))
+    }
+
+    /// Connects relays and renews subscriptions when needed (NETWORK 4.4),
+    /// and works out the feed relays when a profile or the subscriptions
+    /// changed (NETWORK 5).
     fn maintain(&mut self) {
-        let Some(relay) = self.relay.as_mut() else { return };
-        if self.subscriptions.is_empty() {
-            return;
+        if self.feed_relays_dirty {
+            self.feed_relays_dirty = false;
+            self.update_feed_relays();
         }
         let now = Instant::now();
-        let follow = &mut self.follow;
-        if !relay.connected() {
-            if follow.connected {
-                follow.connected = false;
-                follow.retry_at = Some(now + follow.retry_in);
-                self.events.push(FeedEvent::Disconnected { retry_in: follow.retry_in });
+        let ids: Vec<u64> = self.links.keys().copied().collect();
+        for lid in ids {
+            let link = self.links.get_mut(&lid).unwrap();
+            if !link.client.connected() {
+                if std::mem::take(&mut link.was_connected) {
+                    link.retry_at = Some(now + link.retry_in);
+                    link.catching_up.clear();
+                    self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
+                }
+                if link.retry_at.is_some_and(|t| now < t) {
+                    continue;
+                }
+                if link.client.connect().is_err() {
+                    self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
+                    link.retry_at = Some(now + link.retry_in);
+                    link.retry_in = (link.retry_in * 2).min(MAX_RETRY);
+                    continue;
+                }
             }
-            if follow.retry_at.is_some_and(|t| now < t) {
-                return;
-            }
-            if relay.connect().is_err() {
-                self.events.push(FeedEvent::Disconnected { retry_in: follow.retry_in });
-                follow.retry_at = Some(now + follow.retry_in);
-                follow.retry_in = (follow.retry_in * 2).min(MAX_RETRY);
-                return;
+            if link.client.generation() != link.generation {
+                link.generation = link.client.generation();
+                link.was_connected = true;
+                link.retry_at = None;
+                link.retry_in = FIRST_RETRY;
+                link.catching_up.clear();
+                self.settled = false;
+                self.events.push(FeedEvent::Connected(link.url.clone()));
+                let feeds: Vec<FeedKey> = self.subscriptions.feeds().filter(|f| link.serves(f)).copied().collect();
+                for feed in feeds {
+                    let after = self.feeds.highest(&feed).unwrap_or(0);
+                    let req = link.client.subscribe(&feed, after);
+                    self.waiting.insert((lid, req), Waiting::Subscribe(feed, after));
+                }
             }
         }
-        if relay.generation() != follow.generation {
-            *follow = Follow {
-                generation: relay.generation(),
-                connected: true,
-                retry_at: None,
-                retry_in: FIRST_RETRY,
-                settled: false,
-            };
-            self.events.push(FeedEvent::Connected);
-            self.catching_up.clear();
+        let own: Vec<&Link> = self.links.values().filter(|l| l.feeds.is_none()).collect();
+        let down = !own.is_empty() && own.iter().all(|l| !l.client.connected());
+        if down && !self.unreachable {
+            self.events.push(FeedEvent::Unreachable);
+        }
+        self.unreachable = down;
+    }
+
+    /// Adds, changes and removes feed relays to match the profiles in force
+    /// of the subscribed feeds (NETWORK 5).
+    fn update_feed_relays(&mut self) {
+        let own: BTreeSet<String> = self.relay_urls().into_iter().collect();
+        let mut wanted: BTreeMap<String, BTreeSet<FeedKey>> = BTreeMap::new();
+        if self.feed_relays {
             for feed in self.subscriptions.feeds() {
-                let after = self.feeds.highest(feed).unwrap_or(0);
-                let req = relay.subscribe(feed, after);
-                self.waiting.insert(req, Waiting::Subscribe(*feed, after));
+                let Some((_, Some(doc))) = self.profile(feed) else { continue };
+                doc.relays
+                    .iter()
+                    .filter(|u| self.feed_relays_unrestricted || profile::usable_profile_relay(u))
+                    .filter(|u| !own.contains(*u))
+                    .take(FEED_RELAYS_PER_FEED)
+                    .for_each(|u| {
+                        wanted.entry(u.clone()).or_default().insert(*feed);
+                    });
+            }
+        }
+        let room = MAX_LINKS.saturating_sub(own.len());
+        let wanted: BTreeMap<String, BTreeSet<FeedKey>> = wanted.into_iter().take(room).collect();
+        // Remove or update the feed relays there are.
+        let current: Vec<(u64, String)> =
+            self.links.iter().filter(|(_, l)| l.feeds.is_some()).map(|(&id, l)| (id, l.url.clone())).collect();
+        for (lid, url) in current {
+            match wanted.get(&url) {
+                None => self.remove_link(lid),
+                Some(feeds) => {
+                    let link = self.links.get_mut(&lid).unwrap();
+                    let old = link.feeds.replace(feeds.clone()).unwrap_or_default();
+                    if link.ready() {
+                        for feed in feeds.difference(&old) {
+                            let after = self.feeds.highest(feed).unwrap_or(0);
+                            let req = link.client.subscribe(feed, after);
+                            self.waiting.insert((lid, req), Waiting::Subscribe(*feed, after));
+                        }
+                        for feed in old.difference(feeds) {
+                            link.catching_up.remove(feed);
+                            let req = link.client.unsubscribe(feed);
+                            self.waiting.insert((lid, req), Waiting::Unsubscribe);
+                        }
+                    }
+                }
+            }
+        }
+        let have: BTreeSet<String> = self.links.values().map(|l| l.url.clone()).collect();
+        for (url, feeds) in wanted.into_iter().filter(|(u, _)| !have.contains(u)) {
+            let client = (self.connect_feed_relay)(&url);
+            self.add_link(Link::new(url, client, Some(feeds)));
+        }
+    }
+
+    /// Drops a relay; its requests fail.
+    fn remove_link(&mut self, lid: u64) {
+        let Some(mut link) = self.links.remove(&lid) else { return };
+        link.client.close();
+        let mut failed: Vec<u32> = link.client.poll().into_iter().map(|(req, _)| req).collect();
+        failed.extend(self.waiting.keys().filter(|(l, _)| *l == lid).map(|&(_, req)| req));
+        for req in failed {
+            if let Some(waiting) = self.waiting.remove(&(lid, req)) {
+                self.reply(lid, waiting, RelayReply::Failed);
             }
         }
     }
 
-    /// Verifies and stores an entry pushed by the relay, and starts its
+    /// Verifies and stores an entry pushed by a relay, and starts its
     /// automatic download (NETWORK 4.4).
-    fn receive(&mut self, bytes: &[u8]) {
+    fn receive(&mut self, lid: u64, bytes: &[u8]) {
         // Caught up when the relay's last entry for the feed arrives, whether
         // or not it turns out to be valid (NETWORK 4.3).
-        if bytes.len() >= 36 {
+        if bytes.len() >= 36
+            && let Some(link) = self.links.get_mut(&lid)
+        {
             let feed: FeedKey = bytes[..32].try_into().unwrap();
             let seq = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
-            if self.catching_up.get(&feed).is_some_and(|&highest| seq >= highest) {
-                self.catching_up.remove(&feed);
+            if link.catching_up.get(&feed).is_some_and(|&highest| seq >= highest) {
+                link.catching_up.remove(&feed);
             }
         }
-        // Invalid entries and entries for feeds not subscribed are discarded.
+        // Invalid entries, entries for feeds not subscribed and entries
+        // already received (from this relay or another) are discarded.
         let Ok(signed) = entry::decode(bytes) else { return };
         if !self.subscriptions.contains(&signed.entry.feed) || self.insert(&signed).ok() != Some(Insert::New) {
             return;
@@ -532,88 +947,154 @@ impl Node {
         let article = match self.held_article(&entry) {
             Some(held) => held,
             None if entry.size <= self.auto_limit => {
-                if let Some(relay) = &mut self.relay {
-                    let req = relay.get(&entry.blob);
-                    self.waiting.insert(req, Waiting::AutoGet(entry));
-                    return;
+                if self.connected_links().is_empty() {
+                    Article::Failed
+                } else {
+                    return self.fetch_from_relays(GetFor::Auto(entry.clone()), entry.blob);
                 }
-                Article::Failed
             }
             None => Article::NotFetched,
         };
         self.events.push(FeedEvent::Entry { entry, article });
     }
 
-    /// The result of an automatic download.
-    fn downloaded(&mut self, entry: Entry, reply: RelayReply) {
-        let article = match reply {
-            RelayReply::Got(bytes) if valid_size(bytes.len()) && blob_id(&bytes) == entry.blob => {
-                if bytes.len() != entry.size as usize {
-                    Article::SizeMismatch
-                } else if self.store.put(&bytes).is_ok() {
-                    Article::Local
-                } else {
-                    Article::Failed
+    /// The result of an automatic download (`None`: not found anywhere).
+    fn downloaded(&mut self, entry: Entry, bytes: Option<Vec<u8>>) {
+        let article = match bytes {
+            Some(bytes) if bytes.len() != entry.size as usize => Article::SizeMismatch,
+            Some(bytes) if self.store.put(&bytes).is_ok() => {
+                if entry.kind == KIND_PROFILE {
+                    self.feed_relays_dirty = true;
                 }
+                Article::Local
             }
             _ => Article::Failed,
         };
         self.events.push(FeedEvent::Entry { entry, article });
     }
 
-    fn reply(&mut self, waiting: Waiting, reply: RelayReply) {
-        let finished = match (waiting, reply) {
-            (Waiting::Get(token, id), RelayReply::Got(bytes)) => {
-                // NETWORK 2: verify before storing or delivering; a blob
-                // that fails the check counts as not found on this relay.
-                if valid_size(bytes.len()) && blob_id(&bytes) == id {
-                    // A full local store does not stop delivery.
-                    let _ = self.store.put(&bytes);
-                    (token, Done::Got(bytes))
-                } else {
-                    (token, Done::NotFound)
-                }
-            }
-            (Waiting::Get(token, _), RelayReply::NotFound) => (token, Done::NotFound),
-            (Waiting::Put(token, id), RelayReply::Put(relay_id)) if relay_id == id => (token, Done::Put(id)),
-            (Waiting::ArticleBlob(token, entry), RelayReply::Put(relay_id)) if relay_id == entry.blob => {
-                return self.publish_entry(token, entry);
-            }
-            (Waiting::Entry(token, signed), RelayReply::Done) => return self.store_own_entry(token, &signed),
-            (Waiting::Entry(token, _), RelayReply::Refused) => (token, Done::Refused),
-            (Waiting::Get(token, _) | Waiting::Put(token, _), _)
-            | (Waiting::ArticleBlob(token, _) | Waiting::Entry(token, _), _) => (token, Done::Failed),
+    fn reply(&mut self, lid: u64, waiting: Waiting, reply: RelayReply) {
+        match (waiting, reply) {
+            (Waiting::Op(op), reply) => self.op_reply(op, reply),
             (Waiting::Subscribe(feed, after), RelayReply::Subscribed { highest }) => {
-                if highest > after && self.subscriptions.contains(&feed) {
-                    self.catching_up.insert(feed, highest);
+                if highest > after
+                    && self.subscriptions.contains(&feed)
+                    && let Some(link) = self.links.get_mut(&lid)
+                {
+                    link.catching_up.insert(feed, highest);
                 }
-                return self.events.push(FeedEvent::Subscribed(feed));
+                self.events.push(FeedEvent::Subscribed(feed));
             }
-            (Waiting::Subscribe(feed, _), RelayReply::Refused) => {
-                return self.events.push(FeedEvent::SubscribeRefused(feed));
-            }
+            (Waiting::Subscribe(feed, _), RelayReply::Refused) => self.events.push(FeedEvent::SubscribeRefused(feed)),
             // No answer: subscribe again on the next poll.
             (Waiting::Subscribe(..), _) => {
-                self.follow.generation = 0;
-                return;
+                if let Some(link) = self.links.get_mut(&lid) {
+                    link.generation = 0;
+                }
             }
-            (Waiting::Unsubscribe, _) => return,
-            (Waiting::AutoGet(entry), reply) => return self.downloaded(entry, reply),
-        };
-        self.ready.push(finished);
+            (Waiting::Unsubscribe, _) => {}
+        }
+    }
+
+    fn op_reply(&mut self, op_id: u64, reply: RelayReply) {
+        let Some(op) = self.ops.get_mut(&op_id) else { return };
+        match op {
+            Op::Get { id, in_flight, not_found, .. } => {
+                *in_flight -= 1;
+                let id = *id;
+                match reply {
+                    // NETWORK 2: verify before storing or delivering; a blob
+                    // that fails the check counts as not found on this relay.
+                    RelayReply::Got(bytes) if valid_size(bytes.len()) && blob_id(&bytes) == id => {
+                        let Some(Op::Get { purpose, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                        match purpose {
+                            GetFor::Token(token) => {
+                                // A full local store does not stop delivery.
+                                let _ = self.store.put(&bytes);
+                                self.ready.push((token, Done::Got(bytes)));
+                            }
+                            GetFor::Auto(entry) => self.downloaded(entry, Some(bytes)),
+                        }
+                        return;
+                    }
+                    RelayReply::Got(_) | RelayReply::NotFound => *not_found = true,
+                    _ => {}
+                }
+                self.advance_get(op_id);
+            }
+            Op::Put { token, id, in_flight } => {
+                *in_flight -= 1;
+                if reply == RelayReply::Put(*id) {
+                    let done = (*token, Done::Put(*id));
+                    self.ops.remove(&op_id);
+                    self.ready.push(done);
+                } else if *in_flight == 0 {
+                    let done = (*token, Done::Failed);
+                    self.ops.remove(&op_id);
+                    self.ready.push(done);
+                }
+            }
+            Op::PublishBlob { entry, in_flight, .. } => {
+                *in_flight -= 1;
+                let accepted = reply == RelayReply::Put(entry.blob);
+                if accepted || *in_flight == 0 {
+                    let Some(Op::PublishBlob { token, entry, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    if accepted {
+                        self.publish_entry(token, entry);
+                    } else {
+                        self.ready.push((token, Done::Failed));
+                    }
+                }
+            }
+            Op::Entry { in_flight, refused, .. } => {
+                *in_flight -= 1;
+                *refused |= reply == RelayReply::Refused;
+                if reply == RelayReply::Done || *in_flight == 0 {
+                    let Some(Op::Entry { token, signed, refused, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    match reply {
+                        RelayReply::Done => self.store_own_entry(token, &signed),
+                        _ => self.ready.push((token, if refused { Done::Refused } else { Done::Failed })),
+                    }
+                }
+            }
+            Op::Find { scope, query, in_flight, answered, found, .. } => {
+                *in_flight -= 1;
+                if let RelayReply::Found(entries) = reply {
+                    *answered = true;
+                    let kind = if *scope == SCOPE_FEEDS { KIND_PROFILE } else { KIND_ARTICLE };
+                    // NETWORK 4.7: every result is verified; forged ones and
+                    // ones that do not answer the query are dropped.
+                    found.extend(
+                        entries
+                            .iter()
+                            .filter_map(|b| entry::decode(b).ok())
+                            .filter(|s| s.entry.kind == kind && profile::matches(s.entry.title.as_bytes(), query)),
+                    );
+                }
+                if *in_flight == 0 {
+                    let Some(Op::Find { token, scope, query, answered, found, .. }) = self.ops.remove(&op_id) else {
+                        unreachable!()
+                    };
+                    let done = if answered { Done::Found(merge_found(scope, &query, found)) } else { Done::Failed };
+                    self.ready.push((token, done));
+                }
+            }
+        }
     }
 
     /// Reports `Settled` when nothing is outstanding for the feeds.
     fn check_settled(&mut self) {
-        let pending = !self.catching_up.is_empty()
-            || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..) | Waiting::AutoGet(_)));
-        let current = self.relay.as_ref().is_some_and(|r| r.connected() && r.generation() == self.follow.generation);
+        let pending = self.links.values().any(|l| !l.catching_up.is_empty())
+            || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
+            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_), .. }));
+        let connected: Vec<&Link> = self.links.values().filter(|l| l.client.connected()).collect();
+        let current = !connected.is_empty() && connected.iter().all(|l| l.ready());
         if pending {
-            if std::mem::take(&mut self.follow.settled) {
+            if std::mem::take(&mut self.settled) {
                 self.events.push(FeedEvent::Busy);
             }
-        } else if current && !self.follow.settled && !self.subscriptions.is_empty() {
-            self.follow.settled = true;
+        } else if current && !self.settled && !self.subscriptions.is_empty() {
+            self.settled = true;
             self.events.push(FeedEvent::Settled);
         }
     }
@@ -622,17 +1103,18 @@ impl Node {
     /// most briefly. Feed events are collected for `take_feed_events`.
     pub fn poll(&mut self) -> Vec<(Token, Done)> {
         self.maintain();
-        let (replies, pushed) = match &mut self.relay {
-            Some(relay) => (relay.poll(), relay.take_pushed()),
-            None => Default::default(),
-        };
-        for (req, reply) in replies {
-            if let Some(waiting) = self.waiting.remove(&req) {
-                self.reply(waiting, reply);
+        let ids: Vec<u64> = self.links.keys().copied().collect();
+        for lid in ids {
+            let Some(link) = self.links.get_mut(&lid) else { continue };
+            let (replies, pushed) = (link.client.poll(), link.client.take_pushed());
+            for (req, reply) in replies {
+                if let Some(waiting) = self.waiting.remove(&(lid, req)) {
+                    self.reply(lid, waiting, reply);
+                }
             }
-        }
-        for bytes in pushed {
-            self.receive(&bytes);
+            for bytes in pushed {
+                self.receive(lid, &bytes);
+            }
         }
         self.check_settled();
         std::mem::take(&mut self.ready)
@@ -672,6 +1154,59 @@ impl Node {
         self.start_publish_article(0, draft);
         self.wait_for(0)
     }
+
+    /// Publishes a profile, blocking; `description` `None` keeps that of the
+    /// profile in force.
+    pub fn publish_profile(&mut self, name: &str, listed: bool, description: Option<String>, time: u32) -> Done {
+        match description {
+            None => self.start_publish_profile(0, name, listed, time),
+            Some(d) => {
+                let d = self.ensure_identity().ok().map(|_| d);
+                self.start_publish_profile_with(0, name, listed, d, time);
+            }
+        }
+        self.wait_for(0)
+    }
+
+    /// Searches, blocking.
+    pub fn find(&mut self, scope: u8, query: &[u8]) -> Done {
+        self.start_find(0, scope, query);
+        self.wait_for(0)
+    }
+
+    /// Lets every relay be tried again at once (tests).
+    #[cfg(test)]
+    fn skip_backoff(&mut self) {
+        for link in self.links.values_mut() {
+            link.retry_at = Some(Instant::now());
+        }
+    }
+}
+
+/// Merges the results of several relays (NETWORK 4.7): one entry per feed
+/// and `seq` (for feeds, only the highest `seq` of each feed), ordered —
+/// feeds: names starting with the query first, then by feed key; entries:
+/// newest claimed time first, then feed key, then `seq` — and at most 16.
+pub fn merge_found(scope: u8, query: &[u8], found: Vec<SignedEntry>) -> Vec<SignedEntry> {
+    let mut by_key: BTreeMap<(FeedKey, u32), SignedEntry> = BTreeMap::new();
+    for s in found {
+        by_key.entry((s.entry.feed, s.entry.seq)).or_insert(s);
+    }
+    let mut list: Vec<SignedEntry> = if scope == SCOPE_FEEDS {
+        let mut latest: BTreeMap<FeedKey, SignedEntry> = BTreeMap::new();
+        for s in by_key.into_values() {
+            latest.insert(s.entry.feed, s);
+        }
+        let mut list: Vec<SignedEntry> = latest.into_values().collect();
+        list.sort_by_key(|s| (!profile::starts_with(s.entry.title.as_bytes(), query), s.entry.feed));
+        list
+    } else {
+        let mut list: Vec<SignedEntry> = by_key.into_values().collect();
+        list.sort_by(|a, b| (b.entry.time, a.entry.feed, b.entry.seq).cmp(&(a.entry.time, b.entry.feed, a.entry.seq)));
+        list
+    };
+    list.truncate(MAX_FIND_RESULTS);
+    list
 }
 
 #[cfg(test)]
@@ -679,7 +1214,6 @@ mod tests {
     use super::*;
     use crate::protocol::{self, Request, status};
     use crate::relay::{DEFAULT_TIMEOUT, Transport};
-    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -695,6 +1229,7 @@ mod tests {
         std::fs::write(node.store().path(&id), b"blub").unwrap();
         assert_eq!(node.fetch(id), Done::NotFound);
         assert!(!node.store().path(&id).exists());
+        assert_eq!(node.find(SCOPE_FEEDS, b"x"), Done::Failed, "no relay to ask");
     }
 
     #[test]
@@ -712,6 +1247,43 @@ mod tests {
         assert_eq!(held.iter().map(|e| e.entry.title.as_str()).collect::<Vec<_>>(), ["a", "b"]);
     }
 
+    /// Profiles: the latest wins; the description is kept; the timeline
+    /// has only articles; names records.
+    #[test]
+    fn profiles_and_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let me = Identity::from_seed([1; 32]);
+        node.set_identity(me.clone());
+        let key = me.feed_key();
+        assert_eq!(node.publish_profile(" bad", true, None, 1), Done::Failed);
+        assert!(matches!(node.publish_profile("Ana", false, Some("About me.".into()), 1), Done::Published { seq: 1, .. }));
+        let draft = Draft { data: b"text".to_vec(), title: "Post".into(), reply_to: None, time: 2 };
+        assert!(matches!(node.publish_article(&draft), Done::Published { seq: 2, .. }));
+        assert!(matches!(node.publish_profile("Ana B", true, None, 3), Done::Published { seq: 3, .. }));
+        let (entry, doc) = node.profile(&key).unwrap();
+        assert_eq!((entry.title.as_str(), entry.seq, entry.kind), ("Ana B", 3, KIND_PROFILE));
+        assert_eq!(doc.unwrap(), Document { listed: true, relays: vec![], description: "About me.".into() });
+        node.set_subscriptions(Subscriptions::in_memory([key]));
+        assert_eq!(node.timeline(), [(key, 2)], "profile entries are not in the timeline");
+        assert_eq!(node.display_name(&key), Some(("Ana B".into(), false)));
+
+        let other = Identity::from_seed([2; 32]).feed_key();
+        node.set_subscriptions(Subscriptions::in_memory([key, other]));
+        node.set_nickname(other, Some("Bo")).unwrap();
+        let (total, data) = node.name_records(0, 1000);
+        let rec = |k: &FeedKey, flags: u8, name: &str| [&[33 + name.len() as u8, flags][..], k, name.as_bytes()].concat();
+        let mut want = [(key, rec(&key, 2, "Ana B")), (other, rec(&other, 1, "Bo"))];
+        want.sort_by_key(|w| w.0);
+        assert_eq!((total, data), (2, [want[0].1.clone(), want[1].1.clone()].concat()));
+        node.set_nickname(key, Some("Me")).unwrap();
+        node.set_nickname(other, None).unwrap();
+        let (_, data) = node.name_records(0, 1000);
+        assert!(data.windows(rec(&key, 3, "Me").len()).any(|w| w == rec(&key, 3, "Me")));
+        assert!(data.windows(rec(&other, 0, "").len()).any(|w| w == rec(&other, 0, "")));
+        assert_eq!(node.name_records(0, 33), (2, Vec::new()), "the shortest record is 34 bytes");
+    }
+
     /// A scripted relay: answers requests from in-memory state.
     #[derive(Default)]
     struct Script {
@@ -725,10 +1297,16 @@ mod tests {
         live: Vec<Vec<u8>>,
         /// Drop the connection on the next receive.
         drop: bool,
+        /// Refuse connections.
+        down: bool,
         /// Report this `highest` in subscribe replies instead of the truth.
         claim_highest: Option<u32>,
         /// Hold back messages after the subscribe reply until cleared.
         stall: bool,
+        /// Entries a find returns, whatever the query.
+        find: Vec<Vec<u8>>,
+        gets: usize,
+        puts: usize,
     }
 
     struct Fake {
@@ -740,11 +1318,15 @@ mod tests {
         fn send(&mut self, message: Vec<u8>) -> std::io::Result<()> {
             let mut s = self.script.lock().unwrap();
             let reply = match protocol::decode_request(&message).unwrap() {
-                Request::Get { req, id } => match s.blobs.get(&id) {
-                    Some(b) => protocol::encode_get_reply(req, status::DONE, b),
-                    None => protocol::encode_get_reply(req, status::NOT_FOUND, &[]),
-                },
+                Request::Get { req, id } => {
+                    s.gets += 1;
+                    match s.blobs.get(&id) {
+                        Some(b) => protocol::encode_get_reply(req, status::DONE, b),
+                        None => protocol::encode_get_reply(req, status::NOT_FOUND, &[]),
+                    }
+                }
                 Request::Put { req, data } => {
+                    s.puts += 1;
                     s.blobs.insert(blob_id(data), data.to_vec());
                     protocol::encode_put_reply(req, status::DONE, &blob_id(data))
                 }
@@ -766,6 +1348,8 @@ mod tests {
                 Request::Unsubscribe { req, .. } => {
                     protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
                 }
+                Request::Find { req, .. } => protocol::encode_find_reply(req, status::DONE, &s.find),
+                Request::Peer => return Ok(()),
             };
             self.inbox.push_back(reply);
             Ok(())
@@ -784,14 +1368,22 @@ mod tests {
         }
     }
 
-    fn node_with_fake(dir: &std::path::Path) -> (Node, Arc<Mutex<Script>>) {
+    fn fake_relay() -> (RelayClient, Arc<Mutex<Script>>) {
         let script = Arc::new(Mutex::new(Script::default()));
         let s = script.clone();
         let connect = Box::new(move || {
-            s.lock().unwrap().connections += 1;
+            let mut locked = s.lock().unwrap();
+            if locked.down {
+                return Err(std::io::ErrorKind::ConnectionRefused.into());
+            }
+            locked.connections += 1;
             Ok(Box::new(Fake { script: s.clone(), inbox: VecDeque::new() }) as Box<dyn Transport>)
         });
-        let relay = RelayClient::new(connect, DEFAULT_TIMEOUT);
+        (RelayClient::new(connect, DEFAULT_TIMEOUT), script)
+    }
+
+    fn node_with_fake(dir: &std::path::Path) -> (Node, Arc<Mutex<Script>>) {
+        let (relay, script) = fake_relay();
         (Node::new(BlobStore::open(dir, None).unwrap(), Some(relay)), script)
     }
 
@@ -848,7 +1440,7 @@ mod tests {
         node.set_auto_download_limit(10);
         node.set_subscriptions(Subscriptions::in_memory([feed]));
         let events = settle(&mut node);
-        assert_eq!(events[0], FeedEvent::Connected);
+        assert_eq!(events[0], FeedEvent::Connected("relay".into()));
         assert!(events.contains(&FeedEvent::Subscribed(feed)));
         let mut got = entries(&events);
         got.sort_by_key(|e| e.0);
@@ -871,8 +1463,9 @@ mod tests {
         script.lock().unwrap().drop = true;
         node.poll();
         node.poll();
-        assert!(matches!(node.take_feed_events()[..], [FeedEvent::Disconnected { .. }]));
-        node.follow.retry_at = Some(Instant::now()); // skip the backoff
+        let events = node.take_feed_events();
+        assert!(matches!(events[..], [FeedEvent::Disconnected { .. }, FeedEvent::Unreachable]), "{events:?}");
+        node.skip_backoff();
         let events = settle(&mut node);
         assert_eq!(entries(&events), [], "nothing new: {events:?}");
         let s = script.lock().unwrap();
@@ -896,8 +1489,125 @@ mod tests {
         assert_eq!(node.feed_store().highest(&author.feed_key()).unwrap(), 2);
     }
 
+    /// Two relays: puts and publishes go to both; a get asks the other when
+    /// one does not have the blob; with one down, everything still works
+    /// through the other.
+    #[test]
+    fn several_relays() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let (a, sa) = fake_relay();
+        let (b, sb) = fake_relay();
+        node.add_relay("ws://a", a);
+        node.add_relay("ws://b", b);
+        node.set_identity(Identity::from_seed([5; 32]));
+        assert_eq!(node.publish(b"both"), Done::Put(blob_id(b"both")));
+        let draft = Draft { data: b"art".to_vec(), title: "T".into(), reply_to: None, time: 1 };
+        assert!(matches!(node.publish_article(&draft), Done::Published { seq: 1, .. }));
+        for s in [&sa, &sb] {
+            let s = s.lock().unwrap();
+            assert!(s.blobs.contains_key(&blob_id(b"both")) && s.blobs.contains_key(&blob_id(b"art")));
+            assert_eq!(s.held.len(), 1);
+        }
+        // Only B holds this blob.
+        sb.lock().unwrap().blobs.insert(blob_id(b"only b"), b"only b".to_vec());
+        assert_eq!(node.fetch(blob_id(b"only b")), Done::Got(b"only b".to_vec()));
+        assert_eq!(node.fetch(blob_id(b"nowhere")), Done::NotFound);
+        // A goes down: publishing and getting still work through B.
+        {
+            let mut s = sa.lock().unwrap();
+            s.drop = true;
+            s.down = true;
+        }
+        node.poll();
+        assert_eq!(node.connected_relays(), ["ws://b"]);
+        assert!(matches!(node.publish_article(&draft), Done::Published { seq: 2, .. }));
+        sb.lock().unwrap().blobs.insert(blob_id(b"later"), b"later".to_vec());
+        assert_eq!(node.fetch(blob_id(b"later")), Done::Got(b"later".to_vec()));
+        // A comes back: the node reconnects.
+        sa.lock().unwrap().down = false;
+        node.skip_backoff();
+        node.poll();
+        assert_eq!(node.connected_relays(), ["ws://a", "ws://b"]);
+        assert_eq!(sa.lock().unwrap().connections, 2);
+    }
+
+    /// Search: results from two relays are verified, merged and ordered.
+    #[test]
+    fn find_merges_and_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let (a, sa) = fake_relay();
+        let (b, sb) = fake_relay();
+        node.add_relay("ws://a", a);
+        node.add_relay("ws://b", b);
+        let ids: Vec<Identity> = (10..14).map(|i| Identity::from_seed([i; 32])).collect();
+        let profile = |id: &Identity, seq: u32, name: &str| {
+            Entry::profile(id.feed_key(), seq, seq, b"listed: yes\n", name).sign(id).unwrap().bytes
+        };
+        let mut forged = profile(&ids[3], 1, "Ana forged");
+        forged[50] ^= 1;
+        sa.lock().unwrap().find = vec![profile(&ids[0], 1, "Mariana"), profile(&ids[1], 2, "Ana"), forged];
+        sb.lock().unwrap().find = vec![profile(&ids[1], 5, "Anabel"), profile(&ids[2], 1, "ana"), profile(&ids[0], 1, "Mariana")];
+        let Done::Found(found) = node.find(SCOPE_FEEDS, b"ANA") else { panic!() };
+        let got: Vec<(&str, u32)> = found.iter().map(|s| (s.entry.title.as_str(), s.entry.seq)).collect();
+        // Prefix matches first (by feed key), then the rest; the newer
+        // profile of ids[1] wins; the forged entry is gone.
+        let mut prefix = vec![(ids[1].feed_key(), ("Anabel", 5)), (ids[2].feed_key(), ("ana", 1))];
+        prefix.sort();
+        let want: Vec<(&str, u32)> = prefix.into_iter().map(|p| p.1).chain([("Mariana", 1)]).collect();
+        assert_eq!(got, want);
+        // Entries scope: articles only, newest first.
+        let art = |id: &Identity, seq: u32, time: u32, title: &str| {
+            Entry::article(id.feed_key(), seq, time, b"x", None, title).sign(id).unwrap().bytes
+        };
+        sa.lock().unwrap().find = vec![art(&ids[0], 1, 50, "Old news"), profile(&ids[0], 2, "news")];
+        sb.lock().unwrap().find = vec![art(&ids[1], 1, 90, "Fresh news"), art(&ids[0], 1, 50, "Old news")];
+        let Done::Found(found) = node.find(SCOPE_ENTRIES, b"news") else { panic!() };
+        let titles: Vec<&str> = found.iter().map(|s| s.entry.title.as_str()).collect();
+        assert_eq!(titles, ["Fresh news", "Old news"]);
+    }
+
     fn signed(author: &Identity, seq: u32, data: &[u8], title: &str) -> Vec<u8> {
         Entry::article(author.feed_key(), seq, 1000 + seq, data, None, title).sign(author).unwrap().bytes
+    }
+
+    /// Feed relays: a profile held on the host's relay names another relay,
+    /// which the node then also uses for the feed and for gets.
+    #[test]
+    fn feed_relays_from_profiles() {
+        for on in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut node, sa) = node_with_fake(dir.path());
+            let (b, sb) = fake_relay();
+            let b = Arc::new(Mutex::new(Some(b)));
+            node.set_feed_relays_unrestricted(Box::new(move |url| {
+                assert_eq!(url, "ws://feed-relay");
+                b.lock().unwrap().take().unwrap()
+            }));
+            node.set_feed_relays(on);
+            let author = Identity::from_seed([30; 32]);
+            let doc = b"listed: no\nrelay: ws://feed-relay\n";
+            {
+                let mut s = sa.lock().unwrap();
+                s.blobs.insert(blob_id(doc), doc.to_vec());
+                s.held.push(Entry::profile(author.feed_key(), 1, 1, doc, "Author").sign(&author).unwrap().bytes);
+            }
+            sb.lock().unwrap().blobs.insert(blob_id(b"on b"), b"on b".to_vec());
+            sb.lock().unwrap().held.push(signed(&author, 2, b"on b", "B only"));
+            node.set_subscriptions(Subscriptions::in_memory([author.feed_key()]));
+            let events = poll_n(&mut node, 50);
+            let seqs = node.feed_store().seqs(&author.feed_key()).unwrap();
+            if on {
+                assert_eq!(node.connected_relays(), ["relay", "ws://feed-relay"], "{events:?}");
+                assert_eq!(seqs, [1, 2]);
+                assert!(node.store().read(&blob_id(b"on b")).unwrap().is_some(), "downloaded from B");
+            } else {
+                assert_eq!(node.connected_relays(), ["relay"]);
+                assert_eq!(seqs, [1]);
+                assert_eq!(node.fetch(blob_id(b"on b")), Done::NotFound);
+            }
+        }
     }
 
     /// Polls `n` times and returns the events.
@@ -935,13 +1645,13 @@ mod tests {
         // Reconnect: highest (3) equals after (3): settled with nothing new.
         script.lock().unwrap().drop = true;
         poll_n(&mut node, 2);
-        node.follow.retry_at = Some(Instant::now());
+        node.skip_backoff();
         assert_eq!(entries(&settle(&mut node)), []);
         // A relay that holds less than we do (highest < after) is caught up at once.
         script.lock().unwrap().claim_highest = Some(1);
         script.lock().unwrap().drop = true;
         poll_n(&mut node, 2);
-        node.follow.retry_at = Some(Instant::now());
+        node.skip_backoff();
         assert_eq!(entries(&settle(&mut node)), []);
         // An invalid last entry still ends the catch-up.
         {
@@ -953,7 +1663,7 @@ mod tests {
             s.drop = true;
         }
         poll_n(&mut node, 2);
-        node.follow.retry_at = Some(Instant::now());
+        node.skip_backoff();
         assert_eq!(entries(&settle(&mut node)), []);
         assert_eq!(script.lock().unwrap().subscribes, [(feed, 0), (feed, 3), (feed, 3), (feed, 3)]);
     }

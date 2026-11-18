@@ -1,27 +1,37 @@
-//! The relay (NETWORK 3, 4.3): a blob store and feed entry store reachable
-//! over WebSocket. One thread per connection.
+//! The relay (NETWORK 3, 4.3, 4.7, 5): a blob store and feed entry store
+//! reachable over WebSocket. One thread per connection.
 //!
-//! Live entries are fanned out through a bounded queue per connection, which
-//! its own thread drains between reads (reads wait at most [`POLL`]), so a
-//! slow or dead client never blocks a publisher or other clients. A client
-//! whose queue overflows is disconnected; it resubscribes after the highest
-//! `seq` it holds when it reconnects.
+//! Every message for a connection (live entries, and requests this relay
+//! sends to a peer) goes through a bounded queue per connection, which its
+//! own thread drains between reads (reads wait at most [`POLL`]), so a slow
+//! or dead client never blocks a publisher or other clients. A client whose
+//! queue overflows is disconnected; it resubscribes after the highest `seq`
+//! it holds when it reconnects.
 //!
 //! Subscribing and publishing take one lock, so a subscriber sees the
 //! backlog and then live entries in order, each exactly once.
+//!
+//! Peers (NETWORK 5): a connection on which a Peer message arrived, or one
+//! this relay opened to a `--peer` URL. Both sides may send requests on it.
+//! Every entry and every blob up to 16,384 bytes this relay newly stores is
+//! sent to every peer but the one it came from; a client's subscription is
+//! repeated on the peers; a get this relay cannot serve for a client is
+//! asked of the peers.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use terse_net::entry;
+use terse_net::blob::{BlobId, blob_id, valid_size};
+use terse_net::entry::{self, KIND_ARTICLE, KIND_PROFILE};
 use terse_net::feeds::Insert;
 use terse_net::identity::valid_feed_key;
-use terse_net::protocol::{self, Malformed, Request, status};
+use terse_net::profile::{self, Document};
+use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, status};
 use terse_net::relay::websocket_config;
 use terse_net::{BlobStore, FeedKey, FeedStore};
 use tungstenite::Message;
@@ -33,16 +43,56 @@ pub const MIN_FEED_CAP: usize = 256;
 /// How long a connection thread waits for a message before sending queued
 /// entries; bounds the extra latency of a live entry.
 pub const POLL: Duration = Duration::from_millis(10);
+/// Blobs up to this size are pushed to peers (NETWORK 5).
+pub const PUSH_LIMIT: usize = 16_384;
+/// How long a get waits for the peers (NETWORK 5).
+pub const PULL_TIMEOUT: Duration = Duration::from_secs(3);
 /// Queued pushes beyond the feed cap a connection may fall behind by.
 const QUEUE_SLACK: usize = 1024;
 /// A client that cannot take a message within this time is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const FIRST_RETRY: Duration = Duration::from_secs(1);
+const MAX_RETRY: Duration = Duration::from_secs(30);
 
-struct Subscriber {
+struct Conn {
     queue: SyncSender<Vec<u8>>,
+    /// Feeds this connection subscribed to.
     feeds: HashSet<FeedKey>,
     /// Set when the connection is to be closed (its queue overflowed).
     dropped: Arc<AtomicBool>,
+    peer: Arc<AtomicBool>,
+    /// For a peer: the last `req` this relay used on it, the gets it sent
+    /// (by `req`, the pull they serve) and the feeds it subscribed to.
+    next_req: u32,
+    pulls_sent: HashMap<u32, u64>,
+    peer_feeds: HashSet<FeedKey>,
+}
+
+/// A client's get that the peers were asked for.
+struct Pull {
+    client: u64,
+    req: u32,
+    id: BlobId,
+    waiting: usize,
+    deadline: Instant,
+}
+
+#[derive(Default)]
+struct State {
+    next: u64,
+    conns: HashMap<u64, Conn>,
+    pulls: HashMap<u64, Pull>,
+    next_pull: u64,
+}
+
+/// The latest profile entry of a feed (NETWORK 4.6, 4.7).
+struct Profile {
+    seq: u32,
+    bytes: Vec<u8>,
+    blob: BlobId,
+    name: String,
+    /// `None` until the profile document is in the store.
+    listed: Option<bool>,
 }
 
 pub struct Relay {
@@ -50,13 +100,10 @@ pub struct Relay {
     feeds: FeedStore,
     /// Entries kept per feed.
     cap: usize,
-    subscribers: Mutex<Subscribers>,
-}
-
-#[derive(Default)]
-struct Subscribers {
-    next: u64,
-    by_id: HashMap<u64, Subscriber>,
+    state: Mutex<State>,
+    profiles: Mutex<HashMap<FeedKey, Profile>>,
+    /// Messages written to peer connections, by type.
+    peer_messages: [AtomicUsize; 256],
 }
 
 /// One connection's share of the relay.
@@ -64,13 +111,36 @@ pub struct Connection {
     id: u64,
     queue: Receiver<Vec<u8>>,
     dropped: Arc<AtomicBool>,
+    peer: Arc<AtomicBool>,
+}
+
+/// What to send back for a message.
+pub enum Answer {
+    Reply(Vec<u8>),
+    /// Nothing now (a pushed entry, a Peer message, an unknown type, or a
+    /// get the peers were asked for).
+    Nothing,
+    Close,
 }
 
 impl Relay {
     /// A relay on a blob store, with its feed entries beside the blobs.
     pub fn new(blobs: BlobStore, cap: usize) -> Self {
         let feeds = FeedStore::beside_blobs(blobs.dir());
-        Relay { blobs, feeds, cap: cap.max(1), subscribers: Mutex::default() }
+        let mut profiles = HashMap::new();
+        for feed in feeds.feeds().unwrap_or_default() {
+            if let Ok(Some(p)) = feeds.latest_profile(&feed) {
+                profiles.insert(feed, profile_of(&p));
+            }
+        }
+        Relay {
+            blobs,
+            feeds,
+            cap: cap.max(1),
+            state: Mutex::default(),
+            profiles: Mutex::new(profiles),
+            peer_messages: std::array::from_fn(|_| AtomicUsize::new(0)),
+        }
     }
 
     pub fn blobs(&self) -> &BlobStore {
@@ -81,62 +151,221 @@ impl Relay {
         &self.feeds
     }
 
+    /// How many messages of type `kind` this relay has written to peers.
+    pub fn peer_messages(&self, kind: u8) -> usize {
+        self.peer_messages[kind as usize].load(Ordering::Relaxed)
+    }
+
+    /// The number of connections marked as peers.
+    pub fn peer_count(&self) -> usize {
+        self.state.lock().unwrap().conns.values().filter(|c| c.peer.load(Ordering::Relaxed)).count()
+    }
+
     pub fn connect(&self) -> Connection {
         let (queue, rx) = sync_channel(self.cap + QUEUE_SLACK);
         let dropped = Arc::new(AtomicBool::new(false));
-        let mut subs = self.subscribers.lock().unwrap();
-        subs.next += 1;
-        let id = subs.next;
-        subs.by_id.insert(id, Subscriber { queue, feeds: HashSet::new(), dropped: dropped.clone() });
-        Connection { id, queue: rx, dropped }
+        let peer = Arc::new(AtomicBool::new(false));
+        let mut state = self.state.lock().unwrap();
+        state.next += 1;
+        let id = state.next;
+        let conn = Conn {
+            queue,
+            feeds: HashSet::new(),
+            dropped: dropped.clone(),
+            peer: peer.clone(),
+            next_req: 0,
+            pulls_sent: HashMap::new(),
+            peer_feeds: HashSet::new(),
+        };
+        state.conns.insert(id, conn);
+        Connection { id, queue: rx, dropped, peer }
     }
 
     pub fn disconnect(&self, conn: &Connection) {
-        self.subscribers.lock().unwrap().by_id.remove(&conn.id);
+        self.state.lock().unwrap().conns.remove(&conn.id);
     }
 
-    /// The reply to one binary message, or `None` to close the connection.
-    /// Entries for subscriptions are queued on `conn`.
-    pub fn respond(&self, conn: &Connection, message: &[u8]) -> Option<Vec<u8>> {
-        Some(match protocol::decode_request(message) {
+    /// Marks a connection as a peer (NETWORK 5) and repeats the clients'
+    /// subscriptions on it.
+    pub fn mark_peer(&self, conn: &Connection) {
+        let mut state = self.state.lock().unwrap();
+        conn.peer.store(true, Ordering::Relaxed);
+        let wanted: HashSet<FeedKey> =
+            state.conns.values().filter(|c| !c.peer.load(Ordering::Relaxed)).flat_map(|c| c.feeds.iter().copied()).collect();
+        let Some(c) = state.conns.get_mut(&conn.id) else { return };
+        for feed in wanted {
+            let after = self.feeds.highest(&feed).unwrap_or(0);
+            peer_subscribe(c, feed, after);
+        }
+    }
+
+    /// The answer to one binary message. Entries for subscriptions and
+    /// replies to gets asked of peers are queued on `conn`.
+    pub fn respond(&self, conn: &Connection, message: &[u8]) -> Answer {
+        let peer = conn.peer.load(Ordering::Relaxed);
+        if message.first().is_some_and(|&k| k >= 0x80) {
+            if peer {
+                self.from_peer(conn, message);
+            }
+            return Answer::Nothing;
+        }
+        Answer::Reply(match protocol::decode_request(message) {
             Ok(Request::Get { req, id }) => match self.blobs.read(&id) {
                 Ok(Some(data)) => protocol::encode_get_reply(req, status::DONE, &data),
+                // NETWORK 5: a client's get is asked of the peers; a peer's
+                // is answered from this store only.
+                _ if !peer && self.pull(conn, req, id) => return Answer::Nothing,
                 _ => protocol::encode_get_reply(req, status::NOT_FOUND, &[]),
             },
             // Empty, oversize and over-limit blobs are all refused by the store.
-            Ok(Request::Put { req, data }) => match self.blobs.put(data) {
-                Ok(id) => protocol::encode_put_reply(req, status::DONE, &id),
+            Ok(Request::Put { req, data }) => match self.blobs.put_new(data) {
+                Ok((id, new)) => {
+                    if new && data.len() <= PUSH_LIMIT {
+                        self.push_to_peers(Some(conn.id), |r| protocol::encode_put(r, data));
+                    }
+                    protocol::encode_put_reply(req, status::DONE, &id)
+                }
                 Err(_) => protocol::encode_put_reply(req, status::REFUSED, &[0; 32]),
             },
             Ok(Request::Publish { req, entry }) => {
-                protocol::encode_status_reply(protocol::PUBLISH_REPLY, req, self.publish(entry))
+                protocol::encode_status_reply(protocol::PUBLISH_REPLY, req, self.publish_from(entry, Some(conn.id)))
             }
             Ok(Request::Subscribe { req, feed, after }) => match self.subscribe(conn, feed, after) {
                 Some(highest) => protocol::encode_subscribe_reply(req, status::DONE, highest),
                 None => protocol::encode_subscribe_reply(req, status::REFUSED, 0),
             },
             Ok(Request::Unsubscribe { req, feed }) => {
-                if let Some(s) = self.subscribers.lock().unwrap().by_id.get_mut(&conn.id) {
-                    s.feeds.remove(&feed);
+                if let Some(c) = self.state.lock().unwrap().conns.get_mut(&conn.id) {
+                    c.feeds.remove(&feed);
                 }
                 protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
             }
+            Ok(Request::Find { req, scope, query }) => match self.find(scope, query) {
+                Some(found) => protocol::encode_find_reply(req, status::DONE, &found),
+                None => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[]),
+            },
+            Ok(Request::Peer) => {
+                self.mark_peer(conn);
+                return Answer::Nothing;
+            }
+            Err(Malformed::Unknown) => return Answer::Nothing,
             Err(Malformed::Refuse { reply: protocol::GET_REPLY, req }) => {
                 protocol::encode_get_reply(req, status::REFUSED, &[])
             }
             Err(Malformed::Refuse { reply: protocol::PUT_REPLY, req }) => {
                 protocol::encode_put_reply(req, status::REFUSED, &[0; 32])
             }
+            Err(Malformed::Refuse { reply: protocol::FIND_REPLY, req }) => {
+                protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[])
+            }
             Err(Malformed::Refuse { reply, req }) => protocol::encode_status_reply(reply, req, status::REFUSED),
-            Err(Malformed::Close) => return None,
+            Err(Malformed::Close) => return Answer::Close,
         })
+    }
+
+    /// A reply or pushed entry on a peer connection.
+    fn from_peer(&self, conn: &Connection, message: &[u8]) {
+        match protocol::decode_reply(message) {
+            Some(Reply::Entry(bytes)) => {
+                self.publish_from(&bytes, Some(conn.id));
+            }
+            Some(Reply::Get { req, status, data }) => {
+                let pull = self.state.lock().unwrap().conns.get_mut(&conn.id).and_then(|c| c.pulls_sent.remove(&req));
+                if let Some(pull) = pull {
+                    self.pulled(pull, conn.id, (status == status::DONE).then_some(data));
+                }
+            }
+            // Replies to what this relay sent (publish, put, subscribe) need
+            // nothing more.
+            _ => {}
+        }
+    }
+
+    /// Asks every peer for a blob a client wants; false if there are none.
+    fn pull(&self, conn: &Connection, req: u32, id: BlobId) -> bool {
+        let mut state = self.state.lock().unwrap();
+        state.next_pull += 1;
+        let pull_id = state.next_pull;
+        let mut asked = 0;
+        for (&cid, c) in state.conns.iter_mut() {
+            if cid == conn.id || !c.peer.load(Ordering::Relaxed) {
+                continue;
+            }
+            c.next_req = c.next_req.wrapping_add(1);
+            let r = c.next_req;
+            if push(c, protocol::encode_get(r, &id)) {
+                c.pulls_sent.insert(r, pull_id);
+                asked += 1;
+            }
+        }
+        if asked > 0 {
+            let deadline = Instant::now() + PULL_TIMEOUT;
+            state.pulls.insert(pull_id, Pull { client: conn.id, req, id, waiting: asked, deadline });
+        }
+        asked > 0
+    }
+
+    /// A peer's answer to a pull: the first valid blob is stored (if there
+    /// is room) and sent to the client; when every peer has failed, the
+    /// client is told "not found".
+    fn pulled(&self, pull_id: u64, from: u64, data: Option<Vec<u8>>) {
+        let mut state = self.state.lock().unwrap();
+        let Some(pull) = state.pulls.get_mut(&pull_id) else { return };
+        let good = data.filter(|d| valid_size(d.len()) && blob_id(d) == pull.id);
+        pull.waiting -= 1;
+        let reply = match &good {
+            Some(d) => protocol::encode_get_reply(pull.req, status::DONE, d),
+            None if pull.waiting == 0 => protocol::encode_get_reply(pull.req, status::NOT_FOUND, &[]),
+            None => return,
+        };
+        let pull = state.pulls.remove(&pull_id).unwrap();
+        if let Some(c) = state.conns.get(&pull.client) {
+            push(c, reply);
+        }
+        drop(state);
+        if let Some(d) = good
+            && let Ok((_, true)) = self.blobs.put_new(&d)
+            && d.len() <= PUSH_LIMIT
+        {
+            self.push_to_peers(Some(from), |r| protocol::encode_put(r, &d));
+        }
+    }
+
+    /// Ends pulls whose peers did not answer in time.
+    pub fn expire_pulls(&self) {
+        let mut state = self.state.lock().unwrap();
+        let now = Instant::now();
+        let late: Vec<u64> = state.pulls.iter().filter(|(_, p)| p.deadline <= now).map(|(&id, _)| id).collect();
+        for id in late {
+            let pull = state.pulls.remove(&id).unwrap();
+            if let Some(c) = state.conns.get(&pull.client) {
+                push(c, protocol::encode_get_reply(pull.req, status::NOT_FOUND, &[]));
+            }
+        }
+    }
+
+    /// Queues a request (numbered per peer) on every peer but `except`.
+    fn push_to_peers(&self, except: Option<u64>, message: impl Fn(u32) -> Vec<u8>) {
+        let mut state = self.state.lock().unwrap();
+        for (&cid, c) in state.conns.iter_mut() {
+            if Some(cid) != except && c.peer.load(Ordering::Relaxed) {
+                c.next_req = c.next_req.wrapping_add(1);
+                push(c, message(c.next_req));
+            }
+        }
     }
 
     /// Verifies, stores and pushes an entry (NETWORK 4.3); returns the status.
     pub fn publish(&self, bytes: &[u8]) -> u8 {
+        self.publish_from(bytes, None)
+    }
+
+    /// [`Self::publish`] for an entry that came from connection `source`: a
+    /// new entry goes to the subscribers and to every peer but the source.
+    fn publish_from(&self, bytes: &[u8], source: Option<u64>) -> u8 {
         let Ok(signed) = entry::decode(bytes) else { return status::REFUSED };
         let feed = signed.entry.feed;
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let Ok(seqs) = self.feeds.seqs(&feed) else { return status::REFUSED };
         // An entry older than everything kept in a full feed would be pruned
         // at once; storing it could let it replace a pruned entry.
@@ -148,45 +377,123 @@ impl Relay {
             Ok(Insert::Duplicate) => return status::DONE,
             Ok(Insert::Conflict) | Err(_) => return status::REFUSED,
         }
-        // A failed prune only means keeping more than the cap.
-        let _ = self.feeds.prune(&feed, self.cap);
+        let keep = {
+            let mut profiles = self.profiles.lock().unwrap();
+            if signed.entry.kind == KIND_PROFILE && profiles.get(&feed).is_none_or(|p| p.seq < signed.entry.seq) {
+                profiles.insert(feed, profile_of(&signed));
+            }
+            profiles.get(&feed).map(|p| p.seq)
+        };
+        // A failed prune only means keeping more than the cap. The latest
+        // profile is always kept (NETWORK 4.6).
+        let _ = self.feeds.prune_keeping(&feed, self.cap, keep);
         let message = protocol::encode_entry(&signed.bytes);
-        subs.by_id.retain(|_, s| !s.feeds.contains(&feed) || push(s, message.clone()));
+        // Peers get the entry as a publish below, not as a pushed entry.
+        state.conns.retain(|_, c| c.peer.load(Ordering::Relaxed) || !c.feeds.contains(&feed) || push(c, message.clone()));
+        for (&cid, c) in state.conns.iter_mut() {
+            if Some(cid) != source && c.peer.load(Ordering::Relaxed) {
+                c.next_req = c.next_req.wrapping_add(1);
+                push(c, protocol::encode_publish(c.next_req, &signed.bytes));
+            }
+        }
         status::DONE
     }
 
     /// Subscribes `conn` and queues the backlog; returns the highest `seq`
     /// held (NETWORK 4.3), or `None` if refused. The reply is sent before
-    /// the queue is drained, so it precedes the backlog.
+    /// the queue is drained, so it precedes the backlog. A client's
+    /// subscription is repeated on the peers (NETWORK 5).
     fn subscribe(&self, conn: &Connection, feed: FeedKey, after: u32) -> Option<u32> {
         if !valid_feed_key(&feed) {
             return None;
         }
         // Under the lock, so `highest` and the backlog agree and no publish
         // slips between them.
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let seqs = self.feeds.seqs(&feed).ok()?;
-        let s = subs.by_id.get_mut(&conn.id)?;
-        s.feeds.insert(feed);
+        let highest = seqs.last().copied().unwrap_or(0);
+        let c = state.conns.get_mut(&conn.id)?;
+        c.feeds.insert(feed);
         for seq in seqs.iter().copied().filter(|&seq| seq > after) {
             // A file pruned meanwhile is skipped.
             let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
-            if !push(s, protocol::encode_entry(&bytes)) {
-                subs.by_id.remove(&conn.id);
-                break;
+            if !push(c, protocol::encode_entry(&bytes)) {
+                state.conns.remove(&conn.id);
+                return Some(highest);
             }
         }
-        Some(seqs.last().copied().unwrap_or(0))
+        if !conn.peer.load(Ordering::Relaxed) {
+            for c in state.conns.values_mut().filter(|c| c.peer.load(Ordering::Relaxed)) {
+                peer_subscribe(c, feed, highest);
+            }
+        }
+        Some(highest)
+    }
+
+    /// Answers a find from this relay's own index (NETWORK 4.7); `None`
+    /// refuses it.
+    pub fn find(&self, scope: u8, query: &[u8]) -> Option<Vec<Vec<u8>>> {
+        if !(scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES)
+            || !(1..=profile::MAX_NAME).contains(&query.len())
+            || std::str::from_utf8(query).is_err()
+        {
+            return None;
+        }
+        let mut profiles = self.profiles.lock().unwrap();
+        // A profile whose document is not held (or does not parse) is
+        // unlisted, until the document arrives.
+        for p in profiles.values_mut().filter(|p| p.listed.is_none()) {
+            p.listed = match self.blobs.read(&p.blob) {
+                Ok(Some(b)) if blob_id(&b) == p.blob => Some(Document::parse(&b).is_some_and(|d| d.listed)),
+                _ => None,
+            };
+        }
+        let listed = profiles.iter().filter(|(_, p)| p.listed == Some(true));
+        if scope == SCOPE_FEEDS {
+            let mut hits: Vec<(bool, FeedKey, &Vec<u8>)> = listed
+                .filter(|(_, p)| profile::matches(p.name.as_bytes(), query))
+                .map(|(k, p)| (!profile::starts_with(p.name.as_bytes(), query), *k, &p.bytes))
+                .collect();
+            hits.sort();
+            return Some(hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.2.clone()).collect());
+        }
+        let mut hits: Vec<(std::cmp::Reverse<u32>, FeedKey, std::cmp::Reverse<u32>, Vec<u8>)> = Vec::new();
+        for (feed, _) in listed {
+            for bytes in self.feeds.after(feed, 0).unwrap_or_default() {
+                // Stored entries were verified when they arrived.
+                let (Some(&kind), Some(&n)) = (bytes.get(40), bytes.get(108)) else { continue };
+                let Some(title) = bytes.get(109..109 + n as usize) else { continue };
+                if kind == KIND_ARTICLE && profile::matches(title, query) {
+                    let seq = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
+                    let time = u32::from_le_bytes(bytes[36..40].try_into().unwrap());
+                    hits.push((std::cmp::Reverse(time), *feed, std::cmp::Reverse(seq), bytes));
+                }
+            }
+        }
+        hits.sort();
+        Some(hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.3).collect())
+    }
+}
+
+fn profile_of(p: &entry::SignedEntry) -> Profile {
+    Profile { seq: p.entry.seq, bytes: p.bytes.clone(), blob: p.entry.blob, name: p.entry.title.clone(), listed: None }
+}
+
+/// Subscribes to `feed` on a peer, once per connection.
+fn peer_subscribe(c: &mut Conn, feed: FeedKey, after: u32) {
+    if c.peer_feeds.insert(feed) {
+        c.next_req = c.next_req.wrapping_add(1);
+        push(c, protocol::encode_subscribe(c.next_req, &feed, after));
     }
 }
 
 /// Queues a message without waiting; false (and the connection marked for
-/// closing) if the subscriber cannot take it.
-fn push(s: &Subscriber, message: Vec<u8>) -> bool {
-    match s.queue.try_send(message) {
+/// closing) if it cannot take it.
+fn push(c: &Conn, message: Vec<u8>) -> bool {
+    match c.queue.try_send(message) {
         Ok(()) => true,
         Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-            s.dropped.store(true, Ordering::Relaxed);
+            c.dropped.store(true, Ordering::Relaxed);
             false
         }
     }
@@ -205,6 +512,44 @@ pub fn serve(listener: TcpListener, relay: Arc<Relay>) -> std::io::Result<()> {
         });
     }
     Ok(())
+}
+
+/// Keeps a peer link to each URL (NETWORK 5): connects, announces itself
+/// with a Peer message, and reconnects after 1 s, doubling to 30 s, when
+/// the link fails or drops.
+pub fn connect_peers(relay: Arc<Relay>, urls: Vec<String>) {
+    for url in urls {
+        let relay = relay.clone();
+        thread::spawn(move || {
+            let mut retry = FIRST_RETRY;
+            loop {
+                let started = Instant::now();
+                match peer_link(&url, &relay) {
+                    Ok(()) => eprintln!("terse-relay: peer {url}: closed"),
+                    Err(e) => eprintln!("terse-relay: peer {url}: {e}"),
+                }
+                if started.elapsed() > MAX_RETRY {
+                    retry = FIRST_RETRY;
+                }
+                thread::sleep(retry);
+                retry = (retry * 2).min(MAX_RETRY);
+            }
+        });
+    }
+}
+
+fn peer_link(url: &str, relay: &Relay) -> Result<(), String> {
+    let transport = terse_net::relay::WsTransport::connect(url, WRITE_TIMEOUT).map_err(|e| e.to_string())?;
+    let mut ws = transport.into_inner();
+    ws.get_ref().set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
+    ws.get_ref().set_write_timeout(Some(WRITE_TIMEOUT)).map_err(|e| e.to_string())?;
+    ws.send(Message::binary(protocol::encode_peer())).map_err(|e| e.to_string())?;
+    eprintln!("terse-relay: peer {url}: connected");
+    let conn = relay.connect();
+    relay.mark_peer(&conn);
+    let result = serve_connection(&mut ws, relay, &conn);
+    relay.disconnect(&conn);
+    result.map_err(|e| e.to_string())
 }
 
 fn is_timeout(e: &std::io::Error) -> bool {
@@ -230,25 +575,35 @@ fn serve_connection(
     relay: &Relay,
     conn: &Connection,
 ) -> Result<(), tungstenite::Error> {
+    let send = |ws: &mut tungstenite::WebSocket<TcpStream>, m: Vec<u8>| {
+        if conn.peer.load(Ordering::Relaxed)
+            && let Some(&kind) = m.first()
+        {
+            relay.peer_messages[kind as usize].fetch_add(1, Ordering::Relaxed);
+        }
+        ws.send(Message::binary(m))
+    };
     loop {
         if conn.dropped.load(Ordering::Relaxed) {
             break;
         }
+        relay.expire_pulls();
         for message in conn.queue.try_iter() {
-            ws.send(Message::binary(message))?;
+            send(ws, message)?;
         }
-        let reply = match ws.read() {
+        let answer = match ws.read() {
             Ok(Message::Binary(m)) => relay.respond(conn, &m),
             // NETWORK 3: all messages are binary.
-            Ok(Message::Text(_)) => None,
+            Ok(Message::Text(_)) => Answer::Close,
             Ok(_) => continue,
             Err(tungstenite::Error::Io(e)) if is_timeout(&e) => continue,
             Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
             Err(e) => return Err(e),
         };
-        match reply {
-            Some(r) => ws.send(Message::binary(r))?,
-            None => break,
+        match answer {
+            Answer::Reply(r) => send(ws, r)?,
+            Answer::Nothing => {}
+            Answer::Close => break,
         }
     }
     ws.close(None)?;

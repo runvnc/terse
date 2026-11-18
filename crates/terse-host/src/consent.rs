@@ -82,6 +82,29 @@ pub fn describe(program: &str, asked: &Asked) -> (String, String) {
                 "It will be signed with your key and sent to the relay for anyone to read.".into(),
             )
         }
+        Asked::SetProfile { name, listed } => {
+            let room = COLS - 2 - format!("“{program}” asks to publish your name as “”.").chars().count();
+            (
+                format!("“{program}” asks to publish your name as “{}”.", fit(name, room)),
+                if *listed {
+                    "Anyone can see it beside your key, and search can find your feed by it.".into()
+                } else {
+                    "Anyone can see it beside your feed key; search will not find it.".into()
+                },
+            )
+        }
+        Asked::SetNickname { feed, name } if name.is_empty() => (
+            format!("“{program}” asks to remove your nickname for the feed {}.", short_key(feed)),
+            "Nicknames stay on this computer.".into(),
+        ),
+        Asked::SetNickname { feed, name } => {
+            let key = short_key(feed);
+            let room = COLS - 2 - format!("“{program}” asks to call the feed {key} “”.").chars().count();
+            (
+                format!("“{program}” asks to call the feed {key} “{}”.", fit(name, room)),
+                "A nickname for you only: it stays on this computer.".into(),
+            )
+        }
     }
 }
 
@@ -137,5 +160,18 @@ mod tests {
         assert!(rows[FIRST_ROW + 1].starts_with(" “reader” asks to publish “xxx") && rows[FIRST_ROW + 1].contains("…” (2.0 KB)."), "{text}");
         assert!(rows[FIRST_ROW + 3].contains("Y yes"));
         assert!(rows[..FIRST_ROW].iter().all(|r| r.trim().is_empty()), "the rest is the program's");
+        // Set profile shows the name and whether search finds it; set
+        // nickname the key and the name.
+        let listed = describe("reader", &Asked::SetProfile { name: "Ana".into(), listed: true });
+        assert!(listed.0.contains("“Ana”") && listed.1.contains("search can find"), "{listed:?}");
+        let unlisted = describe("reader", &Asked::SetProfile { name: "Ana".into(), listed: false });
+        assert!(unlisted.1.contains("search will not find it"), "{unlisted:?}");
+        let nick = describe("reader", &Asked::SetNickname { feed: [0xAB; 32], name: "Bo".into() });
+        assert!(nick.0.contains("ababab…ababab") && nick.0.contains("“Bo”"), "{nick:?}");
+        let gone = describe("reader", &Asked::SetNickname { feed: [0xAB; 32], name: String::new() });
+        assert!(gone.0.contains("remove"), "{gone:?}");
+        for (a, b) in [listed, unlisted, nick, gone] {
+            assert!(a.chars().count() <= COLS - 2 && b.chars().count() <= COLS - 2, "{a} / {b}");
+        }
     }
 }

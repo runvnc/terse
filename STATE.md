@@ -120,13 +120,13 @@ Each request record is 53 bytes:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | `op` of the pending request (`01h`–`08h`), or `00h` if the handle is free (then every other field is zero) |
+| 0 | 1 | `op` of the pending request (`01h`–`0Ch`), or `00h` if the handle is free (then every other field is zero) |
 | 1 | 4 | Address of its request block (u32) |
-| 5 | 32 | Get, subscribe, unsubscribe, publish: the `id` read at submit. Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
-| 37 | 4 | `offset` read at submit (get, subscriptions, timeline), else zero |
-| 41 | 4 | `length` read at submit (get, subscriptions, timeline, publish), else zero |
-| 45 | 4 | `addr` read at submit (get, subscriptions, timeline), else zero |
-| 49 | 4 | `size` read at submit (put), else zero |
+| 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit. Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
+| 37 | 4 | `offset` read at submit (get, subscriptions, timeline, names, find); set profile: the listed bit, 0 or 1; else zero |
+| 41 | 4 | `length` read at submit (get, subscriptions, timeline, names, find, publish, set profile, set nickname), else zero |
+| 45 | 4 | `addr` read at submit (get, subscriptions, timeline, names, find), else zero |
+| 49 | 4 | `size` read at submit (put; find: the query's length), else zero |
 
 Let `P` be the offset after this section.
 
@@ -158,11 +158,13 @@ That is the end of the serialization. Its length is
 - **This frame's random bytes**: an input consumed within the frame (SPEC 4);
   a new set is latched at step 1 of every frame, so nothing of them outlives
   the frame.
-- **Requests not yet handed to the host**, the bytes a put copied and the
-  title a publish copied: the pending request records hold everything about
-  them that can affect the machine (a put's bytes only matter through their
-  ID, which the completion writes; a publish's title only through the entry
-  the host publishes, which reaches the machine as later inputs). Whether a
+- **Requests not yet handed to the host**, the bytes a put copied, the
+  title a publish copied, the query a find copied and the name a set
+  profile or set nickname copied: the pending request records hold
+  everything about them that can affect the machine (a put's bytes only
+  matter through their ID, which the completion writes; a title, query or
+  name only through what the host does with it, which reaches the machine
+  as later inputs). Whether a
   request waits for the user's consent (SPEC 9.5) is host state; to the
   machine it is pending.
 - **Host bookkeeping**: counters that tell a host the display list changed,

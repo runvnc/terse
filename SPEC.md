@@ -500,14 +500,14 @@ any alignment.
 
 | Offset | Size | Field | Written by |
 |---|---|---|---|
-| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`08h`: section 9.5) | program |
+| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`0Ch`: section 9.5) | program |
 | 1 | 1 | `status` (section 9.3) | device |
 | 2 | 2 | Reserved; ignored | — |
-| 4 | 32 | `id`: get and publish: blob hash; subscribe and unsubscribe: feed key. Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
-| 36 | 4 | `offset`: get: byte offset into the blob; records: index of the first record | program |
-| 40 | 4 | `length`: get and records: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob ends first. Publish: the title's length, 0 to 120, read at submit. | both |
-| 44 | 4 | `addr`: address of the data. Get and records: the `length` bytes there must lie in RAM. Put: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. | program |
-| 48 | 4 | `size`: get: blob size, written on completion. Put: 1 to 1,048,576, read at submit. Records: the number of records that exist, written on completion. Publish: the new entry's `seq`, written on completion. | both |
+| 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key. Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
+| 36 | 4 | `offset`: get: byte offset into the blob; records (subscriptions, timeline, names): index of the first record; find: the scope, 1 or 2; set profile: bit 0 = listed, other bits ignored | program |
+| 40 | 4 | `length`: get, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; read at submit. | both |
+| 44 | 4 | `addr`: address of the data. Get, records and find: the `length` bytes there must lie in RAM. Put: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. | program |
+| 48 | 4 | `size`: get: blob size, written on completion. Put: 1 to 1,048,576, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
 
 ### 9.2 Submit and completion
 
@@ -515,16 +515,18 @@ any alignment.
 
 1. If the 52 bytes at `a0` do not lie wholly in RAM, the submit is rejected
    (it returns 0) and nothing is written.
-2. If the request is invalid (unknown `op`, a length or size out of range, a
-   data range not wholly where section 9.1 requires, a publish title that
-   is not valid UTF-8), the device writes status `04h` to the block and
-   rejects the submit.
+2. If the request is invalid (unknown `op`, a length, size or scope out of
+   range, a data range not wholly where section 9.1 requires, a publish
+   title or find query that is not valid UTF-8, a name that is not a valid
+   display name, section 9.5), the device writes status `04h` to the block
+   and rejects the submit.
 3. If eight requests are already pending, the submit is rejected and the
    block is not changed.
 4. Otherwise the device writes status `00h`, assigns the lowest free handle
    (1–8), which the call returns, and the request becomes pending. For put,
    the device copies the `size` bytes at `addr` at this moment; for publish,
-   the title.
+   the title; for find, the query; for set profile and set nickname, the
+   name.
 
 At the start of a later frame (never the frame of the submit), in step 1 of
 section 1.4, the host may complete any pending requests. Completing a
@@ -532,11 +534,11 @@ request:
 
 - get, on success: copies the delivered bytes to `addr`, writes `length`
   and `size`;
-- subscriptions and timeline, on success: copies the records to `addr`,
-  writes `length` and `size` (section 9.5);
+- subscriptions, timeline, names and find, on success: copies the records
+  to `addr`, writes `length` and `size` (section 9.5);
 - put, on success: writes `id`;
-- subscribe and unsubscribe, on success: nothing more;
-- publish, on success: writes `size`;
+- subscribe, unsubscribe and set nickname, on success: nothing more;
+- publish and set profile, on success: writes `size`;
 - identity, on success: writes `id`;
 - in every case writes `status`, frees the handle, and queues a content-done
   event (section 5). If the event queue is full the event is dropped; the
@@ -565,12 +567,14 @@ are inputs to the machine, alongside those of section 4. A request waiting
 for the user's consent (section 9.5) is simply pending; the user's answer
 reaches the machine only as its completion.
 
-### 9.5 Feeds
+### 9.5 Feeds, names and search
 
-Six further operations use the feeds of `NETWORK.md` section 4, with the
+Ten further operations use the feeds of `NETWORK.md` section 4, with the
 same request block, call, handles and completion rules as get and put.
-Two read the feeds the host has subscribed to; three change them, with the
-user's consent; one tells the program the host's own feed key.
+Three read what the host holds about the feeds it has subscribed to; one
+searches the relays; five change the user's subscriptions, feed, profile or
+nicknames, with the user's consent; one tells the program the host's own
+feed key.
 
 | `op` | Operation |
 |---|---|
@@ -580,10 +584,15 @@ user's consent; one tells the program the host's own feed key.
 | `06h` | Unsubscribe |
 | `07h` | Publish |
 | `08h` | Identity |
+| `09h` | Names |
+| `0Ah` | Find |
+| `0Bh` | Set profile |
+| `0Ch` | Set nickname |
 
-**Reading.** For subscriptions and timeline, `id` is not used; `length` is the size of the buffer at `addr` (1 to 16,384) and
-`offset` is the index of the first record wanted. The device delivers as many
-whole records as fit, writes the number of bytes delivered to `length` and the
+**Reading.** For subscriptions, timeline and names, `id` is not used;
+`length` is the size of the buffer at `addr` (1 to 16,384) and `offset` is
+the index of the first record wanted. The device delivers as many whole
+records as fit, writes the number of bytes delivered to `length` and the
 total number of records that exist to `size`.
 
 **Subscriptions** delivers one 36-byte record per subscribed feed, in
@@ -594,10 +603,11 @@ increasing order of feed key:
 | 0 | 32 | Feed key |
 | 32 | 4 | Highest `seq` held for that feed, or 0 |
 
-**Timeline** delivers the entries of all subscribed feeds, newest first by
-the order in which the host received them. Index 0 is the most recently
-received entry (`NETWORK.md` section 4.4 defines the order). Entries of a
-feed the host has unsubscribed from are not included. Each record is:
+**Timeline** delivers the article entries (kind 1) of all subscribed feeds,
+newest first by the order in which the host received them; profile entries
+(kind 2) are not included. Index 0 is the most recently received entry
+(`NETWORK.md` section 4.4 defines the order). Entries of a feed the host
+has unsubscribed from are not included. Each record is:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -631,20 +641,78 @@ its identity first if it has none. On success `size` is the new entry's
 status is `02h` if the host has no identity yet. `offset`, `length`, `addr`
 and `size` are not used.
 
-**Consent.** Subscribe, unsubscribe and publish change what the user
-follows or speak in the user's name, so the host asks the user before it
-carries one out, and the request stays pending until the user answers. The
-host draws its own prompt over the bottom of the screen, on top of
-everything the program shows; the program cannot draw it, read it or
-answer it. The prompt names the image's title and what is asked: the feed
-key (for example as its first and last six hex digits, `3fa9c2…c21e07`), or
-the article's title and size. While a prompt is shown the keyboard's input
-goes to the host, not to the program; Y allows, N or Escape refuses, and
-other keys (Enter included) do nothing. One request is asked about at a
-time; others wait, in increasing handle order. A refusal completes the
-request with status `05h`. A host where nobody can answer (a headless run)
-completes such requests as its user configured it to (by default with
-`05h`). Identity needs no consent.
+**Display names.** A name given to set profile, and a non-empty name given
+to set nickname, must be a valid display name: valid UTF-8, 1 to 48 bytes,
+no control characters (U+0000–U+001F, U+007F–U+009F), and no whitespace
+(the Unicode White_Space property) as its first or last character.
+Otherwise the request is invalid (section 9.2).
+
+**Names** (`09h`) delivers one record per subscribed feed, in increasing
+order of feed key:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | `L`: number of bytes that follow in this record, 33 to 81 |
+| 1 | 1 | Flags. Bit 0: the name is the user's local nickname for the feed. Bit 1: the feed has a profile in force (`NETWORK.md` section 4.6). Other bits are zero. |
+| 2 | 32 | Feed key |
+| 34 | `L − 33` | The name, 0 to 48 bytes of UTF-8 |
+
+The name is the user's nickname for the feed if there is one (bit 0 set),
+else the display name of the feed's profile in force, else empty. Bit 1 is
+set whenever a profile is in force, whichever name is given. Names are
+declared by the feeds themselves (or chosen by the user) and are not
+unique: a program that shows a name should show the short key beside it.
+
+**Find** (`0Ah`) searches the relays (`NETWORK.md` section 4.7). `id` is not
+used. `offset` is the scope: 1 searches feeds by their profiles, 2 searches
+articles by their titles; any other value is invalid. The query is the
+`size` bytes at `addr`, 1 to 48 bytes of valid UTF-8, which must lie in RAM
+and are copied at submit. `length` is the size of the buffer at `addr` for
+the results (1 to 16,384, in RAM), so the results overwrite the query. On
+completion the buffer holds the results as timeline records (only flag bit
+0 may be set): profile entries (kind 2) for scope 1, article entries (kind
+1) for scope 2. As many whole results as fit are delivered, in order;
+`length` is the number of bytes delivered and `size` the number of results
+the host has, at most 16. The host asks all its relays, verifies every
+entry they return and discards invalid ones and duplicates, and orders and
+caps the merged results as `NETWORK.md` section 4.7 says. If no relay could
+be asked, the request completes with status `03h`.
+
+**Set profile** (`0Bh`) publishes a new profile for the host's own feed.
+`id` is not used. The display name is the `length` bytes at `addr` (1 to
+48, a valid display name, copied at submit); bit 0 of `offset` is set if
+the name may be found by search (listed). The host builds the profile
+document (`NETWORK.md` section 4.6) with that name and listing, keeping the
+description of the profile in force if there is one, and with a relay line
+for each of its configured relays that is not a loopback address. It puts
+the document and publishes a profile entry (kind 2) for it as the next
+entry of its own feed, creating its identity first if it has none. On
+success `size` is the new entry's `seq`.
+
+**Set nickname** (`0Ch`) sets the user's nickname for the feed whose key is
+`id` to the `length` bytes at `addr` (0 to 48, copied at submit; a
+non-empty one must be a valid display name), or removes it if `length` is
+0. `offset` and `size` are not used. A nickname is local to the host and is
+never sent anywhere. The host completes with status `05h` without asking if
+`id` is not a valid feed key, and with `01h` without asking if the nickname
+already is as asked.
+
+**Consent.** Subscribe, unsubscribe, publish, set profile and set nickname
+change what the user follows, speak in the user's name or change what the
+user sees, so the host asks the user before it carries one out, and the
+request stays pending until the user answers. The host draws its own prompt
+over the bottom of the screen, on top of everything the program shows; the
+program cannot draw it, read it or answer it. The prompt names the image's
+title and what is asked: the feed key (for example as its first and last
+six hex digits, `3fa9c2…c21e07`); the article's title and size; the display
+name and whether it will be searchable; or the feed key and the nickname.
+While a prompt is shown the keyboard's input goes to the host, not to the
+program; Y allows, N or Escape refuses, and other keys (Enter included) do
+nothing. One request is asked about at a time; others wait, in increasing
+handle order. A refusal completes the request with status `05h`. A host
+where nobody can answer (a headless run) completes such requests as its
+user configured it to (by default with `05h`). Identity, names and find
+need no consent.
 
 ---
 
@@ -1053,8 +1121,8 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes) or publish (its title), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
-| Content delivered at completion: the bytes a get or records request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
+| Content delivered at completion: the bytes a get, records (subscriptions, timeline, names) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
 fields a completion writes to a request block are free, and so is laying out
@@ -1098,11 +1166,14 @@ These numbers are placeholders until weak hosts have been measured:
 ## 15. Not yet specified
 
 - Font selection, combining marks and complex scripts in the terminal.
-- Names (signed pointers to blobs), ranges verified without fetching the
-  whole blob, and cancelling a content request.
+- Named pointers (a signed, versioned pointer from a key and a name to a
+  blob; not the display names and nicknames of section 9.5), ranges
+  verified without fetching the whole blob, and cancelling a content
+  request.
 - For the requests that need consent (section 9.5): telling the program
   that one waits for the user, remembering a user's answer for later
-  requests, and publishing replies or other kinds of entry.
+  requests, and publishing replies or kinds of entry other than articles
+  and profiles.
 - Devices 5, 6 and 10.
 - On the page: bitmap images, arcs and gradients in figures, links the host
   follows itself, selecting and copying

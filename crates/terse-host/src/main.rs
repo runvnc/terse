@@ -43,8 +43,8 @@ const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 const READER: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
 
 const USAGE: &str = "usage:
-  terse-host [<image|id>] [--demo] [--relay ws://...|none] [--consent ask|allow|deny] [--store <dir>]
-             [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
+  terse-host [<image|id>] [--demo] [--relay ws://...|none]... [--no-feed-relays] [--consent ask|allow|deny]
+             [--store <dir>] [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
   terse-host [<image|id>] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--demo]
              [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--no-trails]
@@ -54,12 +54,14 @@ const USAGE: &str = "usage:
   With no image, runs the feed reader built into terse-host (programs/reader).
   --demo: before the window opens, make sure you have a feed key, subscribe to your own feed and,
   if it has no articles yet, publish four sample articles to it; then run the reader.
-  Relay (windowed runs): --relay if given (none: no network); else the URL in <config>/relay
-  (`terse relay set <url>` writes it); else a relay already running on ws://127.0.0.1:7878;
-  else one started inside terse-host on that port, with its store in $XDG_DATA_HOME/terse/relay
-  (else ~/.local/share/terse/relay). One line on stderr says which. --screenshot and --selftest
-  use a relay only with --relay.
-  --consent: how requests by the program to subscribe, unsubscribe or publish (SPEC 9.5) are
+  Relays (windowed runs): the --relay options if given (several may be; none: no network); else
+  the list in <config>/relays (`terse relay add <url>` writes it; an older <config>/relay is read
+  if there is no list); else a relay already running on ws://127.0.0.1:7878; else one started
+  inside terse-host on that port, with its store in $XDG_DATA_HOME/terse/relay (else
+  ~/.local/share/terse/relay). One line on stderr says which. The host connects to all of them
+  (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
+  --no-feed-relays. --screenshot and --selftest use relays only with --relay.
+  --consent: how requests by the program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
   answered: ask shows the host's prompt at the bottom of the window (Y allows, N or Esc refuses);
   default ask in the window, deny for --screenshot and --selftest (where nobody can answer; a
   --screenshot with ask shows the prompt, unanswered).
@@ -96,7 +98,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
     let mut font = None;
     let mut page_fonts = page::PageFonts::default();
-    let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
+    let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
+    let mut feed_relays = true;
     let (mut consent, mut demo) = (None, false);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -115,7 +118,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--page-serif" => page_fonts.serif = Some(it.next().ok_or(USAGE)?),
             "--page-mono" => page_fonts.mono = Some(it.next().ok_or(USAGE)?),
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
-            "--relay" => relay = Some(it.next().ok_or(USAGE)?),
+            "--relay" => relays.push(it.next().ok_or(USAGE)?),
+            "--no-feed-relays" => feed_relays = false,
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--config" => config = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--events" => events = Some(it.next().ok_or(USAGE)?),
@@ -146,18 +150,24 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let store = store.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
     // The relay: in a window, found or started as README "Getting started"
     // says; otherwise only --relay.
-    let relay = if windowed {
-        let chosen = setup::choose_relay(relay.as_deref(), &config, local::local_port(), default_data_dir().as_deref())?;
+    let relays = if windowed {
+        let chosen = setup::choose_relay(&relays, &config, local::local_port(), default_data_dir().as_deref())?;
         eprintln!("terse-host: {}", chosen.describe());
-        chosen.url().map(str::to_string)
+        chosen.urls()
+    } else if relays.is_empty() {
+        Vec::new()
     } else {
-        relay.filter(|r| r != "none")
+        local::find_relays(&relays, None, 0)?.urls()
     };
     if demo {
-        setup::prepare_demo(&store, &config, relay.as_deref())?;
+        setup::prepare_demo(&store, &config, &relays)?;
     }
-    // The blob store and relay, opened only when needed.
-    let open_node = || Node::open(Some(store.clone()), relay.as_deref(), DEFAULT_TIMEOUT);
+    // The blob store and relays, opened only when needed.
+    let open_node = || {
+        let mut node = Node::open(Some(store.clone()), &relays, DEFAULT_TIMEOUT)?;
+        node.set_feed_relays(feed_relays);
+        Ok::<Node, String>(node)
+    };
     let mut node = None;
     let path = image_path.clone().unwrap_or_else(|| "reader".into());
     // NETWORK 2: an image may be started by its ID.
@@ -182,6 +192,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             // directory.
             node.set_subscriptions(Subscriptions::load(config.join("subscriptions"))?);
             node.set_identity_path(config.join("identity.key"))?;
+            node.set_nicknames(terse_net::profile::Nicknames::load_from_config(&config)?);
             Some(ContentService::start_with_consent(node, consent))
         }
     };

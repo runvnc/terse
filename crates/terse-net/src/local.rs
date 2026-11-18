@@ -1,6 +1,8 @@
-//! Finding a relay when none is named: the config directory's `relay` file,
-//! else a relay listening on this machine's default port. `terse-host` adds
-//! a third choice, a relay of its own (README, "Getting started").
+//! Finding relays when none is named: the config directory's `relays` file
+//! (one URL per line; the older single-URL `relay` file if `relays` does
+//! not exist), else a relay listening on this machine's default port.
+//! `terse-host` adds a third choice, a relay of its own (README, "Getting
+//! started").
 
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -12,8 +14,12 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// Overrides [`DEFAULT_PORT`] for finding and starting a local relay (so
 /// tests never touch the real one).
 pub const PORT_ENV: &str = "TERSE_LOCAL_RELAY_PORT";
-/// The file in the config directory that names the relay.
+/// The file in the config directory that lists the relays, one per line.
+pub const RELAYS_FILE: &str = "relays";
+/// The older file naming one relay, read when `relays` does not exist.
 pub const RELAY_FILE: &str = "relay";
+/// Most relays a host connects to from its list (NETWORK 5).
+pub const MAX_RELAYS: usize = 8;
 /// How long to wait for a local relay to accept a connection.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(300);
 
@@ -31,35 +37,50 @@ pub fn local_url(port: u16) -> String {
     format!("ws://127.0.0.1:{port}")
 }
 
-/// Whether `url` is a relay URL this host accepts in the `relay` file.
+/// Whether `url` is a relay URL this host accepts in its relay list.
 pub fn valid_url(url: &str) -> bool {
     url.strip_prefix("ws://").or_else(|| url.strip_prefix("wss://")).is_some_and(|rest| !rest.is_empty())
         && !url.chars().any(char::is_whitespace)
 }
 
-/// The relay named in `<config>/relay`, if the file exists.
-pub fn read_relay_file(config: &Path) -> Result<Option<String>, String> {
-    let path = config.join(RELAY_FILE);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    let url = text.trim();
-    if !valid_url(url) {
-        return Err(format!("{}: not a ws:// or wss:// URL: {url}", path.display()));
+fn read_optional(path: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
-    Ok(Some(url.to_string()))
 }
 
-/// Writes `url` to `<config>/relay`.
-pub fn write_relay_file(config: &Path, url: &str) -> Result<PathBuf, String> {
-    if !valid_url(url) {
-        return Err(format!("not a ws:// or wss:// URL: {url}"));
+/// The configured relay list and the file it came from: `<config>/relays`
+/// (possibly empty), else `<config>/relay`, else `None`. Blank lines and
+/// repeated URLs are skipped.
+pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, String> {
+    for name in [RELAYS_FILE, RELAY_FILE] {
+        let path = config.join(name);
+        let Some(text) = read_optional(&path)? else { continue };
+        let mut urls: Vec<String> = Vec::new();
+        for (i, line) in text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()) {
+            if !valid_url(line) {
+                return Err(format!("{}:{}: not a ws:// or wss:// URL: {line}", path.display(), i + 1));
+            }
+            if !urls.iter().any(|u| u == line) {
+                urls.push(line.to_string());
+            }
+        }
+        return Ok(Some((urls, path)));
+    }
+    Ok(None)
+}
+
+/// Writes the relay list to `<config>/relays`.
+pub fn write_relays(config: &Path, urls: &[String]) -> Result<PathBuf, String> {
+    if let Some(bad) = urls.iter().find(|u| !valid_url(u)) {
+        return Err(format!("not a ws:// or wss:// URL: {bad}"));
     }
     std::fs::create_dir_all(config).map_err(|e| format!("{}: {e}", config.display()))?;
-    let path = config.join(RELAY_FILE);
-    std::fs::write(&path, format!("{url}\n")).map_err(|e| format!("{}: {e}", path.display()))?;
+    let path = config.join(RELAYS_FILE);
+    let text: String = urls.iter().map(|u| format!("{u}\n")).collect();
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -68,15 +89,15 @@ pub fn accepts(port: u16) -> bool {
     TcpStream::connect_timeout(&local_addr(port), PROBE_TIMEOUT).is_ok()
 }
 
-/// Which relay to use, and why.
+/// Which relays to use, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
-    /// Named with `--relay`.
-    Given(String),
+    /// Named with `--relay` (one or more).
+    Given(Vec<String>),
     /// `--relay none`: no network.
     Disabled,
-    /// From the config directory's `relay` file.
-    ConfigFile(String, PathBuf),
+    /// From the config directory's `relays` (or `relay`) file.
+    ConfigFile(Vec<String>, PathBuf),
     /// Something accepts connections on the local port.
     Local(String),
     /// None of these.
@@ -84,38 +105,52 @@ pub enum Found {
 }
 
 impl Found {
-    pub fn url(&self) -> Option<&str> {
-        match self {
-            Found::Given(u) | Found::ConfigFile(u, _) | Found::Local(u) => Some(u),
-            Found::Disabled | Found::Nothing => None,
-        }
+    /// The relays, at most [`MAX_RELAYS`].
+    pub fn urls(&self) -> Vec<String> {
+        let all = match self {
+            Found::Given(u) | Found::ConfigFile(u, _) => u.clone(),
+            Found::Local(u) => vec![u.clone()],
+            Found::Disabled | Found::Nothing => Vec::new(),
+        };
+        all.into_iter().take(MAX_RELAYS).collect()
     }
 
-    /// One line saying which relay is used and why.
+    /// One line saying which relays are used and why.
     pub fn describe(&self) -> String {
+        let list = |u: &[String]| {
+            let more = if u.len() > MAX_RELAYS { format!(" (only the first {MAX_RELAYS} are used)") } else { String::new() };
+            format!("relay{} {}{more}", if u.len() == 1 { "" } else { "s" }, u.join(" "))
+        };
         match self {
-            Found::Given(u) => format!("relay {u} (--relay)"),
+            Found::Given(u) => format!("{} (--relay)", list(u)),
             Found::Disabled => "no relay (--relay none)".into(),
-            Found::ConfigFile(u, p) => format!("relay {u} (from {})", p.display()),
+            Found::ConfigFile(u, p) => format!("{} (from {})", list(u), p.display()),
             Found::Local(u) => format!("relay {u} (already running on this machine)"),
             Found::Nothing => "no relay".into(),
         }
     }
 }
 
-/// The relay to use: `given` (`--relay`; `none` disables the network), else
-/// the `relay` file in `config`, else a relay accepting connections on
-/// 127.0.0.1:`port`.
-pub fn find_relay(given: Option<&str>, config: Option<&Path>, port: u16) -> Result<Found, String> {
+/// The relays to use: `given` (`--relay`, repeatable; `none` alone disables
+/// the network), else the list in `config` if it is not empty, else a relay
+/// accepting connections on 127.0.0.1:`port`.
+pub fn find_relays(given: &[String], config: Option<&Path>, port: u16) -> Result<Found, String> {
     match given {
-        Some("none") => return Ok(Found::Disabled),
-        Some(url) => return Ok(Found::Given(url.to_string())),
-        None => {}
+        [] => {}
+        [none] if none == "none" => return Ok(Found::Disabled),
+        _ if given.iter().any(|u| u == "none") => return Err("--relay none cannot be combined with relays".into()),
+        _ => {
+            if let Some(bad) = given.iter().find(|u| !valid_url(u)) {
+                return Err(format!("--relay {bad}: not a ws:// or wss:// URL"));
+            }
+            return Ok(Found::Given(given.to_vec()));
+        }
     }
     if let Some(config) = config
-        && let Some(url) = read_relay_file(config)?
+        && let Some((urls, path)) = read_relays(config)?
+        && !urls.is_empty()
     {
-        return Ok(Found::ConfigFile(url, config.join(RELAY_FILE)));
+        return Ok(Found::ConfigFile(urls, path));
     }
     Ok(if accepts(port) { Found::Local(local_url(port)) } else { Found::Nothing })
 }
@@ -129,22 +164,39 @@ mod tests {
         std::net::TcpListener::bind(local_addr(0)).unwrap().local_addr().unwrap().port()
     }
 
+    fn list(u: &[&str]) -> Vec<String> {
+        u.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn config_file_then_local_relay() {
         let config = tempfile::tempdir().unwrap();
         let port = closed_port();
-        assert_eq!(find_relay(None, Some(config.path()), port).unwrap(), Found::Nothing);
-        assert_eq!(find_relay(Some("none"), Some(config.path()), port).unwrap(), Found::Disabled);
+        assert_eq!(find_relays(&[], Some(config.path()), port).unwrap(), Found::Nothing);
+        assert_eq!(find_relays(&list(&["none"]), Some(config.path()), port).unwrap(), Found::Disabled);
+        assert!(find_relays(&list(&["none", "ws://x:1"]), Some(config.path()), port).is_err());
+        assert!(find_relays(&list(&["http://x"]), Some(config.path()), port).is_err());
         let listener = std::net::TcpListener::bind(local_addr(0)).unwrap();
         let open = listener.local_addr().unwrap().port();
-        assert_eq!(find_relay(None, Some(config.path()), open).unwrap(), Found::Local(local_url(open)));
-        let path = write_relay_file(config.path(), "ws://relay.example:7878").unwrap();
-        let found = find_relay(None, Some(config.path()), open).unwrap();
-        assert_eq!(found, Found::ConfigFile("ws://relay.example:7878".into(), path));
-        assert_eq!(found.url(), Some("ws://relay.example:7878"));
-        assert_eq!(find_relay(Some("ws://x:1"), Some(config.path()), open).unwrap(), Found::Given("ws://x:1".into()));
-        assert!(write_relay_file(config.path(), "http://x").is_err());
-        std::fs::write(config.path().join(RELAY_FILE), "garbage\n").unwrap();
-        assert!(find_relay(None, Some(config.path()), open).is_err());
+        assert_eq!(find_relays(&[], Some(config.path()), open).unwrap(), Found::Local(local_url(open)));
+        // The old single-relay file is read when there is no list.
+        std::fs::write(config.path().join(RELAY_FILE), "ws://old.example:7878\n").unwrap();
+        let found = find_relays(&[], Some(config.path()), open).unwrap();
+        assert_eq!(found, Found::ConfigFile(list(&["ws://old.example:7878"]), config.path().join(RELAY_FILE)));
+        // The list wins over it.
+        let path = write_relays(config.path(), &list(&["ws://a.example:1", "ws://b.example:2"])).unwrap();
+        let found = find_relays(&[], Some(config.path()), open).unwrap();
+        assert_eq!(found, Found::ConfigFile(list(&["ws://a.example:1", "ws://b.example:2"]), path));
+        assert_eq!(found.urls(), list(&["ws://a.example:1", "ws://b.example:2"]));
+        let two = list(&["ws://x:1", "ws://y:2"]);
+        assert_eq!(find_relays(&two, Some(config.path()), open).unwrap(), Found::Given(two.clone()));
+        // An empty list falls through to the local relay.
+        write_relays(config.path(), &[]).unwrap();
+        assert_eq!(find_relays(&[], Some(config.path()), open).unwrap(), Found::Local(local_url(open)));
+        assert!(write_relays(config.path(), &list(&["http://x"])).is_err());
+        std::fs::write(config.path().join(RELAYS_FILE), "garbage\n").unwrap();
+        assert!(find_relays(&[], Some(config.path()), open).is_err());
+        let many: Vec<String> = (0..10).map(|i| format!("ws://r{i}.example")).collect();
+        assert_eq!(Found::Given(many).urls().len(), MAX_RELAYS);
     }
 }

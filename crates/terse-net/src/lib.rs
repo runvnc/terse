@@ -6,6 +6,8 @@
 //! - [`local`]: finding a relay when none is named.
 //! - [`entry`]: feed entries, signing and validation (NETWORK 4.2).
 //! - [`feeds`]: stored entries and the subscription list.
+//! - [`profile`]: display names, profile documents, nicknames, search
+//!   matching (NETWORK 4.6, 4.7).
 //! - [`protocol`]: relay message encoding (NETWORK 3, 4.3).
 //! - [`relay`]: a poll-driven relay client over a [`relay::Transport`], with a
 //!   blocking WebSocket transport.
@@ -20,6 +22,7 @@ pub mod feeds;
 pub mod identity;
 pub mod local;
 pub mod node;
+pub mod profile;
 pub mod protocol;
 pub mod relay;
 pub mod service;

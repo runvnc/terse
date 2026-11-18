@@ -88,6 +88,17 @@ pub fn subscription_record(feed: &FeedKey, highest: u32) -> Vec<u8> {
     [&feed[..], &highest.to_le_bytes()].concat()
 }
 
+/// A names record (SPEC 9.5): `L`, the flags (bit 0: a nickname; bit 1: a
+/// profile is in force), the feed key and the name.
+pub fn name_record(feed: &FeedKey, flags: u8, name: &[u8]) -> Vec<u8> {
+    let mut r = Vec::with_capacity(34 + name.len());
+    r.push((33 + name.len()) as u8);
+    r.push(flags);
+    r.extend_from_slice(feed);
+    r.extend_from_slice(name);
+    r
+}
+
 /// A timeline record: `L`, the flags (bit 0: the article is in the store)
 /// and the entry without its signature.
 pub fn timeline_record(unsigned_entry: &[u8], local: bool) -> Vec<u8> {

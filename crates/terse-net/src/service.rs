@@ -63,6 +63,11 @@ pub enum Asked {
     Unsubscribe(FeedKey),
     /// Publish an article (`size` bytes) with this title.
     Publish { title: String, size: u32 },
+    /// Publish a profile with this display name; `listed`: findable by
+    /// search.
+    SetProfile { name: String, listed: bool },
+    /// Give a feed a nickname (empty: remove it).
+    SetNickname { feed: FeedKey, name: String },
 }
 
 /// A request waiting for the user's answer.
@@ -96,8 +101,10 @@ pub struct ContentService {
 enum Job {
     Get { handle: u8, offset: u32, length: u16 },
     Put { handle: u8 },
-    /// A program's publish (SPEC 9.5).
+    /// A program's publish or set profile (SPEC 9.5).
     Publish { handle: u8 },
+    /// A program's find, with its buffer size.
+    Find { handle: u8, length: u16 },
     /// `FeedCommand::Publish`, reported as a feed event.
     FeedPublish,
 }
@@ -186,7 +193,7 @@ impl ContentService {
         loop {
             match self.wait_feed_event(deadline.saturating_duration_since(Instant::now())) {
                 Some(FeedEvent::Settled) => return Ok(()),
-                Some(FeedEvent::Disconnected { .. }) => return Err("cannot reach the relay".into()),
+                Some(FeedEvent::Unreachable) => return Err("cannot reach any relay".into()),
                 Some(_) => {}
                 None => return Err(format!("not caught up after {} s", timeout.as_secs())),
             }
@@ -313,10 +320,13 @@ fn completion(job: Job, done: Done) -> Completion {
         }
         (Job::Put { handle }, Done::Put(id)) => (handle, Outcome::Put { id }),
         (Job::Publish { handle }, Done::Published { seq, .. }) => (handle, Outcome::Published { seq }),
+        (Job::Find { handle, .. }, Done::Found(_)) => (handle, Outcome::Failed),
         (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, Done::NotFound) => {
             (handle, Outcome::NotFound)
         }
-        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, _) => (handle, Outcome::Failed),
+        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle } | Job::Find { handle, .. }, _) => {
+            (handle, Outcome::Failed)
+        }
         (Job::FeedPublish, _) => unreachable!("publishes are reported as feed events"),
     };
     Completion { handle, outcome }
@@ -351,12 +361,27 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
         }
         RequestKind::Subscribe { feed } => Asked::Subscribe(*feed),
         RequestKind::Unsubscribe { feed } => Asked::Unsubscribe(*feed),
+        RequestKind::SetNickname { feed, .. } if !valid_feed_key(feed) => return Step::Complete(Outcome::Refused),
+        RequestKind::SetNickname { feed, name } if node.nicknames().get(feed).unwrap_or("").as_bytes() == &name[..] => {
+            return Step::Complete(Outcome::Done);
+        }
+        RequestKind::SetProfile { name, .. } | RequestKind::SetNickname { name, .. }
+            if std::str::from_utf8(name).is_err() =>
+        {
+            return Step::Complete(Outcome::Refused);
+        }
+        RequestKind::SetProfile { name, listed } => {
+            Asked::SetProfile { name: String::from_utf8_lossy(name).into_owned(), listed: *listed }
+        }
+        RequestKind::SetNickname { feed, name } => {
+            Asked::SetNickname { feed: *feed, name: String::from_utf8_lossy(name).into_owned() }
+        }
         RequestKind::Publish { blob, title } => match node.store().read(blob) {
             Ok(Some(bytes)) => Asked::Publish { title: String::from_utf8_lossy(title).into_owned(), size: bytes.len() as u32 },
             Ok(None) => return Step::Complete(Outcome::NotFound),
             Err(_) => return Step::Complete(Outcome::Failed),
         },
-        _ => unreachable!("only subscribe, unsubscribe and publish need consent"),
+        _ => unreachable!("only subscribe, unsubscribe, publish, set profile and set nickname need consent"),
     };
     match decided {
         Consent::Deny => Step::Complete(Outcome::Refused),
@@ -372,6 +397,14 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
             RequestKind::Publish { blob, title } => {
                 node.start_publish_blob(token, *blob, &String::from_utf8_lossy(title), now());
                 Step::Started
+            }
+            RequestKind::SetProfile { name, listed } => {
+                node.start_publish_profile(token, &String::from_utf8_lossy(name), *listed, now());
+                Step::Started
+            }
+            RequestKind::SetNickname { feed, name } => {
+                let name = String::from_utf8_lossy(name);
+                Step::Complete(if node.set_nickname(*feed, Some(&name)).is_ok() { Outcome::Done } else { Outcome::Failed })
             }
             _ => unreachable!(),
         },
@@ -408,7 +441,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         // feed is followed.
         let wait = if node.busy() || node.connected() {
             Some(Duration::ZERO)
-        } else if node.following() {
+        } else if node.has_relays() {
             Some(IDLE_WAIT)
         } else {
             None
@@ -437,7 +470,12 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
             }
             Some(Work::Content(
                 r @ Request {
-                    kind: RequestKind::Subscribe { .. } | RequestKind::Unsubscribe { .. } | RequestKind::Publish { .. },
+                    kind:
+                        RequestKind::Subscribe { .. }
+                        | RequestKind::Unsubscribe { .. }
+                        | RequestKind::Publish { .. }
+                        | RequestKind::SetProfile { .. }
+                        | RequestKind::SetNickname { .. },
                     ..
                 },
             )) => {
@@ -471,6 +509,16 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     return;
                 }
             }
+            Some(Work::Content(Request { handle, kind: RequestKind::Names { offset, length } })) => {
+                let (total, data) = node.name_records(offset, length);
+                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
+                    return;
+                }
+            }
+            Some(Work::Content(Request { handle, kind: RequestKind::Find { scope, query, length } })) => {
+                pending.insert(next, Job::Find { handle, length });
+                node.start_find(next, scope, &query);
+            }
             Some(Work::Feed(FeedCommand::Publish(draft))) => {
                 pending.insert(next, Job::FeedPublish);
                 node.start_publish_article(next, &draft);
@@ -489,6 +537,12 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                         done => FeedEvent::PublishFailed(done),
                     })
                     .is_ok(),
+                Some(Job::Find { handle, length }) if matches!(done, Done::Found(_)) => {
+                    let Done::Found(found) = done else { unreachable!() };
+                    let (total, data) = node.find_records(&found, length);
+                    let outcome = Outcome::Records { total, data };
+                    finished.send(Finished::Done(Completion { handle, outcome })).is_ok()
+                }
                 Some(job) => finished.send(Finished::Done(completion(job, done))).is_ok(),
                 None => true,
             };
@@ -655,6 +709,83 @@ mod tests {
         assert_eq!(outcomes(&service.wait_finished()), [Outcome::Identity { key: me }]);
         let held = crate::FeedStore::beside_blobs(dir.path()).entries(&me).unwrap();
         assert_eq!((held.len(), held[0].entry.title.as_str(), held[0].entry.blob), (1, "Tïtle", article));
+    }
+
+    /// SPEC 9.5 ops 09h–0Ch: names records; a find with no relay fails;
+    /// set profile and set nickname with consent denied, allowed and asked.
+    #[test]
+    fn names_find_profile_and_nickname_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let make = |consent| {
+            let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+            node.set_identity_path(config.path().join("identity.key")).unwrap();
+            node.set_nicknames(crate::profile::Nicknames::load_from_config(config.path()).unwrap());
+            node.set_subscriptions(crate::Subscriptions::load(config.path().join("subscriptions")).unwrap());
+            ContentService::start_with_consent(node, consent)
+        };
+        let b = crate::Identity::from_seed([2; 32]).feed_key();
+        let kinds = || {
+            vec![
+                RequestKind::SetProfile { name: b"Ana".to_vec(), listed: true },
+                RequestKind::SetNickname { feed: b, name: b"Bee".to_vec() },
+                RequestKind::SetNickname { feed: [0; 32], name: b"Zero".to_vec() },
+                RequestKind::SetNickname { feed: b, name: Vec::new() },
+                RequestKind::Find { scope: 1, query: b"ana".to_vec(), length: 100 },
+            ]
+        };
+        let submit = |service: &mut ContentService, kinds: Vec<RequestKind>| {
+            service.submit(kinds.into_iter().enumerate().map(|(i, kind)| Request { handle: i as u8 + 1, kind }).collect());
+            let mut done = service.wait_finished();
+            done.sort_by_key(|c| c.handle);
+            outcomes(&done)
+        };
+        // Denied: refused; an invalid key refused; removing a nickname
+        // there is not done at once; no relay to find on.
+        let mut service = make(Consent::Deny);
+        assert_eq!(
+            submit(&mut service, kinds()),
+            [Outcome::Refused, Outcome::Refused, Outcome::Refused, Outcome::Done, Outcome::Failed]
+        );
+        assert!(!config.path().join("identity.key").exists());
+        drop(service);
+        // Allowed: the profile is published (the identity created), the
+        // nickname saved.
+        let mut service = make(Consent::Allow);
+        assert_eq!(
+            submit(&mut service, kinds()[..2].to_vec()),
+            [Outcome::Published { seq: 1 }, Outcome::Done]
+        );
+        let me = crate::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
+        let saved = crate::profile::Nicknames::load_from_config(config.path()).unwrap();
+        assert_eq!(saved.get(&b), Some("Bee"));
+        // Names: subscribe to both, read the records.
+        drop(service);
+        let mut subs = crate::Subscriptions::load(config.path().join("subscriptions")).unwrap();
+        subs.add(me).unwrap();
+        subs.add(b).unwrap();
+        let mut service = make(Consent::Ask);
+        let names = submit(&mut service, vec![RequestKind::Names { offset: 0, length: 1000 }]);
+        let rec = |k: &[u8; 32], flags: u8, name: &str| [&[33 + name.len() as u8, flags][..], k, name.as_bytes()].concat();
+        let mut want = [(me, rec(&me, 2, "Ana")), (b, rec(&b, 1, "Bee"))];
+        want.sort_by_key(|w| w.0);
+        assert_eq!(names, [Outcome::Records { total: 2, data: [want[0].1.clone(), want[1].1.clone()].concat() }]);
+        // Asked: the prompts say what is asked; the same nickname again
+        // completes at once.
+        service.submit(vec![
+            Request { handle: 1, kind: RequestKind::SetProfile { name: b"Ana B".to_vec(), listed: false } },
+            Request { handle: 2, kind: RequestKind::SetNickname { feed: b, name: b"Bee".to_vec() } },
+            Request { handle: 3, kind: RequestKind::SetNickname { feed: b, name: Vec::new() } },
+        ]);
+        let done = service.wait_finished();
+        assert_eq!(done, [Completion { handle: 2, outcome: Outcome::Done }]);
+        assert_eq!(service.prompt().unwrap().asked, Asked::SetProfile { name: "Ana B".into(), listed: false });
+        service.answer(true);
+        assert_eq!(service.prompt().unwrap().asked, Asked::SetNickname { feed: b, name: String::new() });
+        service.answer(false);
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        assert_eq!(outcomes(&done), [Outcome::Published { seq: 2 }, Outcome::Refused]);
     }
 
     /// Asked: one prompt at a time, in handle order; a yes carries the

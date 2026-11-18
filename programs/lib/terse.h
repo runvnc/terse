@@ -315,6 +315,41 @@ uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, 
  * host has no identity yet. */
 uint8_t content_identity(content_req *r);
 
+/* Content: names, search, profile and nicknames (SPEC 9.5). */
+#define CONTENT_NAMES 0x09
+#define CONTENT_FIND 0x0A
+#define CONTENT_SET_PROFILE 0x0B
+#define CONTENT_SET_NICKNAME 0x0C
+
+/* Names record flags: the name is the user's nickname; the feed has a
+ * profile in force. */
+#define NAME_NICKNAME 0x01
+#define NAME_PROFILE 0x02
+
+/* Find scopes. */
+#define FIND_FEEDS 1
+#define FIND_ENTRIES 2
+
+/* Names records from index `first`, as many as fit in `length` bytes at
+ * `buf`: L, flags, feed key (32), name (L - 33 bytes, 0 to 48). Names are
+ * self-declared; show the short key beside one. */
+uint8_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf);
+/* Searches the host's relays for `qlen` bytes of UTF-8 (1 to 48) at
+ * `query`, FIND_FEEDS (profile entries) or FIND_ENTRIES (articles). The
+ * query is copied into `buf` first (0 and STATUS_BAD_REQUEST if `buflen`
+ * is shorter than the query); the results, timeline records, replace it:
+ * r->length is the bytes delivered, r->size the number of results (at most
+ * 16). */
+uint8_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen);
+/* Publishes a profile for the host's feed with display name `name` (`len`
+ * bytes, 1 to 48, no control characters, no leading or trailing space);
+ * `listed` lets search find it. The host asks the user; on completion
+ * r->size is the entry's seq. */
+uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed);
+/* Sets the local nickname of feed `key` (32 bytes) to `len` bytes at
+ * `name`, or removes it if `len` is 0. The host asks the user. */
+uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len);
+
 /* Device 7, page (SPEC 11): typeset text in a rectangle. */
 #define PAGE_DONE 0x00
 #define PAGE_REJECTED 0x01

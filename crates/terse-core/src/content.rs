@@ -24,6 +24,10 @@ pub const OP_SUBSCRIBE: u8 = 0x05;
 pub const OP_UNSUBSCRIBE: u8 = 0x06;
 pub const OP_PUBLISH: u8 = 0x07;
 pub const OP_IDENTITY: u8 = 0x08;
+pub const OP_NAMES: u8 = 0x09;
+pub const OP_FIND: u8 = 0x0A;
+pub const OP_SET_PROFILE: u8 = 0x0B;
+pub const OP_SET_NICKNAME: u8 = 0x0C;
 
 /// A subscriptions record: feed key and highest `seq` (SPEC 9.5).
 pub const SUBSCRIPTION_RECORD: usize = 36;
@@ -36,6 +40,21 @@ pub const MAX_TITLE: usize = 120;
 pub const MAX_TIMELINE_RECORD: usize = 2 + ENTRY_HEAD + MAX_TITLE;
 /// Timeline record flag: the article blob is in the host's store.
 pub const FLAG_LOCAL: u8 = 0x01;
+/// Longest display name, nickname or search query, in bytes (SPEC 9.5).
+pub const MAX_NAME: usize = 48;
+/// Bytes of a names record after `L` and flags: the feed key (SPEC 9.5).
+pub const NAMES_HEAD: usize = 32;
+/// Longest names record: `L`, flags, key and a 48-byte name.
+pub const MAX_NAMES_RECORD: usize = 2 + NAMES_HEAD + MAX_NAME;
+/// Names record flag: the name is a local nickname.
+pub const NAME_NICKNAME: u8 = 0x01;
+/// Names record flag: the feed has a profile in force.
+pub const NAME_PROFILE: u8 = 0x02;
+/// Find scopes (`offset` of a find request).
+pub const FIND_FEEDS: u8 = 1;
+pub const FIND_ENTRIES: u8 = 2;
+/// Most results a find completes with.
+pub const MAX_FIND_RESULTS: u32 = 16;
 
 /// Status values (SPEC 9.3).
 pub mod status {
@@ -71,6 +90,16 @@ pub fn readable<'a>(rom: &'a [u8], ram: &'a [u8], addr: u32, len: usize) -> Opti
     (off <= rom.len() && rom.len() - off >= len).then(|| &rom[off..off + len])
 }
 
+/// Whether `b` is a valid display name or nickname (SPEC 9.5): UTF-8, 1 to
+/// 48 bytes, no control characters, no leading or trailing whitespace.
+pub fn valid_display_name(b: &[u8]) -> bool {
+    let Ok(s) = std::str::from_utf8(b) else { return false };
+    (1..=MAX_NAME).contains(&b.len())
+        && !s.chars().any(char::is_control)
+        && !s.starts_with(char::is_whitespace)
+        && !s.ends_with(char::is_whitespace)
+}
+
 fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }
@@ -102,6 +131,18 @@ pub enum RequestKind {
     Publish { blob: [u8; 32], title: Vec<u8> },
     /// The host's own feed key.
     Identity,
+    /// Names records from index `offset`, at most `length` bytes (SPEC 9.5).
+    Names { offset: u32, length: u16 },
+    /// Search the relays: `scope` 1 (feeds) or 2 (entries), the query
+    /// (1 to 48 bytes of UTF-8, copied at submit), results in at most
+    /// `length` bytes (SPEC 9.5).
+    Find { scope: u8, query: Vec<u8>, length: u16 },
+    /// Publish a new profile for the host's feed with display name `name`
+    /// (copied at submit); needs the user's consent.
+    SetProfile { name: Vec<u8>, listed: bool },
+    /// Set (or, with an empty name, remove) the local nickname of `feed`;
+    /// needs the user's consent.
+    SetNickname { feed: [u8; 32], name: Vec<u8> },
 }
 
 /// The host's answer to a pending request (SPEC 9.2), an input to the machine
@@ -120,20 +161,22 @@ pub enum Outcome {
     Got { size: u32, data: Vec<u8> },
     /// A put succeeded; `id` must be the BLAKE3-256 hash of the submitted bytes.
     Put { id: [u8; 32] },
-    /// A subscriptions or timeline request succeeded: the number of records
-    /// that exist and the whole records delivered from the requested index,
-    /// as many as fit in `length` (SPEC 9.5).
+    /// A subscriptions, timeline or names request succeeded: the number of
+    /// records that exist and the whole records delivered from the requested
+    /// index, as many as fit in `length` (SPEC 9.5). A find: the number of
+    /// results (at most 16) and as many whole records as fit.
     Records { total: u32, data: Vec<u8> },
-    /// A subscribe or unsubscribe succeeded.
+    /// A subscribe, unsubscribe or set nickname succeeded.
     Done,
-    /// A publish succeeded: the new entry's `seq`, written to `size`.
+    /// A publish or set profile succeeded: the new entry's `seq`, written to
+    /// `size`.
     Published { seq: u32 },
     /// An identity request succeeded: the host's feed key, written to `id`.
     Identity { key: [u8; 32] },
     NotFound,
     Failed,
-    /// The user (or the host) did not allow a subscribe, unsubscribe or
-    /// publish (SPEC 9.5).
+    /// The user (or the host) did not allow a subscribe, unsubscribe,
+    /// publish, set profile or set nickname (SPEC 9.5).
     Refused,
 }
 
@@ -142,10 +185,15 @@ enum Pending {
     /// `addr` is the guest address of the data.
     Get { id: [u8; 32], offset: u32, length: u16, addr: u32 },
     Put { id: [u8; 32], size: u32 },
+    /// Subscriptions, timeline and names.
     Records { op: u8, offset: u32, length: u16, addr: u32 },
-    /// Subscribe, unsubscribe, publish and identity: the `id` read at submit
-    /// (zero for identity) and a publish's title length.
-    Feed { op: u8, id: [u8; 32], title_len: u8 },
+    /// The query's length is kept for the state record only.
+    Find { scope: u8, length: u16, addr: u32, query_len: u8 },
+    /// Subscribe, unsubscribe, publish, identity, set profile and set
+    /// nickname: the `id` read at submit (zero for identity and set
+    /// profile), set profile's listed bit and the length of a publish's
+    /// title or the name.
+    Feed { op: u8, id: [u8; 32], listed: bool, len: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,16 +209,17 @@ pub struct Content {
     submitted: Vec<Request>,
 }
 
-/// Whether `data` can be the answer to a subscriptions or timeline request
-/// (SPEC 9.5): whole, well-formed records, no more than fit in `length` or
-/// exist after `offset`, and as many as fit. Subscription records have a
-/// fixed size, so their count is exact. A timeline record's size is only
-/// known from its bytes: the records must tile `data` exactly, each `L`
-/// must match its entry's title length, and space left over must be too
-/// small for any record when records remain.
+/// Whether `data` can be the answer to a subscriptions, timeline, names or
+/// find request (SPEC 9.5): whole, well-formed records, no more than fit in
+/// `length` or exist after `offset`, and as many as fit. Subscription
+/// records have a fixed size, so their count is exact. Other records' sizes
+/// are only known from their bytes: the records must tile `data` exactly,
+/// each `L` must be in range (for timeline and find records, match its
+/// entry's title length), and space left over must be too small for any
+/// record when records remain. A find has `offset` 0 and at most 16 results.
 pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) -> bool {
     let (length, remaining) = (length as usize, total.saturating_sub(offset) as usize);
-    if data.len() > length {
+    if data.len() > length || (op == OP_FIND && total > MAX_FIND_RESULTS) {
         return false;
     }
     if op == OP_SUBSCRIPTIONS {
@@ -179,21 +228,31 @@ pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) ->
     let (mut at, mut count) = (0, 0);
     while at < data.len() {
         let l = data[at] as usize;
-        // L counts the flags byte and the entry; byte 108 of the entry is `n`.
-        let Some(&n) = data.get(at + 2 + ENTRY_HEAD - 1) else { return false };
-        if n as usize > MAX_TITLE || l != 1 + ENTRY_HEAD + n as usize || data[at + 1] & !FLAG_LOCAL != 0 {
-            return false;
+        let Some(&flags) = data.get(at + 1) else { return false };
+        if op == OP_NAMES {
+            // L counts the flags byte, the key and the name.
+            if !(1 + NAMES_HEAD..=1 + NAMES_HEAD + MAX_NAME).contains(&l) || flags & !(NAME_NICKNAME | NAME_PROFILE) != 0 {
+                return false;
+            }
+        } else {
+            // L counts the flags byte and the entry; byte 108 of the entry is `n`.
+            let Some(&n) = data.get(at + 2 + ENTRY_HEAD - 1) else { return false };
+            if n as usize > MAX_TITLE || l != 1 + ENTRY_HEAD + n as usize || flags & !FLAG_LOCAL != 0 {
+                return false;
+            }
         }
         at += 1 + l;
         count += 1;
     }
-    at == data.len() && count <= remaining && (count == remaining || length - data.len() < MAX_TIMELINE_RECORD)
+    let largest = if op == OP_NAMES { MAX_NAMES_RECORD } else { MAX_TIMELINE_RECORD };
+    at == data.len() && count <= remaining && (count == remaining || length - data.len() < largest)
 }
 
 impl Content {
     /// Submits the block at guest address `block_addr` (SPEC 9.2 steps
     /// 1-4). Returns the handle (1-8, or 0 if rejected) and the number of
-    /// bytes a put copied (for the charge).
+    /// bytes copied (a put's data, a publish title, a find query, a name),
+    /// for the charge.
     pub fn submit(&mut self, block_addr: u32, rom: &[u8], ram: &mut [u8]) -> (u32, usize) {
         // Step 1: the block lies wholly in RAM, else nothing is written.
         let Some(block) = ram_range(ram.len(), block_addr, BLOCK_LEN) else { return (0, 0) };
@@ -203,7 +262,7 @@ impl Content {
 
         // Step 2.
         let request = match b[OP] {
-            OP_GET | OP_SUBSCRIPTIONS | OP_TIMELINE => {
+            OP_GET | OP_SUBSCRIPTIONS | OP_TIMELINE | OP_NAMES => {
                 ((1..=MAX_GET_LENGTH as u32).contains(&length) && in_ram(length as usize)).then(|| {
                     let length = length as u16;
                     match b[OP] {
@@ -212,10 +271,10 @@ impl Content {
                             (Pending::Get { id, offset, length, addr }, RequestKind::Get { id, offset, length })
                         }
                         op => {
-                            let kind = if op == OP_SUBSCRIPTIONS {
-                                RequestKind::Subscriptions { offset, length }
-                            } else {
-                                RequestKind::Timeline { offset, length }
+                            let kind = match op {
+                                OP_SUBSCRIPTIONS => RequestKind::Subscriptions { offset, length },
+                                OP_TIMELINE => RequestKind::Timeline { offset, length },
+                                _ => RequestKind::Names { offset, length },
                             };
                             (Pending::Records { op, offset, length, addr }, kind)
                         }
@@ -233,7 +292,7 @@ impl Content {
                     OP_UNSUBSCRIBE => RequestKind::Unsubscribe { feed: id },
                     _ => RequestKind::Identity,
                 };
-                Some((Pending::Feed { op: b[OP], id, title_len: 0 }, kind))
+                Some((Pending::Feed { op: b[OP], id, listed: false, len: 0 }, kind))
             }
             // The title is copied (and charged) only once the request is
             // accepted, after step 3.
@@ -241,7 +300,28 @@ impl Content {
                 && readable(rom, ram, addr, length as usize).is_some_and(|t| std::str::from_utf8(t).is_ok()))
             .then(|| {
                 let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
-                (Pending::Feed { op: OP_PUBLISH, id, title_len: length as u8 }, RequestKind::Publish { blob: id, title: Vec::new() })
+                (Pending::Feed { op: OP_PUBLISH, id, listed: false, len: length as u8 }, RequestKind::Publish { blob: id, title: Vec::new() })
+            }),
+            // The query and the names are copied (and charged) after step 3,
+            // like a publish title. A find's query and results share `addr`.
+            OP_FIND => ((offset == FIND_FEEDS as u32 || offset == FIND_ENTRIES as u32)
+                && (1..=MAX_NAME as u32).contains(&size)
+                && (1..=MAX_GET_LENGTH as u32).contains(&length)
+                && in_ram(length as usize)
+                && ram_range(ram.len(), addr, size as usize).is_some_and(|q| std::str::from_utf8(&ram[q..q + size as usize]).is_ok()))
+            .then(|| {
+                let (scope, length) = (offset as u8, length as u16);
+                (Pending::Find { scope, length, addr, query_len: size as u8 }, RequestKind::Find { scope, query: Vec::new(), length })
+            }),
+            OP_SET_PROFILE => readable(rom, ram, addr, length as usize).is_some_and(valid_display_name).then(|| {
+                let listed = offset & 1 != 0;
+                (Pending::Feed { op: OP_SET_PROFILE, id: [0; 32], listed, len: length as u8 }, RequestKind::SetProfile { name: Vec::new(), listed })
+            }),
+            OP_SET_NICKNAME => (length as usize <= MAX_NAME
+                && readable(rom, ram, addr, length as usize).is_some_and(|n| n.is_empty() || valid_display_name(n)))
+            .then(|| {
+                let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
+                (Pending::Feed { op: OP_SET_NICKNAME, id, listed: false, len: length as u8 }, RequestKind::SetNickname { feed: id, name: Vec::new() })
             }),
             _ => None,
         };
@@ -256,8 +336,12 @@ impl Content {
             *data = readable(rom, ram, addr, size as usize).unwrap().to_vec();
             *id = *blake3::hash(data).as_bytes();
         }
-        if let RequestKind::Publish { title, .. } = &mut kind {
-            *title = readable(rom, ram, addr, length as usize).unwrap().to_vec();
+        match &mut kind {
+            RequestKind::Publish { title: bytes, .. } | RequestKind::SetProfile { name: bytes, .. } | RequestKind::SetNickname { name: bytes, .. } => {
+                *bytes = readable(rom, ram, addr, length as usize).unwrap().to_vec();
+            }
+            RequestKind::Find { query, .. } => *query = readable(rom, ram, addr, size as usize).unwrap().to_vec(),
+            _ => {}
         }
 
         // Step 4.
@@ -266,7 +350,10 @@ impl Content {
         self.slots[index] = Some(Slot { block: block_addr, pending });
         let taken = match &kind {
             RequestKind::Put { data } => data.len(),
-            RequestKind::Publish { title, .. } => title.len(),
+            RequestKind::Publish { title: bytes, .. }
+            | RequestKind::SetProfile { name: bytes, .. }
+            | RequestKind::SetNickname { name: bytes, .. }
+            | RequestKind::Find { query: bytes, .. } => bytes.len(),
             _ => 0,
         };
         self.submitted.push(Request { handle, kind });
@@ -331,6 +418,17 @@ impl Content {
                 delivered = data.len();
                 status::DONE
             }
+            (&Pending::Find { length, addr, .. }, Outcome::Records { total, data }) => {
+                if !records_fit(OP_FIND, 0, length, *total, data) {
+                    return None;
+                }
+                let at = ram_range(ram.len(), addr, data.len())?;
+                ram[at..at + data.len()].copy_from_slice(data);
+                put32(ram, LENGTH, data.len() as u32);
+                put32(ram, SIZE, *total);
+                delivered = data.len();
+                status::DONE
+            }
             (Pending::Put { id: want, .. }, Outcome::Put { id }) => {
                 if id != want {
                     return None;
@@ -338,8 +436,8 @@ impl Content {
                 ram[block + ID..block + ID + 32].copy_from_slice(id);
                 status::DONE
             }
-            (&Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE, .. }, Outcome::Done) => status::DONE,
-            (&Pending::Feed { op: OP_PUBLISH, .. }, &Outcome::Published { seq }) => {
+            (&Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_SET_NICKNAME, .. }, Outcome::Done) => status::DONE,
+            (&Pending::Feed { op: OP_PUBLISH | OP_SET_PROFILE, .. }, &Outcome::Published { seq }) => {
                 put32(ram, SIZE, seq);
                 status::DONE
             }
@@ -347,7 +445,10 @@ impl Content {
                 ram[block + ID..block + ID + 32].copy_from_slice(key);
                 status::DONE
             }
-            (&Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH, .. }, Outcome::Refused) => status::REFUSED,
+            (
+                &Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_SET_PROFILE | OP_SET_NICKNAME, .. },
+                Outcome::Refused,
+            ) => status::REFUSED,
             (_, Outcome::NotFound) => status::NOT_FOUND,
             (_, Outcome::Failed) => status::FAILED,
             _ => return None,
@@ -368,7 +469,10 @@ impl Content {
                     Pending::Get { id, offset, length, addr } => (OP_GET, *block, id, offset, length as u32, addr, 0),
                     Pending::Put { id, size } => (OP_PUT, *block, id, 0, 0, 0, size),
                     Pending::Records { op, offset, length, addr } => (op, *block, [0; 32], offset, length as u32, addr, 0),
-                    Pending::Feed { op, id, title_len } => (op, *block, id, 0, title_len as u32, 0, 0),
+                    Pending::Find { scope, length, addr, query_len } => {
+                        (OP_FIND, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
+                    }
+                    Pending::Feed { op, id, listed, len } => (op, *block, id, listed as u32, len as u32, 0, 0),
                 },
             };
             out.push(op);
@@ -523,7 +627,7 @@ mod tests {
         let ram_end = RAM_BASE + RAM_LEN as u32;
         let bad = [
             block(0, [0; 32], 0, 1, 0x1000, 1),
-            block(9, [0; 32], 0, 1, 0x1000, 1),
+            block(0x0D, [0; 32], 0, 1, 0x1000, 1),
             block(0xFF, [0; 32], 0, 1, 0x1000, 1),
             get(0, 0),
             feed(OP_SUBSCRIPTIONS, 0, 0),
@@ -942,5 +1046,352 @@ mod tests {
         assert_eq!(rec(1), want(OP_PUBLISH, BLOCK + 64, [5; 32], 5));
         assert_eq!(rec(2), want(OP_IDENTITY, BLOCK + 128, [0; 32], 0));
         assert!(rec(3).iter().all(|&b| b == 0));
+    }
+
+    /// A names record (SPEC 9.5) with an `n`-byte name.
+    fn names_record(n: usize, flags: u8, key: u8) -> Vec<u8> {
+        let mut r = vec![(1 + NAMES_HEAD + n) as u8, flags];
+        r.extend([key; 32]);
+        r.extend(std::iter::repeat_n(b'n', n));
+        r
+    }
+
+    #[test]
+    fn valid_display_names() {
+        for good in ["a", "Ann Example", "ünïcode", "a b", "x\u{200B}", &"a".repeat(48)] {
+            assert!(valid_display_name(good.as_bytes()), "{good:?}");
+        }
+        for bad in [
+            "",
+            " a",
+            "a ",
+            "\ta",
+            "a\u{3000}",
+            "\u{A0}a",
+            "a\nb",
+            "a\u{0}b",
+            "a\u{7F}",
+            "a\u{9F}",
+            "a\u{85}",
+            &"a".repeat(49),
+        ] {
+            assert!(!valid_display_name(bad.as_bytes()), "{bad:?}");
+        }
+        assert!(!valid_display_name(&[0xC3, 0x28]));
+        // 48 bytes of two-byte characters is fine; 49 bytes is not.
+        assert!(valid_display_name("é".repeat(24).as_bytes()));
+        assert!(!valid_display_name(["é".repeat(24), "a".into()].concat().as_bytes()));
+    }
+
+    #[test]
+    fn names_are_submitted_like_subscriptions() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        for b in [
+            feed(OP_NAMES, 0, 0),
+            feed(OP_NAMES, 0, MAX_GET_LENGTH as u32 + 1),
+            block(OP_NAMES, [0; 32], 0, 2, ram_end - 1, 0),
+            block(OP_NAMES, [0; 32], 0, 1, ROM_BASE, 0),
+        ] {
+            assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+        }
+        assert_eq!(rig.submit(BLOCK, Some(&block(OP_NAMES, [9; 32], 7, MAX_GET_LENGTH as u32, ram_end - MAX_GET_LENGTH as u32, 0))), (1, 0));
+        assert_eq!(rig.content.take_requests(), [Request { handle: 1, kind: RequestKind::Names { offset: 7, length: MAX_GET_LENGTH as u16 } }]);
+    }
+
+    #[test]
+    fn names_records_must_tile_the_delivered_bytes() {
+        let (a, b, c) = (names_record(0, 0, 1), names_record(48, 3, 2), names_record(5, NAME_NICKNAME, 3));
+        assert_eq!((a.len(), b.len(), c.len()), (34, MAX_NAMES_RECORD, 39));
+        let abc = [a.clone(), b.clone(), c.clone()].concat();
+        let mut rig = Rig::new();
+        rig.write(DATA, &[0xEE; 200]);
+        rig.submit(BLOCK, Some(&feed(OP_NAMES, 0, 1000)));
+        let mut short_l = a.clone();
+        short_l[0] = 32;
+        let mut long_name = names_record(49, 0, 1);
+        long_name[0] = 82;
+        let mut bad_flags = abc.clone();
+        bad_flags[1] = 0x04;
+        for (data, why) in [
+            (&short_l[..], "L under 33"),
+            (&long_name, "name over 48 bytes"),
+            (&bad_flags, "unknown flag"),
+            (&abc[..abc.len() - 1], "last record cut short"),
+            (&[abc.clone(), vec![0]].concat(), "trailing byte"),
+            (&[abc.clone(), vec![33]].concat(), "trailing L"),
+            (&abc[..34 + 82], "fewer than fit"),
+        ] {
+            assert_eq!(rig.complete(&[records(1, 3, data)]), (1, 0), "{why}");
+        }
+        assert_eq!(rig.complete(&[records(1, 2, &abc)]), (1, 0), "more records than exist");
+        assert_eq!(rig.complete(&[got(1, 1, &[])]), (1, 0));
+        assert_eq!(rig.complete(&[records(1, 3, &abc)]), (0, 0));
+        assert_eq!(rig.read(DATA, abc.len() + 1), [&abc[..], &[0xEE]].concat());
+        assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), (abc.len() as u32).to_le_bytes());
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [3, 0, 0, 0]);
+        assert_eq!(status(&rig, BLOCK), status::DONE);
+
+        // Room for a and b (116 bytes) but not c: what is left (81) is under
+        // the largest record. With 82 bytes left, c must be delivered.
+        rig.submit(BLOCK, Some(&feed(OP_NAMES, 0, 116 + 81)));
+        assert_eq!(rig.complete(&[records(1, 3, &abc[..116])]), (0, 0));
+        rig.submit(BLOCK, Some(&feed(OP_NAMES, 0, 116 + 82)));
+        assert_eq!(rig.complete(&[records(1, 3, &abc[..116])]), (1, 0));
+        assert_eq!(rig.complete(&[records(1, 3, &abc)]), (0, 0));
+        // From index 2: only c.
+        rig.submit(BLOCK, Some(&feed(OP_NAMES, 2, 1000)));
+        assert_eq!(rig.complete(&[records(1, 3, &abc[34..])]), (1, 0));
+        assert_eq!(rig.complete(&[records(1, 3, &c)]), (0, 0));
+        // Buffer too small for one record; offset at the end; none at all.
+        for (offset, length, total) in [(0, 33, 3), (3, 1000, 3), (0, 1000, 0)] {
+            rig.submit(BLOCK, Some(&feed(OP_NAMES, offset, length)));
+            assert_eq!(rig.complete(&[records(1, total, &[])]), (0, 0), "{offset} {length}");
+            assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), [0, 0, 0, 0]);
+        }
+        // A buffer of 33 bytes still takes no record of 34.
+        rig.submit(BLOCK, Some(&feed(OP_NAMES, 0, 33)));
+        assert_eq!(rig.complete(&[records(1, 1, &a)]), (1, 0));
+    }
+
+    fn find(scope: u32, query_len: u32, length: u32, addr: u32) -> [u8; BLOCK_LEN] {
+        block(OP_FIND, [7; 32], scope, length, addr, query_len)
+    }
+
+    #[test]
+    fn find_copies_the_query_at_submit() {
+        let mut rig = Rig::new();
+        rig.write(DATA, "café".as_bytes());
+        assert_eq!(rig.submit(BLOCK, Some(&find(1, 5, 1000, DATA))), (1, 5));
+        rig.write(DATA, b"XXXXX");
+        assert_eq!(rig.submit(BLOCK + 64, Some(&find(2, 1, 1, DATA))), (2, 1));
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::Find { scope: FIND_FEEDS, query: "café".into(), length: 1000 } },
+                Request { handle: 2, kind: RequestKind::Find { scope: FIND_ENTRIES, query: b"X".to_vec(), length: 1 } },
+            ]
+        );
+    }
+
+    #[test]
+    fn bad_find_requests() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        rig.write(DATA, &[b'q'; 64]);
+        rig.write(DATA + 100, &[0xC3, 0x28]);
+        rig.write(ram_end - 4, b"tail");
+        for b in [
+            find(0, 4, 100, DATA),                    // no scope
+            find(3, 4, 100, DATA),                    // unknown scope
+            find(0x101, 4, 100, DATA),                // only scope 1 or 2, not low bits
+            find(1, 0, 100, DATA),                    // empty query
+            find(1, 49, 100, DATA),                   // query over 48 bytes
+            find(1, 2, 100, DATA + 100),              // not UTF-8
+            find(1, 4, 0, DATA),                      // empty buffer
+            find(1, 4, MAX_GET_LENGTH as u32 + 1, DATA),
+            find(1, 4, 5, ram_end - 4),               // buffer past the end of RAM
+            find(1, 5, 5, ram_end - 4),               // query and buffer past the end
+            find(1, 3, 4, ROM_BASE),                  // in ROM
+            find(1, 1, 1, 0),
+            find(1, 1, 1, u32::MAX),
+        ] {
+            assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+            assert_eq!(rig.read(BLOCK + 2, 50), b[2..], "only the status is written");
+        }
+        assert!(rig.content.pending_handles().is_empty());
+        // The boundaries: a 48-byte query, a buffer at the end of RAM, a
+        // buffer shorter than the query (the query is read from the same
+        // address), a 16,384-byte buffer.
+        for b in [
+            find(1, 48, 100, DATA),
+            find(2, 4, 4, ram_end - 4),
+            find(1, 48, 1, DATA),
+            find(2, 1, MAX_GET_LENGTH as u32, ram_end - MAX_GET_LENGTH as u32),
+        ] {
+            assert_ne!(rig.submit(BLOCK, Some(&b)).0, 0, "{b:02X?}");
+        }
+        // A buffer shorter than a 4-byte query that ends at the end of RAM.
+        assert_eq!(rig.submit(BLOCK, Some(&find(1, 4, 2, ram_end - 2))), (0, 0));
+    }
+
+    #[test]
+    fn find_delivers_whole_timeline_records() {
+        let (a, b) = (timeline_record(3, 1, 0xA1), timeline_record(120, 0, 0xB2));
+        let ab = [a.clone(), b.clone()].concat();
+        let mut rig = Rig::new();
+        rig.write(DATA, b"query");
+        rig.write(DATA + 400, &[0xEE]);
+        rig.submit(BLOCK, Some(&find(2, 5, 400, DATA)));
+        let mut bad_flags = a.clone();
+        bad_flags[1] = 0x02;
+        for (data, total, why) in [
+            (&bad_flags[..], 1, "unknown flag"),
+            (&a[..], 2, "fewer than fit"),
+            (&ab, 1, "more records than results"),
+            (&ab[..ab.len() - 1], 2, "cut short"),
+            (&[ab.clone(), vec![0]].concat()[..], 2, "trailing byte"),
+            (&ab, 17, "more than 16 results"),
+        ] {
+            assert_eq!(rig.complete(&[records(1, total, data)]), (1, 0), "{why}");
+        }
+        assert_eq!(rig.complete(&[got(1, 1, &[])]), (1, 0), "a get result does not complete a find");
+        assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0), "find needs no consent");
+        assert_eq!(rig.complete(&[records(1, 2, &ab)]), (0, 0));
+        assert_eq!(rig.read(DATA, ab.len()), ab, "the results overwrite the query");
+        assert_eq!(rig.read(DATA + 400, 1), [0xEE]);
+        assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), (ab.len() as u32).to_le_bytes());
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [2, 0, 0, 0]);
+        assert_eq!(status(&rig, BLOCK), status::DONE);
+
+        // Sixteen results, of which only those that fit are delivered.
+        rig.write(DATA, b"query");
+        rig.submit(BLOCK, Some(&find(1, 5, 400, DATA)));
+        assert_eq!(rig.complete(&[records(1, 16, &ab)]), (0, 0));
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [16, 0, 0, 0]);
+        // No results; a buffer too small for any record; no relay asked.
+        rig.write(DATA, b"query");
+        for (length, total) in [(400, 0), (110, 3)] {
+            assert_eq!(rig.submit(BLOCK, Some(&find(1, 5, length, DATA))).0, 1);
+            assert_eq!(rig.complete(&[records(1, total, &[])]), (0, 0), "{length} {total}");
+            assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), [0, 0, 0, 0]);
+        }
+        assert_eq!(rig.submit(BLOCK, Some(&find(1, 5, 400, DATA))).0, 1);
+        assert_eq!(rig.complete(&[records(1, 1, &[])]), (1, 0), "nothing delivered though a record fits");
+        rig.complete(&[done(1, Outcome::Failed)]);
+        assert_eq!(status(&rig, BLOCK), status::FAILED);
+    }
+
+    fn set_profile(name_len: u32, addr: u32, offset: u32) -> [u8; BLOCK_LEN] {
+        block(OP_SET_PROFILE, [7; 32], offset, name_len, addr, 0)
+    }
+
+    fn set_nickname(key: [u8; 32], name_len: u32, addr: u32) -> [u8; BLOCK_LEN] {
+        block(OP_SET_NICKNAME, key, 0, name_len, addr, 0)
+    }
+
+    #[test]
+    fn set_profile_and_set_nickname() {
+        let mut rig = Rig::new();
+        rig.write(DATA, "Zoë Example".as_bytes());
+        let n = "Zoë Example".len() as u32;
+        assert_eq!(rig.submit(BLOCK, Some(&set_profile(n, DATA, 0xFFFF_FFFF))), (1, n as usize));
+        assert_eq!(rig.submit(BLOCK + 64, Some(&set_profile(3, ROM_BASE, 2))), (2, 3));
+        assert_eq!(rig.submit(BLOCK + 128, Some(&set_nickname([4; 32], 3, DATA))), (0, 0), "\"Zo\" and half of \"ë\"");
+        assert_eq!(rig.submit(BLOCK + 128, Some(&set_nickname([4; 32], 4, DATA))), (3, 4));
+        rig.write(DATA, b"XXXX");
+        // An empty nickname removes it; it may start just past the end of RAM or ROM.
+        assert_eq!(rig.submit(BLOCK + 192, Some(&set_nickname([5; 32], 0, RAM_BASE + RAM_LEN as u32))), (4, 0));
+        assert_eq!(rig.submit(BLOCK + 256, Some(&set_nickname([6; 32], 0, ROM_BASE + ROM.len() as u32))), (5, 0));
+        assert_eq!(rig.submit(BLOCK + 320, Some(&set_nickname([7; 32], 5, ROM_BASE + 4))), (6, 5));
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::SetProfile { name: "Zoë Example".into(), listed: true } },
+                Request { handle: 2, kind: RequestKind::SetProfile { name: b"rom".to_vec(), listed: false } },
+                Request { handle: 3, kind: RequestKind::SetNickname { feed: [4; 32], name: "Zoë".into() } },
+                Request { handle: 4, kind: RequestKind::SetNickname { feed: [5; 32], name: Vec::new() } },
+                Request { handle: 5, kind: RequestKind::SetNickname { feed: [6; 32], name: Vec::new() } },
+                Request { handle: 6, kind: RequestKind::SetNickname { feed: [7; 32], name: b"bytes".to_vec() } },
+            ]
+        );
+        // Outcomes that do not fit the request are ignored.
+        assert_eq!(rig.complete(&[done(1, Outcome::Done)]), (1, 0));
+        assert_eq!(rig.complete(&[done(3, Outcome::Published { seq: 1 })]), (1, 0));
+        assert_eq!(rig.complete(&[records(4, 0, &[])]), (1, 0));
+        assert_eq!(rig.complete(&[done(4, Outcome::Identity { key: [0; 32] })]), (1, 0));
+        let (ignored, _) = rig.complete(&[
+            done(1, Outcome::Published { seq: 0x0A0B_0C0D }),
+            done(2, Outcome::Refused),
+            done(3, Outcome::Done),
+            done(4, Outcome::Refused),
+            done(5, Outcome::NotFound),
+            done(6, Outcome::Failed),
+        ]);
+        assert_eq!(ignored, 0);
+        assert_eq!(rig.events(), [(5, 1, 1, 0), (5, 2, 5, 0), (5, 3, 1, 0), (5, 4, 5, 0), (5, 5, 2, 0), (5, 6, 3, 0)]);
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [0x0D, 0x0C, 0x0B, 0x0A], "size is the new seq");
+        assert_eq!(rig.read(BLOCK + ID as u32, 32), [7; 32], "id untouched");
+        assert_eq!(rig.read(BLOCK + 128 + 2, 50), set_nickname([4; 32], 4, DATA)[2..], "only the status written");
+        assert!(rig.content.pending_handles().is_empty());
+    }
+
+    #[test]
+    fn bad_set_profile_and_set_nickname_requests() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        rig.write(DATA, b" lead");
+        rig.write(DATA + 16, b"trail ");
+        rig.write(DATA + 32, b"a\x07b");
+        rig.write(DATA + 48, &[0xC3, 0x28]);
+        rig.write(DATA + 64, &[b'a'; 49]);
+        rig.write(ram_end - 2, b"ok");
+        let mut bad = vec![
+            set_profile(0, DATA + 64, 1), // empty
+            set_profile(0, ram_end, 1),
+            set_profile(3, ram_end - 2, 0), // past the end of RAM
+            set_profile(4, ROM_BASE + ROM.len() as u32 - 3, 0),
+            set_profile(1, 0, 0),
+            set_profile(1, u32::MAX, 0),
+            set_profile(49, DATA + 64, 0),
+            set_nickname([1; 32], 1, 0),
+            set_nickname([1; 32], 0, 0), // an empty name must still be at a valid place
+            set_nickname([1; 32], 0, ram_end + 1),
+            set_nickname([1; 32], 49, DATA + 64),
+            set_nickname([1; 32], 3, ram_end - 2),
+        ];
+        for (addr, len) in [(DATA, 5), (DATA + 16, 6), (DATA + 32, 3), (DATA + 48, 2)] {
+            bad.push(set_profile(len, addr, 0));
+            bad.push(set_nickname([1; 32], len, addr));
+        }
+        for b in &bad {
+            assert_eq!(rig.submit(BLOCK, Some(b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+            assert_eq!(rig.read(BLOCK + 2, 50), b[2..], "only the status is written");
+        }
+        assert!(rig.content.pending_handles().is_empty());
+        for b in [
+            set_profile(48, DATA + 64, 0),
+            set_profile(2, ram_end - 2, 0),
+            set_nickname([1; 32], 48, DATA + 64),
+            set_nickname([1; 32], 2, ram_end - 2),
+            set_nickname([1; 32], 4, DATA + 1), // "lead"
+        ] {
+            assert_ne!(rig.submit(BLOCK, Some(&b)).0, 0, "{b:02X?}");
+        }
+    }
+
+    /// STATE.md 1.8: the pending records of names, find, set profile and
+    /// set nickname.
+    #[test]
+    fn state_records_of_names_find_and_profiles() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"Ann");
+        rig.submit(BLOCK, Some(&block(OP_NAMES, [3; 32], 5, 300, DATA, 77)));
+        rig.submit(BLOCK + 64, Some(&find(2, 3, 900, DATA)));
+        rig.submit(BLOCK + 128, Some(&set_profile(3, DATA, 0xFFFF_FFFF)));
+        rig.submit(BLOCK + 192, Some(&set_profile(3, DATA, 2)));
+        rig.submit(BLOCK + 256, Some(&block(OP_SET_NICKNAME, [9; 32], 1, 3, DATA, 8)));
+        let mut out = Vec::new();
+        rig.content.write_state(&mut out);
+        assert_eq!(out.len(), 8 * 53);
+        let rec = |i: usize| &out[i * 53..(i + 1) * 53];
+        let want = |op: u8, block: u32, id: [u8; 32], fields: [u32; 4]| {
+            let mut r = vec![op];
+            r.extend_from_slice(&block.to_le_bytes());
+            r.extend_from_slice(&id);
+            for v in fields {
+                r.extend_from_slice(&v.to_le_bytes());
+            }
+            r
+        };
+        assert_eq!(rec(0), want(OP_NAMES, BLOCK, [0; 32], [5, 300, DATA, 0]));
+        assert_eq!(rec(1), want(OP_FIND, BLOCK + 64, [0; 32], [2, 900, DATA, 3]));
+        assert_eq!(rec(2), want(OP_SET_PROFILE, BLOCK + 128, [0; 32], [1, 3, 0, 0]));
+        assert_eq!(rec(3), want(OP_SET_PROFILE, BLOCK + 192, [0; 32], [0, 3, 0, 0]));
+        assert_eq!(rec(4), want(OP_SET_NICKNAME, BLOCK + 256, [9; 32], [0, 3, 0, 0]));
+        assert!(rec(5).iter().all(|&b| b == 0));
     }
 }
