@@ -1,4 +1,4 @@
-//! Image file format (SPEC 2).
+//! Image file format (SPEC 2). Profile 1 is the RV32IMC machine.
 
 use std::fmt;
 
@@ -7,14 +7,13 @@ pub const FORMAT_VERSION: u8 = 0;
 pub const PROFILE: u8 = 1;
 pub const HEADER_LEN: usize = 32;
 pub const ROM_MAX: usize = 131_072;
-pub const RAM_PAGES_MIN: u8 = 4;
+pub const RAM_PAGES_MIN: u8 = 1;
 pub const RAM_PAGES_MAX: u8 = 128;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 
 /// Device slots and versions this implementation provides (SPEC 3).
-pub const SUPPORTED_DEVICES: [DeviceReq; 5] = [
-    DeviceReq { slot: 0, version: 0 },
+pub const SUPPORTED_DEVICES: [DeviceReq; 4] = [
     DeviceReq { slot: 1, version: 0 },
     DeviceReq { slot: 2, version: 0 },
     DeviceReq { slot: 3, version: 0 },
@@ -162,7 +161,7 @@ impl Image {
     }
 
     pub fn has_device(&self, slot: u8) -> bool {
-        slot <= 1 || self.devices.iter().any(|d| d.slot == slot)
+        slot == 1 || self.devices.iter().any(|d| d.slot == slot)
     }
 
     pub fn title_lossy(&self) -> String {
@@ -189,8 +188,8 @@ mod tests {
         assert_eq!(img.title, b"hi");
         assert_eq!(img.ram_pages, 4);
         assert_eq!(img.rom, [0x76]);
-        assert!(img.has_device(0) && img.has_device(1) && img.has_device(2));
-        assert!(!img.has_device(3));
+        assert!(img.has_device(1) && img.has_device(2));
+        assert!(!img.has_device(0) && !img.has_device(3));
         assert_eq!(img.id, *blake3::hash(&file).as_bytes());
     }
 
@@ -207,14 +206,14 @@ mod tests {
         check(&|f| f[5] = 2, ImageError::UnsupportedProfile(2));
         check(&|f| f[6] = 0, ImageError::RomLength(0));
         check(&|f| f[8] = 2, ImageError::RomLength(0x20001));
-        check(&|f| f[9] = 3, ImageError::RamPages(3));
+        check(&|f| f[9] = 0, ImageError::RamPages(0));
         check(&|f| f[9] = 129, ImageError::RamPages(129));
         check(&|f| f[10] = 17, ImageError::DeviceCount(17));
         check(&|f| f[15] = 1, ImageError::ReservedNotZero);
         check(&|f| f.push(0), ImageError::LengthMismatch { expected: 35, actual: 36 });
         check(&|f| f[33] = 1, ImageError::UnsupportedDevice(DeviceReq { slot: 2, version: 1 }));
         check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq { slot: 5, version: 0 }));
-        check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq { slot: 5, version: 0 }));
+        check(&|f| f[32] = 0, ImageError::UnsupportedDevice(DeviceReq { slot: 0, version: 0 }));
     }
 
     #[test]
@@ -222,6 +221,11 @@ mod tests {
         let d = DeviceReq { slot: 2, version: 0 };
         let file = Image::build("", 4, &[d, d], &[0]);
         assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(2)));
+    }
+
+    #[test]
+    fn one_ram_page_accepted() {
+        assert_eq!(Image::parse(&Image::build("", 1, &[], &[0])).unwrap().ram_pages, 1);
     }
 
     #[test]

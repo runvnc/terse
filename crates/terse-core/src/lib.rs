@@ -1,14 +1,14 @@
-//! Terse machine core (SPEC.md, profile 1).
+//! Terse machine core (SPEC.md, machine profile 1): the RV32IMC CPU, the
+//! machine and its devices.
 //!
 //! Pure and deterministic: no threads, no clock, no OS randomness. The host
 //! passes events, the Unix time, random bytes, controller state and content
 //! completions in through [`FrameInput`].
 
 pub mod content;
-pub mod frames;
+pub mod cpu;
 pub mod image;
 pub mod machine;
-pub mod memory;
 pub mod script;
 pub mod system;
 pub mod terminal;
@@ -16,10 +16,11 @@ pub mod vector;
 pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
-pub use frames::FrameMachine;
+pub use cpu::{Cpu, Fault, FaultKind, RAM_BASE, RAM_INSTRUCTION_COST, ROM_BASE};
 pub use image::{DeviceReq, Image, ImageError};
 pub use machine::{
-    FrameInput, FrameResult, Machine, Registers, MAX_RANDOM_READS_PER_FRAME, STATE_DOMAIN, TSTATES_PER_FRAME,
+    BUDGET_PER_FRAME, ERR_BUFFER, ERR_UNKNOWN, FrameInput, FrameResult, MAX_RANDOM_PER_FRAME, Machine, STATE_DOMAIN,
+    Stopped, call, charge,
 };
 pub use script::Script;
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};

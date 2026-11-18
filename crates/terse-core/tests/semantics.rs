@@ -10,7 +10,7 @@ mod common;
 use std::fmt::Write as _;
 use std::process::Command;
 
-use terse_rv::cpu::{Bus, Code, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
+use terse_core::cpu::{Bus, Code, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
 
 struct Rng(u64);
 

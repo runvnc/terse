@@ -6,8 +6,6 @@ members = [
     "crates/terse-relay",
     "crates/terse-cli",
     "crates/terse-host",
-    "crates/rustzx-z80",
-    "crates/terse-rv",
 ]
 
 [workspace.package]
@@ -19,14 +17,6 @@ publish = false
 terse-core = { path = "crates/terse-core" }
 terse-net = { path = "crates/terse-net" }
 terse-relay = { path = "crates/terse-relay" }
-rustzx-z80 = { path = "crates/rustzx-z80" }
-terse-rv = { path = "crates/terse-rv" }
-
-[profile.dev.package.rustzx-z80]
-opt-level = 3
 
 [profile.dev.package.terse-core]
-opt-level = 2
-
-[profile.dev.package.terse-rv]
 opt-level = 3

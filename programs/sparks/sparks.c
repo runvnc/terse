@@ -1,23 +1,21 @@
 /* sparks: steer a small craft around an arena, collect drifting sparks and
- * keep clear of the rotating sweepers. Uses the terminal for the HUD and the
- * 2D vector display (device 3) for everything else; built with SDCC (see
- * build.sh).
+ * keep clear of the rotating sweepers. Profile 2 (RV32IMC, RV-PROFILE.md)
+ * port of programs/sparks/sparks.c: the same game, frame for frame, in
+ * plain C (no assembly multiply, no static scratch variables, no
+ * multiplications spelled as shifts). Built with clang (see build.sh).
  *
- * Coordinates are sixteenths of a screen unit (SPEC 8.1). The Z80 does all
- * the geometry: angles are 0-255 (a full turn; 0 points right, 64 down),
- * sines come from a table, and fmul() scales by them. All randomness mixes in
- * port 1Ch, so a run is reproducible from its recorded inputs.
+ * Coordinates are sixteenths of a screen unit (SPEC 8.1). Angles are 0-255
+ * (a full turn; 0 points right, 64 down), sines come from a table, and
+ * fmul() scales by them. All randomness mixes in the host's random bytes,
+ * so a run is reproducible from its recorded inputs.
  *
- * Controls: Left/Right turn, Up thrusts, Enter starts, Esc quits, P switches
- * between the clean and the phosphor display style (SPEC 8.7). Controller 0:
- * d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
- * starts, Y switches the style. */
+ * Controls: Left/Right turn, Up thrusts, Enter starts, Esc quits. Controller
+ * 0: d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
+ * starts. */
 
 #include <stdint.h>
 #include "terse.h"
 
-/* The arena: its border runs just inside the screen; the HUD row is drawn
- * over its top. */
 #define AX0 64
 #define AX1 10176
 #define AY0 64
@@ -54,67 +52,22 @@ static const int8_t sintab[256] = {
 #define SIN(a) (sintab[(uint8_t)(a)])
 #define COS(a) (sintab[(uint8_t)((a) + 64)])
 
-/* (v * s) / 128, rounded towards zero: v times a table sine. |v| < 66000. */
-int16_t fmul(int8_t s, int16_t v) __naked
+/* (v * s) / 128, rounded towards zero: v times a table sine. */
+static int16_t fmul(int s, int v)
 {
-    (void)s;
-    (void)v;
-    __asm
-        ld   c, a           ; s (a), v (de): sdcccall(1)
-        xor  a, d
-        push af             ; bit 7: sign of the result
-        ld   a, c
-        or   a, a
-        jp   p, 1$
-        neg
-1$:     ld   c, a           ; c = |s|
-        bit  7, d
-        jr   z, 2$
-        xor  a, a           ; de = |v|
-        sub  a, e
-        ld   e, a
-        sbc  a, a
-        sub  a, d
-        ld   d, a
-2$:     xor  a, a           ; a:hl = de * c, most significant bit of c first
-        ld   h, a
-        ld   l, a
-        ld   b, #8
-3$:     add  hl, hl
-        rla
-        sla  c
-        jr   nc, 4$
-        add  hl, de
-        adc  a, #0
-4$:     djnz 3$
-        sla  l              ; (a:hl) >> 7, the low 16 bits, into de
-        rl   h
-        rla
-        ld   d, a
-        ld   e, h
-        pop  af
-        or   a, a
-        ret  p
-        xor  a, a           ; negate
-        sub  a, e
-        ld   e, a
-        sbc  a, a
-        sub  a, d
-        ld   d, a
-        ret
-    __endasm;
+    return (int16_t)(v * s / 128);
 }
 
-static int16_t abs16(int16_t v) { return v < 0 ? -v : v; }
+static int abs_(int v) { return v < 0 ? -v : v; }
 
-/* xorshift16, stirred with the host's random bytes (port 1Ch). */
+/* xorshift16, stirred with the host's random bytes. */
 static uint16_t seed;
 static uint8_t rnd(void)
 {
     seed ^= seed << 7;
     seed ^= seed >> 9;
     seed ^= seed << 8;
-    seed ^= SYS_RANDOM;
+    seed ^= terse_random_byte();
     if (!seed)
         seed = 0xACE1;
     return (uint8_t)seed;
@@ -124,7 +77,7 @@ static uint8_t rnd(void)
  * position's fraction. */
 static int16_t cx, cy, cvx, cvy;
 static uint8_t cxf, cyf, cang;
-static int8_t turn;
+static int turn;
 static uint8_t thrust;
 
 typedef struct {
@@ -144,37 +97,22 @@ typedef struct {
     uint8_t slot;    /* see new_sweeper */
 } sweeper_t;
 static sweeper_t sweepers[MAX_SWEEPERS];
-static uint8_t nsweepers;
+static int nsweepers;
 
 static uint8_t state, lives, inv, flash, wait, tick, hud_dirty, until_next;
 static uint8_t digits[4];
 
-/* Input. */
-static terse_event ev;
 static terse_pad pad;
-static uint8_t key_left, key_right, key_up, key_start, pad_prev, y_prev, phosphor;
-#define KEY_P 0x13
+static uint8_t key_left, key_right, key_up, key_start, pad_prev;
 
 static uint8_t list[1024];
 
-/* Scratch, kept static for speed. */
-static spark_t *s;
-static sweeper_t *w;
-static int16_t dx, dy, t, u;
-static uint8_t i;
-
-/* Random multiples by shifts: SDCC's multiply costs hundreds of T-states. */
-static uint16_t r;
-static uint16_t rnd_x38(void) { r = rnd(); r <<= 1; return (r << 4) + (r << 1) + r; } /* 0-9690 */
-static uint16_t rnd_x28(void) { r = rnd(); r <<= 2; return (r << 3) - r; }           /* 0-7140 */
-static int16_t rnd_jitter(void) { r = rnd() & 127; return (int16_t)((r << 1) + r) - 192; } /* -192-189 */
-
-static void new_spark(void)
+static void new_spark(spark_t *s)
 {
-    s->x = AX0 + 256 + rnd_x38();
-    s->y = AY0 + 256 + rnd_x28();
+    s->x = AX0 + 256 + rnd() * 38;
+    s->y = AY0 + 256 + rnd() * 28;
     /* Not on top of the craft. */
-    if (abs16(s->x - cx) < 960 && abs16(s->y - cy) < 960)
+    if (abs_(s->x - cx) < 960 && abs_(s->y - cy) < 960)
         s->x += s->x > 5120 ? -4800 : 4800;
     s->vx = (int8_t)(rnd() & 7) - 4;
     s->vy = (int8_t)(rnd() & 7) - 4;
@@ -189,22 +127,21 @@ static void new_spark(void)
 static const int16_t slot_x[4] = { 1264, 3814, 6364, 8914 };
 static const int16_t slot_y[3] = { 1264, 3814, 6364 };
 
-static uint8_t slot_taken(uint8_t slot)
+static int slot_taken(int slot)
 {
-    sweeper_t *o = sweepers;
-    uint8_t j;
-    for (j = 0; j < nsweepers; j++, o++)
-        if (o->slot == slot)
+    for (int j = 0; j < nsweepers; j++)
+        if (sweepers[j].slot == slot)
             return 1;
     return 0;
 }
 
-/* Sets up sweepers[nsweepers] (w); the caller counts it. */
-static void new_sweeper(void)
+static int jitter(void) { return (rnd() & 127) * 3 - 192; }
+
+/* Sets up sweepers[nsweepers]; the caller counts it. */
+static void new_sweeper(sweeper_t *w)
 {
-    uint8_t slot, tries, k;
-    r = rnd() & 31;
-    w->len = 640 + (r << 3) + (r << 2);
+    int slot, tries;
+    w->len = 640 + (rnd() & 31) * 12;
     /* From a random slot, the next free one away from the craft (or, if
      * there is none, any free one). */
     slot = rnd() & 15;
@@ -215,15 +152,14 @@ static void new_sweeper(void)
             slot = 0;
         if (slot_taken(slot))
             continue;
-        k = slot >> 2;
-        w->px = slot_x[slot & 3] + rnd_jitter();
-        w->py = slot_y[k] + rnd_jitter();
-        if (tries >= SLOTS || abs16(w->px - cx) + abs16(w->py - cy) > w->len + 1600)
+        w->px = slot_x[slot & 3] + jitter();
+        w->py = slot_y[slot >> 2] + jitter();
+        if (tries >= SLOTS || abs_(w->px - cx) + abs_(w->py - cy) > w->len + 1600)
             break;
     }
     w->slot = slot;
     w->ang = (uint16_t)rnd() << 8;
-    w->speed = 128 + (int16_t)rnd();
+    w->speed = 128 + rnd();
     if (rnd() & 1)
         w->speed = -w->speed;
 }
@@ -241,6 +177,7 @@ static void put_at(uint8_t col, uint8_t row, uint8_t fg, uint8_t bg, const char 
 /* Row 0: title, score and lives on a coloured background. */
 static void hud(void)
 {
+    char score[5];
     hud_dirty = 0;
     term_fill(0, 0, TERM_COLS, ' ', 7, HUD_BG);
     put_at(2, 0, 226, HUD_BG, "SPARKS");
@@ -249,36 +186,33 @@ static void hud(void)
         return;
     }
     put_at(30, 0, 15, HUD_BG, "SCORE ");
-    for (i = 0; i < 4; i++)
-        term_putc('0' + digits[i]);
+    for (int i = 0; i < 4; i++)
+        score[i] = '0' + digits[i];
+    term_write(score, 4);
     put_at(62, 0, 15, HUD_BG, "LIVES ");
-    TERM_FG = 196;
-    for (i = 0; i < lives; i++) {
-        term_put_cp(0x2665);
-        term_putc(' ');
-    }
+    term_fg(196);
+    for (int i = 0; i < lives; i++)
+        term_puts("♥ ");
 }
 
 /* A text box in the middle of the screen, rows 11-17. */
 static void box(void)
 {
-    for (i = 11; i < 18; i++)
-        term_fill(18, i, 44, ' ', 7, BOX_BG);
+    for (int row = 11; row < 18; row++)
+        term_fill(18, row, 44, ' ', 7, BOX_BG);
 }
 
-static void reset_field(uint8_t n)
+static void reset_field(int n)
 {
     cx = 5120;
     cy = 3840;
     cvx = cvy = 0;
     cxf = cyf = 0;
     cang = 192;
-    for (nsweepers = 0; nsweepers < n; nsweepers++) {
-        w = &sweepers[nsweepers];
-        new_sweeper();
-    }
-    for (s = sparks, i = 0; i < NSPARKS; i++, s++)
-        new_spark();
+    for (nsweepers = 0; nsweepers < n; nsweepers++)
+        new_sweeper(&sweepers[nsweepers]);
+    for (int i = 0; i < NSPARKS; i++)
+        new_spark(&sparks[i]);
 }
 
 static void start_title(void)
@@ -302,7 +236,7 @@ static void start_game(void)
     inv = INVULNERABLE;
     flash = 0;
     until_next = 10;
-    for (i = 0; i < 4; i++)
+    for (int i = 0; i < 4; i++)
         digits[i] = 0;
     reset_field(1);
     term_color(7, 0);
@@ -312,20 +246,21 @@ static void start_game(void)
 
 static void game_over(void)
 {
+    char score[5];
     state = OVER;
     wait = 45;
     box();
     put_at(35, 12, 196, BOX_BG, "G A M E   O V E R");
     put_at(36, 14, 15, BOX_BG, "Score ");
-    for (i = 0; i < 4; i++)
-        term_putc('0' + digits[i]);
+    for (int i = 0; i < 4; i++)
+        score[i] = '0' + digits[i];
+    term_write(score, 4);
     put_at(21, 16, 250, BOX_BG, "Enter or Start: play again.  Esc: quit.");
 }
 
-/* Called from the spark loop, so it leaves `i` and `s` alone. */
 static void scored(void)
 {
-    uint8_t j = 3;
+    int j = 3;
     while (++digits[j] > 9) {
         digits[j] = 0;
         if (!j)
@@ -336,8 +271,7 @@ static void scored(void)
     if (--until_next == 0) {
         until_next = 10;
         if (nsweepers < MAX_SWEEPERS) {
-            w = &sweepers[nsweepers];
-            new_sweeper();
+            new_sweeper(&sweepers[nsweepers]);
             nsweepers++;
         }
     }
@@ -345,6 +279,7 @@ static void scored(void)
 
 static void input(void)
 {
+    terse_event ev;
     uint8_t down, b, edge;
     key_start = 0;
     while (terse_event_pop(&ev)) {
@@ -352,22 +287,10 @@ static void input(void)
             continue;
         down = ev.type == EV_KEY_DOWN;
         switch (ev.a) {
-        case KEY_LEFT:
-            key_left = down;
-            break;
-        case KEY_RIGHT:
-            key_right = down;
-            break;
-        case KEY_UP:
-            key_up = down;
-            break;
-        case KEY_ENTER:
-            key_start |= down;
-            break;
-        case KEY_P:
-            if (down)
-                phosphor ^= 1;
-            break;
+        case KEY_LEFT: key_left = down; break;
+        case KEY_RIGHT: key_right = down; break;
+        case KEY_UP: key_up = down; break;
+        case KEY_ENTER: key_start |= down; break;
         case KEY_ESCAPE:
             if (down)
                 terse_exit(0);
@@ -382,12 +305,6 @@ static void input(void)
     pad_prev = b;
     if (edge & (PAD_A | 0x80))
         key_start = 1;
-    if (pad.buttons & ~y_prev & PAD_Y)
-        phosphor ^= 1;
-    y_prev = pad.buttons;
-    /* The shapes are outlined and add light in the phosphor style; the
-     * persistence stays at its default (160). */
-    vec_style(phosphor);
 
     turn = 0;
     if (key_left || (b & PAD_LEFT))
@@ -402,44 +319,43 @@ static void input(void)
 /* The demo flies itself: turn towards the nearest spark, thrust when facing it. */
 static void autopilot(void)
 {
-    int16_t best = 0x7FFF, tx = 0, ty = 0, d, cross;
-    int8_t c = COS(cang), sn = SIN(cang);
-    for (s = sparks, i = 0; i < NSPARKS; i++, s++) {
-        dx = s->x - cx;
-        dy = s->y - cy;
-        d = abs16(dx) + abs16(dy);
+    int best = 0x7FFF, tx = 0, ty = 0, c = COS(cang), sn = SIN(cang);
+    for (int i = 0; i < NSPARKS; i++) {
+        int16_t dx = sparks[i].x - cx, dy = sparks[i].y - cy;
+        int16_t d = abs_(dx) + abs_(dy);
         if (d < best) {
             best = d;
             tx = dx;
             ty = dy;
         }
     }
-    cross = fmul(c, ty) - fmul(sn, tx);
-    t = fmul(c, tx) + fmul(sn, ty);
+    int16_t cross = fmul(c, ty) - fmul(sn, tx);
+    int16_t along = fmul(c, tx) + fmul(sn, ty);
     turn = cross > 64 ? 4 : cross < -64 ? -4 : 0;
-    thrust = t > abs16(cross);
+    thrust = along > abs_(cross);
 }
 
 static void move_craft(void)
 {
+    int16_t t;
     cang += turn;
     if (thrust) {
-        cvx += (int16_t)COS(cang) << 1;
-        cvy += (int16_t)SIN(cang) << 1;
+        cvx += COS(cang) * 2;
+        cvy += SIN(cang) * 2;
     }
     /* Drag, down to rest. */
     if (cvx > 0)
         cvx -= (cvx >> 6) + 1;
     else if (cvx < 0)
-        cvx += ((-cvx) >> 6) + 1;
+        cvx += (-cvx >> 6) + 1;
     if (cvy > 0)
         cvy -= (cvy >> 6) + 1;
     else if (cvy < 0)
-        cvy += ((-cvy) >> 6) + 1;
-    t = (int16_t)cxf + cvx;
+        cvy += (-cvy >> 6) + 1;
+    t = cxf + cvx;
     cx += t >> 8;
     cxf = (uint8_t)t;
-    t = (int16_t)cyf + cvy;
+    t = cyf + cvy;
     cy += t >> 8;
     cyf = (uint8_t)t;
     /* Soft bounce: reflect, losing half the speed. */
@@ -465,8 +381,8 @@ static void move_craft(void)
 
 static void move_sparks(void)
 {
-    int8_t a, b;
-    for (s = sparks, i = 0; i < NSPARKS; i++, s++) {
+    for (int i = 0; i < NSPARKS; i++) {
+        spark_t *s = &sparks[i];
         s->x += s->vx;
         s->y += s->vy;
         if (s->x < AX0 + SPARK_EDGE || s->x > AX1 - SPARK_EDGE)
@@ -475,13 +391,11 @@ static void move_sparks(void)
             s->vy = -s->vy;
         if (state == OVER)
             continue;
-        dx = s->x - cx;
-        dy = s->y - cy;
+        int16_t dx = s->x - cx, dy = s->y - cy;
         if (dx > -224 && dx < 224 && dy > -224 && dy < 224) {
-            a = dx >> 4;
-            b = dy >> 4;
-            if ((int16_t)(a * a) + (int16_t)(b * b) < 196) {
-                new_spark();
+            int8_t a = dx >> 4, b = dy >> 4;
+            if (a * a + b * b < 196) {
+                new_spark(s);
                 if (state == PLAY)
                     scored();
             }
@@ -490,28 +404,25 @@ static void move_sparks(void)
 }
 
 /* Rotates the sweepers; returns 1 if one touches the craft. */
-static uint8_t move_sweepers(void)
+static int move_sweepers(void)
 {
-    uint8_t hit = 0;
-    int16_t lim;
-    int8_t c, sn;
-    for (w = sweepers, i = 0; i < nsweepers; i++, w++) {
+    int hit = 0;
+    for (int i = 0; i < nsweepers; i++) {
+        sweeper_t *w = &sweepers[i];
         w->ang += w->speed;
         w->a = w->ang >> 8;
-        c = COS(w->a);
-        sn = SIN(w->a);
+        int c = COS(w->a), sn = SIN(w->a);
         w->ex = fmul(c, w->len);
         w->ey = fmul(sn, w->len);
         if (state == OVER)
             continue;
-        dx = cx - w->px;
-        dy = cy - w->py;
-        lim = w->len + HIT_LEN;
+        int16_t dx = cx - w->px, dy = cy - w->py;
+        int lim = w->len + HIT_LEN;
         if (dx > -lim && dx < lim && dy > -lim && dy < lim) {
             /* The craft in the sweeper's frame: u along, t across. */
-            u = fmul(c, dx) + fmul(sn, dy);
+            int16_t u = fmul(c, dx) + fmul(sn, dy);
             if (u > -lim && u < lim) {
-                t = fmul(c, dy) - fmul(sn, dx);
+                int16_t t = fmul(c, dy) - fmul(sn, dx);
                 if (t > -HIT_WIDE && t < HIT_WIDE)
                     hit = 1;
             }
@@ -558,10 +469,6 @@ static void step(void)
 /* One display list for the frame. */
 static void draw(void)
 {
-    uint8_t p, alpha;
-    int8_t c, sn;
-    int16_t nx, ny, lx, ly, rx, ry, bx, by;
-
     vec_begin(list);
     /* Arena border. */
     vec_colour(70, 110, 190, 255);
@@ -572,56 +479,54 @@ static void draw(void)
     vec_line(AX0, AY1);
     vec_line(AX0, AY0);
     if (flash) {
-        vec_colour(255, 40, 40, flash << 3);
+        vec_colour(255, 40, 40, flash * 8);
         vec_rect(AX1, AY1);
     }
 
     /* Sparks: a disc and a pulsing ring. */
     vec_width(20);
-    for (s = sparks, i = 0; i < NSPARKS; i++, s++) {
-        p = (tick + s->phase) & 63;
+    for (int i = 0; i < NSPARKS; i++) {
+        spark_t *s = &sparks[i];
+        int p = (tick + s->phase) & 63;
         if (p >= 32)
             p = 63 - p;
         vec_move(s->x, s->y);
         vec_colour(255, 225, 90, 255);
         vec_disc(52);
-        vec_colour(255, 190, 60, 230 - (p << 2) - (p << 1));
-        vec_circle(80 + (p << 1));
+        vec_colour(255, 190, 60, 230 - p * 6);
+        vec_circle(80 + p * 2);
     }
 
     /* Sweepers and their pivots. */
     vec_width(48);
     vec_colour(255, 80, 50, 255);
-    for (w = sweepers, i = 0; i < nsweepers; i++, w++) {
+    for (int i = 0; i < nsweepers; i++) {
+        sweeper_t *w = &sweepers[i];
         vec_move(w->px - w->ex, w->py - w->ey);
         vec_line(w->px + w->ex, w->py + w->ey);
     }
     vec_colour(255, 170, 130, 255);
-    for (w = sweepers, i = 0; i < nsweepers; i++, w++) {
-        vec_move(w->px, w->py);
+    for (int i = 0; i < nsweepers; i++) {
+        vec_move(sweepers[i].px, sweepers[i].py);
         vec_disc(56);
     }
 
     /* The craft: an arrowhead, see-through while invulnerable. */
     if (state != OVER) {
-        c = COS(cang);
-        sn = SIN(cang);
-        bx = cx - fmul(c, 64);
-        by = cy - fmul(sn, 64);
+        int c = COS(cang), sn = SIN(cang);
+        int16_t bx = cx - fmul(c, 64), by = cy - fmul(sn, 64);
         if (thrust) {
+            int flame = 120 + (tick & 3) * 32;
             vec_colour(255, 150, 40, 220);
-            vec_width(40 + ((tick & 3) << 3));
+            vec_width(40 + (tick & 3) * 8);
             vec_move(bx, by);
-            vec_line(bx - fmul(c, 120 + ((tick & 3) << 5)), by - fmul(sn, 120 + ((tick & 3) << 5)));
+            vec_line(bx - fmul(c, flame), by - fmul(sn, flame));
         }
-        alpha = inv && (tick & 4) ? 90 : 255;
-        nx = cx + fmul(c, 256);
-        ny = cy + fmul(sn, 256);
-        lx = cx + fmul(COS(cang + 102), 200);
-        ly = cy + fmul(SIN(cang + 102), 200);
-        rx = cx + fmul(COS(cang - 102), 200);
-        ry = cy + fmul(SIN(cang - 102), 200);
-        vec_colour(60, 200, 255, alpha >> 1);
+        int alpha = inv && (tick & 4) ? 90 : 255;
+        int16_t nx = cx + fmul(c, 256), ny = cy + fmul(sn, 256);
+        int16_t lx = cx + fmul(COS(cang + 102), 200), ly = cy + fmul(SIN(cang + 102), 200);
+        int16_t rx = cx + fmul(COS(cang - 102), 200), ry = cy + fmul(SIN(cang - 102), 200);
+        vec_colour(60, 200, 255, alpha / 2);
         vec_move(nx, ny);
         vec_tri(lx, ly, bx, by);
         vec_tri(bx, by, rx, ry);
@@ -634,10 +539,7 @@ static void draw(void)
     }
     /* The title and game-over boxes: their cell backgrounds are below every
      * shape (SPEC 8.6), so a near-opaque panel of the same colour, last in
-     * the list, keeps the shapes behind the text from showing through. In
-     * the phosphor style nothing is filled, so the panel is only a frame
-     * and the shapes do show through the box; the text stays readable as
-     * glyphs are drawn above all shapes. */
+     * the list, keeps the shapes behind the text from showing through. */
     if (state != PLAY) {
         vec_colour(48, 48, 48, 230);
         vec_move(18 * 128, 11 * 256);
@@ -652,10 +554,7 @@ int main(void)
     seed = 0xACE1;
     term_cmd(TERM_CURSOR_OFF);
     start_title();
-    /* The frame interrupt of frame 0 was taken as soon as crt0 enabled
-     * interrupts, so this returns at once; the first full frame starts at
-     * the next one. Setting up takes most of frame 0 by itself. */
-    terse_wait_frame();
+    /* Setting up is frame 0; the game's frames start at frame 1. */
     terse_wait_frame();
     for (;;) {
         input();

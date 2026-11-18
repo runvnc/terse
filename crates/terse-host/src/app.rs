@@ -4,8 +4,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use terse_core::{COLS, Event, FrameInput, FrameMachine, MAX_RANDOM_READS_PER_FRAME, ROWS, buttons};
-use terse_rv::{AnyMachine, Program};
+use terse_core::{COLS, Event, FrameInput, Image, MAX_RANDOM_PER_FRAME, Machine, ROWS, buttons};
 use terse_net::ContentService;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -19,14 +18,14 @@ use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
 use crate::renderer::{GlyphSource, Renderer};
 use crate::selftest::SelfTest;
-use crate::{FONT_PX, request_device, terminal_or_blank};
+use crate::{FONT_PX, displayed_terminal, fault_exit, request_device};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// Runs `image` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).
 pub fn run(
-    image: Program,
+    image: Image,
     content: Option<ContentService>,
     selftest: Option<SelfTest>,
     no_trails: bool,
@@ -34,7 +33,7 @@ pub fn run(
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
     let mut app = App {
-        machine: AnyMachine::new(&image),
+        machine: Machine::new(&image),
         content,
         title,
         gfx: None,
@@ -47,7 +46,7 @@ pub fn run(
         wheel: (0.0, 0.0),
         gamepads: Gamepads::new(),
         next_frame: Instant::now(),
-        random: vec![0; MAX_RANDOM_READS_PER_FRAME],
+        random: fresh_random(),
         selftest,
         refresh_hz: None,
         no_trails,
@@ -56,14 +55,23 @@ pub fn run(
     if let Some(e) = app.error {
         return Err(e);
     }
-    if let Some(fault) = app.machine.fault() {
-        eprintln!("terse-host: fault: {fault}");
-    }
     if let Some(t) = &app.selftest {
         t.report(app.refresh_hz);
         return Ok(ExitCode::SUCCESS);
     }
+    if app.machine.fault().is_some() {
+        return Ok(fault_exit());
+    }
     Ok(ExitCode::from(app.machine.exit_code().unwrap_or(0)))
+}
+
+/// A buffer of random bytes for the `random` calls of a frame (SPEC 4).
+fn fresh_random() -> Vec<u8> {
+    let mut random = vec![0; MAX_RANDOM_PER_FRAME];
+    if getrandom::fill(&mut random).is_err() {
+        random.fill(0);
+    }
+    random
 }
 
 struct Gfx {
@@ -151,7 +159,7 @@ impl Gfx {
 }
 
 struct App {
-    machine: AnyMachine,
+    machine: Machine,
     /// Carries out content requests (device 4) off the frame loop.
     content: Option<ContentService>,
     title: String,
@@ -169,6 +177,8 @@ struct App {
     wheel: (f64, f64),
     gamepads: Gamepads,
     next_frame: Instant,
+    /// Random bytes for the next frame; only those a frame takes are
+    /// replaced, so every byte the program sees is fresh.
     random: Vec<u8>,
     selftest: Option<SelfTest>,
     refresh_hz: Option<f64>,
@@ -183,10 +193,11 @@ impl App {
             event_loop.exit();
             return;
         }
-        let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
-        if getrandom::fill(&mut self.random).is_err() {
-            self.random.fill(0);
+        if self.machine.stopped().is_some() {
+            // A fault stays on screen until the window is closed.
+            return;
         }
+        let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         self.coalesced_input();
         let mut controllers = self.gamepads.poll();
         if let Some(t) = &self.selftest {
@@ -201,13 +212,16 @@ impl App {
             FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions, controllers };
         let result = self.machine.run_frame(&input);
         self.pending.clear();
+        if getrandom::fill(&mut self.random[..result.random_used]).is_err() {
+            self.random[..result.random_used].fill(0);
+        }
         if let Some(content) = &mut self.content {
             content.submit(self.machine.take_content_requests());
         }
         let emulate = start.elapsed();
         let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
-            gfx.renderer.update(&gfx.queue, &terminal_or_blank(&self.machine));
+            gfx.renderer.update(&gfx.queue, &displayed_terminal(&self.machine));
             gfx.renderer.update_vectors(&gfx.queue, self.machine.vector());
             // SPEC 8.7: the trail fades once per machine frame.
             let viewport = gfx.viewport();
@@ -217,7 +231,15 @@ impl App {
         if let Some(t) = &mut self.selftest {
             t.log.push(crate::selftest::FrameLog { emulate, upload: start.elapsed(), present: None });
         }
-        if result.exit.is_some() {
+        if let Some(fault) = self.machine.fault() {
+            eprintln!("terse-host: fault: {fault}");
+            if let Some(gfx) = &self.gfx {
+                gfx.window.set_title(&format!("{} — fault: {fault}", self.title));
+            }
+            if self.selftest.is_some() {
+                event_loop.exit();
+            }
+        } else if result.stopped.is_some() {
             event_loop.exit();
         }
     }

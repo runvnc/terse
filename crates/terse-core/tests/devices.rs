@@ -1,4 +1,4 @@
-//! The profile-2 device calls from C (tests/devices/devices.c): results,
+//! The device calls from C (tests/devices/devices.c): results,
 //! error returns, buffer rules, the 32-bit content request block, and the
 //! completion of requests at the start of the next frame.
 
@@ -7,7 +7,7 @@ mod common;
 use std::path::Path;
 
 use terse_core::{CONTROLLERS, Completion, Controller, FrameInput, Outcome, RequestKind, pad};
-use terse_rv::RvMachine;
+use terse_core::Machine;
 
 #[test]
 fn device_calls() {
@@ -17,12 +17,12 @@ fn device_calls() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/devices/devices.c");
     let rom = common::build(&[src], "-Os", true);
     let devices = [common::TERMINAL, common::VECTOR, common::CONTENT];
-    let mut m = RvMachine::new(&common::program(&rom, 4, &devices));
+    let mut m = Machine::new(&common::program(&rom, 4, &devices));
     let mut controllers = [Controller::default(); CONTROLLERS];
     controllers[0] = Controller { connected: true, buttons: pad::A | pad::LEFT, left: (-5, 0), right: (0, 0) };
     let random = [0xAB, 2, 3, 4, 0xCD];
     let r = m.run_frame(&FrameInput { random: &random, controllers, ..Default::default() });
-    assert_eq!(r.exit, None, "{:?}", m.fault());
+    assert_eq!(r.stopped, None);
     assert_eq!(r.random_used, 5);
     let requests = m.take_content_requests();
     assert_eq!(requests.len(), 2);
@@ -56,12 +56,16 @@ fn device_calls() {
         ("vec", 0),
         ("vec-rom", 1),
         ("vec-zero", 1),
+        ("style", 0 | 1 << 4 | 0 << 8),
+        ("persist", 0 | 1 << 4),
+        ("fill", 0 | 1 << 4),
         ("cells", 0x0102_0041 ^ 0x0304_0042),
         ("cellsbad", 0xFFFF_FFFE),
         ("palette", 2),
         ("pad0", 1 | 0x14 << 8 | 0xFB << 16),
         ("pad9", 0),
         ("random", 0xAB | 0xCD << 8),
+        ("rnd-big", 0xFFFF_FFFE),
         ("size", 80 | 30 << 8),
         ("cursor", 79 | 7 << 8),
         ("get", 1),
@@ -79,4 +83,6 @@ fn device_calls() {
     assert_eq!(t.palette()[0], [4, 5, 6]);
     assert_eq!((t.cell(79, 29).ch, t.cell(0, 0).ch), (0x41, 0x42), "cells wrap from 2399 to 0");
     assert_eq!(terse_core::vector::dump(m.vector_list()), "disc 1 2 r 3 c ffffffff\n", "the rejected submits kept the list");
+    let v = m.vector().unwrap();
+    assert_eq!((v.style(), v.persistence(), v.fill()), (0, 200, false));
 }

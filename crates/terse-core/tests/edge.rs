@@ -1,20 +1,19 @@
-//! Edge cases of the profile-2 core and frame loop, by hand: x0, jump
+//! Edge cases of the core and frame loop, by hand: x0, jump
 //! targets, the end of ROM, faults, the budget, and execution from RAM.
 
 mod common;
 
 use common::{assemble, frame, machine};
-use terse_core::FrameInput;
-use terse_rv::cpu::{Bus, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
-use terse_rv::{INSTRUCTIONS_PER_FRAME, RvMachine};
+use terse_core::cpu::{Bus, Cpu, Fault, FaultKind, RAM_BASE, RAM_INSTRUCTION_COST, ROM_BASE, Stop};
+use terse_core::{BUDGET_PER_FRAME, FrameInput, Machine, Stopped, charge};
 
 /// Ends a snippet: exit(a0).
 const EXIT: &str = "    li a7, 0x106\n    ecall\n";
 
-fn run(src: &str) -> RvMachine {
+fn run(src: &str) -> Machine {
     let mut m = machine(&assemble(src), &[]);
     for _ in 0..10 {
-        if frame(&mut m).exit.is_some() {
+        if frame(&mut m).stopped.is_some() {
             break;
         }
     }
@@ -131,11 +130,13 @@ fn a_fault_stops_the_machine() {
     }
     let mut m = machine(&assemble("    li a0, 3\n    li a1, 0\n    sw a0, 0(a1)\n"), &[]);
     let r = frame(&mut m);
-    assert_eq!(r.exit, Some(terse_rv::machine::FAULT_EXIT));
-    assert_eq!(m.fault(), Some(Fault { kind: FaultKind::Store, pc: ROM_BASE + 4, addr: 0 }));
+    let fault = Fault { kind: FaultKind::Store, pc: ROM_BASE + 4, addr: 0 };
+    assert_eq!(r.stopped, Some(Stopped::Fault(fault)));
+    assert_eq!((m.fault(), m.exit_code()), (Some(fault), None), "a fault is not an exit");
     assert_eq!(m.fault().unwrap().to_string(), "store outside RAM at pc 00010004, address 00000000");
+    assert_eq!(m.cpu().pc, ROM_BASE + 4, "pc stays at the faulting instruction");
     let r = frame(&mut m);
-    assert_eq!((r.tstates, m.frame()), (0, 1), "no frame runs after a fault");
+    assert_eq!((r.used, m.frame()), (0, 1), "no frame runs after a fault");
 }
 
 #[test]
@@ -152,8 +153,63 @@ fn code_runs_from_ram() {
     assert_eq!(m.exit_code(), Some(77), "{:?}", m.fault());
 }
 
+/// Copies `code_a` (a0 += 1; return) to RAM and calls it, then rewrites its
+/// first word with `code_b`'s (a0 += 5) and calls it again; exits with a0.
+/// `target` is the register the calls go through: t1 (RAM) or t0 (the
+/// same code in ROM).
+fn rewrite_program(target: &str) -> String {
+    format!(
+        "    li a0, 0\n    la t0, code_a\n    li t1, 0x100000\n    lw t2, 0(t0)\n    sw t2, 0(t1)\n    lw t2, 4(t0)\n\
+         sw t2, 4(t1)\n    jalr ra, 0({target})\n    la t0, code_b\n    lw t2, 0(t0)\n    sw t2, 0(t1)\n\
+         jalr ra, 0({target})\n    li a7, 0x106\n    ecall\n    .balign 4\n    .option push\n    .option norvc\n\
+         code_a:\n    addi a0, a0, 1\n    jalr x0, 0(ra)\ncode_b:\n    addi a0, a0, 5\n    jalr x0, 0(ra)\n    .option pop\n"
+    )
+}
+
+#[test]
+fn code_in_ram_is_decoded_afresh_and_costs_more() {
+    if !common::have_tools() {
+        return;
+    }
+    let mut ram = machine(&assemble(&rewrite_program("t1")), &[]);
+    let r_ram = frame(&mut ram);
+    assert_eq!(ram.stopped(), Some(Stopped::Exit(6)), "the rewritten instruction ran");
+    let mut rom = machine(&assemble(&rewrite_program("t0")), &[]);
+    let r_rom = frame(&mut rom);
+    assert_eq!(rom.exit_code(), Some(6));
+    // Four instructions ran from RAM (two per call), each costing 4 not 1.
+    assert_eq!(r_ram.used - r_rom.used, 4 * (RAM_INSTRUCTION_COST as u64 - 1));
+    assert_eq!(ram.instructions() - rom.instructions(), 4 * (RAM_INSTRUCTION_COST as u64 - 1));
+}
+
+#[test]
+fn ram_loop_runs_a_quarter_as_many_instructions() {
+    if !common::have_tools() {
+        return;
+    }
+    // A two-instruction loop forever, in ROM and copied to RAM; count its
+    // iterations in frame 1 through t3, read after the frame.
+    let src = |in_ram: bool| {
+        format!(
+            "    la t0, body\n    li t1, 0x100000\n    lw t2, 0(t0)\n    sw t2, 0(t1)\n    lw t2, 4(t0)\n    sw t2, 4(t1)\n\
+             li a7, 0x100\n    ecall\n    jr {}\n    .balign 4\n    .option push\n    .option norvc\n\
+             body:\n    addi t3, t3, 1\n    jal x0, body\n    .option pop\n",
+            if in_ram { "t1" } else { "t0" }
+        )
+    };
+    for (in_ram, per_iteration) in [(false, 2), (true, 2 * RAM_INSTRUCTION_COST)] {
+        let mut m = machine(&assemble(&src(in_ram)), &[]);
+        frame(&mut m);
+        let before = m.cpu().x[28];
+        let r = frame(&mut m);
+        let iterations = (m.cpu().x[28] - before) as i64;
+        assert_eq!(r.used as i64, BUDGET_PER_FRAME + (r.used as i64 - BUDGET_PER_FRAME).max(0));
+        assert!((iterations - (BUDGET_PER_FRAME - 1) / per_iteration).abs() <= 1, "{in_ram}: {iterations}");
+    }
+}
+
 /// A loop that runs over several frames' budgets.
-const LOOP: &str = "    li t0, 0\n    li t1, 600000\n1:  addi t0, t0, 1\n    bne t0, t1, 1b\n    mv a0, x0\n    li a7, 0x106\n    ecall\n";
+const LOOP: &str = "    li t0, 0\n    li t1, 150000\n1:  addi t0, t0, 1\n    bne t0, t1, 1b\n    mv a0, x0\n    li a7, 0x106\n    ecall\n";
 
 #[test]
 fn budget_runs_out_mid_loop_and_resumes_exactly() {
@@ -163,29 +219,29 @@ fn budget_runs_out_mid_loop_and_resumes_exactly() {
     let rom = assemble(LOOP);
     let mut m = machine(&rom, &[]);
     let r0 = frame(&mut m);
-    assert_eq!((r0.tstates, r0.halted_early, r0.exit), (INSTRUCTIONS_PER_FRAME as u64, false, None));
-    assert_eq!(m.instructions(), 500_000);
+    assert_eq!((r0.used, r0.waited, r0.stopped), (BUDGET_PER_FRAME as u64, false, None));
+    assert_eq!(m.instructions(), 125_000);
     let r1 = frame(&mut m);
-    assert_eq!(r1.tstates, 500_000);
+    assert_eq!(r1.used, 125_000);
     let r2 = frame(&mut m);
-    assert_eq!(r2.exit, Some(0));
+    assert_eq!(r2.stopped, Some(Stopped::Exit(0)));
     // li, li (lui + addi), then 2 per iteration, then mv, li, ecall.
-    let total = 3 + 2 * 600_000 + 3;
+    let total = 3 + 2 * 150_000 + 3;
     assert_eq!(m.instructions(), total);
-    assert_eq!(r2.tstates, total - 1_000_000);
+    assert_eq!(r2.used, total - 250_000 + charge::CALL as u64);
 
     // The core gives the same state however the budget is cut up.
     let mut ram = vec![0u8; 64];
     let mut whole = Cpu::new(ROM_BASE, RAM_BASE + 64);
-    let mut b = 1_000_000;
+    let mut b = 250_000;
     whole.run(&mut Bus { rom: &rom, ram: &mut ram }, &mut b);
     let mut pieces = Cpu::new(ROM_BASE, RAM_BASE + 64);
     let mut used = 0;
     for n in (1..).map(|i| i % 13 + 1) {
-        let mut b = n.min(1_000_000 - used);
+        let mut b = n.min(250_000 - used);
         used += b;
         assert_eq!(pieces.run(&mut Bus { rom: &rom, ram: &mut ram }, &mut b), Stop::Budget);
-        if used == 1_000_000 {
+        if used == 250_000 {
             break;
         }
     }
@@ -197,23 +253,69 @@ fn wait_frame_discards_the_rest_and_device_charges_carry() {
     if !common::have_tools() {
         return;
     }
-    // Frame 0: wait. Frame 1: a terminal write of 4,000 bytes (1,000
-    // instructions of charge), then wait. Then exit with the frame number.
+    // Frame 0: wait. Frame 1: a terminal write of 4,000 bytes (4,000 units
+    // of charge), then wait. Then exit with the frame number.
     let src = "    li a7, 0x100\n    ecall\n    mv s0, a0\n    li a0, 0x100000\n    li a1, 4000\n    li a7, 0x200\n    ecall\n\
                li a7, 0x100\n    ecall\n    add a0, a0, s0\n    li a7, 0x106\n    ecall\n";
     let mut m = machine(&assemble(src), &[common::TERMINAL]);
+    let call = charge::CALL as u64;
     let r = frame(&mut m);
-    assert!(r.halted_early);
-    assert_eq!(r.tstates, 2, "li + ecall");
+    assert!(r.waited);
+    assert_eq!(r.used, 2 + call, "li + ecall + the call");
     let r = frame(&mut m);
-    assert!(r.halted_early);
-    // mv, li (lui+addi), li, li, ecall + 1,000 charge, li, ecall; 4,000
-    // zero bytes print nothing but are still charged.
-    // (li a0, 0x100000 is one lui; li a1, 4000 is lui + addi.)
-    assert_eq!(r.tstates, 1 + 1 + 2 + 1 + 1 + 1000 + 1 + 1);
+    assert!(r.waited);
+    // mv, li (lui), li (lui+addi), li, ecall + call + 4,000, li, ecall +
+    // call; 4,000 zero bytes print nothing but are still charged.
+    assert_eq!(r.used, 1 + 1 + 2 + 1 + 1 + call + 4000 + 1 + 1 + call);
     let r = frame(&mut m);
     // wait_frame returned 1, then 2.
-    assert_eq!(r.exit, Some(3));
+    assert_eq!(r.stopped, Some(Stopped::Exit(3)));
+}
+
+#[test]
+fn a_charge_beyond_the_budget_carries_into_the_next_frame() {
+    if !common::have_tools() {
+        return;
+    }
+    // Frame 1: 123,800 units of loop, then a 2,400-cell write (2,400 units
+    // of copy): over budget. Frame 2: a counting loop gets what is left.
+    let src = "    li a7, 0x100\n    ecall\n    lui t0, 15\n    addi t0, t0, 460\n1:  addi t0, t0, -1\n    bnez t0, 1b\n\
+               li a0, 0\n    li a1, 0x100000\n    li a2, 2400\n    li a7, 0x207\n    ecall\n\
+               2:  addi t3, t3, 1\n    j 2b\n";
+    let mut m = machine(&assemble(src), &[common::TERMINAL]);
+    frame(&mut m);
+    let r = frame(&mut m);
+    let carry = m.budget();
+    assert!(carry < -1000 && carry > -1300, "{carry} {r:?}");
+    assert_eq!(r.used as i64, BUDGET_PER_FRAME - carry);
+    let before = m.cpu().x[28];
+    let r = frame(&mut m);
+    assert_eq!(r.used as i64, BUDGET_PER_FRAME + carry);
+    let iterations = (m.cpu().x[28] - before) as i64;
+    assert!((iterations * 2 - (BUDGET_PER_FRAME + carry)).abs() <= 2, "{iterations}");
+}
+
+#[test]
+fn write_is_cut_by_the_budget_and_charges_carry() {
+    if !common::have_tools() {
+        return;
+    }
+    // Write 200,000 bytes of RAM (zeros) from frame 0: the call returns
+    // after the byte that uses up the budget; the program writes the rest.
+    let src = "    li s0, 0x100000\n    li s1, 200000\n    li s2, 0\n\
+               1:  mv a0, s0\n    mv a1, s1\n    li a7, 0x200\n    ecall\n    addi s2, s2, 1\n    add s0, s0, a0\n\
+               sub s1, s1, a0\n    bnez s1, 1b\n    mv a0, s2\n    li a7, 0x106\n    ecall\n";
+    let mut m = Machine::new(&common::program(&assemble(src), 32, &[common::TERMINAL]));
+    let mut used = Vec::new();
+    while m.stopped().is_none() && used.len() < 10 {
+        used.push(frame(&mut m).used);
+    }
+    // Each frame's write ends at the first byte with the budget at zero.
+    assert_eq!(m.exit_code(), Some(2), "two writes: {used:?}");
+    assert_eq!(used.len(), 2);
+    assert_eq!(used[0], BUDGET_PER_FRAME as u64);
+    let total = 200_000 + 2 * charge::CALL as u64;
+    assert!(used[1] > total - 125_000 && used[1] < total - 125_000 + 30, "{used:?}");
 }
 
 #[test]
@@ -248,7 +350,9 @@ fn reset_state() {
     let x = &m.cpu().x;
     assert_eq!(m.cpu().pc, ROM_BASE);
     assert_eq!(x[2], RAM_BASE + 4 * 8192, "sp at the end of RAM");
+    assert_eq!((m.budget(), m.stopped(), m.frame()), (0, None, 0));
     assert!(x.iter().enumerate().all(|(i, &v)| i == 2 || v == 0));
     assert!(m.ram().iter().all(|&b| b == 0));
     let _ = FrameInput::default();
 }
+

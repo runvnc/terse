@@ -1,5 +1,5 @@
 //! The order in which a host received feed entries, for the timeline of
-//! SPEC 7.7, and the records the content device delivers for it.
+//! SPEC 9.5, and the records the content device delivers for it.
 //!
 //! On disk, beside the entries: `<blob store>/feeds/arrivals`, an append-only
 //! file of 36-byte records (feed key, `seq` little-endian), oldest first.
@@ -71,7 +71,7 @@ impl Arrivals {
 }
 
 /// Whole records from `records`, appended while they fit in `length` bytes
-/// (SPEC 7.7: as many whole records as fit).
+/// (SPEC 9.5: as many whole records as fit).
 pub fn fill(records: impl IntoIterator<Item = Vec<u8>>, length: usize) -> Vec<u8> {
     let mut out = Vec::new();
     for r in records {

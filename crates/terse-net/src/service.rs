@@ -1,4 +1,4 @@
-//! Carries out content requests (SPEC 7) and follows feeds (NETWORK 4.4) on a
+//! Carries out content requests (SPEC 9) and follows feeds (NETWORK 4.4) on a
 //! background thread, so the frame loop only ever submits requests and
 //! collects completions and feed events without blocking. Blocking waits are
 //! for headless and command-line use.
@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use terse_core::{Completion, Event, FrameInput, FrameMachine, FrameResult, Outcome, Request, RequestKind, Script};
+use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
 
 use crate::identity::FeedKey;
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
@@ -67,7 +67,7 @@ impl ContentService {
     }
 
     /// Whether a new feed entry was stored since the last call (the
-    /// feeds-updated event, SPEC 5.1); never blocks. Consumes the feed
+    /// feeds-updated event, SPEC 5); never blocks. Consumes the feed
     /// events so far, like `take_feed_events`.
     pub fn feeds_updated(&mut self) -> bool {
         self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. }))
@@ -157,7 +157,7 @@ impl Headless {
     }
 
     /// Runs the machine's next frame, then carries out the requests it made.
-    pub fn frame(&mut self, machine: &mut impl FrameMachine) -> FrameResult {
+    pub fn frame(&mut self, machine: &mut Machine) -> FrameResult {
         let mut events = self.script.events(machine.frame()).to_vec();
         if std::mem::take(&mut self.feeds_updated) {
             events.push(Event::feeds_updated());
@@ -224,7 +224,7 @@ fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, ev
                 pending.insert(next, Job::Put { handle });
                 node.start_put(next, &data);
             }
-            // SPEC 7.7: answered at once from the node's own state.
+            // SPEC 9.5: answered at once from the node's own state.
             Some(Work::Content(Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
                 let (total, data) = node.subscription_records(offset, length);
                 if finished.send(Completion { handle, outcome: Outcome::Records { total, data } }).is_err() {

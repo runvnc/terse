@@ -1,43 +1,67 @@
-/* terse.h: the Terse machine for C programs built with SDCC (SPEC.md).
- *
- * Ports are SDCC `__sfr` variables: `TERM_PUT = 'x';` is one OUT. Link
- * crt0.rel first (see programs/reader/build.sh). Machine profile 1. */
+/* terse.h: the Terse machine (SPEC.md, profile 1: RV32IMC) for C programs
+ * built with clang. Devices are reached with `ecall`: a7 = (slot << 8) |
+ * function, arguments in a0-a5, result in a0 (and a1); SPEC 3. */
 
 #ifndef TERSE_H
 #define TERSE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
-/* Device 0, memory (SPEC 4): page register of each slot (slot n covers
- * n * 2000h). Pages 00h-0Fh are ROM, 80h + n is RAM page n. */
-__sfr __at 0x00 MEM_SLOT0;
-__sfr __at 0x01 MEM_SLOT1;
-__sfr __at 0x02 MEM_SLOT2;
-__sfr __at 0x03 MEM_SLOT3;
-__sfr __at 0x04 MEM_SLOT4;
-__sfr __at 0x05 MEM_SLOT5;
-__sfr __at 0x06 MEM_SLOT6;
-__sfr __at 0x07 MEM_SLOT7;
-#define PAGE_RAM 0x80
-#define PAGE_SIZE 0x2000
+/* Memory (SPEC 1.2). */
+#define TERSE_ROM_BASE 0x00010000u
+#define TERSE_RAM_BASE 0x00100000u
 
-/* Device 1, system (SPEC 5). */
-__sfr __at 0x10 SYS_EVENT;   /* read: head event type; write: remove it */
-__sfr __at 0x11 SYS_EVENT_A;
-__sfr __at 0x12 SYS_EVENT_B;
-__sfr __at 0x13 SYS_EVENT_C;
-__sfr __at 0x14 SYS_FRAME0;  /* frame counter, bytes 0-3 */
-__sfr __at 0x18 SYS_TIME0;   /* Unix time latched at frame start, bytes 0-3 */
-__sfr __at 0x1C SYS_RANDOM;
-__sfr __at 0x1D SYS_PAD_SELECT; /* write: controller 0-3, restarts at byte 0 */
-__sfr __at 0x1E SYS_PAD_DATA;   /* read: next byte of the selected controller */
-__sfr __at 0x1F SYS_EXIT;
+/* Call numbers (SPEC 3.2). */
+#define CALL_WAIT_FRAME 0x100
+#define CALL_NEXT_EVENT 0x101
+#define CALL_FRAME 0x102
+#define CALL_TIME 0x103
+#define CALL_RANDOM 0x104
+#define CALL_CONTROLLER 0x105
+#define CALL_EXIT 0x106
+#define CALL_TERM_WRITE 0x200
+#define CALL_TERM_COMMAND 0x201
+#define CALL_TERM_SET_CURSOR 0x202
+#define CALL_TERM_GET_CURSOR 0x203
+#define CALL_TERM_SET_COLOURS 0x204
+#define CALL_TERM_GET_COLOURS 0x205
+#define CALL_TERM_CELLS_READ 0x206
+#define CALL_TERM_CELLS_WRITE 0x207
+#define CALL_TERM_PALETTE_SET 0x208
+#define CALL_TERM_SIZE 0x209
+#define CALL_VEC_SUBMIT 0x300
+#define CALL_VEC_CLEAR 0x301
+#define CALL_VEC_STYLE 0x302
+#define CALL_VEC_PERSISTENCE 0x303
+#define CALL_VEC_FILL 0x304
+#define CALL_CONTENT_SUBMIT 0x400
 
-/* Any port by number (for a slot chosen at run time, say). */
-uint8_t terse_in(uint8_t port);
-void terse_out(uint8_t port, uint8_t value);
+#define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
+#define TERSE_ERR_BUFFER 0xFFFFFFFEu
 
-/* Event types (SPEC 5.1). */
+static inline uint32_t terse_call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+/* Two results: a0 in *lo's return, a1 in *second. */
+static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t *second)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a7) : "memory");
+    *second = a1;
+    return a0;
+}
+
+/* Event types (SPEC 5). */
 #define EV_NONE 0x00
 #define EV_KEY_DOWN 0x01
 #define EV_KEY_UP 0x02
@@ -75,7 +99,6 @@ typedef struct {
     uint8_t type, a, b, c;
 } terse_event;
 
-/* Pointer position in screen units, 640 x 480 (SPEC 5.4); a cell is 8 x 16. */
 #define EV_POINTER_X(e) ((e).a | (uint16_t)((e).c & 0x03) << 8)
 #define EV_POINTER_Y(e) ((e).b | (uint16_t)((e).c & 0x04) << 6)
 #define EV_POINTER_BUTTONS(e) ((e).c >> 3 & 0x07)
@@ -84,24 +107,33 @@ typedef struct {
  * (and leaves *e alone) if the queue is empty. */
 uint8_t terse_event_pop(terse_event *e);
 
-/* Halts until the next frame interrupt, unless one has arrived since the
- * last call (the frame's work ran over). Returns the frames that passed. */
+/* Gives up the rest of this frame's budget and returns at the start of the
+ * next frame. Returns the frames that passed since the last call (more than
+ * 1 if the work in between ran out of budget). */
 uint8_t terse_wait_frame(void);
-extern volatile uint8_t terse_ticks; /* frame interrupts so far (crt0) */
 
-uint32_t terse_frame(void);
-uint32_t terse_time(void);
-#define terse_exit(code) (SYS_EXIT = (code))
+static inline uint32_t terse_frame(void) { return terse_call(CALL_FRAME, 0, 0, 0); }
+static inline uint32_t terse_time(void) { return terse_call(CALL_TIME, 0, 0, 0); }
+static inline void terse_exit(uint32_t code) { terse_call(CALL_EXIT, code, 0, 0); }
+/* Fills buf (in RAM) with the host's random bytes, 256 per call (SPEC 4). */
+void terse_random(void *buf, uint32_t len);
+static inline uint8_t terse_random_byte(void)
+{
+    uint8_t b;
+    terse_random(&b, 1);
+    return b;
+}
 
-/* Controllers (SPEC 5.3). */
+/* Controllers (SPEC 6): the 8-byte state. */
 typedef struct {
     uint8_t connected;
     uint8_t buttons;  /* up, down, left, right, A, B, X, Y from bit 0 */
     uint8_t buttons2; /* L1, R1, L2, R2, select, start, L3, R3 */
     int8_t lx, ly, rx, ry;
+    uint8_t zero;
 } terse_pad;
-void terse_pad_read(uint8_t n, terse_pad *pad);
-#define PAD_UP 0x01      /* terse_pad.buttons */
+static inline void terse_pad_read(uint8_t n, terse_pad *pad) { terse_call(CALL_CONTROLLER, n, (uint32_t)pad, 0); }
+#define PAD_UP 0x01
 #define PAD_DOWN 0x02
 #define PAD_LEFT 0x04
 #define PAD_RIGHT 0x08
@@ -109,25 +141,14 @@ void terse_pad_read(uint8_t n, terse_pad *pad);
 #define PAD_B 0x20
 #define PAD_X 0x40
 #define PAD_Y 0x80
-#define PAD_L1 0x01      /* terse_pad.buttons2 */
+#define PAD_L1 0x01
 #define PAD_R1 0x02
 #define PAD_L2 0x04
 #define PAD_R2 0x08
 #define PAD_SELECT 0x10
 #define PAD_START 0x20
 
-/* Device 2, terminal (SPEC 6). */
-__sfr __at 0x20 TERM_PUT; /* one byte of UTF-8 */
-__sfr __at 0x21 TERM_COL;
-__sfr __at 0x22 TERM_ROW;
-__sfr __at 0x23 TERM_FG;
-__sfr __at 0x24 TERM_BG;
-__sfr __at 0x25 TERM_CMD;
-__sfr __at 0x26 TERM_PTR_LO;
-__sfr __at 0x27 TERM_PTR_HI;
-__sfr __at 0x28 TERM_DATA; /* cell memory at the pointer, which then advances */
-__sfr __at 0x29 TERM_PAL_INDEX;
-__sfr __at 0x2A TERM_PAL_DATA;
+/* Device 2, terminal (SPEC 8). */
 #define TERM_COLS 80
 #define TERM_ROWS 30
 
@@ -139,50 +160,45 @@ __sfr __at 0x2A TERM_PAL_DATA;
 #define TERM_CURSOR_OFF 0x06
 #define TERM_CONTINUATION 0xFFFF
 
-#define term_goto(col, row) (TERM_COL = (col), TERM_ROW = (row))
-#define term_color(fg, bg) (TERM_FG = (fg), TERM_BG = (bg))
-#define term_cmd(c) (TERM_CMD = (c))
-#define term_putc(byte) (TERM_PUT = (byte))
+/* Put character for each of `len` bytes (SPEC 8.3). A write call stops
+ * when the frame's budget runs out; this repeats it until every byte is
+ * written (continuing in the next frame if need be). */
+void term_write(const void *p, uint32_t len);
+static inline void term_goto(uint8_t col, uint8_t row) { terse_call(CALL_TERM_SET_CURSOR, col, row, 0); }
+static inline void term_color(uint8_t fg, uint8_t bg) { terse_call(CALL_TERM_SET_COLOURS, fg, bg, 0); }
+static inline void term_cmd(uint8_t c) { terse_call(CALL_TERM_COMMAND, c, 0, 0); }
+void term_putc(uint8_t byte);
 void term_puts(const char *s);
+/* Sets the foreground only. */
+void term_fg(uint8_t fg);
 /* Writes the printable ASCII bytes (20h-7Eh) at `p`, at most `max`,
- * stopping at any other byte; returns how many it wrote. About 70 T-states
- * a character. */
-uint8_t term_put_ascii(uint8_t max, const uint8_t *p);
+ * stopping at any other byte; returns how many it wrote. */
+uint32_t term_put_ascii(uint32_t max, const uint8_t *p);
 /* Writes one code point as UTF-8 (0000h-FFFFh). */
-void term_put_cp(uint16_t cp);
-/* Writes `n` cells of `ch` (narrow) with colours fg/bg through the cell
- * pointer from (col, row); the cursor does not move. */
+void term_put_cp(uint32_t cp);
+/* Writes `n` cells of `ch` (narrow) with colours fg/bg from (col, row); the
+ * cursor does not move. */
 void term_fill(uint8_t col, uint8_t row, uint8_t n, uint16_t ch, uint8_t fg, uint8_t bg);
-/* Sets the cell pointer to (col, row); then TERM_DATA writes 4 bytes a cell. */
-void term_cell_ptr(uint8_t col, uint8_t row);
-/* Whether a code point takes two cells (SPEC 6.1, Unicode 16.0 W/F). */
-uint8_t term_is_wide(uint16_t cp);
+/* Cells in the 4-byte format of SPEC 8.1, from cell index `index`. */
+static inline void term_cells_write(uint32_t index, const void *cells, uint32_t count)
+{
+    terse_call(CALL_TERM_CELLS_WRITE, index, (uint32_t)cells, count);
+}
+static inline void term_cells_read(uint32_t index, void *cells, uint32_t count)
+{
+    terse_call(CALL_TERM_CELLS_READ, index, (uint32_t)cells, count);
+}
+/* Whether a code point takes two cells (SPEC 8.1, Unicode 16.0 W/F). */
+uint8_t term_is_wide(uint32_t cp);
 
-/* Device 3, 2D vector display (SPEC 8). */
-__sfr __at 0x30 VEC_ADDR0; /* list address: linear RAM, bits 0-7 */
-__sfr __at 0x31 VEC_ADDR1;
-__sfr __at 0x32 VEC_ADDR2;
-__sfr __at 0x33 VEC_LEN_LO; /* list length, 1 to 16384 */
-__sfr __at 0x34 VEC_LEN_HI;
-__sfr __at 0x35 VEC_CMD;    /* write: VEC_SUBMIT or VEC_CLEAR; read: VEC_DONE or VEC_REJECTED */
-__sfr __at 0x36 VEC_STYLE;  /* write: VEC_STYLE_CLEAN or VEC_STYLE_PHOSPHOR (SPEC 8.7) */
-__sfr __at 0x37 VEC_PERSISTENCE; /* write: 0-255, trail kept per frame in 256ths; 160 at reset */
-#define VEC_SUBMIT 0x01
-#define VEC_CLEAR 0x02
+/* Device 3, 2D vector display (SPEC 10). */
 #define VEC_DONE 0x00
 #define VEC_REJECTED 0x01
 #define VEC_MAX_LIST 16384
-#define VEC_STYLE_CLEAN 0x00
-#define VEC_STYLE_PHOSPHOR 0x01
-#define VEC_PERSISTENCE_DEFAULT 160
-
-/* Coordinates are signed sixteenths of a screen unit: the screen is
- * 10240 x 7680 (VEC_UNIT per screen unit, a cell is 128 x 256). */
 #define VEC_UNIT 16
 #define VEC_SCREEN_W 10240
 #define VEC_SCREEN_H 7680
 
-/* Display-list opcodes (SPEC 8.3). */
 #define VEC_OP_END 0x00
 #define VEC_OP_COLOUR 0x01
 #define VEC_OP_WIDTH 0x02
@@ -194,45 +210,37 @@ __sfr __at 0x37 VEC_PERSISTENCE; /* write: 0-255, trail kept per frame in 256ths
 #define VEC_OP_RECT 0x08
 #define VEC_OP_TRIANGLE 0x09
 
-/* Builder: appends commands at vec_ptr (assembly, 60-150 T-states each).
- * The caller owns the buffer and its size:
- *
- *     static uint8_t list[512];
- *     vec_begin(list);
- *     vec_colour(255, 200, 0, 255); vec_move(x, y); vec_disc(48);
- *     vec_submit_list(list);
- */
+/* Builder: appends commands at vec_ptr; the caller owns the buffer. */
 extern uint8_t *vec_ptr;
 #define vec_begin(buf) (vec_ptr = (buf))
-#define vec_length(buf) ((uint16_t)(vec_ptr - (uint8_t *)(buf)))
+#define vec_length(buf) ((uint32_t)(vec_ptr - (uint8_t *)(buf)))
 void vec_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-void vec_width(uint8_t w);                 /* sixteenths; 0 counts as 1 */
-void vec_origin(int16_t x, int16_t y);     /* added to later coordinates */
-void vec_move(int16_t x, int16_t y);       /* sets the current point */
-void vec_line(int16_t x, int16_t y);       /* line to (x, y), the new current point */
-void vec_circle(uint16_t r);               /* outline around the current point */
-void vec_disc(uint16_t r);                 /* filled, around the current point */
-void vec_rect(int16_t x, int16_t y);       /* corners: current point and (x, y) */
-void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2); /* with the current point */
+void vec_width(uint8_t w);
+void vec_origin(int16_t x, int16_t y);
+void vec_move(int16_t x, int16_t y);
+void vec_line(int16_t x, int16_t y);
+void vec_circle(uint16_t r);
+void vec_disc(uint16_t r);
+void vec_rect(int16_t x, int16_t y);
+void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
 void vec_end(void);
 
-/* Submits `len` bytes at linear RAM address `addr` (SPEC 8.2); returns
- * VEC_DONE or VEC_REJECTED. Costs 1 T-state per byte. */
-uint8_t vec_submit(uint32_t addr, uint16_t len);
-/* Submits the list built since vec_begin(buf); `buf` must show RAM. */
-uint8_t vec_submit_list(const uint8_t *buf);
-#define vec_clear() (VEC_CMD = VEC_CLEAR)
-/* Phosphor style (SPEC 8.7): shapes add light, glow, are not filled and
- * leave a trail that fades by persistence / 256 each frame. The program
- * cannot see the trail; the user may turn it off. */
-#define vec_style(s) (VEC_STYLE = (s))
-#define vec_persistence(p) (VEC_PERSISTENCE = (p))
+/* Submits `len` bytes at `list` (which must be in RAM); returns VEC_DONE or
+ * VEC_REJECTED. Costs 1 unit per 4 bytes. */
+static inline uint8_t vec_submit(const void *list, uint32_t len) { return terse_call(CALL_VEC_SUBMIT, (uint32_t)list, len, 0); }
+#define vec_submit_list(buf) vec_submit((buf), vec_length(buf))
+static inline void vec_clear(void) { terse_call(CALL_VEC_CLEAR, 0, 0, 0); }
+/* Display style (SPEC 10.6), persistence 0-255, and fill (SPEC 10.2):
+ * each returns VEC_DONE, or VEC_REJECTED for a value out of range. */
+#define VEC_STYLE_CLEAN 0
+#define VEC_STYLE_PHOSPHOR 1
+#define VEC_FILL_ON 0
+#define VEC_FILL_OFF 1
+static inline uint8_t vec_style(uint32_t s) { return terse_call(CALL_VEC_STYLE, s, 0, 0); }
+static inline uint8_t vec_persistence(uint32_t p) { return terse_call(CALL_VEC_PERSISTENCE, p, 0, 0); }
+static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f, 0, 0); }
 
-/* Device 4, content (SPEC 7). A request block must lie in RAM. */
-__sfr __at 0x40 CONTENT_BLOCK_LO;
-__sfr __at 0x41 CONTENT_BLOCK_HI;
-__sfr __at 0x42 CONTENT_SUBMIT; /* write: submit; read: handle 1-8, or 0 */
-
+/* Device 4, content (SPEC 9). */
 #define CONTENT_GET 0x01
 #define CONTENT_PUT 0x02
 #define CONTENT_SUBSCRIPTIONS 0x03
@@ -244,36 +252,30 @@ __sfr __at 0x42 CONTENT_SUBMIT; /* write: submit; read: handle 1-8, or 0 */
 #define STATUS_FAILED 0x03
 #define STATUS_BAD_REQUEST 0x04
 
-/* SPEC 7.2. 24-bit fields are byte arrays; see get24/set24. */
+/* The 52-byte request block; it must lie in RAM. */
 typedef struct {
     uint8_t op;
     volatile uint8_t status;
+    uint8_t reserved[2];
     uint8_t id[32];
-    uint8_t offset[3];
-    uint16_t length;
-    uint8_t addr[3];
-    uint8_t size[3];
+    uint32_t offset;
+    volatile uint32_t length;
+    uint32_t addr; /* a guest address */
+    volatile uint32_t size;
 } content_req;
 
-/* Timeline record flags (SPEC 7.7). */
 #define TIMELINE_LOCAL 0x01
 
 uint32_t get24(const uint8_t *p);
-void set24(uint8_t *p, uint32_t v);
 
-/* The linear RAM address (SPEC 7.1) that `p` shows in the current mapping,
- * or 0xFFFFFFFF if it does not show RAM. */
-uint32_t terse_linear(const void *p);
+static inline uint8_t content_submit(content_req *r) { return terse_call(CALL_CONTENT_SUBMIT, (uint32_t)r, 0, 0); }
+uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf);
+uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf);
 
-/* Submits a request block; returns the handle (1-8), or 0 if rejected (a
- * bad request also sets status 04h). Completion: an EV_CONTENT_DONE event
- * with the handle in `a` and the status in `b`; `r->status` changes too. */
-uint8_t content_submit(content_req *r);
-/* Fills and submits a get of `length` bytes of blob `id` at `offset`,
- * delivered to linear RAM address `addr`. */
-uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint16_t length, uint32_t addr);
-/* Fills and submits a subscriptions or timeline request (SPEC 7.7):
- * records from index `first` into the `length`-byte buffer at `addr`. */
-uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint16_t length, uint32_t addr);
+/* The C library the compiler may call. */
+void *memcpy(void *d, const void *s, size_t n);
+void *memset(void *d, int c, size_t n);
+void *memmove(void *d, const void *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 
 #endif

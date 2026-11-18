@@ -1,13 +1,13 @@
-//! Device 2, Terminal (SPEC 6).
+//! Device 2, Terminal (SPEC 8). Its operations return how many clears and
+//! scrolls they did, which the machine charges for (SPEC 11).
 
 use crate::wide::is_wide;
 
 pub const COLS: usize = 80;
 pub const ROWS: usize = 30;
 pub const CELL_BYTES: usize = 4;
-pub const CELL_MEMORY: usize = COLS * ROWS * CELL_BYTES; // 9,600
-/// Charge for clear, scroll up and scroll down (SPEC 6.5).
-pub const SCROLL_CLEAR_CHARGE: u32 = 600;
+pub const CELLS: usize = COLS * ROWS; // 2,400
+pub const CELL_MEMORY: usize = CELLS * CELL_BYTES; // 9,600
 
 /// The right cell of a wide character (SPEC 6.1).
 pub const CONTINUATION: u16 = 0xFFFF;
@@ -21,7 +21,7 @@ pub struct Cell {
     pub bg: u8,
 }
 
-/// Incremental UTF-8 decoder for port 20h (SPEC 6.3).
+/// Incremental UTF-8 decoder for `write` (SPEC 8.3).
 ///
 /// Malformed input becomes U+FFFD following the "maximal subpart" practice
 /// (Unicode ch. 3, WHATWG): an invalid lead byte gives one U+FFFD; a sequence
@@ -88,20 +88,15 @@ pub struct Terminal {
     fg: u8,
     bg: u8,
     cursor_visible: bool,
-    /// SPEC 6.3: the next printed character starts a new row first.
+    /// SPEC 8.3: the next printed character starts a new row first.
     pending_wrap: bool,
-    /// Kept as written; reduced modulo 9,600 when used (SPEC 6.2).
-    cell_pointer: u16,
     palette: [[u8; 3]; 256],
-    palette_index: u8,
-    /// Which component (0 red, 1 green, 2 blue) the next port 2Ah write sets.
-    palette_component: u8,
     decoder: Utf8Decoder,
 }
 
 impl Default for Terminal {
     fn default() -> Self {
-        // SPEC 6.6
+        // SPEC 8.5
         let mut t = Terminal {
             cells: vec![0; CELL_MEMORY],
             col: 0,
@@ -110,10 +105,7 @@ impl Default for Terminal {
             bg: 0,
             cursor_visible: true,
             pending_wrap: false,
-            cell_pointer: 0,
             palette: xterm_palette(),
-            palette_index: 0,
-            palette_component: 0,
             decoder: Utf8Decoder::default(),
         };
         t.fill_rows(0..ROWS);
@@ -128,7 +120,7 @@ impl Terminal {
         Cell { ch: u16::from_le_bytes([c[0], c[1]]), fg: c[2], bg: c[3] }
     }
 
-    /// Raw cell memory, 4 bytes per cell (SPEC 6.1).
+    /// Raw cell memory, 4 bytes per cell (SPEC 8.1).
     pub fn cell_bytes(&self) -> &[u8] {
         &self.cells
     }
@@ -151,10 +143,6 @@ impl Terminal {
 
     pub fn colors(&self) -> (u8, u8) {
         (self.fg, self.bg)
-    }
-
-    pub fn cell_pointer(&self) -> u16 {
-        self.cell_pointer
     }
 
     /// The grid as text, one line per row, trailing spaces trimmed. The
@@ -186,106 +174,146 @@ impl Terminal {
         col + 1 < COLS && self.cell(col, row).ch != CONTINUATION && self.cell(col + 1, row).ch == CONTINUATION
     }
 
-    /// Cells, cursor, colours, cell pointer, palette and the put-character
-    /// decoder (STATE.md, terminal section).
+    /// Cells, cursor, colours, palette and the put-character decoder
+    /// (STATE.md, terminal section).
     pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.cells);
         out.extend_from_slice(&[self.col, self.row, self.fg, self.bg]);
         out.extend_from_slice(&[self.cursor_visible as u8, self.pending_wrap as u8]);
-        out.extend_from_slice(&self.cell_pointer.to_le_bytes());
         out.extend(self.palette.iter().flatten());
-        out.extend_from_slice(&[self.palette_index, self.palette_component]);
         out.push(self.decoder.len);
         out.extend_from_slice(&self.decoder.bytes);
     }
 
-    /// Returns the charge in T-states.
-    pub fn port_out(&mut self, reg: u8, value: u8) -> u32 {
-        match reg {
-            0x0 => {
-                let mut charge = 0;
-                for cp in self.decoder.feed(value).into_iter().flatten() {
-                    charge += self.put_char(cp);
+    /// Put character (SPEC 8.3) for each byte of a UTF-8 stream; a sequence
+    /// may continue in the next call. Returns the clears and scrolls done.
+    pub fn write(&mut self, bytes: &[u8]) -> u32 {
+        let mut ops = 0;
+        for &b in bytes {
+            ops += self.put_byte(b);
+        }
+        ops
+    }
+
+    /// `write` as the call does it (SPEC 8.2): each byte is charged
+    /// `per_byte` plus `per_op` for each clear or scroll it causes, and the
+    /// write stops after the byte whose charge brings `budget` to zero or
+    /// below (always after at least one byte). Returns (bytes consumed,
+    /// units charged).
+    pub fn write_limited(&mut self, bytes: &[u8], budget: i64, per_byte: u32, per_op: u32) -> (usize, u32) {
+        let mut charged: u32 = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            charged += per_byte + self.put_byte(b) * per_op;
+            if budget - charged as i64 <= 0 {
+                return (i + 1, charged);
+            }
+        }
+        (bytes.len(), charged)
+    }
+
+    /// One byte of put character; returns the clears and scrolls done.
+    #[inline(always)]
+    fn put_byte(&mut self, b: u8) -> u32 {
+        // Printable ASCII with nothing pending: the common case.
+        if (0x20..0x7F).contains(&b) && self.decoder.needed == 0 && !self.pending_wrap {
+            let col = self.col as usize;
+            if col < COLS - 1 {
+                let i = (self.row as usize * COLS + col) * CELL_BYTES;
+                let here = u16::from_le_bytes([self.cells[i], self.cells[i + 1]]);
+                let next = u16::from_le_bytes([self.cells[i + 4], self.cells[i + 5]]);
+                // Not part of a wide pair (no neighbour to blank, SPEC 8.3
+                // step 3) and no wrap: just the cell and the cursor.
+                if here != CONTINUATION && next != CONTINUATION {
+                    self.cells[i..i + CELL_BYTES].copy_from_slice(&[b, 0, self.fg, self.bg]);
+                    self.col += 1;
+                    return 0;
                 }
-                charge
             }
-            0x1 => {
-                self.col = value.min(COLS as u8 - 1);
-                self.pending_wrap = false;
-                0
+        }
+        let mut ops = 0;
+        for cp in self.decoder.feed(b).into_iter().flatten() {
+            ops += self.put_char(cp);
+        }
+        ops
+    }
+
+    /// Moves the cursor, clamping to the grid (SPEC 8.2); clears pending wrap.
+    pub fn set_cursor(&mut self, col: u32, row: u32) {
+        self.col = col.min(COLS as u32 - 1) as u8;
+        self.row = row.min(ROWS as u32 - 1) as u8;
+        self.pending_wrap = false;
+    }
+
+    /// Sets the current colours.
+    pub fn set_colours(&mut self, fg: u8, bg: u8) {
+        self.fg = fg;
+        self.bg = bg;
+    }
+
+    /// Copies cells from cell `first` (0-2399) into `out` (4 bytes each,
+    /// SPEC 8.1), wrapping from the last cell to the first.
+    pub fn cells_read(&self, first: usize, out: &mut [u8]) {
+        let mut at = first * CELL_BYTES % CELL_MEMORY;
+        let mut done = 0;
+        while done < out.len() {
+            let n = (out.len() - done).min(CELL_MEMORY - at);
+            out[done..done + n].copy_from_slice(&self.cells[at..at + n]);
+            done += n;
+            at = 0;
+        }
+    }
+
+    /// Writes cells from cell `first`, the reverse of `cells_read`. The
+    /// bytes are not checked (SPEC 8.2).
+    pub fn cells_write(&mut self, first: usize, data: &[u8]) {
+        let mut at = first * CELL_BYTES % CELL_MEMORY;
+        let mut done = 0;
+        while done < data.len() {
+            let n = (data.len() - done).min(CELL_MEMORY - at);
+            self.cells[at..at + n].copy_from_slice(&data[done..done + n]);
+            done += n;
+            at = 0;
+        }
+    }
+
+    /// Sets palette entries from `first` (wrapping from 255 to 0) from
+    /// red, green, blue triples.
+    pub fn palette_set(&mut self, first: usize, rgb: &[u8]) {
+        for (i, c) in rgb.chunks_exact(3).enumerate() {
+            self.palette[(first + i) % 256] = [c[0], c[1], c[2]];
+        }
+    }
+
+    /// A command (SPEC 8.4); returns the clears and scrolls done (0 or 1).
+    pub fn command(&mut self, value: u8) -> u32 {
+        match value {
+            0x01 => self.clear(),
+            0x02 => self.scroll_up(),
+            0x03 => {
+                let row = COLS * CELL_BYTES;
+                self.cells.copy_within(0..CELL_MEMORY - row, row);
+                self.fill_rows(0..1);
+                1
             }
-            0x2 => {
-                self.row = value.min(ROWS as u8 - 1);
-                self.pending_wrap = false;
-                0
-            }
-            0x3 => {
-                self.fg = value;
-                0
-            }
-            0x4 => {
-                self.bg = value;
-                0
-            }
-            0x5 => self.command(value),
-            0x6 => {
-                self.cell_pointer = (self.cell_pointer & 0xFF00) | value as u16;
-                0
-            }
-            0x7 => {
-                self.cell_pointer = (self.cell_pointer & 0x00FF) | (value as u16) << 8;
-                0
-            }
-            0x8 => {
-                let p = self.take_cell_pointer();
-                self.cells[p] = value;
-                0
-            }
-            0x9 => {
-                self.palette_index = value;
-                self.palette_component = 0;
-                0
-            }
-            0xA => {
-                self.palette[self.palette_index as usize][self.palette_component as usize] = value;
-                self.palette_component += 1;
-                if self.palette_component == 3 {
-                    self.palette_component = 0;
-                    self.palette_index = self.palette_index.wrapping_add(1);
+            0x04 => {
+                for col in self.col as usize..COLS {
+                    self.set_cell(col, self.row as usize, SPACE);
                 }
+                0
+            }
+            0x05 => {
+                self.cursor_visible = true;
+                0
+            }
+            0x06 => {
+                self.cursor_visible = false;
                 0
             }
             _ => 0,
         }
     }
 
-    pub fn port_in(&mut self, reg: u8) -> u8 {
-        match reg {
-            0x1 => self.col,
-            0x2 => self.row,
-            0x3 => self.fg,
-            0x4 => self.bg,
-            0x6 => self.cell_pointer as u8,
-            0x7 => (self.cell_pointer >> 8) as u8,
-            0x8 => {
-                let p = self.take_cell_pointer();
-                self.cells[p]
-            }
-            0x9 => self.palette_index,
-            0xB => COLS as u8,
-            0xC => ROWS as u8,
-            _ => 0xFF,
-        }
-    }
-
-    /// Port 28h: the reduced pointer to use now; the pointer then advances.
-    fn take_cell_pointer(&mut self) -> usize {
-        let p = self.cell_pointer as usize % CELL_MEMORY;
-        self.cell_pointer = ((p + 1) % CELL_MEMORY) as u16;
-        p
-    }
-
-    /// SPEC 6.3; returns the charge.
+    /// SPEC 8.3; returns the clears and scrolls done.
     fn put_char(&mut self, cp: u32) -> u32 {
         let charge = match cp {
             0x08 => {
@@ -315,7 +343,7 @@ impl Terminal {
         charge
     }
 
-    /// Prints one character (SPEC 6.3 steps 1-4); returns the charge.
+    /// Prints one character (SPEC 8.3 steps 1-4); returns the scrolls done.
     fn print(&mut self, ch: u16) -> u32 {
         const LAST: usize = COLS - 1;
         let width = if is_wide(ch) { 2 } else { 1 };
@@ -341,7 +369,7 @@ impl Terminal {
 
     /// Writes `chars` from `col` in the cursor row with the current colours.
     /// A wide pair cut in two loses its other half, which becomes a space and
-    /// keeps its colours (SPEC 6.3 step 3).
+    /// keeps its colours (SPEC 8.3 step 3).
     fn write_cells(&mut self, col: usize, chars: &[u16]) {
         let row = self.row as usize;
         let end = col + chars.len();
@@ -367,48 +395,19 @@ impl Terminal {
         }
     }
 
-    /// SPEC 6.4; returns the charge.
-    fn command(&mut self, value: u8) -> u32 {
-        match value {
-            0x01 => self.clear(),
-            0x02 => self.scroll_up(),
-            0x03 => {
-                let row = COLS * CELL_BYTES;
-                self.cells.copy_within(0..CELL_MEMORY - row, row);
-                self.fill_rows(0..1);
-                SCROLL_CLEAR_CHARGE
-            }
-            0x04 => {
-                for col in self.col as usize..COLS {
-                    self.set_cell(col, self.row as usize, SPACE);
-                }
-                0
-            }
-            0x05 => {
-                self.cursor_visible = true;
-                0
-            }
-            0x06 => {
-                self.cursor_visible = false;
-                0
-            }
-            _ => 0,
-        }
-    }
-
     fn clear(&mut self) -> u32 {
         self.fill_rows(0..ROWS);
         self.col = 0;
         self.row = 0;
         self.pending_wrap = false;
-        SCROLL_CLEAR_CHARGE
+        1
     }
 
     fn scroll_up(&mut self) -> u32 {
         let row = COLS * CELL_BYTES;
         self.cells.copy_within(row.., 0);
         self.fill_rows(ROWS - 1..ROWS);
-        SCROLL_CLEAR_CHARGE
+        1
     }
 
     fn set_cell(&mut self, col: usize, row: usize, ch: u16) {
@@ -426,7 +425,7 @@ impl Terminal {
     }
 }
 
-/// The xterm 256-colour palette (SPEC 6.6).
+/// The xterm 256-colour palette (SPEC 8.5).
 pub fn xterm_palette() -> [[u8; 3]; 256] {
     const BASE: [[u8; 3]; 16] = [
         [0x00, 0x00, 0x00],
@@ -463,8 +462,36 @@ pub fn xterm_palette() -> [[u8; 3]; 256] {
 mod tests {
     use super::*;
 
+    /// Feeds the bytes through the decoder and put character, without the
+    /// fast path of `write`.
     fn put(t: &mut Terminal, s: &[u8]) -> u32 {
-        s.iter().map(|&b| t.port_out(0, b)).sum()
+        let mut ops = 0;
+        for &b in s {
+            for cp in t.decoder.feed(b).into_iter().flatten() {
+                ops += t.put_char(cp);
+            }
+        }
+        ops
+    }
+
+    /// The old register writes, as calls: 1 column, 2 row, 3 foreground,
+    /// 4 background, 5 command.
+    trait Regs {
+        fn port_out(&mut self, reg: u8, v: u8) -> u32;
+    }
+    impl Regs for Terminal {
+        fn port_out(&mut self, reg: u8, v: u8) -> u32 {
+            let ((col, row), (fg, bg)) = (self.cursor(), self.colors());
+            match reg {
+                1 => self.set_cursor(v as u32, row as u32),
+                2 => self.set_cursor(col as u32, v as u32),
+                3 => self.set_colours(v, bg),
+                4 => self.set_colours(fg, v),
+                5 => return self.command(v),
+                _ => unreachable!(),
+            }
+            0
+        }
     }
 
     fn ch(t: &Terminal, col: usize, row: usize) -> u16 {
@@ -478,7 +505,6 @@ mod tests {
         assert_eq!(t.cell(79, 29), Cell { ch: 0x20, fg: 7, bg: 0 });
         assert_eq!(t.cursor(), (0, 0));
         assert!(t.cursor_visible());
-        assert_eq!(t.cell_pointer(), 0);
         assert_eq!(t.palette()[1], [0xCD, 0, 0]);
         assert_eq!(t.palette()[16], [0, 0, 0]);
         assert_eq!(t.palette()[196], [0xFF, 0, 0]);
@@ -511,7 +537,7 @@ mod tests {
         assert_eq!(ch(&t, 0, 0), 't' as u16, "no scroll yet");
         assert_eq!(t.cursor(), (79, 29));
         assert!(t.pending_wrap());
-        assert_eq!(put(&mut t, b"Y"), SCROLL_CLEAR_CHARGE);
+        assert_eq!(put(&mut t, b"Y"), 1);
         assert_eq!(ch(&t, 79, 28), 'Z' as u16);
         assert_eq!(ch(&t, 0, 29), 'Y' as u16);
         assert_eq!(ch(&t, 0, 0), ' ' as u16, "top row scrolled away");
@@ -609,7 +635,7 @@ mod tests {
         // On the last row the move scrolls.
         t.port_out(1, 79);
         t.port_out(2, 29);
-        assert_eq!(put(&mut t, "好".as_bytes()), SCROLL_CLEAR_CHARGE);
+        assert_eq!(put(&mut t, "好".as_bytes()), 1);
         assert_eq!((ch(&t, 0, 29), ch(&t, 1, 29), ch(&t, 79, 28)), (0x597D, CONTINUATION, 0x20));
         assert_eq!(t.cursor(), (2, 29));
 
@@ -664,11 +690,8 @@ mod tests {
     fn text_skips_continuation_cells() {
         let mut t = Terminal::default();
         put(&mut t, "a你b".as_bytes());
-        // A stray continuation code written through the cell pointer.
-        t.port_out(6, (COLS * CELL_BYTES) as u8);
-        t.port_out(7, ((COLS * CELL_BYTES) >> 8) as u8);
-        t.port_out(8, 0xFF);
-        t.port_out(8, 0xFF);
+        // A stray continuation code written with cells_write.
+        t.cells_write(COLS, &[0xFF, 0xFF, 7, 0]);
         put(&mut t, b"\n\nend");
         let text = t.text();
         let lines: Vec<&str> = text.lines().take(3).collect();
@@ -704,7 +727,7 @@ mod tests {
         assert_eq!(ch(&t, 0, 1), ' ' as u16);
         put(&mut t, b"x");
         t.port_out(3, 5);
-        assert_eq!(put(&mut t, b"\x0C"), SCROLL_CLEAR_CHARGE);
+        assert_eq!(put(&mut t, b"\x0C"), 1);
         assert_eq!(t.cursor(), (0, 0));
         assert_eq!(t.cell(0, 1), Cell { ch: 0x20, fg: 5, bg: 0 });
     }
@@ -717,7 +740,7 @@ mod tests {
         t.port_out(2, 29);
         put(&mut t, b"last");
         t.port_out(4, 3);
-        assert_eq!(put(&mut t, b"\n"), SCROLL_CLEAR_CHARGE);
+        assert_eq!(put(&mut t, b"\n"), 1);
         assert_eq!(ch(&t, 0, 28), 'l' as u16);
         assert_eq!(t.cell(0, 29), Cell { ch: 0x20, fg: 7, bg: 3 });
         assert_eq!(t.cursor(), (0, 29));
@@ -783,62 +806,78 @@ mod tests {
     }
 
     #[test]
-    fn cursor_and_colour_ports() {
+    fn cursor_and_colours() {
         let mut t = Terminal::default();
-        t.port_out(1, 200);
-        t.port_out(2, 200);
-        assert_eq!((t.port_in(1), t.port_in(2)), (79, 29));
-        t.port_out(3, 0x12);
-        t.port_out(4, 0x34);
-        assert_eq!((t.port_in(3), t.port_in(4)), (0x12, 0x34));
-        assert_eq!((t.port_in(0xB), t.port_in(0xC)), (80, 30));
-        assert_eq!(t.port_in(0x0), 0xFF);
-        assert_eq!(t.port_in(0xA), 0xFF);
-        assert_eq!(t.port_in(0xF), 0xFF);
+        t.set_cursor(200, u32::MAX);
+        assert_eq!(t.cursor(), (79, 29));
+        t.set_colours(0x12, 0x34);
+        assert_eq!(t.colors(), (0x12, 0x34));
     }
 
     #[test]
-    fn cell_pointer_access_and_wrap() {
+    fn cells_read_write_and_wrap() {
         let mut t = Terminal::default();
-        // Write cell (1, 0) through the pointer.
-        t.port_out(6, 4);
-        t.port_out(7, 0);
-        for b in [b'Q', 0, 9, 1] {
-            t.port_out(8, b);
-        }
+        t.cells_write(1, &[b'Q', 0, 9, 1]);
         assert_eq!(t.cell(1, 0), Cell { ch: 'Q' as u16, fg: 9, bg: 1 });
-        assert_eq!(t.cell_pointer(), 8);
-        // Wrap from 9,599 to 0.
-        t.port_out(6, (9599 & 0xFF) as u8);
-        t.port_out(7, (9599 >> 8) as u8);
-        t.port_out(8, 0x55);
-        assert_eq!(t.cell_pointer(), 0);
-        assert_eq!(t.cell(79, 29).bg, 0x55);
-        // Values above 9,599 are reduced modulo 9,600 when used.
-        t.port_out(6, 0x84);
-        t.port_out(7, 0x25); // 0x2584 = 9604 -> 4
-        assert_eq!((t.port_in(6), t.port_in(7)), (0x84, 0x25));
-        assert_eq!(t.port_in(8), b'Q');
-        assert_eq!(t.cell_pointer(), 5);
-        assert_eq!(t.port_in(8), 0);
+        // From the last cell, wrapping to the first.
+        t.cells_write(CELLS - 1, &[b'A', 0, 1, 2, b'B', 0, 3, 4]);
+        assert_eq!(t.cell(79, 29), Cell { ch: 'A' as u16, fg: 1, bg: 2 });
+        assert_eq!(t.cell(0, 0), Cell { ch: 'B' as u16, fg: 3, bg: 4 });
+        let mut out = [0u8; 12];
+        t.cells_read(CELLS - 1, &mut out);
+        assert_eq!(out, [b'A', 0, 1, 2, b'B', 0, 3, 4, b'Q', 0, 9, 1]);
+        // The whole grid, from the middle: every cell once.
+        let mut all = vec![0u8; CELL_MEMORY];
+        t.cells_read(1200, &mut all);
+        assert_eq!(&all[..CELL_MEMORY / 2], &t.cell_bytes()[CELL_MEMORY / 2..]);
+        assert_eq!(&all[CELL_MEMORY / 2..], &t.cell_bytes()[..CELL_MEMORY / 2]);
+        // Not checked: a continuation code is written as given.
+        t.cells_write(2, &[0xFF, 0xFF, 0, 0]);
+        assert_eq!(t.cell(2, 0).ch, CONTINUATION);
     }
 
     #[test]
     fn palette_writes() {
         let mut t = Terminal::default();
-        t.port_out(9, 255);
-        for v in [1, 2, 3, 4, 5, 6] {
-            t.port_out(0xA, v);
-        }
+        t.palette_set(255, &[1, 2, 3, 4, 5, 6]);
         assert_eq!(t.palette()[255], [1, 2, 3]);
         assert_eq!(t.palette()[0], [4, 5, 6], "index wraps 255 -> 0");
-        assert_eq!(t.port_in(9), 1);
-        // Writing the index restarts at red.
-        t.port_out(0xA, 9);
-        t.port_out(9, 7);
-        t.port_out(0xA, 10);
-        assert_eq!(t.palette()[1][0], 9);
-        assert_eq!(t.palette()[7], [10, 0xE5, 0xE5]);
+        assert_eq!(t.palette()[1], [0xCD, 0, 0]);
+        t.palette_set(7, &[10, 11, 12]);
+        assert_eq!(t.palette()[7], [10, 11, 12]);
+    }
+
+    #[test]
+    fn write_limited_stops_when_the_budget_is_used() {
+        let mut t = Terminal::default();
+        assert_eq!(t.write_limited(b"abcdef", 3, 1, 150), (3, 3));
+        assert_eq!(t.cursor(), (3, 0));
+        // Already out of budget: still one byte, so a program always progresses.
+        assert_eq!(t.write_limited(b"xyz", -50, 1, 150), (1, 1));
+        // A scroll is charged with the byte that caused it.
+        t.set_cursor(0, 29);
+        assert_eq!(t.write_limited(b"\n\nq", 1000, 1, 150), (3, 303));
+        assert_eq!(t.write_limited(b"\n\nq", 100, 1, 150), (1, 151));
+        assert_eq!(t.write_limited(b"", 100, 1, 150), (0, 0));
+    }
+
+    #[test]
+    fn bulk_write_matches_byte_at_a_time() {
+        // The fast path for ASCII must agree with put character everywhere:
+        // next to wide pairs, at the end of rows, with pending wrap.
+        let text = "ab你cd\n好xyz\tq\u{7F}\r".repeat(40) + &"0123456789".repeat(300);
+        let mut a = Terminal::default();
+        let mut b = Terminal::default();
+        for start in [0u32, 77, 78, 79] {
+            a.set_cursor(start, 3);
+            b.set_cursor(start, 3);
+            a.write("你你你".as_bytes());
+            put(&mut b, "你你你".as_bytes());
+            a.set_cursor(start, 3);
+            b.set_cursor(start, 3);
+            assert_eq!(a.write(text.as_bytes()), put(&mut b, text.as_bytes()));
+            assert_eq!(a, b, "from column {start}");
+        }
     }
 
     #[test]
@@ -846,11 +885,11 @@ mod tests {
         let mut t = Terminal::default();
         put(&mut t, b"row0\nrow1");
         t.port_out(4, 2);
-        assert_eq!(t.port_out(5, 2), SCROLL_CLEAR_CHARGE);
+        assert_eq!(t.port_out(5, 2), 1);
         assert_eq!(ch(&t, 0, 0), 'r' as u16);
         assert_eq!(ch(&t, 3, 0), '1' as u16);
         assert_eq!(t.cell(0, 29), Cell { ch: 0x20, fg: 7, bg: 2 });
-        assert_eq!(t.port_out(5, 3), SCROLL_CLEAR_CHARGE);
+        assert_eq!(t.port_out(5, 3), 1);
         assert_eq!(ch(&t, 3, 1), '1' as u16);
         assert_eq!(t.cell(0, 0), Cell { ch: 0x20, fg: 7, bg: 2 });
         // Clear to end of row from the cursor, free.
@@ -864,7 +903,7 @@ mod tests {
         assert_eq!(t.port_out(5, 5), 0);
         assert!(t.cursor_visible());
         assert_eq!(t.port_out(5, 0x77), 0);
-        assert_eq!(t.port_out(5, 1), SCROLL_CLEAR_CHARGE);
+        assert_eq!(t.port_out(5, 1), 1);
         assert_eq!(t.cursor(), (0, 0));
         assert_eq!(t.cell(5, 5), Cell { ch: 0x20, fg: 7, bg: 2 });
     }

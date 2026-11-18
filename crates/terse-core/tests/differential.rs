@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
-use terse_rv::RvMachine;
+use terse_core::Machine;
 
 struct Gen(u64);
 
@@ -133,7 +133,7 @@ fn torture_matches_native() {
     assert!(want.lines().count() == 12 && want.ends_with("end\n"), "{want}");
     for opt in ["-O0", "-Os", "-O2"] {
         let rom = common::build(std::slice::from_ref(&src), opt, true);
-        let mut m = RvMachine::new(&common::program(&rom, 4, &[common::TERMINAL]));
+        let mut m = Machine::new(&common::program(&rom, 4, &[common::TERMINAL]));
         let mut frames = 0;
         while m.exit_code().is_none() && frames < 2000 {
             m.run_frame(&Default::default());

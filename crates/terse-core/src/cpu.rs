@@ -1,4 +1,4 @@
-//! An RV32IMC interpreter for profile 2 (RV-PROFILE.md section 1).
+//! The RV32IMC interpreter of machine profile 1 (SPEC 1.1).
 //!
 //! Exactly RV32I + M + C, user mode only: no CSRs, no A/F/D, no FENCE.I.
 //! Every reserved, illegal or unsupported encoding (including all of C's
@@ -10,7 +10,9 @@
 //! their base-ISA equivalents), then executed. ROM cannot change, so a
 //! machine decodes it once ([`Code`]) and [`Cpu::run_cached`] executes from
 //! that; [`Cpu::run`] decodes as it goes. Both share `decode` and the
-//! execution loop.
+//! execution loop. An instruction fetched from ROM costs 1 budget unit; one
+//! fetched from RAM is decoded afresh every time (so code written to RAM
+//! takes effect at once) and costs [`RAM_INSTRUCTION_COST`] (SPEC 1.4).
 
 use std::fmt;
 
@@ -18,6 +20,10 @@ use std::fmt;
 pub const ROM_BASE: u32 = 0x0001_0000;
 /// Guest address of RAM byte 0.
 pub const RAM_BASE: u32 = 0x0010_0000;
+
+/// Budget units an instruction fetched from RAM costs (one from ROM costs 1).
+/// Provisional (SPEC "Provisional values").
+pub const RAM_INSTRUCTION_COST: i64 = 4;
 
 /// Why the machine stopped with a fault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -467,10 +473,12 @@ impl Cpu {
         Cpu { x, pc, min_sp: sp }
     }
 
-    /// Runs until `budget` (instructions) is used up, an `ecall`, or a fault,
-    /// decoding each instruction as it goes. Every instruction costs 1. On a
-    /// fault `pc` is left at the faulting instruction, which is not counted
-    /// and changes nothing.
+    /// Runs until `budget` is used up, an `ecall`, or a fault, decoding each
+    /// instruction as it goes. An instruction in ROM costs 1, one in RAM
+    /// [`RAM_INSTRUCTION_COST`]; an instruction that starts with a positive
+    /// budget completes, so the budget can end below zero. On a fault `pc` is
+    /// left at the faulting instruction, which is not counted and changes
+    /// nothing.
     pub fn run(&mut self, bus: &mut Bus, budget: &mut i64) -> Stop {
         self.run_with(bus, None, budget)
     }
@@ -496,17 +504,20 @@ impl Cpu {
             if left <= 0 {
                 break Stop::Budget;
             }
-            left -= 1;
             min_sp = min_sp.min(x[2]);
             let slot = (pc.wrapping_sub(ROM_BASE) / 2) as usize;
-            let inst = match code {
-                Some(c) if slot < c.insts.len() => c.insts[slot],
-                _ => bus.decode_at(pc).pack(),
+            let (inst, cost) = match code {
+                Some(c) if slot < c.insts.len() => (c.insts[slot], 1),
+                _ if slot < bus.rom.len() / 2 => (bus.decode_at(pc).pack(), 1),
+                _ => (bus.decode_at(pc).pack(), RAM_INSTRUCTION_COST),
             };
+            left -= cost;
             macro_rules! fault {
-                ($kind:expr, $addr:expr) => {
-                    break Stop::Fault(Fault { kind: $kind, pc, addr: $addr })
-                };
+                ($kind:expr, $addr:expr) => {{
+                    // The faulting instruction was not executed.
+                    left += cost;
+                    break Stop::Fault(Fault { kind: $kind, pc, addr: $addr });
+                }};
             }
             macro_rules! load {
                 ($n:literal, $addr:expr) => {
@@ -628,10 +639,6 @@ impl Cpu {
             };
             pc = next;
         };
-        if matches!(stop, Stop::Fault(_)) {
-            // The faulting instruction was not executed.
-            left += 1;
-        }
         self.pc = pc;
         self.min_sp = min_sp;
         self.x.copy_from_slice(&regs[..32]);

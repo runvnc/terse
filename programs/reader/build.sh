@@ -1,9 +1,12 @@
 #!/bin/sh
-# Builds reader.terse from reader.c and programs/lib with SDCC (4.x, z80
-# port) and the workspace's `terse pack`.
+# Builds reader.terse from reader.c and programs/lib with
+# clang (riscv32), ld.lld, llvm-objcopy and the workspace's `terse pack`.
 #   ./build.sh [<out dir>]     default: this directory
 # Set TERSE to a built `terse` binary to skip cargo, or CARGO if cargo is
-# not on PATH (e.g. CARGO=~/.cargo/bin/cargo).
+# not on PATH; CLANG, LLD and OBJCOPY name the tools (defaults: clang,
+# ld.lld, llvm-objcopy). The flags and the order of the objects are those
+# of crates/terse-cli/tests/common/mod.rs, which checks that reader.terse is
+# up to date.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 lib="$here/../lib"
@@ -17,21 +20,12 @@ else
 fi
 
 cd "$tmp"
-sdasz80 -g -o crt0.rel "$lib/crt0.s"
-cflags="-mz80 --std-c11 --opt-code-size -I$lib"
-sdcc $cflags -c "$lib/terse.c" -o terse.rel
-sdcc $cflags -c "$here/reader.c" -o reader.rel
-# Code from 0100h after crt0's vectors; data in RAM from 8000h (crt0.s has
-# the memory map). Only z80.lib's support routines that the code calls are
-# linked (see the .map file for which).
-sdcc -mz80 --no-std-crt0 --nostdlib --code-loc 0x0100 --data-loc 0x8000 \
-    -L /usr/share/sdcc/lib/z80 -l z80 \
-    crt0.rel reader.rel terse.rel -o reader.ihx
-makebin -p reader.ihx reader.bin
-size=$(wc -c < reader.bin)
-# The reader maps RAM into slot 3 (6000h-7FFFh) to read the article.
-if [ "$size" -gt 24576 ]; then
-    echo "reader.bin is $size bytes; it must end below 6000h" >&2
-    exit 1
-fi
+cflags="--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32 -Os -ffreestanding -nostdlib -fno-builtin -ffunction-sections -fdata-sections"
+n=0
+for src in "$lib/crt0.S" "$here/reader.c" "$lib/terse.c"; do
+    "${CLANG:-clang}" $cflags -I "$lib" -c "$src" -o "$n.o"
+    n=$((n + 1))
+done
+"${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o 1.o 2.o -o reader.elf
+"${OBJCOPY:-llvm-objcopy}" -O binary reader.elf reader.bin
 terse pack --rom reader.bin --title reader --ram-pages 10 --device 2:0 --device 4:0 -o "$out/reader.terse"

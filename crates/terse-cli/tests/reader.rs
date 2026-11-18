@@ -1,20 +1,27 @@
-//! Golden tests for programs/reader/reader.terse: a host with a blob store
-//! holding two feeds (no relay), the content device served by the real
-//! `ContentService`, and scripted events. Every request completes at the
-//! start of the next frame, as in `terse run`. Set UPDATE_GOLDEN=1 to
-//! rewrite the expected screens in programs/reader/expected/.
+//! Golden tests for programs/rv/reader/reader.terse, the profile-2 port of
+//! the reader: the fixtures, scripts and expected screens of
+//! crates/terse-cli/tests/reader.rs (programs/reader/expected/, read only),
+//! run on `terse_rv::RvMachine`. Screens must be identical to the Z80
+//! reader's; they may be complete in earlier frames.
 //!
-//! `timing` prints the measurements quoted in the README (run with
+//! `timing` prints the measurements for the profile comparison (run with
 //! `--nocapture`).
+
+mod common;
 
 use std::path::{Path, PathBuf};
 
-use terse_core::{Event, FrameInput, FrameResult, Image, Machine, Script, TSTATES_PER_FRAME};
+use terse_core::{Event, FrameInput, FrameResult, Script};
 use terse_net::{BlobStore, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id};
+use terse_rv::{INSTRUCTIONS_PER_FRAME, RAM_BASE, RvMachine};
 
-const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
+const IMAGE: &[u8] = include_bytes!("../../../programs/rv/reader/reader.terse");
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
+
+fn new_machine() -> RvMachine {
+    RvMachine::new(&terse_rv::parse_image(IMAGE).unwrap())
+}
 
 fn expected_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/reader/expected")
@@ -99,7 +106,7 @@ impl Fixture {
 }
 
 struct Run {
-    machine: Machine,
+    machine: RvMachine,
     content: ContentService,
     script: Script,
     completions: Vec<terse_core::Completion>,
@@ -111,7 +118,7 @@ struct Run {
 impl Run {
     fn new(fixture: &Fixture, script: &str) -> Self {
         Run {
-            machine: Machine::new(&Image::parse(IMAGE).unwrap()),
+            machine: new_machine(),
             content: fixture.content(),
             script: Script::parse(script).unwrap(),
             completions: Vec::new(),
@@ -130,6 +137,7 @@ impl Run {
         let input = FrameInput { events: &events, completions: &completions, unix_time: self.unix_time, ..Default::default() };
         let r = self.machine.run_frame(&input);
         assert_eq!(r.completions_ignored, 0);
+        assert!(self.machine.fault().is_none(), "{:?}", self.machine.fault());
         self.content.submit(self.machine.take_content_requests());
         self.completions = self.content.wait_finished();
         self.results.push(r);
@@ -150,11 +158,7 @@ impl Run {
 
 fn golden(name: &str, got: &str) {
     let path = expected_dir().join(format!("{name}.txt"));
-    if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        std::fs::create_dir_all(expected_dir()).unwrap();
-        std::fs::write(&path, got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("{} (run with UPDATE_GOLDEN=1)", path.display()));
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert_eq!(got, want, "screen differs from {}", path.display());
 }
 
@@ -182,7 +186,6 @@ fn list_of_two_feeds() {
     let screen = run.screen();
     golden("list", &screen);
     assert!(row(&screen, 0).contains("8 entries  ·  2 subscriptions"));
-    // Newest first; the selection is on the first entry.
     assert!(row(&screen, 1).contains("Emoji"));
     assert!(row(&screen, 7).contains("日本語の記事：テスト"));
     let reply = row(&screen, 5);
@@ -191,7 +194,6 @@ fn list_of_two_feeds() {
     assert!(row(&screen, 3).ends_with("…"), "cut with an ellipsis: {}", row(&screen, 3));
     let key = terse_net::to_hex(&alice().feed_key());
     assert!(row(&screen, 2).contains(&key[..8]));
-    // Selection bar: row 1 has the selected background.
     let t = run.machine.terminal().unwrap();
     assert_ne!(t.cell(40, 1).bg, t.cell(40, 2).bg);
 }
@@ -206,7 +208,7 @@ fn list_with_a_clock() {
     let screen = run.screen();
     assert!(row(&screen, 1).starts_with("      2h ago "), "{}", row(&screen, 1));
     run.unix_time = T0 + 600 + 3 * 86400;
-    run.machine = Machine::new(&Image::parse(IMAGE).unwrap());
+    run.machine = new_machine();
     run.frames(10);
     assert!(row(&run.screen(), 8).starts_with("      3d ago "), "{}", row(&run.screen(), 8));
 }
@@ -214,29 +216,31 @@ fn list_with_a_clock() {
 #[test]
 fn open_scroll_and_return() {
     let f = Fixture::populated();
-    // Select "A long article" (index 5) with Down and a click, open it.
     let mut run = Run::new(&f, "12 press down\n13 press down\n14 click 300 104\n16 press enter\n");
     run.frames(30);
     let opened = run.screen();
-    golden("article", &opened);
+    // The Z80 golden was taken while the Z80 was still wrapping the article
+    // (its status bar says "lines 1–27 of 72+"); here the article is fully
+    // wrapped by then. Rows 0-28 are identical; the status bar is final.
+    let text_rows = |s: &str| s.lines().take(29).collect::<Vec<_>>().join("\n");
+    let want = std::fs::read_to_string(expected_dir().join("article.txt")).unwrap();
+    assert_eq!(text_rows(&opened), text_rows(&want));
+    assert!(row(&want, 29).contains("lines 1–27 of 72+"));
+    assert!(row(&opened, 29).starts_with(" lines 1–27 of 105  25%"), "{}", row(&opened, 29));
     assert!(row(&opened, 0).contains("A long article"));
     assert!(row(&opened, 29).contains("lines 1–27 of"));
-    // Scrolling: a page, then three lines by the wheel.
     run.script = Script::parse("30 press pagedown\n32 wheel 1\n").unwrap();
     run.frames(10);
     let scrolled = run.screen();
     golden("article-scrolled", &scrolled);
     assert!(row(&scrolled, 29).contains("lines 30–56 of"), "{}", row(&scrolled, 29));
-    // Every text row fits: no row is longer than 80 columns, and the long word is split.
     assert!(opened.lines().chain(scrolled.lines()).all(|l| l.chars().count() <= 80));
-    // Back to the list, with the same selection.
     run.script = Script::parse("40 press esc\n").unwrap();
     run.frames(8);
     let back = run.screen();
     assert!(row(&back, 6).contains("A long article"));
     let t = run.machine.terminal().unwrap();
     assert_ne!(t.cell(40, 6).bg, t.cell(40, 5).bg, "selected");
-    // Esc in the list exits.
     run.script = Script::parse("48 press esc\n").unwrap();
     run.frames(2);
     assert_eq!(run.machine.exit_code(), Some(0));
@@ -282,64 +286,59 @@ fn refresh_keeps_the_selection() {
     let t = run.machine.terminal().unwrap();
     assert!(row(&screen, 4).contains("A title long enough"));
     assert_ne!(t.cell(40, 4).bg, t.cell(40, 3).bg, "the selection moved down with its entry");
-    // Opening the new entry clears its mark.
     run.script = Script::parse(&format!("{} press home\n{} press enter\n{} press esc\n", 31, 32, 36)).unwrap();
     run.frames(14);
     assert!(row(&run.screen(), 1).starts_with(" ") && row(&run.screen(), 1).contains("Fresh news"));
 }
 
-/// Measurements for the README: frames and T-states to draw the list, the
-/// busiest frame of a session, and Enter to a local article on screen.
+/// Measurements for the comparison with the Z80 reader: frames and
+/// instructions to draw the list, the busiest frame of a session, Enter to
+/// a local article on screen, and the deepest stack.
 #[test]
 fn timing() {
     let f = Fixture::populated();
-    // Open "A long article" (index 5), page through it, go back, open the
-    // big one (index 1), go to its end, go back.
     let script = "40 press down\n41 press down\n42 press down\n43 press down\n44 press down\n50 press enter\n\
                   90 press pagedown\n95 wheel 2\n100 press end\n110 press esc\n120 press home\n121 press down\n\
                   123 press enter\n160 press end\n170 press esc\n";
     let mut run = Run::new(&f, script);
     run.frames(200);
-    // The first frame from which rows 0-28 (or, with `status`, all rows)
-    // stay as they are at frame `to`.
     let settled = |from: usize, to: usize, status: bool| {
         let rows = |s: &str| s.lines().take(if status { 30 } else { 29 }).collect::<Vec<_>>().join("\n");
         let last = rows(&run.screens[to]);
         (from..=to).find(|&i| run.screens[i..=to].iter().all(|s| rows(s) == last)).unwrap()
     };
     let list_done = settled(0, 39, true);
-    let tstates: u64 = run.results[..=list_done].iter().map(|r| r.tstates).sum();
+    let instructions: u64 = run.results[..=list_done].iter().map(|r| r.tstates).sum();
     let worst = run.results.iter().enumerate().max_by_key(|(_, r)| r.tstates).unwrap();
     let spilled = run.results.iter().filter(|r| !r.halted_early).count();
+    let mut sorted: Vec<u64> = run.results.iter().map(|r| r.tstates).collect();
+    sorted.sort_unstable();
     eprintln!(
-        "reader: list of 8 entries drawn by frame {list_done} ({tstates} T-states from reset)\n\
-         reader: Enter (frame 50) to the ~6 KB article's first page on screen: {} frames, fully wrapped: {} frames\n\
-         reader: Enter (frame 123) to the >16 KiB article's first page: {} frames, fully wrapped: {} frames\n\
-         reader: busiest frame {} with {} T-states ({:.0}% of {TSTATES_PER_FRAME}); frames not ending in HALT: {spilled}",
+        "rv reader: list of 8 entries drawn by frame {list_done} ({instructions} instructions from reset)\n\
+         rv reader: Enter (frame 50) to the ~6 KB article's first page on screen: {} frames, fully wrapped: {} frames\n\
+         rv reader: Enter (frame 123) to the >16 KiB article's first page: {} frames, fully wrapped: {} frames\n\
+         rv reader: busiest frame {} with {} instructions ({:.1}% of {INSTRUCTIONS_PER_FRAME}); median frame {}; \
+         frames not ending in wait_frame: {spilled}",
         settled(50, 89, false) - 50 + 1,
         settled(50, 89, true) - 50 + 1,
         settled(123, 159, false) - 123 + 1,
         settled(123, 159, true) - 123 + 1,
         worst.0,
         worst.1.tstates,
-        worst.1.tstates as f64 * 100.0 / TSTATES_PER_FRAME as f64,
+        worst.1.tstates as f64 * 100.0 / INSTRUCTIONS_PER_FRAME as f64,
+        sorted[sorted.len() / 2],
     );
-    // The stack grows down from FFFFh into zeroed RAM: its deepest point is
-    // where the bytes below are untouched (a run of 256 zeros).
-    let ram = &run.machine.ram()[..0x8000];
-    let mut low = ram.len();
-    while low > 256 && ram[low - 256..low].iter().any(|&b| b != 0) {
-        low -= 1;
-    }
-    let deepest = (low..ram.len()).find(|&i| ram[i] != 0).unwrap();
-    eprintln!("reader: stack reached {:04X}h ({} bytes)", 0x8000 + deepest, ram.len() - deepest);
+    let ram_end = RAM_BASE + run.machine.ram().len() as u32;
+    let min_sp = run.machine.cpu().min_sp;
+    eprintln!("rv reader: stack reached {min_sp:08X}h ({} bytes)", ram_end - min_sp);
     assert_eq!(spilled, 0, "a frame's work ran into the next frame");
 }
 
 /// The costliest text: wide characters only, wrapped and redrawn page by
-/// page. No frame's work may spill into the next.
+/// page. Measured, not limited: on profile 2 a frame that runs out of
+/// instructions simply continues in the next.
 #[test]
-fn wide_text_stays_within_each_frame() {
+fn wide_text_frames() {
     let mut f = Fixture::new();
     let text: String = (0..80).map(|i| format!("{}\n", "日本語の文章も二桁の幅で折り返されます。".repeat(1 + i % 4))).collect();
     f.publish(&alice(), "日本語".repeat(13).as_str(), text.as_bytes(), None);
@@ -347,8 +346,23 @@ fn wide_text_stays_within_each_frame() {
     let mut run = Run::new(&f, script);
     run.frames(70);
     let worst = run.results.iter().map(|r| r.tstates).max().unwrap();
-    eprintln!("reader: wide text, busiest frame {worst} T-states");
-    assert!(run.results.iter().all(|r| r.halted_early), "{:?}", run.results.iter().map(|r| r.tstates).collect::<Vec<_>>());
+    let spilled = run.results.iter().filter(|r| !r.halted_early).count();
+    let busy: Vec<(usize, u64)> =
+        run.results.iter().map(|r| r.tstates).enumerate().filter(|&(_, t)| t > 20_000).collect();
+    eprintln!(
+        "rv reader: wide text, busiest frame {worst} instructions; frames not ending in wait_frame: {spilled}; \
+         frames over 20,000 instructions: {busy:?}"
+    );
     assert!(row(&run.screen(), 29).contains("lines 16–42 of"), "{}", run.screen());
 }
 
+/// reader.terse is up to date with its sources (skipped without the tools).
+#[test]
+fn image_is_up_to_date() {
+    if !common::have_tools() {
+        return;
+    }
+    let rom = common::build(&[common::workspace().join("programs/rv/reader/reader.c")], "-Os", true);
+    let image = terse_rv::parse_image(IMAGE).unwrap();
+    assert!(image.rom == rom, "programs/rv/reader/reader.terse is out of date: run programs/rv/reader/build.sh");
+}

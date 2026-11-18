@@ -9,7 +9,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::process::Command;
 
-use terse_rv::cpu::{Bus, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
+use terse_core::cpu::{Bus, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
 
 /// Disassembles each encoding; returns LLVM's text, or None if invalid.
 fn llvm(encodings: &[Vec<u8>], attrs: &str) -> Vec<Option<String>> {

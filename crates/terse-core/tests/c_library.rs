@@ -1,5 +1,5 @@
 //! programs/lib/terse.c must agree with the machine: its wide-character
-//! table is the one of SPEC 6.1 (`terse_core::wide`).
+//! table is the one of SPEC 8.1 (`terse_core::wide`).
 
 const TERSE_C: &str = include_str!("../../../programs/lib/terse.c");
 

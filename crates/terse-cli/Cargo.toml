@@ -12,8 +12,6 @@ path = "src/main.rs"
 [dependencies]
 terse-core.workspace = true
 terse-net.workspace = true
-terse-rv.workspace = true
-rsasm = { version = "0.1.3", default-features = false, features = ["retro"] }
 
 [dev-dependencies]
 terse-net.workspace = true

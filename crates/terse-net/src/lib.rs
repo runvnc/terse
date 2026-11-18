@@ -1,4 +1,4 @@
-//! Host-side networking for the content device (SPEC 7, NETWORK.md).
+//! Host-side networking for the content device (SPEC 9, NETWORK.md).
 //!
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
@@ -11,7 +11,7 @@
 //! - [`node`]: host behaviour (NETWORK 2, 4.4): store first, then the relay,
 //!   with verification; following and publishing feeds.
 //! - [`service`]: runs a node on a background thread for the frame loop.
-//! - [`timeline`]: the arrival order of entries and the feed records of SPEC 7.7.
+//! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
 pub mod blob;
 pub mod entry;

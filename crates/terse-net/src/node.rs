@@ -14,7 +14,7 @@
 //! not above `after`. The node is settled when every feed is caught up and
 //! no automatic download is running.
 //!
-//! The node also answers the content device's feed operations (SPEC 7.7):
+//! The node also answers the content device's feed operations (SPEC 9.5):
 //! every new entry it stores is appended to the arrival log
 //! ([`crate::timeline::Arrivals`]); the timeline is that log, newest first,
 //! restricted to the feeds subscribed to now.
@@ -351,7 +351,7 @@ impl Node {
     }
 
     /// The subscriptions records from index `offset` that fit in `length`
-    /// bytes, and how many exist (SPEC 7.7). The order is the key order.
+    /// bytes, and how many exist (SPEC 9.5). The order is the key order.
     pub fn subscription_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let feeds: Vec<&FeedKey> = self.subscriptions.feeds().collect();
         let records = feeds
@@ -362,7 +362,7 @@ impl Node {
     }
 
     /// The stored entries of the subscribed feeds, newest arrival first
-    /// (SPEC 7.7). Entries of feeds no longer subscribed are left out (and
+    /// (SPEC 9.5). Entries of feeds no longer subscribed are left out (and
     /// come back in place if the feed is subscribed again); entries stored
     /// without an arrival record (by an older version) come last, highest
     /// `seq` first. Entries that fail verification are left out.
@@ -400,7 +400,7 @@ impl Node {
     }
 
     /// The timeline records from index `offset` that fit in `length` bytes,
-    /// and how many exist (SPEC 7.7).
+    /// and how many exist (SPEC 9.5).
     pub fn timeline_records(&mut self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let list = self.timeline();
         let mut records = Vec::new();
@@ -930,7 +930,7 @@ mod tests {
         titles
     }
 
-    /// SPEC 7.7: newest arrival first across feeds, the same after a
+    /// SPEC 9.5: newest arrival first across feeds, the same after a
     /// restart; unsubscribed feeds drop out.
     #[test]
     fn timeline_order_across_feeds_and_restarts() {

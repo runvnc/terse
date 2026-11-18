@@ -1,30 +1,31 @@
-//! Device 3, 2D vector display (SPEC 8).
+//! Device 3, 2D vector display (SPEC 10).
 //!
 //! The device only validates and copies the display list. [`decode`] turns a
 //! stored list into resolved primitives (origin applied, drawing state
-//! tracked, SPEC 8.3 termination rules); hosts and tests draw from it rather
-//! than parsing the list themselves.
+//! tracked, SPEC 10.3 termination rules, the fill cap of SPEC 10.4); hosts
+//! and tests draw from it rather than parsing the list themselves.
 
 use std::fmt;
 
-use crate::memory::Memory;
-
-/// Longest list a submit accepts (SPEC 8.2).
+/// Longest list a submit accepts (SPEC 10.2).
 pub const MAX_LIST: usize = 16_384;
 
-/// Commands (port 35h writes).
-pub const CMD_SUBMIT: u8 = 0x01;
-pub const CMD_CLEAR: u8 = 0x02;
-/// Results (port 35h reads).
-pub const RESULT_DONE: u8 = 0x00;
-pub const RESULT_REJECTED: u8 = 0x01;
-/// Styles (port 36h writes, SPEC 8.7).
+/// Results of `submit` (and of `style`, `persistence`, `fill`).
+pub const RESULT_DONE: u32 = 0;
+pub const RESULT_REJECTED: u32 = 1;
+/// Styles (SPEC 10.6).
 pub const STYLE_CLEAN: u8 = 0x00;
 pub const STYLE_PHOSPHOR: u8 = 0x01;
-/// Persistence after reset (port 37h, SPEC 8.2).
+/// Persistence after reset (SPEC 10.2).
 pub const DEFAULT_PERSISTENCE: u8 = 160;
+/// Total area, in square screen units, that the filled shapes of one list
+/// may cover (SPEC 10.4). Provisional.
+pub const FILL_CAP: u64 = 4 * 640 * 480;
+/// The screen in sixteenths of a screen unit (SPEC 10.1).
+const SCREEN_W16: i32 = 640 * 16;
+const SCREEN_H16: i32 = 480 * 16;
 
-/// Display-list opcodes (SPEC 8.3).
+/// Display-list opcodes (SPEC 10.3).
 pub mod op {
     pub const END: u8 = 0x00;
     pub const COLOUR: u8 = 0x01;
@@ -38,16 +39,14 @@ pub mod op {
     pub const TRIANGLE: u8 = 0x09;
 }
 
-/// The device state (SPEC 8.5): address, length, result, style,
-/// persistence and the list copy.
+/// The device state (SPEC 10.7): style, persistence, fill mode and the
+/// list copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vector {
-    /// Linear RAM address, 24 bits.
-    addr: u32,
-    length: u16,
-    result: u8,
     style: u8,
     persistence: u8,
+    /// False after a `fill(1)`: filled shapes are drawn as outlines.
+    fill: bool,
     list: Vec<u8>,
     /// Changes whenever the list's contents change (not part of the
     /// machine state; for hosts that cache what they upload).
@@ -55,74 +54,67 @@ pub struct Vector {
 }
 
 impl Default for Vector {
-    /// The state after reset (SPEC 8.2).
+    /// The state after reset (SPEC 10.2).
     fn default() -> Self {
-        Vector {
-            addr: 0,
-            length: 0,
-            result: RESULT_DONE,
-            style: STYLE_CLEAN,
-            persistence: DEFAULT_PERSISTENCE,
-            list: Vec::new(),
-            generation: 0,
-        }
+        Vector { style: STYLE_CLEAN, persistence: DEFAULT_PERSISTENCE, fill: true, list: Vec::new(), generation: 0 }
     }
 }
 
 impl Vector {
-    /// Returns the charge in T-states (SPEC 8.4).
-    pub fn port_out(&mut self, reg: u8, value: u8, memory: &Memory) -> u32 {
-        match reg {
-            0x0 => self.addr = (self.addr & 0xFF_FF00) | value as u32,
-            0x1 => self.addr = (self.addr & 0xFF_00FF) | (value as u32) << 8,
-            0x2 => self.addr = (self.addr & 0x00_FFFF) | (value as u32) << 16,
-            0x3 => self.length = (self.length & 0xFF00) | value as u16,
-            0x4 => self.length = (self.length & 0x00FF) | (value as u16) << 8,
-            0x5 => return self.command(value, memory),
-            // SPEC 8.2: other style values are ignored.
-            0x6 if value == STYLE_CLEAN || value == STYLE_PHOSPHOR => self.style = value,
-            0x7 => self.persistence = value,
-            _ => {}
+    /// Replaces the list with `bytes` if it is 1 to 16,384 bytes long;
+    /// returns [`RESULT_DONE`] or [`RESULT_REJECTED`] (the list is kept).
+    /// The caller checks that the bytes lie in RAM.
+    pub fn submit(&mut self, bytes: &[u8]) -> u32 {
+        if bytes.is_empty() || bytes.len() > MAX_LIST {
+            return RESULT_REJECTED;
         }
-        0
+        if self.list != bytes {
+            self.list.clear();
+            self.list.extend_from_slice(bytes);
+            self.generation += 1;
+        }
+        RESULT_DONE
     }
 
-    pub fn port_in(&self, reg: u8) -> u8 {
-        match reg {
-            0x5 => self.result,
-            _ => 0xFF,
+    /// Empties the list.
+    pub fn clear(&mut self) {
+        if !self.list.is_empty() {
+            self.list.clear();
+            self.generation += 1;
         }
     }
 
-    fn command(&mut self, value: u8, memory: &Memory) -> u32 {
-        match value {
-            CMD_SUBMIT => {
-                let (addr, len, ram) = (self.addr as usize, self.length as usize, memory.ram());
-                if len == 0 || len > MAX_LIST || addr + len > ram.len() {
-                    self.result = RESULT_REJECTED;
-                    return 0;
-                }
-                self.result = RESULT_DONE;
-                let bytes = &ram[addr..addr + len];
-                if self.list != bytes {
-                    self.list.clear();
-                    self.list.extend_from_slice(bytes);
-                    self.generation += 1;
-                }
-                len as u32
+    /// Sets the style: 0 clean, 1 phosphor; anything else is rejected.
+    pub fn set_style(&mut self, n: u32) -> u32 {
+        match n {
+            0 | 1 => {
+                self.style = n as u8;
+                RESULT_DONE
             }
-            CMD_CLEAR => {
-                self.result = RESULT_DONE;
-                if !self.list.is_empty() {
-                    self.list.clear();
-                    self.generation += 1;
-                }
-                0
+            _ => RESULT_REJECTED,
+        }
+    }
+
+    /// Sets the persistence, 0-255; anything else is rejected.
+    pub fn set_persistence(&mut self, n: u32) -> u32 {
+        match u8::try_from(n) {
+            Ok(p) => {
+                self.persistence = p;
+                RESULT_DONE
             }
-            _ => {
-                self.result = RESULT_REJECTED;
-                0
+            Err(_) => RESULT_REJECTED,
+        }
+    }
+
+    /// Sets the fill mode: 0 filled shapes are filled, 1 they are drawn as
+    /// outlines; anything else is rejected.
+    pub fn set_fill(&mut self, n: u32) -> u32 {
+        match n {
+            0 | 1 => {
+                self.fill = n == 0;
+                RESULT_DONE
             }
+            _ => RESULT_REJECTED,
         }
     }
 
@@ -131,36 +123,51 @@ impl Vector {
         &self.list
     }
 
-    /// The style (port 36h): [`STYLE_CLEAN`] or [`STYLE_PHOSPHOR`].
+    /// The style: [`STYLE_CLEAN`] or [`STYLE_PHOSPHOR`].
     pub fn style(&self) -> u8 {
         self.style
     }
 
-    /// True in the phosphor style (SPEC 8.7).
+    /// True in the phosphor style (SPEC 10.6).
     pub fn phosphor(&self) -> bool {
         self.style == STYLE_PHOSPHOR
     }
 
-    /// The persistence (port 37h), 0-255; the trail is multiplied by
-    /// persistence / 256 each frame (SPEC 8.7).
+    /// The persistence, 0-255 (SPEC 10.6).
     pub fn persistence(&self) -> u8 {
         self.persistence
     }
 
-    /// The line `terse run --dump-vectors` prints before the list when the
-    /// style is not clean: `-- vector style: phosphor, persistence N --`.
-    pub fn style_line(&self) -> Option<String> {
-        self.phosphor().then(|| format!("-- vector style: phosphor, persistence {} --", self.persistence))
+    /// Whether filled shapes are filled (false after `fill(1)`).
+    pub fn fill(&self) -> bool {
+        self.fill
     }
 
-    /// Address, length, result, style, persistence and list (STATE.md,
-    /// vector section); not the generation counter.
+    /// Whether shapes are drawn as outlines: in the phosphor style, or with
+    /// fill off.
+    pub fn outlined(&self) -> bool {
+        self.phosphor() || !self.fill
+    }
+
+    /// The line `terse run --dump-vectors` prints before the list when the
+    /// style or fill mode is not the default, e.g.
+    /// `-- vector style: phosphor, persistence 160 --` or
+    /// `-- vector style: clean, fill off --`.
+    pub fn style_line(&self) -> Option<String> {
+        match (self.phosphor(), self.fill) {
+            (false, true) => None,
+            (false, false) => Some("-- vector style: clean, fill off --".into()),
+            (true, true) => Some(format!("-- vector style: phosphor, persistence {} --", self.persistence)),
+            (true, false) => Some(format!("-- vector style: phosphor, persistence {}, fill off --", self.persistence)),
+        }
+    }
+
+    /// Style, persistence, fill mode and list (STATE.md, vector section);
+    /// not the generation counter.
     pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.addr.to_le_bytes());
-        out.extend_from_slice(&self.length.to_le_bytes());
-        out.push(self.result);
         out.push(self.style);
         out.push(self.persistence);
+        out.push(!self.fill as u8);
         out.extend_from_slice(&(self.list.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.list);
     }
@@ -170,14 +177,15 @@ impl Vector {
         self.generation
     }
 
-    /// The list decoded into primitives.
-    pub fn primitives(&self) -> Decoder<'_> {
-        decode(&self.list)
+    /// What the host draws: the outlines of the list when [`Vector::outlined`],
+    /// else its primitives with the fill cap applied.
+    pub fn shapes(&self) -> Box<dyn Iterator<Item = Primitive> + '_> {
+        if self.outlined() { Box::new(decode_outlines(&self.list)) } else { Box::new(decode(&self.list)) }
     }
 
-    /// The list decoded into outlines, as the phosphor style draws it.
-    pub fn outlines(&self) -> Outlines<'_> {
-        decode_outlines(&self.list)
+    /// [`Vector::shapes`] as text, one per line (`terse run --dump-vectors`).
+    pub fn dump(&self) -> String {
+        self.shapes().map(|p| format!("{p}\n")).collect()
     }
 }
 
@@ -220,9 +228,41 @@ impl fmt::Display for Primitive {
     }
 }
 
-/// Decodes a display list (SPEC 8.3).
+/// Decodes a display list (SPEC 10.3), leaving out the filled shapes that
+/// the fill cap (SPEC 10.4) stops.
 pub fn decode(list: &[u8]) -> Decoder<'_> {
-    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0) }
+    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), cap: true, filled: 0, capped: false }
+}
+
+/// Decodes a display list without the fill cap (for outlines, where
+/// nothing is filled).
+fn decode_uncapped(list: &[u8]) -> Decoder<'_> {
+    Decoder { cap: false, ..decode(list) }
+}
+
+/// The area a filled shape counts against the fill cap (SPEC 10.4): its
+/// bounding box (a disc's bounding square) clipped to the screen, in
+/// sixteenths squared, divided by 256 and rounded up.
+pub fn fill_area(p: &Primitive) -> u64 {
+    let (x0, y0, x1, y1) = match *p {
+        Primitive::Disc { x, y, radius, .. } => {
+            let (x, y, r) = (x as i32, y as i32, radius as i32);
+            (x - r, y - r, x + r, y + r)
+        }
+        Primitive::Rect { x0, y0, x1, y1, .. } => {
+            let (x0, y0, x1, y1) = (x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+            (x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1))
+        }
+        Primitive::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
+            let xs = [x0 as i32, x1 as i32, x2 as i32];
+            let ys = [y0 as i32, y1 as i32, y2 as i32];
+            (*xs.iter().min().unwrap(), *ys.iter().min().unwrap(), *xs.iter().max().unwrap(), *ys.iter().max().unwrap())
+        }
+        Primitive::Line { .. } | Primitive::Circle { .. } => return 0,
+    };
+    let w = (x1.min(SCREEN_W16) - x0.max(0)).max(0) as u64;
+    let h = (y1.min(SCREEN_H16) - y0.max(0)).max(0) as u64;
+    (w * h).div_ceil(256)
 }
 
 /// Iterator over the primitives of a list; see [`decode`].
@@ -234,6 +274,12 @@ pub struct Decoder<'a> {
     width: u8,
     origin: (u16, u16),
     point: (i16, i16),
+    /// Whether the fill cap applies.
+    cap: bool,
+    /// Area of the filled shapes drawn so far, in square screen units.
+    filled: u64,
+    /// The cap has been reached: no more filled shapes.
+    capped: bool,
 }
 
 /// Operand bytes of each opcode, or `None` for End and unknown opcodes.
@@ -260,6 +306,27 @@ impl Iterator for Decoder<'_> {
     type Item = Primitive;
 
     fn next(&mut self) -> Option<Primitive> {
+        loop {
+            let p = self.next_uncapped()?;
+            if !self.cap || matches!(p, Primitive::Line { .. } | Primitive::Circle { .. }) {
+                return Some(p);
+            }
+            if self.capped {
+                continue;
+            }
+            let area = fill_area(&p);
+            if self.filled + area > FILL_CAP {
+                self.capped = true;
+                continue;
+            }
+            self.filled += area;
+            return Some(p);
+        }
+    }
+}
+
+impl Decoder<'_> {
+    fn next_uncapped(&mut self) -> Option<Primitive> {
         loop {
             let &opcode = self.list.get(self.at)?;
             // End, unknown opcode, or operands cut off: the list ends here.
@@ -301,18 +368,19 @@ impl Iterator for Decoder<'_> {
     }
 }
 
-/// The decoded list as text, one primitive per line (see `Display`).
+/// The decoded list as text, one primitive per line (see `Display`), as
+/// the clean style with fill on draws it.
 pub fn dump(list: &[u8]) -> String {
     decode(list).map(|p| format!("{p}\n")).collect()
 }
 
-/// The list as the phosphor style draws it (SPEC 8.7): nothing is filled. A
+/// The list as outlines (SPEC 10.6, and fill off): nothing is filled. A
 /// disc becomes a circle, a rectangle four lines and a triangle three lines,
 /// each with the width in effect at that command; lines and circles pass
 /// through. Every host draws phosphor shapes from this, so they agree on
 /// which outlines a fill becomes.
 pub fn decode_outlines(list: &[u8]) -> Outlines<'_> {
-    Outlines { decoder: decode(list), queued: [None; 4], next: 4 }
+    Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4 }
 }
 
 /// Iterator over the outline primitives of a list; see [`decode_outlines`].
@@ -442,124 +510,138 @@ mod tests {
         assert_eq!(all(&[op::END]), []);
     }
 
-    fn ram_with(bytes: &[u8], at: usize) -> Memory {
-        let mut m = Memory::new(&[0], 4);
-        m.ram_mut()[at..at + bytes.len()].copy_from_slice(bytes);
-        m
-    }
-
-    /// Sets address and length through the ports, then submits.
-    fn submit(v: &mut Vector, m: &Memory, addr: u32, len: u16) -> u32 {
-        for (reg, b) in [(0, addr as u8), (1, (addr >> 8) as u8), (2, (addr >> 16) as u8), (3, len as u8), (4, (len >> 8) as u8)] {
-            assert_eq!(v.port_out(reg, b, m), 0);
-        }
-        v.port_out(5, CMD_SUBMIT, m)
-    }
-
     #[test]
     fn reset_state() {
         let v = Vector::default();
-        assert_eq!(v.port_in(5), RESULT_DONE);
         assert!(v.list().is_empty());
-        assert_eq!((v.style(), v.persistence()), (STYLE_CLEAN, 160));
-        for reg in [0, 1, 2, 3, 4, 6, 7, 8, 0xF] {
-            assert_eq!(v.port_in(reg), 0xFF, "port 3{reg:X}h is write-only or undefined");
-        }
+        assert_eq!((v.style(), v.persistence(), v.fill()), (STYLE_CLEAN, 160, true));
     }
 
     #[test]
-    fn submit_copies_and_charges() {
+    fn submit_copies_and_counts_changes() {
         let list = [cmd(op::MOVE, &xy(1, 2)), cmd(op::LINE, &xy(3, 4))].concat();
-        let mut m = ram_with(&list, 0x6123);
         let mut v = Vector::default();
-        assert_eq!(submit(&mut v, &m, 0x6123, list.len() as u16), list.len() as u32, "1 T-state per byte");
-        assert_eq!(v.port_in(5), RESULT_DONE);
+        assert_eq!(v.submit(&list), RESULT_DONE);
         assert_eq!(v.list(), list);
         let g = v.generation();
-        // The device keeps its own copy.
-        m.ram_mut()[0x6123] = 0xFF;
-        assert_eq!(v.list(), list);
-        // Same bytes again: still charged, list unchanged.
-        m.ram_mut()[0x6123] = op::MOVE;
-        assert_eq!(submit(&mut v, &m, 0x6123, list.len() as u16), list.len() as u32);
+        // Same bytes again: list unchanged.
+        assert_eq!(v.submit(&list), RESULT_DONE);
         assert_eq!(v.generation(), g);
-        // Different bytes: the counter changes.
-        assert_eq!(submit(&mut v, &m, 0x6123, 5), 5);
+        assert_eq!(v.submit(&list[..5]), RESULT_DONE);
         assert_eq!(v.list(), &list[..5]);
         assert_ne!(v.generation(), g);
-        // Largest list, ending exactly at the end of RAM.
-        let end = m.ram().len() as u32;
-        assert_eq!(submit(&mut v, &m, end - 16_384, 16_384), 16_384);
-        assert_eq!(v.list().len(), 16_384);
+        assert_eq!(v.submit(&vec![0; MAX_LIST]), RESULT_DONE);
     }
 
     #[test]
     fn rejections_keep_the_list() {
         let list = cmd(op::DISC, &[16, 0]);
-        let m = ram_with(&list, 0);
         let mut v = Vector::default();
-        submit(&mut v, &m, 0, 3);
+        v.submit(&list);
         let g = v.generation();
-        let end = m.ram().len() as u32;
-        for (addr, len) in [(0, 0), (0, 16_385), (end - 2, 3), (end, 1), (0xFF_FFFF, 1), (end - 16_383, 16_384)] {
-            assert_eq!(submit(&mut v, &m, addr, len), 0, "no charge for {addr:X} {len}");
-            assert_eq!(v.port_in(5), RESULT_REJECTED, "{addr:X} {len}");
+        for bad in [&[][..], &vec![0; MAX_LIST + 1]] {
+            assert_eq!(v.submit(bad), RESULT_REJECTED);
             assert_eq!(v.list(), list);
             assert_eq!(v.generation(), g);
         }
-        // Unknown commands.
-        for c in [0x00, 0x03, 0xFF] {
-            assert_eq!(v.port_out(5, c, &m), 0);
-            assert_eq!(v.port_in(5), RESULT_REJECTED);
-            assert_eq!(v.list(), list);
-        }
-        // A good submit sets the result back to done.
-        submit(&mut v, &m, 0, 3);
-        assert_eq!(v.port_in(5), RESULT_DONE);
     }
 
     #[test]
     fn clear() {
-        let m = ram_with(&cmd(op::DISC, &[16, 0]), 0);
         let mut v = Vector::default();
-        v.port_out(5, 0x7F, &m);
-        assert_eq!(v.port_out(5, CMD_CLEAR, &m), 0);
-        assert_eq!(v.port_in(5), RESULT_DONE);
-        submit(&mut v, &m, 0, 3);
+        v.clear();
+        v.submit(&cmd(op::DISC, &[16, 0]));
         let g = v.generation();
-        assert_eq!(v.port_out(5, CMD_CLEAR, &m), 0, "clear is free");
+        v.clear();
         assert!(v.list().is_empty());
         assert_ne!(v.generation(), g);
-        assert_eq!(v.primitives().count(), 0);
+        assert_eq!(v.shapes().count(), 0);
     }
 
     #[test]
-    fn style_and_persistence() {
-        let m = ram_with(&[], 0);
+    fn style_persistence_and_fill() {
         let mut v = Vector::default();
-        assert_eq!((v.style(), v.persistence()), (STYLE_CLEAN, DEFAULT_PERSISTENCE));
-        assert!(!v.phosphor());
         assert_eq!(v.style_line(), None);
-        assert_eq!(v.port_out(6, STYLE_PHOSPHOR, &m), 0);
-        assert!(v.phosphor());
+        assert_eq!(v.set_style(1), RESULT_DONE);
+        assert!(v.phosphor() && v.outlined());
         assert_eq!(v.style_line().unwrap(), "-- vector style: phosphor, persistence 160 --");
-        // Values other than 0 and 1 are ignored.
-        for ignored in [2, 0x80, 0xFF] {
-            v.port_out(6, ignored, &m);
+        for bad in [2, 0x100, u32::MAX] {
+            assert_eq!(v.set_style(bad), RESULT_REJECTED);
             assert_eq!(v.style(), STYLE_PHOSPHOR);
         }
-        v.port_out(6, STYLE_CLEAN, &m);
-        assert_eq!(v.style(), STYLE_CLEAN);
+        assert_eq!(v.set_style(0), RESULT_DONE);
         for p in [0, 1, 255] {
-            assert_eq!(v.port_out(7, p, &m), 0);
-            assert_eq!(v.persistence(), p);
+            assert_eq!(v.set_persistence(p), RESULT_DONE);
+            assert_eq!(v.persistence(), p as u8);
         }
-        // Write-only; neither touches the result or the list.
-        assert_eq!((v.port_in(6), v.port_in(7), v.port_in(5)), (0xFF, 0xFF, RESULT_DONE));
-        assert!(v.list().is_empty());
+        assert_eq!(v.set_persistence(256), RESULT_REJECTED);
+        assert_eq!(v.persistence(), 255);
+        assert_eq!(v.set_fill(1), RESULT_DONE);
+        assert!(!v.fill() && v.outlined() && !v.phosphor());
+        assert_eq!(v.style_line().unwrap(), "-- vector style: clean, fill off --");
+        assert_eq!(v.set_fill(2), RESULT_REJECTED);
+        assert!(!v.fill());
         let mut state = Vec::new();
         v.write_state(&mut state);
-        assert_eq!(&state[7..9], &[STYLE_CLEAN, 255]);
+        assert_eq!(&state[..7], &[STYLE_CLEAN, 255, 1, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn fill_off_draws_outlines() {
+        let list = [cmd(op::MOVE, &xy(10, 20)), cmd(op::RECT, &xy(30, 40)), cmd(op::DISC, &[5, 0])].concat();
+        let mut v = Vector::default();
+        v.submit(&list);
+        assert_eq!(v.shapes().collect::<Vec<_>>(), all(&list));
+        v.set_fill(1);
+        assert_eq!(v.shapes().collect::<Vec<_>>(), decode_outlines(&list).collect::<Vec<_>>());
+        assert_eq!(v.shapes().count(), 5);
+    }
+
+    #[test]
+    fn fill_area_is_clipped_to_the_screen() {
+        let c = WHITE;
+        let disc = |x, y, radius| Primitive::Disc { x, y, radius, rgba: c };
+        assert_eq!(fill_area(&disc(160, 160, 16)), 4); // 2 x 2 units
+        assert_eq!(fill_area(&disc(0, 0, 16)), 1); // a quarter on screen
+        assert_eq!(fill_area(&disc(5120, 3840, 60000)), 640 * 480);
+        assert_eq!(fill_area(&disc(-100, 0, 50)), 0);
+        assert_eq!(fill_area(&disc(0, 0, 1)), 1, "rounded up");
+        assert_eq!(fill_area(&disc(16, 16, 0)), 0);
+        let rect = Primitive::Rect { x0: 320, y0: 0, x1: -32000, y1: 32000, rgba: c };
+        assert_eq!(fill_area(&rect), 20 * 480);
+        let tri = Primitive::Triangle { x0: 0, y0: 0, x1: 160, y1: 0, x2: 80, y2: 320, rgba: c };
+        assert_eq!(fill_area(&tri), 10 * 20);
+        assert_eq!(fill_area(&Primitive::Line { x0: 0, y0: 0, x1: 9000, y1: 7000, width: 255, rgba: c }), 0);
+    }
+
+    #[test]
+    fn fill_cap_stops_later_fills_only() {
+        // Full-screen rectangles: four fit exactly; the fifth, and every
+        // later fill however small, is not drawn; lines and circles go on.
+        let full = cmd(op::RECT, &xy(10240, 7680));
+        let mut list = Vec::new();
+        for _ in 0..4 {
+            list.extend_from_slice(&full);
+        }
+        list.extend_from_slice(&cmd(op::LINE, &xy(5, 5)));
+        list.extend_from_slice(&cmd(op::DISC, &[1, 0])); // area 1: over the cap
+        list.extend_from_slice(&full);
+        list.extend_from_slice(&cmd(op::CIRCLE, &[9, 0]));
+        list.extend_from_slice(&[cmd(op::TRIANGLE, &xy(1, 1)), xy(2, 2).to_vec()].concat()); // area 1, also stopped
+        let got = all(&list);
+        let kinds: Vec<String> = got.iter().map(|p| p.to_string().split(' ').next().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["rect", "rect", "rect", "rect", "line", "circle"]);
+        // A fill that would cross the cap is dropped even when a smaller one
+        // would still fit; the cap stays shut.
+        let mut list = [full.clone(), full.clone(), full.clone()].concat();
+        list.extend_from_slice(&cmd(op::RECT, &xy(5120, 7680))); // half a screen: 3.5
+        list.extend_from_slice(&full); // would be 4.5
+        list.extend_from_slice(&cmd(op::RECT, &xy(16, 16))); // would fit, but the cap is shut
+        assert_eq!(all(&list).len(), 4);
+        // Outlines are never capped.
+        let many: Vec<u8> = std::iter::repeat_n(full.clone(), 10).flatten().collect();
+        assert_eq!(all(&many).len(), 4);
+        assert_eq!(decode_outlines(&many).count(), 40);
     }
 
     #[test]

@@ -12,7 +12,6 @@ path = "src/main.rs"
 [dependencies]
 terse-core.workspace = true
 terse-net.workspace = true
-terse-rv.workspace = true
 winit = "0.30"
 wgpu = "30"
 pollster = "0.4"

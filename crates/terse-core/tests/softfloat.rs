@@ -1,6 +1,6 @@
 //! Doubles without an FPU: tests/softfloat/softfloat.c (add, subtract,
 //! multiply, divide) is checked bit for bit against this host's FPU on two
-//! million random operand pairs (natively), then run on profile 2, where it
+//! million random operand pairs (natively), then run on the machine, where it
 //! must give the native checksum; prints the instructions per operation.
 
 mod common;
@@ -8,7 +8,7 @@ mod common;
 use std::path::Path;
 use std::process::Command;
 
-use terse_rv::RvMachine;
+use terse_core::Machine;
 
 #[test]
 fn soft_doubles() {
@@ -32,10 +32,10 @@ fn soft_doubles() {
 
     for opt in ["-Os", "-O2"] {
         let rom = common::build(&[src.join("main.c")], opt, true);
-        let mut m = RvMachine::new(&common::program(&rom, 4, &[common::TERMINAL]));
+        let mut m = Machine::new(&common::program(&rom, 4, &[common::TERMINAL]));
         let mut costs = Vec::new();
         while m.exit_code().is_none() && costs.len() < 100 {
-            costs.push(m.run_frame(&Default::default()).tstates);
+            costs.push(m.run_frame(&Default::default()).used);
         }
         assert_eq!(m.exit_code(), Some(0), "{:?}", m.fault());
         assert_eq!(m.terminal().unwrap().text().lines().next().unwrap(), checksum, "{opt}");

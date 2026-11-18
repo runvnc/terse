@@ -1,5 +1,5 @@
-/* Exercises the profile-2 device calls; prints one "name value" line each
- * (value in hex). crates/terse-rv/tests/devices.rs checks them. */
+/* Exercises the device calls; prints one "name value" line each (value in
+ * hex). crates/terse-core/tests/devices.rs checks them. */
 
 #include "terse.h"
 
@@ -23,6 +23,7 @@ static uint32_t cells[2];
 static const uint32_t cells_src[2] = {0x01020041, 0x03040042};
 static const uint8_t pal[6] = {1, 2, 3, 4, 5, 6};
 static terse_pad pad;
+static uint8_t big[300];
 
 int main(void)
 {
@@ -40,6 +41,10 @@ int main(void)
     line("vec      ", vec_submit_list(list));
     line("vec-rom  ", vec_submit(rom_list, 6));
     line("vec-zero ", vec_submit(list, 0));
+    r = vec_style(VEC_STYLE_PHOSPHOR) | vec_style(2) << 4;
+    line("style    ", r | vec_style(VEC_STYLE_CLEAN) << 8);
+    line("persist  ", vec_persistence(200) | vec_persistence(256) << 4);
+    line("fill     ", vec_fill(VEC_FILL_OFF) | vec_fill(7) << 4);
     term_cells_write(2399, cells_src, 2); /* wraps to cell 0 */
     term_cells_read(2399, cells, 2);
     line("cells    ", cells[0] ^ cells[1]);
@@ -49,6 +54,7 @@ int main(void)
     line("pad9     ", terse_call(CALL_CONTROLLER, 9, (uint32_t)&pad, 0) | pad.buttons);
     terse_random(rnd, 5);
     line("random   ", rnd[0] | (uint32_t)rnd[4] << 8);
+    line("rnd-big  ", terse_call(CALL_RANDOM, (uint32_t)big, 257, 0));
     a = terse_call2(CALL_TERM_SIZE, 0, 0, &r);
     line("size     ", a | r << 8);
     term_goto(200, 7); /* clamped to column 79 */

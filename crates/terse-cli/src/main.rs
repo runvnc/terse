@@ -1,17 +1,15 @@
 //! `terse`: headless runner, image tools and feeds.
 
-mod asm;
 mod feed;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use terse_core::{DeviceReq, FrameMachine, Script};
+use terse_core::{DeviceReq, Image, Machine, Script, Stopped};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::service::Headless;
 use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
-use terse_rv::{AnyMachine, Program};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -23,9 +21,7 @@ const USAGE: &str = "usage:
   terse put <file> [--relay ws://...] [--store <dir>]
   terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
   terse hash <file>
-  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--profile 1|2]
-             -o <out.terse>
-  terse asm <source.asm> -o <out.bin>
+  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>]
   terse feed subscribe|unsubscribe <key>
@@ -46,7 +42,10 @@ entries are kept in <store>/feeds.
 --events: scripted input, one event per line (see README).
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
---bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.";
+--bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
+`run` exits with the program's exit code (0-255). If the machine stops with a fault
+(SPEC 1.5), it prints the fault and ends by signal SIGTERM, so a parent process can
+tell a fault from any exit code (a shell's $status shows 143).";
 
 /// Options for commands that use the blob store and relay.
 const NET_OPTIONS: [&str; 2] = ["--relay", "--store"];
@@ -60,7 +59,6 @@ fn main() -> ExitCode {
         Some("get") => get(&args[1..]),
         Some("hash") => hash(&args[1..]),
         Some("pack") => pack(&args[1..]),
-        Some("asm") => assemble(&args[1..]),
         Some("key") => feed::key(&args[1..]),
         Some("feed") => feed::feed(&args[1..]),
         _ => Err(USAGE.to_string()),
@@ -162,13 +160,13 @@ impl Net<'_> {
     }
 }
 
-/// Loads an image of either profile from a file, or by image ID (NETWORK 2).
-fn load_image(arg: &str, net: &mut Net) -> Result<Program, String> {
+/// Loads an image from a file, or by image ID (NETWORK 2).
+fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
     let bytes = match parse_hex(arg) {
         Some(id) if !Path::new(arg).exists() => net.fetch(id)?,
         _ => read(arg)?,
     };
-    terse_rv::parse_image(&bytes).map_err(|e| format!("{arg}: {e}"))
+    Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))
 }
 
 /// Reads an `--events` script (README, "Scripted input").
@@ -207,7 +205,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
 
-    let mut machine = AnyMachine::new(&image);
+    let mut machine = Machine::new(&image);
     let content = if image.has_device(4) {
         // SPEC 7.7: the feeds are those of the --config subscriptions.
         let mut node = net.take()?;
@@ -226,28 +224,27 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
     // Headless runs are reproducible (see `Headless`).
     let mut headless = Headless::new(content, script);
-    let mut exit = None;
+    let mut stopped = None;
     let mut times = Vec::new();
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
         let start = std::time::Instant::now();
-        exit = headless.frame(&mut machine).exit;
+        stopped = headless.frame(&mut machine).stopped;
         if args.has("--bench") {
             times.push(start.elapsed());
         }
         if let Some(n) = hash_every
             && machine.frame() % n == 0
         {
-            let hash = machine.state_hash().ok_or("--hash-every: no state hash for this profile")?;
-            println!("{} {}", machine.frame(), to_hex(&hash));
+            println!("{} {}", machine.frame(), to_hex(&machine.state_hash()));
         }
-        if exit.is_some() {
+        if stopped.is_some() {
             break;
         }
     }
     if let Some(fault) = machine.fault() {
         eprintln!("terse: fault: {fault}");
     }
-    if exit.is_none() && frames.is_none() {
+    if stopped.is_none() && frames.is_none() {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
 
@@ -255,26 +252,51 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         bench_report(&mut times);
     }
     if args.has("--hash") {
-        let hash = machine.state_hash().ok_or("--hash: no state hash for this profile")?;
-        println!("{}", to_hex(&hash));
+        println!("{}", to_hex(&machine.state_hash()));
     }
     if args.has("--dump") {
         match machine.terminal() {
             Some(t) => print!("{}", t.text()),
             None => eprintln!("terse: image has no terminal device"),
         }
-        // SPEC 8: the list device 3 holds at the end of the last frame, one
-        // primitive per line.
+        // SPEC 10: the list device 3 holds at the end of the last frame, one
+        // shape per line, as the host draws it.
         if args.has("--dump-vectors") {
             if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
                 println!("{line}");
             }
-            let list = machine.vector_list();
-            println!("-- vectors: {} list bytes --", list.len());
-            print!("{}", terse_core::vector::dump(list));
+            println!("-- vectors: {} list bytes --", machine.vector_list().len());
+            if let Some(v) = machine.vector() {
+                print!("{}", v.dump());
+            }
         }
     }
-    Ok(ExitCode::from(exit.unwrap_or(0)))
+    match stopped {
+        Some(Stopped::Fault(_)) => Ok(fault_exit()),
+        Some(Stopped::Exit(code)) => Ok(ExitCode::from(code)),
+        None => Ok(ExitCode::SUCCESS),
+    }
+}
+
+/// Ends the process after a fault in a way no exit code can be mistaken
+/// for: by signal SIGTERM (a shell shows status 143, which a program could
+/// also return; a parent that waits for the process sees the signal).
+fn fault_exit() -> ExitCode {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn raise(sig: i32) -> i32;
+        }
+        const SIGTERM: i32 = 15;
+        // SAFETY: raise only sends a signal to this process.
+        unsafe {
+            raise(SIGTERM);
+        }
+    }
+    ExitCode::from(255)
 }
 
 /// `--bench`: emulation time per frame (the machine and, for device 4, the
@@ -308,7 +330,7 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     println!("file:      {path}");
     println!("title:     {}", image.title_lossy());
     println!("format:    {}", terse_core::image::FORMAT_VERSION);
-    println!("profile:   {}", image.profile);
+    println!("profile:   {}", terse_core::image::PROFILE);
     println!("rom_len:   {} bytes", image.rom.len());
     println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
     println!("devices:   {}", if devices.is_empty() { "-".into() } else { devices.join(" ") });
@@ -364,7 +386,7 @@ fn parse_device(s: &str) -> Result<DeviceReq, String> {
 
 fn pack(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "--profile", "-o"])?;
+    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "-o"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.to_string());
     }
@@ -379,28 +401,11 @@ fn pack(args: &[String]) -> Result<ExitCode, String> {
     if devices.len() > terse_core::image::MAX_DEVICES {
         return Err("more than 16 devices".into());
     }
-    let profile = match args.get("--profile").unwrap_or("1") {
-        "1" => terse_core::image::PROFILE,
-        "2" => terse_rv::PROFILE_RV32,
-        p => return Err(format!("unknown profile {p} (1 or 2)")),
-    };
-    let file = terse_rv::build_image(profile, title, ram_pages, &devices, &rom);
+    let file = Image::build(title, ram_pages, &devices, &rom);
     // Validate exactly as a host would.
-    let image = terse_rv::parse_image(&file).map_err(|e| e.to_string())?;
+    let image = Image::parse(&file).map_err(|e| e.to_string())?;
     let out = args.require("-o")?;
     write(out, &file)?;
     println!("{out}: {} bytes, id {}", file.len(), image.id_hex());
-    Ok(ExitCode::SUCCESS)
-}
-
-fn assemble(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &[])?;
-    args.check_known(&["-o"])?;
-    let src_path = args.one_positional()?;
-    let src = std::fs::read_to_string(src_path).map_err(|e| format!("{src_path}: {e}"))?;
-    let bin = asm::assemble(src_path, &src)?;
-    let out = args.require("-o")?;
-    write(out, &bin)?;
-    println!("{out}: {} bytes", bin.len());
     Ok(ExitCode::SUCCESS)
 }

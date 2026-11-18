@@ -1,53 +1,127 @@
-//! The machine: CPU, bus and the frame loop (SPEC 1.3).
+//! The machine: the RV32IMC core, ROM and RAM, the frame loop and the
+//! devices reached through `ecall` (SPEC 1, 3, 11).
 
-use rustzx_z80::{Z80, Z80Bus};
+use std::fmt;
 
-use crate::content::{Completion, Content, Request};
+use crate::content::{Completion, Content, Request, ram_range, readable};
+use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
 use crate::image::Image;
-use crate::memory::Memory;
 use crate::system::{CONTROLLERS, Controller, Event, System};
-use crate::terminal::Terminal;
+use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
 use crate::vector::Vector;
 
 /// Leading domain string of the state serialization (STATE.md).
-pub const STATE_DOMAIN: &[u8] = b"terse-state-0";
+pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
 
-/// T-states added to the budget each frame (SPEC 1).
-pub const TSTATES_PER_FRAME: i64 = 300_000;
-/// Value on the data bus during interrupt acknowledge (SPEC 1.3).
-const INTERRUPT_BUS_BYTE: u8 = 0xFF;
-/// T-states of an I/O cycle. rustzx-z80 leaves this to the bus.
-const IO_CYCLE: u64 = 4;
-/// Upper bound on port 1Ch reads in one frame: every instruction that reads a
-/// port takes at least 11 T-states and must start with a positive budget.
-pub const MAX_RANDOM_READS_PER_FRAME: usize = (TSTATES_PER_FRAME as usize).div_ceil(11);
+/// Budget units added each frame (SPEC 1.4). Provisional.
+pub const BUDGET_PER_FRAME: i64 = 125_000;
 
-/// Inputs for one frame (SPEC 5.2).
+/// The charges of SPEC 11, in budget units. Provisional.
+pub mod charge {
+    /// Every call, on top of the `ecall` instruction itself.
+    pub const CALL: u32 = 4;
+    /// Terminal `write`, per byte.
+    pub const WRITE_BYTE: u32 = 1;
+    /// Raw copies between guest memory and a device: one unit per this many
+    /// bytes, rounded up per call.
+    pub const COPY_BYTES_PER_UNIT: usize = 4;
+    /// A terminal clear, scroll up or scroll down, also when caused by `write`.
+    pub const SCROLL_CLEAR: u32 = 150;
+}
+
+/// The longest `random` request (SPEC 4).
+pub const MAX_RANDOM_PER_CALL: u32 = 256;
+
+/// The most random bytes a program can take in one frame: each `random`
+/// call that starts with a positive budget takes at most 256 bytes and
+/// costs at least its instruction, the call charge and the copy.
+pub const MAX_RANDOM_PER_FRAME: usize = (BUDGET_PER_FRAME as usize)
+    .div_ceil(1 + charge::CALL as usize + MAX_RANDOM_PER_CALL as usize / charge::COPY_BYTES_PER_UNIT)
+    * MAX_RANDOM_PER_CALL as usize;
+
+/// What an unknown call, or a call to an absent device, returns.
+pub const ERR_UNKNOWN: u32 = 0xFFFF_FFFF;
+/// What a call given a bad buffer returns.
+pub const ERR_BUFFER: u32 = 0xFFFF_FFFE;
+
+/// Units charged for copying `bytes` bytes.
+pub fn copy_charge(bytes: usize) -> u32 {
+    bytes.div_ceil(charge::COPY_BYTES_PER_UNIT) as u32
+}
+
+/// Call numbers: `a7 = (device slot << 8) | function` (SPEC 3.2).
+pub mod call {
+    pub const WAIT_FRAME: u32 = 0x100;
+    pub const NEXT_EVENT: u32 = 0x101;
+    pub const FRAME: u32 = 0x102;
+    pub const TIME: u32 = 0x103;
+    pub const RANDOM: u32 = 0x104;
+    pub const CONTROLLER: u32 = 0x105;
+    pub const EXIT: u32 = 0x106;
+
+    pub const TERM_WRITE: u32 = 0x200;
+    pub const TERM_COMMAND: u32 = 0x201;
+    pub const TERM_SET_CURSOR: u32 = 0x202;
+    pub const TERM_GET_CURSOR: u32 = 0x203;
+    pub const TERM_SET_COLOURS: u32 = 0x204;
+    pub const TERM_GET_COLOURS: u32 = 0x205;
+    pub const TERM_CELLS_READ: u32 = 0x206;
+    pub const TERM_CELLS_WRITE: u32 = 0x207;
+    pub const TERM_PALETTE_SET: u32 = 0x208;
+    pub const TERM_SIZE: u32 = 0x209;
+
+    pub const VEC_SUBMIT: u32 = 0x300;
+    pub const VEC_CLEAR: u32 = 0x301;
+    pub const VEC_STYLE: u32 = 0x302;
+    pub const VEC_PERSISTENCE: u32 = 0x303;
+    pub const VEC_FILL: u32 = 0x304;
+
+    pub const CONTENT_SUBMIT: u32 = 0x400;
+}
+
+/// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stopped {
+    Exit(u8),
+    Fault(Fault),
+}
+
+impl fmt::Display for Stopped {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Stopped::Exit(code) => write!(f, "exit {code}"),
+            Stopped::Fault(fault) => write!(f, "fault: {fault}"),
+        }
+    }
+}
+
+/// Inputs for one frame (SPEC 4.2).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInput<'a> {
     pub events: &'a [Event],
     pub unix_time: u32,
-    /// Bytes returned by successive reads of port 1Ch in this frame. Reads
-    /// beyond the end return 00h; supply `MAX_RANDOM_READS_PER_FRAME` bytes to
-    /// never run out.
+    /// Bytes for the `random` calls of this frame, taken in order. Calls
+    /// beyond the end get zeros; supply `MAX_RANDOM_PER_FRAME` bytes to never
+    /// run out (`FrameResult::random_used` says how many were taken).
     pub random: &'a [u8],
-    /// Content requests the host finished (SPEC 7.3), applied before the CPU runs.
+    /// Content requests the host finished (SPEC 9.2), applied before the CPU runs.
     pub completions: &'a [Completion],
-    /// The four controllers (SPEC 5.3), latched for the frame.
+    /// The four controllers (SPEC 6), latched for the frame.
     pub controllers: [Controller; CONTROLLERS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameResult {
-    /// Exit code, if the machine has stopped (in this frame or earlier).
-    pub exit: Option<u8>,
-    /// T-states executed this frame, including device charges.
-    pub tstates: u64,
-    /// The CPU halted with no interrupt able to wake it and the rest of the
-    /// budget was discarded.
-    pub halted_early: bool,
+    /// Set once the machine has stopped (in this frame or earlier).
+    pub stopped: Option<Stopped>,
+    /// Budget units used this frame: instructions, call charges and the
+    /// charge for content delivered at its start.
+    pub used: u64,
+    /// The program called `wait_frame` and the rest of the budget was
+    /// discarded.
+    pub waited: bool,
     /// Events dropped because the queue was full, and feeds-updated events
-    /// beyond the first in this frame's input (SPEC 5.1: at most one per frame).
+    /// beyond the first in this frame's input (SPEC 5: at most one per frame).
     pub events_dropped: usize,
     /// How many bytes of `FrameInput::random` were consumed (for recording).
     pub random_used: usize,
@@ -56,265 +130,369 @@ pub struct FrameResult {
     pub completions_ignored: usize,
 }
 
-/// Everything the CPU sees through its bus.
-struct Hardware {
-    memory: Memory,
+impl FrameResult {
+    /// The exit code, if the program has exited.
+    pub fn exit(&self) -> Option<u8> {
+        match self.stopped {
+            Some(Stopped::Exit(code)) => Some(code),
+            _ => None,
+        }
+    }
+}
+
+pub struct Machine {
+    cpu: Cpu,
+    rom: Vec<u8>,
+    /// The ROM, decoded once.
+    code: Code,
+    ram: Vec<u8>,
     system: System,
     terminal: Option<Terminal>,
     vector: Option<Vector>,
     content: Option<Content>,
-    interrupt_request: bool,
-    /// T-states of the current step, including device charges.
-    step_tstates: u64,
-}
-
-impl Z80Bus for Hardware {
-    fn read_internal(&mut self, addr: u16) -> u8 {
-        self.memory.read(addr)
-    }
-
-    fn write_internal(&mut self, addr: u16, data: u8) {
-        self.memory.write(addr, data);
-    }
-
-    fn wait_mreq(&mut self, _addr: u16, clk: usize) {
-        self.step_tstates += clk as u64;
-    }
-
-    fn wait_no_mreq(&mut self, _addr: u16, clk: usize) {
-        self.step_tstates += clk as u64;
-    }
-
-    fn wait_internal(&mut self, clk: usize) {
-        self.step_tstates += clk as u64;
-    }
-
-    // SPEC 1 and 3: the upper address byte is ignored; the high nibble selects the device.
-    fn read_io(&mut self, port: u16) -> u8 {
-        self.step_tstates += IO_CYCLE;
-        let (slot, reg) = ((port as u8) >> 4, port as u8 & 0x0F);
-        match slot {
-            0 => self.memory.port_in(reg),
-            1 => self.system.port_in(reg),
-            2 => self.terminal.as_mut().map_or(0xFF, |t| t.port_in(reg)),
-            3 => self.vector.as_ref().map_or(0xFF, |v| v.port_in(reg)),
-            4 => self.content.as_ref().map_or(0xFF, |c| c.port_in(reg)),
-            _ => 0xFF,
-        }
-    }
-
-    fn write_io(&mut self, port: u16, data: u8) {
-        self.step_tstates += IO_CYCLE;
-        let (slot, reg) = ((port as u8) >> 4, port as u8 & 0x0F);
-        match slot {
-            0 => self.memory.port_out(reg, data),
-            1 => self.system.port_out(reg, data),
-            2 => {
-                if let Some(t) = &mut self.terminal {
-                    // SPEC 1.3: charges count as extra T-states of the I/O instruction.
-                    self.step_tstates += t.port_out(reg, data) as u64;
-                }
-            }
-            3 => {
-                if let Some(v) = &mut self.vector {
-                    self.step_tstates += v.port_out(reg, data, &self.memory) as u64;
-                }
-            }
-            4 => {
-                if let Some(c) = &mut self.content {
-                    self.step_tstates += c.port_out(reg, data, &mut self.memory) as u64;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn read_interrupt(&mut self) -> u8 {
-        INTERRUPT_BUS_BYTE
-    }
-
-    fn reti(&mut self) {}
-
-    fn halt(&mut self, _halted: bool) {}
-
-    fn int_active(&self) -> bool {
-        self.interrupt_request
-    }
-
-    fn nmi_active(&self) -> bool {
-        false
-    }
-
-    fn pc_callback(&mut self, _addr: u16) {}
-}
-
-/// A snapshot of the CPU registers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Registers {
-    pub af: u16,
-    pub bc: u16,
-    pub de: u16,
-    pub hl: u16,
-    pub af_alt: u16,
-    pub bc_alt: u16,
-    pub de_alt: u16,
-    pub hl_alt: u16,
-    pub ix: u16,
-    pub iy: u16,
-    pub sp: u16,
-    pub pc: u16,
-    pub i: u8,
-    pub r: u8,
-    pub iff1: bool,
-    pub iff2: bool,
-    pub im: u8,
-    pub halted: bool,
-}
-
-pub struct Machine {
-    cpu: Z80,
-    hw: Hardware,
-    /// Carries a negative remainder between frames (SPEC 1.3).
+    /// The budget; zero or negative between frames (a negative remainder
+    /// carries into the next frame).
     budget: i64,
+    stopped: Option<Stopped>,
     image_id: [u8; 32],
+    /// Instructions executed since reset (not machine state).
+    instructions: u64,
+    /// Device calls made since reset (not machine state).
+    calls: u64,
 }
 
 impl Machine {
+    /// The machine at reset (SPEC 1.3).
     pub fn new(image: &Image) -> Self {
-        // SPEC 1.2: rustzx-z80's default state is all registers zero,
-        // IFF1 = IFF2 = 0, interrupt mode 0.
+        let ram = vec![0; image.ram_pages as usize * 8192];
+        let ram_end = RAM_BASE + ram.len() as u32;
         Machine {
-            cpu: Z80::default(),
-            hw: Hardware {
-                memory: Memory::new(&image.rom, image.ram_pages),
-                system: System::default(),
-                terminal: image.has_device(2).then(Terminal::default),
-                vector: image.has_device(3).then(Vector::default),
-                content: image.has_device(4).then(Content::default),
-                interrupt_request: false,
-                step_tstates: 0,
-            },
+            cpu: Cpu::new(ROM_BASE, ram_end),
+            rom: image.rom.clone(),
+            code: Code::new(&image.rom),
+            ram,
+            system: System::default(),
+            terminal: image.has_device(2).then(Terminal::default),
+            vector: image.has_device(3).then(Vector::default),
+            content: image.has_device(4).then(Content::default),
             budget: 0,
+            stopped: None,
             image_id: image.id,
+            instructions: 0,
+            calls: 0,
         }
     }
 
-    /// Runs one frame (SPEC 1.3). Does nothing once the machine has exited.
+    /// Runs one frame (SPEC 1.4). Does nothing once the machine has stopped.
     pub fn run_frame(&mut self, input: &FrameInput) -> FrameResult {
         let mut result = FrameResult {
-            exit: self.exit_code(),
-            tstates: 0,
-            halted_early: false,
+            stopped: self.stopped,
+            used: 0,
+            waited: false,
             events_dropped: 0,
             random_used: 0,
             completions_ignored: 0,
         };
-        if result.exit.is_some() {
+        if self.stopped.is_some() {
             return result;
         }
-        let hw = &mut self.hw;
 
-        // Step 1: events, clock and controllers.
+        // Step 1: inputs.
         let mut feeds_updated = false;
         for &e in input.events {
             if e.kind == Event::FEEDS_UPDATED && std::mem::replace(&mut feeds_updated, true) {
                 result.events_dropped += 1;
                 continue;
             }
-            if !hw.system.push_event(e) {
+            if !self.system.push_event(e) {
                 result.events_dropped += 1;
             }
         }
-        hw.system.latch(input.unix_time, input.random, &input.controllers);
-
-        // SPEC 7.3: completions, after this frame's input events.
-        match &mut hw.content {
+        self.system.latch(input.unix_time, input.random, &input.controllers);
+        let mut delivered_charge = 0;
+        match &mut self.content {
             Some(content) => {
-                let (ignored, dropped) = content.complete(input.completions, &mut hw.memory, &mut hw.system);
+                let (ignored, dropped, delivered) = content.complete(input.completions, &mut self.ram, &mut self.system);
                 result.completions_ignored = ignored;
                 result.events_dropped += dropped;
+                delivered_charge = copy_charge(delivered) as i64;
             }
             None => result.completions_ignored = input.completions.len(),
         }
 
-        // Step 2: the request is a latch; setting it again is not a second interrupt.
-        hw.interrupt_request = true;
-
-        // Step 3.
-        self.budget += TSTATES_PER_FRAME;
+        // Step 2: run.
+        self.budget += BUDGET_PER_FRAME - delivered_charge;
+        let start = self.budget;
         while self.budget > 0 {
-            let wakeable = hw.interrupt_request && self.cpu.regs.get_iff1();
-            if self.cpu.is_halted() && !wakeable {
-                result.halted_early = true;
-                break;
-            }
-            hw.step_tstates = 0;
-            if self.cpu.emulate(hw) {
-                hw.interrupt_request = false;
-            }
-            self.budget -= hw.step_tstates as i64;
-            result.tstates += hw.step_tstates;
-            if hw.system.exit_code().is_some() {
-                break;
+            let before = self.budget;
+            let stop = self.cpu.run_cached(&self.code, &mut Bus { rom: &self.rom, ram: &mut self.ram }, &mut self.budget);
+            self.instructions += (before - self.budget).max(0) as u64;
+            match stop {
+                Stop::Budget => break,
+                Stop::Fault(f) => {
+                    self.stopped = Some(Stopped::Fault(f));
+                    break;
+                }
+                Stop::Ecall => {
+                    self.calls += 1;
+                    let (units, wait) = self.ecall();
+                    self.budget -= units as i64;
+                    if wait {
+                        result.waited = true;
+                        break;
+                    }
+                    if self.stopped.is_some() {
+                        break;
+                    }
+                }
             }
         }
+        result.used = (start - self.budget + delivered_charge) as u64;
         // Unused budget never carries forward; a negative remainder does.
         self.budget = self.budget.min(0);
 
-        // Step 4 needs no work here: the terminal state is the presented state.
-        hw.system.end_frame();
-        result.exit = hw.system.exit_code();
-        result.random_used = hw.system.random_used();
+        // Step 3: the frame ends.
+        self.system.end_frame();
+        result.stopped = self.stopped;
+        result.random_used = self.system.random_used();
         result
     }
 
+    /// Carries out the call in a7 (SPEC 3); returns (units charged beyond
+    /// the `ecall` instruction, whether the program waits for the next frame).
+    fn ecall(&mut self) -> (u32, bool) {
+        let x = &self.cpu.x;
+        let (n, a0, a1, a2) = (x[17], x[10], x[11], x[12]);
+        let mut r1 = None;
+        let mut units = charge::CALL;
+        let mut wait = false;
+        let ram = &mut self.ram[..];
+        let rom = &self.rom[..];
+        let r0 = match n {
+            call::WAIT_FRAME => {
+                // Returns the number of the frame it returns in.
+                wait = true;
+                self.system.frame().wrapping_add(1)
+            }
+            call::NEXT_EVENT => match ram_range(ram.len(), a0, 4) {
+                None => ERR_BUFFER,
+                Some(at) => match self.system.pop_event() {
+                    None => 0,
+                    Some(e) => {
+                        ram[at..at + 4].copy_from_slice(&[e.kind, e.a, e.b, e.c]);
+                        units += copy_charge(4);
+                        1
+                    }
+                },
+            },
+            call::FRAME => self.system.frame(),
+            call::TIME => self.system.time(),
+            call::RANDOM => match ram_range(ram.len(), a0, a1 as usize).filter(|_| a1 <= MAX_RANDOM_PER_CALL) {
+                None => ERR_BUFFER,
+                Some(at) => {
+                    self.system.random(&mut ram[at..at + a1 as usize]);
+                    units += copy_charge(a1 as usize);
+                    a1
+                }
+            },
+            call::CONTROLLER => match ram_range(ram.len(), a1, 8) {
+                None => ERR_BUFFER,
+                Some(at) => {
+                    let bytes = self.system.controller(a0);
+                    ram[at..at + 8].copy_from_slice(&bytes);
+                    units += copy_charge(8);
+                    bytes[0] as u32
+                }
+            },
+            call::EXIT => {
+                self.stopped = Some(Stopped::Exit(a0 as u8));
+                0
+            }
+            0x200..=0x2FF if self.terminal.is_some() => {
+                let t = self.terminal.as_mut().unwrap();
+                match n {
+                    call::TERM_WRITE => match readable(rom, ram, a0, a1 as usize) {
+                        None => ERR_BUFFER,
+                        Some(bytes) => {
+                            // Stops after the byte that uses up the budget.
+                            let left = self.budget - units as i64;
+                            let (done, charged) = t.write_limited(bytes, left, charge::WRITE_BYTE, charge::SCROLL_CLEAR);
+                            units += charged;
+                            done as u32
+                        }
+                    },
+                    call::TERM_COMMAND => {
+                        if a0 < 0x100 {
+                            units += t.command(a0 as u8) * charge::SCROLL_CLEAR;
+                        }
+                        0
+                    }
+                    call::TERM_SET_CURSOR => {
+                        t.set_cursor(a0, a1);
+                        0
+                    }
+                    call::TERM_GET_CURSOR => {
+                        let (col, row) = t.cursor();
+                        r1 = Some(row as u32);
+                        col as u32
+                    }
+                    call::TERM_SET_COLOURS => {
+                        // A value above 255 leaves that colour as it is.
+                        let (fg, bg) = t.colors();
+                        t.set_colours(u8::try_from(a0).unwrap_or(fg), u8::try_from(a1).unwrap_or(bg));
+                        0
+                    }
+                    call::TERM_GET_COLOURS => {
+                        let (fg, bg) = t.colors();
+                        r1 = Some(bg as u32);
+                        fg as u32
+                    }
+                    call::TERM_CELLS_READ => {
+                        let len = a2 as usize * CELL_BYTES;
+                        match ram_range(ram.len(), a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
+                            None => ERR_BUFFER,
+                            Some(at) => {
+                                t.cells_read(a0 as usize, &mut ram[at..at + len]);
+                                units += copy_charge(len);
+                                a2
+                            }
+                        }
+                    }
+                    call::TERM_CELLS_WRITE => {
+                        let len = a2 as usize * CELL_BYTES;
+                        match readable(rom, ram, a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
+                            None => ERR_BUFFER,
+                            Some(bytes) => {
+                                t.cells_write(a0 as usize, bytes);
+                                units += copy_charge(len);
+                                a2
+                            }
+                        }
+                    }
+                    call::TERM_PALETTE_SET => {
+                        let len = a2 as usize * 3;
+                        match readable(rom, ram, a1, len).filter(|_| a0 < 256 && a2 <= 256) {
+                            None => ERR_BUFFER,
+                            Some(bytes) => {
+                                t.palette_set(a0 as usize, bytes);
+                                units += copy_charge(len);
+                                a2
+                            }
+                        }
+                    }
+                    call::TERM_SIZE => {
+                        r1 = Some(ROWS as u32);
+                        COLS as u32
+                    }
+                    _ => ERR_UNKNOWN,
+                }
+            }
+            0x300..=0x3FF if self.vector.is_some() => {
+                let v = self.vector.as_mut().unwrap();
+                match n {
+                    call::VEC_SUBMIT => {
+                        // A list not wholly in RAM is rejected like a bad length.
+                        match ram_range(ram.len(), a0, a1 as usize) {
+                            Some(at) if v.submit(&ram[at..at + a1 as usize]) == crate::vector::RESULT_DONE => {
+                                units += copy_charge(a1 as usize);
+                                crate::vector::RESULT_DONE
+                            }
+                            _ => crate::vector::RESULT_REJECTED,
+                        }
+                    }
+                    call::VEC_CLEAR => {
+                        v.clear();
+                        0
+                    }
+                    call::VEC_STYLE => v.set_style(a0),
+                    call::VEC_PERSISTENCE => v.set_persistence(a0),
+                    call::VEC_FILL => v.set_fill(a0),
+                    _ => ERR_UNKNOWN,
+                }
+            }
+            call::CONTENT_SUBMIT if self.content.is_some() => {
+                let (handle, taken) = self.content.as_mut().unwrap().submit(a0, rom, ram);
+                units += copy_charge(taken);
+                handle
+            }
+            _ => ERR_UNKNOWN,
+        };
+        self.cpu.x[10] = r0;
+        if let Some(r1) = r1 {
+            self.cpu.x[11] = r1;
+        }
+        (units, wait)
+    }
+
+    /// Why the machine stopped, once it has.
+    pub fn stopped(&self) -> Option<Stopped> {
+        self.stopped
+    }
+
+    /// The exit code, once the program has exited (not after a fault).
     pub fn exit_code(&self) -> Option<u8> {
-        self.hw.system.exit_code()
+        match self.stopped {
+            Some(Stopped::Exit(code)) => Some(code),
+            _ => None,
+        }
     }
 
-    /// The terminal, or `None` if the image does not list device 2.
+    /// The fault that stopped the machine, if any.
+    pub fn fault(&self) -> Option<Fault> {
+        match self.stopped {
+            Some(Stopped::Fault(f)) => Some(f),
+            _ => None,
+        }
+    }
+
     pub fn terminal(&self) -> Option<&Terminal> {
-        self.hw.terminal.as_ref()
+        self.terminal.as_ref()
     }
 
-    /// The vector display, or `None` if the image does not list device 3.
     pub fn vector(&self) -> Option<&Vector> {
-        self.hw.vector.as_ref()
+        self.vector.as_ref()
     }
 
-    /// The display list device 3 holds (SPEC 8.2): empty if the device is
-    /// absent or cleared. What the host shows for the frame just run.
     pub fn vector_list(&self) -> &[u8] {
-        self.hw.vector.as_ref().map_or(&[], Vector::list)
+        self.vector.as_ref().map_or(&[], Vector::list)
     }
 
-    /// Changes whenever [`Machine::vector_list`] changes, so a host can skip
-    /// re-uploading an unchanged list.
+    /// Changes whenever `vector_list` changes.
     pub fn vector_generation(&self) -> u64 {
-        self.hw.vector.as_ref().map_or(0, Vector::generation)
+        self.vector.as_ref().map_or(0, Vector::generation)
     }
 
-    /// The content device, or `None` if the image does not list device 4.
     pub fn content(&self) -> Option<&Content> {
-        self.hw.content.as_ref()
+        self.content.as_ref()
     }
 
-    /// Content requests submitted since the last call (SPEC 7.3), for the host
-    /// to carry out.
+    /// Content requests submitted since the last call.
     pub fn take_content_requests(&mut self) -> Vec<Request> {
-        self.hw.content.as_mut().map_or_else(Vec::new, Content::take_requests)
+        self.content.as_mut().map_or_else(Vec::new, Content::take_requests)
     }
 
     pub fn system(&self) -> &System {
-        &self.hw.system
+        &self.system
     }
 
-    /// Number of frames run so far (the frame counter, port 14h).
+    /// The frame counter: frames run since reset.
     pub fn frame(&self) -> u32 {
-        self.hw.system.frame()
+        self.system.frame()
     }
 
-    /// The carried T-state budget (zero or negative between frames).
+    pub fn cpu(&self) -> &Cpu {
+        &self.cpu
+    }
+
+    pub fn ram(&self) -> &[u8] {
+        &self.ram
+    }
+
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    /// The carried budget (zero or negative between frames).
     pub fn budget(&self) -> i64 {
         self.budget
     }
@@ -323,125 +501,76 @@ impl Machine {
         &self.image_id
     }
 
-    pub fn interrupt_requested(&self) -> bool {
-        self.hw.interrupt_request
+    /// Budget units spent on instructions since reset (an instruction from
+    /// RAM counts 4), call charges not included. Not machine state.
+    pub fn instructions(&self) -> u64 {
+        self.instructions
     }
 
-    pub fn slots(&self) -> &[u8; 8] {
-        self.hw.memory.slots()
+    /// Device calls (`ecall`s) since reset. Not machine state.
+    pub fn calls(&self) -> u64 {
+        self.calls
     }
 
-    pub fn ram(&self) -> &[u8] {
-        self.hw.memory.ram()
-    }
-
-    /// Reads the address space as the CPU sees it (no side effects).
-    pub fn peek(&self, addr: u16) -> u8 {
-        self.hw.memory.read(addr)
-    }
-
-    /// The canonical serialization of the machine state (STATE.md): every
-    /// part of the state that can influence later frames or what is
-    /// presented, in a fixed, implementation-independent byte layout. Only
-    /// meaningful between frames.
-    pub fn state_bytes(&self) -> Vec<u8> {
-        let hw = &self.hw;
-        let mut out = Vec::with_capacity(STATE_DOMAIN.len() + 128 + hw.memory.ram().len() + 12_000);
+    /// The state serialization of STATE.md. Defined between frames.
+    pub fn state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(64 * 1024 + self.ram.len());
         out.extend_from_slice(STATE_DOMAIN);
         out.extend_from_slice(&self.image_id);
-
         // CPU.
-        let r = &self.cpu.regs;
-        for v in [
-            r.get_af(),
-            r.get_bc(),
-            r.get_de(),
-            r.get_hl(),
-            u16::from_be_bytes([r.get_acc_alt(), r.get_flags_alt()]),
-            u16::from_be_bytes([r.get_b_alt(), r.get_c_alt()]),
-            u16::from_be_bytes([r.get_d_alt(), r.get_e_alt()]),
-            u16::from_be_bytes([r.get_h_alt(), r.get_l_alt()]),
-            r.get_ix(),
-            r.get_iy(),
-            r.get_sp(),
-            r.get_pc(),
-            r.get_mem_ptr(),
-        ] {
+        out.extend_from_slice(&self.cpu.pc.to_le_bytes());
+        for r in &self.cpu.x[1..] {
+            out.extend_from_slice(&r.to_le_bytes());
+        }
+        // Frame loop.
+        out.extend_from_slice(&self.system.frame().to_le_bytes());
+        let (kind, code, fault) = match self.stopped {
+            None => (0u8, 0u8, None),
+            Some(Stopped::Exit(c)) => (1, c, None),
+            Some(Stopped::Fault(f)) => (2, 0, Some(f)),
+        };
+        out.extend_from_slice(&[kind, code]);
+        let (fkind, detail, pc, addr) = match fault {
+            None => (0u8, 0u32, 0u32, 0u32),
+            Some(f) => {
+                let (k, d) = match f.kind {
+                    FaultKind::Illegal(enc) => (1, enc),
+                    FaultKind::Ebreak => (2, 0),
+                    FaultKind::Fetch => (3, 0),
+                    FaultKind::Load => (4, 0),
+                    FaultKind::Store => (5, 0),
+                    FaultKind::Misaligned => (6, 0),
+                };
+                (k, d, f.pc, f.addr)
+            }
+        };
+        out.push(fkind);
+        for v in [detail, pc, addr] {
             out.extend_from_slice(&v.to_le_bytes());
         }
-        let im: u8 = self.cpu.get_im().into();
-        // The interrupt shadow only matters while IFF1 is set: after DI it
-        // changes nothing, so it is normalised to 0 there.
-        let shadow = self.cpu.interrupt_blocked() && r.get_iff1();
-        out.extend_from_slice(&[
-            r.get_i(),
-            r.get_r(),
-            r.get_iff1() as u8,
-            r.get_iff2() as u8,
-            im,
-            self.cpu.is_halted() as u8,
-            shadow as u8,
-            self.cpu.pending_prefix().unwrap_or(0),
-            r.get_q(),
-        ]);
-
-        // Frame loop.
-        hw.system.write_frame_state(&mut out);
         out.extend_from_slice(&(self.budget as i32).to_le_bytes());
-        out.push(hw.interrupt_request as u8);
-
-        hw.memory.write_state(&mut out);
-        hw.system.write_state(&mut out);
-        match &hw.terminal {
-            Some(t) => {
-                out.push(1);
-                t.write_state(&mut out);
-            }
-            None => out.push(0),
+        // RAM.
+        out.extend_from_slice(&(self.ram.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.ram);
+        // Devices.
+        self.system.write_state(&mut out);
+        out.push(self.terminal.is_some() as u8);
+        if let Some(t) = &self.terminal {
+            t.write_state(&mut out);
         }
-        match &hw.vector {
-            Some(v) => {
-                out.push(1);
-                v.write_state(&mut out);
-            }
-            None => out.push(0),
+        out.push(self.vector.is_some() as u8);
+        if let Some(v) = &self.vector {
+            v.write_state(&mut out);
         }
-        match &hw.content {
-            Some(c) => {
-                out.push(1);
-                c.write_state(&mut out);
-            }
-            None => out.push(0),
+        out.push(self.content.is_some() as u8);
+        if let Some(c) = &self.content {
+            c.write_state(&mut out);
         }
         out
     }
 
-    /// BLAKE3-256 of [`Machine::state_bytes`] (SPEC 9, STATE.md).
+    /// The state hash: BLAKE3-256 of [`Machine::state`].
     pub fn state_hash(&self) -> [u8; 32] {
-        *blake3::hash(&self.state_bytes()).as_bytes()
-    }
-
-    pub fn registers(&self) -> Registers {
-        let r = &self.cpu.regs;
-        Registers {
-            af: r.get_af(),
-            bc: r.get_bc(),
-            de: r.get_de(),
-            hl: r.get_hl(),
-            af_alt: u16::from_be_bytes([r.get_acc_alt(), r.get_flags_alt()]),
-            bc_alt: u16::from_be_bytes([r.get_b_alt(), r.get_c_alt()]),
-            de_alt: u16::from_be_bytes([r.get_d_alt(), r.get_e_alt()]),
-            hl_alt: u16::from_be_bytes([r.get_h_alt(), r.get_l_alt()]),
-            ix: r.get_ix(),
-            iy: r.get_iy(),
-            sp: r.get_sp(),
-            pc: r.get_pc(),
-            i: r.get_i(),
-            r: r.get_r(),
-            iff1: r.get_iff1(),
-            iff2: r.get_iff2(),
-            im: self.cpu.get_im().into(),
-            halted: self.cpu.is_halted(),
-        }
+        *blake3::hash(&self.state()).as_bytes()
     }
 }

@@ -1,4 +1,5 @@
-//! Device 1, System (SPEC 5).
+//! Device 1, System (SPEC 5, 6): events, the frame counter, the clock,
+//! random bytes and controllers.
 
 use std::collections::VecDeque;
 
@@ -6,7 +7,7 @@ pub const QUEUE_CAPACITY: usize = 64;
 /// Screen size in screen units (SPEC 5.4).
 pub const SCREEN_WIDTH: u16 = 640;
 pub const SCREEN_HEIGHT: u16 = 480;
-/// Number of game controllers (SPEC 5.3).
+/// Number of game controllers (SPEC 6).
 pub const CONTROLLERS: usize = 4;
 
 /// One input event (SPEC 5.1): a type byte and three parameter bytes.
@@ -85,7 +86,7 @@ impl Event {
     }
 }
 
-/// One game controller's state for a frame (SPEC 5.3).
+/// One game controller's state for a frame (SPEC 6).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Controller {
     pub connected: bool,
@@ -97,7 +98,7 @@ pub struct Controller {
     pub right: (i8, i8),
 }
 
-/// Controller button bits for `Controller::buttons` (SPEC 5.3 bytes 1 and 2).
+/// Controller button bits for `Controller::buttons` (SPEC 6, bytes 1 and 2).
 pub mod pad {
     pub const UP: u16 = 1 << 0;
     pub const DOWN: u16 = 1 << 1;
@@ -118,7 +119,7 @@ pub mod pad {
 }
 
 impl Controller {
-    /// The eight bytes ports 1Dh/1Eh read; all zero when not connected.
+    /// The eight bytes the `controller` call writes; all zero when not connected.
     pub fn bytes(&self) -> [u8; 8] {
         if !self.connected {
             return [0; 8];
@@ -135,13 +136,8 @@ pub struct System {
     time: u32,
     random: Vec<u8>,
     random_used: usize,
-    exit: Option<u8>,
-    /// Controller bytes latched for this frame (SPEC 5.3).
+    /// Controller bytes latched for this frame (SPEC 6).
     controllers: [[u8; 8]; CONTROLLERS],
-    /// The selected controller, if 0-3 was last written to port 1Dh (reset: 0).
-    selected: Option<u8>,
-    /// Next byte read through port 1Eh.
-    pad_byte: u8,
 }
 
 impl Default for System {
@@ -152,11 +148,7 @@ impl Default for System {
             time: 0,
             random: Vec::new(),
             random_used: 0,
-            exit: None,
             controllers: [[0; 8]; CONTROLLERS],
-            // SPEC 5.3: after reset, controller 0 is selected.
-            selected: Some(0),
-            pad_byte: 0,
         }
     }
 }
@@ -171,8 +163,13 @@ impl System {
         true
     }
 
+    /// Removes and returns the event at the head of the queue.
+    pub fn pop_event(&mut self) -> Option<Event> {
+        self.queue.pop_front()
+    }
+
     /// Latches the clock, this frame's random bytes and the controllers
-    /// (SPEC 1.3 step 1, 5.3).
+    /// (SPEC 1.3 step 1).
     pub fn latch(&mut self, unix_time: u32, random: &[u8], controllers: &[Controller; CONTROLLERS]) {
         self.controllers = controllers.map(|c| c.bytes());
         self.time = unix_time;
@@ -181,51 +178,29 @@ impl System {
         self.random_used = 0;
     }
 
+    /// Fills `out` with the next of this frame's random bytes; once the
+    /// host's bytes are used up, with zeros.
+    pub fn random(&mut self, out: &mut [u8]) {
+        let from = self.random_used.min(self.random.len());
+        let n = out.len().min(self.random.len() - from);
+        out[..n].copy_from_slice(&self.random[from..from + n]);
+        out[n..].fill(0);
+        self.random_used += out.len();
+    }
+
     /// Random bytes consumed this frame (never more than were supplied).
     pub fn random_used(&self) -> usize {
         self.random_used.min(self.random.len())
     }
 
+    /// Controller `n`'s eight bytes for this frame (SPEC 6); zeros for a
+    /// controller that is not connected or does not exist.
+    pub fn controller(&self, n: u32) -> [u8; 8] {
+        self.controllers.get(n as usize).copied().unwrap_or([0; 8])
+    }
+
     pub fn end_frame(&mut self) {
         self.frame = self.frame.wrapping_add(1);
-    }
-
-    pub fn port_in(&mut self, reg: u8) -> u8 {
-        let head = self.queue.front().copied();
-        match reg {
-            0x0 => head.map_or(0, |e| e.kind),
-            0x1 => head.map_or(0, |e| e.a),
-            0x2 => head.map_or(0, |e| e.b),
-            0x3 => head.map_or(0, |e| e.c),
-            0x4..=0x7 => self.frame.to_le_bytes()[reg as usize - 0x4],
-            0x8..=0xB => self.time.to_le_bytes()[reg as usize - 0x8],
-            0xC => {
-                // Reads beyond the supplied bytes return 00h.
-                let b = self.random.get(self.random_used).copied().unwrap_or(0);
-                self.random_used += 1;
-                b
-            }
-            0xE => {
-                let b = self.selected.map_or(0, |c| self.controllers[c as usize][self.pad_byte as usize]);
-                self.pad_byte = (self.pad_byte + 1) % 8;
-                b
-            }
-            _ => 0xFF,
-        }
-    }
-
-    pub fn port_out(&mut self, reg: u8, value: u8) {
-        match reg {
-            0x0 => {
-                self.queue.pop_front();
-            }
-            0xD => {
-                self.selected = (value < CONTROLLERS as u8).then_some(value);
-                self.pad_byte = 0;
-            }
-            0xF => self.exit = Some(value),
-            _ => {}
-        }
     }
 
     pub fn queue(&self) -> impl ExactSizeIterator<Item = &Event> {
@@ -236,14 +211,9 @@ impl System {
         self.frame
     }
 
-    pub fn exit_code(&self) -> Option<u8> {
-        self.exit
-    }
-
-    /// The frame counter and exit state (STATE.md, machine section).
-    pub(crate) fn write_frame_state(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.frame.to_le_bytes());
-        out.extend_from_slice(&[self.exit.is_some() as u8, self.exit.unwrap_or(0)]);
+    /// The Unix time latched at the start of the frame.
+    pub fn time(&self) -> u32 {
+        self.time
     }
 
     /// The latches and the event queue (STATE.md, system section). This
@@ -258,10 +228,6 @@ impl System {
         for c in &self.controllers {
             out.extend_from_slice(c);
         }
-        out.push(self.selected.unwrap_or(0xFF));
-        // With no controller selected the read position cannot be observed
-        // (selecting one restarts it), so it is written as 0.
-        out.push(if self.selected.is_some() { self.pad_byte } else { 0 });
     }
 }
 
@@ -272,20 +238,13 @@ mod tests {
     #[test]
     fn queue_head_and_remove() {
         let mut s = System::default();
-        assert_eq!(s.port_in(0x0), 0);
-        assert_eq!(s.port_in(0x1), 0);
+        assert_eq!(s.pop_event(), None);
         s.push_event(Event::key_down(0x29, modifiers::SHIFT));
         s.push_event(Event::text('你'));
-        assert_eq!((s.port_in(0), s.port_in(1), s.port_in(2)), (1, 0x29, 1));
-        s.port_out(0, 0);
-        assert_eq!(s.port_in(0), 3);
+        assert_eq!(s.pop_event(), Some(Event { kind: 1, a: 0x29, b: 1, c: 0 }));
         let cp = '你' as u32;
-        assert_eq!(s.port_in(1), cp as u8);
-        assert_eq!(s.port_in(2), (cp >> 8) as u8);
-        assert_eq!(s.port_in(3), 0);
-        s.port_out(0, 0);
-        s.port_out(0, 0); // removing from an empty queue is harmless
-        assert_eq!(s.port_in(0), 0);
+        assert_eq!(s.pop_event(), Some(Event { kind: 3, a: cp as u8, b: (cp >> 8) as u8, c: 0 }));
+        assert_eq!(s.pop_event(), None);
     }
 
     #[test]
@@ -303,24 +262,25 @@ mod tests {
         assert!(!s.push_event(Event::key_down(0xEE, 0)));
         assert_eq!(s.queue().len(), QUEUE_CAPACITY);
         assert_eq!(s.queue().last().unwrap().a, (QUEUE_CAPACITY - 1) as u8);
-        assert_eq!(s.port_in(1), 0, "head is the oldest event");
+        assert_eq!(s.pop_event().unwrap().a, 0, "head is the oldest event");
     }
 
     #[test]
-    fn counters_time_random_exit() {
+    fn counters_time_and_random() {
         let mut s = System::default();
-        s.latch(0x1234_5678, &[0xAB], &Default::default());
+        s.latch(0x1234_5678, &[0xAB, 0xCD, 0xEF], &Default::default());
         s.end_frame();
         s.end_frame();
-        assert_eq!(s.port_in(0x4), 2);
-        assert_eq!(s.port_in(0x7), 0);
-        assert_eq!(s.port_in(0x8), 0x78);
-        assert_eq!(s.port_in(0xB), 0x12);
-        assert_eq!(s.port_in(0xC), 0xAB);
-        assert_eq!(s.port_in(0xD), 0xFF);
-        assert_eq!(s.exit_code(), None);
-        s.port_out(0xF, 3);
-        assert_eq!(s.exit_code(), Some(3));
+        assert_eq!((s.frame(), s.time()), (2, 0x1234_5678));
+        let mut b = [9; 2];
+        s.random(&mut b);
+        assert_eq!(b, [0xAB, 0xCD]);
+        let mut b = [9; 3];
+        s.random(&mut b);
+        assert_eq!(b, [0xEF, 0, 0], "zeros once the host's bytes are used up");
+        assert_eq!(s.random_used(), 3);
+        s.latch(0, &[], &Default::default());
+        assert_eq!(s.random_used(), 0);
     }
 
     #[test]
@@ -351,59 +311,25 @@ mod tests {
         assert_eq!((e.kind, e.a, e.b, e.c), (0x07, 0, 0, 0));
     }
 
-    fn read_pad(s: &mut System, n: usize) -> Vec<u8> {
-        (0..n).map(|_| s.port_in(0xE)).collect()
-    }
-
     #[test]
-    fn controller_port_sequence_and_wraparound() {
+    fn controllers_are_latched_per_frame() {
         let mut s = System::default();
         let mut pads = [Controller::default(); CONTROLLERS];
         pads[0] = Controller { connected: true, buttons: pad::UP | pad::A | pad::START, left: (-128, 127), right: (5, -5) };
         pads[2] = Controller { connected: true, buttons: 0xFFFF, left: (0, 0), right: (0, 0) };
         pads[3] = Controller { connected: false, buttons: 0xFFFF, left: (9, 9), right: (9, 9) };
         s.latch(0, &[], &pads);
-        // Controller 0 is selected after reset; byte 7 wraps to byte 0.
-        let want0 = [1, 0x11, 0x20, 0x81, 0x7F, 5, 0xFB, 0];
-        assert_eq!(read_pad(&mut s, 10), [&want0[..], &want0[..2]].concat());
-        // Selecting restarts at byte 0, even mid-sequence.
-        s.port_out(0xD, 2);
-        assert_eq!(read_pad(&mut s, 3), [1, 0xFF, 0xFF]);
-        s.port_out(0xD, 2);
-        assert_eq!(read_pad(&mut s, 1), [1]);
-        // Not connected (whatever the rest of its state), and no controller.
-        s.port_out(0xD, 1);
-        assert_eq!(read_pad(&mut s, 8), [0; 8]);
-        s.port_out(0xD, 3);
-        assert_eq!(read_pad(&mut s, 8), [0; 8]);
-        for none in [4, 0x80, 0xFF] {
-            s.port_out(0xD, none);
-            assert_eq!(read_pad(&mut s, 9), [0; 9], "select {none}");
-        }
-        // Port 1Dh is write-only and 1Eh read-only.
-        assert_eq!(s.port_in(0xD), 0xFF);
-        s.port_out(0xE, 3);
-        s.port_out(0xD, 0);
-        assert_eq!(read_pad(&mut s, 1), [1]);
-    }
-
-    #[test]
-    fn controller_state_is_latched_per_frame() {
-        let mut s = System::default();
-        let mut pads = [Controller::default(); CONTROLLERS];
-        pads[0] = Controller { connected: true, buttons: pad::B, ..Default::default() };
-        s.latch(0, &[], &pads);
-        assert_eq!(read_pad(&mut s, 2), [1, 0x20]);
+        assert_eq!(s.controller(0), [1, 0x11, 0x20, 0x81, 0x7F, 5, 0xFB, 0]);
+        assert_eq!(s.controller(2), [1, 0xFF, 0xFF, 0, 0, 0, 0, 0]);
+        assert_eq!(s.controller(1), [0; 8]);
+        assert_eq!(s.controller(3), [0; 8], "not connected, whatever the rest");
+        assert_eq!(s.controller(4), [0; 8]);
+        assert_eq!(s.controller(u32::MAX), [0; 8]);
         // The host's state changes within the frame: nothing changes until
-        // the next latch, and the read position carries across frames.
+        // the next latch.
         pads[0].buttons = pad::DOWN;
-        assert_eq!(read_pad(&mut s, 7), [0, 0, 0, 0, 0, 0, 1]);
-        s.end_frame();
+        assert_eq!(s.controller(0)[1], 0x11);
         s.latch(0, &[], &pads);
-        assert_eq!(read_pad(&mut s, 1), [0x02]);
-        pads[0].connected = false;
-        s.latch(0, &[], &pads);
-        s.port_out(0xD, 0);
-        assert_eq!(read_pad(&mut s, 8), [0; 8]);
+        assert_eq!(s.controller(0)[1], 0x02);
     }
 }
