@@ -27,7 +27,7 @@
 
 
 
- 97%                                  ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+ 97%                     Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 1002, scroll 524 (stored 524), region 64 0 512 464 --
   506  19     0   sans15 |starter kept in the refrigerator survives a few weeks without
   525  19     0   sans15 |attention and usually recovers after two or three feedings.

@@ -27,7 +27,7 @@
 
 
 
- Link: https://en.wikipedia.org/wiki/Sourdough
+ Link 1: https://en.wikipedia.org/wiki/Sourdough
 -- page: height 1002, scroll 444 (stored 444), region 64 0 512 464 --
   449  19     0   sans15 |Temperature matters more than almost anything else. A warm kitchen
   468  19     0   sans15 |speeds fermentation up and makes the starter hungry; a cool one

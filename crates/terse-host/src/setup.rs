@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terse_net::local::{self, Found};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::{BlobStore, ContentService, Draft, FeedCommand, FeedEvent, FeedStore, Node, Subscriptions, to_hex};
+use terse_net::entry::KIND_ARTICLE;
+use terse_net::{BlobStore, ContentService, Done, Draft, FeedCommand, FeedEvent, FeedStore, Node, Subscriptions, blob_id, to_hex};
 
 /// The relays the host uses, and why.
 #[derive(Debug, PartialEq, Eq)]
@@ -76,14 +77,31 @@ struct Sample {
 }
 
 /// Oldest first: the timeline shows the last one at the top. Only a feed
-/// with no entries gets them (`prepare_demo`), so a sample added here
+/// with no articles gets them (`prepare_demo`), so a sample added here
 /// reaches new users only; README says how others publish it themselves.
+/// The welcome article's `terse:LONG`, `terse:LANGUAGES` and
+/// `terse:PICTURES` become links to the other three ([`sample_text`]).
 const SAMPLES: [Sample; 4] = [
-    Sample { title: "Welcome to Terse", text: include_str!("../demo/welcome.txt") },
     Sample { title: "How Terse works: a longer read", text: include_str!("../demo/long.txt") },
     Sample { title: "Hello in three languages: こんにちは, مرحبا", text: include_str!("../demo/languages.txt") },
     Sample { title: "Pictures in articles", text: include_str!("../demo/pictures.txt") },
+    Sample { title: "Welcome to Terse", text: include_str!("../demo/welcome.txt") },
 ];
+
+/// The display name of the profile `--demo` gives a new identity (not
+/// listed for search).
+pub const DEMO_NAME: &str = "demo";
+
+/// A sample's text as published: in the welcome article, the
+/// placeholders become `terse:` links to the other samples, by blob ID
+/// (an ID depends only on the bytes).
+fn sample_text(s: &Sample) -> String {
+    let id = |i: usize| to_hex(&blob_id(SAMPLES[i].text.as_bytes()));
+    s.text.replace("terse:LONG", &format!("terse:{}", id(0))).replace("terse:LANGUAGES", &format!("terse:{}", id(1))).replace(
+        "terse:PICTURES",
+        &format!("terse:{}", id(2)),
+    )
+}
 
 /// How long `--demo` waits for the relay (catching up, publishing).
 const DEMO_DEADLINE: Duration = Duration::from_secs(60);
@@ -92,14 +110,22 @@ fn now() -> u32 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
 }
 
-/// `--demo`: makes sure the identity exists, subscribes to the own feed and,
-/// if that feed has no entries (after catching up with the relay, if there
-/// is one), publishes the sample articles. Returns how many it
-/// published.
+/// `--demo`: makes sure the identity exists (a new one gets an unlisted
+/// profile named [`DEMO_NAME`]), subscribes to the own feed and, if that
+/// feed has no articles (after catching up with the relay, if there is
+/// one), publishes the sample articles. Returns how many it published.
 pub fn prepare_demo(store_dir: &Path, config: &Path, relays: &[String]) -> Result<usize, String> {
     let mut node = Node::open(Some(store_dir.to_path_buf()), relays, DEFAULT_TIMEOUT)?;
-    node.set_identity_path(config.join("identity.key"))?;
+    let identity = config.join("identity.key");
+    let new = !identity.exists();
+    node.set_identity_path(identity)?;
     let key = node.ensure_identity()?;
+    if new {
+        match node.publish_profile(DEMO_NAME, false, Some(String::new()), now()) {
+            Done::Published { seq, .. } => eprintln!("terse-host: demo: your profile is named \"{DEMO_NAME}\" (#{seq}, not listed)"),
+            done => return Err(format!("demo: publishing the profile failed ({done:?})")),
+        }
+    }
     let mut subs = Subscriptions::load(config.join("subscriptions"))?;
     subs.add(key).map_err(|e| format!("{}: {e}", config.join("subscriptions").display()))?;
     node.set_subscriptions(subs);
@@ -110,13 +136,14 @@ pub fn prepare_demo(store_dir: &Path, config: &Path, relays: &[String]) -> Resul
     {
         return Err(format!("demo: relay {}: {e}", relays.join(" ")));
     }
-    let held = FeedStore::beside_blobs(store_dir).seqs(&key).map_err(|e| e.to_string())?.len();
+    let entries = FeedStore::beside_blobs(store_dir).entries(&key).map_err(|e| e.to_string())?;
+    let held = entries.iter().filter(|e| e.entry.kind == KIND_ARTICLE).count();
     if held > 0 {
-        eprintln!("terse-host: demo: your feed already has {held} entries; nothing published");
+        eprintln!("terse-host: demo: your feed already has {held} articles; nothing published");
         return Ok(0);
     }
     for s in &SAMPLES {
-        let draft = Draft { data: s.text.as_bytes().to_vec(), title: s.title.into(), reply_to: None, time: now() };
+        let draft = Draft { data: sample_text(s).into_bytes(), title: s.title.into(), reply_to: None, time: now() };
         service.feed(FeedCommand::Publish(draft));
         let deadline = Instant::now() + DEMO_DEADLINE;
         loop {
@@ -186,14 +213,17 @@ mod tests {
         assert_eq!(prepare_demo(store.path(), config.path(), &url).unwrap(), 0);
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let feeds = FeedStore::beside_blobs(store.path());
-        assert_eq!(feeds.seqs(&key).unwrap(), [1, 2, 3, 4]);
+        // The profile, then the four articles.
+        assert_eq!(feeds.seqs(&key).unwrap(), [1, 2, 3, 4, 5]);
+        let profile = feeds.latest_profile(&key).unwrap().unwrap();
+        assert_eq!((profile.entry.seq, profile.entry.title.as_str()), (1, DEMO_NAME));
         let subs = Subscriptions::load(config.path().join("subscriptions")).unwrap();
         assert_eq!(subs.feeds().collect::<Vec<_>>(), [&key]);
         // Same config, empty store: caught up from the relay, nothing new.
         let fresh = tempfile::tempdir().unwrap();
         assert_eq!(prepare_demo(fresh.path(), config.path(), &url).unwrap(), 0);
-        assert_eq!(FeedStore::beside_blobs(fresh.path()).seqs(&key).unwrap(), [1, 2, 3, 4]);
-        assert_eq!(FeedStore::beside_blobs(relay_dir.path()).seqs(&key).unwrap(), [1, 2, 3, 4]);
+        assert_eq!(FeedStore::beside_blobs(fresh.path()).seqs(&key).unwrap(), [1, 2, 3, 4, 5]);
+        assert_eq!(FeedStore::beside_blobs(relay_dir.path()).seqs(&key).unwrap(), [1, 2, 3, 4, 5]);
         // Without a relay too.
         let (store, config) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         assert_eq!(prepare_demo(store.path(), config.path(), &[]).unwrap(), 4);
@@ -201,9 +231,15 @@ mod tests {
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let entries = FeedStore::beside_blobs(store.path()).entries(&key).unwrap();
         let titles: Vec<&str> = entries.iter().map(|e| e.entry.title.as_str()).collect();
-        assert_eq!(titles, SAMPLES.map(|s| s.title));
+        assert_eq!(titles[0], DEMO_NAME);
+        assert_eq!(titles[1..], SAMPLES.map(|s| s.title));
         for s in &SAMPLES {
-            assert!(s.title.len() <= 120 && s.text.len() <= terse_net::node::AUTO_DOWNLOAD_LIMIT as usize);
+            assert!(s.title.len() <= 120 && sample_text(s).len() <= terse_net::node::AUTO_DOWNLOAD_LIMIT as usize);
         }
+        // The welcome article links to the other three, which are held.
+        let welcome = &entries[4].entry;
+        let text = BlobStore::open(store.path(), None).unwrap().read(&welcome.blob).unwrap().unwrap();
+        let links = terse_net::article::terse_links(&text);
+        assert_eq!(links, [1, 2, 3].map(|i| entries[i].entry.blob));
     }
 }

@@ -1,0 +1,39 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ U unsubscribe  Esc back
+-- page: height 225, scroll 0 (stored 0), region 64 0 512 464 --
+   16  33     0   sans26b |Bobby
+   55  15     0   sans12 |your nickname for the feed  ·  0b513a…e39f2d
+   80   8     0  -- rule --
+   98  19     0   sans15 |Feed key:
+  123  19    12   mono15 |0b513ad9 b4924015 ca0902ed 079044d3
+  142  19    12   mono15 |ac5dbec2 306f0694 8c10da8e b6e39f2d
+  175  19     0   sans15b |You are subscribed to this feed.
+  208  17     0   sans13 |U: unsubscribe   Esc: back

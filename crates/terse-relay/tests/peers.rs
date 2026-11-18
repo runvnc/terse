@@ -126,6 +126,7 @@ fn no_storm_in_a_triangle() {
     let data = b"One article.".to_vec();
     let entry = Entry::article(author.feed_key(), 1, 1, &data, None, "One").sign(&author).unwrap();
     let mut client = RelayClient::websocket(&a.url, DEFAULT_TIMEOUT);
+    client.connect().unwrap();
     client.put(&data);
     client.publish(&entry.bytes);
     let mut replies = Vec::new();

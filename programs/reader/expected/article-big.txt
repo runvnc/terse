@@ -27,7 +27,7 @@
 
 
 
- 100%                                 ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+ 100%                    Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 22072, scroll 21608 (stored 21608), region 64 0 512 464 --
 21614  19     0   sans15 |Line 743 of the big article, which needs more than one request.
 21643  19     0   sans15 |Line 744 of the big article, which needs more than one request.

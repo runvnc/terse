@@ -11,6 +11,13 @@
 //! Subscribing and publishing take one lock, so a subscriber sees the
 //! backlog and then live entries in order, each exactly once.
 //!
+//! Search (NETWORK 4.7): entries are found in the order this relay stored
+//! them, newest first, by an arrival log beside the entries (the host's
+//! [`terse_net::timeline::Arrivals`]); entries stored before the log
+//! existed are added to it at start, by feed key and then `seq`. A
+//! connection may search at most [`FINDS_PER_SECOND`] times in any second;
+//! further finds are refused.
+//!
 //! Peers (NETWORK 5): a connection on which a Peer message arrived, or one
 //! this relay opened to a `--peer` URL. Both sides may send requests on it.
 //! Every entry and every blob up to 16,384 bytes this relay newly stores is
@@ -18,7 +25,7 @@
 //! repeated on the peers; a get this relay cannot serve for a client is
 //! asked of the peers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -33,6 +40,7 @@ use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Document};
 use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, status};
 use terse_net::relay::websocket_config;
+use terse_net::timeline::Arrivals;
 use terse_net::{BlobStore, FeedKey, FeedStore};
 use tungstenite::Message;
 
@@ -47,6 +55,9 @@ pub const POLL: Duration = Duration::from_millis(10);
 pub const PUSH_LIMIT: usize = 16_384;
 /// How long a get waits for the peers (NETWORK 5).
 pub const PULL_TIMEOUT: Duration = Duration::from_secs(3);
+/// Finds a connection may make in any one second (NETWORK 4.7: a relay may
+/// refuse more).
+pub const FINDS_PER_SECOND: usize = 4;
 /// Queued pushes beyond the feed cap a connection may fall behind by.
 const QUEUE_SLACK: usize = 1024;
 /// A client that cannot take a message within this time is dropped.
@@ -102,6 +113,8 @@ pub struct Relay {
     cap: usize,
     state: Mutex<State>,
     profiles: Mutex<HashMap<FeedKey, Profile>>,
+    /// The order in which entries were stored.
+    arrivals: Mutex<Arrivals>,
     /// Messages written to peer connections, by type.
     peer_messages: [AtomicUsize; 256],
 }
@@ -112,6 +125,8 @@ pub struct Connection {
     queue: Receiver<Vec<u8>>,
     dropped: Arc<AtomicBool>,
     peer: Arc<AtomicBool>,
+    /// When this connection's recent finds were answered.
+    finds: Mutex<VecDeque<Instant>>,
 }
 
 /// What to send back for a message.
@@ -133,7 +148,21 @@ impl Relay {
                 profiles.insert(feed, profile_of(&p));
             }
         }
+        // Entries stored without an arrival record (by an older relay) are
+        // recorded now. A failure only leaves them out of searches.
+        let mut arrivals = Arrivals::beside_blobs(blobs.dir());
+        let logged: HashSet<(FeedKey, u32)> = arrivals.order().map(|o| o.iter().copied().collect()).unwrap_or_default();
+        let mut stored = feeds.feeds().unwrap_or_default();
+        stored.sort();
+        for feed in stored {
+            for seq in feeds.seqs(&feed).unwrap_or_default() {
+                if !logged.contains(&(feed, seq)) {
+                    let _ = arrivals.record(&feed, seq);
+                }
+            }
+        }
         Relay {
+            arrivals: Mutex::new(arrivals),
             blobs,
             feeds,
             cap: cap.max(1),
@@ -178,7 +207,7 @@ impl Relay {
             peer_feeds: HashSet::new(),
         };
         state.conns.insert(id, conn);
-        Connection { id, queue: rx, dropped, peer }
+        Connection { id, queue: rx, dropped, peer, finds: Mutex::default() }
     }
 
     pub fn disconnect(&self, conn: &Connection) {
@@ -240,7 +269,7 @@ impl Relay {
                 }
                 protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
             }
-            Ok(Request::Find { req, scope, query }) => match self.find(scope, query) {
+            Ok(Request::Find { req, scope, query }) => match (valid_find(scope, query) && self.allow_find(conn)).then(|| self.find(scope, query)).flatten() {
                 Some(found) => protocol::encode_find_reply(req, status::DONE, &found),
                 None => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[]),
             },
@@ -261,6 +290,22 @@ impl Relay {
             Err(Malformed::Refuse { reply, req }) => protocol::encode_status_reply(reply, req, status::REFUSED),
             Err(Malformed::Close) => return Answer::Close,
         })
+    }
+
+    /// Whether `conn` may search now: fewer than [`FINDS_PER_SECOND`] finds
+    /// answered in the last second. An allowed find is counted; refused and
+    /// malformed ones are not.
+    fn allow_find(&self, conn: &Connection) -> bool {
+        let now = Instant::now();
+        let mut finds = conn.finds.lock().unwrap();
+        while finds.front().is_some_and(|&t| now.duration_since(t) >= Duration::from_secs(1)) {
+            finds.pop_front();
+        }
+        if finds.len() >= FINDS_PER_SECOND {
+            return false;
+        }
+        finds.push_back(now);
+        true
     }
 
     /// A reply or pushed entry on a peer connection.
@@ -373,7 +418,8 @@ impl Relay {
             return status::REFUSED;
         }
         match self.feeds.insert(&signed) {
-            Ok(Insert::New) => {}
+            // A failed record only leaves the entry out of searches.
+            Ok(Insert::New) => drop(self.arrivals.lock().unwrap().record(&feed, signed.entry.seq)),
             Ok(Insert::Duplicate) => return status::DONE,
             Ok(Insert::Conflict) | Err(_) => return status::REFUSED,
         }
@@ -433,10 +479,7 @@ impl Relay {
     /// Answers a find from this relay's own index (NETWORK 4.7); `None`
     /// refuses it.
     pub fn find(&self, scope: u8, query: &[u8]) -> Option<Vec<Vec<u8>>> {
-        if !(scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES)
-            || !(1..=profile::MAX_NAME).contains(&query.len())
-            || std::str::from_utf8(query).is_err()
-        {
+        if !valid_find(scope, query) {
             return None;
         }
         let mut profiles = self.profiles.lock().unwrap();
@@ -457,22 +500,35 @@ impl Relay {
             hits.sort();
             return Some(hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.2.clone()).collect());
         }
-        let mut hits: Vec<(std::cmp::Reverse<u32>, FeedKey, std::cmp::Reverse<u32>, Vec<u8>)> = Vec::new();
-        for (feed, _) in listed {
-            for bytes in self.feeds.after(feed, 0).unwrap_or_default() {
-                // Stored entries were verified when they arrived.
-                let (Some(&kind), Some(&n)) = (bytes.get(40), bytes.get(108)) else { continue };
-                let Some(title) = bytes.get(109..109 + n as usize) else { continue };
-                if kind == KIND_ARTICLE && profile::matches(title, query) {
-                    let seq = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
-                    let time = u32::from_le_bytes(bytes[36..40].try_into().unwrap());
-                    hits.push((std::cmp::Reverse(time), *feed, std::cmp::Reverse(seq), bytes));
-                }
+        let listed: HashSet<FeedKey> = listed.map(|(k, _)| *k).collect();
+        drop(profiles);
+        // Newest stored first (NETWORK 4.7); pruned entries are skipped.
+        let order: Vec<(FeedKey, u32)> = match self.arrivals.lock().unwrap().order() {
+            Ok(o) => o.iter().rev().filter(|(f, _)| listed.contains(f)).copied().collect(),
+            Err(_) => Vec::new(),
+        };
+        let mut hits = Vec::new();
+        for (feed, seq) in order {
+            if hits.len() == MAX_FIND_RESULTS {
+                break;
+            }
+            // Stored entries were verified when they arrived.
+            let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
+            let (Some(&kind), Some(&n)) = (bytes.get(40), bytes.get(108)) else { continue };
+            let Some(title) = bytes.get(109..109 + n as usize) else { continue };
+            if kind == KIND_ARTICLE && profile::matches(title, query) {
+                hits.push(bytes);
             }
         }
-        hits.sort();
-        Some(hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.3).collect())
+        Some(hits)
     }
+}
+
+/// Whether a find's scope and query are well formed (NETWORK 4.7).
+fn valid_find(scope: u8, query: &[u8]) -> bool {
+    (scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES)
+        && (1..=profile::MAX_NAME).contains(&query.len())
+        && std::str::from_utf8(query).is_ok()
 }
 
 fn profile_of(p: &entry::SignedEntry) -> Profile {

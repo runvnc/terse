@@ -449,6 +449,8 @@ impl Content {
                 &Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_SET_PROFILE | OP_SET_NICKNAME, .. },
                 Outcome::Refused,
             ) => status::REFUSED,
+            // NETWORK 4.7: the relays refused the search.
+            (Pending::Find { .. }, Outcome::Refused) => status::REFUSED,
             (_, Outcome::NotFound) => status::NOT_FOUND,
             (_, Outcome::Failed) => status::FAILED,
             _ => return None,
@@ -1173,6 +1175,11 @@ mod tests {
                 Request { handle: 2, kind: RequestKind::Find { scope: FIND_ENTRIES, query: b"X".to_vec(), length: 1 } },
             ]
         );
+        // A find the relays refused (NETWORK 4.7) completes with status 05h;
+        // one no relay could answer with 03h.
+        rig.complete(&[done(1, Outcome::Refused), done(2, Outcome::Failed)]);
+        assert_eq!(status(&rig, BLOCK), status::REFUSED);
+        assert_eq!(status(&rig, BLOCK + 64), status::FAILED);
     }
 
     #[test]
@@ -1238,7 +1245,6 @@ mod tests {
             assert_eq!(rig.complete(&[records(1, total, data)]), (1, 0), "{why}");
         }
         assert_eq!(rig.complete(&[got(1, 1, &[])]), (1, 0), "a get result does not complete a find");
-        assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0), "find needs no consent");
         assert_eq!(rig.complete(&[records(1, 2, &ab)]), (0, 0));
         assert_eq!(rig.read(DATA, ab.len()), ab, "the results overwrite the query");
         assert_eq!(rig.read(DATA + 400, 1), [0xEE]);

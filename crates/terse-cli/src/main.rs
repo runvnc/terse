@@ -26,7 +26,7 @@ const USAGE: &str = "usage:
   terse feed publish <file> --title <t> [--reply-to <id>]
   terse feed subscribe|unsubscribe <key>
   terse feed subscriptions
-  terse feed sync [--watch] [--auto-download <bytes>]
+  terse feed sync [--watch] [--auto-download <bytes>] [--no-prefetch]
   terse feed list [<key>]
   terse feed read <key> <seq>
   terse feed nickname <key> [<name>]
@@ -57,6 +57,7 @@ find it (default: as in your current profile, else unlisted), the description fr
 (default: kept), and relay lines for your relays that are not loopback addresses (the
 --relay options, else your relay list). Names are not unique: listings show the key too.
 --auto-download: articles up to this size are fetched as entries arrive (default 16384).
+--no-prefetch: do not also fetch the terse: links of those articles (NETWORK 4.4).
 --events: scripted input, one event per line (see README).
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
@@ -107,7 +108,7 @@ impl Args {
         let mut it = args.iter();
         while let Some(a) = it.next() {
             if a.starts_with('-') {
-                let value = if switches.contains(&a.as_str()) || a == "--no-feed-relays" {
+                let value = if switches.contains(&a.as_str()) || a == "--no-feed-relays" || a == "--no-prefetch" {
                     None
                 } else {
                     Some(it.next().ok_or(format!("{a} needs a value"))?.clone())

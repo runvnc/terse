@@ -321,6 +321,8 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Put { handle }, Done::Put(id)) => (handle, Outcome::Put { id }),
         (Job::Publish { handle }, Done::Published { seq, .. }) => (handle, Outcome::Published { seq }),
         (Job::Find { handle, .. }, Done::Found(_)) => (handle, Outcome::Failed),
+        // NETWORK 4.7: no relay answered and one refused (SPEC 9.5).
+        (Job::Find { handle, .. }, Done::Refused) => (handle, Outcome::Refused),
         (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, Done::NotFound) => {
             (handle, Outcome::NotFound)
         }
@@ -439,7 +441,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
     loop {
         // Block for work only when nothing is waiting on the relay and no
         // feed is followed.
-        let wait = if node.busy() || node.connected() {
+        let wait = if node.busy() || node.connected() || node.connecting() {
             Some(Duration::ZERO)
         } else if node.has_relays() {
             Some(IDLE_WAIT)

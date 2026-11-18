@@ -558,7 +558,7 @@ end of the blob completes with status `01h` and `length` 0.
 | `02h` | Not found |
 | `03h` | Failed (network error or timeout; the host decides when to give up) |
 | `04h` | Bad request |
-| `05h` | Refused: the user said no, or the host does not permit it (section 9.5) |
+| `05h` | Refused: the user said no, the host does not permit it, or the relays refused a find (section 9.5) |
 
 ### 9.4 Determinism
 
@@ -675,8 +675,11 @@ completion the buffer holds the results as timeline records (only flag bit
 `length` is the number of bytes delivered and `size` the number of results
 the host has, at most 16. The host asks all its relays, verifies every
 entry they return and discards invalid ones and duplicates, and orders and
-caps the merged results as `NETWORK.md` section 4.7 says. If no relay could
-be asked, the request completes with status `03h`.
+caps the merged results as `NETWORK.md` section 4.7 says. If no relay
+answered with results and at least one refused the find (a relay may refuse
+one from a client that searches too often), the request completes with
+status `05h`; otherwise, if no relay could be asked or none answered, with
+`03h`.
 
 **Set profile** (`0Bh`) publishes a new profile for the host's own feed.
 `id` is not used. The display name is the `length` bytes at `addr` (1 to

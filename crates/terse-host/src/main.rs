@@ -43,7 +43,7 @@ const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 const READER: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
 
 const USAGE: &str = "usage:
-  terse-host [<image|id>] [--demo] [--relay ws://...|none]... [--no-feed-relays] [--consent ask|allow|deny]
+  terse-host [<image|id>] [--demo] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--consent ask|allow|deny]
              [--store <dir>] [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
   terse-host [<image|id>] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--demo]
@@ -61,6 +61,8 @@ const USAGE: &str = "usage:
   ~/.local/share/terse/relay). One line on stderr says which. The host connects to all of them
   (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
   --no-feed-relays. --screenshot and --selftest use relays only with --relay.
+  --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
+  terse: links in it (NETWORK 4.4).
   --consent: how requests by the program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
   answered: ask shows the host's prompt at the bottom of the window (Y allows, N or Esc refuses);
   default ask in the window, deny for --screenshot and --selftest (where nobody can answer; a
@@ -99,7 +101,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut font = None;
     let mut page_fonts = page::PageFonts::default();
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
-    let mut feed_relays = true;
+    let (mut feed_relays, mut prefetch) = (true, true);
     let (mut consent, mut demo) = (None, false);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -120,6 +122,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relays.push(it.next().ok_or(USAGE)?),
             "--no-feed-relays" => feed_relays = false,
+            "--no-prefetch" => prefetch = false,
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--config" => config = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--events" => events = Some(it.next().ok_or(USAGE)?),
@@ -166,6 +169,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let open_node = || {
         let mut node = Node::open(Some(store.clone()), &relays, DEFAULT_TIMEOUT)?;
         node.set_feed_relays(feed_relays);
+        node.set_prefetch(prefetch);
         Ok::<Node, String>(node)
     };
     let mut node = None;

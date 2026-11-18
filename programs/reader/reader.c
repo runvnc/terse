@@ -1,12 +1,22 @@
 /* reader.c: a feed reader for Terse (machine profile 1, RV32IMC).
  *
  * Shows the timeline of the feeds the host subscribes to (SPEC 9), newest
- * first, the subscribed feeds, a help page and articles (NETWORK 4.5: text
- * with headings, lists, preformatted blocks and figures), all on the page
- * device (SPEC 11) in the sans face. The terminal shows only the status
- * row (29: key hints, the reading position, the outcome of a request) and,
- * while a feed key is being typed, the entry row (28). The rows under the page are blank, in the colour of the page's
+ * first, the subscribed feeds, a feed's page, search results, a help page
+ * and articles (NETWORK 4.5: text with headings, lists, preformatted
+ * blocks, figures and links), all on the page device (SPEC 11) in the sans
+ * face. The terminal shows only the status row (29: key hints, the reading
+ * position, the outcome of a request) and, while something is being typed
+ * (a feed key, a nickname, a public name, a search), the entry row (28).
+ * The rows under the page are blank, in the colour of the page's
  * background (xterm 234, (28, 28, 28)), which is opaque.
+ *
+ * Names: wherever a feed is shown (the timeline's details line, the feeds
+ * list, an article's details line, a feed's page, search results) it is
+ * its name, then its short key in brackets (the key alone if no name is
+ * known). The name is the user's nickname, else the feed's declared name,
+ * from the names records (op 09h, one per subscribed feed, read with the
+ * subscriptions), else the profile's name among the search results. Names
+ * are not unique, so a name is never shown without the key.
  *
  * Every frame it handles the queued events, rebuilds and submits the page's
  * document if what it shows changed, does a bounded share of the work in
@@ -60,9 +70,26 @@
  *     in the document (or in 65,535 bytes) is shown as its fence would be.
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
- *   - Links: the first 512 get anchors 1, 2, ... and the link colour;
- *     pressing one (event 09h) shows its URL in the status row (there is
- *     no browser).
+ *   - Links: http(s) URLs, terse:<blob ID> (an article) and
+ *     terse:feed/<key> (a feed). The first 512 get anchors 1, 2, ... and
+ *     the link colour. Tab and Shift+Tab make the next or previous link
+ *     the current one, in amber (its Colour command is changed in place
+ *     and the document submitted again, keeping the scroll value), and the
+ *     status row shows it; Enter or a click follows it. A program does not
+ *     learn where the page put a link, so the current link is not scrolled
+ *     into view. A web link only shows its URL (there is no browser). An
+ *     article link opens that article: the one shown goes on a back stack
+ *     of 8 (Esc goes back through it, each to its scroll value, then to
+ *     the view the first was opened from); its title is the timeline's if
+ *     the host has an entry for the blob (the timeline buffer is looked
+ *     at, then the whole timeline read, one request at a time, before the
+ *     document is built), else the ID's short form; one larger than
+ *     ART_CAP is not shown. A feed link opens the feed's page (name, keys,
+ *     subscribed or not; S, U), from which Esc returns to the article.
+ *   - Prefetch: the first 8 distinct article links of the article shown
+ *     are got with one-byte gets as they are met while building (the host
+ *     fetches and keeps the whole blob), at most 2 at a time and only
+ *     while fewer than 4 requests of any kind are pending.
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
@@ -87,21 +114,34 @@
  * position is 0% at the top and 100% at the end, and not shown when the
  * document fits. The help page scrolls the same way.
  *
- * Feeds: the subscriptions (op 03h: key and highest seq), how many
- * timeline entries each has (counted by reading the whole timeline, one
- * request a frame) and a "you" mark on the host's own feed (op 08h). S
- * opens the entry row for a feed key (typed or pasted; whitespace is
- * ignored; Enter subscribes, op 05h), U unsubscribes from the selected
- * feed (op 06h). T (in every view but the article) publishes a test
- * article: put (02h), publish (07h), identity again (08h) and, if the own
- * feed is not subscribed, subscribe to it, so that the article shows in
- * the timeline. The host asks the user about each subscribe, unsubscribe
- * and publish; the status row says what came of it.
+ * Feeds: the subscriptions (op 03h: key and highest seq) with their
+ * names, how many timeline entries each has (counted by reading the whole
+ * timeline, one request a frame) and a "you" mark on the host's own feed
+ * (op 08h). S opens the entry row for a feed key (typed or pasted;
+ * whitespace is ignored; Enter subscribes, op 05h), U unsubscribes from
+ * the selected feed (op 06h), Enter opens its page. N types a nickname
+ * for the selected feed (op 0Ch; empty removes it), P the user's public
+ * name, then asks on the status row whether search may find it (Y/N; op
+ * 0Bh); both are checked against the display name rules first. T (in
+ * every view but the article) publishes a test article: put (02h),
+ * publish (07h), identity again (08h) and, if the own feed is not
+ * subscribed, subscribe to it, so that the article shows in the timeline.
+ * The host asks the user about each subscribe, unsubscribe, publish,
+ * profile and nickname; the status row says what came of it.
+ *
+ * Search (/ from the timeline or feeds): Enter sends two finds at once
+ * (op 0Ah: feeds by name, articles by title) and shows a list like the
+ * others: a heading slot for each section (with its count, or why it is
+ * empty), the feeds (name; short key, "you", "subscribed") and the
+ * articles (title; feed, date, size). Headings are not selectable; Enter
+ * or a click opens a feed's page or an article (Esc comes back).
  *
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
- * timeline buffer, a 16 KiB buffer for counting, 16 KiB of subscription
- * records, up to 48 KiB of the article (ART_CAP), the 64 KiB article
- * document and an 8 KiB document for the other views. The timeline buffer
+ * timeline buffer, a 16 KiB buffer for counting, a 16 KiB buffer for
+ * looking up a linked article's entry, 16 KiB of subscription records,
+ * 16 KiB of names records, two 4 KiB search buffers, up to 48 KiB of the
+ * article (ART_CAP), the 64 KiB article document and an 8 KiB document
+ * for the other views. The timeline buffer
  * holds one request's worth of records: 70 entries with 120-byte titles to
  * 147 with empty ones. A figure's path commands are built in place, in the
  * article document where its Figure command will hold them. */
@@ -186,7 +226,8 @@
  * whole document ends well within its budget. The estimates (measured, and
  * rounded up): per byte looked at while finding blocks and while emitting
  * them (scanned a word at a time, and copied), per line, per LF or colon
- * met while emitting, per paragraph and per link; for a figure's path
+ * met while emitting, per paragraph, per link and per "terse:" looked at
+ * (its 64 digits checked); for a figure's path
  * string, per separator byte, per byte of a number, per token, per segment
  * converted and per figure. */
 #define BUILD_UNITS 80000
@@ -196,6 +237,7 @@
 #define W_HIT 120
 #define W_BLOCK 400
 #define W_LINK 900
+#define W_TERSE 1200
 #define W_PSEP 14
 #define W_PBYTE 20
 #define W_PTOKEN 100
@@ -204,13 +246,18 @@
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
+#define KEY_N 0x11
+#define KEY_P 0x13
 #define KEY_S 0x16
 #define KEY_T 0x17
 #define KEY_U 0x18
+#define KEY_Y 0x1C
 #define KEY_F1 0x3A
 
-enum { TIMELINE, FEEDS, HELP, ARTICLE };
-enum { FETCHING, READY, NOT_FOUND, FAILED };
+enum { TIMELINE, FEEDS, HELP, ARTICLE, SEARCH, FEED };
+enum { FETCHING, READY, NOT_FOUND, FAILED, TOO_LARGE };
+/* Kinds of link (NETWORK 4.5). */
+enum { LK_WEB, LK_ARTICLE, LK_FEED };
 
 static uint8_t view;
 static uint32_t now; /* Unix time of this frame; 0 if the host has none */
@@ -253,25 +300,62 @@ static uint8_t cnt_done, cnt_again;
 static uint8_t own_key[32], own_known;
 
 /* The request that changes something (one at a time). */
-enum { OP_IDLE, OP_PUT, OP_PUBLISH, OP_IDENT, OP_SELF_SUB, OP_SUB, OP_UNSUB };
+enum { OP_IDLE, OP_PUT, OP_PUBLISH, OP_IDENT, OP_SELF_SUB, OP_SUB, OP_UNSUB, OP_NICK, OP_PROFILE };
 static uint8_t op_state;
 static uint8_t op_key[32];
 static char test_title[24];
 static uint8_t test_tlen;
 static uint32_t test_seq, tests;
+/* A name being set (nickname or public name) and, for the public name,
+ * whether it is to be listed. */
+static uint8_t op_name[48], op_nlen, op_listed;
+/* The Y/N question about listing the public name is shown. */
+static uint8_t asking;
 
-/* The feed key being typed: the non-blank characters (ASCII, anything else
- * as 0x80), how many there were. */
-#define ENTRY_CAP 100
+/* Names (op 09h) of the subscribed feeds: the records and where each
+ * starts, in key order. */
+#define NAMES_LEN 16384
+static content_req nm_req;
+static uint8_t nm_handle, nm_again;
+static uint8_t nm_buf[NAMES_LEN];
+static uint16_t nm_at[MAX_SUBS], nm_n;
+
+/* The text being typed on row 28: a feed key (the non-blank characters,
+ * ASCII, anything else as 0x80; entry_n counts them), or a nickname, a
+ * public name or a search (UTF-8; entry_n counts the bytes, also those
+ * past ENTRY_CAP). The character of the key that opened the entry is
+ * not typed if its text arrives by the next frame (entry_eat). */
+#define ENTRY_CAP 200
+enum { E_OFF, E_KEY, E_NICK, E_NAME, E_SEARCH };
 static uint8_t entry, entry_buf[ENTRY_CAP];
 static uint16_t entry_n;
+static uint8_t entry_eat;
+static uint32_t entry_eat_until;
+static uint8_t nick_key[32]; /* the feed a nickname is typed for */
+
+/* Search (op 0Ah): the query, the two requests (feeds, articles), their
+ * results (timeline records) and where each starts, and their status (0
+ * while pending). The list's rows: the feeds' heading, the feeds, the
+ * articles' heading, the articles. */
+#define FIND_LEN 4096
+#define FIND_MAX 16
+static content_req sf_req, sa_req;
+static uint8_t sf_handle, sa_handle, sf_st, sa_st, s_ran;
+static uint8_t sf_buf[FIND_LEN], sa_buf[FIND_LEN];
+static uint16_t sf_at[FIND_MAX], sa_at[FIND_MAX];
+static uint8_t sf_n, sa_n;
+static uint8_t s_query[48], s_qlen;
+static uint8_t s_back; /* the view search goes back to */
+
+/* The feed page: its key and the view it goes back to. */
+static uint8_t fp_key[32], fp_back;
 
 /* --- Lists ------------------------------------------------------------- */
 
 typedef struct {
     uint16_t sel, top;
 } listpos;
-static listpos tlp, fdp;
+static listpos tlp, fdp, srp;
 static uint16_t slot_e = E_GUESS;
 static uint16_t rect_h = PAGE_H;
 static uint8_t last_slots; /* slots of the list document shown, 0 if not a list */
@@ -289,10 +373,38 @@ static uint32_t art_seq, art_time, art_size;
 static uint8_t art_blob[32];
 static uint16_t art_have, art_want;
 static uint8_t art[ART_CAP];
+/* art_entry: the article's entry is known (else only its blob ID, from a
+ * link); art_link: it was opened by a link (a larger one than ART_CAP is
+ * not shown); art_return: the view Esc goes back to after the last
+ * article of the back stack. */
+static uint8_t art_entry, art_link, art_return;
+static int32_t art_restore; /* the scroll value to go back to, or -1 */
+
+/* Looking for the entry of an article opened by a link: the timeline is
+ * read from lk_pos on, one request at a time. */
+static content_req lk_req;
+static uint8_t lk_handle, lk_restart;
+static uint32_t lk_pos;
+static uint8_t lk_buf[TL_BUF_LEN];
+
+/* The back stack: the articles a link was followed from, oldest first. */
+#define BACK_N 8
+static uint8_t bk_blob[BACK_N][32], bk_link[BACK_N], bk_n;
+static int32_t bk_scroll[BACK_N];
+
+/* Prefetch: the first PF_N distinct article links of the article shown,
+ * got one byte at a time (the host fetches and keeps the whole blob), at
+ * most PF_SLOTS at once and only while few other requests are pending. */
+#define PF_N 8
+#define PF_SLOTS 2
+#define PF_PENDING 4
+static uint8_t pf_ids[PF_N][32], pf_n, pf_next;
+static content_req pf_req[PF_SLOTS];
+static uint8_t pf_handle[PF_SLOTS], pf_byte[PF_SLOTS];
 
 /* The document and how far it is built (offsets into art). */
 static uint8_t doc[DOC_CAP];
-enum { B_FIND, B_EMIT, B_FINISH, B_DONE };
+enum { B_START, B_FIND, B_EMIT, B_FINISH, B_DONE };
 /* Kinds of line (B_FIND) and of block. */
 enum { L_PLAIN, L_INDENT, L_ITEM, L_H1, L_H2, L_FENCE };
 enum { K_NONE, K_PARA, K_ITEM, K_H1, K_H2, K_PRE, K_FENCE, K_FIGURE };
@@ -317,6 +429,12 @@ static uint16_t b_shown;   /* the article bytes in the document */
 static uint32_t b_work;    /* units left for this frame */
 static const uint8_t *b_colour; /* the colour of the block's text */
 static uint16_t link_at[MAX_LINKS], link_len[MAX_LINKS], links;
+/* Each link's kind and where its Colour command is in the document. */
+static uint8_t link_kind[MAX_LINKS];
+static uint16_t link_doc[MAX_LINKS];
+/* The article builder's place in its document, kept while other
+ * documents are built in ldoc. */
+static uint8_t *a_ptr, *a_limit, a_overflow;
 
 /* A figure being converted (B_EMIT of a K_FIGURE block): its size, the
  * width it is scaled down from (0: not scaled), where its path commands
@@ -339,6 +457,7 @@ static uint8_t page_h_known;
 static int32_t scroll, scroll_sent;
 static uint8_t to_end;    /* End was pressed: stay at the end as the height grows */
 static uint16_t link_shown; /* the anchor whose URL the status row shows, 0 none */
+static uint16_t cur_link;   /* the current link (Tab), 0 none */
 
 static const uint8_t rgb_title[3] = {240, 240, 240};
 static const uint8_t rgb_meta[3] = {140, 140, 140};
@@ -354,6 +473,7 @@ static const uint8_t rgb_sel_meta[3] = {205, 170, 110};
 static const uint8_t rgb_you[3] = {120, 210, 140};
 static const uint8_t rgb_key[3] = {200, 215, 235};
 static const uint8_t rgb_error[3] = {255, 135, 120};
+static const uint8_t rgb_cur_link[3] = {255, 200, 95};
 
 /* --- Text -------------------------------------------------------------- */
 
@@ -458,6 +578,77 @@ static void tb_key(const uint8_t *k)
     tb_hex(k, 3);
     tb_s("\xE2\x80\xA6");
     tb_hex(k + 29, 3);
+}
+
+static void tb_bytes(const uint8_t *p, uint32_t n)
+{
+    while (n-- && tb_n < sizeof tb)
+        tb[tb_n++] = *p++;
+}
+
+/* A name on one line: line and paragraph separators (U+2028, U+2029;
+ * names hold no control characters) become spaces. */
+static void tb_name(const uint8_t *p, uint8_t n)
+{
+    uint8_t i;
+    for (i = 0; i < n && tb_n < sizeof tb; i++) {
+        if (p[i] == 0xE2 && i + 2 < n && p[i + 1] == 0x80 && (p[i + 2] == 0xA8 || p[i + 2] == 0xA9)) {
+            tb[tb_n++] = ' ';
+            i += 2;
+        } else {
+            tb[tb_n++] = p[i];
+        }
+    }
+}
+
+/* The name to show for a feed: its nickname or declared name (names of
+ * the subscribed feeds, op 09h), else the name of its profile among the
+ * search results; its length, 0 if none is known. *nick is set if it is
+ * the user's nickname. */
+static const uint8_t *name_of(const uint8_t *key, uint8_t *len, uint8_t *nick)
+{
+    int32_t lo = 0, hi = (int32_t)nm_n - 1, mid, c;
+    uint8_t k, *r;
+    *nick = 0;
+    while (lo <= hi) {
+        mid = (lo + hi) >> 1;
+        r = nm_buf + nm_at[mid];
+        c = memcmp(r + 2, key, 32);
+        if (!c) {
+            *len = r[0] - 33;
+            *nick = r[1] & NAME_NICKNAME;
+            return r + 34;
+        }
+        if (c < 0)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    for (k = 0; k < sf_n; k++) {
+        r = sf_buf + sf_at[k];
+        if (!memcmp(r + 2, key, 32)) {
+            *len = r[110];
+            return r + 111;
+        }
+    }
+    *len = 0;
+    return 0;
+}
+
+/* A feed as shown everywhere: its name and its short key in brackets, or
+ * the short key alone. */
+static void tb_feed(const uint8_t *key)
+{
+    uint8_t n, nick;
+    const uint8_t *name = name_of(key, &n, &nick);
+    if (n) {
+        tb_name(name, n);
+        tb_s(" (");
+        tb_key(key);
+        tb_s(")");
+    } else {
+        tb_key(key);
+    }
 }
 
 /* A size: "812 bytes", "6.1 KB", "1.0 MB" (KB = 1024 bytes). */
@@ -725,19 +916,75 @@ static uint32_t link_length(uint32_t i, uint32_t end)
     return k > head ? k : 0;
 }
 
+static uint8_t hex_value(uint8_t c);
+
+static uint8_t is_lower_hex(uint8_t c)
+{
+    return (uint8_t)(c - '0') < 10 || (uint8_t)(c - 'a') < 6;
+}
+
+/* Whether art[i .. i + 64) are lowercase hex digits not followed by a
+ * letter or digit before `end`. */
+static uint8_t hex64_at(uint32_t i, uint32_t end)
+{
+    uint32_t k;
+    if (end - i < 64)
+        return 0;
+    for (k = 0; k < 64; k++)
+        if (!is_lower_hex(art[i + k]))
+            return 0;
+    return i + 64 == end || !is_alnum(art[i + 64]);
+}
+
+/* The length of the terse: link at art[i] (a 't'), 0 if none, and its
+ * kind; the block ends at `end`. */
+static uint32_t terse_length(uint32_t i, uint32_t end, uint8_t *kind)
+{
+    if (end - i < 70 || memcmp(art + i, "terse:", 6) || (i > b_start && is_alnum(art[i - 1])))
+        return 0;
+    spend(W_TERSE);
+    if (hex64_at(i + 6, end)) {
+        *kind = LK_ARTICLE;
+        return 70;
+    }
+    if (end - i >= 75 && !memcmp(art + i + 6, "feed/", 5) && hex64_at(i + 11, end)) {
+        *kind = LK_FEED;
+        return 75;
+    }
+    return 0;
+}
+
+/* 64 hex digits into 32 bytes. */
+static void unhex(const uint8_t *h, uint8_t *out)
+{
+    uint8_t k;
+    for (k = 0; k < 32; k++)
+        out[k] = hex_value(h[2 * k]) << 4 | hex_value(h[2 * k + 1]);
+}
+
+static void prefetch_add(const uint8_t *id);
+
 /* A link of `len` bytes at art[i]: an anchor (the first MAX_LINKS) in the
- * link colour. */
-static void put_link(uint32_t i, uint32_t len)
+ * link colour (the current link's colour if it is the current one). An
+ * article link is also queued for prefetching. */
+static void put_link(uint32_t i, uint32_t len, uint8_t kind)
 {
     b_text = i + len;
     spend(W_LINK + len * W_EMIT);
     if (doc_overflow)
         return;
+    if (kind == LK_ARTICLE) {
+        uint8_t id[32];
+        unhex(art + i + 6, id);
+        prefetch_add(id);
+    }
     if (links < MAX_LINKS) {
         link_at[links] = i;
         link_len[links] = len;
+        link_kind[links] = kind;
         doc_anchor(++links);
-        doc_rgb(rgb_link);
+        link_doc[links - 1] = doc_ptr - doc;
+        doc_rgb(links == cur_link ? rgb_cur_link : rgb_link);
         b_shown = i + doc_text(art + i, len);
         doc_anchor(0);
         doc_rgb(b_colour);
@@ -1087,13 +1334,22 @@ static uint8_t emit_block(void)
                 }
             }
         } else {
-            /* A link has "http:" or "https:" before its "//". */
+            /* A link has "http:" or "https:" before its "//", or is
+             * "terse:" and an ID or "feed/" and a key. */
             uint32_t c = p - art, at = c - 4, len;
+            uint8_t kind = LK_WEB;
             if (c >= b_text + 5 && art[c - 1] == 's')
                 at = c - 5;
             if (at >= b_text && c >= b_text + 4 && art[at] == 'h' && (len = link_length(at, end))) {
                 flush(at);
-                put_link(at, len);
+                put_link(at, len, LK_WEB);
+                p = art + at + len;
+                continue;
+            }
+            at = c - 5;
+            if (c >= b_text + 5 && art[at] == 't' && (len = terse_length(at, end, &kind))) {
+                flush(at);
+                put_link(at, len, kind);
                 p = art + at + len;
                 continue;
             }
@@ -1404,11 +1660,18 @@ static void send_scroll(void)
     }
 }
 
-static void submit_doc(void)
+/* The article's document as built so far (doc_ptr while building, a_ptr
+ * otherwise). */
+static void submit_len(uint32_t n)
 {
-    page_submit(doc, doc_length(doc));
+    page_submit(doc, n);
     scroll_sent = 0; /* a submit sets the scroll value to 0 */
     dirty[STATUS_ROW] = 1;
+}
+
+static void submit_doc(void)
+{
+    submit_len(doc_length(doc));
 }
 
 /* B_FINISH: the closing note if not all of the article is shown, End, and
@@ -1437,14 +1700,26 @@ static void finish_doc(void)
     b_phase = B_DONE;
 }
 
+static void doc_head(void);
+
 /* A frame's share of building the document; the first frame of it submits
- * what there is. */
+ * what there is. It starts (with the head) once the article's bytes are
+ * coming and its entry, if it is looked for, is known. */
 static void build(void)
 {
     uint32_t limit = art_have;
     uint8_t final = art_have >= art_want;
-    if (art_state != READY || b_phase == B_DONE)
+    if (art_state != READY || b_phase == B_DONE || lk_handle)
         return;
+    if (b_phase == B_START) {
+        doc_begin(doc, DOC_CAP - DOC_RESERVE);
+        doc_head();
+        b_phase = B_FIND;
+    } else {
+        doc_ptr = a_ptr;
+        doc_limit = a_limit;
+        doc_overflow = a_overflow;
+    }
     if (final && art_have < art_size) {
         /* Cut short: end at a character, not in one. */
         uint32_t j = limit;
@@ -1490,6 +1765,9 @@ static void build(void)
         submit_doc();
         doc_state = 1;
     }
+    a_ptr = doc_ptr;
+    a_limit = doc_limit;
+    a_overflow = doc_overflow;
 }
 
 /* --- Pages ------------------------------------------------------------- */
@@ -1667,6 +1945,8 @@ static void lp_wheel(listpos *p, uint16_t total, int8_t steps)
     lp_set(p, total, s, t);
 }
 
+static uint16_t s_rows(void);
+
 /* A height event in a list view: the slot height, if it is a list's. */
 static void list_height(uint32_t h)
 {
@@ -1682,6 +1962,7 @@ static void list_height(uint32_t h)
         page_dirty = 1;
     lp_keep(&tlp, tl_total);
     lp_keep(&fdp, subs_n);
+    lp_keep(&srp, s_rows());
 }
 
 /* --- Timeline ------------------------------------------------------------ */
@@ -1734,10 +2015,39 @@ static void load_subscriptions(void)
     sub_handle = content_feed(&sub_req, CONTENT_SUBSCRIPTIONS, 0, sizeof sub_buf, sub_buf);
 }
 
-/* The subscriptions and the timeline again (after a change). */
+static void load_names(void)
+{
+    if (nm_handle) {
+        nm_again = 1;
+        return;
+    }
+    nm_handle = content_names(&nm_req, 0, NAMES_LEN, nm_buf);
+}
+
+static void names_done(uint8_t status)
+{
+    uint32_t at = 0, n = 0;
+    nm_handle = 0;
+    if (status == STATUS_DONE) {
+        while (at < nm_req.length && n < MAX_SUBS) {
+            nm_at[n++] = at;
+            at += 1 + nm_buf[at];
+        }
+        nm_n = n;
+        page_dirty = 1;
+    }
+    if (nm_again) {
+        nm_again = 0;
+        load_names();
+    }
+}
+
+/* The subscriptions, their names and the timeline again (after a
+ * change). */
 static void reload(void)
 {
     load_subscriptions();
+    load_names();
     if (tl_handle) {
         tl_again = 1; /* reload once this load is in */
         return;
@@ -1942,7 +2252,7 @@ static void timeline_doc(void)
         doc_title(r + R_TITLE, r[R_N]);
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
-        tb_key(r + R_FEED);
+        tb_feed(r + R_FEED);
         tb_s("  \xC2\xB7  ");
         tb_date(get32(r + R_TIME));
         tb_s("  \xC2\xB7  ");
@@ -1964,9 +2274,9 @@ static void feeds_doc(void)
 {
     uint16_t i, end, slots = 1;
     int32_t own = own_index();
-    const uint8_t *r;
+    const uint8_t *r, *name;
     uint32_t seq;
-    uint8_t s;
+    uint8_t s, n, nick;
     ldoc_begin();
     tb_n = 0;
     tb_u(subs_total);
@@ -1994,6 +2304,14 @@ static void feeds_doc(void)
         s = i == fdp.sel;
         slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
         tb_n = 0;
+        name = name_of(r, &n, &nick);
+        if (n) {
+            tb_name(name, n);
+            doc_text(tb, tb_n);
+            doc_rgb(s ? rgb_sel_meta : rgb_meta);
+            tb_n = 0;
+            tb_s("  ");
+        }
         tb_key(r);
         doc_text(tb, tb_n);
         if (i == own) {
@@ -2002,6 +2320,8 @@ static void feeds_doc(void)
         }
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
+        if (nick)
+            tb_s("your nickname  \xC2\xB7  ");
         seq = get32(r + 32);
         if (seq) {
             tb_s("highest #");
@@ -2022,6 +2342,211 @@ static void feeds_doc(void)
         slot_end(i + 1);
     }
     list_submit(slots);
+}
+
+/* --- Search ------------------------------------------------------------ */
+
+static uint16_t s_rows(void)
+{
+    return 2 + sf_n + sa_n;
+}
+
+/* Whether row r is a section's heading (the feeds', the articles'). */
+static uint8_t s_heading(uint16_t r)
+{
+    return r == 0 || r == sf_n + 1;
+}
+
+/* The result record of row r (not a heading). */
+static const uint8_t *s_record(uint16_t r)
+{
+    return r <= sf_n ? sf_buf + sf_at[r - 1] : sa_buf + sa_at[r - sf_n - 2];
+}
+
+/* The first result row, or 0 if there is none. */
+static uint16_t s_first(void)
+{
+    return sf_n ? 1 : sa_n ? sf_n + 2 : 0;
+}
+
+/* After a move in direction dir (-1 or 1), the selection is moved off a
+ * heading. */
+static void s_fix(int8_t dir)
+{
+    uint16_t total = s_rows(), sel = srp.sel;
+    if (!s_heading(sel))
+        return;
+    if (dir > 0 ? sel + 1 < total : sel == 0)
+        sel++;
+    else if (sel > 1)
+        sel--;
+    else
+        sel = s_first();
+    if (s_heading(sel))
+        sel = s_first();
+    lp_set(&srp, total, sel, sel == 1 ? 0 : srp.top);
+}
+
+/* A search's results: where each record starts. */
+static uint8_t find_parse(const uint8_t *buf, const content_req *r, uint16_t *at)
+{
+    uint32_t a = 0, n = 0;
+    while (a < r->length && n < FIND_MAX) {
+        at[n++] = a;
+        a += 1 + buf[a];
+    }
+    return n;
+}
+
+/* The line under a section's heading. */
+static void s_section_meta(uint8_t st, uint8_t n)
+{
+    tb_n = 0;
+    if (!st)
+        tb_s("searching\xE2\x80\xA6");
+    else if (st == STATUS_DONE && n) {
+        tb_u(n);
+        tb_s(" found");
+    }
+    else if (st == STATUS_DONE)
+        tb_s("none found");
+    else if (st == STATUS_REFUSED)
+        tb_s("the relays refused the search");
+    else
+        tb_s("not searched: no relay could be reached");
+}
+
+static void search_doc(void)
+{
+    uint16_t i, end, total = s_rows(), slots = 1;
+    const uint8_t *r;
+    uint8_t s;
+    ldoc_begin();
+    tb_n = 0;
+    if (!s_ran) {
+        tb_s("Type a feed's name or words of an article's title, then Enter");
+    } else {
+        tb_s("\xE2\x80\x9C");
+        tb_bytes(s_query, s_qlen);
+        tb_s("\xE2\x80\x9D: listed feeds and their articles, from your relays");
+    }
+    header_slot("Search");
+    if (!s_ran) {
+        list_submit(slots);
+        return;
+    }
+    end = srp.top + vis() + 1;
+    if (end > total)
+        end = total;
+    for (i = srp.top; i < end; i++, slots++) {
+        if (s_heading(i)) {
+            slot_begin(rgb_head, DOC_BOLD, 0);
+            doc_s(i ? "Articles" : "Feeds");
+            slot_meta(rgb_meta);
+            s_section_meta(i ? sa_st : sf_st, i ? sa_n : sf_n);
+            doc_text(tb, tb_n);
+            continue;
+        }
+        r = s_record(i);
+        s = i == srp.sel;
+        slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
+        doc_title(r + R_TITLE, r[R_N]);
+        slot_meta(s ? rgb_sel_meta : rgb_meta);
+        tb_n = 0;
+        if (i <= sf_n) {
+            tb_key(r + R_FEED);
+            if (own_known && !memcmp(r + R_FEED, own_key, 32))
+                tb_s("  \xC2\xB7  you");
+            if (find_sub(r + R_FEED) >= 0)
+                tb_s("  \xC2\xB7  subscribed");
+        } else {
+            tb_feed(r + R_FEED);
+            tb_s("  \xC2\xB7  ");
+            tb_date(get32(r + R_TIME));
+            tb_s("  \xC2\xB7  ");
+            tb_size(get24(r + R_SIZE));
+        }
+        doc_text(tb, tb_n);
+        slot_end(i + 1);
+    }
+    list_submit(slots);
+}
+
+/* --- The feed page --------------------------------------------------------- */
+
+static void feed_doc(void)
+{
+    uint8_t n, nick, g;
+    const uint8_t *name = name_of(fp_key, &n, &nick);
+    int32_t k = find_sub(fp_key);
+    ldoc_begin();
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(TITLE_SIZE);
+    doc_rgb(rgb_title);
+    tb_n = 0;
+    if (n)
+        tb_name(name, n);
+    else
+        tb_s("A feed");
+    doc_text(tb, tb_n);
+    doc_paragraph(DOC_START, 0, 6, 0);
+    doc_font(DOC_SANS, 0);
+    doc_size(META_SIZE);
+    doc_rgb(rgb_meta);
+    tb_n = 0;
+    if (n) {
+        tb_s(nick ? "your nickname for the feed  \xC2\xB7  " : "the name the feed gives itself  \xC2\xB7  ");
+        tb_key(fp_key);
+    } else {
+        tb_s("no name known  \xC2\xB7  ");
+        tb_key(fp_key);
+    }
+    doc_text(tb, tb_n);
+    doc_paragraph(DOC_START, 0, 10, 0);
+    doc_rgb(rgb_rule);
+    doc_rule();
+    doc_paragraph(DOC_START, 0, 10, 0);
+    doc_size(BODY_SIZE);
+    doc_rgb(rgb_body);
+    doc_s("Feed key:");
+    doc_paragraph(DOC_START, 12, 6, DOC_NOWRAP);
+    doc_font(DOC_MONO, 0);
+    doc_rgb(rgb_key);
+    tb_n = 0;
+    for (g = 0; g < 8; g++) {
+        tb_hex(fp_key + g * 4, 4);
+        tb_s(g == 3 ? "\n" : g == 7 ? "" : " ");
+    }
+    doc_text(tb, tb_n);
+    doc_paragraph(DOC_START, 0, 14, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    if (own_known && !memcmp(fp_key, own_key, 32)) {
+        doc_rgb(rgb_you);
+        doc_s(k >= 0 ? "Your own feed. You are subscribed to it." : "Your own feed. You are not subscribed to it.");
+    } else if (k >= 0) {
+        doc_rgb(rgb_you);
+        doc_s("You are subscribed to this feed.");
+    } else {
+        doc_rgb(rgb_body);
+        doc_s("You are not subscribed to this feed.");
+    }
+    doc_paragraph(DOC_START, 0, 14, 0);
+    doc_font(DOC_SANS, 0);
+    doc_size(13);
+    doc_rgb(rgb_meta);
+    doc_s(k >= 0 ? "U: unsubscribe   Esc: back" : "S: subscribe (its articles then arrive in your timeline)   Esc: back");
+    column_submit();
+}
+
+/* Shows the feed page of `key`; Esc goes back to view `back`. */
+static void show(uint8_t v);
+static void feed_page(const uint8_t *key, uint8_t back)
+{
+    memcpy(fp_key, key, 32);
+    fp_back = back;
+    show(FEED);
+    page_dirty = 1;
 }
 
 /* --- Help -------------------------------------------------------------- */
@@ -2052,20 +2577,29 @@ static const char *const help_keys[] = {
     0, "Timeline",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "move the selection",
     "Enter, click", "open the article",
+    "/", "search",
     "F", "feeds",
     "? or F1", "this help",
     "T", "publish a test article",
     "Esc", "quit",
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
-    "Click a link", "show its address",
-    "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
+    "Tab, Shift+Tab", "the next or previous link (the current one is in amber; it may be off screen)",
+    "Enter, click", "follow the link: terse: links open the article or the feed's page; a web link shows its address",
+    "Esc, Backspace, \xE2\x86\x90", "back to the previous article, then to where you came from",
     0, "Feeds",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel, click", "select a feed",
+    "Enter", "the feed's page",
     "S", "subscribe: type or paste a feed key, then Enter (Esc cancels)",
     "U", "unsubscribe from the selected feed",
-    "T, ? or F1", "as in the timeline",
+    "N", "a nickname for the selected feed, which only you see (empty removes it)",
+    "P", "your public name, shown beside your key; you choose whether search may find it",
+    "/, T, ? or F1", "as in the timeline",
     "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
+    0, "Search",
+    "Enter", "search your relays for listed feeds by name and their articles by title",
+    "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (a feed's page, where S subscribes)",
+    "Esc", "back",
     0, "Help",
     "T", "publish a test article, and subscribe to your own feed so that it shows in the timeline",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "scroll",
@@ -2119,8 +2653,9 @@ static void help_doc(void)
     doc_font(DOC_SANS, 0);
     doc_size(13);
     doc_rgb(rgb_meta);
-    doc_s("Subscribing, unsubscribing and publishing need your consent: the host asks you with its own "
-          "prompt, and the status row says what came of it.");
+    doc_s("Subscribing, unsubscribing, publishing and setting names need your consent: the host asks you with "
+          "its own prompt, and the status row says what came of it. Names are chosen by the feeds themselves (or "
+          "by you, as nicknames) and are not unique, so the reader shows the short key beside every name.");
     column_submit();
     doc_state = 2;
     page_h_known = 0;
@@ -2130,31 +2665,46 @@ static void help_doc(void)
 
 /* --- Article ----------------------------------------------------------- */
 
-/* The title, the details line and the rule. */
+/* The title, the details line and the rule. An article known only by
+ * its blob ID (a link) is titled with the ID's short form. */
 static void doc_head(void)
 {
     doc_paragraph(DOC_START, 0, 14, 0);
     doc_font(DOC_SANS, DOC_BOLD);
     doc_size(TITLE_SIZE);
     doc_rgb(rgb_title);
-    if (art_tlen)
-        doc_text(art_title, art_tlen);
+    tb_n = 0;
+    if (!art_entry)
+        tb_key(art_blob);
+    else if (art_tlen)
+        tb_bytes(art_title, art_tlen);
     else
-        doc_s("Untitled");
+        tb_s("Untitled");
+    doc_text(tb, tb_n);
     doc_paragraph(DOC_START, 0, 6, 0);
     doc_font(DOC_SANS, 0);
     doc_size(META_SIZE);
     doc_rgb(rgb_meta);
     tb_n = 0;
-    tb_key(art_feed);
-    tb_s("  \xC2\xB7  #");
-    tb_u(art_seq);
-    tb_s("  \xC2\xB7  ");
-    tb_date(art_time);
-    tb_s(" UTC  \xC2\xB7  ");
-    tb_size(art_size);
+    if (art_entry) {
+        tb_feed(art_feed);
+        tb_s("  \xC2\xB7  #");
+        tb_u(art_seq);
+        tb_s("  \xC2\xB7  ");
+        tb_date(art_time);
+        tb_s(" UTC  \xC2\xB7  ");
+        tb_size(art_size);
+    } else {
+        tb_s("terse:");
+        tb_key(art_blob);
+        tb_s("  \xC2\xB7  not in your timeline");
+        if (art_state == READY || art_state == TOO_LARGE) {
+            tb_s("  \xC2\xB7  ");
+            tb_size(art_size);
+        }
+    }
     doc_text(tb, tb_n);
-    if (art_reply) {
+    if (art_entry && art_reply) {
         doc_rgb(rgb_reply);
         doc_s("  \xE2\x86\xB3 reply");
     }
@@ -2178,9 +2728,41 @@ static void article_message(const char *text, const uint8_t *rgb, uint8_t back)
     if (back) {
         doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
         doc_rgb(rgb_meta);
-        doc_s("Esc: back to the timeline");
+        doc_s(bk_n ? "Esc: back to the previous article"
+                   : art_return == SEARCH ? "Esc: back to the search" : "Esc: back to the timeline");
     }
     column_submit();
+}
+
+/* The page that stands in for the article while it is fetched, or says
+ * why it is not shown. */
+static void article_page(void)
+{
+    switch (art_state) {
+    case FETCHING:
+    case READY:
+        article_message(art_entry && art_local ? "Reading the article\xE2\x80\xA6" : "Fetching the article from the relay\xE2\x80\xA6",
+                        rgb_meta, 0);
+        break;
+    case NOT_FOUND:
+        article_message("Not found: neither this host nor its relays have this article.", rgb_error, 1);
+        break;
+    case FAILED:
+        article_message("Could not fetch the article (no relay, network error or timeout).", rgb_error, 1);
+        break;
+    case TOO_LARGE:
+        tb_n = 0;
+        tb_s("Too large: this article is ");
+        tb_size(art_size);
+        tb_s(", and this reader shows articles of up to 48 KB.");
+        tb[tb_n] = 0;
+        {
+            static char m[80];
+            memcpy(m, tb, tb_n + 1);
+            article_message(m, rgb_error, 1);
+        }
+        break;
+    }
 }
 
 static uint32_t max_scroll(void)
@@ -2204,6 +2786,7 @@ static void scroll_to(int32_t s)
 static void scroll_by(int32_t delta)
 {
     to_end = 0;
+    art_restore = -1;
     scroll_to(scroll + delta);
 }
 
@@ -2215,6 +2798,11 @@ static void page_laid_out(uint32_t h)
         return;
     page_h = h;
     page_h_known = 1;
+    /* Back to an article: its old place, once all of it is laid out. */
+    if (art_restore >= 0 && view == ARTICLE && doc_state == 2) {
+        scroll = art_restore;
+        art_restore = -1;
+    }
     scroll_to(to_end ? (int32_t)max_scroll() : scroll);
     dirty[STATUS_ROW] = 1;
 }
@@ -2227,12 +2815,11 @@ static void request_chunk(void)
     art_handle = content_get(&art_req, art_blob, art_have, n, art + art_have);
 }
 
-static void open_article(uint16_t i)
+/* The entry of record r is the article's. */
+static void take_entry(const uint8_t *r)
 {
-    uint8_t *r, k;
-    if (i >= tl_total || !in_window(i) || art_handle)
-        return;
-    r = record(i);
+    uint8_t k;
+    art_entry = 1;
     art_tlen = r[R_N];
     memcpy(art_title, r + R_TITLE, art_tlen);
     memcpy(art_feed, r + R_FEED, 32);
@@ -2244,43 +2831,124 @@ static void open_article(uint16_t i)
     art_seq = get32(r + R_SEQ);
     art_time = get32(r + R_TIME);
     art_size = get24(r + R_SIZE);
-    art_want = art_size > ART_CAP ? ART_CAP : art_size;
+}
+
+static void lookup_request(void)
+{
+    lk_handle = content_feed(&lk_req, CONTENT_TIMELINE, lk_pos, TL_BUF_LEN, lk_buf);
+}
+
+/* Starts reading art_blob (its entry known or not); `restore`: the
+ * scroll value to go back to, or -1. */
+static void article_start(int32_t restore)
+{
+    art_want = art_entry && art_size < ART_CAP ? art_size : ART_CAP;
     art_have = 0;
     art_state = FETCHING;
     request_chunk();
     view = ARTICLE;
-    article_message(art_local ? "Reading the article\xE2\x80\xA6" : "Fetching the article from the relay\xE2\x80\xA6", rgb_meta, 0);
-    /* The document: its head now, the article as it arrives. */
-    doc_begin(doc, DOC_CAP - DOC_RESERVE);
-    doc_head();
-    b_phase = B_FIND;
+    b_phase = B_START;
     b_line = b_lines = b_in_line = 0;
     b_kind = b_prev = K_NONE;
     b_shown = links = 0;
     doc_state = 0;
     page_h = page_h_known = 0;
     scroll = scroll_sent = 0;
+    art_restore = restore;
     to_end = 0;
-    link_shown = 0;
+    link_shown = cur_link = 0;
+    pf_n = pf_next = 0;
     dirty[STATUS_ROW] = 1;
+    article_page();
+}
+
+/* Opens the article of record r (timeline or search); Esc goes back to
+ * view `from`. */
+static void open_record(const uint8_t *r, uint8_t from)
+{
+    if (art_handle)
+        return;
+    take_entry(r);
+    art_link = 0;
+    art_return = from;
+    bk_n = 0;
+    article_start(-1);
+}
+
+static void open_article(uint16_t i)
+{
+    if (i >= tl_total || !in_window(i))
+        return;
+    open_record(record(i), TIMELINE);
+}
+
+/* Opens the article whose blob ID is `id`: its entry is the timeline's
+ * if the host has one (the timeline buffer is looked at first, then the
+ * whole timeline is read). */
+static void open_blob(const uint8_t *id, uint8_t link, int32_t restore)
+{
+    uint16_t i;
+    memcpy(art_blob, id, 32);
+    art_entry = art_tlen = 0;
+    art_link = link;
+    for (i = 0; i < tl_count; i++)
+        if (!memcmp(tl_buf + rec_at[i] + R_BLOB, id, 32)) {
+            take_entry(tl_buf + rec_at[i]);
+            break;
+        }
+    if (!art_entry && tl_total && !(tl_base == 0 && tl_count >= tl_total)) {
+        lk_pos = 0;
+        if (lk_handle)
+            lk_restart = 1; /* when the one in progress is in */
+        else
+            lookup_request();
+    }
+    article_start(restore);
+}
+
+static void lookup_done(uint8_t status)
+{
+    uint32_t at = 0, n = 0;
+    lk_handle = 0;
+    if (lk_restart) {
+        lk_restart = 0;
+        if (!art_entry)
+            lookup_request();
+        return;
+    }
+    if (art_entry)
+        return;
+    if (status == STATUS_DONE) {
+        while (at < lk_req.length) {
+            if (!memcmp(lk_buf + at + R_BLOB, art_blob, 32)) {
+                take_entry(lk_buf + at);
+                if (art_state == FETCHING || art_state == NOT_FOUND || art_state == FAILED)
+                    article_page();
+                return;
+            }
+            n++;
+            at += 1 + lk_buf[at];
+        }
+        lk_pos += n;
+        if (n && lk_pos < lk_req.size)
+            lookup_request();
+    }
 }
 
 static void article_done(uint8_t status)
 {
     uint32_t size;
-    const char *m;
     art_handle = 0;
     if (status == STATUS_NOT_FOUND || status == STATUS_FAILED || status == STATUS_BAD_REQUEST) {
         art_state = status == STATUS_NOT_FOUND ? NOT_FOUND : FAILED;
         if (view != ARTICLE)
             return;
-        m = art_state == NOT_FOUND ? "Not found: neither this host nor its relay has the article."
-                                   : "Could not fetch the article (no relay, network error or timeout).";
         if (doc_state == 0) {
-            article_message(m, rgb_error, 1);
+            article_page();
         } else {
             tb_n = 0;
-            tb_s(m);
+            tb_s(art_state == NOT_FOUND ? "Not found: neither this host nor its relays have the rest of the article."
+                                        : "Could not fetch the rest of the article.");
             say(C_ERROR);
         }
         dirty[STATUS_ROW] = 1;
@@ -2288,6 +2956,13 @@ static void article_done(uint8_t status)
     }
     size = art_req.size;
     art_size = size;
+    /* By a link: an article larger than the reader shows is not shown. */
+    if (art_link && size > ART_CAP) {
+        art_state = TOO_LARGE;
+        if (view == ARTICLE)
+            article_page();
+        return;
+    }
     if (size < art_want)
         art_want = size;
     art_have += art_req.length;
@@ -2296,6 +2971,166 @@ static void article_done(uint8_t status)
     else
         art_want = art_have;
     art_state = READY;
+}
+
+/* --- Links ------------------------------------------------------------- */
+
+/* Whether link `id` is in the document as submitted, its Colour command
+ * there to be changed. */
+static uint8_t link_usable(uint16_t id)
+{
+    uint32_t at = link_doc[id - 1];
+    return id && id <= links && at + 4 <= (uint32_t)(a_ptr - doc) && doc[at] == DOC_OP_COLOUR;
+}
+
+static void link_colour(uint16_t id, const uint8_t *rgb)
+{
+    if (link_usable(id))
+        memcpy(doc + link_doc[id - 1] + 1, rgb, 3);
+}
+
+/* Makes link `id` the current one (0: none): its colour changes and the
+ * document is submitted again (keeping the scroll value) if it is all
+ * shown; the status row shows the link. */
+static void set_cur_link(uint16_t id)
+{
+    if (id == cur_link) {
+        link_shown = id;
+        dirty[STATUS_ROW] = 1;
+        return;
+    }
+    link_colour(cur_link, rgb_link);
+    cur_link = id;
+    link_colour(id, rgb_cur_link);
+    if (doc_state == 2)
+        submit_len(a_ptr - doc);
+    link_shown = id;
+    dirty[STATUS_ROW] = 1;
+}
+
+/* Tab and Shift+Tab: the next or previous link in the document. */
+static void tab_link(int8_t dir)
+{
+    uint16_t n = 0, id;
+    while (n < links && link_usable(n + 1))
+        n++;
+    if (!n) {
+        tb_n = 0;
+        tb_s("No links in this article");
+        say(C_INFO);
+        return;
+    }
+    if (dir > 0)
+        id = cur_link >= n ? 1 : cur_link + 1;
+    else
+        id = cur_link <= 1 || cur_link > n ? n : cur_link - 1;
+    set_cur_link(id);
+}
+
+/* Follows link `id`: an article link opens the article (the one shown
+ * goes on the back stack), a feed link the feed's page; a web link only
+ * shows its address. */
+static void follow(uint16_t id)
+{
+    const uint8_t *t = art + link_at[id - 1];
+    uint8_t target[32];
+    switch (link_kind[id - 1]) {
+    case LK_ARTICLE:
+        if (art_handle) {
+            tb_n = 0;
+            tb_s("Wait: this article is still being read");
+            say(C_INFO);
+            return;
+        }
+        unhex(t + 6, target);
+        if (bk_n == BACK_N) {
+            memmove(bk_blob, bk_blob + 1, sizeof bk_blob - 32);
+            memmove(bk_link, bk_link + 1, BACK_N - 1);
+            memmove(bk_scroll, bk_scroll + 1, sizeof bk_scroll - sizeof bk_scroll[0]);
+            bk_n--;
+        }
+        memcpy(bk_blob[bk_n], art_blob, 32);
+        bk_link[bk_n] = art_link;
+        bk_scroll[bk_n] = scroll;
+        bk_n++;
+        open_blob(target, 1, -1);
+        break;
+    case LK_FEED:
+        unhex(t + 11, target);
+        feed_page(target, ARTICLE);
+        break;
+    default:
+        set_cur_link(id);
+    }
+}
+
+/* Esc in an article: the previous article of the back stack, else the
+ * view the first one was opened from. */
+static void article_back(void)
+{
+    if (!bk_n) {
+        show(art_return);
+        return;
+    }
+    if (art_handle) {
+        tb_n = 0;
+        tb_s("Wait: this article is still being read");
+        say(C_INFO);
+        return;
+    }
+    bk_n--;
+    open_blob(bk_blob[bk_n], bk_link[bk_n], bk_scroll[bk_n]);
+}
+
+/* Back to the article from the feed page: its document is submitted
+ * again (or its stand-in shown), at the same place. */
+static void article_resume(void)
+{
+    view = ARTICLE;
+    region(RECT_X, PAGE_H);
+    page_h_known = 0;
+    art_restore = scroll;
+    dirty[STATUS_ROW] = 1;
+    if (art_state != READY || b_phase == B_START) {
+        article_page();
+    } else if (b_phase == B_DONE) {
+        submit_len(a_ptr - doc);
+        doc_state = 2;
+    } else if (b_phase != B_START) {
+        submit_len(a_ptr - doc);
+        doc_state = 1;
+    }
+}
+
+/* --- Prefetch ------------------------------------------------------------ */
+
+/* Queues an article link's blob (the first PF_N distinct ones, not the
+ * article shown). */
+static void prefetch_add(const uint8_t *id)
+{
+    uint8_t k;
+    if (pf_n == PF_N || !memcmp(id, art_blob, 32))
+        return;
+    for (k = 0; k < pf_n; k++)
+        if (!memcmp(pf_ids[k], id, 32))
+            return;
+    memcpy(pf_ids[pf_n++], id, 32);
+}
+
+/* Requests pending, of every kind. */
+static uint8_t pending(void)
+{
+    return !!tl_handle + !!sub_handle + !!cnt_handle + !!id_handle + !!op_handle + !!art_handle + !!nm_handle
+           + !!lk_handle + !!sf_handle + !!sa_handle + !!pf_handle[0] + !!pf_handle[1];
+}
+
+/* Sends queued prefetches while few requests are pending. */
+static void prefetch_step(void)
+{
+    uint8_t k;
+    for (k = 0; k < PF_SLOTS; k++)
+        if (!pf_handle[k] && pf_next < pf_n && pending() < PF_PENDING)
+            pf_handle[k] = content_get(&pf_req[k], pf_ids[pf_next++], 0, 1, &pf_byte[k]);
 }
 
 /* How far through the page the rectangle is: 0% at the top, 100% at the
@@ -2462,6 +3297,41 @@ static void op_done(uint8_t st)
         say(st == STATUS_DONE ? C_OK : C_ERROR);
         reload();
         break;
+    case OP_NICK:
+        tb_s("Nickname for ");
+        tb_key(op_key);
+        if (st == STATUS_DONE) {
+            if (op_nlen) {
+                tb_s(" set to \xE2\x80\x9C");
+                tb_bytes(op_name, op_nlen);
+                tb_s("\xE2\x80\x9D");
+            } else {
+                tb_s(" removed");
+            }
+            say(C_OK);
+            load_names();
+        } else {
+            tb_s(st == STATUS_REFUSED ? ": refused" : ": failed");
+            say(C_ERROR);
+        }
+        break;
+    case OP_PROFILE:
+        if (st == STATUS_DONE) {
+            tb_s("Your public name is now \xE2\x80\x9C");
+            tb_bytes(op_name, op_nlen);
+            tb_s(op_listed ? "\xE2\x80\x9D, and others can find it by search (#" : "\xE2\x80\x9D, not listed for search (#");
+            tb_u(op_req.size);
+            tb_s(")");
+            say(C_OK);
+            /* Setting a profile creates the identity if there was none. */
+            if (!id_handle)
+                id_handle = content_identity(&id_req);
+            reload();
+        } else {
+            tb_s(st == STATUS_REFUSED ? "Setting your public name was refused" : "Setting your public name failed");
+            say(C_ERROR);
+        }
+        break;
     case OP_SUB:
     case OP_UNSUB:
         tb_s(s == OP_SUB ? "Subscrib" : "Unsubscrib");
@@ -2480,31 +3350,79 @@ static void op_done(uint8_t st)
     }
 }
 
-/* --- The feed key entry -------------------------------------------------- */
+/* --- Typing on row 28 ---------------------------------------------------- */
 
-static void entry_show(uint8_t on)
+/* Opens (mode E_KEY, E_NICK, E_NAME, E_SEARCH) or closes (E_OFF) the
+ * entry row; `eat`: the character of the key that opened it. */
+static void entry_open(uint8_t mode, uint8_t eat)
 {
-    entry = on;
+    entry = mode;
     entry_n = 0;
-    rect_h = on ? PAGE_H - 16 : PAGE_H;
+    entry_eat = eat;
+    entry_eat_until = terse_frame() + 1;
+    rect_h = mode ? PAGE_H - 16 : PAGE_H;
     lp_keep(&fdp, subs_n);
+    lp_keep(&srp, s_rows());
     page_dirty = 1;
     dirty[ENTRY_ROW] = dirty[STATUS_ROW] = 1;
-    if (!on)
+    if (!mode)
         term_cmd(TERM_CURSOR_OFF);
 }
 
-/* A character typed or pasted; blanks are left out. */
+static void entry_show(uint8_t on)
+{
+    entry_open(on ? E_KEY : E_OFF, 0);
+}
+
+/* A character typed or pasted. A feed key leaves blanks out; text keeps
+ * them, but not line breaks. */
 static void entry_text(uint32_t cp)
 {
-    if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r')
-        return;
-    if (!entry_n && (cp == 's' || cp == 'S'))
-        return; /* the text of the S that opened the entry */
-    if (entry_n < ENTRY_CAP)
-        entry_buf[entry_n] = cp > 0x20 && cp < 0x7F ? cp : 0x80;
-    if (entry_n < 0xFFFF)
-        entry_n++;
+    uint8_t u[4], n, k;
+    if (entry_eat) {
+        uint8_t eat = entry_eat;
+        entry_eat = 0;
+        if ((cp | 0x20) == eat && terse_frame() <= entry_eat_until)
+            return; /* the text of the key that opened the entry */
+    }
+    if (entry == E_KEY) {
+        if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r')
+            return;
+        if (!entry_n && (cp == 's' || cp == 'S'))
+            return; /* the text of the S that opened the entry */
+        if (entry_n < ENTRY_CAP)
+            entry_buf[entry_n] = cp > 0x20 && cp < 0x7F ? cp : 0x80;
+        if (entry_n < 0xFFFF)
+            entry_n++;
+    } else {
+        if (cp == '\n' || cp == '\r')
+            return;
+        if (cp < 0x80) {
+            u[0] = cp;
+            n = 1;
+        } else if (cp < 0x800) {
+            u[0] = 0xC0 | cp >> 6;
+            u[1] = 0x80 | (cp & 0x3F);
+            n = 2;
+        } else if (cp < 0x10000) {
+            u[0] = 0xE0 | cp >> 12;
+            u[1] = 0x80 | (cp >> 6 & 0x3F);
+            u[2] = 0x80 | (cp & 0x3F);
+            n = 3;
+        } else {
+            u[0] = 0xF0 | cp >> 18;
+            u[1] = 0x80 | (cp >> 12 & 0x3F);
+            u[2] = 0x80 | (cp >> 6 & 0x3F);
+            u[3] = 0x80 | (cp & 0x3F);
+            n = 4;
+        }
+        for (k = 0; k < n; k++) {
+            if (entry_n < ENTRY_CAP)
+                entry_buf[entry_n] = u[k];
+            if (entry_n < 0xFFFF)
+                entry_n++;
+        }
+    }
     dirty[ENTRY_ROW] = 1;
     if (msg_n) {
         msg_n = 0;
@@ -2512,7 +3430,19 @@ static void entry_text(uint32_t cp)
     }
 }
 
-static void entry_submit(void)
+/* Backspace: one character (a whole UTF-8 sequence in text). */
+static void entry_back(void)
+{
+    if (!entry_n)
+        return;
+    if (entry != E_KEY && entry_n <= ENTRY_CAP)
+        while (entry_n > 1 && (entry_buf[entry_n - 1] & 0xC0) == 0x80)
+            entry_n--;
+    entry_n--;
+    dirty[ENTRY_ROW] = 1;
+}
+
+static void entry_submit_key(void)
 {
     uint8_t key[32];
     uint16_t i, n = entry_n < ENTRY_CAP ? entry_n : ENTRY_CAP;
@@ -2552,6 +3482,208 @@ static void entry_submit(void)
     say_key("Subscribing to ", key, "\xE2\x80\xA6 (the host asks you)", C_INFO);
 }
 
+/* The code point of the UTF-8 sequence at p (valid: typed text). */
+static uint32_t utf8_at(const uint8_t *p)
+{
+    if (p[0] < 0x80)
+        return p[0];
+    if (p[0] < 0xE0)
+        return (uint32_t)(p[0] & 0x1F) << 6 | (p[1] & 0x3F);
+    if (p[0] < 0xF0)
+        return (uint32_t)(p[0] & 0x0F) << 12 | (uint32_t)(p[1] & 0x3F) << 6 | (p[2] & 0x3F);
+    return (uint32_t)(p[0] & 0x07) << 18 | (uint32_t)(p[1] & 0x3F) << 12 | (uint32_t)(p[2] & 0x3F) << 6 | (p[3] & 0x3F);
+}
+
+/* The Unicode White_Space property (NETWORK 4.6). */
+static uint8_t is_space(uint32_t c)
+{
+    return (c >= 0x09 && c <= 0x0D) || c == 0x20 || c == 0x85 || c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A)
+           || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000;
+}
+
+/* Checks the typed text as a display name (NETWORK 4.6); says what is
+ * wrong and returns 0 if it is not one. `what`: "A nickname", "A name". */
+static uint8_t name_ok(const char *what)
+{
+    uint16_t i = 0, last = 0;
+    uint32_t c;
+    tb_n = 0;
+    if (entry_n > 48) {
+        tb_s(what);
+        tb_s(" has at most 48 bytes of UTF-8; this one has ");
+        tb_u(entry_n);
+        say(C_ERROR);
+        return 0;
+    }
+    while (i < entry_n) {
+        c = utf8_at(entry_buf + i);
+        if (c < 0x20 || (c >= 0x7F && c < 0xA0)) {
+            tb_s(what);
+            tb_s(" cannot hold control characters");
+            say(C_ERROR);
+            return 0;
+        }
+        if (!i && is_space(c))
+            break;
+        last = i;
+        i += entry_buf[i] < 0x80 ? 1 : entry_buf[i] < 0xE0 ? 2 : entry_buf[i] < 0xF0 ? 3 : 4;
+    }
+    if (i < entry_n || is_space(utf8_at(entry_buf + last))) {
+        tb_s(what);
+        tb_s(" cannot start or end with a space");
+        say(C_ERROR);
+        return 0;
+    }
+    return 1;
+}
+
+static void entry_submit_nick(void)
+{
+    if (entry_n && !name_ok("A nickname"))
+        return;
+    if (op_busy())
+        return;
+    memcpy(op_key, nick_key, 32);
+    op_nlen = entry_n;
+    memcpy(op_name, entry_buf, op_nlen);
+    entry_open(E_OFF, 0);
+    op_start(OP_NICK, content_set_nickname(&op_req, op_key, op_name, op_nlen));
+    tb_n = 0;
+    tb_s(op_nlen ? "Setting the nickname for " : "Removing the nickname of ");
+    tb_key(op_key);
+    tb_s("\xE2\x80\xA6 (the host asks you)");
+    say(C_INFO);
+}
+
+static void entry_submit_name(void)
+{
+    if (!entry_n) {
+        tb_n = 0;
+        tb_s("Type the name others will see beside your feed key, or Esc to cancel");
+        say(C_ERROR);
+        return;
+    }
+    if (!name_ok("A name") || op_busy())
+        return;
+    op_nlen = entry_n;
+    memcpy(op_name, entry_buf, op_nlen);
+    entry_open(E_OFF, 0);
+    asking = 1;
+    dirty[STATUS_ROW] = 1;
+}
+
+/* The answer to "let others find this name by search?" */
+static void answer_listed(uint8_t listed)
+{
+    asking = 0;
+    op_listed = listed;
+    op_start(OP_PROFILE, content_set_profile(&op_req, op_name, op_nlen, listed));
+    tb_n = 0;
+    tb_s("Publishing your public name \xE2\x80\x9C");
+    tb_bytes(op_name, op_nlen);
+    tb_s("\xE2\x80\x9D\xE2\x80\xA6 (the host asks you)");
+    say(C_INFO);
+}
+
+/* Enter in the search entry: both searches at once. */
+static void search_run(void)
+{
+    tb_n = 0;
+    if (!entry_n) {
+        tb_s("Type a name or words of a title to search for, or Esc to go back");
+        say(C_ERROR);
+        return;
+    }
+    if (entry_n > 48) {
+        tb_s("A search has at most 48 bytes of UTF-8; this one has ");
+        tb_u(entry_n);
+        say(C_ERROR);
+        return;
+    }
+    if (sf_handle || sa_handle) {
+        tb_s("Busy: the previous search is not answered yet");
+        say(C_ERROR);
+        return;
+    }
+    s_qlen = entry_n;
+    memcpy(s_query, entry_buf, s_qlen);
+    sf_n = sa_n = 0;
+    s_ran = 1;
+    sf_handle = content_find(&sf_req, FIND_FEEDS, s_query, s_qlen, sf_buf, FIND_LEN);
+    sa_handle = content_find(&sa_req, FIND_ENTRIES, s_query, s_qlen, sa_buf, FIND_LEN);
+    sf_st = sf_handle ? 0 : STATUS_FAILED;
+    sa_st = sa_handle ? 0 : STATUS_FAILED;
+    srp.sel = srp.top = 0;
+    entry_open(E_OFF, 0);
+    tb_s("Searching your relays for \xE2\x80\x9C");
+    tb_bytes(s_query, s_qlen);
+    tb_s("\xE2\x80\x9D\xE2\x80\xA6");
+    say(C_INFO);
+}
+
+/* A search request is in: when both are, the selection goes to the first
+ * result and the status row says how it went. */
+static void find_done(uint8_t feeds, uint8_t status)
+{
+    if (feeds) {
+        sf_handle = 0;
+        sf_st = status;
+        sf_n = status == STATUS_DONE ? find_parse(sf_buf, &sf_req, sf_at) : 0;
+    } else {
+        sa_handle = 0;
+        sa_st = status;
+        sa_n = status == STATUS_DONE ? find_parse(sa_buf, &sa_req, sa_at) : 0;
+    }
+    page_dirty = 1;
+    if (sf_handle || sa_handle)
+        return;
+    srp.sel = s_first();
+    srp.top = 0;
+    lp_keep(&srp, s_rows());
+    tb_n = 0;
+    if (sf_n || sa_n) {
+        tb_u(sf_n);
+        tb_s(sf_n == 1 ? " feed and " : " feeds and ");
+        tb_u(sa_n);
+        tb_s(sa_n == 1 ? " article found" : " articles found");
+        say(C_OK);
+    } else if (sf_st == STATUS_DONE || sa_st == STATUS_DONE) {
+        tb_s("Nothing found for \xE2\x80\x9C");
+        tb_bytes(s_query, s_qlen);
+        tb_s("\xE2\x80\x9D (only listed feeds can be found)");
+        say(C_INFO);
+    } else if (sf_st == STATUS_REFUSED || sa_st == STATUS_REFUSED) {
+        tb_s("The relays refused the search (too many at once?): try again in a moment");
+        say(C_ERROR);
+    } else {
+        tb_s("Search needs a relay, and none could be reached");
+        say(C_ERROR);
+    }
+}
+
+static void entry_submit(void)
+{
+    switch (entry) {
+    case E_KEY: entry_submit_key(); break;
+    case E_NICK: entry_submit_nick(); break;
+    case E_NAME: entry_submit_name(); break;
+    case E_SEARCH: search_run(); break;
+    }
+}
+
+/* N in the feeds view: a nickname for the selected feed. */
+static void nickname(void)
+{
+    if (!subs_n) {
+        tb_n = 0;
+        tb_s("No feed to give a nickname to");
+        say(C_ERROR);
+        return;
+    }
+    memcpy(nick_key, sub_buf + fdp.sel * 36, 32);
+    entry_open(E_NICK, 'n');
+}
+
 /* --- Terminal rows ------------------------------------------------------- */
 
 static void bar_row(uint8_t row)
@@ -2568,36 +3700,92 @@ static void draw_entry_row(void)
         return;
     }
     row_start(ENTRY_ROW, C_TEXT, C_ENTRY_BG);
-    puts_(" Feed key: ");
-    if (n > COLS - 13) {
-        from = n - (COLS - 14);
-        ink(C_DIM);
-        put1(0x2026);
-        ink(C_TEXT);
+    if (entry == E_KEY) {
+        puts_(" Feed key: ");
+        if (n > COLS - 13) {
+            from = n - (COLS - 14);
+            ink(C_DIM);
+            put1(0x2026);
+            ink(C_TEXT);
+        }
+        for (i = from; i < n; i++)
+            put1(entry_buf[i] < 0x80 ? entry_buf[i] : 0xFFFD);
+    } else {
+        if (entry == E_NICK) {
+            tb_n = 0;
+            tb_s(" Nickname for ");
+            tb_key(nick_key);
+            tb_s(": ");
+            tb[tb_n] = 0;
+            puts_(tb);
+        } else {
+            puts_(entry == E_NAME ? " Your public name: " : " Search: ");
+        }
+        /* Not cut inside a character. */
+        while (n < entry_n && n && (entry_buf[n] & 0xC0) == 0x80)
+            n--;
+        put_title(entry_buf, n > 255 ? 255 : n, COLS - 1 - col);
     }
-    for (i = from; i < n; i++)
-        put1(entry_buf[i] < 0x80 ? entry_buf[i] : 0xFFFD);
     i = col;
     row_end();
     term_goto(i, ENTRY_ROW);
     term_cmd(TERM_CURSOR_ON);
 }
 
+/* The status row's account of the current link. */
+static void link_status(void)
+{
+    uint16_t id = link_shown;
+    uint32_t n = link_len[id - 1];
+    const uint8_t *t = art + link_at[id - 1];
+    puts_(" Link ");
+    put_u32(id);
+    puts_(": ");
+    if (link_kind[id - 1] == LK_WEB) {
+        put_title(t, n > 255 ? 255 : n, COLS - 1 - col);
+        return;
+    }
+    if (link_kind[id - 1] == LK_FEED) {
+        uint8_t key[32];
+        unhex(t + 11, key);
+        tb_n = 0;
+        tb_s("terse:feed/");
+        tb_key(key);
+        tb_s("  (a feed)   Enter: open");
+    } else {
+        uint8_t id32[32];
+        unhex(t + 6, id32);
+        tb_n = 0;
+        tb_s("terse:");
+        tb_key(id32);
+        tb_s("  (an article)   Enter: open");
+    }
+    put_title((const uint8_t *)tb, tb_n, COLS - 1 - col);
+}
+
 static void draw_status(void)
 {
     bar_row(STATUS_ROW);
     if (view == ARTICLE && link_shown) {
-        uint32_t n = link_len[link_shown - 1];
-        puts_(" Link: ");
-        put_title(art + link_at[link_shown - 1], n > 255 ? 255 : n, COLS - 1 - col);
+        link_status();
+    } else if (asking) {
+        puts_(" Let others find \xE2\x80\x9C");
+        put_title(op_name, op_nlen, 40);
+        puts_("\xE2\x80\x9D by search?   Y: yes   N: no   Esc: cancel");
     } else if (msg_n) {
         spaces(1);
         ink(msg_fg);
         put_title((const uint8_t *)msg, msg_n, COLS - 2);
-    } else if (entry) {
+    } else if (entry == E_KEY) {
         puts_(" Type or paste a feed key   Enter: subscribe   Esc: cancel");
+    } else if (entry == E_NICK) {
+        puts_(" Type a nickname (only you see it; empty removes it)   Enter: set   Esc: cancel");
+    } else if (entry == E_NAME) {
+        puts_(" Type the name others see beside your key   Enter: next   Esc: cancel");
+    } else if (entry == E_SEARCH) {
+        puts_(" Type a feed's name or words of a title   Enter: search   Esc: cancel");
     } else if (view == TIMELINE) {
-        puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  F feeds  ? help  T publish a test  Esc quit");
+        puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  / search  F feeds  ? help  T test  Esc quit");
         if (tl_total) {
             ink(C_BAR_DIM);
             tb_n = 0;
@@ -2608,7 +3796,11 @@ static void draw_status(void)
             put_title((const uint8_t *)tb, tb_n, tb_n);
         }
     } else if (view == FEEDS) {
-        puts_(" \xE2\x86\x91\xE2\x86\x93 move  S subscribe  U unsubscribe  T publish a test  ? help  Esc back");
+        puts_(" \xE2\x86\x91\xE2\x86\x93 move  S subscribe  U unsub  N nickname  P your name  / search  Esc back");
+    } else if (view == SEARCH) {
+        puts_(" \xE2\x86\x91\xE2\x86\x93 select  Enter open  / new search  Esc back");
+    } else if (view == FEED) {
+        puts_(find_sub(fp_key) >= 0 ? " U unsubscribe  Esc back" : " S subscribe  Esc back");
     } else {
         if (doc_state && page_h_known && max_scroll()) {
             spaces(1);
@@ -2619,8 +3811,8 @@ static void draw_status(void)
             pad_to(COLS - 48);
             puts_("\xE2\x86\x91\xE2\x86\x93 scroll  T publish a test  F feeds  Esc back");
         } else {
-            pad_to(COLS - 42);
-            puts_("\xE2\x86\x91\xE2\x86\x93 PgUp PgDn Home End wheel   Esc/\xE2\x86\x90: back");
+            pad_to(COLS - 55);
+            puts_("Tab link  Enter follow  \xE2\x86\x91\xE2\x86\x93 PgUp PgDn  Esc/\xE2\x86\x90 back");
         }
     }
     row_end();
@@ -2633,7 +3825,12 @@ static void show(uint8_t v)
     if (view == v)
         return;
     if (entry)
-        entry_show(0);
+        entry_open(E_OFF, 0);
+    asking = 0;
+    if (v == ARTICLE) {
+        article_resume();
+        return;
+    }
     view = v;
     link_shown = 0;
     page_dirty = 1;
@@ -2642,6 +3839,15 @@ static void show(uint8_t v)
         lp_keep(&fdp, subs_n);
         start_count();
     }
+}
+
+/* Opens the search view (from the timeline or feeds) with the entry. */
+static void search_open(void)
+{
+    if (view != SEARCH)
+        s_back = view;
+    show(SEARCH);
+    entry_open(E_SEARCH, '/');
 }
 
 /* Scrolling keys of the article and help. */
@@ -2655,43 +3861,114 @@ static void scroll_key(uint8_t code)
     case KEY_HOME: scroll_by(-scroll); break;
     case KEY_END:
         to_end = 1;
+        art_restore = -1;
         if (page_h_known)
             scroll_to(max_scroll());
         break;
     }
 }
 
+/* Opens the selected search result: a feed's page or an article. */
+static void search_open_row(uint16_t r)
+{
+    const uint8_t *rec;
+    if (r >= s_rows() || s_heading(r))
+        return;
+    rec = s_record(r);
+    if (r <= sf_n)
+        feed_page(rec + R_FEED, SEARCH);
+    else
+        open_record(rec, SEARCH);
+}
+
+/* S and U on the feed page. */
+static void feed_follow(uint8_t op)
+{
+    if ((op == CONTENT_SUBSCRIBE) == (find_sub(fp_key) >= 0)) {
+        say_key(op == CONTENT_SUBSCRIBE ? "Already subscribed to " : "Not subscribed to ", fp_key, "", C_INFO);
+        return;
+    }
+    if (op_busy())
+        return;
+    memcpy(op_key, fp_key, 32);
+    op_start(op == CONTENT_SUBSCRIBE ? OP_SUB : OP_UNSUB, content_follow(&op_req, op, op_key));
+    say_key(op == CONTENT_SUBSCRIBE ? "Subscribing to " : "Unsubscribing from ", op_key, "\xE2\x80\xA6 (the host asks you)",
+            C_INFO);
+}
+
 /* Returns 1 to quit. */
 static uint8_t key(uint8_t code, uint8_t mods)
 {
     uint8_t back = code == KEY_ESCAPE || code == KEY_BACKSPACE || code == KEY_LEFT;
+    uint8_t plain = !(mods & (MOD_CONTROL | MOD_ALT | MOD_META));
     if (msg_n) {
         msg_n = 0;
         dirty[STATUS_ROW] = 1;
+    }
+    if (asking) {
+        if (code == KEY_Y)
+            answer_listed(1);
+        else if (code == KEY_N)
+            answer_listed(0);
+        else if (code == KEY_ESCAPE) {
+            asking = 0;
+            dirty[STATUS_ROW] = 1;
+        }
+        return 0;
     }
     if (entry) {
         if (code == KEY_ENTER) {
             entry_submit();
         } else if (code == KEY_ESCAPE) {
-            entry_show(0);
-        } else if (code == KEY_BACKSPACE && entry_n) {
-            entry_n--;
-            dirty[ENTRY_ROW] = 1;
+            entry_open(E_OFF, 0);
+            if (view == SEARCH && !s_ran)
+                show(s_back);
+        } else if (code == KEY_BACKSPACE) {
+            entry_back();
         }
         return 0;
     }
     if (view == ARTICLE) {
+        if (code == KEY_TAB) {
+            tab_link(mods & MOD_SHIFT ? -1 : 1);
+            return 0;
+        }
+        if (code == KEY_ENTER) {
+            if (cur_link)
+                follow(cur_link);
+            return 0;
+        }
         if (link_shown) {
             link_shown = 0;
             dirty[STATUS_ROW] = 1;
         }
         if (back)
-            show(TIMELINE);
+            article_back();
         else
             scroll_key(code);
         return 0;
     }
-    if (!(mods & (MOD_CONTROL | MOD_ALT | MOD_META))) {
+    if (view == FEED) {
+        if (back)
+            show(fp_back);
+        else if (plain && code == KEY_S)
+            feed_follow(CONTENT_SUBSCRIBE);
+        else if (plain && code == KEY_U)
+            feed_follow(CONTENT_UNSUBSCRIBE);
+        return 0;
+    }
+    if (view == SEARCH) {
+        uint16_t old = srp.sel;
+        if (back) {
+            show(s_back);
+        } else if (code == KEY_ENTER) {
+            search_open_row(srp.sel);
+        } else if (lp_key(&srp, s_rows(), code)) {
+            s_fix(srp.sel >= old ? 1 : -1);
+        }
+        return 0;
+    }
+    if (plain) {
         switch (code) {
         case KEY_F: show(FEEDS); return 0;
         case KEY_F1: show(HELP); return 0;
@@ -2703,6 +3980,14 @@ static uint8_t key(uint8_t code, uint8_t mods)
         case KEY_U:
             if (view == FEEDS)
                 unsubscribe();
+            return 0;
+        case KEY_N:
+            if (view == FEEDS)
+                nickname();
+            return 0;
+        case KEY_P:
+            if (view == FEEDS && !op_busy())
+                entry_open(E_NAME, 'p');
             return 0;
         }
     }
@@ -2716,7 +4001,10 @@ static uint8_t key(uint8_t code, uint8_t mods)
     } else if (back) {
         show(TIMELINE);
     } else if (view == FEEDS) {
-        lp_key(&fdp, subs_n, code);
+        if (code == KEY_ENTER && subs_n)
+            feed_page(sub_buf + fdp.sel * 36, FEEDS);
+        else
+            lp_key(&fdp, subs_n, code);
     } else {
         scroll_key(code);
     }
@@ -2725,12 +4013,14 @@ static uint8_t key(uint8_t code, uint8_t mods)
 
 static void anchor(uint16_t id, uint8_t buttons)
 {
-    if (!id || entry)
+    if (!id || entry || asking)
         return;
     if (view == ARTICLE) {
         if (id <= links) {
-            link_shown = id;
-            dirty[STATUS_ROW] = 1;
+            if (link_kind[id - 1] == LK_WEB)
+                set_cur_link(id);
+            else if (buttons & BUTTON_PRIMARY)
+                follow(id);
         }
     } else if (!(buttons & BUTTON_PRIMARY)) {
         return;
@@ -2739,6 +4029,9 @@ static void anchor(uint16_t id, uint8_t buttons)
         open_article(id - 1);
     } else if (view == FEEDS && id <= subs_n) {
         lp_set(&fdp, subs_n, id - 1, fdp.top);
+    } else if (view == SEARCH && id <= s_rows()) {
+        lp_set(&srp, s_rows(), id - 1, srp.top);
+        search_open_row(id - 1);
     }
 }
 
@@ -2764,8 +4057,12 @@ static uint8_t handle_events(void)
             cp = ev.a | (uint32_t)ev.b << 8 | (uint32_t)(ev.c & 0x1F) << 16;
             if (entry)
                 entry_text(cp);
+            else if (asking)
+                break;
             else if (cp == '?' && view != ARTICLE)
                 show(HELP);
+            else if (cp == '/' && view != ARTICLE)
+                search_open();
             break;
         case EV_WHEEL:
             if (view == TIMELINE) {
@@ -2773,6 +4070,13 @@ static uint8_t handle_events(void)
             } else if (view == FEEDS) {
                 if (!entry)
                     lp_wheel(&fdp, subs_n, (int8_t)ev.a);
+            } else if (view == SEARCH) {
+                if (!entry) {
+                    uint16_t old = srp.sel;
+                    lp_wheel(&srp, s_rows(), (int8_t)ev.a);
+                    s_fix(srp.sel >= old ? 1 : -1);
+                }
+            } else if (view == FEED) {
             } else {
                 if (link_shown) {
                     link_shown = 0;
@@ -2782,9 +4086,9 @@ static uint8_t handle_events(void)
             }
             break;
         case EV_PAGE_LAID_OUT:
-            if (view == TIMELINE || view == FEEDS)
+            if (view == TIMELINE || view == FEEDS || view == SEARCH)
                 list_height(EV_PAGE_HEIGHT(ev));
-            else
+            else if (view != FEED)
                 page_laid_out(EV_PAGE_HEIGHT(ev));
             break;
         case EV_PAGE_ANCHOR: anchor(EV_ANCHOR_ID(ev), EV_ANCHOR_BUTTONS(ev)); break;
@@ -2800,6 +4104,18 @@ static uint8_t handle_events(void)
                 count_done(ev.b);
             else if (done_for(op_handle, &op_req))
                 op_done(ev.b);
+            else if (done_for(nm_handle, &nm_req))
+                names_done(ev.b);
+            else if (done_for(lk_handle, &lk_req))
+                lookup_done(ev.b);
+            else if (done_for(sf_handle, &sf_req))
+                find_done(1, ev.b);
+            else if (done_for(sa_handle, &sa_req))
+                find_done(0, ev.b);
+            else if (done_for(pf_handle[0], &pf_req[0]))
+                pf_handle[0] = 0;
+            else if (done_for(pf_handle[1], &pf_req[1]))
+                pf_handle[1] = 0;
             else if (done_for(id_handle, &id_req)) {
                 id_handle = 0;
                 if (ev.b == STATUS_DONE) {
@@ -2824,9 +4140,14 @@ static void render(void)
             timeline_doc();
         else if (view == FEEDS)
             feeds_doc();
+        else if (view == SEARCH)
+            search_doc();
+        else if (view == FEED)
+            feed_doc();
         else
             help_doc();
     }
+    prefetch_step();
     if (view == ARTICLE)
         build();
     if (view == ARTICLE || view == HELP)
@@ -2848,6 +4169,7 @@ int main(void)
     term_cmd(TERM_CLEAR);
     page_background(28, 28, 28, 255);
     load_subscriptions();
+    load_names();
     load_timeline(0);
     id_handle = content_identity(&id_req);
     dirty[STATUS_ROW] = 1;

@@ -27,7 +27,7 @@
 
 
 
- 0%                                   ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+ 0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 1257, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |pictures
    53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  3.2 KB

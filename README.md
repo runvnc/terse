@@ -160,11 +160,12 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--store <dir>] [--config <dir>]`
+`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--store <dir>] [--config <dir>]`
 opens a window and runs the image at 60 frames/s of virtual time; with no image it
 runs the reader, which is built into the binary (`programs/reader/reader.terse`), and
 with `--demo` it first sets up the sample articles ([Getting started](#getting-started)).
-The relays are found or started as Getting started says. `--consent` answers the
+The relays are found or started as Getting started says. `--no-prefetch` turns off
+fetching the `terse:` links of automatically downloaded articles (NETWORK 4.4). `--consent` answers the
 program's requests to subscribe, unsubscribe, publish, set its profile and set a
 nickname: `ask` (the default) shows the
 host's prompt, `allow` and `deny` answer every one without asking. Ctrl+V and
@@ -210,7 +211,9 @@ and prints it. With `--peer` (repeatable) it mirrors other relays (NETWORK.md se
 5): it keeps a connection to each, sends them every entry and every blob up to 16,384
 bytes it newly stores, follows on them the feeds its clients follow, and asks them for
 a blob a client wants that it does not hold. Two relays only need one of them to name
-the other. It answers searches (`terse find`) from what it holds.
+the other. It answers searches (`terse find`) from what it holds, articles in the
+order it stored them, newest first, and refuses a connection's fifth search within
+a second.
 
 ## Trying the relay locally
 
@@ -260,9 +263,10 @@ Commands:
 - `find <text>` asks your relays for listed feeds whose name contains the text
   (ASCII letters match either case; names starting with it first) and prints key
   and name; `find --entries <text>` finds articles of listed feeds by title.
-- `feed sync [--watch] [--auto-download <bytes>]` connects to the relay, receives
+- `feed sync [--watch] [--auto-download <bytes>] [--no-prefetch]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
-  articles up to 16,384 bytes (or `--auto-download`). One line per new entry:
+  articles up to 16,384 bytes (or `--auto-download`), and with them the first
+  eight `terse:` links in each (not with `--no-prefetch`; NETWORK 4.4). One line per new entry:
   time (UTC, as claimed by the author), feed key prefix, seq, size, article
   state, title. The state is `local` (in the store), `remote` (over the limit;
   `feed read` fetches it), `failed` or `size-mismatch` (the blob is not the size
@@ -470,18 +474,37 @@ the terminal shows only the status row (row 29: key hints, the position such as
 `2/3`, or the outcome of the last action) and, while a feed key is typed, row 28.
 
 - **Timeline** (newest first): one entry per paragraph, the title, then a dimmer line
-  with the feed key's short form (`3fa9c2…c21e07`), the date and time (UTC), the
+  with the feed (name and short key), the date and time (UTC), the
   size, and `↳ reply` or `not downloaded` when they apply. The selected entry is in
   amber. Up/Down, PgUp/PgDn, Home/End and the wheel (3 entries a step) move the
-  selection; Enter, or a click on an entry, opens it; F feeds; ? or F1 help; T
-  publishes a test article; Esc quits. With no entries, a page says so and which
-  keys to press. New entries appear without a key press.
-- **Feeds** (F): the subscribed feeds, each with its short key (`you` marks your own),
-  the highest entry number and how many entries are held. S opens the key entry on
+  selection; Enter, or a click on an entry, opens it; / search; F feeds; ? or F1
+  help; T publishes a test article; Esc quits. With no entries, a page says so and
+  which keys to press. New entries appear without a key press.
+- **Feeds** (F): the subscribed feeds, each with its name and short key (`you` marks
+  your own, `your nickname` a name you gave it), the highest entry number and how
+  many entries are held. Enter opens the feed's page. N types a nickname for the
+  selected feed, which only you see (empty removes it; content op 0Ch); P types your
+  public name, then asks on the status row whether search may find it (Y/N), and
+  publishes your profile (op 0Bh). Both names are checked first (1 to 48 bytes, no
+  control characters, no space at either end) and the host asks you before either
+  is set. S opens the key entry on
   row 28: type or paste a feed key (whitespace is ignored, so the grouped form from
   the help page pastes as is); Enter subscribes (the host asks you), Esc cancels,
   Backspace deletes; a malformed key is reported on the status row. U unsubscribes
   from the selected feed. Esc, Backspace or Left go back.
+- **Search** (/ from the timeline or feeds): type a feed's name or words of an
+  article's title and press Enter. The reader asks the relays for listed feeds by
+  name and for their articles by title at once (op 0Ah, twice) and lists both: the
+  feeds (name; short key, `you`, `subscribed`) and the articles (title; feed, date,
+  size), under a heading each that says how many were found, or that none were,
+  or why it could not search (no relay could be reached; the relays refused, which
+  a relay does when one connection searches more than 4 times a second). Up/Down,
+  the wheel or a click select; Enter opens a feed's page or an article; Esc goes
+  back. In the reference fixture the results are on the page 2 frames after Enter
+  (the frame of the key counted as 1) with a relay on this machine.
+- **Feed page** (Enter on a feed, or a `terse:feed/<key>` link): the feed's name
+  (and whether it is your nickname or the feed's own), its key in full and whether
+  you follow it; S subscribes, U unsubscribes, Esc goes back.
 - **Help** (? or F1): the keys of every view and your own feed key in full, in the
   monospaced face, in groups of eight hex digits. T publishes a test article
   ("Test article N", a few paragraphs with the frame and time in them): the reader
@@ -508,7 +531,19 @@ paragraphs wrapped, headings in bold (21 and 17 units), list items with a bullet
 preformatted blocks and fences in monospace without wrapping, figures centred (one
 wider than the column scaled down to its 512 units). Bare `http://` and `https://`
 URLs get an anchor and a link colour; pressing one shows the URL in the status bar,
-since there is no browser. Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
+since there is no browser. So do `terse:<id>` links (an article, by its blob ID) and
+`terse:feed/<key>` links (a feed): clicking one, or making it current with Tab or
+Shift+Tab (it turns amber and the status row shows it) and pressing Enter, opens the
+article or the feed's page. The article opened by a link has the title of the
+timeline's entry for that blob if your host has one, else its ID's short form; one
+that is missing, larger than the 48 KiB the reader shows, or cannot be fetched gets
+a page saying so. Esc goes back through the articles followed (up to 8, each at the
+place it was scrolled to), then to where the first was opened from. The reader does
+not know where the page put a link, so Tab does not scroll the current link into
+view. On opening an article the reader also gets its first 8 article links, one byte
+each, at most two at a time, so the host holds them by the time you follow one (the
+host itself does the same for articles of subscribed feeds as they arrive,
+NETWORK 4.4). Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
 line, the wheel by 60 a step, Home/End to the ends; the reader clamps its scroll
 value with the height from the page's height event and shows in the status bar how
 far it is scrolled, 0% at the top and 100% at the bottom (nothing until the first
@@ -565,11 +600,13 @@ document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
 height arrives in the next; the whole height of a 48 KiB article arrives 15 frames
-after Enter. The busiest frame uses 74,809 units (60% of 125,000, building an
-article's document; 57,779 for an article with a 4 KB figure path); outside the article view at most 28,833
-(23%, publishing a test article); a typical frame 138; no frame runs out of budget.
-ROM 28,108 bytes, 22 RAM pages (the 64 KiB document, the 48 KiB article, the
-timeline records).
+after Enter. The busiest frame uses 74,580 units (60% of 125,000, building an
+article's document; 61,202 for an article with a 4 KB figure path); outside the article view at most 32,211
+(26%, publishing a test article); a typical frame 162; no frame runs out of budget.
+ROM 44,282 bytes, 28 RAM pages (the 64 KiB document, the 48 KiB article, the
+timeline records, the names and the search results). Following a `terse:` link to
+a local article: the article is on the page 2 frames after Enter, busiest frame
+40,697 units; a search: busiest frame 20,336 units.
 
 In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
 entries, 13 Down then 13 Up presses 8 frames apart, the list window scrolling): every

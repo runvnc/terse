@@ -1,0 +1,39 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Let others find “Carol W” by search?   Y: yes   N: no   Esc: cancel
+-- page: height 172, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Feeds
+   28  15     0   sans12 |3 subscriptions  ·  your key 91a28a…9a4b3a
+   51  20     0   sans16 |[Bobby]{1}[  0b513a…e39f2d]{1}
+   71  15     0   sans12 |[your nickname  ·  highest #10  ·  5 articles held]{1}
+   94  20     0   sans16 |[Alice]{2}[  66be7e…0c473a]{2}
+  114  15     0   sans12 |[highest #12  ·  5 articles held]{2}
+  137  20     0   sans16 |[91a28a…9a4b3a]{3}[  you]{3}
+  157  15     0   sans12 |[highest #11  ·  1 article held]{3}

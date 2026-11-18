@@ -13,7 +13,18 @@
 //!
 //! Reconnecting: a relay whose connection is lost (or cannot be made) is
 //! tried again after 1 s, doubling up to 30 s, and the subscriptions are
-//! renewed on every new connection.
+//! renewed on every new connection. WebSocket relays connect in the
+//! background; an operation that needs a relay while none is connected but
+//! some are connecting waits until one is connected or none is connecting,
+//! and is otherwise sent to the connected relays only, so a relay that does
+//! not answer never delays the others.
+//!
+//! Prefetch (NETWORK 4.4): when an automatic download stores a kind-1
+//! article, the first [`PREFETCH_LINKS`] distinct `terse:` article links in
+//! it whose blobs are not held or being fetched are fetched too, unless an
+//! entry shows the blob is larger than the automatic download limit; a
+//! fetched blob larger than the limit is discarded. Prefetched blobs are
+//! not scanned.
 //!
 //! Caught up (NETWORK 4.3): a feed is caught up on a connection once the
 //! entry whose `seq` equals the `highest` of the subscribe reply has arrived
@@ -30,6 +41,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::article;
 use crate::blob::{BlobId, blob_id, to_hex, valid_size};
 use crate::entry::{self, Entry, KIND_ARTICLE, KIND_PROFILE, MAX_TITLE, SignedEntry};
 use crate::feeds::{FeedStore, Insert, Subscriptions};
@@ -50,6 +62,11 @@ pub const AUTO_DOWNLOAD_LIMIT: u32 = 16_384;
 pub const MAX_LINKS: usize = 16;
 /// Feed relays taken from one profile.
 pub const FEED_RELAYS_PER_FEED: usize = 2;
+/// Links of an automatically downloaded article that are fetched with it.
+pub const PREFETCH_LINKS: usize = 8;
+/// How long an operation waiting for relays to connect waits for the rest
+/// once one is connected.
+pub const CONNECT_GRACE: Duration = Duration::from_millis(200);
 /// Relays asked at once for a blob.
 const GET_FANOUT: usize = 2;
 
@@ -70,7 +87,7 @@ pub enum Done {
     Found(Vec<SignedEntry>),
     NotFound,
     /// Every relay refused an entry (for example, a different entry already
-    /// has its `seq`).
+    /// has its `seq`), or no relay answered a search and one refused it.
     Refused,
     Failed,
 }
@@ -140,6 +157,8 @@ enum GetFor {
     Token(Token),
     /// The automatic download of a new entry's blob.
     Auto(Entry),
+    /// A blob linked from an automatically downloaded article.
+    Prefetch,
 }
 
 /// An operation that may involve several relays.
@@ -152,7 +171,8 @@ enum Op {
     /// assigned) is published once a relay has it.
     PublishBlob { token: Token, entry: Entry, in_flight: usize },
     Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool },
-    Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, answered: bool, found: Vec<SignedEntry> },
+    /// The verified results of each relay that answered, by link.
+    Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, refused: bool, found: BTreeMap<u64, Vec<SignedEntry>> },
 }
 
 /// One relay connection.
@@ -196,6 +216,9 @@ impl Link {
 }
 
 type FeedConnector = Box<dyn Fn(&str) -> RelayClient + Send>;
+/// An operation started again once a relay is connected or none is
+/// connecting.
+type Deferred = Box<dyn FnOnce(&mut Node) + Send>;
 
 pub struct Node {
     store: BlobStore,
@@ -226,6 +249,14 @@ pub struct Node {
     verified: HashMap<(FeedKey, u32), Option<(Entry, Vec<u8>)>>,
     /// A feed with an entry pointing at a blob, for choosing relays.
     blob_feeds: HashMap<BlobId, FeedKey>,
+    /// The size an entry gives a blob, for prefetch (filled from the
+    /// subscribed feeds when first needed, then as entries are stored).
+    blob_sizes: HashMap<BlobId, u32>,
+    blob_sizes_loaded: bool,
+    prefetch: bool,
+    /// Operations waiting for a relay to be connected, and since when.
+    deferred: Vec<Deferred>,
+    deferred_since: Option<Instant>,
     /// Feed relays (NETWORK 5) in use.
     feed_relays: bool,
     /// The feed relays must be worked out again (a profile or the
@@ -261,6 +292,11 @@ impl Node {
             events: Vec::new(),
             verified: HashMap::new(),
             blob_feeds: HashMap::new(),
+            blob_sizes: HashMap::new(),
+            blob_sizes_loaded: false,
+            prefetch: true,
+            deferred: Vec::new(),
+            deferred_since: None,
             feed_relays: true,
             feed_relays_dirty: true,
             feed_relays_unrestricted: false,
@@ -391,6 +427,12 @@ impl Node {
         self.auto_limit = bytes;
     }
 
+    /// Whether to fetch the `terse:` links of automatically downloaded
+    /// articles (NETWORK 4.4); on by default.
+    pub fn set_prefetch(&mut self, on: bool) {
+        self.prefetch = on;
+    }
+
     /// The profile in force for a feed (NETWORK 4.6) and its document, if
     /// the document is in the store and parses.
     pub fn profile(&self, feed: &FeedKey) -> Option<(Entry, Option<Document>)> {
@@ -422,6 +464,23 @@ impl Node {
         self.links.iter().filter(|(_, l)| l.client.connected()).map(|(&id, _)| id).collect()
     }
 
+    /// Whether some relay is being connected in the background.
+    pub fn connecting(&self) -> bool {
+        self.links.values().any(|l| l.client.connecting())
+    }
+
+    /// Keeps `start` for later if relays are being connected and none is
+    /// connected yet; returns whether it did. It is started once no relay
+    /// is being connected, or [`CONNECT_GRACE`] after one is connected.
+    fn defer(&mut self, start: impl FnOnce(&mut Node) + Send + 'static) -> bool {
+        if !self.connecting() || !self.connected_links().is_empty() {
+            return false;
+        }
+        self.deferred.push(Box::new(start));
+        self.deferred_since.get_or_insert_with(Instant::now);
+        true
+    }
+
     /// Starts fetching the whole blob `id`.
     pub fn start_get(&mut self, token: Token, id: BlobId) {
         match self.store.read(&id) {
@@ -437,6 +496,9 @@ impl Node {
             return self.ready.push((token, Done::NotFound));
         }
         self.maintain();
+        if self.defer(move |n| n.start_get(token, id)) {
+            return;
+        }
         self.fetch_from_relays(GetFor::Token(token), id);
     }
 
@@ -473,6 +535,7 @@ impl Node {
             match purpose {
                 GetFor::Token(token) => self.ready.push((token, if not_found { Done::NotFound } else { Done::Failed })),
                 GetFor::Auto(entry) => self.downloaded(entry, None),
+                GetFor::Prefetch => {}
             }
         }
     }
@@ -487,6 +550,10 @@ impl Node {
             return self.ready.push((token, Done::Put(id)));
         }
         self.maintain();
+        let copy = data.to_vec();
+        if self.defer(move |n| n.start_put(token, &copy)) {
+            return;
+        }
         let op = self.new_op(Op::Put { token, id, in_flight: 0 });
         self.send_put(op, data);
     }
@@ -557,6 +624,10 @@ impl Node {
             return self.publish_entry(token, entry);
         }
         self.maintain();
+        let (copy, later) = (data.to_vec(), entry.clone());
+        if self.defer(move |n| n.start_publish(token, &copy, later)) {
+            return;
+        }
         let op = self.new_op(Op::PublishBlob { token, entry, in_flight: 0 });
         self.send_put(op, data);
     }
@@ -618,6 +689,7 @@ impl Node {
             // A failure only leaves the entry at the old end of the timeline.
             let _ = self.arrivals.record(&signed.entry.feed, signed.entry.seq);
             self.blob_feeds.insert(signed.entry.blob, signed.entry.feed);
+            self.blob_sizes.insert(signed.entry.blob, signed.entry.size);
             if signed.entry.kind == KIND_PROFILE {
                 self.feed_relays_dirty = true;
             }
@@ -632,6 +704,10 @@ impl Node {
             return self.ready.push((token, Done::Failed));
         }
         self.maintain();
+        let copy = query.to_vec();
+        if self.defer(move |n| n.start_find(token, scope, &copy)) {
+            return;
+        }
         let targets = self.connected_links();
         if targets.is_empty() {
             return self.ready.push((token, Done::Failed));
@@ -641,8 +717,8 @@ impl Node {
             scope,
             query: query.to_vec(),
             in_flight: targets.len(),
-            answered: false,
-            found: Vec::new(),
+            refused: false,
+            found: BTreeMap::new(),
         });
         for lid in targets {
             let req = self.links.get_mut(&lid).unwrap().client.find(scope, query);
@@ -680,7 +756,7 @@ impl Node {
 
     /// Whether any operation is waiting for a relay.
     pub fn busy(&self) -> bool {
-        !self.waiting.is_empty()
+        !self.waiting.is_empty() || !self.deferred.is_empty()
     }
 
     /// Whether the node has subscriptions and a relay, so it follows feeds.
@@ -825,13 +901,24 @@ impl Node {
                     link.catching_up.clear();
                     self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
                 }
-                if link.retry_at.is_some_and(|t| now < t) {
+                if link.client.connecting() {
                     continue;
                 }
-                if link.client.connect().is_err() {
+                let mut failed = link.client.take_connect_failure().is_some();
+                if !failed {
+                    if link.retry_at.is_some_and(|t| now < t) {
+                        continue;
+                    }
+                    link.client.start_connect();
+                    failed = link.client.take_connect_failure().is_some();
+                }
+                if failed {
                     self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
                     link.retry_at = Some(now + link.retry_in);
                     link.retry_in = (link.retry_in * 2).min(MAX_RETRY);
+                    continue;
+                }
+                if !link.client.connected() {
                     continue;
                 }
             }
@@ -852,7 +939,7 @@ impl Node {
             }
         }
         let own: Vec<&Link> = self.links.values().filter(|l| l.feeds.is_none()).collect();
-        let down = !own.is_empty() && own.iter().all(|l| !l.client.connected());
+        let down = !own.is_empty() && own.iter().all(|l| !l.client.connected() && !l.client.connecting());
         if down && !self.unreachable {
             self.events.push(FeedEvent::Unreachable);
         }
@@ -966,6 +1053,9 @@ impl Node {
                 if entry.kind == KIND_PROFILE {
                     self.feed_relays_dirty = true;
                 }
+                if entry.kind == KIND_ARTICLE && self.prefetch && self.subscriptions.contains(&entry.feed) {
+                    self.prefetch_links(&bytes);
+                }
                 Article::Local
             }
             _ => Article::Failed,
@@ -973,9 +1063,42 @@ impl Node {
         self.events.push(FeedEvent::Entry { entry, article });
     }
 
+    /// Fetches the first [`PREFETCH_LINKS`] distinct `terse:` article links
+    /// of `text` whose blobs are not held or being fetched, except those an
+    /// entry shows to be larger than the automatic download limit
+    /// (NETWORK 4.4).
+    fn prefetch_links(&mut self, text: &[u8]) {
+        if !self.blob_sizes_loaded {
+            self.blob_sizes_loaded = true;
+            let feeds: Vec<FeedKey> = self.subscriptions.feeds().copied().collect();
+            for feed in feeds {
+                for s in self.feeds.entries(&feed).unwrap_or_default() {
+                    self.blob_sizes.entry(s.entry.blob).or_insert(s.entry.size);
+                }
+            }
+        }
+        let fetching: BTreeSet<BlobId> =
+            self.ops.values().filter_map(|o| if let Op::Get { id, .. } = o { Some(*id) } else { None }).collect();
+        let mut chosen: Vec<BlobId> = Vec::new();
+        for id in article::terse_links(text) {
+            if chosen.len() == PREFETCH_LINKS {
+                break;
+            }
+            if chosen.contains(&id) || fetching.contains(&id) || self.store.path(&id).exists() {
+                continue;
+            }
+            chosen.push(id);
+        }
+        for id in chosen {
+            if self.blob_sizes.get(&id).is_none_or(|&size| size <= self.auto_limit) {
+                self.fetch_from_relays(GetFor::Prefetch, id);
+            }
+        }
+    }
+
     fn reply(&mut self, lid: u64, waiting: Waiting, reply: RelayReply) {
         match (waiting, reply) {
-            (Waiting::Op(op), reply) => self.op_reply(op, reply),
+            (Waiting::Op(op), reply) => self.op_reply(lid, op, reply),
             (Waiting::Subscribe(feed, after), RelayReply::Subscribed { highest }) => {
                 if highest > after
                     && self.subscriptions.contains(&feed)
@@ -996,7 +1119,7 @@ impl Node {
         }
     }
 
-    fn op_reply(&mut self, op_id: u64, reply: RelayReply) {
+    fn op_reply(&mut self, lid: u64, op_id: u64, reply: RelayReply) {
         let Some(op) = self.ops.get_mut(&op_id) else { return };
         match op {
             Op::Get { id, in_flight, not_found, .. } => {
@@ -1014,6 +1137,12 @@ impl Node {
                                 self.ready.push((token, Done::Got(bytes)));
                             }
                             GetFor::Auto(entry) => self.downloaded(entry, Some(bytes)),
+                            // Not scanned; discarded if over the limit.
+                            GetFor::Prefetch => {
+                                if bytes.len() <= self.auto_limit as usize {
+                                    let _ = self.store.put(&bytes);
+                                }
+                            }
                         }
                         return;
                     }
@@ -1057,14 +1186,14 @@ impl Node {
                     }
                 }
             }
-            Op::Find { scope, query, in_flight, answered, found, .. } => {
+            Op::Find { scope, query, in_flight, refused, found, .. } => {
                 *in_flight -= 1;
+                *refused |= reply == RelayReply::Refused;
                 if let RelayReply::Found(entries) = reply {
-                    *answered = true;
                     let kind = if *scope == SCOPE_FEEDS { KIND_PROFILE } else { KIND_ARTICLE };
                     // NETWORK 4.7: every result is verified; forged ones and
                     // ones that do not answer the query are dropped.
-                    found.extend(
+                    found.entry(lid).or_default().extend(
                         entries
                             .iter()
                             .filter_map(|b| entry::decode(b).ok())
@@ -1072,10 +1201,16 @@ impl Node {
                     );
                 }
                 if *in_flight == 0 {
-                    let Some(Op::Find { token, scope, query, answered, found, .. }) = self.ops.remove(&op_id) else {
+                    let Some(Op::Find { token, scope, query, refused, found, .. }) = self.ops.remove(&op_id) else {
                         unreachable!()
                     };
-                    let done = if answered { Done::Found(merge_found(scope, &query, found)) } else { Done::Failed };
+                    let done = if !found.is_empty() {
+                        Done::Found(merge_found(scope, &query, found.into_values().collect()))
+                    } else if refused {
+                        Done::Refused
+                    } else {
+                        Done::Failed
+                    };
                     self.ready.push((token, done));
                 }
             }
@@ -1086,7 +1221,7 @@ impl Node {
     fn check_settled(&mut self) {
         let pending = self.links.values().any(|l| !l.catching_up.is_empty())
             || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
-            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_), .. }));
+            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch, .. }));
         let connected: Vec<&Link> = self.links.values().filter(|l| l.client.connected()).collect();
         let current = !connected.is_empty() && connected.iter().all(|l| l.ready());
         if pending {
@@ -1114,6 +1249,13 @@ impl Node {
             }
             for bytes in pushed {
                 self.receive(lid, &bytes);
+            }
+        }
+        let graced = self.deferred_since.is_some_and(|t| t.elapsed() >= CONNECT_GRACE) && !self.connected_links().is_empty();
+        if !self.deferred.is_empty() && (!self.connecting() || graced) {
+            self.deferred_since = None;
+            for start in std::mem::take(&mut self.deferred) {
+                start(self);
             }
         }
         self.check_settled();
@@ -1183,26 +1325,33 @@ impl Node {
     }
 }
 
-/// Merges the results of several relays (NETWORK 4.7): one entry per feed
-/// and `seq` (for feeds, only the highest `seq` of each feed), ordered —
-/// feeds: names starting with the query first, then by feed key; entries:
-/// newest claimed time first, then feed key, then `seq` — and at most 16.
-pub fn merge_found(scope: u8, query: &[u8], found: Vec<SignedEntry>) -> Vec<SignedEntry> {
-    let mut by_key: BTreeMap<(FeedKey, u32), SignedEntry> = BTreeMap::new();
-    for s in found {
-        by_key.entry((s.entry.feed, s.entry.seq)).or_insert(s);
-    }
+/// Merges the results of several relays, one list per relay in relay
+/// order (NETWORK 4.7): one entry per feed and `seq`, at most 16. Feeds:
+/// only the highest `seq` of each feed, names starting with the query
+/// first, then by feed key. Entries: by rank, the first result of each
+/// relay, then the second of each, and so on.
+pub fn merge_found(scope: u8, query: &[u8], found: Vec<Vec<SignedEntry>>) -> Vec<SignedEntry> {
     let mut list: Vec<SignedEntry> = if scope == SCOPE_FEEDS {
         let mut latest: BTreeMap<FeedKey, SignedEntry> = BTreeMap::new();
-        for s in by_key.into_values() {
-            latest.insert(s.entry.feed, s);
+        for s in found.into_iter().flatten() {
+            if latest.get(&s.entry.feed).is_none_or(|l| l.entry.seq < s.entry.seq) {
+                latest.insert(s.entry.feed, s);
+            }
         }
         let mut list: Vec<SignedEntry> = latest.into_values().collect();
         list.sort_by_key(|s| (!profile::starts_with(s.entry.title.as_bytes(), query), s.entry.feed));
         list
     } else {
-        let mut list: Vec<SignedEntry> = by_key.into_values().collect();
-        list.sort_by(|a, b| (b.entry.time, a.entry.feed, b.entry.seq).cmp(&(a.entry.time, b.entry.feed, a.entry.seq)));
+        let mut seen: BTreeSet<(FeedKey, u32)> = BTreeSet::new();
+        let mut list = Vec::new();
+        let longest = found.iter().map(Vec::len).max().unwrap_or(0);
+        for rank in 0..longest {
+            for s in found.iter().filter_map(|l| l.get(rank)) {
+                if seen.insert((s.entry.feed, s.entry.seq)) {
+                    list.push(s.clone());
+                }
+            }
+        }
         list
     };
     list.truncate(MAX_FIND_RESULTS);
@@ -1305,7 +1454,11 @@ mod tests {
         stall: bool,
         /// Entries a find returns, whatever the query.
         find: Vec<Vec<u8>>,
+        /// Refuse finds.
+        find_refused: bool,
         gets: usize,
+        /// The blobs asked for, in order.
+        asked: Vec<BlobId>,
         puts: usize,
     }
 
@@ -1320,6 +1473,7 @@ mod tests {
             let reply = match protocol::decode_request(&message).unwrap() {
                 Request::Get { req, id } => {
                     s.gets += 1;
+                    s.asked.push(id);
                     match s.blobs.get(&id) {
                         Some(b) => protocol::encode_get_reply(req, status::DONE, b),
                         None => protocol::encode_get_reply(req, status::NOT_FOUND, &[]),
@@ -1347,6 +1501,9 @@ mod tests {
                 }
                 Request::Unsubscribe { req, .. } => {
                     protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
+                }
+                Request::Find { req, .. } if s.find_refused => {
+                    protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[])
                 }
                 Request::Find { req, .. } => protocol::encode_find_reply(req, status::DONE, &s.find),
                 Request::Peer => return Ok(()),
@@ -1473,6 +1630,60 @@ mod tests {
         assert_eq!(s.subscribes, [(feed, 0), (feed, 6)]);
     }
 
+    /// Prefetch (NETWORK 4.4): the first 8 distinct links not held, one
+    /// level, none known or found to be over the limit; off with
+    /// `set_prefetch(false)`.
+    #[test]
+    fn prefetches_links_of_downloaded_articles() {
+        let author = Identity::from_seed([6; 32]);
+        let feed = author.feed_key();
+        let link = |data: &[u8]| format!("terse:{}", to_hex(&blob_id(data)));
+        let held = b"held already".to_vec();
+        let deeper = b"one level down".to_vec();
+        let nested = format!("Nested: {}", link(&deeper)).into_bytes();
+        let small: Vec<Vec<u8>> = (1..=7).map(|i| format!("small {i}").into_bytes()).collect();
+        let big_known = vec![b'y'; 2000];
+        let big_unknown = vec![b'x'; 2000];
+        let mut text = format!("{} {} {} {} {}", link(&held), link(&big_known), link(&big_unknown), link(&nested), link(&small[0]));
+        text += &format!(" again {} feed terse:feed/{}", link(&small[0]), to_hex(&blob_id(&small[6])));
+        for s in &small[1..] {
+            text += &format!(" {}", link(s));
+        }
+        let main = text.into_bytes();
+        assert!(main.len() <= 1500);
+        let run = |prefetch: bool| {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut node, script) = node_with_fake(dir.path());
+            node.store().put(&held).unwrap();
+            {
+                let mut s = script.lock().unwrap();
+                for b in [&big_known, &big_unknown, &deeper, &nested, &main].into_iter().chain(&small) {
+                    s.blobs.insert(blob_id(b), b.clone());
+                }
+                s.held = vec![
+                    Entry::article(feed, 1, 1, &big_known, None, "big").sign(&author).unwrap().bytes,
+                    Entry::article(feed, 2, 2, &main, None, "main").sign(&author).unwrap().bytes,
+                ];
+            }
+            node.set_auto_download_limit(1500);
+            node.set_prefetch(prefetch);
+            node.set_subscriptions(Subscriptions::in_memory([feed]));
+            settle(&mut node);
+            let asked = script.lock().unwrap().asked.clone();
+            (dir, node, asked)
+        };
+        let (_dir, node, asked) = run(true);
+        let mut want = vec![blob_id(&main), blob_id(&big_unknown), blob_id(&nested)];
+        want.extend(small[..5].iter().map(|s| blob_id(s)));
+        assert_eq!(asked, want, "8 links: held and known-big skipped, not counted beyond the 8, nested not followed");
+        let has = |b: &[u8]| node.store().read(&blob_id(b)).unwrap().is_some();
+        assert!(has(&nested) && small[..5].iter().all(|s| has(s)));
+        assert!(!has(&big_unknown), "fetched, over the limit, discarded");
+        assert!(!has(&big_known) && !has(&deeper) && !has(&small[5]));
+        let (_dir, _node, asked) = run(false);
+        assert_eq!(asked, [blob_id(&main)]);
+    }
+
     #[test]
     fn publishing_through_a_relay() {
         let dir = tempfile::tempdir().unwrap();
@@ -1557,15 +1768,27 @@ mod tests {
         prefix.sort();
         let want: Vec<(&str, u32)> = prefix.into_iter().map(|p| p.1).chain([("Mariana", 1)]).collect();
         assert_eq!(got, want);
-        // Entries scope: articles only, newest first.
+        // Entries scope: articles only, merged by rank in relay order (each
+        // relay's own order is kept; claimed times do not matter), each once.
         let art = |id: &Identity, seq: u32, time: u32, title: &str| {
             Entry::article(id.feed_key(), seq, time, b"x", None, title).sign(id).unwrap().bytes
         };
-        sa.lock().unwrap().find = vec![art(&ids[0], 1, 50, "Old news"), profile(&ids[0], 2, "news")];
-        sb.lock().unwrap().find = vec![art(&ids[1], 1, 90, "Fresh news"), art(&ids[0], 1, 50, "Old news")];
+        sa.lock().unwrap().find = vec![
+            art(&ids[0], 1, 50, "a1 news"),
+            profile(&ids[0], 2, "news"),
+            art(&ids[0], 3, 99, "a2 news"),
+            art(&ids[0], 4, 10, "a3 news"),
+        ];
+        sb.lock().unwrap().find =
+            vec![art(&ids[1], 1, 90, "b1 news"), art(&ids[0], 1, 50, "a1 news"), art(&ids[1], 2, 1, "b2 news")];
         let Done::Found(found) = node.find(SCOPE_ENTRIES, b"news") else { panic!() };
         let titles: Vec<&str> = found.iter().map(|s| s.entry.title.as_str()).collect();
-        assert_eq!(titles, ["Fresh news", "Old news"]);
+        assert_eq!(titles, ["a1 news", "b1 news", "a2 news", "a3 news", "b2 news"]);
+        // A refusal counts only when no relay answered.
+        sa.lock().unwrap().find_refused = true;
+        assert!(matches!(node.find(SCOPE_ENTRIES, b"news"), Done::Found(f) if f.len() == 3));
+        sb.lock().unwrap().find_refused = true;
+        assert_eq!(node.find(SCOPE_ENTRIES, b"news"), Done::Refused);
     }
 
     fn signed(author: &Identity, seq: u32, data: &[u8], title: &str) -> Vec<u8> {

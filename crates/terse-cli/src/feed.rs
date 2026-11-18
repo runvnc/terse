@@ -66,6 +66,7 @@ fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
     if let Some(n) = args.get("--auto-download") {
         node.set_auto_download_limit(n.parse().map_err(|_| format!("bad byte count {n}"))?);
     }
+    node.set_prefetch(!args.has("--no-prefetch"));
     Ok(node)
 }
 
@@ -285,8 +286,8 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
 }
 
 fn sync(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--watch"])?;
-    known(&args, &["--watch", "--auto-download"])?;
+    let args = Args::parse(args, &["--watch", "--no-prefetch"])?;
+    known(&args, &["--watch", "--auto-download", "--no-prefetch"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.into());
     }

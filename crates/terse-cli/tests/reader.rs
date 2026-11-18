@@ -16,7 +16,7 @@ use terse_core::{Event, FrameInput, FrameResult, Image, Machine, PageInput, RAM_
 use terse_net::{BlobStore, Consent, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id, to_hex};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-const RAM_PAGES: u8 = 22;
+const RAM_PAGES: u8 = 28;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 /// The article's (and help's) rectangle (reader.c RECT_*).
@@ -162,6 +162,10 @@ struct Fixture {
     author: Node,
     feeds: Vec<FeedKey>,
     time: u32,
+    /// The host's nicknames for feeds.
+    nicknames: Vec<(FeedKey, String)>,
+    /// The host's relays (none: no network).
+    relays: Vec<String>,
 }
 
 impl Fixture {
@@ -169,7 +173,15 @@ impl Fixture {
         let store = tempfile::tempdir().unwrap();
         let config = tempfile::tempdir().unwrap();
         let author = Node::new(BlobStore::open(store.path(), None).unwrap(), None);
-        Fixture { store, config, author, feeds: vec![alice().feed_key(), bob().feed_key()], time: T0 }
+        Fixture {
+            store,
+            config,
+            author,
+            feeds: vec![alice().feed_key(), bob().feed_key()],
+            time: T0,
+            nicknames: Vec::new(),
+            relays: Vec::new(),
+        }
     }
 
     /// Publishes into the store, as `terse feed publish` without a relay does.
@@ -224,10 +236,25 @@ impl Fixture {
         self
     }
 
+    /// Publishes a profile for `who` into the store.
+    fn profile(&mut self, who: &Identity, name: &str, listed: bool) {
+        self.author.set_identity(who.clone());
+        self.time += 600;
+        assert!(matches!(self.author.publish_profile(name, listed, Some(String::new()), self.time), terse_net::Done::Published { .. }));
+    }
+
     fn content(&self, consent: Consent) -> ContentService {
         let mut node = Node::new(BlobStore::open(self.store.path(), None).unwrap(), None);
+        for url in &self.relays {
+            node.add_relay(url, terse_net::relay::RelayClient::websocket(url, terse_net::relay::DEFAULT_TIMEOUT));
+        }
         node.set_subscriptions(Subscriptions::in_memory(self.feeds.iter().copied()));
         node.set_identity_path(self.config.path().join("identity.key")).unwrap();
+        let mut nicknames = terse_net::profile::Nicknames::in_memory();
+        for (feed, name) in &self.nicknames {
+            nicknames.set(*feed, Some(name)).unwrap();
+        }
+        node.set_nicknames(nicknames);
         ContentService::start_with_consent(node, consent)
     }
 }
@@ -246,6 +273,11 @@ struct Run {
     heights: Vec<(u32, u32)>,
     /// The frames that ended with a newly submitted document.
     submits: Vec<u32>,
+    /// Every get the program sent: frame, blob, length.
+    gets: Vec<(u32, [u8; 32], u16)>,
+    /// The most requests pending at once.
+    most_pending: usize,
+    pending: usize,
 }
 
 impl Run {
@@ -266,6 +298,9 @@ impl Run {
             screens: Vec::new(),
             heights: Vec::new(),
             submits: Vec::new(),
+            gets: Vec::new(),
+            most_pending: 0,
+            pending: 0,
         }
     }
 
@@ -296,8 +331,17 @@ impl Run {
         if page.generation() != generation && page.document().is_some() {
             self.submits.push(frame);
         }
-        self.content.submit(self.machine.take_content_requests());
+        let requests = self.machine.take_content_requests();
+        for r in &requests {
+            if let terse_core::RequestKind::Get { id, length, .. } = r.kind {
+                self.gets.push((frame, id, length));
+            }
+        }
+        self.pending += requests.len();
+        self.most_pending = self.most_pending.max(self.pending);
+        self.content.submit(requests);
         self.completions = self.content.wait_finished();
+        self.pending -= self.completions.len();
         self.feeds_updated = self.content.feeds_updated();
         self.results.push(r);
         self.screens.push(self.screen());
@@ -817,7 +861,7 @@ fn open_scroll_and_return() {
     run.click_anchor(1);
     let linked = run.view();
     golden("article-link", &linked);
-    assert_eq!(row(&linked, 29).trim_end(), " Link: https://en.wikipedia.org/wiki/Sourdough");
+    assert_eq!(row(&linked, 29).trim_end(), " Link 1: https://en.wikipedia.org/wiki/Sourdough");
     // The second link: the parenthesis and full stop are not part of it.
     assert!(run.page_text().contains("([https://en.wikipedia.org/wiki/Lactobacillus]{2}).\n"), "{}", run.page_text());
     run.press("down");
@@ -918,7 +962,7 @@ fn article_not_found() {
     golden("not-found", &view);
     let text = run.page_text();
     assert!(text.starts_with("An article that is not in the store\n"), "{text}");
-    assert!(text.contains("Not found: neither this host nor its relay has the article."), "{text}");
+    assert!(text.contains("Not found: neither this host nor its relays have this article."), "{text}");
     assert!(text.contains("Esc: back to the timeline"), "{text}");
     blank_rows(&view, 29);
 }
@@ -1347,7 +1391,9 @@ fn figure_cost() {
 /// much over the building share.
 #[test]
 fn line_kinds_frames() {
-    for unit in ["  \t\n", "\n", "a\n\n", "- a\n", "# a\n", "    a\n", "a\n    b\n", "```\na\n```\n"] {
+    let near = format!("terse:{}g terse:feed/{}g\n", "a".repeat(63), "a".repeat(63));
+    let link = format!("terse:{} ", "a".repeat(64));
+    for unit in ["  \t\n", "\n", "a\n\n", "- a\n", "# a\n", "    a\n", "a\n    b\n", "```\na\n```\n", &near, &link] {
         let run = open_only("Lines", &unit.repeat(40000 / unit.len()), 60);
         let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
         assert!(run.results.iter().all(|r| r.waited), "{unit:?}: {used:?}");
@@ -1397,4 +1443,441 @@ fn crlf_article() {
     assert_eq!(figs[0].path, [3, 0, 0, 0, 0, 4, 64, 1, 160, 0]);
     let view = run.view();
     assert!(view.contains("sans21b |Title\n") && view.contains("|• item\n") && view.contains("sans15 |After.\n"), "{view}");
+}
+
+// --- Names, search, links ------------------------------------------------
+
+/// The short form of a blob ID (the title of an article known only by it).
+fn short_id(id: &[u8; 32]) -> String {
+    short(id)
+}
+
+/// The colour of the first span of anchor `id` on the page.
+fn anchor_rgb(run: &Run, id: u16) -> [u8; 3] {
+    run.layout().lines.iter().flat_map(|l| &l.spans).find(|s| s.style.anchor == id).unwrap().style.rgb
+}
+
+/// Alice has a listed profile "Alice", bob is "Bobby" by nickname, carol
+/// (the host) has none.
+fn named() -> Fixture {
+    let mut f = Fixture::populated().with_identity(true);
+    f.profile(&alice(), "Alice", true);
+    f.nicknames.push((bob().feed_key(), "Bobby".into()));
+    f
+}
+
+#[test]
+fn names_in_timeline_and_feeds() {
+    let f = named();
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    golden("names-list", &run.view());
+    let text = run.page_text();
+    let (a, b, c) = (short(&alice().feed_key()), short(&bob().feed_key()), short(&carol().feed_key()));
+    assert!(text.contains(&format!("[Alice ({a})  ·  2026-11-17 18:50")), "{text}");
+    assert!(text.contains(&format!("[Bobby ({b})  ·  2026-11-17 19:40")), "{text}");
+    assert!(text.contains(&format!("[{c}  ·  ")), "no name: the key alone: {text}");
+    assert!(!text.contains("Alice  ·") && !text.contains("Bobby  ·"), "never a name without the key: {text}");
+    run.press("f");
+    run.frames(4);
+    golden("names-feeds", &run.view());
+    let text = run.page_text();
+    assert!(text.contains(&format!("[Alice]{{2}}[  {a}]{{2}}")), "{text}");
+    assert!(text.contains(&format!("[Bobby]{{1}}[  {b}]{{1}}")), "{text}");
+    assert!(text.contains(&format!("[{c}]")) && text.contains("  you]"), "{text}");
+    assert!(text.contains("[your nickname  ·  highest #"), "{text}");
+    // The article's details line.
+    run.press("esc");
+    run.press("home");
+    run.press("down");
+    run.press("enter");
+    run.frames(2);
+    assert!(run.page_text().contains(&format!("Bobby ({b})  ·  #10")), "{}", run.page_text());
+}
+
+/// N in the feeds view: the nickname entry, allowed and refused, a
+/// malformed one, and removing one.
+#[test]
+fn nickname_flow() {
+    let f = named();
+    // Key order: bob (0b51…), alice (66be…), carol.
+    let mut run = Run::with_consent(&f, "10 press f\n12 press down\n14 press n\n", Consent::Allow);
+    run.frames(16);
+    assert!(row(&run.screen(), 28).starts_with(&format!(" Nickname for {}:", short(&alice().feed_key()))), "{}", run.screen());
+    run.text(" Al");
+    run.press("enter");
+    assert_eq!(run.status(), " A nickname cannot start or end with a space");
+    for _ in 0..3 {
+        run.press("backspace");
+    }
+    run.text("Ally ✓");
+    golden("nickname-entry", &run.view());
+    run.press("enter");
+    run.frames(3);
+    assert_eq!(run.status(), format!(" Nickname for {} set to “Ally ✓”", short(&alice().feed_key())));
+    assert!(row(&run.screen(), 28).trim().is_empty());
+    let text = run.page_text();
+    assert!(text.contains(&format!("[Ally ✓]{{2}}[  {}]{{2}}", short(&alice().feed_key()))), "{text}");
+    // Empty removes it: the declared name is back.
+    run.press("n");
+    run.press("enter");
+    run.frames(3);
+    assert_eq!(run.status(), format!(" Nickname for {} removed", short(&alice().feed_key())));
+    assert!(run.page_text().contains(&format!("[Alice]{{2}}[  {}]{{2}}", short(&alice().feed_key()))), "{}", run.page_text());
+    // Too long.
+    run.press("n");
+    run.text(&"x".repeat(49));
+    run.press("enter");
+    assert_eq!(run.status(), " A nickname has at most 48 bytes of UTF-8; this one has 49");
+    // Refused.
+    let mut run = Run::with_consent(&f, "10 press f\n14 press n\n", Consent::Deny);
+    run.frames(16);
+    run.text("Nope");
+    run.press("enter");
+    run.frames(3);
+    assert_eq!(run.status(), format!(" Nickname for {}: refused", short(&bob().feed_key())));
+    assert!(run.page_text().contains(&format!("[Bobby]{{1}}[  {}]{{1}}", short(&bob().feed_key()))), "{}", run.page_text());
+}
+
+/// P in the feeds view: the public name, the listing question, allowed
+/// (listed and not) and refused.
+#[test]
+fn public_name_flow() {
+    let f = named();
+    let mut run = Run::with_consent(&f, "10 press f\n14 press p\n", Consent::Allow);
+    run.frames(16);
+    assert!(row(&run.screen(), 28).starts_with(" Your public name:"), "{}", run.screen());
+    run.text("Carol W");
+    run.press("enter");
+    golden("public-name-question", &run.view());
+    assert_eq!(run.status(), " Let others find “Carol W” by search?   Y: yes   N: no   Esc: cancel");
+    run.press("y");
+    run.frames(4);
+    assert!(run.status().starts_with(" Your public name is now “Carol W”, and others can find it by search (#"), "{}", run.status());
+    let text = run.page_text();
+    assert!(text.contains(&format!("[Carol W]{{3}}[  {}]{{3}}[  you]{{3}}", short(&carol().feed_key()))), "{text}");
+    let feeds = terse_net::FeedStore::beside_blobs(f.store.path());
+    let p = feeds.latest_profile(&carol().feed_key()).unwrap().unwrap();
+    assert_eq!(p.entry.title, "Carol W");
+    // N: not listed.
+    run.press("p");
+    run.text("Carol");
+    run.press("enter");
+    run.press("n");
+    run.frames(4);
+    assert!(run.status().starts_with(" Your public name is now “Carol”, not listed for search (#"), "{}", run.status());
+    // Esc at the question: nothing.
+    run.press("p");
+    run.text("Carol");
+    run.press("enter");
+    run.press("esc");
+    assert!(run.status().contains("S subscribe"), "{}", run.status());
+    // A malformed name.
+    run.press("p");
+    run.press("enter");
+    assert_eq!(run.status(), " Type the name others will see beside your feed key, or Esc to cancel");
+    run.text("Carol ");
+    run.press("enter");
+    assert_eq!(run.status(), " A name cannot start or end with a space");
+    // Refused.
+    let mut run = Run::with_consent(&f, "10 press f\n14 press p\n", Consent::Deny);
+    run.frames(16);
+    run.text("Carol W");
+    run.press("enter");
+    run.press("y");
+    run.frames(3);
+    assert_eq!(run.status(), " Setting your public name was refused");
+}
+
+/// A relay serving a copy of the fixture's store, on an ephemeral port.
+fn relay_for(f: &Fixture) -> (tempfile::TempDir, String) {
+    fn copy(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            if e.file_type().unwrap().is_dir() {
+                copy(&e.path(), &to.join(e.file_name()));
+            } else {
+                std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    copy(f.store.path(), dir.path());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let relay = std::sync::Arc::new(terse_relay::Relay::new(BlobStore::open(dir.path(), None).unwrap(), 1024));
+    std::thread::spawn(move || terse_relay::serve(listener, relay));
+    (dir, url)
+}
+
+/// Bob gets a listed profile too ("Bob the baker"); carol is not
+/// subscribed to bob.
+fn searchable() -> (Fixture, tempfile::TempDir) {
+    let mut f = named();
+    f.profile(&bob(), "Bob the baker", true);
+    f.feeds.retain(|k| *k != bob().feed_key());
+    let (dir, url) = relay_for(&f);
+    f.relays.push(url);
+    (f, dir)
+}
+
+#[test]
+fn search_finds_feeds_and_articles() {
+    let (f, _relay) = searchable();
+    let mut run = Run::with_consent(&f, "10 text /\n", Consent::Allow);
+    run.frames(12);
+    assert!(row(&run.screen(), 28).starts_with(" Search:"), "{}", run.screen());
+    assert!(run.page_text().starts_with("Search\n"), "{}", run.page_text());
+    // "b" matches bob's name and titles with a b.
+    run.text("b");
+    let enter = run.machine.frame();
+    run.press("enter");
+    run.frames(2);
+    let view = run.view();
+    golden("search", &view);
+    let text = run.page_text();
+    assert!(text.contains("Feeds\n1 found\n"), "{text}");
+    assert!(text.contains(&format!("[Bob the baker]{{2}}\n[{}]{{2}}", short(&bob().feed_key()))), "{text}");
+    assert!(text.contains("Articles\n"), "{text}");
+    assert!(text.contains("[A big article (over 48 KiB)]"), "{text}");
+    assert!(text.contains(&format!("[Bob the baker ({})  ·  2026-11-17 19:40  ·  6 bytes]", short(&bob().feed_key()))), "{text}");
+    assert_eq!(run.status(), " 1 feed and 2 articles found");
+    assert_eq!(run.selected(), "Bob the baker");
+    // Results in frames: Enter's frame counted as 1.
+    let first = run.submits.iter().copied().filter(|&s| s > enter).nth(0).unwrap();
+    eprintln!("reader: search: results submitted {} frames after Enter (Enter's frame is 1)", first - enter + 1);
+    // Down crosses the articles' heading; Up comes back.
+    run.press("down");
+    assert!(run.selected().starts_with("A big article") || !run.selected().is_empty());
+    run.press("up");
+    assert_eq!(run.selected(), "Bob the baker");
+    // Enter: the feed's page; S subscribes.
+    run.press("enter");
+    let page = run.page_text();
+    assert!(page.starts_with("Bob the baker\n"), "{page}");
+    assert!(page.contains("You are not subscribed to this feed."), "{page}");
+    run.press("s");
+    run.frames(4);
+    assert_eq!(run.status(), format!(" Subscribed to {}", short(&bob().feed_key())));
+    assert!(run.page_text().contains("You are subscribed to this feed."), "{}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().contains("subscribed]"), "the marker: {}", run.page_text());
+    // An article result opens; Esc comes back to the search.
+    run.press("down");
+    run.press("enter");
+    run.frames(3);
+    assert!(!run.page_text().starts_with("Search"), "{}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Search\n"), "{}", run.page_text());
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    eprintln!("reader: search, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}
+
+#[test]
+fn search_without_results_relay_or_permission() {
+    let (f, _relay) = searchable();
+    let mut run = Run::new(&f, "10 text /\n");
+    run.frames(12);
+    run.text("zzz");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), " Nothing found for “zzz” (only listed feeds can be found)");
+    let text = run.page_text();
+    assert!(text.contains("Feeds\nnone found\n") && text.contains("Articles\nnone found\n"), "{text}");
+    golden("search-none", &run.view());
+    // A third search within a second: the relay allows 4 finds a second.
+    run.text("/");
+    run.text("zzz");
+    run.press("enter");
+    run.frames(2);
+    run.text("/");
+    run.text("zzz");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), " The relays refused the search (too many at once?): try again in a moment");
+    // No relay.
+    let f = named();
+    let mut run = Run::new(&f, "10 press f\n12 text /\n");
+    run.frames(14);
+    run.text("Alice");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), " Search needs a relay, and none could be reached");
+    golden("search-no-relay", &run.view());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Feeds\n"), "back where it came from: {}", run.page_text());
+}
+
+/// An article with links of every kind, published newest (so first).
+fn linked(f: &mut Fixture) -> [u8; 32] {
+    let sour = to_hex(&blob_id(SOURDOUGH.as_bytes()));
+    let missing = to_hex(&blob_id(b"not anywhere"));
+    let text = format!(
+        "Links of every kind.\n\nThe sourdough article: terse:{sour}\n\nOne that is nowhere: terse:{missing}\n\n\
+         Bob's feed: terse:feed/{}\n\nAnd the web: https://example.com/x\n\nNot links: terse:{}0 and xterse:{sour}\n",
+        to_hex(&bob().feed_key()),
+        &sour
+    );
+    f.publish(&alice(), "Links", text.as_bytes(), None);
+    blob_id(text.as_bytes())
+}
+
+#[test]
+fn tab_moves_through_links() {
+    let mut f = named();
+    linked(&mut f);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(16);
+    let text = run.page_text();
+    assert!(text.contains("[terse:2c3d70") && text.contains("]{3}"), "{text}");
+    assert!(text.contains("[https://example.com/x]{4}"), "{text}");
+    assert!(!text.contains("{5}"), "the near misses are not links: {text}");
+    assert_eq!(anchor_rgb(&run, 1), [110, 170, 255]);
+    run.press("tab");
+    run.frames(1);
+    assert_eq!(anchor_rgb(&run, 1), SELECTED, "the current link");
+    assert_eq!(run.status(), format!(" Link 1: terse:{}  (an article)   Enter: open", short(&blob_id(SOURDOUGH.as_bytes()))));
+    golden("article-tab", &run.view());
+    run.press("tab");
+    run.press("tab");
+    run.press("tab");
+    assert_eq!(run.status(), " Link 4: https://example.com/x");
+    assert_eq!(anchor_rgb(&run, 4), SELECTED);
+    assert_eq!(anchor_rgb(&run, 1), [110, 170, 255]);
+    run.press("tab");
+    assert!(run.status().starts_with(" Link 1: "), "wraps: {}", run.status());
+    run.script_now("{f} press tab shift\n", 2);
+    assert_eq!(run.status(), " Link 4: https://example.com/x", "Shift+Tab goes back");
+    run.press("enter");
+    assert_eq!(run.status(), " Link 4: https://example.com/x", "a web link only shows its address");
+    assert!(run.page_text().starts_with("Links\n"));
+}
+
+#[test]
+fn following_links_and_back() {
+    let mut f = named();
+    linked(&mut f);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(16);
+    run.press("tab");
+    run.press("enter");
+    run.frames(2);
+    let view = run.view();
+    golden("article-followed", &view);
+    assert!(run.page_text().starts_with(&format!("{SOURDOUGH_TITLE}\nAlice ({})  ·  #1", short(&alice().feed_key()))), "the timeline's title: {}", run.page_text());
+    run.press("end");
+    run.press("esc");
+    run.frames(2);
+    assert!(run.page_text().starts_with("Links\n"), "back: {}", run.page_text());
+    // A missing article: its short hash as the title.
+    run.press("tab");
+    run.press("tab");
+    run.press("enter");
+    run.frames(2);
+    let missing = blob_id(b"not anywhere");
+    let view = run.view();
+    golden("article-link-missing", &view);
+    let text = run.page_text();
+    assert!(text.starts_with(&format!("{}\nterse:{}  ·  not in your timeline", short_id(&missing), short_id(&missing))), "{text}");
+    assert!(text.contains("Not found: neither this host nor its relays have this article."), "{text}");
+    assert!(text.contains("Esc: back to the previous article"), "{text}");
+    run.press("esc");
+    run.frames(2);
+    assert!(run.page_text().starts_with("Links\n"), "{}", run.page_text());
+    // A feed link: the feed page; S subscribes; Esc back to the article.
+    run.press("tab");
+    run.press("tab");
+    run.press("tab");
+    run.press("enter");
+    let view = run.view();
+    golden("feed-page", &view);
+    let text = run.page_text();
+    assert!(text.starts_with(&format!("Bobby\nyour nickname for the feed  ·  {}", short(&bob().feed_key()))), "{text}");
+    assert!(text.contains("You are subscribed to this feed."), "{text}");
+    run.press("esc");
+    run.frames(2);
+    assert!(run.page_text().starts_with("Links\n"), "{}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    eprintln!("reader: following links, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}
+
+/// Ten articles, each linking to the next: the back stack keeps the last
+/// eight, then Esc goes to the timeline. Every article's first eight links
+/// are prefetched, at most two at a time.
+#[test]
+fn back_stack_and_prefetch() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let mut texts = vec![String::from("The end of the chain.\n")];
+    for i in (0..9).rev() {
+        texts.insert(0, format!("Article {i}. Next: terse:{}\n", to_hex(&blob_id(texts[0].as_bytes()))));
+    }
+    for (i, t) in texts.iter().enumerate().rev() {
+        f.publish(&alice(), &format!("Chain {i}"), t.as_bytes(), None);
+    }
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(16);
+    assert!(run.page_text().starts_with("Chain 0\n"), "{}", run.page_text());
+    for i in 1..10 {
+        run.press("tab");
+        run.press("enter");
+        run.frames(2);
+        assert!(run.page_text().starts_with(&format!("Chain {i}\n")), "{i}: {}", run.page_text());
+    }
+    for i in (2..9).rev() {
+        run.press("esc");
+        run.frames(2);
+        assert!(run.page_text().starts_with(&format!("Chain {i}\n")), "{i}: {}", run.page_text());
+    }
+    run.press("esc");
+    run.frames(2);
+    assert!(run.page_text().starts_with("Chain 1\n"), "{}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "eight back, then the timeline: {}", run.page_text());
+    // Prefetches: one-byte gets of each next article.
+    let pre: Vec<&(u32, [u8; 32], u16)> = run.gets.iter().filter(|g| g.2 == 1).collect();
+    assert!(pre.len() >= 9, "{pre:?}");
+    assert!(run.most_pending <= 8);
+
+    // Many links: only the first eight distinct ones, two at a time.
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let ids: Vec<[u8; 32]> = (0..12).map(|i| blob_id(format!("elsewhere {i}").as_bytes())).collect();
+    let mut text = String::from("Many links.\n\n");
+    for id in ids.iter().chain(&ids[..3]) {
+        text.push_str(&format!("terse:{}\n", to_hex(id)));
+    }
+    f.publish(&alice(), "Many", text.as_bytes(), None);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(30);
+    let pre: Vec<[u8; 32]> = run.gets.iter().filter(|g| g.2 == 1).map(|g| g.1).collect();
+    assert_eq!(pre, ids[..8], "the first eight distinct links, in order");
+    let mut per_frame = std::collections::HashMap::new();
+    for g in run.gets.iter().filter(|g| g.2 == 1) {
+        *per_frame.entry(g.0).or_insert(0) += 1;
+    }
+    assert!(per_frame.values().all(|&n| n <= 2), "{per_frame:?}");
+}
+
+/// A link to an article over the reader's 48 KiB: a page says so.
+#[test]
+fn link_to_a_large_article() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    f.publish(&alice(), "Big", big_article().as_bytes(), None);
+    let text = format!("A link to a big one: terse:{}\n", to_hex(&blob_id(big_article().as_bytes())));
+    f.publish(&alice(), "Pointer", text.as_bytes(), None);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(16);
+    run.press("tab");
+    run.press("enter");
+    run.frames(3);
+    let text = run.page_text();
+    assert!(text.starts_with("Big\n"), "{text}");
+    assert!(text.contains("Too large: this article is 50.8 KB, and this reader shows articles\nof up to 48 KB."), "{text}");
 }

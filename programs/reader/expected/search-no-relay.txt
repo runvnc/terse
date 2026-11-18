@@ -1,0 +1,37 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Search needs a relay, and none could be reached
+-- page: height 129, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Search
+   28  15     0   sans12 |“Alice”: listed feeds and their articles, from your relays
+   51  20     0   sans16b |Feeds
+   71  15     0   sans12 |not searched: no relay could be reached
+   94  20     0   sans16b |Articles
+  114  15     0   sans12 |not searched: no relay could be reached

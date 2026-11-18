@@ -27,7 +27,7 @@
 
 
 
- ↑↓ move  Enter open  F feeds  ? help  T publish a test  Esc quit
+ ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
 -- page: height 228, scroll 0 (stored 0), region 64 0 512 464 --
    48  33     0   sans26b |No articles yet
    97  19     0   sans15 |The timeline shows the articles of the feeds this host subscribes

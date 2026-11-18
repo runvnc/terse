@@ -27,7 +27,7 @@
 
 
 
- 100%                                 ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+ 100%                    Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 651, scroll 187 (stored 187), region 64 0 512 464 --
   193  22     0   sans17b |A subheading
   225  19    10   sans15 |• A list item, whose text goes on on the next line, with a link

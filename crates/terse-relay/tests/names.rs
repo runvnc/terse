@@ -6,7 +6,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS};
-use terse_net::relay::{DEFAULT_TIMEOUT, RelayClient};
+use terse_net::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use terse_net::{BlobStore, Done, Entry, Identity, Node, blob_id, entry};
 use terse_relay::Relay;
 
@@ -85,12 +85,31 @@ fn find_feeds_and_entries() {
     r.blobs().put(b"listed: yes\n").unwrap();
     assert_eq!(titles(r.find(SCOPE_FEEDS, b"no document").unwrap()), ["Ana no document"]);
 
-    // Entries of listed feeds only, articles only, newest first.
+    // Entries of listed feeds only, articles only, newest stored first
+    // (whatever time their authors claim).
     article(&r, &ids[1], 2, 100, "Rust news");
     article(&r, &ids[2], 2, 300, "More NEWS");
     article(&r, &ids[3], 2, 500, "Hidden news");
     article(&r, &ids[2], 3, 200, "Old news");
-    assert_eq!(titles(r.find(SCOPE_ENTRIES, b"news").unwrap()), ["More NEWS", "Old news", "Rust news"]);
+    article(&r, &ids[1], 1_000_000, 1, "Late news");
+    assert_eq!(titles(r.find(SCOPE_ENTRIES, b"news").unwrap()), ["Late news", "Old news", "More NEWS", "Rust news"]);
+    // The order is kept across a restart; entries stored with no arrival
+    // record (an older store) are recorded at start, by feed key then seq.
+    drop(r);
+    let r = relay(dir.path(), 1024);
+    assert_eq!(titles(r.find(SCOPE_ENTRIES, b"news").unwrap()), ["Late news", "Old news", "More NEWS", "Rust news"]);
+    drop(r);
+    std::fs::remove_file(dir.path().join("feeds").join("arrivals")).unwrap();
+    let r = relay(dir.path(), 1024);
+    let mut seeded = vec![
+        (ids[1].feed_key(), 2, "Rust news"),
+        (ids[1].feed_key(), 1_000_000, "Late news"),
+        (ids[2].feed_key(), 2, "More NEWS"),
+        (ids[2].feed_key(), 3, "Old news"),
+    ];
+    seeded.sort();
+    let want: Vec<&str> = seeded.iter().rev().map(|s| s.2).collect();
+    assert_eq!(titles(r.find(SCOPE_ENTRIES, b"news").unwrap()), want);
     // At most 16 results.
     for seq in 4..30 {
         article(&r, &ids[2], seq, 1000 + seq, "many");
@@ -126,4 +145,34 @@ fn find_merges_two_relays() {
     let got: Vec<(_, &str, u32)> = found.iter().map(|s| (s.entry.feed, s.entry.title.as_str(), s.entry.seq)).collect();
     assert_eq!(got, want);
     assert!(found.iter().all(|s| s.entry.blob == blob_id(b"listed: yes\n\nAbout.")));
+}
+
+/// A connection that searches more than 4 times a second is refused
+/// (NETWORK 4.7); a refused find does not count.
+#[test]
+fn find_rate_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = serve(relay(dir.path(), 1024));
+    let mut client = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
+    client.connect().unwrap();
+    let ask = |client: &mut RelayClient, n: usize| {
+        let reqs: Vec<u32> = (0..n).map(|_| client.find(SCOPE_FEEDS, b"x")).collect();
+        let mut replies = Vec::new();
+        while replies.len() < n {
+            replies.extend(client.poll());
+        }
+        replies.sort_by_key(|r| reqs.iter().position(|q| *q == r.0));
+        replies.into_iter().map(|r| r.1).collect::<Vec<_>>()
+    };
+    let start = std::time::Instant::now();
+    let got = ask(&mut client, 6);
+    assert!(start.elapsed() < std::time::Duration::from_millis(900));
+    let found = RelayReply::Found(Vec::new());
+    assert_eq!(got, [found.clone(), found.clone(), found.clone(), found.clone(), RelayReply::Refused, RelayReply::Refused]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(ask(&mut client, 1), [found]);
+    // Another connection has its own allowance.
+    let mut other = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
+    other.connect().unwrap();
+    assert_eq!(ask(&mut other, 4).iter().filter(|r| **r == RelayReply::Refused).count(), 0);
 }

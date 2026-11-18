@@ -1,0 +1,52 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
+-- page: height 1002, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |Keeping a sourdough starter alive
+   53  15     0   sans12 |Alice (66be7e…0c473a)  ·  #1  ·  2026-11-17 18:10 UTC  ·  2.5 KB
+   78   8     0  -- rule --
+   96  19     0   sans15 |A sourdough starter is nothing more than flour and water that has
+  115  19     0   sans15 |been colonised by wild yeast and lactic acid bacteria. Left on a
+  134  19     0   sans15 |kitchen counter, the mixture ferments, rises and falls each day, and
+  153  19     0   sans15 |in return for regular feeding it will leaven bread for decades. Some
+  172  19     0   sans15 |bakeries keep starters that are older than the buildings they work
+  191  19     0   sans15 |in.
+  220  19     0   sans15 |The routine is simple once it settles into a rhythm. Discard most of
+  239  19     0   sans15 |the starter, keep a small amount, and feed it with fresh flour and
+  258  19     0   sans15 |water in equal weights. Within four to eight hours it should double
+  277  19     0   sans15 |in volume and smell pleasantly sour, like yoghurt or green apples.
+  296  19     0   sans15 |That peak is the moment to bake with it.
+  325  19     0   sans15 |A typical week at room temperature looks like this:
+  354  17     0   mono13 |    Day   Keep   Flour   Water   Notes
+  371  17     0   mono13 |    Mon   20 g    50 g    50 g   rises in about six hours
+  388  17     0   mono13 |    Wed   20 g    50 g    50 g   bake on Thursday morning
+  405  17     0   mono13 |    Fri   20 g   100 g   100 g   a double feed for the weekend
+  422  17     0   mono13 |    Sun   rests in the fridge until Monday
+  449  19     0   sans15 |Temperature matters more than almost anything else. A warm kitchen

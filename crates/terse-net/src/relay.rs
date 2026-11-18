@@ -5,10 +5,15 @@
 //! with a browser WebSocket transport. Replies are matched to requests by
 //! `req`; a request with no reply within the timeout fails. Entries the relay
 //! pushes are collected unverified for the caller ([`RelayClient::take_pushed`]).
+//!
+//! A WebSocket client connects on a thread of its own ([`RelayClient::start_connect`]),
+//! so a relay that does not answer never holds up the thread that polls the
+//! client; `poll` takes in the outcome of the attempt.
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tungstenite::protocol::WebSocketConfig;
@@ -68,14 +73,22 @@ impl WsTransport {
             .strip_prefix("ws://")
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{url}: only ws:// relays are supported")))?;
         let authority = rest.split('/').next().unwrap_or_default();
-        let addr = authority
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{url}: no address")))?;
-        if public_only && !crate::profile::public_ip(addr.ip()) {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{url}: not a public address")));
+        let addrs: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
+        check_addrs(&addrs, public_only).map_err(|e| io::Error::new(e.kind(), format!("{url}: {e}")))?;
+        // Only the addresses checked above are used; the name is not
+        // resolved again.
+        let mut last = io::Error::new(io::ErrorKind::NotFound, format!("{url}: no address"));
+        let mut stream = None;
+        for addr in &addrs {
+            match TcpStream::connect_timeout(addr, timeout) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => last = e,
+            }
         }
-        let stream = TcpStream::connect_timeout(&addr, timeout)?;
+        let stream = stream.ok_or(last)?;
         stream.set_read_timeout(Some(timeout))?;
         stream.set_write_timeout(Some(timeout))?;
         stream.set_nodelay(true)?;
@@ -89,6 +102,20 @@ impl WsTransport {
     pub fn into_inner(self) -> WebSocket<TcpStream> {
         self.ws
     }
+}
+
+/// Checks the resolved addresses of a relay: there must be one and, with
+/// `public_only`, every one must be public ([`crate::profile::public_ip`]),
+/// so a name that resolves to a private address among public ones is
+/// refused (NETWORK 5).
+pub fn check_addrs(addrs: &[SocketAddr], public_only: bool) -> io::Result<()> {
+    if addrs.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "no address"));
+    }
+    if public_only && addrs.iter().any(|a| !crate::profile::public_ip(a.ip())) {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a public address"));
+    }
+    Ok(())
 }
 
 impl Transport for WsTransport {
@@ -129,9 +156,17 @@ pub enum RelayReply {
 }
 
 type Connector = Box<dyn FnMut() -> io::Result<Box<dyn Transport>> + Send>;
+type Attempt = (Connector, io::Result<Box<dyn Transport>>);
 
 pub struct RelayClient {
-    connect: Connector,
+    /// `None` while a background attempt has it.
+    connect: Option<Connector>,
+    /// Connect on a thread of its own ([`Self::start_connect`]).
+    background: bool,
+    /// The background attempt in progress.
+    attempt: Option<mpsc::Receiver<Attempt>>,
+    /// Why the last attempt failed, not yet taken.
+    failure: Option<io::Error>,
     transport: Option<Box<dyn Transport>>,
     timeout: Duration,
     next_req: u32,
@@ -151,7 +186,10 @@ impl RelayClient {
     /// connection fails.
     pub fn new(connect: Connector, timeout: Duration) -> Self {
         RelayClient {
-            connect,
+            connect: Some(connect),
+            background: false,
+            attempt: None,
+            failure: None,
             transport: None,
             timeout,
             next_req: 0,
@@ -162,7 +200,8 @@ impl RelayClient {
         }
     }
 
-    /// A client for a `ws://` relay URL.
+    /// A client for a `ws://` relay URL. It connects in the background
+    /// ([`Self::start_connect`]).
     pub fn websocket(url: &str, timeout: Duration) -> Self {
         Self::websocket_checked(url, timeout, false)
     }
@@ -171,10 +210,12 @@ impl RelayClient {
     /// connects to public addresses.
     pub fn websocket_checked(url: &str, timeout: Duration, public_only: bool) -> Self {
         let url = url.to_string();
-        Self::new(
+        let mut client = Self::new(
             Box::new(move || Ok(Box::new(WsTransport::connect_checked(&url, timeout, public_only)?) as Box<dyn Transport>)),
             timeout,
-        )
+        );
+        client.background = true;
+        client
     }
 
     /// Searches the relay's index (NETWORK 4.7).
@@ -221,13 +262,82 @@ impl RelayClient {
         req
     }
 
-    /// Connects now if not connected.
+    /// Connects now if not connected, waiting for an attempt in progress.
     pub fn connect(&mut self) -> io::Result<()> {
+        if let Some(rx) = self.attempt.take() {
+            let (connect, result) = rx.recv().map_err(|_| io::Error::other("connect thread lost"))?;
+            self.connect = Some(connect);
+            return result.map(|t| {
+                self.transport = Some(t);
+                self.generation += 1;
+            });
+        }
+        self.failure = None;
         if self.transport.is_none() {
-            self.transport = Some((self.connect)()?);
+            let connect = self.connect.as_mut().ok_or_else(|| io::Error::other("no connector"))?;
+            self.transport = Some(connect()?);
             self.generation += 1;
         }
         Ok(())
+    }
+
+    /// Starts connecting if not connected and no attempt is in progress: on
+    /// a thread of its own for a WebSocket client (the outcome is taken in
+    /// by `poll`), else at once. A failure is kept for
+    /// [`Self::take_connect_failure`].
+    pub fn start_connect(&mut self) {
+        if self.transport.is_some() || self.attempt.is_some() {
+            return;
+        }
+        let Some(mut connect) = self.connect.take() else { return };
+        if !self.background {
+            let result = connect();
+            self.connect = Some(connect);
+            return self.finish(result);
+        }
+        let (tx, rx) = mpsc::channel();
+        self.attempt = Some(rx);
+        std::thread::spawn(move || {
+            let result = connect();
+            let _ = tx.send((connect, result));
+        });
+    }
+
+    /// Whether a background attempt to connect is in progress.
+    pub fn connecting(&self) -> bool {
+        self.attempt.is_some()
+    }
+
+    /// Why the last attempt to connect failed, once.
+    pub fn take_connect_failure(&mut self) -> Option<io::Error> {
+        self.failure.take()
+    }
+
+    fn finish(&mut self, result: io::Result<Box<dyn Transport>>) {
+        match result {
+            Ok(t) => {
+                self.transport = Some(t);
+                self.generation += 1;
+            }
+            Err(e) => self.failure = Some(e),
+        }
+    }
+
+    /// Takes in the outcome of a background attempt, waiting at most `wait`.
+    fn check_attempt(&mut self, wait: Duration) {
+        let Some(rx) = &self.attempt else { return };
+        match rx.recv_timeout(wait) {
+            Ok((connect, result)) => {
+                self.attempt = None;
+                self.connect = Some(connect);
+                self.finish(result);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.attempt = None;
+                self.failure = Some(io::Error::other("connect thread lost"));
+            }
+        }
     }
 
     pub fn connected(&self) -> bool {
@@ -255,7 +365,10 @@ impl RelayClient {
     }
 
     fn send(&mut self, req: u32, message: Vec<u8>) {
-        if self.connect().is_err() {
+        // A background client is connected by `start_connect` only, so a
+        // request never waits for a connection.
+        let connected = if self.background { self.transport.is_some() } else { self.connect().is_ok() };
+        if !connected {
             return self.ready.push((req, RelayReply::Failed));
         }
         match self.transport.as_mut().map(|t| t.send(message)) {
@@ -278,6 +391,7 @@ impl RelayClient {
     /// Receives what has arrived and expires late requests; returns finished
     /// requests. Waits at most briefly.
     pub fn poll(&mut self) -> Vec<(u32, RelayReply)> {
+        self.check_attempt(RECV_WAIT);
         // Read while connected, not only while busy: entries may be pushed.
         loop {
             let Some(transport) = &mut self.transport else { break };
@@ -415,5 +529,45 @@ mod tests {
         drop(relay);
         assert!(c.poll().is_empty());
         assert!(!c.connected());
+    }
+
+    /// NETWORK 5: a feed relay is refused if any of its addresses is not
+    /// public.
+    #[test]
+    fn every_resolved_address_is_checked() {
+        let addr = |s: &str| s.parse::<SocketAddr>().unwrap();
+        let public = [addr("93.184.216.34:80"), addr("[2606:2800:220:1::1]:80")];
+        assert!(check_addrs(&public, true).is_ok());
+        for bad in ["127.0.0.1:80", "10.1.2.3:80", "192.168.0.1:80", "169.254.1.1:80", "[::1]:80", "[fe80::1]:80", "[::ffff:10.0.0.1]:80"] {
+            let mixed = [public[0], addr(bad), public[1]];
+            assert_eq!(check_addrs(&mixed, true).unwrap_err().kind(), io::ErrorKind::PermissionDenied, "{bad}");
+            assert!(check_addrs(&mixed, false).is_ok(), "own relays may be anywhere");
+        }
+        assert_eq!(check_addrs(&[], false).unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    /// A background client connects on its own thread; requests made
+    /// meanwhile fail at once instead of waiting.
+    #[test]
+    fn background_connect() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let mut c = RelayClient::websocket(&url, Duration::from_millis(200));
+        c.start_connect();
+        assert!(c.connecting() && !c.connected());
+        let start = Instant::now();
+        let a = c.get(&[1; 32]);
+        assert_eq!(c.poll(), [(a, RelayReply::Failed)]);
+        assert!(start.elapsed() < Duration::from_millis(100));
+        // Nobody answers the handshake: the attempt fails at the timeout.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while c.connecting() {
+            assert!(Instant::now() < deadline);
+            c.poll();
+        }
+        assert!(!c.connected());
+        assert!(c.take_connect_failure().is_some());
+        assert!(c.take_connect_failure().is_none());
+        drop(listener);
     }
 }

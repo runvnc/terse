@@ -264,3 +264,29 @@ fn reader_follows_feeds_while_running() {
     let (second, first) = (screen.find("[Second, while running]{1}"), screen.find("[First from the relay]{2}"));
     assert!(second.is_some() && first.is_some() && second < first, "newest first: {screen}");
 }
+
+/// `feed sync` also fetches the `terse:` links of the articles it downloads
+/// (NETWORK 4.4), unless `--no-prefetch`.
+#[test]
+fn sync_prefetches_links() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let linked = b"An article only linked to.\n".to_vec();
+    BlobStore::open(relay_dir.path(), None).unwrap().put(&linked).unwrap();
+    let author = User::new();
+    let config = author.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    let file = author.store.path().join("linking.txt");
+    std::fs::write(&file, format!("See terse:{}.\n", to_hex(&blob_id(&linked)))).unwrap();
+    author.feed(&["publish", file.to_str().unwrap(), "--title", "Linking"], Some(&url));
+    for prefetch in [true, false] {
+        let reader = User::new();
+        reader.feed(&["subscribe", &key], None);
+        let mut args = vec!["sync"];
+        if !prefetch {
+            args.push("--no-prefetch");
+        }
+        assert_eq!(reader.feed(&args, Some(&url)).lines().count(), 1);
+        assert_eq!(reader.has_blob(&linked), prefetch);
+    }
+}

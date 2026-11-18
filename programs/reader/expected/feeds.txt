@@ -27,7 +27,7 @@
 
 
 
- ↑↓ move  S subscribe  U unsubscribe  T publish a test  ? help  Esc back
+ ↑↓ move  S subscribe  U unsub  N nickname  P your name  / search  Esc back
 -- page: height 172, scroll 0 (stored 0), region 32 0 576 464 --
     8  20     0   sans16b |Feeds
    28  15     0   sans12 |3 subscriptions  ·  your key 91a28a…9a4b3a

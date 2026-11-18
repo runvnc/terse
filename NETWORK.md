@@ -21,7 +21,9 @@ blob, so an image ID is a blob ID.
 - Otherwise the host asks its relays (section 5). In v0 it fetches the whole blob, checks
   that its BLAKE3-256 hash equals the requested ID, stores it, and only then
   delivers the requested range to the program. A blob that fails the check is
-  discarded and treated as not found on that relay.
+  discarded and treated as not found on that relay. A get reply carries the
+  whole blob, so a host learns a blob's size only from an entry that points
+  at it or by downloading it.
 - A put stores the blob locally and sends it to every relay the host is
   connected to (section 5).
 - A host may start a program by image ID: it gets the blob, validates it as an
@@ -146,6 +148,13 @@ received first is kept.
   it gets the blob without being asked. This applies to profile entries
   too. If the blob's length differs from the entry's size, the blob is not
   associated with the entry. Larger blobs are fetched only on request.
+- **Prefetch:** when the host stores an article blob through automatic
+  download for an article entry (kind 1) of a subscribed feed, it scans the
+  text for `terse:` article links (section 4.5), takes the first 8 distinct
+  ones whose blobs it does not hold and is not already fetching, and gets
+  them. It skips a link when an entry it holds gives the blob a size over
+  the automatic download limit, and discards a fetched blob over that
+  limit. Prefetched blobs are not scanned. The user may turn prefetch off.
 - **Arrival order:** the host records the order in which it first stored
   each entry, and keeps that record across restarts. This is the order of
   the timeline that programs read (SPEC.md section 9.5), which holds only
@@ -202,8 +211,11 @@ below), which then starts the next block.
   at least one character after the `//`, running to the first byte that is
   not printable ASCII or is `<`, `>` or `"`; trailing `.` `,` `;` `:` `!`
   `?` `'` are not part of it, nor is a trailing `)` or `]` when the link
-  holds more of it than of its opening bracket. Links count in every block
-  that shows text.
+  holds more of it than of its opening bracket. A link is also `terse:`
+  followed by 64 lowercase hexadecimal digits (an article, by blob ID) or
+  `terse:feed/` followed by 64 lowercase hexadecimal digits (a feed key),
+  not preceded by a letter or digit, with the digits not followed by a
+  letter or digit. Links count in every block that shows text.
 - There is no inline markup: `*`, `_` and backquotes inside a line are
   ordinary text.
 
@@ -312,16 +324,20 @@ declared name.
   start with the query (same folding) first, then the others, each group in
   increasing order of feed key.
 - **Scope 2** returns article entries (kind 1) of feeds with a listed
-  profile in force whose title matches, newest first: by the claimed time,
-  higher first, then by feed key, increasing, then by `seq`, higher first.
+  profile in force whose title matches, newest first by the order in which
+  the relay stored them (not by the time the author claims).
 - At most 16 results. A relay answers from what it holds; it needs the
   profile document to know `listed`, so a profile whose document it does
   not hold, or cannot parse, counts as not listed.
+- A relay may refuse a find (status `3`, `count` 0) from a connection that
+  searches too often.
 - **Clients** ask all their relays and merge the replies: they verify every
   returned entry and drop invalid ones, ones of the wrong kind and ones that
-  do not match the query; they keep one entry per feed and `seq` (for scope
-  1, only the highest `seq` of each feed), order the merged list by the same
-  rules and keep the first 16.
+  do not match the query, and keep one entry per feed and `seq`. Scope 1:
+  only the highest `seq` of each feed, ordered by the rules above. Scope 2:
+  by rank, the first result of each relay (in the order of the host's
+  relays), then the second of each, and so on. They keep the first 16. A
+  search that no relay answered and at least one refused is refused.
 
 ## 5. Several relays
 
@@ -335,9 +351,13 @@ connections. It ignores a `relay` line whose host is `localhost`, a name
 under `.localhost`, or an address that is loopback, unspecified, private
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or
 link-local (169.254.0.0/16, fe80::/10), and does not connect if a host
-name resolves to such an address. A host connects to all its relays and,
-when a connection fails or drops, tries again after 1 s, doubling the wait
-up to 30 s.
+name resolves to any such address; it connects only to the addresses it
+checked, without resolving the name again. A host connects to all its
+relays and, when a connection fails or drops, tries again after 1 s,
+doubling the wait up to 30 s. A relay that is still connecting does not
+hold up requests: they go to the relays that are connected. Only while
+none is connected does a request wait, for the first connection (and
+briefly for the others).
 
 - **Put and publish** go to every connected relay. They succeed when at
   least one relay accepts. When publishing an article, the entry is
@@ -401,4 +421,5 @@ peer link at most once in each direction.
 - Relay discovery beyond configuration, the local relay and the `relay`
   lines of profiles.
 - Direct connections between hosts.
-- Abuse limits beyond blob size: on publishing, on searches, on peers.
+- Abuse limits beyond blob size and the search rate: on publishing, on
+  peers.

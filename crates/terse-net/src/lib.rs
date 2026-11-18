@@ -1,5 +1,6 @@
 //! Host-side networking for the content device (SPEC 9, NETWORK.md).
 //!
+//! - [`article`]: `terse:` links in articles (NETWORK 4.5).
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
 //! - [`identity`]: Ed25519 feed identities and the secret key file (NETWORK 4.1).
@@ -16,6 +17,7 @@
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
+pub mod article;
 pub mod blob;
 pub mod entry;
 pub mod feeds;
