@@ -1,5 +1,5 @@
-/* torture.c: arithmetic and control-flow torture for the profile-2 core.
- * Built twice by crates/terse-rv/tests/differential.rs: natively (x86-64,
+/* torture.c: arithmetic and control-flow torture for the RV32IMC core.
+ * Built twice by crates/terse-core/tests/differential.rs: natively (x86-64,
  * -fwrapv) and for rv32imc at several optimisation levels; each build
  * prints the same lines of checksums, which must agree. Only behaviour C
  * defines (with -fwrapv) is used: no division by zero, no INT_MIN / -1,

@@ -5,7 +5,7 @@ hosts through a relay and carries signed feeds of small articles. There are
 no names, messages or peer-to-peer links yet.
 
 Programs never see this protocol. They use the content device (SPEC.md
-section 7); the host speaks the protocol on their behalf.
+section 9); the host speaks the protocol on their behalf.
 
 ## 1. Blobs
 
@@ -129,7 +129,7 @@ received first is kept.
   fetched only on request.
 - **Arrival order:** the host records the order in which it first stored
   each entry, and keeps that record across restarts. This is the order of
-  the timeline that programs read (SPEC.md section 7.7). Unsubscribing
+  the timeline that programs read (SPEC.md section 9.5). Unsubscribing
   removes a feed's entries from the timeline but not from the record;
   subscribing again puts them back where they were.
 - Publishing an article: the host puts the blob, then signs and publishes an
@@ -146,7 +146,7 @@ reading instant.
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
 - Letting programs subscribe and publish, with the user's consent. (Reading
-  feeds is specified: SPEC.md section 7.7.)
+  feeds is specified: SPEC.md section 9.5.)
 - Finding replies to an article, ranking, moderation and spam limits.
 - Key rotation and several feeds per identity.
 - An article markup format.

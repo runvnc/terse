@@ -137,7 +137,7 @@ fn sampled_32_bit_encodings() {
             *diffs.entry(what).or_default() += 1;
         }
     }
-    // Profile 2 has no CSRs, no privileged instructions and no FENCE.I: LLVM
+    // The machine has no CSRs, no privileged instructions and no FENCE.I: LLVM
     // decodes those (Zicsr, Zifencei and the privileged spec are on by
     // default), the core faults. Nothing else may differ.
     let unsupported = |m: &str| {

@@ -2,8 +2,8 @@
  * integer C (round to nearest, ties to even; subnormals; infinities; NaN
  * results are the default NaN 7FF8...h). Structure after Berkeley SoftFloat
  * 3; division is plain restoring division, one quotient bit a step. For
- * measuring what doubles cost on profile 2, which has no FPU and no
- * compiler-rt. crates/terse-rv/tests/softfloat.rs checks it against the
+ * measuring what doubles cost on the machine, which has no FPU and no
+ * compiler-rt. crates/terse-core/tests/softfloat.rs checks it against the
  * host's FPU (natively) and runs it on the machine. */
 
 #include <stdint.h>

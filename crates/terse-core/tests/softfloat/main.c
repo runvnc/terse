@@ -1,5 +1,5 @@
 /* Drives softfloat.c: natively (TERSE_NATIVE) it checks every operation
- * against the host's FPU and prints a checksum; on profile 2 it prints the
+ * against the host's FPU and prints a checksum; on the machine it prints the
  * same checksum and spends one frame on each phase, so that the frame
  * results give the instructions per operation. */
 
