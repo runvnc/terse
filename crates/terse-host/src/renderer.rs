@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use terse_core::{COLS, CONTINUATION, ROWS, Terminal};
+use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal};
 
 /// Supplies glyph coverage bitmaps, one or two terminal cells in size.
 pub trait GlyphSource {
@@ -115,6 +115,26 @@ impl Params {
 struct Atlas {
     slots: HashMap<(u16, bool), u16>,
     next: usize,
+}
+
+/// The grid rectangle (x, y, width, height) inside a viewport: the largest
+/// integer multiple of the native size `grid` that fits, or a scaled-down fit.
+fn grid_rect(grid: (u32, u32), viewport: (u32, u32)) -> (f32, f32, f32, f32) {
+    let (gw, gh) = grid;
+    let fit = (viewport.0 as f32 / gw as f32).min(viewport.1 as f32 / gh as f32);
+    let scale = if fit >= 1.0 { fit.floor() } else { fit };
+    let (w, h) = (gw as f32 * scale, gh as f32 * scale);
+    (((viewport.0 as f32 - w) / 2.0).floor(), ((viewport.1 as f32 - h) / 2.0).floor(), w, h)
+}
+
+/// A viewport position in screen units, given the grid rectangle: the grid
+/// spans exactly the 640 × 480 screen.
+fn screen_pos(rect: (f32, f32, f32, f32), x: f64, y: f64) -> (u16, u16) {
+    let (ox, oy, w, h) = rect;
+    let unit = |p: f64, origin: f32, size: f32, units: u16| {
+        ((p as f32 - origin) / size * units as f32).floor().clamp(0.0, (units - 1) as f32) as u16
+    };
+    (unit(x, ox, w, SCREEN_WIDTH), unit(y, oy, h, SCREEN_HEIGHT))
 }
 
 pub struct Renderer {
@@ -360,23 +380,19 @@ impl Renderer {
         slot
     }
 
-    /// The grid rectangle (x, y, width, height) inside a viewport: the largest
-    /// integer multiple of the native size that fits, or a scaled-down fit.
     fn grid_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32) {
-        let (gw, gh) = self.grid_size();
-        let fit = (viewport.0 as f32 / gw as f32).min(viewport.1 as f32 / gh as f32);
-        let scale = if fit >= 1.0 { fit.floor() } else { fit };
-        let (w, h) = (gw as f32 * scale, gh as f32 * scale);
-        (((viewport.0 as f32 - w) / 2.0).floor(), ((viewport.1 as f32 - h) / 2.0).floor(), w, h)
+        grid_rect(self.grid_size(), viewport)
     }
 
-    /// The terminal cell under a viewport position, if any.
-    pub fn cell_at(&self, viewport: (u32, u32), x: f64, y: f64) -> Option<(u8, u8)> {
-        let (ox, oy, w, h) = self.grid_rect(viewport);
-        let col = ((x as f32 - ox) / w * COLS as f32).floor();
-        let row = ((y as f32 - oy) / h * ROWS as f32).floor();
-        let inside = (0.0..COLS as f32).contains(&col) && (0.0..ROWS as f32).contains(&row);
-        inside.then_some((col as u8, row as u8))
+    /// A viewport position in screen units (SPEC 5.4), through the same
+    /// transform that places the grid, clamped to the screen.
+    pub fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16) {
+        screen_pos(self.grid_rect(viewport), x, y)
+    }
+
+    /// The height of one terminal row in viewport pixels.
+    pub fn row_height(&self, viewport: (u32, u32)) -> f64 {
+        (self.grid_rect(viewport).3 / ROWS as f32) as f64
     }
 
     /// Records the draw into `encoder`, covering all of `target`.
@@ -416,5 +432,29 @@ impl Renderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn viewport_to_screen_units() {
+        // A 10 × 20 px cell grid (800 × 600) shown at 2x in a 1700 × 1300
+        // viewport: offset (50, 50), 1600 × 1200.
+        let rect = grid_rect((800, 600), (1700, 1300));
+        assert_eq!(rect, (50.0, 50.0, 1600.0, 1200.0));
+        assert_eq!(screen_pos(rect, 50.0, 50.0), (0, 0));
+        assert_eq!(screen_pos(rect, 1649.9, 1249.9), (639, 479));
+        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC 5.4).
+        assert_eq!(screen_pos(rect, 50.0 + 3.0 * 20.0, 50.0 + 2.0 * 40.0), (24, 32));
+        // Outside the grid: clamped.
+        assert_eq!(screen_pos(rect, 0.0, 2000.0), (0, 479));
+        assert_eq!(screen_pos(rect, 1699.0, -5.0), (639, 0));
+        // Scaled down to fit.
+        let rect = grid_rect((800, 600), (400, 600));
+        assert_eq!(rect, (0.0, 150.0, 400.0, 300.0));
+        assert_eq!(screen_pos(rect, 200.0, 300.0), (320, 240));
     }
 }

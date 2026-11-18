@@ -19,12 +19,9 @@ use terse_net::{
 
 use crate::{Args, USAGE, read};
 
-/// `feed sync` without `--watch` is caught up once the node is settled and
-/// nothing has arrived for this long: the relay sends no end-of-backlog
-/// marker (NETWORK 4.3).
-const QUIET: Duration = Duration::from_millis(500);
-/// `feed sync` without `--watch` gives up after this long.
-const SYNC_DEADLINE: Duration = Duration::from_secs(60);
+/// `feed sync` without `--watch` gives up if not caught up (NETWORK 4.3)
+/// after this long.
+pub const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Every `key` and `feed` command accepts these, used or not.
 const OPTIONS: [&str; 3] = ["--config", "--relay", "--store"];
@@ -49,7 +46,7 @@ fn load_identity(args: &Args) -> Result<Identity, String> {
     Identity::load(&path)
 }
 
-fn load_subscriptions(args: &Args) -> Result<Subscriptions, String> {
+pub fn load_subscriptions(args: &Args) -> Result<Subscriptions, String> {
     Subscriptions::load(config_dir(args)?.join("subscriptions"))
 }
 
@@ -228,27 +225,22 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
         return Err("no subscriptions (add one with `terse feed subscribe <key>`)".into());
     }
     let mut service = ContentService::start(node);
-    let start = Instant::now();
-    // Settled and not busy since; with a quiet period, that is caught up.
-    let mut idle = false;
+    let deadline = Instant::now() + SYNC_DEADLINE;
     let mut lost = false;
     loop {
-        let wait = if watch { Duration::from_secs(3600) } else { QUIET };
+        let wait = if watch { Duration::from_secs(3600) } else { deadline.saturating_duration_since(Instant::now()) };
         let Some(event) = service.wait_feed_event(wait) else {
-            if !watch && idle {
-                return Ok(ExitCode::SUCCESS);
-            }
-            if !watch && start.elapsed() > SYNC_DEADLINE {
+            if !watch && Instant::now() >= deadline {
                 return Err(format!("{relay}: not caught up after {} s", SYNC_DEADLINE.as_secs()));
             }
             continue;
         };
         match event {
             FeedEvent::Entry { entry, article } => println!("{}", entry_line(&entry, Some(article))),
-            FeedEvent::Settled => idle = true,
-            FeedEvent::Busy => idle = false,
+            // Every feed caught up and every download done.
+            FeedEvent::Settled if !watch => return Ok(ExitCode::SUCCESS),
+            FeedEvent::Settled | FeedEvent::Busy => {}
             FeedEvent::Connected => {
-                idle = false;
                 if lost {
                     eprintln!("terse: reconnected to {relay}");
                 }
@@ -257,7 +249,6 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
                 if !watch {
                     return Err(format!("{relay}: cannot reach the relay, or the connection was lost"));
                 }
-                idle = false;
                 lost = true;
                 eprintln!("terse: {relay}: not connected; retrying in {} s", retry_in.as_secs());
             }

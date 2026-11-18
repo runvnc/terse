@@ -1,0 +1,30 @@
+ Terse reader  ·  0 entries  ·  0 subscriptions           ✓ local ↳ reply • new
+
+
+
+      No entries yet.
+
+      The timeline shows the articles of the feeds this host subscribes to,
+      newest first. To subscribe, run on the host:
+
+          terse feed subscribe <feed key>
+
+      and run this program with a relay (--relay ws://…). New entries appear
+      here as they arrive; no need to restart.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ PgUp PgDn Home End wheel: move   Enter/click: open   Esc: quit

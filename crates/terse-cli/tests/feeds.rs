@@ -198,3 +198,63 @@ fn author_and_reader() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not this entry's article"));
 }
+
+fn reader_image() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/reader/reader.terse")
+}
+
+/// `terse run` with a relay: the feeds are synced (NETWORK 4.3 caught up)
+/// before frame 0, so the reader's first timeline already holds them; an
+/// entry published while the machine runs reaches it as a feeds-updated
+/// event (SPEC 5.1) and the list refreshes by itself.
+#[test]
+fn reader_follows_feeds_while_running() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let (author, reader) = (User::new(), User::new());
+    let config = author.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    let publish = |name: &str, title: &str| {
+        let file = author.store.path().join(name);
+        std::fs::write(&file, format!("{title}\n")).unwrap();
+        author.feed(&["publish", file.to_str().unwrap(), "--title", title], Some(&url));
+    };
+    publish("one.txt", "First from the relay");
+    reader.feed(&["subscribe", &key], None);
+
+    // From an empty store: synced before the first frame.
+    let image = reader_image();
+    let screen = terse_ok(&[
+        "run", image.to_str().unwrap(), "--frames", "10", "--dump", "--relay", &url, "--store", reader.store(),
+        "--config", reader.config.path().to_str().unwrap(),
+    ]);
+    assert!(screen.lines().next().unwrap().contains("1 entry  ·  1 subscription"), "{screen}");
+    assert!(screen.lines().nth(1).unwrap().contains(&format!("{} ✓  First from the relay", &key[..8])), "{screen}");
+
+    // While running: a live entry, without any key press.
+    let store = BlobStore::open(reader.store.path(), None).unwrap();
+    let mut node = terse_net::Node::new(store, Some(terse_net::relay::RelayClient::websocket(&url, Duration::from_secs(10))));
+    node.set_subscriptions(terse_net::Subscriptions::load(reader.config.path().join("subscriptions")).unwrap());
+    let mut content = terse_net::ContentService::start(node);
+    content.wait_caught_up(Duration::from_secs(10)).unwrap();
+    let image = terse_core::Image::parse(&std::fs::read(&image).unwrap()).unwrap();
+    let mut machine = terse_core::Machine::new(&image);
+    let mut headless = terse_net::service::Headless::new(Some(content), terse_core::Script::default());
+    for _ in 0..10 {
+        headless.frame(&mut machine);
+    }
+    publish("two.txt", "Second, while running");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !machine.terminal().unwrap().text().contains("Second, while running") && Instant::now() < deadline {
+        headless.frame(&mut machine);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..10 {
+        headless.frame(&mut machine);
+    }
+    let screen = machine.terminal().unwrap().text();
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[0].contains("2 entries"), "{screen}");
+    assert!(lines[1].starts_with('•') && lines[1].ends_with("Second, while running"), "new, marked: {screen}");
+    assert!(lines[2].contains("First from the relay"), "{screen}");
+}

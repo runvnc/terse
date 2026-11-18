@@ -293,7 +293,7 @@ fn system_ports_from_the_cpu() {
 ",
     );
     let events = [Event::key_down(0x29, 0), Event::text('x')];
-    let r = m.run_frame(&FrameInput { events: &events, unix_time: 0x6000_0001, random: &[7, 9, 11], completions: &[] });
+    let r = m.run_frame(&FrameInput { events: &events, unix_time: 0x6000_0001, random: &[7, 9, 11], ..Default::default() });
     assert_eq!(r.random_used, 2);
     let got: Vec<u8> = (0..7).map(|i| m.peek(0x8000 + i)).collect();
     assert_eq!(got, [1, 0x29, 3, 0x01, 0x60, 7, 9]);
@@ -395,7 +395,7 @@ loop    halt
         for f in 0..20u8 {
             let events = [Event::text(char::from(b'a' + f)), Event::key_down(f, 1)];
             let random = [f.wrapping_mul(37), 1, 2];
-            m.run_frame(&FrameInput { events: &events, unix_time: 1_700_000_000 + f as u32, random: &random, completions: &[] });
+            m.run_frame(&FrameInput { events: &events, unix_time: 1_700_000_000 + f as u32, random: &random, ..Default::default() });
         }
         m
     };
@@ -416,4 +416,63 @@ fn image_parse_feeds_machine() {
     let mut m = Machine::new(&img);
     assert!(frame(&mut m).halted_early);
     assert_eq!(m.image_id(), &img.id);
+}
+
+/// SPEC 5.1: at most one feeds-updated event per frame; extra ones in a
+/// frame's input are dropped and counted.
+#[test]
+fn one_feeds_updated_per_frame() {
+    let mut m = machine("di\n halt\n");
+    let events = [Event::feeds_updated(), Event::key_down(4, 0), Event::feeds_updated(), Event::feeds_updated()];
+    let r = m.run_frame(&FrameInput { events: &events, ..Default::default() });
+    assert_eq!(r.events_dropped, 2);
+    let kinds: Vec<u8> = m.system().queue().map(|e| e.kind).collect();
+    assert_eq!(kinds, [Event::FEEDS_UPDATED, Event::KEY_DOWN]);
+    // The next frame may carry another (the first is still queued).
+    let r = m.run_frame(&FrameInput { events: &[Event::feeds_updated()], ..Default::default() });
+    assert_eq!(r.events_dropped, 0);
+    assert_eq!(m.system().queue().len(), 3);
+}
+
+/// SPEC 5.3 through the CPU: the state read in a frame is the one latched at
+/// its start, and controller 0 is selected after reset.
+#[test]
+fn controllers_from_the_cpu() {
+    use terse_core::{Controller, pad};
+    let mut m = machine(
+        "
+        ld sp,0
+        im 1
+        ei
+loop    halt
+        jr loop
+        org 38h
+        ld hl,(9000h)       ; next free byte, from 8000h
+        ld a,h
+        or a
+        jr nz,have
+        ld hl,8000h
+have    in a,(1Eh)          ; byte 0 of the selected controller
+        ld (hl),a
+        inc hl
+        in a,(1Eh)          ; byte 1
+        ld (hl),a
+        inc hl
+        ld (9000h),hl
+        ld a,2
+        out (1Dh),a         ; select controller 2: restarts at byte 0
+        ei
+        reti
+",
+    );
+    let mut pads = [Controller::default(); 4];
+    pads[0] = Controller { connected: true, buttons: pad::LEFT, ..Default::default() };
+    pads[2] = Controller { connected: true, buttons: pad::Y, ..Default::default() };
+    m.run_frame(&FrameInput { controllers: pads, ..Default::default() });
+    pads[2].buttons = pad::X;
+    m.run_frame(&FrameInput { controllers: pads, ..Default::default() });
+    pads[2].connected = false;
+    m.run_frame(&FrameInput { controllers: pads, ..Default::default() });
+    let got: Vec<u8> = (0..6).map(|i| m.peek(0x8000 + i)).collect();
+    assert_eq!(got, [1, 0x04, 1, 0x40, 0, 0]);
 }

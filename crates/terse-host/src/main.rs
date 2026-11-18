@@ -1,16 +1,19 @@
 //! `terse-host`: runs a Terse image in a window, or renders a screenshot.
 
 mod app;
+mod gamepad;
 mod glyphs;
 mod keymap;
 mod renderer;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
-use terse_core::{FrameInput, Image, Machine, Terminal};
+use terse_core::{Image, Machine, Script, Terminal};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::{ContentService, Node, parse_hex};
+use terse_net::service::Headless;
+use terse_net::{ContentService, Node, Subscriptions, default_config_dir, parse_hex};
 
 use crate::glyphs::SystemGlyphs;
 use crate::renderer::Renderer;
@@ -18,9 +21,15 @@ use crate::renderer::Renderer;
 /// Font size in logical pixels.
 const FONT_PX: f32 = 18.0;
 
+/// How long `--screenshot` waits for feeds to catch up before frame 0.
+const SYNC_DEADLINE: Duration = Duration::from_secs(60);
+
 const USAGE: &str = "usage:
-  terse-host <image|id> [--relay ws://...] [--store <dir>]
-  terse-host <image|id> --screenshot <out.png> --frames <N> [--relay ws://...] [--store <dir>]";
+  terse-host <image|id> [--relay ws://...] [--store <dir>] [--config <dir>]
+  terse-host <image|id> --screenshot <out.png> --frames <N> [--events <file>] [--relay ws://...] [--store <dir>]
+             [--config <dir>]
+  --config holds the feed subscriptions (default $XDG_CONFIG_HOME/terse, else ~/.config/terse);
+  --events is scripted input, as for `terse run`.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -36,13 +45,15 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut image_path = None;
     let mut screenshot = None;
     let mut frames = None;
-    let (mut relay, mut store) = (None, None);
+    let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--relay" => relay = Some(it.next().ok_or(USAGE)?),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
+            "--config" => config = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
+            "--events" => events = Some(it.next().ok_or(USAGE)?),
             "--frames" => {
                 let n = it.next().ok_or(USAGE)?;
                 frames = Some(n.parse::<u64>().map_err(|_| format!("bad frame count {n}"))?);
@@ -61,18 +72,34 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         _ => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
     };
     let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    let content = match (image.has_device(4), node) {
-        (false, _) => None,
-        (true, Some(node)) => Some(ContentService::start(node)),
-        (true, None) => Some(ContentService::start(open_node()?)),
+    let content = match image.has_device(4) {
+        false => None,
+        true => {
+            let mut node = match node {
+                Some(node) => node,
+                None => open_node()?,
+            };
+            // SPEC 7.7: the feeds are those of the subscription list, which
+            // the node also follows on the relay (NETWORK 4.4).
+            let dir = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
+            node.set_subscriptions(Subscriptions::load(dir.join("subscriptions"))?);
+            Some(ContentService::start(node))
+        }
     };
 
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            take_screenshot(&image, content, Path::new(&out), frames)?;
+            let script = match &events {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+                    Script::parse(&text).map_err(|e| format!("{path}: {e}"))?
+                }
+                None => Script::default(),
+            };
+            take_screenshot(&image, content, script, Path::new(&out), frames)?;
             Ok(ExitCode::SUCCESS)
         }
-        (None, None) => app::run(image, content),
+        (None, None) if events.is_none() => app::run(image, content),
         _ => Err(USAGE.into()),
     }
 }
@@ -104,19 +131,26 @@ async fn request_device(
     Ok((adapter, device, queue))
 }
 
-/// Runs `frames` frames headless (no events, time 0, no random bytes, and
-/// content requests completed at the next frame, like `terse run`) and renders
-/// the terminal offscreen to a PNG.
-fn take_screenshot(image: &Image, mut content: Option<ContentService>, out: &Path, frames: u64) -> Result<(), String> {
+/// Runs `frames` frames headless, exactly as `terse run` does (scripted
+/// events, time 0, no random bytes, content requests completed at the next
+/// frame, feeds caught up first), and renders the terminal offscreen to a PNG.
+fn take_screenshot(
+    image: &Image,
+    mut content: Option<ContentService>,
+    script: Script,
+    out: &Path,
+    frames: u64,
+) -> Result<(), String> {
+    if let Some(c) = content.as_mut().filter(|c| c.following())
+        && let Err(e) = c.wait_caught_up(SYNC_DEADLINE)
+    {
+        eprintln!("terse-host: feeds: {e}; running with the entries held locally");
+    }
     let mut machine = Machine::new(image);
-    let mut completions = Vec::new();
+    let mut headless = Headless::new(content, script);
     for _ in 0..frames {
-        if machine.run_frame(&FrameInput { completions: &completions, ..Default::default() }).exit.is_some() {
+        if headless.frame(&mut machine).exit.is_some() {
             break;
-        }
-        if let Some(content) = &mut content {
-            content.submit(machine.take_content_requests());
-            completions = content.wait_finished();
         }
     }
 

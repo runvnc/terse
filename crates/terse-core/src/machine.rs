@@ -5,7 +5,7 @@ use rustzx_z80::{Z80, Z80Bus};
 use crate::content::{Completion, Content, Request};
 use crate::image::Image;
 use crate::memory::Memory;
-use crate::system::{Event, System};
+use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::Terminal;
 
 /// T-states added to the budget each frame (SPEC 1).
@@ -29,6 +29,8 @@ pub struct FrameInput<'a> {
     pub random: &'a [u8],
     /// Content requests the host finished (SPEC 7.3), applied before the CPU runs.
     pub completions: &'a [Completion],
+    /// The four controllers (SPEC 5.3), latched for the frame.
+    pub controllers: [Controller; CONTROLLERS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +42,8 @@ pub struct FrameResult {
     /// The CPU halted with no interrupt able to wake it and the rest of the
     /// budget was discarded.
     pub halted_early: bool,
-    /// Events dropped because the queue was full.
+    /// Events dropped because the queue was full, and feeds-updated events
+    /// beyond the first in this frame's input (SPEC 5.1: at most one per frame).
     pub events_dropped: usize,
     /// How many bytes of `FrameInput::random` were consumed (for recording).
     pub random_used: usize,
@@ -199,13 +202,18 @@ impl Machine {
         }
         let hw = &mut self.hw;
 
-        // Step 1: events and clock.
+        // Step 1: events, clock and controllers.
+        let mut feeds_updated = false;
         for &e in input.events {
+            if e.kind == Event::FEEDS_UPDATED && std::mem::replace(&mut feeds_updated, true) {
+                result.events_dropped += 1;
+                continue;
+            }
             if !hw.system.push_event(e) {
                 result.events_dropped += 1;
             }
         }
-        hw.system.latch(input.unix_time, input.random);
+        hw.system.latch(input.unix_time, input.random, &input.controllers);
 
         // SPEC 7.3: completions, after this frame's input events.
         match &mut hw.content {

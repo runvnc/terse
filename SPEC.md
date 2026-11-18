@@ -198,12 +198,18 @@ full is dropped.
   input, after keyboard layout and input-method composition.
 - **Pointer** positions are in screen units (section 5.4): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
-  per frame for movement. Buttons: primary, secondary, middle, from the
-  lowest bit.
+  per frame for movement; a button change is sent at once, with the current
+  position. Positions outside the screen are clamped to it, and nothing is
+  sent when the pointer leaves the host's window. Buttons: primary,
+  secondary, middle, from the lowest bit.
 - **Wheel:** a positive vertical step means scroll down (towards later
-  content); a positive horizontal step means scroll right.
+  content); a positive horizontal step means scroll right. At most one wheel
+  event is sent per frame, with each value from −127 to 127; the host adds
+  up smaller movements until they make a whole step.
 - **Feeds updated** is sent when the host has stored one or more new feed
-  entries since the previous frame (section 7.7). At most one per frame.
+  entries since the previous frame (section 7.7). At most one per frame. It
+  is sent after the automatic download of those entries' articles has
+  finished or failed, so the timeline's "local" flags are already correct.
 
 ### 5.2 Determinism
 
@@ -233,7 +239,9 @@ start of each frame.
 | 7 | Zero |
 
 A controller that is not connected, or no selection, reads as all zeros.
-After reset, controller 0 is selected.
+After reset, controller 0 is selected. The read position is kept from one
+frame to the next; only a write to `1Dh` restarts it. Axis values are never
+−128.
 
 ### 5.4 Screen units
 
@@ -471,8 +479,8 @@ For both, `length` is the size of the buffer at `addr` (1 to 16,384) and
 whole records as fit, writes the number of bytes delivered to `length` and the
 total number of records that exist to `size`.
 
-**Subscriptions** delivers one 36-byte record per subscribed feed, in an
-order that does not change while the list is unchanged:
+**Subscriptions** delivers one 36-byte record per subscribed feed, in
+increasing order of feed key:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -481,12 +489,13 @@ order that does not change while the list is unchanged:
 
 **Timeline** delivers the entries of all subscribed feeds, newest first by
 the order in which the host received them. Index 0 is the most recently
-received entry. Each record is:
+received entry (`NETWORK.md` section 4.4 defines the order). Entries of a
+feed the host has unsubscribed from are not included. Each record is:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | `L`: number of bytes that follow in this record |
-| 1 | 1 | Flags. Bit 0: the article blob is in the host's store, so a get will complete without the network. |
+| 1 | 1 | Flags. Bit 0: the article blob is in the host's store, so a get will complete without the network. Other bits are zero. |
 | 2 | `L − 1` | The entry without its signature (`NETWORK.md` section 4.2, bytes 0 to 108 + `n`) |
 
 The host has already verified every entry it delivers. When new entries

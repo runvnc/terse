@@ -124,3 +124,42 @@ fn bad_image_is_refused() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("bad magic"));
 }
+
+/// The checked-in reader.terse is what programs/reader/build.sh makes from
+/// its C sources. Skipped when SDCC is not installed.
+#[test]
+fn reader_image_is_up_to_date() {
+    if Command::new("sdcc").arg("--version").output().is_err() {
+        eprintln!("skipped: sdcc is not installed, so programs/reader/reader.terse is not checked");
+        return;
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/reader");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("reader-build");
+    std::fs::create_dir_all(&out).unwrap();
+    let built = Command::new("sh").arg(dir.join("build.sh")).arg(&out).env("TERSE", TERSE).output().unwrap();
+    assert!(built.status.success(), "build.sh failed: {}", String::from_utf8_lossy(&built.stderr));
+    let fresh = std::fs::read(out.join("reader.terse")).unwrap();
+    let checked_in = std::fs::read(dir.join("reader.terse")).unwrap();
+    assert!(
+        fresh == checked_in,
+        "programs/reader/reader.terse is out of date with reader.c and programs/lib; run programs/reader/build.sh"
+    );
+}
+
+/// `--events`: scripted input for `terse run`.
+#[test]
+fn run_with_scripted_events() {
+    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let events = tmp.join("hello-events.txt");
+    std::fs::write(&events, "# type, then leave\n5 text Hi 你好\n6 press enter\n8 down esc\n").unwrap();
+    let image = hello_dir().join("hello.terse");
+    let out = terse(&["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "30", "--dump"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("Hi 你好"), "{text}");
+    assert!(text.contains("frame 00000008"), "exited at frame 8: {text}");
+    std::fs::write(&events, "5 jump\n").unwrap();
+    let out = terse(&["run", image.to_str().unwrap(), "--events", events.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("line 1: unknown command"));
+}

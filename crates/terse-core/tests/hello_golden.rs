@@ -31,7 +31,7 @@ fn run(frames: u32, escape_at: Option<u32>) -> (Machine, Option<u8>) {
         if escape_at == Some(f) {
             events.push(Event::key_down(KEY_ESCAPE, 0));
         }
-        let input = FrameInput { events: &events, unix_time: 1_700_000_000 + f / 60, random: &[], completions: &[] };
+        let input = FrameInput { events: &events, unix_time: 1_700_000_000 + f / 60, random: &[], ..Default::default() };
         exit = m.run_frame(&input).exit;
     }
     (m, exit)

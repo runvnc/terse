@@ -7,15 +7,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use terse_core::{DeviceReq, FrameInput, Image, Machine};
+use terse_core::{DeviceReq, Image, Machine, Script};
 use terse_net::relay::DEFAULT_TIMEOUT;
+use terse_net::service::Headless;
 use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
-  terse run <image|id> [--frames N] [--dump] [--relay ws://...] [--store <dir>]
+  terse run <image|id> [--frames N] [--dump] [--events <file>] [--relay ws://...] [--store <dir>]
+            [--config <dir>]
   terse info <image|id> [--relay ws://...] [--store <dir>]
   terse put <file> [--relay ws://...] [--store <dir>]
   terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
@@ -38,7 +40,8 @@ const USAGE: &str = "usage:
 entries are kept in <store>/feeds.
 --config holds the identity and subscriptions; it defaults to $XDG_CONFIG_HOME/terse
 (or ~/.config/terse).
---auto-download: articles up to this size are fetched as entries arrive (default 16384).";
+--auto-download: articles up to this size are fetched as entries arrive (default 16384).
+--events: scripted input, one event per line (see README).";
 
 /// Options for commands that use the blob store and relay.
 const NET_OPTIONS: [&str; 2] = ["--relay", "--store"];
@@ -163,9 +166,17 @@ fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
     Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))
 }
 
+/// Reads an `--events` script (README, "Scripted input").
+pub fn load_script(path: Option<&str>) -> Result<Script, String> {
+    let Some(path) = path else { return Ok(Script::default()) };
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    Script::parse(&text).map_err(|e| format!("{path}: {e}"))
+}
+
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &["--dump"])?;
-    args.check_known(&["--frames", "--dump", "--relay", "--store"])?;
+    args.check_known(&["--frames", "--dump", "--events", "--relay", "--store", "--config"])?;
+    let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None };
     let image = load_image(args.one_positional()?, &mut net)?;
     let frames: Option<u64> = match args.get("--frames") {
@@ -174,19 +185,29 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     let mut machine = Machine::new(&image);
-    let mut content = if image.has_device(4) { Some(ContentService::start(net.take()?)) } else { None };
-    // Headless runs are reproducible: no events, time 0, random bytes 00h, and
-    // every content request completes at the start of the next frame.
-    let mut completions = Vec::new();
+    let content = if image.has_device(4) {
+        // SPEC 7.7: the feeds are those of the --config subscriptions.
+        let mut node = net.take()?;
+        node.set_subscriptions(feed::load_subscriptions(&args)?);
+        let mut content = ContentService::start(node);
+        // Start from a caught-up store, so that a run sees what the relay
+        // holds when it starts; later entries arrive while it runs.
+        if content.following()
+            && let Err(e) = content.wait_caught_up(feed::SYNC_DEADLINE)
+        {
+            eprintln!("terse: feeds: {e}; running with the entries held locally");
+        }
+        Some(content)
+    } else {
+        None
+    };
+    // Headless runs are reproducible (see `Headless`).
+    let mut headless = Headless::new(content, script);
     let mut exit = None;
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
-        exit = machine.run_frame(&FrameInput { completions: &completions, ..Default::default() }).exit;
+        exit = headless.frame(&mut machine).exit;
         if exit.is_some() {
             break;
-        }
-        if let Some(content) = &mut content {
-            content.submit(machine.take_content_requests());
-            completions = content.wait_finished();
         }
     }
     if exit.is_none() && frames.is_none() {

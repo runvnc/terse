@@ -3,6 +3,11 @@
 use std::collections::VecDeque;
 
 pub const QUEUE_CAPACITY: usize = 64;
+/// Screen size in screen units (SPEC 5.4).
+pub const SCREEN_WIDTH: u16 = 640;
+pub const SCREEN_HEIGHT: u16 = 480;
+/// Number of game controllers (SPEC 5.3).
+pub const CONTROLLERS: usize = 4;
 
 /// One input event (SPEC 5.1): a type byte and three parameter bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +37,8 @@ impl Event {
     pub const TEXT: u8 = 0x03;
     pub const POINTER: u8 = 0x04;
     pub const CONTENT_DONE: u8 = 0x05;
+    pub const WHEEL: u8 = 0x06;
+    pub const FEEDS_UPDATED: u8 = 0x07;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -47,8 +54,29 @@ impl Event {
         Event { kind: Self::TEXT, a: v as u8, b: (v >> 8) as u8, c: (v >> 16) as u8 }
     }
 
-    pub fn pointer(column: u8, row: u8, buttons: u8) -> Self {
-        Event { kind: Self::POINTER, a: column, b: row, c: buttons }
+    /// A pointer position in screen units (SPEC 5.4), clamped to 0-639 and
+    /// 0-479, and the button bits (`buttons::*`).
+    pub fn pointer(x: u16, y: u16, buttons: u8) -> Self {
+        let (x, y) = (x.min(SCREEN_WIDTH - 1), y.min(SCREEN_HEIGHT - 1));
+        let c = (x >> 8) as u8 & 0x03 | ((y >> 8) as u8 & 0x01) << 2 | (buttons & 0x07) << 3;
+        Event { kind: Self::POINTER, a: x as u8, b: y as u8, c }
+    }
+
+    /// The position and buttons of a pointer event (the inverse of `pointer`).
+    pub fn pointer_parts(&self) -> (u16, u16, u8) {
+        let x = self.a as u16 | ((self.c & 0x03) as u16) << 8;
+        let y = self.b as u16 | ((self.c >> 2 & 0x01) as u16) << 8;
+        (x, y, self.c >> 3 & 0x07)
+    }
+
+    /// Wheel steps; positive is down (towards later content) and right.
+    pub fn wheel(vertical: i8, horizontal: i8) -> Self {
+        Event { kind: Self::WHEEL, a: vertical as u8, b: horizontal as u8, c: 0 }
+    }
+
+    /// The host stored new feed entries since the previous frame (SPEC 7.7).
+    pub fn feeds_updated() -> Self {
+        Event { kind: Self::FEEDS_UPDATED, a: 0, b: 0, c: 0 }
     }
 
     /// A content request finished (SPEC 7.3).
@@ -57,7 +85,50 @@ impl Event {
     }
 }
 
-#[derive(Default)]
+/// One game controller's state for a frame (SPEC 5.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Controller {
+    pub connected: bool,
+    /// Byte 1 in bits 0-7 (`pad::UP` …) and byte 2 in bits 8-15
+    /// (`pad::L1` …).
+    pub buttons: u16,
+    /// Sticks, x then y; −127 is left or up, 127 right or down (−128 reads as −127).
+    pub left: (i8, i8),
+    pub right: (i8, i8),
+}
+
+/// Controller button bits for `Controller::buttons` (SPEC 5.3 bytes 1 and 2).
+pub mod pad {
+    pub const UP: u16 = 1 << 0;
+    pub const DOWN: u16 = 1 << 1;
+    pub const LEFT: u16 = 1 << 2;
+    pub const RIGHT: u16 = 1 << 3;
+    pub const A: u16 = 1 << 4;
+    pub const B: u16 = 1 << 5;
+    pub const X: u16 = 1 << 6;
+    pub const Y: u16 = 1 << 7;
+    pub const L1: u16 = 1 << 8;
+    pub const R1: u16 = 1 << 9;
+    pub const L2: u16 = 1 << 10;
+    pub const R2: u16 = 1 << 11;
+    pub const SELECT: u16 = 1 << 12;
+    pub const START: u16 = 1 << 13;
+    pub const L3: u16 = 1 << 14;
+    pub const R3: u16 = 1 << 15;
+}
+
+impl Controller {
+    /// The eight bytes ports 1Dh/1Eh read; all zero when not connected.
+    pub fn bytes(&self) -> [u8; 8] {
+        if !self.connected {
+            return [0; 8];
+        }
+        let axis = |v: i8| v.max(-127) as u8;
+        let [lo, hi] = self.buttons.to_le_bytes();
+        [1, lo, hi, axis(self.left.0), axis(self.left.1), axis(self.right.0), axis(self.right.1), 0]
+    }
+}
+
 pub struct System {
     queue: VecDeque<Event>,
     frame: u32,
@@ -65,6 +136,29 @@ pub struct System {
     random: Vec<u8>,
     random_used: usize,
     exit: Option<u8>,
+    /// Controller bytes latched for this frame (SPEC 5.3).
+    controllers: [[u8; 8]; CONTROLLERS],
+    /// The selected controller, if 0-3 was last written to port 1Dh (reset: 0).
+    selected: Option<u8>,
+    /// Next byte read through port 1Eh.
+    pad_byte: u8,
+}
+
+impl Default for System {
+    fn default() -> Self {
+        System {
+            queue: VecDeque::new(),
+            frame: 0,
+            time: 0,
+            random: Vec::new(),
+            random_used: 0,
+            exit: None,
+            controllers: [[0; 8]; CONTROLLERS],
+            // SPEC 5.3: after reset, controller 0 is selected.
+            selected: Some(0),
+            pad_byte: 0,
+        }
+    }
 }
 
 impl System {
@@ -77,8 +171,10 @@ impl System {
         true
     }
 
-    /// Latches the clock and this frame's random bytes (SPEC 1.3 step 1).
-    pub fn latch(&mut self, unix_time: u32, random: &[u8]) {
+    /// Latches the clock, this frame's random bytes and the controllers
+    /// (SPEC 1.3 step 1, 5.3).
+    pub fn latch(&mut self, unix_time: u32, random: &[u8], controllers: &[Controller; CONTROLLERS]) {
+        self.controllers = controllers.map(|c| c.bytes());
         self.time = unix_time;
         self.random.clear();
         self.random.extend_from_slice(random);
@@ -109,6 +205,11 @@ impl System {
                 self.random_used += 1;
                 b
             }
+            0xE => {
+                let b = self.selected.map_or(0, |c| self.controllers[c as usize][self.pad_byte as usize]);
+                self.pad_byte = (self.pad_byte + 1) % 8;
+                b
+            }
             _ => 0xFF,
         }
     }
@@ -117,6 +218,10 @@ impl System {
         match reg {
             0x0 => {
                 self.queue.pop_front();
+            }
+            0xD => {
+                self.selected = (value < CONTROLLERS as u8).then_some(value);
+                self.pad_byte = 0;
             }
             0xF => self.exit = Some(value),
             _ => {}
@@ -180,7 +285,7 @@ mod tests {
     #[test]
     fn counters_time_random_exit() {
         let mut s = System::default();
-        s.latch(0x1234_5678, &[0xAB]);
+        s.latch(0x1234_5678, &[0xAB], &Default::default());
         s.end_frame();
         s.end_frame();
         assert_eq!(s.port_in(0x4), 2);
@@ -192,5 +297,89 @@ mod tests {
         assert_eq!(s.exit_code(), None);
         s.port_out(0xF, 3);
         assert_eq!(s.exit_code(), Some(3));
+    }
+
+    #[test]
+    fn pointer_packing_at_the_extremes() {
+        let cases = [
+            ((0, 0, 0), (0x00, 0x00, 0x00)),
+            ((639, 479, 0b111), (0x7F, 0xDF, 0x02 | 0x04 | 0x38)),
+            ((256, 256, buttons::PRIMARY), (0x00, 0x00, 0x01 | 0x04 | 0x08)),
+            ((255, 255, buttons::MIDDLE), (0xFF, 0xFF, 0x20)),
+            ((512, 0, buttons::SECONDARY), (0x00, 0x00, 0x02 | 0x10)),
+            ((767, 300, 0), (0x7F, 0x2C, 0x02 | 0x04)), // x clamped to 639
+            ((u16::MAX, u16::MAX, 0xFF), (0x7F, 0xDF, 0x02 | 0x04 | 0x38)),
+        ];
+        for ((x, y, b), (a, bb, c)) in cases {
+            let e = Event::pointer(x, y, b);
+            assert_eq!((e.kind, e.a, e.b, e.c), (Event::POINTER, a, bb, c), "({x}, {y}, {b})");
+            assert_eq!(e.pointer_parts(), (x.min(639), y.min(479), b & 7));
+        }
+    }
+
+    #[test]
+    fn wheel_and_feeds_updated() {
+        let e = Event::wheel(-3, 1);
+        assert_eq!((e.kind, e.a, e.b, e.c), (0x06, 0xFD, 0x01, 0));
+        let e = Event::wheel(127, -128);
+        assert_eq!((e.a, e.b), (0x7F, 0x80));
+        let e = Event::feeds_updated();
+        assert_eq!((e.kind, e.a, e.b, e.c), (0x07, 0, 0, 0));
+    }
+
+    fn read_pad(s: &mut System, n: usize) -> Vec<u8> {
+        (0..n).map(|_| s.port_in(0xE)).collect()
+    }
+
+    #[test]
+    fn controller_port_sequence_and_wraparound() {
+        let mut s = System::default();
+        let mut pads = [Controller::default(); CONTROLLERS];
+        pads[0] = Controller { connected: true, buttons: pad::UP | pad::A | pad::START, left: (-128, 127), right: (5, -5) };
+        pads[2] = Controller { connected: true, buttons: 0xFFFF, left: (0, 0), right: (0, 0) };
+        pads[3] = Controller { connected: false, buttons: 0xFFFF, left: (9, 9), right: (9, 9) };
+        s.latch(0, &[], &pads);
+        // Controller 0 is selected after reset; byte 7 wraps to byte 0.
+        let want0 = [1, 0x11, 0x20, 0x81, 0x7F, 5, 0xFB, 0];
+        assert_eq!(read_pad(&mut s, 10), [&want0[..], &want0[..2]].concat());
+        // Selecting restarts at byte 0, even mid-sequence.
+        s.port_out(0xD, 2);
+        assert_eq!(read_pad(&mut s, 3), [1, 0xFF, 0xFF]);
+        s.port_out(0xD, 2);
+        assert_eq!(read_pad(&mut s, 1), [1]);
+        // Not connected (whatever the rest of its state), and no controller.
+        s.port_out(0xD, 1);
+        assert_eq!(read_pad(&mut s, 8), [0; 8]);
+        s.port_out(0xD, 3);
+        assert_eq!(read_pad(&mut s, 8), [0; 8]);
+        for none in [4, 0x80, 0xFF] {
+            s.port_out(0xD, none);
+            assert_eq!(read_pad(&mut s, 9), [0; 9], "select {none}");
+        }
+        // Port 1Dh is write-only and 1Eh read-only.
+        assert_eq!(s.port_in(0xD), 0xFF);
+        s.port_out(0xE, 3);
+        s.port_out(0xD, 0);
+        assert_eq!(read_pad(&mut s, 1), [1]);
+    }
+
+    #[test]
+    fn controller_state_is_latched_per_frame() {
+        let mut s = System::default();
+        let mut pads = [Controller::default(); CONTROLLERS];
+        pads[0] = Controller { connected: true, buttons: pad::B, ..Default::default() };
+        s.latch(0, &[], &pads);
+        assert_eq!(read_pad(&mut s, 2), [1, 0x20]);
+        // The host's state changes within the frame: nothing changes until
+        // the next latch, and the read position carries across frames.
+        pads[0].buttons = pad::DOWN;
+        assert_eq!(read_pad(&mut s, 7), [0, 0, 0, 0, 0, 0, 1]);
+        s.end_frame();
+        s.latch(0, &[], &pads);
+        assert_eq!(read_pad(&mut s, 1), [0x02]);
+        pads[0].connected = false;
+        s.latch(0, &[], &pads);
+        s.port_out(0xD, 0);
+        assert_eq!(read_pad(&mut s, 8), [0; 8]);
     }
 }

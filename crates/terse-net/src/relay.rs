@@ -100,8 +100,11 @@ pub enum RelayReply {
     Got(Vec<u8>),
     /// The ID the relay computed for a put.
     Put(BlobId),
-    /// A publish, subscribe or unsubscribe succeeded.
+    /// A publish or unsubscribe succeeded.
     Done,
+    /// A subscribe succeeded; the relay holds entries up to `seq` `highest`
+    /// (0: none).
+    Subscribed { highest: u32 },
     NotFound,
     Refused,
     /// Connection error, protocol error or timeout.
@@ -252,6 +255,7 @@ impl RelayClient {
                 Some(Reply::Get { req, status: status::DONE, data }) => (req, RelayReply::Got(data)),
                 Some(Reply::Put { req, status: status::DONE, id: Some(id) }) => (req, RelayReply::Put(id)),
                 Some(Reply::Status { req, status: status::DONE, .. }) => (req, RelayReply::Done),
+                Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
                 Some(Reply::Get { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
                 Some(Reply::Get { req, .. } | Reply::Put { req, .. } | Reply::Status { req, .. }) => {
                     (req, RelayReply::Refused)
@@ -358,11 +362,11 @@ mod tests {
         assert_eq!(sent.recv().unwrap(), protocol::encode_subscribe(s, &[3; 32], 7));
         assert_eq!(sent.recv().unwrap(), protocol::encode_publish(p, b"entry"));
         assert_eq!(sent.recv().unwrap(), protocol::encode_unsubscribe(u, &[3; 32]));
-        relay.send(protocol::encode_status_reply(protocol::SUBSCRIBE_REPLY, s, status::DONE)).unwrap();
+        relay.send(protocol::encode_subscribe_reply(s, status::DONE, 12)).unwrap();
         relay.send(protocol::encode_entry(b"pushed")).unwrap();
         relay.send(protocol::encode_status_reply(protocol::PUBLISH_REPLY, p, status::REFUSED)).unwrap();
         relay.send(protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, u, status::DONE)).unwrap();
-        assert_eq!(c.poll(), [(s, RelayReply::Done), (p, RelayReply::Refused), (u, RelayReply::Done)]);
+        assert_eq!(c.poll(), [(s, RelayReply::Subscribed { highest: 12 }), (p, RelayReply::Refused), (u, RelayReply::Done)]);
         assert_eq!(c.take_pushed(), [b"pushed".to_vec()]);
         // Entries arrive while nothing is waiting, too.
         relay.send(protocol::encode_entry(b"later")).unwrap();

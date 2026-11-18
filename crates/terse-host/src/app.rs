@@ -8,11 +8,12 @@ use terse_core::{COLS, Event, FrameInput, Image, MAX_RANDOM_READS_PER_FRAME, Mac
 use terse_net::ContentService;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::gamepad::Gamepads;
 use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
 use crate::renderer::{GlyphSource, Renderer};
@@ -32,7 +33,10 @@ pub fn run(image: Image, content: Option<ContentService>) -> Result<ExitCode, St
         pending: Vec::new(),
         modifiers: ModifiersState::empty(),
         buttons: 0,
-        pointer_cell: None,
+        pointer: None,
+        pointer_sent: None,
+        wheel: (0.0, 0.0),
+        gamepads: Gamepads::new(),
         next_frame: Instant::now(),
         random: vec![0; MAX_RANDOM_READS_PER_FRAME],
     };
@@ -132,7 +136,13 @@ struct App {
     pending: Vec<Event>,
     modifiers: ModifiersState,
     buttons: u8,
-    pointer_cell: Option<(u8, u8)>,
+    /// The pointer in screen units, and the position last sent (SPEC 5.1:
+    /// movement is sent at most once per frame).
+    pointer: Option<(u16, u16)>,
+    pointer_sent: Option<(u16, u16)>,
+    /// Wheel steps not yet sent (vertical, horizontal; positive is down, right).
+    wheel: (f64, f64),
+    gamepads: Gamepads,
     next_frame: Instant,
     random: Vec<u8>,
 }
@@ -144,9 +154,12 @@ impl App {
         if getrandom::fill(&mut self.random).is_err() {
             self.random.fill(0);
         }
+        self.coalesced_input();
         // SPEC 7.3: whatever finished since the last frame completes now.
         let completions = self.content.as_mut().map_or_else(Vec::new, ContentService::take_finished);
-        let input = FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions };
+        let controllers = self.gamepads.poll();
+        let input =
+            FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions, controllers };
         let result = self.machine.run_frame(&input);
         self.pending.clear();
         if let Some(content) = &mut self.content {
@@ -174,15 +187,48 @@ impl App {
         }
     }
 
+    /// Pointer movement and wheel steps gathered since the last frame,
+    /// queued as at most one event each; also the feeds-updated event.
+    fn coalesced_input(&mut self) {
+        if let Some((x, y)) = self.pointer
+            && self.pointer != self.pointer_sent
+        {
+            self.pending.push(Event::pointer(x, y, self.buttons));
+            self.pointer_sent = self.pointer;
+        }
+        let steps = |acc: &mut f64| {
+            let whole = acc.trunc().clamp(-127.0, 127.0);
+            *acc -= whole;
+            whole as i8
+        };
+        let (v, h) = (steps(&mut self.wheel.0), steps(&mut self.wheel.1));
+        if v != 0 || h != 0 {
+            self.pending.push(Event::wheel(v, h));
+        }
+        // SPEC 5.1, 7.7: new entries were stored since the previous frame.
+        if self.content.as_mut().is_some_and(ContentService::feeds_updated) {
+            self.pending.push(Event::feeds_updated());
+        }
+    }
+
     fn pointer_moved(&mut self, pos: PhysicalPosition<f64>) {
         let Some(gfx) = &self.gfx else { return };
-        let cell = gfx.renderer.cell_at(gfx.viewport(), pos.x, pos.y);
-        if cell != self.pointer_cell {
-            self.pointer_cell = cell;
-            if let Some((col, row)) = cell {
-                self.pending.push(Event::pointer(col, row, self.buttons));
+        self.pointer = Some(gfx.renderer.screen_pos(gfx.viewport(), pos.x, pos.y));
+    }
+
+    /// winit's deltas are positive when content should move right and down,
+    /// that is, when scrolling left and up; SPEC 5.1 steps are the opposite.
+    fn wheel(&mut self, delta: MouseScrollDelta) {
+        let (x, y) = match delta {
+            MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
+            MouseScrollDelta::PixelDelta(p) => {
+                // One step per terminal row of travel.
+                let row = self.gfx.as_ref().map_or(16.0, |g| g.renderer.row_height(g.viewport())).max(1.0);
+                (p.x / row, p.y / row)
             }
-        }
+        };
+        self.wheel.0 -= y;
+        self.wheel.1 -= x;
     }
 
     fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
@@ -196,8 +242,11 @@ impl App {
             ElementState::Pressed => self.buttons |= bit,
             ElementState::Released => self.buttons &= !bit,
         }
-        if let Some((col, row)) = self.pointer_cell {
-            self.pending.push(Event::pointer(col, row, self.buttons));
+        // Button changes are sent at once, in order with key events, at the
+        // current position.
+        if let Some((x, y)) = self.pointer {
+            self.pending.push(Event::pointer(x, y, self.buttons));
+            self.pointer_sent = self.pointer;
         }
     }
 }
@@ -236,8 +285,8 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => self.key(event),
             WindowEvent::CursorMoved { position, .. } => self.pointer_moved(position),
-            WindowEvent::CursorLeft { .. } => self.pointer_cell = None,
             WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
+            WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             _ => {}
         }
     }

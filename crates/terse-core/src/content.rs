@@ -18,6 +18,22 @@ pub const MAX_GET_LENGTH: usize = 16_384;
 
 pub const OP_GET: u8 = 0x01;
 pub const OP_PUT: u8 = 0x02;
+pub const OP_SUBSCRIPTIONS: u8 = 0x03;
+pub const OP_TIMELINE: u8 = 0x04;
+
+/// A subscriptions record: feed key and highest `seq` (SPEC 7.7).
+pub const SUBSCRIPTION_RECORD: usize = 36;
+/// Bytes of an entry before its title (NETWORK 4.2).
+pub const ENTRY_HEAD: usize = 109;
+/// Longest entry title (NETWORK 4.2).
+pub const MAX_TITLE: usize = 120;
+/// Longest timeline record: `L`, flags and an entry with a 120-byte title,
+/// without its signature (SPEC 7.7).
+pub const MAX_TIMELINE_RECORD: usize = 2 + ENTRY_HEAD + MAX_TITLE;
+/// Timeline record flag: the article blob is in the host's store.
+pub const FLAG_LOCAL: u8 = 0x01;
+/// Largest record count `size` can hold.
+const MAX_RECORDS: u32 = 0xFF_FFFF;
 
 /// Status values (SPEC 7.4).
 pub mod status {
@@ -49,6 +65,10 @@ pub enum RequestKind {
     Get { id: [u8; 32], offset: u32, length: u16 },
     /// The bytes to publish, copied at submit time.
     Put { data: Vec<u8> },
+    /// Subscription records from index `offset`, at most `length` bytes (SPEC 7.7).
+    Subscriptions { offset: u32, length: u16 },
+    /// Timeline records from index `offset`, at most `length` bytes (SPEC 7.7).
+    Timeline { offset: u32, length: u16 },
 }
 
 /// The host's answer to a pending request (SPEC 7.3), an input to the machine
@@ -67,6 +87,10 @@ pub enum Outcome {
     Got { size: u32, data: Vec<u8> },
     /// A put succeeded; `id` must be the BLAKE3-256 hash of the submitted bytes.
     Put { id: [u8; 32] },
+    /// A subscriptions or timeline request succeeded: the number of records
+    /// that exist and the whole records delivered from the requested index,
+    /// as many as fit in `length` (SPEC 7.7).
+    Records { total: u32, data: Vec<u8> },
     NotFound,
     Failed,
 }
@@ -75,6 +99,7 @@ pub enum Outcome {
 enum Pending {
     Get { offset: u32, length: u16, addr: usize },
     Put { id: [u8; 32] },
+    Records { op: u8, offset: u32, length: u16, addr: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +119,35 @@ pub struct Content {
 
 fn u24(b: &[u8]) -> usize {
     b[0] as usize | (b[1] as usize) << 8 | (b[2] as usize) << 16
+}
+
+/// Whether `data` can be the answer to a subscriptions or timeline request
+/// (SPEC 7.7): whole, well-formed records, no more than fit in `length` or
+/// exist after `offset`, and as many as fit. Subscription records have a
+/// fixed size, so their count is exact. A timeline record's size is only
+/// known from its bytes: the records must tile `data` exactly, each `L`
+/// must match its entry's title length, and space left over must be too
+/// small for any record when records remain.
+fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) -> bool {
+    let (length, remaining) = (length as usize, total.saturating_sub(offset) as usize);
+    if total > MAX_RECORDS || data.len() > length {
+        return false;
+    }
+    if op == OP_SUBSCRIPTIONS {
+        return data.len() == remaining.min(length / SUBSCRIPTION_RECORD) * SUBSCRIPTION_RECORD;
+    }
+    let (mut at, mut count) = (0, 0);
+    while at < data.len() {
+        let l = data[at] as usize;
+        // L counts the flags byte and the entry; byte 108 of the entry is `n`.
+        let Some(&n) = data.get(at + 2 + ENTRY_HEAD - 1) else { return false };
+        if n as usize > MAX_TITLE || l != 1 + ENTRY_HEAD + n as usize || data[at + 1] & !FLAG_LOCAL != 0 {
+            return false;
+        }
+        at += 1 + l;
+        count += 1;
+    }
+    at == data.len() && count <= remaining && (count == remaining || length - data.len() < MAX_TIMELINE_RECORD)
 }
 
 impl Content {
@@ -138,6 +192,18 @@ impl Content {
                     (Pending::Get { offset, length, addr }, RequestKind::Get { id, offset, length })
                 })
             }
+            OP_SUBSCRIPTIONS | OP_TIMELINE => {
+                let length = u16::from_le_bytes([b[LENGTH], b[LENGTH + 1]]);
+                (length as usize <= MAX_GET_LENGTH && fits(length as usize)).then(|| {
+                    let offset = u24(&b[OFFSET..]) as u32;
+                    let kind = if b[0] == OP_SUBSCRIPTIONS {
+                        RequestKind::Subscriptions { offset, length }
+                    } else {
+                        RequestKind::Timeline { offset, length }
+                    };
+                    (Pending::Records { op: b[0], offset, length, addr }, kind)
+                })
+            }
             OP_PUT => {
                 let size = u24(&b[SIZE..]);
                 (size <= MAX_BLOB && fits(size)).then(|| {
@@ -163,7 +229,7 @@ impl Content {
         self.last_submit = handle;
         let charge = match &kind {
             RequestKind::Put { data } => data.len() as u32,
-            RequestKind::Get { .. } => 0,
+            _ => 0,
         };
         self.submitted.push(Request { handle, kind });
         charge
@@ -206,6 +272,15 @@ impl Content {
                 ram[addr..addr + data.len()].copy_from_slice(data);
                 ram[block + LENGTH..block + LENGTH + 2].copy_from_slice(&(data.len() as u16).to_le_bytes());
                 ram[block + SIZE..block + SIZE + 3].copy_from_slice(&(size as u32).to_le_bytes()[..3]);
+                status::DONE
+            }
+            (&Pending::Records { op, offset, length, addr }, Outcome::Records { total, data }) => {
+                if !records_fit(op, offset, length, *total, data) {
+                    return None;
+                }
+                ram[addr..addr + data.len()].copy_from_slice(data);
+                ram[block + LENGTH..block + LENGTH + 2].copy_from_slice(&(data.len() as u16).to_le_bytes());
+                ram[block + SIZE..block + SIZE + 3].copy_from_slice(&total.to_le_bytes()[..3]);
                 status::DONE
             }
             (Pending::Put { id: want }, Outcome::Put { id }) => {
@@ -301,6 +376,23 @@ mod tests {
         block(OP_GET, [7; 32], offset, length, 0x1000, 0)
     }
 
+    fn feed(op: u8, offset: u32, length: u16) -> [u8; BLOCK_LEN] {
+        block(op, [7; 32], offset, length, 0x1000, 0)
+    }
+
+    fn records(handle: u8, total: u32, data: &[u8]) -> Completion {
+        Completion { handle, outcome: Outcome::Records { total, data: data.to_vec() } }
+    }
+
+    /// A timeline record (SPEC 7.7) whose entry has an `n`-byte title.
+    fn timeline_record(n: usize, flags: u8, fill: u8) -> Vec<u8> {
+        let mut r = vec![(1 + ENTRY_HEAD + n) as u8, flags];
+        r.extend(std::iter::repeat_n(fill, ENTRY_HEAD - 1));
+        r.push(n as u8);
+        r.extend(std::iter::repeat_n(b't', n));
+        r
+    }
+
     fn put(size: u32) -> [u8; BLOCK_LEN] {
         block(OP_PUT, [0; 32], 0, 0, 0x1000, size)
     }
@@ -365,8 +457,12 @@ mod tests {
         let ram_end = RAM_LEN as u32;
         let bad = [
             block(0, [0; 32], 0, 1, 0x1000, 1),
-            block(3, [0; 32], 0, 1, 0x1000, 1),
+            block(5, [0; 32], 0, 1, 0x1000, 1),
+            block(0xFF, [0; 32], 0, 1, 0x1000, 1),
             get(0, 0),
+            feed(OP_SUBSCRIPTIONS, 0, 0),
+            feed(OP_TIMELINE, 0, MAX_GET_LENGTH as u16 + 1),
+            block(OP_TIMELINE, [0; 32], 0, 2, ram_end - 1, 0),
             get(0, MAX_GET_LENGTH as u16 + 1),
             block(OP_GET, [0; 32], 0, 2, ram_end - 1, 0),
             block(OP_GET, [0; 32], 0, 1, ram_end, 0),
@@ -538,5 +634,111 @@ mod tests {
         assert_eq!(rig.memory.read(DATA), 0x42);
         assert!(rig.events().iter().all(|e| e.0 == Event::KEY_DOWN));
         assert!(rig.content.pending_handles().is_empty());
+    }
+
+    #[test]
+    fn feed_requests_are_submitted_like_get() {
+        let mut rig = Rig::new();
+        assert_eq!(rig.submit(BLOCK, Some(&feed(OP_SUBSCRIPTIONS, 3, 72))), (1, 0));
+        assert_eq!(rig.submit(BLOCK + 64, Some(&feed(OP_TIMELINE, 0x12_3456, MAX_GET_LENGTH as u16))), (2, 0));
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::Subscriptions { offset: 3, length: 72 } },
+                Request { handle: 2, kind: RequestKind::Timeline { offset: 0x12_3456, length: MAX_GET_LENGTH as u16 } },
+            ]
+        );
+        // A get result does not complete a feed request, nor records a get.
+        assert_eq!(rig.complete(&[got(1, 1, &[])]), (1, 0));
+        rig.submit(BLOCK + 128, Some(&get(0, 1)));
+        assert_eq!(rig.complete(&[records(3, 0, &[])]), (1, 0));
+    }
+
+    #[test]
+    fn subscriptions_deliver_whole_records() {
+        let sub = |i: u8| [vec![i; 32], vec![i, 0, 0, 0]].concat();
+        // 100 bytes hold two 36-byte records; four exist.
+        let mut rig = Rig::new();
+        rig.write(DATA, &[0xEE; 110]);
+        rig.submit(BLOCK, Some(&feed(OP_SUBSCRIPTIONS, 0, 100)));
+        let three = [sub(1), sub(2), sub(3)].concat();
+        let two = [sub(1), sub(2)].concat();
+        assert_eq!(rig.complete(&[records(1, 4, &three)]), (1, 0), "more than fit");
+        assert_eq!(rig.complete(&[records(1, 4, &two[..71])]), (1, 0), "not whole records");
+        assert_eq!(rig.complete(&[records(1, 4, &two[..36])]), (1, 0), "fewer than fit");
+        assert_eq!(rig.complete(&[records(1, 0x100_0000, &two)]), (1, 0), "total beyond 24 bits");
+        assert_eq!(rig.complete(&[records(1, 4, &two)]), (0, 0));
+        assert_eq!(rig.read(DATA, 73), [&two[..], &[0xEE]].concat());
+        assert_eq!(rig.read(BLOCK + LENGTH as u16, 2), [72, 0]);
+        assert_eq!(rig.read(BLOCK + SIZE as u16, 3), [4, 0, 0]);
+        assert_eq!(status(&rig, BLOCK), status::DONE);
+        assert_eq!(rig.events(), [(5, 1, 1, 0)]);
+
+        // Offset 3 of 4: one record, though two would fit.
+        rig.submit(BLOCK, Some(&feed(OP_SUBSCRIPTIONS, 3, 100)));
+        assert_eq!(rig.complete(&[records(1, 4, &two)]), (1, 0));
+        assert_eq!(rig.complete(&[records(1, 4, &sub(4))]), (0, 0));
+        // A buffer too small for one record, and an offset at or beyond the end.
+        for (offset, length) in [(0, 35), (4, 100), (5000, 100)] {
+            rig.submit(BLOCK, Some(&feed(OP_SUBSCRIPTIONS, offset, length)));
+            assert_eq!(rig.complete(&[records(1, 4, &sub(1))]), (1, 0), "{offset} {length}");
+            assert_eq!(rig.complete(&[records(1, 4, &[])]), (0, 0), "{offset} {length}");
+            assert_eq!(rig.read(BLOCK + LENGTH as u16, 2), [0, 0]);
+            assert_eq!(rig.read(BLOCK + SIZE as u16, 3), [4, 0, 0]);
+        }
+        // No subscriptions at all.
+        rig.submit(BLOCK, Some(&feed(OP_SUBSCRIPTIONS, 0, 36)));
+        assert_eq!(rig.complete(&[records(1, 0, &[])]), (0, 0));
+    }
+
+    #[test]
+    fn timeline_records_must_tile_the_delivered_bytes() {
+        let (a, b, c) = (timeline_record(0, 1, 0xA1), timeline_record(120, 0, 0xB2), timeline_record(7, 1, 0xC3));
+        assert_eq!((a.len(), b.len(), c.len()), (111, MAX_TIMELINE_RECORD, 118));
+        let abc = [a.clone(), b.clone(), c.clone()].concat();
+        let mut rig = Rig::new();
+        rig.submit(BLOCK, Some(&feed(OP_TIMELINE, 0, 1000)));
+        let mut bad_l = abc.clone();
+        bad_l[0] += 1;
+        let mut bad_flags = abc.clone();
+        bad_flags[1] = 0x02;
+        let mut long_title = timeline_record(121, 0, 0);
+        long_title[0] = 0xE7; // 1 + 109 + 121 does not fit in L; any value fails
+        let cut = abc[..abc.len() - 1].to_vec();
+        let extra = [abc.clone(), vec![0]].concat();
+        for (data, why) in [
+            (&bad_l[..], "L disagrees with n"),
+            (&bad_flags, "unknown flag"),
+            (&long_title, "title over 120 bytes"),
+            (&cut, "last record cut short"),
+            (&extra, "trailing byte"),
+            (&abc[..111 + 231], "fewer than fit"),
+        ] {
+            assert_eq!(rig.complete(&[records(1, 3, data)]), (1, 0), "{why}");
+        }
+        assert_eq!(rig.complete(&[records(1, 2, &abc)]), (1, 0), "more records than exist");
+        assert_eq!(rig.complete(&[records(1, 3, &abc)]), (0, 0));
+        assert_eq!(rig.read(DATA, abc.len()), abc);
+        assert_eq!(rig.read(BLOCK + LENGTH as u16, 2), (abc.len() as u16).to_le_bytes());
+        assert_eq!(rig.read(BLOCK + SIZE as u16, 3), [3, 0, 0]);
+
+        // Room for a and b (342 bytes) but not c: the rest of the buffer is
+        // under the largest record, so stopping there is allowed.
+        rig.submit(BLOCK, Some(&feed(OP_TIMELINE, 0, 400)));
+        assert_eq!(rig.complete(&[records(1, 3, &a)]), (1, 0), "b would have fit");
+        assert_eq!(rig.complete(&[records(1, 3, &abc[..342])]), (0, 0));
+        // Buffer too small for one record; offsets at and beyond the end.
+        for (offset, length) in [(0, 100), (3, 1000), (0x00FF_FFFF, 1000)] {
+            rig.submit(BLOCK, Some(&feed(OP_TIMELINE, offset, length)));
+            assert_eq!(rig.complete(&[records(1, 3, &[])]), (0, 0), "{offset} {length}");
+            assert_eq!(rig.read(BLOCK + LENGTH as u16, 2), [0, 0]);
+        }
+        rig.submit(BLOCK, Some(&feed(OP_TIMELINE, 0, 1000)));
+        assert_eq!(rig.complete(&[records(1, 3, &[])]), (1, 0), "nothing delivered though records fit");
+        // An empty timeline; a failure.
+        assert_eq!(rig.complete(&[records(1, 0, &[])]), (0, 0));
+        rig.submit(BLOCK, Some(&feed(OP_TIMELINE, 0, 1000)));
+        rig.complete(&[Completion { handle: 1, outcome: Outcome::Failed }]);
+        assert_eq!(status(&rig, BLOCK), status::FAILED);
     }
 }

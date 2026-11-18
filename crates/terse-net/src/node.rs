@@ -7,8 +7,19 @@
 //! Reconnecting: when the connection is lost (or cannot be made) while there
 //! are subscriptions, the node retries after 1 s, doubling up to 30 s, and
 //! subscribes again on every new connection.
+//!
+//! Caught up (NETWORK 4.3): a feed is caught up once the entry whose `seq`
+//! equals the `highest` of the subscribe reply has arrived (valid or not:
+//! an invalid entry is still the relay's last), or at once if `highest` is
+//! not above `after`. The node is settled when every feed is caught up and
+//! no automatic download is running.
+//!
+//! The node also answers the content device's feed operations (SPEC 7.7):
+//! every new entry it stores is appended to the arrival log
+//! ([`crate::timeline::Arrivals`]); the timeline is that log, newest first,
+//! restricted to the feeds subscribed to now.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -18,6 +29,7 @@ use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
 use crate::relay::{RelayClient, RelayReply};
 use crate::store::{BlobStore, default_store_dir};
+use crate::timeline::{self, Arrivals};
 
 /// Identifies an operation started on a [`Node`]; chosen by the caller.
 pub type Token = u64;
@@ -84,8 +96,8 @@ pub enum FeedEvent {
     /// Could not connect, or the connection was lost; the next attempt is
     /// in `retry_in`.
     Disconnected { retry_in: Duration },
-    /// Every subscription on this connection is answered and no automatic
-    /// download is in progress.
+    /// Every feed is caught up on this connection (NETWORK 4.3) and no
+    /// automatic download is in progress.
     Settled,
     /// A subscription or download started after `Settled`; `Settled` follows
     /// when it is done.
@@ -102,7 +114,8 @@ enum Waiting {
     /// yet assigned) is published next.
     ArticleBlob(Token, Entry),
     Entry(Token, SignedEntry),
-    Subscribe(FeedKey),
+    /// A subscribe sent with this `after`.
+    Subscribe(FeedKey, u32),
     Unsubscribe,
     /// The automatic download of a new entry's article.
     AutoGet(Entry),
@@ -133,6 +146,13 @@ pub struct Node {
     last_seq: u32,
     follow: Follow,
     events: Vec<FeedEvent>,
+    /// Feeds subscribed on this connection and not yet caught up, with the
+    /// `highest` their subscribe reply gave.
+    catching_up: HashMap<FeedKey, u32>,
+    arrivals: Arrivals,
+    /// Verified stored entries (`None`: invalid on disk), by feed and `seq`;
+    /// stored entries never change.
+    verified: HashMap<(FeedKey, u32), Option<(Entry, Vec<u8>)>>,
 }
 
 impl Node {
@@ -141,6 +161,7 @@ impl Node {
     pub fn new(store: BlobStore, relay: Option<RelayClient>) -> Self {
         Node {
             feeds: FeedStore::beside_blobs(store.dir()),
+            arrivals: Arrivals::beside_blobs(store.dir()),
             store,
             relay,
             waiting: HashMap::new(),
@@ -151,6 +172,8 @@ impl Node {
             last_seq: 0,
             follow: Follow { generation: 0, connected: false, retry_at: None, retry_in: FIRST_RETRY, settled: false },
             events: Vec::new(),
+            catching_up: HashMap::new(),
+            verified: HashMap::new(),
         }
     }
 
@@ -257,11 +280,21 @@ impl Node {
     }
 
     fn store_own_entry(&mut self, token: Token, signed: &SignedEntry) {
-        let done = match self.feeds.insert(signed) {
+        let done = match self.insert(signed) {
             Ok(Insert::New | Insert::Duplicate) => Done::Published { seq: signed.entry.seq, blob: signed.entry.blob },
             _ => Done::Failed,
         };
         self.ready.push((token, done));
+    }
+
+    /// Stores an entry and records the arrival of a new one.
+    fn insert(&mut self, signed: &SignedEntry) -> std::io::Result<Insert> {
+        let insert = self.feeds.insert(signed)?;
+        if insert == Insert::New {
+            // A failure only leaves the entry at the old end of the timeline.
+            let _ = self.arrivals.record(&signed.entry.feed, signed.entry.seq);
+        }
+        Ok(insert)
     }
 
     /// Adds a feed to the subscriptions (saved if they are backed by a file)
@@ -273,13 +306,14 @@ impl Node {
             {
                 let after = self.feeds.highest(&feed).unwrap_or(0);
                 let req = relay.subscribe(&feed, after);
-                self.waiting.insert(req, Waiting::Subscribe(feed));
+                self.waiting.insert(req, Waiting::Subscribe(feed, after));
             }
         }
         Ok(())
     }
 
     pub fn unsubscribe(&mut self, feed: &FeedKey) -> std::io::Result<()> {
+        self.catching_up.remove(feed);
         if self.subscriptions.remove(feed)?
             && let Some(relay) = self.relay.as_mut().filter(|r| r.connected())
         {
@@ -316,6 +350,73 @@ impl Node {
         Some(if len == entry.size as u64 { Article::Local } else { Article::SizeMismatch })
     }
 
+    /// The subscriptions records from index `offset` that fit in `length`
+    /// bytes, and how many exist (SPEC 7.7). The order is the key order.
+    pub fn subscription_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
+        let feeds: Vec<&FeedKey> = self.subscriptions.feeds().collect();
+        let records = feeds
+            .iter()
+            .skip(offset as usize)
+            .map(|feed| timeline::subscription_record(feed, self.feeds.highest(feed).unwrap_or(0)));
+        (feeds.len() as u32, timeline::fill(records, length as usize))
+    }
+
+    /// The stored entries of the subscribed feeds, newest arrival first
+    /// (SPEC 7.7). Entries of feeds no longer subscribed are left out (and
+    /// come back in place if the feed is subscribed again); entries stored
+    /// without an arrival record (by an older version) come last, highest
+    /// `seq` first. Entries that fail verification are left out.
+    pub fn timeline(&mut self) -> Vec<(FeedKey, u32)> {
+        let mut held: HashMap<FeedKey, BTreeSet<u32>> = self
+            .subscriptions
+            .feeds()
+            .map(|feed| (*feed, self.feeds.seqs(feed).unwrap_or_default().into_iter().collect()))
+            .collect();
+        let order = self.arrivals.order().map(<[_]>::to_vec).unwrap_or_default();
+        let mut out: Vec<(FeedKey, u32)> = order
+            .into_iter()
+            .rev()
+            .filter(|(feed, seq)| held.get_mut(feed).is_some_and(|seqs| seqs.remove(seq)))
+            .collect();
+        let mut rest: Vec<(FeedKey, u32)> =
+            held.into_iter().flat_map(|(feed, seqs)| seqs.into_iter().map(move |seq| (feed, seq))).collect();
+        rest.sort_by(|a, b| (b.1, b.0).cmp(&(a.1, a.0)));
+        out.extend(rest);
+        out.retain(|&(feed, seq)| self.verified_entry(feed, seq).is_some());
+        out
+    }
+
+    /// A stored entry and its bytes without the signature, verified once.
+    fn verified_entry(&mut self, feed: FeedKey, seq: u32) -> Option<&(Entry, Vec<u8>)> {
+        let feeds = &self.feeds;
+        self.verified
+            .entry((feed, seq))
+            .or_insert_with(|| {
+                let signed = entry::decode(&feeds.get(&feed, seq).ok()??).ok()?;
+                let unsigned = signed.bytes[..signed.bytes.len() - entry::SIGNATURE_LEN].to_vec();
+                (signed.entry.feed == feed && signed.entry.seq == seq).then_some((signed.entry, unsigned))
+            })
+            .as_ref()
+    }
+
+    /// The timeline records from index `offset` that fit in `length` bytes,
+    /// and how many exist (SPEC 7.7).
+    pub fn timeline_records(&mut self, offset: u32, length: u16) -> (u32, Vec<u8>) {
+        let list = self.timeline();
+        let mut records = Vec::new();
+        let mut used = 0;
+        for &(feed, seq) in list.iter().skip(offset as usize) {
+            let Some((entry, unsigned)) = self.verified_entry(feed, seq).cloned() else { continue };
+            if used + 2 + unsigned.len() > length as usize {
+                break;
+            }
+            let local = self.held_article(&entry) == Some(Article::Local);
+            used += 2 + unsigned.len();
+            records.push(timeline::timeline_record(&unsigned, local));
+        }
+        (list.len() as u32, records.concat())
+    }
+
     /// Connects and renews subscriptions when needed (NETWORK 4.4).
     fn maintain(&mut self) {
         let Some(relay) = self.relay.as_mut() else { return };
@@ -349,10 +450,11 @@ impl Node {
                 settled: false,
             };
             self.events.push(FeedEvent::Connected);
+            self.catching_up.clear();
             for feed in self.subscriptions.feeds() {
                 let after = self.feeds.highest(feed).unwrap_or(0);
                 let req = relay.subscribe(feed, after);
-                self.waiting.insert(req, Waiting::Subscribe(*feed));
+                self.waiting.insert(req, Waiting::Subscribe(*feed, after));
             }
         }
     }
@@ -360,9 +462,18 @@ impl Node {
     /// Verifies and stores an entry pushed by the relay, and starts its
     /// automatic download (NETWORK 4.4).
     fn receive(&mut self, bytes: &[u8]) {
+        // Caught up when the relay's last entry for the feed arrives, whether
+        // or not it turns out to be valid (NETWORK 4.3).
+        if bytes.len() >= 36 {
+            let feed: FeedKey = bytes[..32].try_into().unwrap();
+            let seq = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
+            if self.catching_up.get(&feed).is_some_and(|&highest| seq >= highest) {
+                self.catching_up.remove(&feed);
+            }
+        }
         // Invalid entries and entries for feeds not subscribed are discarded.
         let Ok(signed) = entry::decode(bytes) else { return };
-        if !self.subscriptions.contains(&signed.entry.feed) || self.feeds.insert(&signed).ok() != Some(Insert::New) {
+        if !self.subscriptions.contains(&signed.entry.feed) || self.insert(&signed).ok() != Some(Insert::New) {
             return;
         }
         let entry = signed.entry;
@@ -420,12 +531,17 @@ impl Node {
             (Waiting::Entry(token, _), RelayReply::Refused) => (token, Done::Refused),
             (Waiting::Get(token, _) | Waiting::Put(token, _), _)
             | (Waiting::ArticleBlob(token, _) | Waiting::Entry(token, _), _) => (token, Done::Failed),
-            (Waiting::Subscribe(feed), RelayReply::Done) => return self.events.push(FeedEvent::Subscribed(feed)),
-            (Waiting::Subscribe(feed), RelayReply::Refused) => {
+            (Waiting::Subscribe(feed, after), RelayReply::Subscribed { highest }) => {
+                if highest > after && self.subscriptions.contains(&feed) {
+                    self.catching_up.insert(feed, highest);
+                }
+                return self.events.push(FeedEvent::Subscribed(feed));
+            }
+            (Waiting::Subscribe(feed, _), RelayReply::Refused) => {
                 return self.events.push(FeedEvent::SubscribeRefused(feed));
             }
             // No answer: subscribe again on the next poll.
-            (Waiting::Subscribe(_), _) => {
+            (Waiting::Subscribe(..), _) => {
                 self.follow.generation = 0;
                 return;
             }
@@ -437,7 +553,8 @@ impl Node {
 
     /// Reports `Settled` when nothing is outstanding for the feeds.
     fn check_settled(&mut self) {
-        let pending = self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(_) | Waiting::AutoGet(_)));
+        let pending = !self.catching_up.is_empty()
+            || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..) | Waiting::AutoGet(_)));
         let current = self.relay.as_ref().is_some_and(|r| r.connected() && r.generation() == self.follow.generation);
         if pending {
             if std::mem::take(&mut self.follow.settled) {
@@ -556,6 +673,10 @@ mod tests {
         live: Vec<Vec<u8>>,
         /// Drop the connection on the next receive.
         drop: bool,
+        /// Report this `highest` in subscribe replies instead of the truth.
+        claim_highest: Option<u32>,
+        /// Hold back messages after the subscribe reply until cleared.
+        stall: bool,
     }
 
     struct Fake {
@@ -581,8 +702,10 @@ mod tests {
                 }
                 Request::Subscribe { req, feed, after } => {
                     s.subscribes.push((feed, after));
-                    self.inbox.push_back(protocol::encode_status_reply(protocol::SUBSCRIBE_REPLY, req, status::DONE));
                     let seq = |e: &Vec<u8>| u32::from_le_bytes(e[32..36].try_into().unwrap());
+                    let highest = s.held.iter().filter(|e| e[..32] == feed).map(seq).max().unwrap_or(0);
+                    let highest = s.claim_highest.unwrap_or(highest);
+                    self.inbox.push_back(protocol::encode_subscribe_reply(req, status::DONE, highest));
                     for e in s.held.iter().filter(|e| e[..32] == feed && seq(e) > after) {
                         self.inbox.push_back(protocol::encode_entry(e));
                     }
@@ -602,6 +725,9 @@ mod tests {
                 return Err(std::io::ErrorKind::ConnectionReset.into());
             }
             self.inbox.extend(s.live.drain(..));
+            if s.stall && self.inbox.front().is_some_and(|m| m[0] == protocol::ENTRY) {
+                return Ok(None);
+            }
             Ok(self.inbox.pop_front())
         }
     }
@@ -716,5 +842,149 @@ mod tests {
         let sent = entry::decode(&s.held[1]).unwrap().entry;
         assert_eq!((sent.seq, sent.time, sent.reply_to, sent.size), (2, 77, [9; 32], 7));
         assert_eq!(node.feed_store().highest(&author.feed_key()).unwrap(), 2);
+    }
+
+    fn signed(author: &Identity, seq: u32, data: &[u8], title: &str) -> Vec<u8> {
+        Entry::article(author.feed_key(), seq, 1000 + seq, data, None, title).sign(author).unwrap().bytes
+    }
+
+    /// Polls `n` times and returns the events.
+    fn poll_n(node: &mut Node, n: usize) -> Vec<FeedEvent> {
+        (0..n).flat_map(|_| {
+            node.poll();
+            node.take_feed_events()
+        })
+        .collect()
+    }
+
+    /// NETWORK 4.3: caught up when the entry with `seq` = `highest` arrives,
+    /// or at once if `highest` is not above `after`.
+    #[test]
+    fn caught_up_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, script) = node_with_fake(dir.path());
+        let author = Identity::from_seed([6; 32]);
+        let feed = author.feed_key();
+        {
+            let mut s = script.lock().unwrap();
+            s.held = vec![signed(&author, 1, b"a", "a"), signed(&author, 3, b"b", "b")];
+            s.stall = true;
+        }
+        node.set_auto_download_limit(0);
+        node.set_subscriptions(Subscriptions::in_memory([feed]));
+        // Subscribed, but the backlog has not arrived: not settled.
+        let events = poll_n(&mut node, 5);
+        assert!(events.contains(&FeedEvent::Subscribed(feed)), "{events:?}");
+        assert!(!events.contains(&FeedEvent::Settled), "{events:?}");
+        script.lock().unwrap().stall = false;
+        let events = settle(&mut node);
+        assert_eq!(entries(&events), [(1, Article::NotFetched), (3, Article::NotFetched)]);
+
+        // Reconnect: highest (3) equals after (3): settled with nothing new.
+        script.lock().unwrap().drop = true;
+        poll_n(&mut node, 2);
+        node.follow.retry_at = Some(Instant::now());
+        assert_eq!(entries(&settle(&mut node)), []);
+        // A relay that holds less than we do (highest < after) is caught up at once.
+        script.lock().unwrap().claim_highest = Some(1);
+        script.lock().unwrap().drop = true;
+        poll_n(&mut node, 2);
+        node.follow.retry_at = Some(Instant::now());
+        assert_eq!(entries(&settle(&mut node)), []);
+        // An invalid last entry still ends the catch-up.
+        {
+            let mut s = script.lock().unwrap();
+            s.claim_highest = None;
+            let mut forged = signed(&author, 4, b"c", "c");
+            forged[50] ^= 1;
+            s.held.push(forged);
+            s.drop = true;
+        }
+        poll_n(&mut node, 2);
+        node.follow.retry_at = Some(Instant::now());
+        assert_eq!(entries(&settle(&mut node)), []);
+        assert_eq!(script.lock().unwrap().subscribes, [(feed, 0), (feed, 3), (feed, 3), (feed, 3)]);
+    }
+
+    /// An empty relay: subscribed with `highest` 0, settled at once.
+    #[test]
+    fn caught_up_with_a_relay_with_no_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, _script) = node_with_fake(dir.path());
+        node.set_subscriptions(Subscriptions::in_memory([Identity::from_seed([7; 32]).feed_key()]));
+        let events = settle(&mut node);
+        assert_eq!(entries(&events), []);
+        assert_eq!(node.timeline_records(0, 16384), (0, Vec::new()));
+    }
+
+    fn timeline_titles(node: &mut Node) -> Vec<String> {
+        let (total, data) = node.timeline_records(0, 16384);
+        let mut titles = Vec::new();
+        let mut at = 0;
+        while at < data.len() {
+            let n = data[at + 2 + 108] as usize;
+            titles.push(String::from_utf8(data[at + 2 + 109..at + 2 + 109 + n].to_vec()).unwrap());
+            at += 1 + data[at] as usize;
+        }
+        assert_eq!(titles.len(), total as usize);
+        titles
+    }
+
+    /// SPEC 7.7: newest arrival first across feeds, the same after a
+    /// restart; unsubscribed feeds drop out.
+    #[test]
+    fn timeline_order_across_feeds_and_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (Identity::from_seed([8; 32]), Identity::from_seed([9; 32]));
+        let (mut node, script) = node_with_fake(dir.path());
+        {
+            let mut s = script.lock().unwrap();
+            s.blobs.insert(blob_id(b"a1"), b"a1".to_vec());
+            s.held = vec![signed(&a, 1, b"a1", "a1"), signed(&a, 2, b"a2", "a2")];
+        }
+        node.set_subscriptions(Subscriptions::in_memory([a.feed_key(), b.feed_key()]));
+        settle(&mut node);
+        for (author, seq, title) in [(&b, 1, "b1"), (&a, 3, "a3"), (&b, 2, "b2")] {
+            let e = signed(author, seq, title.as_bytes(), title);
+            script.lock().unwrap().live.push(protocol::encode_entry(&e));
+            settle(&mut node);
+        }
+        assert_eq!(timeline_titles(&mut node), ["b2", "a3", "b1", "a2", "a1"]);
+
+        // Records: L, flags (a1 was downloaded) and the unsigned entry.
+        let (total, data) = node.timeline_records(4, 16384);
+        assert_eq!(total, 5);
+        let want = &signed(&a, 1, b"a1", "a1")[..111];
+        assert_eq!(data, [&[112u8, 1][..], want].concat());
+        // Whole records only; an offset past the end; a buffer too small.
+        assert_eq!(node.timeline_records(0, 113 + 112).1.len(), 113);
+        assert_eq!(node.timeline_records(5, 1000), (5, Vec::new()));
+        assert_eq!(node.timeline_records(0, 100), (5, Vec::new()));
+
+        // Subscriptions: key order, highest seq held.
+        let (total, data) = node.subscription_records(0, 100);
+        let mut keys = [a.feed_key(), b.feed_key()];
+        keys.sort();
+        let highest = |k: &FeedKey| if *k == a.feed_key() { 3u32 } else { 2 };
+        let want: Vec<u8> = keys.iter().flat_map(|k| [&k[..], &highest(k).to_le_bytes()].concat()).collect();
+        assert_eq!((total, data), (2, want.clone()));
+        assert_eq!(node.subscription_records(1, 36), (2, want[36..].to_vec()));
+        assert_eq!(node.subscription_records(0, 35), (2, Vec::new()));
+
+        // A restart: the same order.
+        drop(node);
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        node.set_subscriptions(Subscriptions::in_memory([a.feed_key(), b.feed_key()]));
+        assert_eq!(timeline_titles(&mut node), ["b2", "a3", "b1", "a2", "a1"]);
+        // Unsubscribed feeds drop out, and return in place.
+        node.set_subscriptions(Subscriptions::in_memory([a.feed_key()]));
+        assert_eq!(timeline_titles(&mut node), ["a3", "a2", "a1"]);
+        node.set_subscriptions(Subscriptions::in_memory([a.feed_key(), b.feed_key()]));
+        assert_eq!(timeline_titles(&mut node), ["b2", "a3", "b1", "a2", "a1"]);
+        // A damaged entry file is left out.
+        std::fs::write(dir.path().join("feeds").join(to_hex(&a.feed_key())).join("0000000003"), b"junk").unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        node.set_subscriptions(Subscriptions::in_memory([a.feed_key(), b.feed_key()]));
+        assert_eq!(timeline_titles(&mut node), ["b2", "b1", "a2", "a1"]);
     }
 }

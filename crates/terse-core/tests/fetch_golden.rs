@@ -26,6 +26,9 @@ fn serve(requests: Vec<Request>, blobs: &[&[u8]]) -> Vec<Completion> {
                     }
                 }
                 RequestKind::Put { data } => Outcome::Put { id: *blake3::hash(&data).as_bytes() },
+                RequestKind::Subscriptions { .. } | RequestKind::Timeline { .. } => {
+                    Outcome::Records { total: 0, data: Vec::new() }
+                }
             };
             Completion { handle, outcome }
         })

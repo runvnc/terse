@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use terse_core::{Completion, Outcome, Request, RequestKind};
+use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
 
 use crate::identity::FeedKey;
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
@@ -37,6 +37,8 @@ pub struct ContentService {
     events: Receiver<FeedEvent>,
     /// Requests submitted and not yet returned by `take_finished`/`wait_finished`.
     outstanding: usize,
+    /// The node has a relay and subscriptions.
+    following: bool,
 }
 
 /// What the worker needs to turn a `Done` into a completion.
@@ -48,6 +50,7 @@ enum Job {
 
 impl ContentService {
     pub fn start(node: Node) -> Self {
+        let following = node.following();
         let (jobs, job_rx) = mpsc::channel();
         let (done_tx, finished) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
@@ -55,7 +58,34 @@ impl ContentService {
             .name("terse-content".into())
             .spawn(move || worker(node, job_rx, done_tx, event_tx))
             .expect("spawn content thread");
-        ContentService { jobs, finished, events, outstanding: 0 }
+        ContentService { jobs, finished, events, outstanding: 0, following }
+    }
+
+    /// Whether the node follows feeds through a relay.
+    pub fn following(&self) -> bool {
+        self.following
+    }
+
+    /// Whether a new feed entry was stored since the last call (the
+    /// feeds-updated event, SPEC 5.1); never blocks. Consumes the feed
+    /// events so far, like `take_feed_events`.
+    pub fn feeds_updated(&mut self) -> bool {
+        self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. }))
+    }
+
+    /// Waits until every feed is caught up (NETWORK 4.3) and its automatic
+    /// downloads are done. Fails if the relay cannot be reached or `timeout`
+    /// passes first.
+    pub fn wait_caught_up(&mut self, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.wait_feed_event(deadline.saturating_duration_since(Instant::now())) {
+                Some(FeedEvent::Settled) => return Ok(()),
+                Some(FeedEvent::Disconnected { .. }) => return Err("cannot reach the relay".into()),
+                Some(_) => {}
+                None => return Err(format!("not caught up after {} s", timeout.as_secs())),
+            }
+        }
     }
 
     pub fn submit(&mut self, requests: Vec<Request>) {
@@ -108,6 +138,41 @@ impl ContentService {
     }
 }
 
+/// Runs a machine the reproducible headless way (`terse run`, `terse-host
+/// --screenshot`): scripted events, Unix time 0, random bytes 00h, no
+/// controllers, and every content request completed at the start of the
+/// next frame. A feeds-updated event is delivered in the frame after the one
+/// in which the host stored a new entry; entries stored before the first
+/// frame (the initial sync) are not announced.
+pub struct Headless {
+    content: Option<ContentService>,
+    script: Script,
+    completions: Vec<Completion>,
+    feeds_updated: bool,
+}
+
+impl Headless {
+    pub fn new(content: Option<ContentService>, script: Script) -> Self {
+        Headless { content, script, completions: Vec::new(), feeds_updated: false }
+    }
+
+    /// Runs the machine's next frame, then carries out the requests it made.
+    pub fn frame(&mut self, machine: &mut Machine) -> FrameResult {
+        let mut events = self.script.events(machine.frame()).to_vec();
+        if std::mem::take(&mut self.feeds_updated) {
+            events.push(Event::feeds_updated());
+        }
+        let completions = std::mem::take(&mut self.completions);
+        let result = machine.run_frame(&FrameInput { events: &events, completions: &completions, ..Default::default() });
+        if let Some(content) = &mut self.content {
+            content.submit(machine.take_content_requests());
+            self.completions = content.wait_finished();
+            self.feeds_updated = content.feeds_updated();
+        }
+        result
+    }
+}
+
 fn completion(job: Job, done: Done) -> Completion {
     let (handle, outcome) = match (job, done) {
         (Job::Get { handle, offset, length }, Done::Got(blob)) => {
@@ -156,6 +221,19 @@ fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, ev
             Some(Work::Content(Request { handle, kind: RequestKind::Put { data } })) => {
                 pending.insert(next, Job::Put { handle });
                 node.start_put(next, &data);
+            }
+            // SPEC 7.7: answered at once from the node's own state.
+            Some(Work::Content(Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
+                let (total, data) = node.subscription_records(offset, length);
+                if finished.send(Completion { handle, outcome: Outcome::Records { total, data } }).is_err() {
+                    return;
+                }
+            }
+            Some(Work::Content(Request { handle, kind: RequestKind::Timeline { offset, length } })) => {
+                let (total, data) = node.timeline_records(offset, length);
+                if finished.send(Completion { handle, outcome: Outcome::Records { total, data } }).is_err() {
+                    return;
+                }
             }
             Some(Work::Feed(FeedCommand::Publish(draft))) => {
                 pending.insert(next, Job::Publish);
@@ -235,5 +313,32 @@ mod tests {
         assert_eq!(service.wait_feed_event(timeout), Some(FeedEvent::Published { seq: 1, blob: blob_id(b"text") }));
         assert_eq!(service.wait_feed_event(timeout), Some(FeedEvent::PublishFailed(Done::Failed)));
         assert!(service.take_feed_events().is_empty());
+    }
+
+    #[test]
+    fn answers_feed_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let author = crate::Identity::from_seed([6; 32]);
+        node.set_identity(author.clone());
+        for title in ["one", "two"] {
+            let draft = Draft { data: title.as_bytes().to_vec(), title: title.into(), reply_to: None, time: 0 };
+            assert!(matches!(node.publish_article(&draft), Done::Published { .. }));
+        }
+        node.set_subscriptions(crate::Subscriptions::in_memory([author.feed_key()]));
+        let mut service = ContentService::start(node);
+        service.submit(vec![
+            Request { handle: 1, kind: RequestKind::Subscriptions { offset: 0, length: 100 } },
+            Request { handle: 2, kind: RequestKind::Timeline { offset: 1, length: 1000 } },
+        ]);
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        let Outcome::Records { total, data } = &done[0].outcome else { panic!("{done:?}") };
+        assert_eq!((*total, &data[..32], &data[32..]), (1, &author.feed_key()[..], &2u32.to_le_bytes()[..]));
+        let Outcome::Records { total, data } = &done[1].outcome else { panic!("{done:?}") };
+        // Index 1 is the older entry; its article is in the store.
+        assert_eq!((*total, data.len(), data[0], data[1]), (2, 2 + 109 + 3, 1 + 109 + 3, 1));
+        assert_eq!(&data[2 + 109..], b"one");
+        assert!(!service.feeds_updated(), "own publishing is not a new entry of a followed feed");
     }
 }

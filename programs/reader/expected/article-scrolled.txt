@@ -1,0 +1,30 @@
+ A long article
+ feed 66be7e33  #3  2026-11-17 18:30 UTC  6177 bytes
+itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
+to fill the paragraph out to a few hundred bytes.
+
+Paragraph 7. The quick brown fox jumps over the lazy dog while the reader wraps
+each line at a space so that no word is split unless it is longer than the row
+itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
+to fill the paragraph out to a few hundred bytes.
+
+Paragraph 8. The quick brown fox jumps over the lazy dog while the reader wraps
+each line at a space so that no word is split unless it is longer than the row
+itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
+to fill the paragraph out to a few hundred bytes.
+
+Paragraph 9. The quick brown fox jumps over the lazy dog while the reader wraps
+each line at a space so that no word is split unless it is longer than the row
+itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
+to fill the paragraph out to a few hundred bytes.
+
+Paragraph 10. The quick brown fox jumps over the lazy dog while the reader
+wraps each line at a space so that no word is split unless it is longer than
+the row itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then
+more words to fill the paragraph out to a few hundred bytes.
+
+Paragraph 11. The quick brown fox jumps over the lazy dog while the reader
+wraps each line at a space so that no word is split unless it is longer than
+the row itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then
+more words to fill the paragraph out to a few hundred bytes.
+ lines 30–56 of 105  53%              ↑↓ PgUp PgDn Home End wheel   Esc/←: back

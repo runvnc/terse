@@ -62,7 +62,10 @@ fn relay_round_trip_tampering_and_fetch_by_image_id() {
     // message both come from the relay. The screen matches the golden one.
     let image = programs().join("fetch/fetch.terse");
     let image_id = terse_ok(&["put", image.to_str().unwrap(), "--relay", &url, "--store", a]).trim().to_string();
-    let screen = terse_ok(&["run", &image_id, "--relay", &url, "--store", d, "--frames", "10", "--dump"]);
+    // An empty config directory: no subscriptions.
+    let config = tempfile::tempdir().unwrap();
+    let config = config.path().to_str().unwrap();
+    let screen = terse_ok(&["run", &image_id, "--relay", &url, "--store", d, "--config", config, "--frames", "10", "--dump"]);
     let expected = std::fs::read_to_string(programs().join("fetch/expected-screen.txt")).unwrap();
     assert_eq!(screen, expected);
     // The program's put reached the relay.
@@ -76,7 +79,8 @@ fn relay_round_trip_tampering_and_fetch_by_image_id() {
     };
     let e = tempfile::tempdir().unwrap();
     let screen = terse_ok(&[
-        "run", image.to_str().unwrap(), "--relay", &dead, "--store", e.path().to_str().unwrap(), "--frames", "10", "--dump",
+        "run", image.to_str().unwrap(), "--relay", &dead, "--store", e.path().to_str().unwrap(), "--config", config,
+        "--frames", "10", "--dump",
     ]);
     assert!(screen.contains("fetching… status 03 failed"), "{screen}");
     assert!(screen.contains("Putting 256 bytes built in RAM… status 03 failed"), "{screen}");

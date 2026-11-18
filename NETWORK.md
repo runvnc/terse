@@ -1,8 +1,8 @@
 # Terse network — v0 (draft)
 
 Status: the first, deliberately minimal step. It moves immutable blobs between
-hosts through a relay. There are no names, identities, signatures, messages or
-peer-to-peer links yet.
+hosts through a relay and carries signed feeds of small articles. There are
+no names, messages or peer-to-peer links yet.
 
 Programs never see this protocol. They use the content device (SPEC.md
 section 7); the host speaks the protocol on their behalf.
@@ -81,8 +81,9 @@ see secret keys.
 The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by
 bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
-An entry is valid if its length matches `n`, the signature verifies under the
-feed key, `seq` is at least 1, the kind is known, the size is 1 to 1,048,576
+An entry is valid if `n` is at most 120, its length matches `n`, the
+signature verifies under the feed key (strict verification: small-order keys
+and non-canonical signatures are rejected), `seq` is at least 1, the kind is known, the size is 1 to 1,048,576
 and the title is valid UTF-8. Hosts and relays discard invalid entries.
 
 If two different valid entries have the same feed key and `seq`, the one
@@ -95,7 +96,7 @@ received first is kept.
 | client → relay | Publish | `03h`, `req` (4), entry |
 | relay → client | Publish reply | `83h`, `req` (4), `status` (1) |
 | client → relay | Subscribe | `04h`, `req` (4), feed key (32), `after` (4) |
-| relay → client | Subscribe reply | `84h`, `req` (4), `status` (1) |
+| relay → client | Subscribe reply | `84h`, `req` (4), `status` (1), then if `status` is 1: `highest` (4), the highest `seq` the relay holds for the feed, or 0 |
 | client → relay | Unsubscribe | `05h`, `req` (4), feed key (32) |
 | relay → client | Unsubscribe reply | `85h`, `req` (4), `status` (1) |
 | relay → client | Entry | `90h`, entry |
@@ -103,9 +104,16 @@ received first is kept.
 - The relay verifies an entry before storing it. Publishing an entry the relay
   already holds succeeds. Publishing a different entry with a `seq` it already
   holds is refused.
-- After a successful subscribe, the relay sends every entry it holds for that
-  feed with `seq` greater than `after`, in increasing order, and then each new
-  entry as it is published, until the client unsubscribes or disconnects.
+- After a successful subscribe, the relay sends the reply, then every entry it
+  holds for that feed with `seq` greater than `after`, in increasing order,
+  and then each new entry as it is published, until the client unsubscribes
+  or disconnects. Each entry is sent once. The client has caught up with the
+  feed when it has received an entry whose `seq` is `highest` or greater
+  (whether or not that entry is valid), or immediately if `highest` is not
+  greater than `after`.
+- Publish, subscribe and unsubscribe replies use status `1` (done) or `3`
+  (refused). Unsubscribing from a feed that was not subscribed succeeds.
+- `seq` values need not be consecutive, and the time is not checked.
 - A relay may keep only the most recent entries of a feed (at least 256).
 
 ### 4.4 Host behaviour
@@ -119,6 +127,11 @@ received first is kept.
   it gets the blob without being asked. If the blob's length differs from the
   entry's size, the blob is not associated with the entry. Larger blobs are
   fetched only on request.
+- **Arrival order:** the host records the order in which it first stored
+  each entry, and keeps that record across restarts. This is the order of
+  the timeline that programs read (SPEC.md section 7.7). Unsubscribing
+  removes a feed's entries from the timeline but not from the record;
+  subscribing again puts them back where they were.
 - Publishing an article: the host puts the blob, then signs and publishes an
   entry with the next `seq`.
 
@@ -132,8 +145,8 @@ reading instant.
 
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
-- How programs see feeds and subscriptions (a device), and consent for
-  publishing on the user's behalf.
+- Letting programs subscribe and publish, with the user's consent. (Reading
+  feeds is specified: SPEC.md section 7.7.)
 - Finding replies to an article, ranking, moderation and spam limits.
 - Key rotation and several feeds per identity.
 - An article markup format.

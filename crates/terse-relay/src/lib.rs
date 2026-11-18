@@ -111,9 +111,10 @@ impl Relay {
             Ok(Request::Publish { req, entry }) => {
                 protocol::encode_status_reply(protocol::PUBLISH_REPLY, req, self.publish(entry))
             }
-            Ok(Request::Subscribe { req, feed, after }) => {
-                protocol::encode_status_reply(protocol::SUBSCRIBE_REPLY, req, self.subscribe(conn, feed, after))
-            }
+            Ok(Request::Subscribe { req, feed, after }) => match self.subscribe(conn, feed, after) {
+                Some(highest) => protocol::encode_subscribe_reply(req, status::DONE, highest),
+                None => protocol::encode_subscribe_reply(req, status::REFUSED, 0),
+            },
             Ok(Request::Unsubscribe { req, feed }) => {
                 if let Some(s) = self.subscribers.lock().unwrap().by_id.get_mut(&conn.id) {
                     s.feeds.remove(&feed);
@@ -154,21 +155,28 @@ impl Relay {
         status::DONE
     }
 
-    fn subscribe(&self, conn: &Connection, feed: FeedKey, after: u32) -> u8 {
+    /// Subscribes `conn` and queues the backlog; returns the highest `seq`
+    /// held (NETWORK 4.3), or `None` if refused. The reply is sent before
+    /// the queue is drained, so it precedes the backlog.
+    fn subscribe(&self, conn: &Connection, feed: FeedKey, after: u32) -> Option<u32> {
         if !valid_feed_key(&feed) {
-            return status::REFUSED;
+            return None;
         }
+        // Under the lock, so `highest` and the backlog agree and no publish
+        // slips between them.
         let mut subs = self.subscribers.lock().unwrap();
-        let Ok(backlog) = self.feeds.after(&feed, after) else { return status::REFUSED };
-        let Some(s) = subs.by_id.get_mut(&conn.id) else { return status::REFUSED };
+        let seqs = self.feeds.seqs(&feed).ok()?;
+        let s = subs.by_id.get_mut(&conn.id)?;
         s.feeds.insert(feed);
-        for bytes in backlog {
+        for seq in seqs.iter().copied().filter(|&seq| seq > after) {
+            // A file pruned meanwhile is skipped.
+            let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
             if !push(s, protocol::encode_entry(&bytes)) {
                 subs.by_id.remove(&conn.id);
                 break;
             }
         }
-        status::DONE
+        Some(seqs.last().copied().unwrap_or(0))
     }
 }
 

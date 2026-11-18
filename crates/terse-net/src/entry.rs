@@ -13,6 +13,8 @@ pub const MAX_TITLE: usize = 120;
 /// Bytes before the title.
 const HEAD: usize = 109;
 const SIG: usize = 64;
+/// Length of the signature at the end of an entry.
+pub const SIGNATURE_LEN: usize = SIG;
 pub const MAX_ENTRY: usize = HEAD + MAX_TITLE + SIG;
 
 /// An entry's fields.

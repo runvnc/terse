@@ -64,10 +64,23 @@ fn publish(ws: &mut Ws, req: u32, entry: &[u8]) -> u8 {
 }
 
 fn subscribe(ws: &mut Ws, req: u32, id: &Identity, after: u32) -> u8 {
+    subscribe_highest(ws, req, id, after).0
+}
+
+/// Subscribes; returns the status and, if done, `highest` (NETWORK 4.3).
+fn subscribe_highest(ws: &mut Ws, req: u32, id: &Identity, after: u32) -> (u8, Option<u32>) {
     let reply = ask(ws, protocol::encode_subscribe(req, &id.feed_key(), after));
-    assert_eq!(reply.len(), 6);
     assert_eq!(reply[..5], protocol::encode_status_reply(SUBSCRIBE_REPLY, req, 0)[..5]);
-    reply[5]
+    match reply[5] {
+        status::DONE => {
+            assert_eq!(reply.len(), 10);
+            (status::DONE, Some(u32::from_le_bytes(reply[6..10].try_into().unwrap())))
+        }
+        s => {
+            assert_eq!(reply.len(), 6);
+            (s, None)
+        }
+    }
 }
 
 fn pushed(ws: &mut Ws) -> Vec<u8> {
@@ -186,4 +199,41 @@ fn keeps_the_most_recent_entries_and_survives_a_restart() {
     assert!(quiet(&mut sub));
     let mut ws = connect(&restarted);
     assert_eq!(publish(&mut ws, 1, &entry(&author, total, "different")), status::REFUSED, "seq held after restart");
+}
+
+/// NETWORK 4.3: the subscribe reply carries the highest `seq` held and
+/// comes before the backlog; `seq` values need not be consecutive.
+#[test]
+fn subscribe_reply_carries_highest() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = start(dir.path(), 1024);
+    let author = Identity::from_seed([4; 32]);
+    let mut ws = connect(&url);
+
+    // A relay with no entries for the feed.
+    let mut empty = connect(&url);
+    assert_eq!(subscribe_highest(&mut empty, 1, &author, 0), (status::DONE, Some(0)));
+    assert!(quiet(&mut empty));
+
+    for seq in [2, 5, 9] {
+        assert_eq!(publish(&mut ws, seq, &entry(&author, seq, "x")), status::DONE);
+    }
+    // `empty` receives the new entries live.
+    for seq in [2u32, 5, 9] {
+        assert_eq!(pushed(&mut empty)[32..36], seq.to_le_bytes());
+    }
+    for (after, backlog) in [(0, &[2u32, 5, 9][..]), (5, &[9]), (9, &[]), (100, &[])] {
+        let mut sub = connect(&url);
+        assert_eq!(subscribe_highest(&mut sub, 7, &author, after), (status::DONE, Some(9)), "after {after}");
+        for &seq in backlog {
+            assert_eq!(pushed(&mut sub)[32..36], seq.to_le_bytes());
+        }
+        assert!(quiet(&mut sub), "after {after}");
+    }
+    // A refused subscribe has no `highest`.
+    let reply = ask(&mut ws, protocol::encode_subscribe(3, &[0; 32], 0));
+    assert_eq!(reply, [SUBSCRIBE_REPLY, 3, 0, 0, 0, status::REFUSED]);
+    // Unsubscribing from a feed that was not subscribed succeeds.
+    let reply = ask(&mut ws, protocol::encode_unsubscribe(4, &author.feed_key()));
+    assert_eq!(reply, protocol::encode_status_reply(UNSUBSCRIBE_REPLY, 4, status::DONE));
 }
