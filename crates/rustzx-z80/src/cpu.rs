@@ -77,6 +77,19 @@ impl Z80 {
         self.halted
     }
 
+    /// Terse patch: true if the next step will not check for an interrupt
+    /// (set by EI, DI and by a prefix whose instruction has not run yet).
+    pub fn interrupt_blocked(&self) -> bool {
+        self.skip_interrupt
+    }
+
+    /// Terse patch: a prefix byte (DDh, EDh or FDh) already fetched whose
+    /// instruction the next step executes, as left by a DD/FD prefix followed
+    /// by another prefix; `None` between whole instructions.
+    pub fn pending_prefix(&self) -> Option<u8> {
+        self.active_prefix.to_byte()
+    }
+
     /// Returns current interrupt mode
     pub fn get_im(&self) -> IntMode {
         self.int_mode

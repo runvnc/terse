@@ -17,7 +17,7 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...]
-            [--store <dir>] [--config <dir>]
+            [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]
   terse info <image|id> [--relay ws://...] [--store <dir>]
   terse put <file> [--relay ws://...] [--store <dir>]
   terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
@@ -41,7 +41,10 @@ entries are kept in <store>/feeds.
 --config holds the identity and subscriptions; it defaults to $XDG_CONFIG_HOME/terse
 (or ~/.config/terse).
 --auto-download: articles up to this size are fetched as entries arrive (default 16384).
---events: scripted input, one event per line (see README).";
+--events: scripted input, one event per line (see README).
+--hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
+`<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
+--bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.";
 
 /// Options for commands that use the blob store and relay.
 const NET_OPTIONS: [&str; 2] = ["--relay", "--store"];
@@ -174,8 +177,19 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--dump", "--dump-vectors"])?;
-    args.check_known(&["--frames", "--dump", "--dump-vectors", "--events", "--relay", "--store", "--config"])?;
+    let args = Args::parse(args, &["--dump", "--dump-vectors", "--hash", "--bench"])?;
+    args.check_known(&[
+        "--frames",
+        "--dump",
+        "--dump-vectors",
+        "--events",
+        "--relay",
+        "--store",
+        "--config",
+        "--hash",
+        "--hash-every",
+        "--bench",
+    ])?;
     if args.has("--dump-vectors") && !args.has("--dump") {
         return Err("--dump-vectors needs --dump".into());
     }
@@ -184,6 +198,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     let image = load_image(args.one_positional()?, &mut net)?;
     let frames: Option<u64> = match args.get("--frames") {
         Some(n) => Some(n.parse().map_err(|_| format!("bad frame count {n}"))?),
+        None => None,
+    };
+    let hash_every: Option<u32> = match args.get("--hash-every") {
+        Some(n) => Some(n.parse().ok().filter(|&n| n > 0).ok_or(format!("bad --hash-every {n}"))?),
         None => None,
     };
 
@@ -207,8 +225,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     // Headless runs are reproducible (see `Headless`).
     let mut headless = Headless::new(content, script);
     let mut exit = None;
+    let mut times = Vec::new();
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
+        let start = std::time::Instant::now();
         exit = headless.frame(&mut machine).exit;
+        if args.has("--bench") {
+            times.push(start.elapsed());
+        }
+        if let Some(n) = hash_every
+            && machine.frame() % n == 0
+        {
+            println!("{} {}", machine.frame(), to_hex(&machine.state_hash()));
+        }
         if exit.is_some() {
             break;
         }
@@ -217,6 +245,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
 
+    if args.has("--bench") {
+        bench_report(&mut times);
+    }
+    if args.has("--hash") {
+        println!("{}", to_hex(&machine.state_hash()));
+    }
     if args.has("--dump") {
         match machine.terminal() {
             Some(t) => print!("{}", t.text()),
@@ -231,6 +265,27 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     Ok(ExitCode::from(exit.unwrap_or(0)))
+}
+
+/// `--bench`: emulation time per frame (the machine and, for device 4, the
+/// headless content service), on stderr.
+fn bench_report(times: &mut [std::time::Duration]) {
+    if times.is_empty() {
+        return;
+    }
+    let total: std::time::Duration = times.iter().sum();
+    times.sort();
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    let at = |q: f64| times[((times.len() - 1) as f64 * q).round() as usize];
+    let real = times.len() as f64 / 60.0;
+    eprintln!(
+        "bench: {} frames, emulation per frame p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms; {:.1}x real time",
+        times.len(),
+        ms(at(0.5)),
+        ms(at(0.99)),
+        ms(times[times.len() - 1]),
+        real / total.as_secs_f64(),
+    );
 }
 
 fn info(args: &[String]) -> Result<ExitCode, String> {

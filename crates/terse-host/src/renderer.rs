@@ -26,7 +26,9 @@ const LAYER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Supplies glyph coverage bitmaps, one or two terminal cells in size.
 pub trait GlyphSource {
-    /// Cell size in pixels (width, height).
+    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC 5.4:
+    /// square screen units); the renderer shows the grid at 4:3 regardless,
+    /// so glyphs from a cell of another shape are stretched.
     fn cell_size(&self) -> (u32, u32);
     /// Writes the coverage of `ch` spanning `cells` cells (1, or 2 for a wide
     /// character) into `out` (`cells * width * height` bytes, row major,
@@ -143,7 +145,8 @@ struct Atlas {
 }
 
 /// The grid rectangle (x, y, width, height) inside a viewport: the largest
-/// integer multiple of the native size `grid` that fits, or a scaled-down fit.
+/// integer multiple of the native size `grid` that fits, or a scaled-down fit,
+/// centred. The scale is the same on both axes, so a 4:3 `grid` stays 4:3.
 fn grid_rect(grid: (u32, u32), viewport: (u32, u32)) -> (f32, f32, f32, f32) {
     let (gw, gh) = grid;
     let fit = (viewport.0 as f32 / gw as f32).min(viewport.1 as f32 / gh as f32);
@@ -373,9 +376,11 @@ impl Renderer {
         self.vectors.update(queue, list, generation);
     }
 
-    /// Size of the whole grid at the atlas's native cell size.
+    /// Size of the whole grid at the atlas's native cell width: 4:3, so that
+    /// screen units are square (SPEC 5.4) whatever the glyph source's cell.
     pub fn grid_size(&self) -> (u32, u32) {
-        (COLS as u32 * self.cell_px.0, ROWS as u32 * self.cell_px.1)
+        let width = COLS as u32 * self.cell_px.0;
+        (width, width * SCREEN_HEIGHT as u32 / SCREEN_WIDTH as u32)
     }
 
     /// Uploads the terminal state (SPEC 6.7: presentation is up to the host).
@@ -569,5 +574,28 @@ mod tests {
         let rect = grid_rect((800, 600), (400, 600));
         assert_eq!(rect, (0.0, 150.0, 400.0, 300.0));
         assert_eq!(screen_pos(rect, 200.0, 300.0), (320, 240));
+    }
+
+    /// Whatever the window's shape, the grid is 4:3 and centred, so a screen
+    /// unit is as wide as it is high (SPEC 5.4), and the pointer maps back
+    /// through the same rectangle.
+    #[test]
+    fn grid_stays_four_by_three() {
+        let native = (880, 660); // 11 x 22 pixel cells
+        for viewport in [(880, 660), (1920, 1080), (1000, 2000), (300, 200), (1761, 1321), (881, 1500)] {
+            let (x, y, w, h) = grid_rect(native, viewport);
+            assert!((w / h - 4.0 / 3.0).abs() < 1e-6, "{viewport:?}: {w} x {h}");
+            assert!(w <= viewport.0 as f32 && h <= viewport.1 as f32, "{viewport:?}");
+            // Centred (the offset is a whole pixel, the size need not be).
+            assert!((x - (viewport.0 as f32 - w - x)).abs() < 2.0, "{viewport:?}");
+            assert!((y - (viewport.1 as f32 - h - y)).abs() < 2.0, "{viewport:?}");
+            // One screen unit is the same size on both axes.
+            assert!((w / 640.0 - h / 480.0).abs() < 1e-4);
+            // The centre of the window is the centre of the screen.
+            let c = screen_pos((x, y, w, h), viewport.0 as f64 / 2.0, viewport.1 as f64 / 2.0);
+            assert!(c.0.abs_diff(320) <= 1 && c.1.abs_diff(240) <= 1, "{viewport:?}: {c:?}");
+        }
+        assert_eq!(grid_rect(native, (1920, 1080)), (520.0, 210.0, 880.0, 660.0));
+        assert_eq!(grid_rect(native, (1760, 1400)), (0.0, 40.0, 1760.0, 1320.0));
     }
 }

@@ -33,6 +33,10 @@ struct Utf8Decoder {
     needed: u8,
     lower: u8,
     upper: u8,
+    /// The bytes of the incomplete sequence so far (`len` of them): the
+    /// decoder's state in a form any implementation can produce (STATE.md).
+    bytes: [u8; 3],
+    len: u8,
 }
 
 impl Utf8Decoder {
@@ -49,7 +53,14 @@ impl Utf8Decoder {
         self.upper = 0xBF;
         self.code_point = (self.code_point << 6) | (byte & 0x3F) as u32;
         self.needed -= 1;
-        if self.needed == 0 { [Some(self.code_point), None] } else { [None, None] }
+        if self.needed == 0 {
+            let cp = self.code_point;
+            *self = Utf8Decoder::default();
+            return [Some(cp), None];
+        }
+        self.bytes[self.len as usize] = byte;
+        self.len += 1;
+        [None, None]
     }
 
     fn start(&mut self, byte: u8) -> Option<u32> {
@@ -64,7 +75,7 @@ impl Utf8Decoder {
             0xF1..=0xF3 => (3, byte & 0x07, 0x80, 0xBF),
             _ => return Some(REPLACEMENT as u32),
         };
-        *self = Utf8Decoder { code_point: bits as u32, needed, lower, upper };
+        *self = Utf8Decoder { code_point: bits as u32, needed, lower, upper, bytes: [byte, 0, 0], len: 1 };
         None
     }
 }
@@ -173,6 +184,19 @@ impl Terminal {
     /// character followed by the continuation code.
     fn is_pair(&self, col: usize, row: usize) -> bool {
         col + 1 < COLS && self.cell(col, row).ch != CONTINUATION && self.cell(col + 1, row).ch == CONTINUATION
+    }
+
+    /// Cells, cursor, colours, cell pointer, palette and the put-character
+    /// decoder (STATE.md, terminal section).
+    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.cells);
+        out.extend_from_slice(&[self.col, self.row, self.fg, self.bg]);
+        out.extend_from_slice(&[self.cursor_visible as u8, self.pending_wrap as u8]);
+        out.extend_from_slice(&self.cell_pointer.to_le_bytes());
+        out.extend(self.palette.iter().flatten());
+        out.extend_from_slice(&[self.palette_index, self.palette_component]);
+        out.push(self.decoder.len);
+        out.extend_from_slice(&self.decoder.bytes);
     }
 
     /// Returns the charge in T-states.
@@ -733,6 +757,21 @@ mod tests {
             assert_eq!(&got, want, "input {input:02X?}");
             assert_eq!(t.cursor().0 as usize, want.len(), "input {input:02X?}");
         }
+    }
+
+    #[test]
+    fn decoder_keeps_the_incomplete_sequence() {
+        let mut t = Terminal::default();
+        put(&mut t, b"\xF0\x9F\x98");
+        assert_eq!((t.decoder.len, t.decoder.bytes), (3, [0xF0, 0x9F, 0x98]));
+        put(&mut t, b"\x80");
+        assert_eq!((t.decoder.len, t.decoder.bytes), (0, [0; 3]));
+        put(&mut t, b"\xE4\xBD");
+        assert_eq!((t.decoder.len, t.decoder.bytes), (2, [0xE4, 0xBD, 0]));
+        put(&mut t, b"\xC3");
+        assert_eq!((t.decoder.len, t.decoder.bytes), (1, [0xC3, 0, 0]), "interrupted, then decoded afresh");
+        put(&mut t, b"A");
+        assert_eq!(t.decoder, Utf8Decoder::default());
     }
 
     #[test]

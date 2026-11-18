@@ -26,7 +26,7 @@ Requires a Rust toolchain (edition 2024). If `cargo` is not on your `PATH`
 
 `terse` commands:
 
-- `run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, random bytes 00h, controllers only from `pad` lines) for N frames or
   until the program exits (capped at 36,000 frames), prints the 80x30 grid with
@@ -41,6 +41,11 @@ Requires a Rust toolchain (edition 2024). If `cargo` is not on your `PATH`
   the local entries if that fails within 60 s), then keeps following them while the
   machine runs; an entry stored during frame N is announced by a feeds-updated event
   in frame N + 1.
+  `--hash` prints the machine's state hash ([STATE.md](STATE.md)) after the last
+  frame as 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame
+  whose frame counter is a multiple of N (after frames N, 2N, …). `--bench` prints,
+  on stderr, the emulation time per frame (p50, p99, max; the machine and the
+  headless content service) and how many times faster than real time the run was.
 - `info <image|id>` prints the header fields and the image ID (BLAKE3-256).
 - `put <file>` stores a blob (and sends it to `--relay`) and prints its ID;
   `get <id> [-o <file>]` fetches one; `hash <file>` prints a file's blob ID.
@@ -57,16 +62,24 @@ are supported.
   `<store>/feeds/arrivals`.
 
 `terse-host <image|id> [--relay ws://...] [--store <dir>] [--config <dir>]` opens a
-window and runs the image at 60 frames/s of virtual time. Input: keyboard and text;
-the pointer in screen units (SPEC 5.4: window pixels map to 640x480 through the
-transform that places the grid, clamped at the edges, movement at most once a
-frame); the wheel (line and pixel deltas, one step per terminal row of travel);
+window and runs the image at 60 frames/s of virtual time. The screen (SPEC 5.4) is
+shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels (11 × 22 at
+the default font size; the glyphs are rasterised at that size, so text is crisp at
+the native size and at whole multiples of it), and the grid is scaled uniformly,
+centred and letterboxed in a window of any other shape. Input: keyboard and text;
+the pointer in screen units (window pixels map to 640x480 through the same
+rectangle, clamped at the edges, movement at most once a frame); the wheel (line and pixel deltas, one step per terminal row of travel);
 game controllers through [gilrs](https://crates.io/crates/gilrs), numbered in
 order of connection. Content requests run on a background thread and complete at
 the first frame after they finish; with `--relay` the subscribed feeds sync in the
 background and new entries are announced with a feeds-updated event. The window
 closes when the program writes the exit port. `--screenshot <out.png> --frames N
-[--events <file>]` runs headless exactly like `terse run` and writes a PNG.
+[--events <file>] [--size <W>x<H>]` runs headless exactly like `terse run` and writes a
+PNG, of the grid's native size or `W` × `H` pixels with the screen letterboxed in it.
+`--selftest <image|id> [--frames N] [--events <file>] [--csv <file>]` runs N frames
+(default 200) in the window with vsync, with only the scripted input (default: the
+image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
+ignored), and prints timings: see [Conformance image](#conformance-image).
 
 `terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N]`
 serves a blob store and feeds over WebSocket (NETWORK.md sections 3 and 4.3), one
@@ -159,6 +172,8 @@ Two users on one machine (each with their own store and config), with
                          shapes, then glyphs: SPEC 8.6)
     crates/rustzx-z80/   vendored Z80 core (rustzx-z80 0.16.0, MIT) with a small patch,
                          see crates/rustzx-z80/PATCHES.md
+    STATE.md             the state hash: the byte layout of the machine state, for
+                         comparing implementations frame by frame (proposed for SPEC 9)
     programs/hello/      demo program: hello.asm, build.sh, the built hello.terse and
                          the golden screen used by the tests
     programs/fetch/      content device demo: gets message.txt by its ID and puts a
@@ -169,6 +184,9 @@ Two users on one machine (each with their own store and config), with
     programs/sparks/     a game for the vector display, in C: sparks.c, build.sh, the
                          built sparks.terse, recorded sessions in sessions/ and the
                          golden screens in expected/
+    programs/conform/    the conformance and responsiveness image: conform.asm,
+                         build.sh, conform.terse, its input conform.events, and
+                         expected-hashes.txt and expected-screen.txt
 
 ## Assembling programs
 
@@ -331,10 +349,9 @@ colour and width tracked, the list's end rules applied); `terse-host`, `terse ru
 outlines and discs as instanced quads shaded by distance (round ends,
 antialiased), rectangles and triangles as plain triangles, blended in list order,
 clipped to the screen, and re-uploads them only when the list changes. The screen
-is the terminal grid's rectangle, scaled per axis, so with a font whose cells are
-not exactly 1:2 screen units are not square (a circle is a slightly oval one in
-pixels; 4.5% with an 11 × 23 pixel cell). Shapes are blended in sRGB space, like
-the terminal's glyphs. Layers
+is the terminal grid's rectangle, which is 4:3, so a circle is round (a radius-200
+disc measures 550 × 550 pixels at the default size; before cells were made 1:2 it
+was 550 × 574). Shapes are blended in sRGB space, like the terminal's glyphs. Layers
 (SPEC 8.6): cell backgrounds, then shapes, then glyphs and the cursor, so text is
 always readable over shapes. A program without device 3 looks exactly as before.
 
@@ -394,3 +411,93 @@ busiest frame is frame 0 (setting up, 37% of the 300,000 T-states); after that a
 most 27%, the demo with six sweepers and eight sparks at most 24%, the median frame
 15%. The display list is about 320 bytes (at most 410). ROM 6,990 bytes, 4 RAM
 pages.
+
+## Conformance image
+
+`programs/conform/conform.terse` (assembly, `conform.asm`) is for whoever writes a
+new host: run it with its scripted input `conform.events` and compare. It needs
+devices 2, 3 and 4 and 16 RAM pages. Two uses:
+
+**Conformance (headless, deterministic).** Run it for 200 frames with an empty
+store and no subscriptions, printing the state hash ([STATE.md](STATE.md)) every
+10 frames, and compare with `expected-hashes.txt`:
+
+    mkdir -p /tmp/conform/store /tmp/conform/config
+    cargo run -p terse-cli -- run programs/conform/conform.terse --events programs/conform/conform.events --store /tmp/conform/store --config /tmp/conform/config --frames 200 --hash-every 10
+    cargo run -p terse-cli -- run programs/conform/conform.terse --events programs/conform/conform.events --store /tmp/conform/store --config /tmp/conform/config --frames 200 --dump --dump-vectors
+
+The second prints the final screen (`expected-screen.txt`): one PASS or FAIL line
+per section the program can check itself, and the display list. A FAIL line says
+how many checks failed and where the first one was (the address of the test op in
+`conform.asm`'s listing, or a checkpoint number in sections written as code). The
+hashes are the authoritative check: they also cover what the program cannot see
+(the palette, the display list, the CPU's internal state, every T-state). `cargo
+test -p terse-cli --test conform` does both and checks `conform.terse` is built
+from `conform.asm` (`programs/conform/build.sh` rebuilds it; `UPDATE_GOLDEN=1`
+rewrites the expected files). Esc exits with the number of failed sections as the
+exit code.
+
+What it does, by frame (the scripted input is in the frames named):
+
+- frame 0: paging (every slot shows every RAM page, ROM pages 0-3, ROM beyond the
+  image and unmapped pages, with interrupts off and the test running from RAM for
+  slot 0); system ports and absent devices (`FFh`), the latched counter and time,
+  the upper port address byte ignored;
+- frames 2-5 (read at 6): key down/up with modifiers, text including U+1F600,
+  pointer at both corners with all buttons, a click, wheel steps, two
+  feeds-updated events in one frame (one kept); frame 8 (read at 9): 70 text events,
+  64 kept; frames 10-13: controllers 0 and 2, selection, wrap-around, the read
+  position carried across frames, disconnection;
+- timing: the iterations of a 35-T-state loop between two frame interrupts in
+  modes 1, 2 and 0 (8,566, 8,564 and 8,566: worked out by hand from SPEC 1.3 and
+  the instruction timings; mode 2 accepts in 19 T-states and its handler is longer),
+  three frames of a loop that scrolls the terminal so up to 646 T-states run over
+  into the next frame (464, 463, 463; a host that drops the negative remainder gets
+  464 every time), the interrupt's return address after HALT and the advance of R,
+  device charges (seven 600-T-state clears and scrolls, a 1,000-byte submit and a
+  500-byte put: 8,395), and a frame that never halts with interrupts off for 2.5
+  frames (one interrupt after EI, and not before the instruction after it);
+- the terminal: every command and control character, pending wrap and what clears
+  it, wide characters at columns 78 and 79 and on the last row, overwriting half of
+  a wide pair, malformed UTF-8 (the WHATWG cases, U+FFFF, above U+FFFF), the cell
+  pointer (wrap, values of 9,600 and more), palette writes and index wrap;
+- the vector display: a list with every opcode (and bytes after End), every
+  rejection (length 0 and 16,385, ranges past the end of RAM, unknown commands), a
+  16,384-byte list ending at the last byte of RAM, lists cut short and ending at an
+  unknown opcode;
+- the content device without a network: a put, then gets of the same blob (whole,
+  from offset 90 and at the end), a get of a blob nobody has, twelve kinds of bad
+  request, blocks outside RAM, eight pending requests and a ninth rejected, and
+  the subscriptions and timeline operations (only their status is checked, so a
+  host with feeds still passes);
+- frames 47-125, the stress phase: every frame uses its whole budget (no HALT),
+  rewrites all 2,400 cells (rows of 40 CJK characters never shown before, rows of
+  80 Latin Extended-A or Cyrillic letters, colours changing) and submits a new
+  16,384-byte display list: frames 47-106 a list of 4,257 lines, rectangles,
+  triangles, circles and discs, frames 107-125 one of 5,456 translucent discs that
+  each cover the whole screen (the fill-rate worst case);
+- from frame 126: the results, over a display list whose circle of radius 200
+  units at the centre must be round.
+
+**Responsiveness (window).** `terse-host --selftest` runs the image in the normal
+window with vsync and the same script, and prints for each machine frame the
+emulation time (`run_frame` and handing requests to the content service), the
+render-submit time (uploading the grid and the list, encoding, submitting,
+presenting), the wait for a swapchain image, and the interval between presents:
+p50, p99 and max, how many frames' emulation plus render took over 16.7 ms and
+over 4 ms, and how many machine frames were never presented (the host keeps 60
+frames/s of virtual time and skips presents when drawing falls behind).
+`--csv <file>` writes every frame's numbers, and `terse run --bench` measures
+emulation alone, headless:
+
+    cargo run --release -p terse-host -- --selftest programs/conform/conform.terse --store /tmp/conform/store --config /tmp/conform/config --csv /tmp/conform/frames.csv
+    cargo run --release -p terse-cli -- run programs/conform/conform.terse --events programs/conform/conform.events --store /tmp/conform/store --config /tmp/conform/config --frames 200 --bench
+
+Measured on the development machine (Linux, RTX 2060, Vulkan, 60 Hz), release
+build: emulation of a full-budget stress frame about 0.9 ms (headless: p99 0.9-1.3
+ms, 40 times real time over the 200 frames); render-submit 0.4 ms for the test
+screens, about 8 ms in the stress frames (almost all of it rasterising some 600
+new CJK glyphs a frame), 0.66 s once when the CJK fallback font is first loaded;
+the full-screen-disc frames are limited by the GPU (a present every 60-80 ms, so
+most of those frames are not presented). A debug build takes about 75 ms per
+stress frame. Nothing passes or fails on these numbers.

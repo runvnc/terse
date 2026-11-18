@@ -239,6 +239,30 @@ impl System {
     pub fn exit_code(&self) -> Option<u8> {
         self.exit
     }
+
+    /// The frame counter and exit state (STATE.md, machine section).
+    pub(crate) fn write_frame_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.frame.to_le_bytes());
+        out.extend_from_slice(&[self.exit.is_some() as u8, self.exit.unwrap_or(0)]);
+    }
+
+    /// The latches and the event queue (STATE.md, system section). This
+    /// frame's random bytes are an input consumed within the frame and are
+    /// not included.
+    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.time.to_le_bytes());
+        out.push(self.queue.len() as u8);
+        for e in &self.queue {
+            out.extend_from_slice(&[e.kind, e.a, e.b, e.c]);
+        }
+        for c in &self.controllers {
+            out.extend_from_slice(c);
+        }
+        out.push(self.selected.unwrap_or(0xFF));
+        // With no controller selected the read position cannot be observed
+        // (selecting one restarts it), so it is written as 0.
+        out.push(if self.selected.is_some() { self.pad_byte } else { 0 });
+    }
 }
 
 #[cfg(test)]

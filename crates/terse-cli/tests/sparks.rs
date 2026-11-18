@@ -127,6 +127,36 @@ fn cli_dump_matches() {
     assert_eq!(String::from_utf8(out.stdout).unwrap(), want);
 }
 
+/// State hashes (STATE.md) of the keyboard session at a few frames, golden
+/// in `keys-hashes.txt`; `terse run --hash-every` prints the same.
+#[test]
+fn state_hashes() {
+    let frames = [30, 900, 1800, 3000];
+    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let mut h = Headless::new(None, Script::parse(&recorded("keys.txt")).unwrap());
+    let mut got = String::new();
+    for f in 1..=3000 {
+        h.frame(&mut m);
+        if frames.contains(&f) {
+            let hash: String = m.state_hash().iter().map(|b| format!("{b:02x}")).collect();
+            got += &format!("{f} {hash}\n");
+        }
+    }
+    golden("keys-hashes.txt", &got);
+
+    let events = sessions_dir().join("keys.txt");
+    let image = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/sparks.terse");
+    let out = Command::new(TERSE)
+        .args(["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "1800"])
+        .args(["--hash-every", "900", "--hash"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let lines: Vec<&str> = got.lines().collect();
+    let last = lines[2].split_once(' ').unwrap().1;
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("{}\n{}\n{last}\n", lines[1], lines[2]));
+}
+
 #[test]
 fn same_script_same_run() {
     let script = recorded("keys.txt");

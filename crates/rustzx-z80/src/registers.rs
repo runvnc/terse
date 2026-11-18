@@ -297,6 +297,13 @@ impl Regs {
         self.last_q
     }
 
+    /// Terse patch: the Q value the last executed instruction left (the F it
+    /// wrote, or 0 if it did not write F); the next instruction's `step_q`
+    /// moves it to `last_q`.
+    pub fn get_q(&self) -> u8 {
+        self.q
+    }
+
     pub fn dec_pc(&mut self) -> u16 {
         self.pc = self.pc.wrapping_sub(1);
         self.pc

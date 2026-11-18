@@ -1,0 +1,39 @@
+Terse conformance image • conform.events
+PASS paging: 8 slots x ROM, RAM, unmapped pages
+PASS system ports, absent devices
+PASS events: key, text, pointer, wheel, feeds
+PASS event queue overflow (70 -> 64) = 0040
+PASS controllers
+PASS frame loop count, IM 1 = 2176
+PASS frame loop count, IM 2 = 2174
+PASS frame loop count, IM 0 = 2176
+PASS negative remainder carry = 01CF
+PASS HALT return address, R = 0014
+PASS device charges = 20CB
+PASS full-budget frames, interrupt latch, EI
+PASS terminal: print, cursor, controls
+PASS terminal: pending wrap
+PASS terminal: wide characters
+PASS terminal: malformed UTF-8
+PASS terminal: commands
+PASS terminal: cell pointer
+PASS terminal: palette
+PASS vector: submit, reject, clear
+PASS content: put, get, not found
+PASS content: bad requests
+PASS content: eight pending
+PASS content: subscriptions, timeline
+PASS stress frames run = 0050
+
+All sections pass.  Esc: exit (code = sections failed).
+
+
+-- vectors: 100 list bytes --
+line 256 6400 1920 6400 w 1 c 4080ffff
+line 1920 6400 1920 7360 w 48 c 4080ffff
+line 1920 7360 1920 7360 w 48 c 4080ffff
+disc 1920 7360 r 384 c ff000080
+circle 5120 3840 r 3200 w 32 c 00ff80ff
+rect 5120 3840 8640 5440 c ffc00060
+triangle 5120 3840 320 7040 1920 7520 c ffc00060
+disc 0 0 r 64 c ffffffff

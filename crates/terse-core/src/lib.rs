@@ -16,7 +16,9 @@ pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
 pub use image::{DeviceReq, Image, ImageError};
-pub use machine::{FrameInput, FrameResult, Machine, Registers, MAX_RANDOM_READS_PER_FRAME, TSTATES_PER_FRAME};
+pub use machine::{
+    FrameInput, FrameResult, Machine, Registers, MAX_RANDOM_READS_PER_FRAME, STATE_DOMAIN, TSTATES_PER_FRAME,
+};
 pub use script::Script;
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};
 pub use terminal::{CONTINUATION, Cell, COLS, ROWS, Terminal};

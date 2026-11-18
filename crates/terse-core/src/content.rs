@@ -97,8 +97,8 @@ pub enum Outcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Pending {
-    Get { offset: u32, length: u16, addr: usize },
-    Put { id: [u8; 32] },
+    Get { id: [u8; 32], offset: u32, length: u16, addr: usize },
+    Put { id: [u8; 32], size: u32 },
     Records { op: u8, offset: u32, length: u16, addr: usize },
 }
 
@@ -189,7 +189,7 @@ impl Content {
                 (length as usize <= MAX_GET_LENGTH && fits(length as usize)).then(|| {
                     let id = b[ID..ID + 32].try_into().unwrap();
                     let offset = u24(&b[OFFSET..]) as u32;
-                    (Pending::Get { offset, length, addr }, RequestKind::Get { id, offset, length })
+                    (Pending::Get { id, offset, length, addr }, RequestKind::Get { id, offset, length })
                 })
             }
             OP_SUBSCRIPTIONS | OP_TIMELINE => {
@@ -209,7 +209,7 @@ impl Content {
                 (size <= MAX_BLOB && fits(size)).then(|| {
                     let data = ram[addr..addr + size].to_vec();
                     let id = *blake3::hash(&data).as_bytes();
-                    (Pending::Put { id }, RequestKind::Put { data })
+                    (Pending::Put { id, size: size as u32 }, RequestKind::Put { data })
                 })
             }
             _ => None,
@@ -263,7 +263,7 @@ impl Content {
         let slot = self.slots[index].as_ref()?;
         let block = slot.block;
         let status = match (&slot.pending, &c.outcome) {
-            (&Pending::Get { offset, length, addr }, Outcome::Got { size, data }) => {
+            (&Pending::Get { offset, length, addr, .. }, Outcome::Got { size, data }) => {
                 let (size, offset) = (*size as usize, offset as usize);
                 let expected = (length as usize).min(size.saturating_sub(offset));
                 if !(1..=MAX_BLOB).contains(&size) || data.len() != expected {
@@ -283,7 +283,7 @@ impl Content {
                 ram[block + SIZE..block + SIZE + 3].copy_from_slice(&total.to_le_bytes()[..3]);
                 status::DONE
             }
-            (Pending::Put { id: want }, Outcome::Put { id }) => {
+            (Pending::Put { id: want, .. }, Outcome::Put { id }) => {
                 if id != want {
                     return None;
                 }
@@ -297,6 +297,32 @@ impl Content {
         ram[block + STATUS] = status;
         self.slots[index] = None;
         Some(status)
+    }
+
+    /// Block address, last result and the eight request slots (STATE.md,
+    /// content section). Requests not yet taken by the host are not
+    /// included: they are also in the slots.
+    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.block_addr.to_le_bytes());
+        out.push(self.last_submit);
+        for slot in &self.slots {
+            // op, block, id, offset, length, addr, size: 51 bytes.
+            let (op, block, id, offset, length, addr, size) = match slot {
+                None => (0, 0, [0; 32], 0, 0, 0, 0),
+                Some(Slot { block, pending }) => match *pending {
+                    Pending::Get { id, offset, length, addr } => (OP_GET, *block, id, offset, length, addr, 0),
+                    Pending::Put { id, size } => (OP_PUT, *block, id, 0, 0, 0, size),
+                    Pending::Records { op, offset, length, addr } => (op, *block, [0; 32], offset, length, addr, 0),
+                },
+            };
+            out.push(op);
+            out.extend_from_slice(&(block as u32).to_le_bytes());
+            out.extend_from_slice(&id);
+            out.extend_from_slice(&offset.to_le_bytes());
+            out.extend_from_slice(&length.to_le_bytes());
+            out.extend_from_slice(&(addr as u32).to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+        }
     }
 
     /// Requests accepted since the last call, in submit order.

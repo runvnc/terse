@@ -105,6 +105,16 @@ impl Vector {
         &self.list
     }
 
+    /// Address, length, result and list (STATE.md, vector section); not the
+    /// generation counter.
+    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.addr.to_le_bytes());
+        out.extend_from_slice(&self.length.to_le_bytes());
+        out.push(self.result);
+        out.extend_from_slice(&(self.list.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.list);
+    }
+
     /// A counter that changes whenever [`Vector::list`] changes.
     pub fn generation(&self) -> u64 {
         self.generation

@@ -17,11 +17,14 @@ use crate::gamepad::Gamepads;
 use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
 use crate::renderer::{GlyphSource, Renderer};
+use crate::selftest::SelfTest;
 use crate::{FONT_PX, request_device, terminal_or_blank};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-pub fn run(image: Image, content: Option<ContentService>) -> Result<ExitCode, String> {
+/// Runs `image` in a window. With `selftest`, input comes only from its
+/// script and the host measures itself (see `selftest.rs`).
+pub fn run(image: Image, content: Option<ContentService>, selftest: Option<SelfTest>) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
     let mut app = App {
@@ -39,10 +42,16 @@ pub fn run(image: Image, content: Option<ContentService>) -> Result<ExitCode, St
         gamepads: Gamepads::new(),
         next_frame: Instant::now(),
         random: vec![0; MAX_RANDOM_READS_PER_FRAME],
+        selftest,
+        refresh_hz: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
         return Err(e);
+    }
+    if let Some(t) = &app.selftest {
+        t.report(app.refresh_hz);
+        return Ok(ExitCode::SUCCESS);
     }
     Ok(ExitCode::from(app.machine.exit_code().unwrap_or(0)))
 }
@@ -107,15 +116,19 @@ impl Gfx {
         (self.config.width, self.config.height)
     }
 
-    fn draw(&mut self) {
+    /// Draws and presents; returns how long acquiring the swapchain image
+    /// took and how long the rest (encode, submit, present) took.
+    fn draw(&mut self) -> Option<(Duration, Duration)> {
+        let start = Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return None;
             }
-            _ => return,
+            _ => return None,
         };
+        let acquired = Instant::now();
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let viewport = self.viewport();
@@ -123,6 +136,7 @@ impl Gfx {
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         self.queue.present(frame);
+        Some((acquired - start, acquired.elapsed()))
     }
 }
 
@@ -146,19 +160,31 @@ struct App {
     gamepads: Gamepads,
     next_frame: Instant,
     random: Vec<u8>,
+    selftest: Option<SelfTest>,
+    refresh_hz: Option<f64>,
 }
 
 impl App {
     /// Runs one machine frame with the input gathered since the last one.
     fn step(&mut self, event_loop: &ActiveEventLoop) {
+        if self.selftest.as_ref().is_some_and(SelfTest::done) {
+            event_loop.exit();
+            return;
+        }
         let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         if getrandom::fill(&mut self.random).is_err() {
             self.random.fill(0);
         }
         self.coalesced_input();
+        let mut controllers = self.gamepads.poll();
+        if let Some(t) = &self.selftest {
+            // The script is the only input (coalesced_input sent nothing).
+            self.pending.extend_from_slice(t.script.events(self.machine.frame()));
+            controllers = t.script.controllers(self.machine.frame());
+        }
+        let start = Instant::now();
         // SPEC 7.3: whatever finished since the last frame completes now.
         let completions = self.content.as_mut().map_or_else(Vec::new, ContentService::take_finished);
-        let controllers = self.gamepads.poll();
         let input =
             FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions, controllers };
         let result = self.machine.run_frame(&input);
@@ -166,10 +192,15 @@ impl App {
         if let Some(content) = &mut self.content {
             content.submit(self.machine.take_content_requests());
         }
+        let emulate = start.elapsed();
+        let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
             gfx.renderer.update(&gfx.queue, &terminal_or_blank(&self.machine));
             gfx.renderer.update_vectors(&gfx.queue, self.machine.vector_list(), self.machine.vector_generation());
             gfx.window.request_redraw();
+        }
+        if let Some(t) = &mut self.selftest {
+            t.log.push(crate::selftest::FrameLog { emulate, upload: start.elapsed(), present: None });
         }
         if result.exit.is_some() {
             event_loop.exit();
@@ -177,6 +208,9 @@ impl App {
     }
 
     fn key(&mut self, event: KeyEvent) {
+        if self.selftest.is_some() {
+            return;
+        }
         let pressed = event.state == ElementState::Pressed;
         if let PhysicalKey::Code(code) = event.physical_key
             && let Some(usage) = hid_usage(code)
@@ -192,6 +226,9 @@ impl App {
     /// Pointer movement and wheel steps gathered since the last frame,
     /// queued as at most one event each; also the feeds-updated event.
     fn coalesced_input(&mut self) {
+        if self.selftest.is_some() {
+            return;
+        }
         if let Some((x, y)) = self.pointer
             && self.pointer != self.pointer_sent
         {
@@ -234,6 +271,9 @@ impl App {
     }
 
     fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if self.selftest.is_some() {
+            return;
+        }
         let bit = match button {
             MouseButton::Left => buttons::PRIMARY,
             MouseButton::Right => buttons::SECONDARY,
@@ -259,7 +299,14 @@ impl ApplicationHandler for App {
             return;
         }
         match Gfx::new(event_loop, &self.title) {
-            Ok(gfx) => self.gfx = Some(gfx),
+            Ok(gfx) => {
+                self.refresh_hz = gfx
+                    .window
+                    .current_monitor()
+                    .and_then(|m| m.refresh_rate_millihertz())
+                    .map(|mhz| mhz as f64 / 1000.0);
+                self.gfx = Some(gfx);
+            }
             Err(e) => {
                 self.error = Some(e);
                 event_loop.exit();
@@ -280,8 +327,11 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(gfx) = &mut self.gfx {
-                    gfx.draw();
+                if let Some(gfx) = &mut self.gfx
+                    && let Some((acquire, render)) = gfx.draw()
+                    && let Some(t) = &mut self.selftest
+                {
+                    t.presented(acquire, render, Instant::now());
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),

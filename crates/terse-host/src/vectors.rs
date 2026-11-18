@@ -3,9 +3,8 @@
 //! antialiasing from a distance computed in the fragment shader; rectangles
 //! and triangles are plain geometry. Shapes are blended over each other in
 //! list order (source-over, by opacity) and clipped to the screen rectangle.
-//! The screen is the terminal grid's rectangle, scaled per axis; with a font
-//! whose cells are not exactly 1:2, screen units are not square and a circle
-//! is a slightly elliptical one in pixels.
+//! The screen is the terminal grid's rectangle, which the renderer keeps at
+//! 4:3, so screen units are square (SPEC 5.4) and a circle is round.
 
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
 use terse_core::vector::{MAX_LIST, decode};
@@ -25,8 +24,8 @@ const INSTANCE_BYTES: usize = 40;
 
 const SHADER: &str = r#"
 // Shapes are placed and measured in sixteenths of a screen unit and mapped to
-// pixels per axis: the screen covers the terminal grid's rectangle, whose
-// cells need not make screen units square.
+// pixels: the screen covers the terminal grid's rectangle, which is 4:3, so
+// the two scales are equal; they are kept apart only for generality.
 struct Params {
     origin: vec2<f32>,    // the screen's top left in framebuffer pixels
     viewport: vec2<f32>,  // framebuffer size in pixels
@@ -287,7 +286,7 @@ impl VectorLayer {
         }
         let (x, y, w, h) = rect;
         let mut bytes = Vec::with_capacity(32);
-        // Per axis: the grid's cells need not make screen units square.
+        // Equal for a 4:3 rectangle (Renderer::grid_size).
         let (sx, sy) = (w / (SCREEN_WIDTH as f32 * 16.0), h / (SCREEN_HEIGHT as f32 * 16.0));
         for v in [x, y, viewport.0 as f32, viewport.1 as f32, sx, sy, 0.0, 0.0] {
             bytes.extend_from_slice(&v.to_le_bytes());

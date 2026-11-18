@@ -5,6 +5,7 @@ mod gamepad;
 mod glyphs;
 mod keymap;
 mod renderer;
+mod selftest;
 mod vectors;
 
 use std::path::{Path, PathBuf};
@@ -27,10 +28,15 @@ const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
   terse-host <image|id> [--relay ws://...] [--store <dir>] [--config <dir>]
-  terse-host <image|id> --screenshot <out.png> --frames <N> [--events <file>] [--relay ws://...] [--store <dir>]
-             [--config <dir>]
+  terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>]
+             [--relay ws://...] [--store <dir>] [--config <dir>]
+  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--store <dir>] [--config <dir>]
   --config holds the feed subscriptions (default $XDG_CONFIG_HOME/terse, else ~/.config/terse);
-  --events is scripted input, as for `terse run`.";
+  --events is scripted input, as for `terse run`; --size is the picture's size in pixels
+  (default: the grid at the font's size), the screen letterboxed in it at 4:3.
+  --selftest runs N frames (default 200) in the window with only the scripted input (default:
+  the image's name with .events, if that file exists) and prints per-frame timings;
+  --csv writes them per frame.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -46,15 +52,24 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut image_path = None;
     let mut screenshot = None;
     let mut frames = None;
+    let mut size = None;
+    let (mut selftest, mut csv) = (false, None);
     let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
+            "--selftest" => selftest = true,
+            "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relay = Some(it.next().ok_or(USAGE)?),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--config" => config = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--events" => events = Some(it.next().ok_or(USAGE)?),
+            "--size" => {
+                let v = it.next().ok_or(USAGE)?;
+                let parsed = v.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
+                size = Some(parsed.filter(|&(w, h): &(u32, u32)| w > 0 && h > 0).ok_or(format!("bad size {v}"))?);
+            }
             "--frames" => {
                 let n = it.next().ok_or(USAGE)?;
                 frames = Some(n.parse::<u64>().map_err(|_| format!("bad frame count {n}"))?);
@@ -88,6 +103,28 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
 
+    if selftest {
+        if screenshot.is_some() || size.is_some() {
+            return Err(USAGE.into());
+        }
+        // The script beside the image (conform.terse: conform.events), unless given.
+        let events = events.map(PathBuf::from).or_else(|| {
+            Some(Path::new(&path).with_extension("events")).filter(|p| p.exists())
+        });
+        let script = match &events {
+            Some(p) => {
+                let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+                Script::parse(&text).map_err(|e| format!("{}: {e}", p.display()))?
+            }
+            None => Script::default(),
+        };
+        let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
+        let test = selftest::SelfTest::new(script, frames, csv);
+        return app::run(image, content, Some(test));
+    }
+    if csv.is_some() {
+        return Err(USAGE.into());
+    }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
             let script = match &events {
@@ -97,10 +134,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 None => Script::default(),
             };
-            take_screenshot(&image, content, script, Path::new(&out), frames)?;
+            take_screenshot(&image, content, script, Path::new(&out), frames, size)?;
             Ok(ExitCode::SUCCESS)
         }
-        (None, None) if events.is_none() => app::run(image, content),
+        (None, None) if events.is_none() && size.is_none() => app::run(image, content, None),
         _ => Err(USAGE.into()),
     }
 }
@@ -141,6 +178,7 @@ fn take_screenshot(
     script: Script,
     out: &Path,
     frames: u64,
+    size: Option<(u32, u32)>,
 ) -> Result<(), String> {
     if let Some(c) = content.as_mut().filter(|c| c.following())
         && let Err(e) = c.wait_caught_up(SYNC_DEADLINE)
@@ -164,7 +202,7 @@ fn take_screenshot(
     let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX)?));
     renderer.update(&queue, &terminal_or_blank(&machine));
     renderer.update_vectors(&queue, machine.vector_list(), machine.vector_generation());
-    let (width, height) = renderer.grid_size();
+    let (width, height) = size.unwrap_or(renderer.grid_size());
 
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("screenshot"),

@@ -1,7 +1,7 @@
 //! Glyphs from system fonts: the fontconfig monospace font, with fallback to
 //! other installed fonts for characters it lacks (e.g. CJK).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use fontdb::{Database, Family, ID, Query, Style, Weight};
 use fontdue::{Font, FontSettings};
@@ -17,6 +17,11 @@ pub struct SystemGlyphs {
     /// Other regular-weight upright faces, monospaced ones first.
     fallbacks: Vec<ID>,
     fonts: HashMap<ID, Option<Font>>,
+    /// The fallback face that last had a glyph: tried before the full scan,
+    /// since text in another script tends to come from one font.
+    last_fallback: Option<ID>,
+    /// Characters no face has, so they are not scanned for again.
+    missing: HashSet<char>,
 }
 
 impl SystemGlyphs {
@@ -47,12 +52,20 @@ impl SystemGlyphs {
             primary,
             fallbacks,
             fonts: HashMap::new(),
+            last_fallback: None,
+            missing: HashSet::new(),
         };
         let font = glyphs.font(primary).ok_or("cannot load the monospace font")?;
         let line = font.horizontal_line_metrics(px).ok_or("monospace font has no line metrics")?;
         let advance = font.metrics('0', px).advance_width;
-        glyphs.cell = (advance.round().max(1.0) as u32, line.new_line_size.ceil().max(1.0) as u32);
-        glyphs.baseline = line.ascent.round();
+        // SPEC 5.4: screen units are square and a cell is 8 x 16 of them, so
+        // the cell is exactly 1:2. Its width is the font's advance; the text
+        // body (ascent to descent) is centred in the height, which is within
+        // a pixel or two of the font's line height for usual monospace fonts.
+        let width = advance.round().max(1.0) as u32;
+        glyphs.cell = (width, 2 * width);
+        let body = line.ascent - line.descent;
+        glyphs.baseline = (line.ascent + (glyphs.cell.1 as f32 - body) / 2.0).round();
         Ok(glyphs)
     }
 
@@ -74,19 +87,33 @@ impl SystemGlyphs {
             .as_ref()
     }
 
-    /// The first face that has a glyph for `ch`. Coverage is checked with
-    /// ttf-parser so fallback fonts are only fully loaded when needed.
+    /// A face that has a glyph for `ch`: the primary, else the fallback that
+    /// last had one, else the first fallback that does. Coverage is checked
+    /// with ttf-parser so fallback fonts are only fully loaded when needed;
+    /// that scan reads every font file, so its results are remembered.
     fn face_for(&mut self, ch: char) -> Option<ID> {
         if self.font(self.primary).is_some_and(|f| f.has_glyph(ch)) {
             return Some(self.primary);
         }
+        if self.missing.contains(&ch) {
+            return None;
+        }
+        if let Some(id) = self.last_fallback
+            && self.font(id).is_some_and(|f| f.has_glyph(ch))
+        {
+            return Some(id);
+        }
         let db = &self.db;
-        let id = self.fallbacks.iter().copied().find(|&id| {
+        let Some(id) = self.fallbacks.iter().copied().find(|&id| {
             db.with_face_data(id, |data, index| {
                 ttf_parser::Face::parse(data, index).is_ok_and(|f| f.glyph_index(ch).is_some())
             })
             .unwrap_or(false)
-        })?;
+        }) else {
+            self.missing.insert(ch);
+            return None;
+        };
+        self.last_fallback = Some(id);
         self.font(id).map(|_| id)
     }
 }

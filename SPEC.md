@@ -609,9 +609,19 @@ pixels are up to the host and cannot be observed by the program.
 An implementation conforms to profile 1 if:
 
 - its CPU passes ZEXALL and uses standard Z80 T-state timings;
-- for any image and recorded input sequence, the contents of RAM, the CPU
-  registers, the slot registers and all device state after every frame equal
-  those of the reference implementation.
+- for any image and recorded input sequence, the machine state after every
+  frame equals that of the reference implementation. The state, and a hash
+  of it for comparing implementations, are defined byte for byte in
+  `STATE.md`.
+
+`programs/conform` is a test image with a recorded input script and the
+expected state hash every 10 frames. Its last phase is a deliberate worst
+case for a host (full-budget frames, every cell rewritten, maximum-size
+vector lists), for measuring how a host holds its frame rate.
+
+A run of `DD`/`FD` prefix bytes is executed one prefix at a time (4 T-states
+each), so a frame can end between a prefix and the instruction it modifies;
+no interrupt is accepted there, nor directly after `EI`.
 
 ## 10. Not yet specified
 
@@ -620,5 +630,8 @@ An implementation conforms to profile 1 if:
 - Names (signed pointers to blobs), ranges verified without fetching the
   whole blob, and cancelling a content request.
 - Devices 5, 6, 9 and A.
+- A limit on the total area a vector list may fill. Without one, a legal
+  list of thousands of full-screen translucent discs costs a host tens of
+  milliseconds per frame, which breaks the rule that device cost is bounded.
 - Starting other machines, and messages between machines.
 - Snapshots.

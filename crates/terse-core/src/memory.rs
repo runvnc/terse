@@ -78,6 +78,13 @@ impl Memory {
         &mut self.ram
     }
 
+    /// Slot registers and RAM (STATE.md, memory section).
+    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.slots);
+        out.extend_from_slice(&(self.ram.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.ram);
+    }
+
     /// The linear RAM address (SPEC 7.1) that `addr` shows in the current
     /// mapping, or `None` if it does not show RAM.
     pub fn linear(&self, addr: u16) -> Option<usize> {

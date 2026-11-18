@@ -9,6 +9,9 @@ use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::Terminal;
 use crate::vector::Vector;
 
+/// Leading domain string of the state serialization (STATE.md).
+pub const STATE_DOMAIN: &[u8] = b"terse-state-0";
+
 /// T-states added to the budget each frame (SPEC 1).
 pub const TSTATES_PER_FRAME: i64 = 300_000;
 /// Value on the data bus during interrupt acknowledge (SPEC 1.3).
@@ -335,6 +338,87 @@ impl Machine {
     /// Reads the address space as the CPU sees it (no side effects).
     pub fn peek(&self, addr: u16) -> u8 {
         self.hw.memory.read(addr)
+    }
+
+    /// The canonical serialization of the machine state (STATE.md): every
+    /// part of the state that can influence later frames or what is
+    /// presented, in a fixed, implementation-independent byte layout. Only
+    /// meaningful between frames.
+    pub fn state_bytes(&self) -> Vec<u8> {
+        let hw = &self.hw;
+        let mut out = Vec::with_capacity(STATE_DOMAIN.len() + 128 + hw.memory.ram().len() + 12_000);
+        out.extend_from_slice(STATE_DOMAIN);
+        out.extend_from_slice(&self.image_id);
+
+        // CPU.
+        let r = &self.cpu.regs;
+        for v in [
+            r.get_af(),
+            r.get_bc(),
+            r.get_de(),
+            r.get_hl(),
+            u16::from_be_bytes([r.get_acc_alt(), r.get_flags_alt()]),
+            u16::from_be_bytes([r.get_b_alt(), r.get_c_alt()]),
+            u16::from_be_bytes([r.get_d_alt(), r.get_e_alt()]),
+            u16::from_be_bytes([r.get_h_alt(), r.get_l_alt()]),
+            r.get_ix(),
+            r.get_iy(),
+            r.get_sp(),
+            r.get_pc(),
+            r.get_mem_ptr(),
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        let im: u8 = self.cpu.get_im().into();
+        // The interrupt shadow only matters while IFF1 is set: after DI it
+        // changes nothing, so it is normalised to 0 there.
+        let shadow = self.cpu.interrupt_blocked() && r.get_iff1();
+        out.extend_from_slice(&[
+            r.get_i(),
+            r.get_r(),
+            r.get_iff1() as u8,
+            r.get_iff2() as u8,
+            im,
+            self.cpu.is_halted() as u8,
+            shadow as u8,
+            self.cpu.pending_prefix().unwrap_or(0),
+            r.get_q(),
+        ]);
+
+        // Frame loop.
+        hw.system.write_frame_state(&mut out);
+        out.extend_from_slice(&(self.budget as i32).to_le_bytes());
+        out.push(hw.interrupt_request as u8);
+
+        hw.memory.write_state(&mut out);
+        hw.system.write_state(&mut out);
+        match &hw.terminal {
+            Some(t) => {
+                out.push(1);
+                t.write_state(&mut out);
+            }
+            None => out.push(0),
+        }
+        match &hw.vector {
+            Some(v) => {
+                out.push(1);
+                v.write_state(&mut out);
+            }
+            None => out.push(0),
+        }
+        match &hw.content {
+            Some(c) => {
+                out.push(1);
+                c.write_state(&mut out);
+            }
+            None => out.push(0),
+        }
+        out
+    }
+
+    /// BLAKE3-256 of [`Machine::state_bytes`] (SPEC 9, STATE.md).
+    pub fn state_hash(&self) -> [u8; 32] {
+        *blake3::hash(&self.state_bytes()).as_bytes()
     }
 
     pub fn registers(&self) -> Registers {
