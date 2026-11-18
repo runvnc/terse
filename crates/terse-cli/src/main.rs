@@ -7,10 +7,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use terse_core::{DeviceReq, Image, Machine, Script};
+use terse_core::{DeviceReq, FrameMachine, Script};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::service::Headless;
 use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
+use terse_rv::{AnyMachine, Program};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -22,7 +23,8 @@ const USAGE: &str = "usage:
   terse put <file> [--relay ws://...] [--store <dir>]
   terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
   terse hash <file>
-  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
+  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--profile 1|2]
+             -o <out.terse>
   terse asm <source.asm> -o <out.bin>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>]
@@ -160,13 +162,13 @@ impl Net<'_> {
     }
 }
 
-/// Loads an image from a file, or by image ID (NETWORK 2).
-fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
+/// Loads an image of either profile from a file, or by image ID (NETWORK 2).
+fn load_image(arg: &str, net: &mut Net) -> Result<Program, String> {
     let bytes = match parse_hex(arg) {
         Some(id) if !Path::new(arg).exists() => net.fetch(id)?,
         _ => read(arg)?,
     };
-    Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))
+    terse_rv::parse_image(&bytes).map_err(|e| format!("{arg}: {e}"))
 }
 
 /// Reads an `--events` script (README, "Scripted input").
@@ -205,7 +207,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
 
-    let mut machine = Machine::new(&image);
+    let mut machine = AnyMachine::new(&image);
     let content = if image.has_device(4) {
         // SPEC 7.7: the feeds are those of the --config subscriptions.
         let mut node = net.take()?;
@@ -235,11 +237,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         if let Some(n) = hash_every
             && machine.frame() % n == 0
         {
-            println!("{} {}", machine.frame(), to_hex(&machine.state_hash()));
+            let hash = machine.state_hash().ok_or("--hash-every: no state hash for this profile")?;
+            println!("{} {}", machine.frame(), to_hex(&hash));
         }
         if exit.is_some() {
             break;
         }
+    }
+    if let Some(fault) = machine.fault() {
+        eprintln!("terse: fault: {fault}");
     }
     if exit.is_none() && frames.is_none() {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
@@ -249,7 +255,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         bench_report(&mut times);
     }
     if args.has("--hash") {
-        println!("{}", to_hex(&machine.state_hash()));
+        let hash = machine.state_hash().ok_or("--hash: no state hash for this profile")?;
+        println!("{}", to_hex(&hash));
     }
     if args.has("--dump") {
         match machine.terminal() {
@@ -301,7 +308,7 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     println!("file:      {path}");
     println!("title:     {}", image.title_lossy());
     println!("format:    {}", terse_core::image::FORMAT_VERSION);
-    println!("profile:   {}", terse_core::image::PROFILE);
+    println!("profile:   {}", image.profile);
     println!("rom_len:   {} bytes", image.rom.len());
     println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
     println!("devices:   {}", if devices.is_empty() { "-".into() } else { devices.join(" ") });
@@ -357,7 +364,7 @@ fn parse_device(s: &str) -> Result<DeviceReq, String> {
 
 fn pack(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "-o"])?;
+    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "--profile", "-o"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.to_string());
     }
@@ -372,9 +379,14 @@ fn pack(args: &[String]) -> Result<ExitCode, String> {
     if devices.len() > terse_core::image::MAX_DEVICES {
         return Err("more than 16 devices".into());
     }
-    let file = Image::build(title, ram_pages, &devices, &rom);
+    let profile = match args.get("--profile").unwrap_or("1") {
+        "1" => terse_core::image::PROFILE,
+        "2" => terse_rv::PROFILE_RV32,
+        p => return Err(format!("unknown profile {p} (1 or 2)")),
+    };
+    let file = terse_rv::build_image(profile, title, ram_pages, &devices, &rom);
     // Validate exactly as a host would.
-    let image = Image::parse(&file).map_err(|e| e.to_string())?;
+    let image = terse_rv::parse_image(&file).map_err(|e| e.to_string())?;
     let out = args.require("-o")?;
     write(out, &file)?;
     println!("{out}: {} bytes, id {}", file.len(), image.id_hex());

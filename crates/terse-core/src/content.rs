@@ -128,7 +128,7 @@ fn u24(b: &[u8]) -> usize {
 /// known from its bytes: the records must tile `data` exactly, each `L`
 /// must match its entry's title length, and space left over must be too
 /// small for any record when records remain.
-fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) -> bool {
+pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) -> bool {
     let (length, remaining) = (length as usize, total.saturating_sub(offset) as usize);
     if total > MAX_RECORDS || data.len() > length {
         return false;

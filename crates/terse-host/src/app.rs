@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use terse_core::{COLS, Event, FrameInput, Image, MAX_RANDOM_READS_PER_FRAME, Machine, ROWS, buttons};
+use terse_core::{COLS, Event, FrameInput, FrameMachine, MAX_RANDOM_READS_PER_FRAME, ROWS, buttons};
+use terse_rv::{AnyMachine, Program};
 use terse_net::ContentService;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -25,7 +26,7 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 /// Runs `image` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).
 pub fn run(
-    image: Image,
+    image: Program,
     content: Option<ContentService>,
     selftest: Option<SelfTest>,
     no_trails: bool,
@@ -33,7 +34,7 @@ pub fn run(
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
     let mut app = App {
-        machine: Machine::new(&image),
+        machine: AnyMachine::new(&image),
         content,
         title,
         gfx: None,
@@ -54,6 +55,9 @@ pub fn run(
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
         return Err(e);
+    }
+    if let Some(fault) = app.machine.fault() {
+        eprintln!("terse-host: fault: {fault}");
     }
     if let Some(t) = &app.selftest {
         t.report(app.refresh_hz);
@@ -147,7 +151,7 @@ impl Gfx {
 }
 
 struct App {
-    machine: Machine,
+    machine: AnyMachine,
     /// Carries out content requests (device 4) off the frame loop.
     content: Option<ContentService>,
     title: String,

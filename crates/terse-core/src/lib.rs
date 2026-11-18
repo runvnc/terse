@@ -5,6 +5,7 @@
 //! completions in through [`FrameInput`].
 
 pub mod content;
+pub mod frames;
 pub mod image;
 pub mod machine;
 pub mod memory;
@@ -15,6 +16,7 @@ pub mod vector;
 pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
+pub use frames::FrameMachine;
 pub use image::{DeviceReq, Image, ImageError};
 pub use machine::{
     FrameInput, FrameResult, Machine, Registers, MAX_RANDOM_READS_PER_FRAME, STATE_DOMAIN, TSTATES_PER_FRAME,
