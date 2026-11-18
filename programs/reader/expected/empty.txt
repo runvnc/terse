@@ -28,3 +28,4 @@
 
 
  ↑↓ PgUp PgDn Home End wheel: move   Enter/click: open   Esc: quit
+-- page: height 0, scroll 0 (stored 0), region 0 0 0 0 --

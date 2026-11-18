@@ -28,4 +28,4 @@ for src in "$lib/crt0.S" "$here/reader.c" "$lib/terse.c"; do
 done
 "${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o 1.o 2.o -o reader.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary reader.elf reader.bin
-terse pack --rom reader.bin --title reader --ram-pages 9 --device 2:0 --device 4:0 -o "$out/reader.terse"
+terse pack --rom reader.bin --title reader --ram-pages 17 --device 2:0 --device 4:0 --device 7:0 -o "$out/reader.terse"

@@ -228,11 +228,39 @@ void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     vec_ptr += 4;
 }
 
-/* What the compiler may call. */
+/* What the compiler may call. memcpy copies whole words where it can (about
+ * 1.5 units a byte instead of 5): a word at a time when both pointers have
+ * the same alignment, else shifting words together (never reading a word
+ * that holds no byte of the source). */
 void *memcpy(void *d, const void *s, size_t n)
 {
     uint8_t *dp = d;
     const uint8_t *sp = s;
+    if (n >= 8) {
+        uint32_t *dw;
+        while ((uint32_t)dp & 3) {
+            *dp++ = *sp++;
+            n--;
+        }
+        dw = (uint32_t *)dp;
+        if (!((uint32_t)sp & 3)) {
+            const uint32_t *sw = (const uint32_t *)sp;
+            for (; n >= 4; n -= 4)
+                *dw++ = *sw++;
+            sp = (const uint8_t *)sw;
+        } else {
+            uint32_t sh = ((uint32_t)sp & 3) * 8;
+            const uint32_t *sw = (const uint32_t *)((uint32_t)sp & ~3u);
+            uint32_t w = *sw++;
+            for (; n >= 8; n -= 4) {
+                uint32_t next = *sw++;
+                *dw++ = w >> sh | next << (32 - sh);
+                w = next;
+                sp += 4;
+            }
+        }
+        dp = (uint8_t *)dw;
+    }
     while (n--)
         *dp++ = *sp++;
     return d;
@@ -264,4 +292,136 @@ int memcmp(const void *a, const void *b, size_t n)
         if (*p != *q)
             return *p - *q;
     return 0;
+}
+
+/* Device 7 document builder. */
+uint8_t *doc_ptr, *doc_limit;
+uint8_t doc_overflow;
+
+void doc_begin(uint8_t *buf, uint32_t cap)
+{
+    doc_ptr = buf;
+    doc_limit = buf + cap;
+    doc_overflow = 0;
+}
+
+/* Room for an n-byte command at doc_ptr, or 0 (and doc_overflow set). */
+static uint8_t *doc_room(uint32_t n)
+{
+    if (doc_overflow || (uint32_t)(doc_limit - doc_ptr) < n) {
+        doc_overflow = 1;
+        return 0;
+    }
+    uint8_t *p = doc_ptr;
+    doc_ptr = p + n;
+    return p;
+}
+
+/* Where to cut the text at p (longer than n) at most n bytes in: moves the
+ * cut back to the start of a character (ASCII or a lead byte), at most 3
+ * bytes; a longer run of continuation bytes is malformed anyway and is cut
+ * where it is. */
+static uint32_t doc_cut(const uint8_t *p, uint32_t n)
+{
+    uint32_t k = n;
+    while (k && n - k < 3 && (p[k] & 0xC0) == 0x80)
+        k--;
+    return (p[k] & 0xC0) == 0x80 ? n : k;
+}
+
+uint32_t doc_text(const void *src, uint32_t len)
+{
+    const uint8_t *p = src;
+    uint32_t done = 0;
+    while (len) {
+        uint32_t n = len > DOC_TEXT_MAX ? DOC_TEXT_MAX : len;
+        uint32_t room = doc_overflow ? 0 : (uint32_t)(doc_limit - doc_ptr);
+        uint8_t full = room < 3 + n;
+        if (full)
+            n = room > 3 ? room - 3 : 0;
+        if (n < len)
+            n = doc_cut(p, n);
+        if (n) {
+            uint8_t *d = doc_ptr;
+            d[0] = DOC_OP_TEXT;
+            d[1] = n;
+            d[2] = n >> 8;
+            memcpy(d + 3, p, n);
+            doc_ptr = d + 3 + n;
+        }
+        p += n;
+        len -= n;
+        done += n;
+        if (full) {
+            doc_overflow = 1;
+            break;
+        }
+    }
+    return done;
+}
+
+void doc_font(uint8_t face, uint8_t flags)
+{
+    uint8_t *p = doc_room(3);
+    if (p) {
+        p[0] = DOC_OP_FONT;
+        p[1] = face;
+        p[2] = flags;
+    }
+}
+
+void doc_size(uint8_t size)
+{
+    uint8_t *p = doc_room(2);
+    if (p) {
+        p[0] = DOC_OP_SIZE;
+        p[1] = size;
+    }
+}
+
+void doc_colour(uint8_t r, uint8_t g, uint8_t b)
+{
+    uint8_t *p = doc_room(4);
+    if (p) {
+        p[0] = DOC_OP_COLOUR;
+        p[1] = r;
+        p[2] = g;
+        p[3] = b;
+    }
+}
+
+void doc_paragraph(uint8_t align, uint8_t indent, uint8_t space, uint8_t flags)
+{
+    uint8_t *p = doc_room(5);
+    if (p) {
+        p[0] = DOC_OP_PARAGRAPH;
+        p[1] = align;
+        p[2] = indent;
+        p[3] = space;
+        p[4] = flags;
+    }
+}
+
+void doc_rule(void)
+{
+    uint8_t *p = doc_room(1);
+    if (p)
+        p[0] = DOC_OP_RULE;
+}
+
+void doc_anchor(uint16_t id)
+{
+    uint8_t *p = doc_room(3);
+    if (p) {
+        p[0] = DOC_OP_ANCHOR;
+        p[1] = id;
+        p[2] = id >> 8;
+    }
+}
+
+void doc_end(void)
+{
+    uint8_t *p = doc_room(1);
+    if (p)
+        p[0] = DOC_OP_END;
 }

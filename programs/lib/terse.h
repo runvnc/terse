@@ -36,6 +36,11 @@
 #define CALL_VEC_PERSISTENCE 0x303
 #define CALL_VEC_FILL 0x304
 #define CALL_CONTENT_SUBMIT 0x400
+#define CALL_PAGE_SUBMIT 0x700
+#define CALL_PAGE_CLEAR 0x701
+#define CALL_PAGE_REGION 0x702
+#define CALL_PAGE_SCROLL 0x703
+#define CALL_PAGE_BACKGROUND 0x704
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -47,6 +52,18 @@ static inline uint32_t terse_call(uint32_t n, uint32_t x, uint32_t y, uint32_t z
     register uint32_t a2 __asm__("a2") = z;
     register uint32_t a7 __asm__("a7") = n;
     __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+/* Four arguments (a0-a3). */
+static inline uint32_t terse_call4(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t w)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a3 __asm__("a3") = w;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a7) : "memory");
     return a0;
 }
 
@@ -70,6 +87,8 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
 #define EV_CONTENT_DONE 0x05
 #define EV_WHEEL 0x06
 #define EV_FEEDS_UPDATED 0x07
+#define EV_PAGE_LAID_OUT 0x08
+#define EV_PAGE_ANCHOR 0x09
 
 /* USB HID key codes used by most programs. */
 #define KEY_ENTER 0x28
@@ -102,6 +121,10 @@ typedef struct {
 #define EV_POINTER_X(e) ((e).a | (uint16_t)((e).c & 0x03) << 8)
 #define EV_POINTER_Y(e) ((e).b | (uint16_t)((e).c & 0x04) << 6)
 #define EV_POINTER_BUTTONS(e) ((e).c >> 3 & 0x07)
+/* Page laid out: the height (0-FFFFFFh); page anchor: the id and buttons. */
+#define EV_PAGE_HEIGHT(e) ((e).a | (uint32_t)(e).b << 8 | (uint32_t)(e).c << 16)
+#define EV_ANCHOR_ID(e) ((e).a | (uint16_t)(e).b << 8)
+#define EV_ANCHOR_BUTTONS(e) ((e).c)
 
 /* Copies the head event into *e and removes it; returns its type, EV_NONE
  * (and leaves *e alone) if the queue is empty. */
@@ -271,6 +294,77 @@ uint32_t get24(const uint8_t *p);
 static inline uint8_t content_submit(content_req *r) { return terse_call(CALL_CONTENT_SUBMIT, (uint32_t)r, 0, 0); }
 uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf);
 uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf);
+
+/* Device 7, page (SPEC 11): typeset text in a rectangle. */
+#define PAGE_DONE 0x00
+#define PAGE_REJECTED 0x01
+#define PAGE_MAX_DOC 65536u
+
+/* Submits the document of `len` bytes at `doc` (ROM or RAM): PAGE_DONE, and
+ * the scroll value is 0 again; PAGE_REJECTED for a length of 0 or more
+ * than 65,536; TERSE_ERR_BUFFER if the bytes are not wholly in ROM or RAM.
+ * Costs 1 unit per 4 bytes. The height arrives later, as EV_PAGE_LAID_OUT. */
+static inline uint32_t page_submit(const void *doc, uint32_t len) { return terse_call(CALL_PAGE_SUBMIT, (uint32_t)doc, len, 0); }
+#define page_submit_doc(buf) page_submit((buf), doc_length(buf))
+/* No document: only the background shows (the scroll value is kept). */
+static inline void page_clear(void) { terse_call(CALL_PAGE_CLEAR, 0, 0, 0); }
+/* The rectangle in screen units (clamped to the screen); w or h 0 hides it. */
+static inline void page_region(uint32_t x, uint32_t y, uint32_t w, uint32_t h) { terse_call4(CALL_PAGE_REGION, x, y, w, h); }
+/* Units from the top of the document to the top of the rectangle; the host
+ * clamps it to 0 .. max(0, height - rectangle height) when it draws. */
+static inline void page_scroll(int32_t y) { terse_call(CALL_PAGE_SCROLL, (uint32_t)y, 0, 0); }
+/* The colour behind the text; a = 0 lets the cell backgrounds show. */
+static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    terse_call(CALL_PAGE_BACKGROUND, r | (uint32_t)g << 8 | (uint32_t)b << 16 | (uint32_t)a << 24, 0, 0);
+}
+
+/* Document opcodes (SPEC 11.3). */
+#define DOC_OP_END 0x00
+#define DOC_OP_TEXT 0x01
+#define DOC_OP_FONT 0x02
+#define DOC_OP_SIZE 0x03
+#define DOC_OP_COLOUR 0x04
+#define DOC_OP_PARAGRAPH 0x05
+#define DOC_OP_RULE 0x06
+#define DOC_OP_ANCHOR 0x07
+
+/* Faces and font flags (doc_font), alignment and flags (doc_paragraph). */
+#define DOC_SANS 0
+#define DOC_SERIF 1
+#define DOC_MONO 2
+#define DOC_BOLD 0x01
+#define DOC_ITALIC 0x02
+#define DOC_START 0
+#define DOC_CENTRE 1
+#define DOC_END 2
+#define DOC_NOWRAP 0x01
+/* Longest text of one Text command. */
+#define DOC_TEXT_MAX 65535u
+
+/* Document builder: appends commands at doc_ptr into a buffer the caller
+ * owns, never past doc_limit. A command that does not fit is not written:
+ * doc_overflow is set and every later command is dropped too, so the
+ * document holds a clean prefix. The caller may lower doc_limit to keep
+ * room in reserve (for a closing note, the End byte) and raise it later
+ * (clearing doc_overflow), but never past the end of its buffer. */
+extern uint8_t *doc_ptr, *doc_limit;
+extern uint8_t doc_overflow;
+void doc_begin(uint8_t *buf, uint32_t cap);
+#define doc_length(buf) ((uint32_t)(doc_ptr - (uint8_t *)(buf)))
+/* Appends `len` bytes of UTF-8 as Text commands of at most 65,535 bytes
+ * each, split between characters (a sequence split across two commands
+ * would be malformed in both). If the buffer fills, appends as much as
+ * fits, cut between characters, and sets doc_overflow. Returns the bytes
+ * of text appended. */
+uint32_t doc_text(const void *p, uint32_t len);
+void doc_font(uint8_t face, uint8_t flags);
+void doc_size(uint8_t size);
+void doc_colour(uint8_t r, uint8_t g, uint8_t b);
+void doc_paragraph(uint8_t align, uint8_t indent, uint8_t space, uint8_t flags);
+void doc_rule(void);
+void doc_anchor(uint16_t id);
+void doc_end(void);
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

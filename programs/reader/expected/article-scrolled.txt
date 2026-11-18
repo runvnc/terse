@@ -1,30 +1,54 @@
- A long article
- feed 66be7e33  #3  2026-11-17 18:30 UTC  6177 bytes
-itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
-to fill the paragraph out to a few hundred bytes.
+ Keeping a sourdough starter alive
 
-Paragraph 7. The quick brown fox jumps over the lazy dog while the reader wraps
-each line at a space so that no word is split unless it is longer than the row
-itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
-to fill the paragraph out to a few hundred bytes.
 
-Paragraph 8. The quick brown fox jumps over the lazy dog while the reader wraps
-each line at a space so that no word is split unless it is longer than the row
-itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
-to fill the paragraph out to a few hundred bytes.
 
-Paragraph 9. The quick brown fox jumps over the lazy dog while the reader wraps
-each line at a space so that no word is split unless it is longer than the row
-itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
-to fill the paragraph out to a few hundred bytes.
 
-Paragraph 10. The quick brown fox jumps over the lazy dog while the reader
-wraps each line at a space so that no word is split unless it is longer than
-the row itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then
-more words to fill the paragraph out to a few hundred bytes.
 
-Paragraph 11. The quick brown fox jumps over the lazy dog while the reader
-wraps each line at a space so that no word is split unless it is longer than
-the row itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then
-more words to fill the paragraph out to a few hundred bytes.
- lines 30–56 of 105  53%              ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 96%                                  ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+-- page: height 988, scroll 508 (stored 508), region 64 16 512 448 --
+  492  19     0   sans15 |starter kept in the refrigerator survives a few weeks without
+  511  19     0   sans15 |attention and usually recovers after two or three feedings.
+  540  19     0   sans15 |The choice of flour changes the character of the culture. Whole
+  559  19     0   sans15 |wheat and rye carry more of the wild yeast and the nutrients it
+  578  19     0   sans15 |feeds on, so a starter begun with them tends to wake up sooner and
+  597  19     0   sans15 |smell more strongly. White flour gives a milder, more predictable
+  616  19     0   sans15 |starter; many bakers begin with rye and move to white once the jar
+  635  19     0   sans15 |rises on schedule.
+  664  19     0   sans15 |Nothing has to go to waste. The discard that is poured off before
+  683  19     0   sans15 |each feeding still holds plenty of flavour, and it can go into
+  702  19     0   sans15 |pancakes, crackers, waffles or pizza dough, where it adds a gentle
+  721  19     0   sans15 |tang without needing to leaven anything on its own.
+  750  19     0   sans15 |When something goes wrong it is rarely fatal. A grey liquid on top,
+  769  19     0   sans15 |often called hooch, only means the starter is hungry: pour it off
+  788  19     0   sans15 |and feed it. Pink or orange streaks are another matter, and a sign
+  807  19     0   sans15 |to start again. The history of the method, from ancient Egypt to the
+  826  19     0   sans15 |San Francisco gold rush, is told at
+  845  19     0   sans15 |[https://en.wikipedia.org/wiki/Sourdough]{1} and the microbes themselves
+  864  19     0   sans15 |are described in detail
+  883  19     0   sans15 |([https://en.wikipedia.org/wiki/Lactobacillus]{2}).
+  912  19     0   sans15 |Most of all, be patient. A new starter can take ten days before it
+  931  19     0   sans15 |rises reliably, and the bread it makes in its first month is rarely
+  950  19     0   sans15 |its best. The flavour deepens as the culture settles, which is one
