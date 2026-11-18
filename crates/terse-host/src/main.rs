@@ -5,6 +5,7 @@ mod gamepad;
 mod glyphs;
 mod keymap;
 mod renderer;
+mod vectors;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -162,6 +163,7 @@ fn take_screenshot(
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX)?));
     renderer.update(&queue, &terminal_or_blank(&machine));
+    renderer.update_vectors(&queue, machine.vector_list(), machine.vector_generation());
     let (width, height) = renderer.grid_size();
 
     let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -185,7 +187,7 @@ fn take_screenshot(
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    renderer.render(&queue, &mut encoder, &view, (width, height));
+    renderer.render(&device, &queue, &mut encoder, &view, (width, height));
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {

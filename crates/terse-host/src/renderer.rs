@@ -1,10 +1,28 @@
-//! Terminal renderer: one full-screen fragment-shader pass over three textures
-//! (cells, glyph atlas, palette). Independent of windowing and of where glyph
+//! Screen renderer: the terminal and the vector display, combined in the
+//! layer order of SPEC 8.6. Independent of windowing and of where glyph
 //! bitmaps come from, so a browser front end can reuse it.
+//!
+//! Two passes of one full-screen terminal shader (over the cells, glyph
+//! atlas and palette textures) with the vectors between them:
+//!
+//! 1. background mode: cell backgrounds into an offscreen layer that holds
+//!    sRGB-encoded colours (`Rgba8Unorm`);
+//! 2. the vector shapes, blended into that layer (`vectors.rs`);
+//! 3. glyph mode: into the target, each pixel is the layer below mixed with
+//!    the cell's foreground by glyph (or cursor) coverage, in sRGB space as
+//!    before, then converted to linear for an sRGB target.
+//!
+//! With no shapes the layer holds exactly the background colours, so the
+//! result is the same as the earlier single pass.
 
 use std::collections::HashMap;
 
 use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal};
+
+use crate::vectors::VectorLayer;
+
+/// Format of the offscreen layer of backgrounds and shapes.
+const LAYER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Supplies glyph coverage bitmaps, one or two terminal cells in size.
 pub trait GlyphSource {
@@ -30,13 +48,14 @@ struct Params {
     grid: vec2<u32>,        // columns, rows
     cursor: vec2<u32>,
     atlas_cols: u32,
-    flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB
+    flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB, bit 2: background mode
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var cells: texture_2d<u32>;
 @group(0) @binding(2) var atlas: texture_2d<f32>;
 @group(0) @binding(3) var palette: texture_2d<f32>;
+@group(0) @binding(4) var under: texture_2d<f32>;  // backgrounds and shapes (glyph mode)
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -60,11 +79,16 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let rel = (pos.xy - p.origin) / p.size;
     // Outside the grid (letterbox): palette entry 0.
     var color = palette_rgb(0u);
+    let background = (p.flags & 4u) != 0u;
     if all(rel >= vec2<f32>(0.0)) && all(rel < vec2<f32>(1.0)) {
         let g = rel * vec2<f32>(p.grid);
         let cell = min(vec2<u32>(g), p.grid - 1u);
         let px = min(vec2<u32>(fract(g) * vec2<f32>(p.cell_px)), p.cell_px - 1u);
         let c = textureLoad(cells, cell, 0);
+        if background {
+            // sRGB-encoded, unconverted: the layer is not an sRGB format.
+            return vec4<f32>(palette_rgb(c.a), 1.0);
+        }
         let slot = c.r | (c.g << 8u);
         let origin = vec2<u32>(slot % p.atlas_cols, slot / p.atlas_cols) * p.cell_px;
         var coverage = textureLoad(atlas, origin + px, 0).r;
@@ -73,9 +97,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             coverage = 1.0;
         }
         // Blend in sRGB space, as terminals usually do.
-        color = mix(palette_rgb(c.a), palette_rgb(c.b), coverage);
+        let below = textureLoad(under, vec2<u32>(pos.xy), 0).rgb;
+        color = mix(below, palette_rgb(c.b), coverage);
     }
-    if (p.flags & 2u) != 0u {
+    if (p.flags & 2u) != 0u && !background {
         color = to_linear(color);
     }
     return vec4<f32>(color, 1.0);
@@ -142,9 +167,18 @@ pub struct Renderer {
     atlas: Atlas,
     cell_px: (u32, u32),
     target_is_srgb: bool,
+    /// Background mode, drawing into the layer.
+    background_pipeline: wgpu::RenderPipeline,
+    background_bind_group: wgpu::BindGroup,
+    background_params: wgpu::Buffer,
+    /// Glyph mode, drawing into the target.
     pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
+    bind_group_layout: wgpu::BindGroupLayout,
     params_buffer: wgpu::Buffer,
+    /// The layer of backgrounds and shapes, its size, and the glyph-mode
+    /// bind group that reads it; made for the viewport on first use.
+    layer: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
+    vectors: VectorLayer,
     cell_texture: wgpu::Texture,
     atlas_texture: wgpu::Texture,
     palette_texture: wgpu::Texture,
@@ -221,12 +255,16 @@ impl Renderer {
             wgpu::TextureFormat::R8Unorm,
         );
         let palette_texture = texture(device, "palette", (256, 1), wgpu::TextureFormat::Rgba8Unorm);
-        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("params"),
-            size: 48,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 48,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let params_buffer = uniform("params");
+        let background_params = uniform("background params");
 
         let float = wgpu::TextureSampleType::Float { filterable: false };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -245,21 +283,17 @@ impl Renderer {
                 texture_entry(1, wgpu::TextureSampleType::Uint),
                 texture_entry(2, float),
                 texture_entry(3, float),
+                texture_entry(4, float),
             ],
         });
-        let [cells_view, atlas_view, palette_view] = [&cell_texture, &atlas_texture, &palette_texture]
-            .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
-        let view = wgpu::BindingResource::TextureView;
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("terminal"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: view(&cells_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: view(&atlas_view) },
-                wgpu::BindGroupEntry { binding: 3, resource: view(&palette_view) },
-            ],
-        });
+        // Background mode never reads `under`; it gets a 1 × 1 stand-in.
+        let unused = texture(device, "unused layer", (1, 1), LAYER_FORMAT);
+        let background_bind_group = Self::bind_group(
+            device,
+            &layout,
+            &background_params,
+            [&cell_texture, &atlas_texture, &palette_texture, &unused],
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("terminal"),
@@ -270,27 +304,29 @@ impl Renderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("terminal"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(target_format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline_for = |format: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("terminal"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(format.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
         let glyph_bytes = (2 * cell_px.0 * cell_px.1) as usize;
         Renderer {
@@ -298,9 +334,14 @@ impl Renderer {
             atlas: Atlas { slots: HashMap::new(), next: 1 },
             cell_px,
             target_is_srgb: target_format.is_srgb(),
-            pipeline,
-            bind_group,
+            background_pipeline: pipeline_for(LAYER_FORMAT),
+            background_bind_group,
+            background_params,
+            pipeline: pipeline_for(target_format),
+            bind_group_layout: layout,
             params_buffer,
+            layer: None,
+            vectors: VectorLayer::new(device, LAYER_FORMAT),
             cell_texture,
             atlas_texture,
             palette_texture,
@@ -308,6 +349,28 @@ impl Renderer {
             glyph_scratch: vec![0; glyph_bytes],
             cursor: None,
         }
+    }
+
+    /// The terminal shader's bind group: params, cells, atlas, palette and
+    /// the layer below the glyphs.
+    fn bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        params: &wgpu::Buffer,
+        textures: [&wgpu::Texture; 4],
+    ) -> wgpu::BindGroup {
+        let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }];
+        for (i, v) in views.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: wgpu::BindingResource::TextureView(v) });
+        }
+        device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("terminal"), layout, entries: &entries })
+    }
+
+    /// Uploads the vector display list (SPEC 8), unless `generation` (see
+    /// `Machine::vector_generation`) shows it is unchanged.
+    pub fn update_vectors(&mut self, queue: &wgpu::Queue, list: &[u8], generation: u64) {
+        self.vectors.update(queue, list, generation);
     }
 
     /// Size of the whole grid at the atlas's native cell size.
@@ -395,15 +458,46 @@ impl Renderer {
         (self.grid_rect(viewport).3 / ROWS as f32) as f64
     }
 
-    /// Records the draw into `encoder`, covering all of `target`.
+    /// The layer for `viewport` and the glyph-mode bind group reading it.
+    fn layer(&mut self, device: &wgpu::Device, viewport: (u32, u32)) -> (wgpu::TextureView, wgpu::BindGroup) {
+        if let Some((size, view, group)) = &self.layer
+            && *size == viewport
+        {
+            return (view.clone(), group.clone());
+        }
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("layer"),
+            size: wgpu::Extent3d { width: viewport.0, height: viewport.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: LAYER_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let group = Self::bind_group(
+            device,
+            &self.bind_group_layout,
+            &self.params_buffer,
+            [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex],
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.layer = Some((viewport, view.clone(), group.clone()));
+        (view, group)
+    }
+
+    /// Records the draw into `encoder`, covering all of `target`
+    /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC 8.6).
     pub fn render(
-        &self,
+        &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         viewport: (u32, u32),
     ) {
-        let (x, y, w, h) = self.grid_rect(viewport);
+        let rect = self.grid_rect(viewport);
+        let (x, y, w, h) = rect;
         let (cursor, shown) = self.cursor.map_or(((0, 0), 0), |c| (c, 1));
         let params = Params {
             origin: [x, y],
@@ -415,22 +509,41 @@ impl Renderer {
             flags: shown | if self.target_is_srgb { 2 } else { 0 },
         };
         queue.write_buffer(&self.params_buffer, 0, &params.bytes());
+        queue.write_buffer(&self.background_params, 0, &Params { flags: 4, ..params }.bytes());
+        let (layer, glyph_group) = self.layer(device, viewport);
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("terminal"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
+        let attachment = |view, load| {
+            Some(wgpu::RenderPassColorAttachment {
+                view,
                 depth_slice: None,
                 resolve_target: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-            })],
+                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+            })
+        };
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("backgrounds and shapes"),
+                color_attachments: &[attachment(&layer, wgpu::LoadOp::Clear(wgpu::Color::BLACK))],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.background_pipeline);
+            pass.set_bind_group(0, &self.background_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+            self.vectors.draw(queue, &mut pass, viewport, rect);
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("glyphs"),
+            color_attachments: &[attachment(target, wgpu::LoadOp::Clear(wgpu::Color::BLACK))],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, &glyph_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

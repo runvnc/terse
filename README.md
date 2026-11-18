@@ -26,11 +26,14 @@ Requires a Rust toolchain (edition 2024). If `cargo` is not on your `PATH`
 
 `terse` commands:
 
-- `run <image|id> [--frames N] [--dump] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
-  Unix time 0, random bytes 00h, no controllers) for N frames or until the program
-  exits (capped at 36,000 frames), prints the 80x30 grid with `--dump` (a wide
-  character's continuation cell is skipped), and exits with the machine's exit code.
+  Unix time 0, random bytes 00h, controllers only from `pad` lines) for N frames or
+  until the program exits (capped at 36,000 frames), prints the 80x30 grid with
+  `--dump` (a wide character's continuation cell is skipped), and exits with the
+  machine's exit code. `--dump-vectors` adds the display list device 3 holds, after
+  a `-- vectors: N list bytes --` line, one decoded primitive per line (see
+  [Vector display](#vector-display)).
   Content requests (device 4) are carried out between frames and always complete at
   the start of the next frame, so runs are reproducible. For an image with device 4
   the feeds (SPEC 7.7) are those subscribed in `--config` (see [Feeds](#feeds)):
@@ -140,10 +143,11 @@ Two users on one machine (each with their own store and config), with
 
 ## Layout
 
-    crates/terse-core/   the machine: image parsing, memory, frame loop, devices 0, 1, 2
-                         and 4. No GUI, threads, clock, I/O or OS randomness; inputs
-                         (events, time, random bytes, content completions) are passed in.
-                         wide.rs holds the Unicode 16.0 East Asian Width W/F table.
+    crates/terse-core/   the machine: image parsing, memory, frame loop, devices 0-4. No
+                         GUI, threads, clock, I/O or OS randomness; inputs (events,
+                         time, random bytes, controllers, content completions) are passed
+                         in. wide.rs holds the Unicode 16.0 East Asian Width W/F table;
+                         vector.rs is device 3 and the one display-list decoder.
     crates/terse-net/    host side of device 4 and feeds: blob store, identities, entries,
                          feed store, relay protocol, relay client (behind a small
                          Transport trait), content service thread
@@ -151,7 +155,8 @@ Two users on one machine (each with their own store and config), with
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds, assembler
                          front end
     crates/terse-host/   `terse-host`: winit + wgpu window; renderer.rs is the
-                         window-independent terminal renderer (one fragment-shader pass)
+                         window-independent renderer (terminal backgrounds, vectors.rs's
+                         shapes, then glyphs: SPEC 8.6)
     crates/rustzx-z80/   vendored Z80 core (rustzx-z80 0.16.0, MIT) with a small patch,
                          see crates/rustzx-z80/PATCHES.md
     programs/hello/      demo program: hello.asm, build.sh, the built hello.terse and
@@ -161,6 +166,9 @@ Two users on one machine (each with their own store and config), with
     programs/lib/        C support for SDCC: crt0.s, terse.h, terse.c
     programs/reader/     the feed reader, in C: reader.c, build.sh, the built
                          reader.terse and the golden screens in expected/
+    programs/sparks/     a game for the vector display, in C: sparks.c, build.sh, the
+                         built sparks.terse, recorded sessions in sessions/ and the
+                         golden screens in expected/
 
 ## Assembling programs
 
@@ -189,12 +197,20 @@ its arguments. Blank lines and text after `#` are ignored (except in `text`).
     10 click <x> <y>                            pointer with the primary button, then released
     10 wheel <vertical> [<horizontal>]          wheel steps; positive is down and right
     10 feeds-updated                            a feeds-updated event
+    10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]  controller n (0-3) from this frame on
+    10 pad <n> off                              controller n disconnected
 
 `<key>` is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`,
 `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`,
 `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`. The events of a
 frame are delivered in the order written. A cell (column, row) starts at screen
 unit (column × 8, row × 16).
+
+A `pad` line connects controller `n` and sets its whole state (SPEC 5.3) until the
+next `pad` line for it; controllers are disconnected until their first one.
+`<buttons>` is hexadecimal, byte 1 in bits 0-7 and byte 2 in bits 8-15 (`1` up,
+`2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start, `14` A and left); the
+sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 
 ## C programs
 
@@ -206,10 +222,12 @@ unit (column × 8, row × 16).
   initialised globals, IM 1 + EI, `call _main`, and main's return value written to
   the exit port. RAM is zero at reset, so nothing is cleared.
 - `terse.h` / `terse.c`: ports as SDCC `__sfr __at` variables, events, waiting for a
-  frame (HALT), the frame counter and time, controllers, terminal helpers (put
-  character and string, a code point as UTF-8, a run of ASCII, cursor, colours,
-  commands, cell-pointer writes, the wide-character test), content requests (the
-  request block, get, the feed operations, linear RAM addresses).
+  frame (HALT), the frame counter and time, controllers (`terse_pad_read`, `PAD_*`
+  button bits), terminal helpers (put character and string, a code point as UTF-8,
+  a run of ASCII, cursor, colours, commands, cell-pointer writes, the
+  wide-character test), the vector display (a display-list builder and submit, see
+  below), content requests (the request block, get, the feed operations, linear RAM
+  addresses).
 
 Memory: code in ROM from 0000h (vectors) and 0100h (`--code-loc`), data and the
 stack in RAM from 8000h (`--data-loc`; slots 4-7 show RAM pages 80h-83h at reset).
@@ -297,3 +315,82 @@ Measured with the golden-test fixture (`cargo test -p terse-cli --test reader ti
 -- --nocapture`): the list of 8 entries is drawn by frame 2; an already-local 6 KB
 article shows its first page 8 frames after Enter; the busiest frame of that session
 uses 72% of the frame's 300,000 T-states and no frame's work runs into the next.
+
+## Vector display
+
+Device 3 (SPEC 8) draws a display list of lines, circle outlines, discs,
+rectangles and triangles. A program builds the list in RAM and submits it (ports
+30h-35h, 1 T-state per byte); the device keeps its copy and the host draws it every
+frame until the next submit or clear. Coordinates are sixteenths of a screen unit,
+so the screen is 10240 × 7680. An image gets the device with `terse pack … --device
+3:0`; without it ports 30h-3Fh read FFh and nothing is drawn.
+
+`terse_core::vector::decode` turns a list into resolved primitives (origin added,
+colour and width tracked, the list's end rules applied); `terse-host`, `terse run
+--dump-vectors` and the tests all draw or print from it. `terse-host` draws lines,
+outlines and discs as instanced quads shaded by distance (round ends,
+antialiased), rectangles and triangles as plain triangles, blended in list order,
+clipped to the screen, and re-uploads them only when the list changes. The screen
+is the terminal grid's rectangle, scaled per axis, so with a font whose cells are
+not exactly 1:2 screen units are not square (a circle is a slightly oval one in
+pixels; 4.5% with an 11 × 23 pixel cell). Shapes are blended in sRGB space, like
+the terminal's glyphs. Layers
+(SPEC 8.6): cell backgrounds, then shapes, then glyphs and the cursor, so text is
+always readable over shapes. A program without device 3 looks exactly as before.
+
+From C (`programs/lib/terse.h`), the builder appends to a buffer you own:
+
+    static uint8_t list[512];
+    vec_begin(list);
+    vec_colour(255, 200, 0, 255);           /* r, g, b, opacity */
+    vec_width(32);                          /* two screen units */
+    vec_move(160 * VEC_UNIT, 120 * VEC_UNIT);
+    vec_line(480 * VEC_UNIT, 120 * VEC_UNIT);
+    vec_disc(10 * VEC_UNIT);                /* around the current point */
+    vec_submit_list(list);                  /* VEC_DONE or VEC_REJECTED */
+
+Each builder call is a few dozen to 150 T-states (assembly); `vec_tri`, `vec_rect`,
+`vec_circle`, `vec_origin`, `vec_end` and `vec_clear()` are the rest.
+
+## Sparks
+
+`programs/sparks` is a small game for the vector display, in C. Steer a small
+craft around the arena: it turns, thrusts and drifts with inertia, and bounces
+softly off the walls. Fly over the drifting sparks to collect them; the sweepers,
+bars turning about fixed pivots, cost a life when they touch you (three lives, then
+a moment of invulnerability after each hit). Every ten sparks another sweeper
+appears, up to six. Until you start, a demo plays itself with six sweepers.
+
+    cargo run --release -p terse-host -- programs/sparks/sparks.terse
+
+- Keyboard: Left/Right turn, Up thrusts, Enter starts (and restarts after game
+  over), Esc quits.
+- Controller 0: d-pad left/right or the left stick turns, A, d-pad up or the stick
+  pushed up thrusts, A or Start starts.
+
+The HUD (row 0) and the title and game-over boxes are terminal text on coloured
+cell backgrounds, so the layer order shows: shapes pass over the backgrounds and
+under the text. The Z80 does all the geometry: a 256-entry sine table and an
+assembly multiply (`fmul`, about 500 T-states) rotate the sweepers and the craft,
+in sixteenths so motion is smooth; the device only receives finished coordinates.
+Randomness is a xorshift generator stirred with port 1Ch, so a run is a function
+of its recorded inputs.
+
+Rebuild with `programs/sparks/build.sh` (needs SDCC; set `CARGO` or `TERSE` as for
+the reader); a test fails if `sparks.terse` is out of date. The tests
+(`crates/terse-cli/tests/sparks.rs`) replay two recorded 3,600-frame sessions in
+`programs/sparks/sessions/` (`keys.txt` with the keyboard, `pad.txt` with `pad`
+lines), recorded by a player that only looks at the display list (`cargo test -p
+terse-cli --test sparks record_sessions -- --ignored`). They compare the terminal
+and the decoded display list with `programs/sparks/expected/` (`UPDATE_GOLDEN=1`
+rewrites them), check a replay is identical, and that no frame overruns. To watch a
+recording headless:
+
+    target/debug/terse run programs/sparks/sparks.terse --events programs/sparks/sessions/keys.txt --frames 900 --dump --dump-vectors
+    target/debug/terse-host programs/sparks/sparks.terse --events programs/sparks/sessions/keys.txt --frames 3060 --screenshot /tmp/sparks.png
+
+Measured with `cargo test -p terse-cli --test sparks budget -- --nocapture`: the
+busiest frame is frame 0 (setting up, 37% of the 300,000 T-states); after that at
+most 27%, the demo with six sweepers and eight sparks at most 24%, the median frame
+15%. The display list is about 320 bytes (at most 410). ROM 6,990 bytes, 4 RAM
+pages.

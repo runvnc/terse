@@ -178,15 +178,62 @@ void term_cell_ptr(uint8_t col, uint8_t row)
     TERM_PTR_HI = at >> 8;
 }
 
-void term_fill(uint8_t col, uint8_t row, uint8_t n, uint16_t ch, uint8_t fg, uint8_t bg)
+void term_fill(uint8_t col, uint8_t row, uint8_t n, uint16_t ch, uint8_t fg, uint8_t bg) __naked
 {
-    term_cell_ptr(col, row);
-    while (n--) {
-        TERM_DATA = ch;
-        TERM_DATA = ch >> 8;
-        TERM_DATA = fg;
-        TERM_DATA = bg;
-    }
+    (void)col;
+    (void)row;
+    (void)n;
+    (void)ch;
+    (void)fg;
+    (void)bg;
+    __asm
+        ld   c, a           ; col (a), row (l); n, ch, fg, bg on the stack
+        ld   h, #0
+        ld   d, h
+        ld   e, l
+        add  hl, hl
+        add  hl, hl
+        add  hl, de         ; row * 5
+        add  hl, hl
+        add  hl, hl
+        add  hl, hl
+        add  hl, hl         ; row * 80
+        ld   b, #0
+        add  hl, bc
+        add  hl, hl
+        add  hl, hl         ; (row * 80 + col) * 4
+        ld   a, l
+        out  (_TERM_PTR_LO), a
+        ld   a, h
+        out  (_TERM_PTR_HI), a
+        ld   hl, #2
+        add  hl, sp
+        ld   b, (hl)        ; n
+        inc  hl
+        ld   e, (hl)        ; ch
+        inc  hl
+        ld   d, (hl)
+        inc  hl
+        ld   a, (hl)        ; fg
+        inc  hl
+        ld   h, (hl)        ; bg
+        ld   l, a
+        inc  b
+        ld   c, #_TERM_DATA
+        jr   2$
+1$:     out  (c), e         ; about 60 T-states a cell
+        out  (c), d
+        out  (c), l
+        out  (c), h
+2$:     djnz 1$
+        pop  hl             ; return, dropping the 5 bytes of arguments
+        inc  sp
+        inc  sp
+        inc  sp
+        inc  sp
+        inc  sp
+        jp   (hl)
+    __endasm;
 }
 
 /* Code points U+0000-U+FFFF whose Unicode 16.0 East Asian Width is W or F,
@@ -281,4 +328,199 @@ uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint16_t length
     r->length = length;
     set24(r->addr, addr);
     return content_submit(r);
+}
+
+/* Device 3 display-list builder (see terse.h). */
+uint8_t *vec_ptr;
+
+void vec_move(int16_t x, int16_t y) __naked
+{
+    (void)x;
+    (void)y;
+    __asm
+        ld   a, #0x04
+vec_xy:                     ; opcode in a, x in hl, y in de (sdcccall(1))
+        ld   c, l
+        ld   b, h
+        ld   hl, (_vec_ptr)
+        ld   (hl), a
+        inc  hl
+        ld   (hl), c
+        inc  hl
+        ld   (hl), b
+        inc  hl
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+void vec_line(int16_t x, int16_t y) __naked
+{
+    (void)x;
+    (void)y;
+    __asm
+        ld   a, #0x05
+        jr   vec_xy
+    __endasm;
+}
+
+void vec_rect(int16_t x, int16_t y) __naked
+{
+    (void)x;
+    (void)y;
+    __asm
+        ld   a, #0x08
+        jr   vec_xy
+    __endasm;
+}
+
+void vec_origin(int16_t x, int16_t y) __naked
+{
+    (void)x;
+    (void)y;
+    __asm
+        ld   a, #0x03
+        jr   vec_xy
+    __endasm;
+}
+
+void vec_circle(uint16_t r) __naked
+{
+    (void)r;
+    __asm
+        ld   a, #0x06
+vec_r:                      ; opcode in a, radius in hl
+        ex   de, hl
+        ld   hl, (_vec_ptr)
+        ld   (hl), a
+        inc  hl
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+void vec_disc(uint16_t r) __naked
+{
+    (void)r;
+    __asm
+        ld   a, #0x07
+        jr   vec_r
+    __endasm;
+}
+
+void vec_width(uint8_t w) __naked
+{
+    (void)w;
+    __asm
+        ld   hl, (_vec_ptr)
+        ld   (hl), #0x02
+        inc  hl
+        ld   (hl), a
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+void vec_end(void) __naked
+{
+    __asm
+        ld   hl, (_vec_ptr)
+        ld   (hl), #0x00
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+void vec_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a) __naked
+{
+    (void)r;
+    (void)g;
+    (void)b;
+    (void)a;
+    __asm
+        ld   b, a           ; r (a), g (l); b and a on the stack, popped here
+        ld   c, l
+        pop  de             ; return address
+        pop  hl             ; l = b, h = a
+        push de
+        ex   de, hl
+        ld   hl, (_vec_ptr)
+        ld   (hl), #0x01
+        inc  hl
+        ld   (hl), b
+        inc  hl
+        ld   (hl), c
+        inc  hl
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2) __naked
+{
+    (void)x1;
+    (void)y1;
+    (void)x2;
+    (void)y2;
+    __asm
+        ld   c, l           ; x1 (hl), y1 (de); x2, y2 on the stack, popped here
+        ld   b, h
+        ld   hl, (_vec_ptr)
+        ld   (hl), #0x09
+        inc  hl
+        ld   (hl), c
+        inc  hl
+        ld   (hl), b
+        inc  hl
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        ex   de, hl
+        pop  bc             ; return address
+        pop  hl             ; x2
+        ex   de, hl
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        pop  de             ; y2
+        push bc
+        ld   (hl), e
+        inc  hl
+        ld   (hl), d
+        inc  hl
+        ld   (_vec_ptr), hl
+        ret
+    __endasm;
+}
+
+uint8_t vec_submit(uint32_t addr, uint16_t len)
+{
+    VEC_ADDR0 = addr;
+    VEC_ADDR1 = addr >> 8;
+    VEC_ADDR2 = addr >> 16;
+    VEC_LEN_LO = len;
+    VEC_LEN_HI = len >> 8;
+    VEC_CMD = VEC_SUBMIT;
+    return VEC_CMD;
+}
+
+uint8_t vec_submit_list(const uint8_t *buf)
+{
+    return vec_submit(terse_linear(buf), vec_length(buf));
 }

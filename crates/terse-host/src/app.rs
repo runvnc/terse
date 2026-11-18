@@ -118,7 +118,8 @@ impl Gfx {
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.renderer.render(&self.queue, &mut encoder, &view, self.viewport());
+        let viewport = self.viewport();
+        self.renderer.render(&self.device, &self.queue, &mut encoder, &view, viewport);
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         self.queue.present(frame);
@@ -167,6 +168,7 @@ impl App {
         }
         if let Some(gfx) = &mut self.gfx {
             gfx.renderer.update(&gfx.queue, &terminal_or_blank(&self.machine));
+            gfx.renderer.update_vectors(&gfx.queue, self.machine.vector_list(), self.machine.vector_generation());
             gfx.window.request_redraw();
         }
         if result.exit.is_some() {

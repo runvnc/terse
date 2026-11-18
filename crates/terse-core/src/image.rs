@@ -13,10 +13,11 @@ pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 
 /// Device slots and versions this implementation provides (SPEC 3).
-pub const SUPPORTED_DEVICES: [DeviceReq; 4] = [
+pub const SUPPORTED_DEVICES: [DeviceReq; 5] = [
     DeviceReq { slot: 0, version: 0 },
     DeviceReq { slot: 1, version: 0 },
     DeviceReq { slot: 2, version: 0 },
+    DeviceReq { slot: 3, version: 0 },
     DeviceReq { slot: 4, version: 0 },
 ];
 
@@ -212,7 +213,7 @@ mod tests {
         check(&|f| f[15] = 1, ImageError::ReservedNotZero);
         check(&|f| f.push(0), ImageError::LengthMismatch { expected: 35, actual: 36 });
         check(&|f| f[33] = 1, ImageError::UnsupportedDevice(DeviceReq { slot: 2, version: 1 }));
-        check(&|f| f[32] = 3, ImageError::UnsupportedDevice(DeviceReq { slot: 3, version: 0 }));
+        check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq { slot: 5, version: 0 }));
         check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq { slot: 5, version: 0 }));
     }
 

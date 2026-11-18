@@ -101,6 +101,20 @@ typedef struct {
     int8_t lx, ly, rx, ry;
 } terse_pad;
 void terse_pad_read(uint8_t n, terse_pad *pad);
+#define PAD_UP 0x01      /* terse_pad.buttons */
+#define PAD_DOWN 0x02
+#define PAD_LEFT 0x04
+#define PAD_RIGHT 0x08
+#define PAD_A 0x10
+#define PAD_B 0x20
+#define PAD_X 0x40
+#define PAD_Y 0x80
+#define PAD_L1 0x01      /* terse_pad.buttons2 */
+#define PAD_R1 0x02
+#define PAD_L2 0x04
+#define PAD_R2 0x08
+#define PAD_SELECT 0x10
+#define PAD_START 0x20
 
 /* Device 2, terminal (SPEC 6). */
 __sfr __at 0x20 TERM_PUT; /* one byte of UTF-8 */
@@ -143,6 +157,66 @@ void term_fill(uint8_t col, uint8_t row, uint8_t n, uint16_t ch, uint8_t fg, uin
 void term_cell_ptr(uint8_t col, uint8_t row);
 /* Whether a code point takes two cells (SPEC 6.1, Unicode 16.0 W/F). */
 uint8_t term_is_wide(uint16_t cp);
+
+/* Device 3, 2D vector display (SPEC 8). */
+__sfr __at 0x30 VEC_ADDR0; /* list address: linear RAM, bits 0-7 */
+__sfr __at 0x31 VEC_ADDR1;
+__sfr __at 0x32 VEC_ADDR2;
+__sfr __at 0x33 VEC_LEN_LO; /* list length, 1 to 16384 */
+__sfr __at 0x34 VEC_LEN_HI;
+__sfr __at 0x35 VEC_CMD;    /* write: VEC_SUBMIT or VEC_CLEAR; read: VEC_DONE or VEC_REJECTED */
+#define VEC_SUBMIT 0x01
+#define VEC_CLEAR 0x02
+#define VEC_DONE 0x00
+#define VEC_REJECTED 0x01
+#define VEC_MAX_LIST 16384
+
+/* Coordinates are signed sixteenths of a screen unit: the screen is
+ * 10240 x 7680 (VEC_UNIT per screen unit, a cell is 128 x 256). */
+#define VEC_UNIT 16
+#define VEC_SCREEN_W 10240
+#define VEC_SCREEN_H 7680
+
+/* Display-list opcodes (SPEC 8.3). */
+#define VEC_OP_END 0x00
+#define VEC_OP_COLOUR 0x01
+#define VEC_OP_WIDTH 0x02
+#define VEC_OP_ORIGIN 0x03
+#define VEC_OP_MOVE 0x04
+#define VEC_OP_LINE 0x05
+#define VEC_OP_CIRCLE 0x06
+#define VEC_OP_DISC 0x07
+#define VEC_OP_RECT 0x08
+#define VEC_OP_TRIANGLE 0x09
+
+/* Builder: appends commands at vec_ptr (assembly, 60-150 T-states each).
+ * The caller owns the buffer and its size:
+ *
+ *     static uint8_t list[512];
+ *     vec_begin(list);
+ *     vec_colour(255, 200, 0, 255); vec_move(x, y); vec_disc(48);
+ *     vec_submit_list(list);
+ */
+extern uint8_t *vec_ptr;
+#define vec_begin(buf) (vec_ptr = (buf))
+#define vec_length(buf) ((uint16_t)(vec_ptr - (uint8_t *)(buf)))
+void vec_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+void vec_width(uint8_t w);                 /* sixteenths; 0 counts as 1 */
+void vec_origin(int16_t x, int16_t y);     /* added to later coordinates */
+void vec_move(int16_t x, int16_t y);       /* sets the current point */
+void vec_line(int16_t x, int16_t y);       /* line to (x, y), the new current point */
+void vec_circle(uint16_t r);               /* outline around the current point */
+void vec_disc(uint16_t r);                 /* filled, around the current point */
+void vec_rect(int16_t x, int16_t y);       /* corners: current point and (x, y) */
+void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2); /* with the current point */
+void vec_end(void);
+
+/* Submits `len` bytes at linear RAM address `addr` (SPEC 8.2); returns
+ * VEC_DONE or VEC_REJECTED. Costs 1 T-state per byte. */
+uint8_t vec_submit(uint32_t addr, uint16_t len);
+/* Submits the list built since vec_begin(buf); `buf` must show RAM. */
+uint8_t vec_submit_list(const uint8_t *buf);
+#define vec_clear() (VEC_CMD = VEC_CLEAR)
 
 /* Device 4, content (SPEC 7). A request block must lie in RAM. */
 __sfr __at 0x40 CONTENT_BLOCK_LO;

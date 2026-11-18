@@ -12,7 +12,16 @@
 //! 10 click <x> <y>                            pointer with the primary button, then released
 //! 10 wheel <vertical> [<horizontal>]          wheel steps (06h); positive is down and right
 //! 10 feeds-updated                            feeds updated (07h)
+//! 10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]    controller n (0-3) state (SPEC 5.3)
+//! 10 pad <n> off                               controller n disconnected
 //! ```
+//!
+//! A `pad` line connects controller `n` and sets its state from that frame
+//! on, until the next `pad` line for it. `<buttons>` is hexadecimal (with or
+//! without `0x`), byte 1 of the controller state in bits 0-7 and byte 2 in
+//! bits 8-15 (`10` is A, `2000` is Start); the sticks are -127 to 127 and the
+//! right stick defaults to 0 0. Controllers are disconnected until their
+//! first `pad` line.
 //!
 //! `<key>` is a USB HID usage ID (decimal or `0x28`) or a name: `a`-`z`,
 //! `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`,
@@ -21,11 +30,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::system::{Event, buttons, modifiers};
+use crate::system::{CONTROLLERS, Controller, Event, buttons, modifiers};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Script {
     frames: BTreeMap<u32, Vec<Event>>,
+    /// Controller changes: from this frame on, controller n has this state.
+    pads: BTreeMap<u32, Vec<(usize, Controller)>>,
 }
 
 /// The HID usage ID for a key name or number.
@@ -89,6 +100,30 @@ fn number<T: std::str::FromStr>(word: Option<&&str>, what: &str) -> Result<T, St
     w.parse().map_err(|_| format!("bad {what} {w}"))
 }
 
+/// `<n> <buttons> <lx> <ly> [<rx> <ry>]` or `<n> off`.
+fn parse_pad(words: &[&str]) -> Result<(usize, Controller), String> {
+    let n: usize = number(words.first(), "controller")?;
+    if n >= CONTROLLERS {
+        return Err(format!("bad controller {n}"));
+    }
+    if words.get(1) == Some(&"off") && words.len() == 2 {
+        return Ok((n, Controller::default()));
+    }
+    let b = words.get(1).ok_or("missing buttons")?;
+    let buttons = u16::from_str_radix(b.trim_start_matches("0x"), 16).map_err(|_| format!("bad buttons {b}"))?;
+    let axis = |i: usize, what: &str| -> Result<i8, String> {
+        let v: i8 = number(words.get(i), what)?;
+        if v == -128 { Err(format!("bad {what} -128")) } else { Ok(v) }
+    };
+    let left = (axis(2, "lx")?, axis(3, "ly")?);
+    let right = match words.len() {
+        4 => (0, 0),
+        6 => (axis(4, "rx")?, axis(5, "ry")?),
+        _ => return Err("pad wants <n> <buttons> <lx> <ly> [<rx> <ry>]".into()),
+    };
+    Ok((n, Controller { connected: true, buttons, left, right }))
+}
+
 impl Script {
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut script = Script::default();
@@ -107,6 +142,12 @@ impl Script {
         let frame: u32 = frame.parse().map_err(|_| format!("bad frame number {frame}"))?;
         let rest = rest.trim_start();
         let (command, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        if command == "pad" {
+            let words: Vec<&str> = args.split('#').next().unwrap_or("").split_whitespace().collect();
+            let pad = parse_pad(&words)?;
+            self.pads.entry(frame).or_default().push(pad);
+            return Ok(());
+        }
         let events = self.frames.entry(frame).or_default();
         if command == "text" {
             // The rest of the line, exactly (after one separating space).
@@ -141,6 +182,18 @@ impl Script {
             _ => return Err(format!("unknown command {command:?}")),
         }
         Ok(())
+    }
+
+    /// The controller state for `frame`: each controller as set by its last
+    /// `pad` line at or before `frame`.
+    pub fn controllers(&self, frame: u32) -> [Controller; CONTROLLERS] {
+        let mut out = [Controller::default(); CONTROLLERS];
+        for changes in self.pads.range(..=frame).map(|(_, v)| v) {
+            for &(n, c) in changes {
+                out[n] = c;
+            }
+        }
+        out
     }
 
     /// The events for `frame`, in the order written.
@@ -179,6 +232,23 @@ mod tests {
         assert_eq!(s.events(8), [Event::feeds_updated()]);
         assert_eq!(s.events(2), [Event::key_down(0x45, 0), Event::key_up(0x45, 0)]);
         assert_eq!(s.events(9), []);
+    }
+
+    #[test]
+    fn pad_state_persists_until_changed() {
+        let s = Script::parse("5 pad 0 10 -127 0\n9 pad 0 0x2001 5 -6 7 127 # start, up\n9 pad 3 0 0 0\n12 pad 0 off\n").unwrap();
+        assert_eq!(s.controllers(4), [Controller::default(); 4]);
+        let a = Controller { connected: true, buttons: 0x10, left: (-127, 0), right: (0, 0) };
+        assert_eq!(s.controllers(5)[0], a);
+        assert_eq!(s.controllers(8)[0], a);
+        let b = Controller { connected: true, buttons: 0x2001, left: (5, -6), right: (7, 127) };
+        assert_eq!(s.controllers(9)[0], b);
+        assert_eq!(s.controllers(11)[3], Controller { connected: true, ..Default::default() });
+        assert_eq!(s.controllers(12)[0], Controller::default());
+        assert!(s.events(5).is_empty());
+        for bad in ["1 pad 4 0 0 0", "1 pad 0 xyz 0 0", "1 pad 0 0 -128 0", "1 pad 0 0 0", "1 pad 0 0 0 0 1"] {
+            assert!(Script::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

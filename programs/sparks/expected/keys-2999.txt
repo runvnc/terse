@@ -1,0 +1,61 @@
+  SPARKS                      SCORE 0030                      LIVES
+
+
+
+
+
+
+
+
+
+
+
+                                   G A M E   O V E R
+
+                                    Score 0030
+
+                     Enter or Start: play again.  Esc: quit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- vectors: 312 list bytes --
+line 64 64 10176 64 w 32 c 466ebeff
+line 10176 64 10176 7616 w 32 c 466ebeff
+line 10176 7616 64 7616 w 32 c 466ebeff
+line 64 7616 64 64 w 32 c 466ebeff
+rect 64 64 10176 7616 c ff282878
+disc 230 7148 r 52 c ffe15aff
+circle 230 7148 r 126 w 20 c ffbe3c5c
+disc 1837 1930 r 52 c ffe15aff
+circle 1837 1930 r 126 w 20 c ffbe3c5c
+disc 5718 356 r 52 c ffe15aff
+circle 5718 356 r 138 w 20 c ffbe3c38
+disc 6956 2699 r 52 c ffe15aff
+circle 6956 2699 r 120 w 20 c ffbe3c6e
+disc 1878 2084 r 52 c ffe15aff
+circle 1878 2084 r 84 w 20 c ffbe3cda
+disc 380 1199 r 52 c ffe15aff
+circle 380 1199 r 122 w 20 c ffbe3c68
+disc 1156 1259 r 52 c ffe15aff
+circle 1156 1259 r 88 w 20 c ffbe3cce
+disc 318 5545 r 52 c ffe15aff
+circle 318 5545 r 102 w 20 c ffbe3ca4
+line 8138 889 9804 1537 w 48 c ff5032ff
+line 646 5814 1720 6842 w 48 c ff5032ff
+line 4146 3067 3290 4345 w 48 c ff5032ff
+line 9421 4282 8065 3226 w 48 c ff5032ff
+disc 8971 1213 r 56 c ffaa82ff
+disc 1183 6328 r 56 c ffaa82ff
+disc 3718 3706 r 56 c ffaa82ff
+disc 8743 3754 r 56 c ffaa82ff
+rect 2304 2816 7936 4608 c 303030e6

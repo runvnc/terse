@@ -16,8 +16,8 @@ use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
-  terse run <image|id> [--frames N] [--dump] [--events <file>] [--relay ws://...] [--store <dir>]
-            [--config <dir>]
+  terse run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...]
+            [--store <dir>] [--config <dir>]
   terse info <image|id> [--relay ws://...] [--store <dir>]
   terse put <file> [--relay ws://...] [--store <dir>]
   terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
@@ -174,8 +174,11 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--dump"])?;
-    args.check_known(&["--frames", "--dump", "--events", "--relay", "--store", "--config"])?;
+    let args = Args::parse(args, &["--dump", "--dump-vectors"])?;
+    args.check_known(&["--frames", "--dump", "--dump-vectors", "--events", "--relay", "--store", "--config"])?;
+    if args.has("--dump-vectors") && !args.has("--dump") {
+        return Err("--dump-vectors needs --dump".into());
+    }
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None };
     let image = load_image(args.one_positional()?, &mut net)?;
@@ -218,6 +221,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         match machine.terminal() {
             Some(t) => print!("{}", t.text()),
             None => eprintln!("terse: image has no terminal device"),
+        }
+        // SPEC 8: the list device 3 holds at the end of the last frame, one
+        // primitive per line.
+        if args.has("--dump-vectors") {
+            let list = machine.vector_list();
+            println!("-- vectors: {} list bytes --", list.len());
+            print!("{}", terse_core::vector::dump(list));
         }
     }
     Ok(ExitCode::from(exit.unwrap_or(0)))

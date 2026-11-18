@@ -11,6 +11,7 @@ pub mod memory;
 pub mod script;
 pub mod system;
 pub mod terminal;
+pub mod vector;
 pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
@@ -19,3 +20,4 @@ pub use machine::{FrameInput, FrameResult, Machine, Registers, MAX_RANDOM_READS_
 pub use script::Script;
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};
 pub use terminal::{CONTINUATION, Cell, COLS, ROWS, Terminal};
+pub use vector::{Primitive, Vector};

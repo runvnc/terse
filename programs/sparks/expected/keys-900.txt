@@ -1,0 +1,59 @@
+  SPARKS                      SCORE 0009                      LIVES ♥ ♥ ♥
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- vectors: 288 list bytes --
+line 64 64 10176 64 w 32 c 466ebeff
+line 10176 64 10176 7616 w 32 c 466ebeff
+line 10176 7616 64 7616 w 32 c 466ebeff
+line 64 7616 64 64 w 32 c 466ebeff
+disc 7151 3516 r 52 c ffe15aff
+circle 7151 3516 r 100 w 20 c ffbe3caa
+disc 9535 2284 r 52 c ffe15aff
+circle 9535 2284 r 134 w 20 c ffbe3c44
+disc 3362 6480 r 52 c ffe15aff
+circle 3362 6480 r 108 w 20 c ffbe3c92
+disc 6704 6932 r 52 c ffe15aff
+circle 6704 6932 r 94 w 20 c ffbe3cbc
+disc 7050 3512 r 52 c ffe15aff
+circle 7050 3512 r 108 w 20 c ffbe3c92
+disc 762 2350 r 52 c ffe15aff
+circle 762 2350 r 102 w 20 c ffbe3ca4
+disc 9649 2109 r 52 c ffe15aff
+circle 9649 2109 r 90 w 20 c ffbe3cc8
+disc 4516 7398 r 52 c ffe15aff
+circle 4516 7398 r 82 w 20 c ffbe3ce0
+line 8082 1100 9860 1326 w 48 c ff5032ff
+disc 8971 1213 r 56 c ffaa82ff
+triangle 6965 2303 7396 2310 7270 2395 c 3cc8ff7f
+triangle 6965 2303 7270 2395 7327 2536 c 3cc8ff7f
+line 6965 2303 7396 2310 w 20 c c8f5ffff
+line 7396 2310 7270 2395 w 20 c c8f5ffff
+line 7270 2395 7327 2536 w 20 c c8f5ffff
+line 7327 2536 6965 2303 w 20 c c8f5ffff

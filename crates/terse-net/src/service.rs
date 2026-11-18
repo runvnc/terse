@@ -139,8 +139,8 @@ impl ContentService {
 }
 
 /// Runs a machine the reproducible headless way (`terse run`, `terse-host
-/// --screenshot`): scripted events, Unix time 0, random bytes 00h, no
-/// controllers, and every content request completed at the start of the
+/// --screenshot`): scripted events and controllers (`pad` lines), Unix time
+/// 0, random bytes 00h, and every content request completed at the start of the
 /// next frame. A feeds-updated event is delivered in the frame after the one
 /// in which the host stored a new entry; entries stored before the first
 /// frame (the initial sync) are not announced.
@@ -163,7 +163,9 @@ impl Headless {
             events.push(Event::feeds_updated());
         }
         let completions = std::mem::take(&mut self.completions);
-        let result = machine.run_frame(&FrameInput { events: &events, completions: &completions, ..Default::default() });
+        let controllers = self.script.controllers(machine.frame());
+        let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
+        let result = machine.run_frame(&input);
         if let Some(content) = &mut self.content {
             content.submit(machine.take_content_requests());
             self.completions = content.wait_finished();

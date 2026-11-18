@@ -132,7 +132,7 @@ select a register in that device.
 | `00h`–`0Fh` | 0 | Memory | specified |
 | `10h`–`1Fh` | 1 | System | specified |
 | `20h`–`2Fh` | 2 | Terminal | specified |
-| `30h`–`3Fh` | 3 | 2D vector display | reserved |
+| `30h`–`3Fh` | 3 | 2D vector display | specified |
 | `40h`–`4Fh` | 4 | Content | specified |
 | `50h`–`5Fh` | 5 | Messages | reserved |
 | `60h`–`6Fh` | 6 | Sound | reserved |
@@ -247,8 +247,9 @@ frame to the next; only a write to `1Dh` restarts it. Axis values are never
 
 The screen is 640 units wide and 480 high, with (0, 0) at the top left. A
 terminal cell is 8 units wide and 16 high, so the cell at (column, row) covers
-x from `column × 8` and y from `row × 16`. Pointer positions and, later, the
-graphics devices use these units.
+x from `column × 8` and y from `row × 16`. Pointer positions and the graphics
+devices use these units. Units are square: the host shows the screen at a
+4:3 shape, so a circle is round.
 
 ## 6. Device 2 — Terminal (version 0)
 
@@ -371,7 +372,8 @@ xterm 256-colour palette: entries 0–15 the standard and bright colours,
 ### 6.7 Presentation
 
 How the host draws the grid (font, size, cursor shape, smoothing) is not part
-of this spec and cannot be observed by the program.
+of this spec and cannot be observed by the program. Section 8.6 says how the
+grid is combined with the vector display.
 
 ## 7. Device 4 — Content (version 0)
 
@@ -504,7 +506,105 @@ read the timeline again.
 
 ---
 
-## 8. Conformance
+## 8. Device 3 — 2D vector display (version 0)
+
+Draws lines and simple filled shapes from a **display list**: a short
+sequence of drawing commands that the program builds in RAM and hands to the
+device. The device keeps its own copy and the host draws it every frame until
+the program submits another. The device does no geometry for the program: it
+does not rotate, scale or clip against anything but the screen, and nothing
+it draws can be read back.
+
+### 8.1 Coordinates
+
+Coordinates are signed 16-bit numbers in **sixteenths of a screen unit**
+(section 5.4), little-endian. The screen's top left is (0, 0) and its bottom
+right is (10240, 7680). Anything outside the screen is not shown.
+
+### 8.2 Ports
+
+| Port | Access | Function |
+|---|---|---|
+| `30h` | write | List address, bits 0–7 |
+| `31h` | write | List address, bits 8–15 |
+| `32h` | write | List address, bits 16–23 |
+| `33h` | write | List length, bits 0–7 |
+| `34h` | write | List length, bits 8–15 |
+| `35h` | write | Command: `01h` submit, `02h` clear |
+| `35h` | read | Result of the last command: `00h` done, `01h` rejected |
+
+The address is a linear RAM address (section 7.1). **Submit** copies `length`
+bytes from RAM into the device, replacing the previous list. It is rejected,
+and the previous list kept, if the length is 0 or more than 16,384 or any
+part of the range is outside RAM. **Clear** empties the list. Any other
+command value is rejected. Ports `30h`–`34h` cannot be read (they return
+`FFh`).
+
+The list that the device holds at the end of a frame is the one the host
+shows for that frame. After reset the list is empty, the address and length
+are 0 and the result is `00h`.
+
+### 8.3 Display list
+
+A list is a sequence of commands, each one opcode byte followed by its
+operands. Drawing state at the start of a list: colour opaque white
+(255, 255, 255, 255), width 16 (one screen unit), origin (0, 0), current
+point (0, 0).
+
+| Opcode | Command | Operands | Effect |
+|---|---|---|---|
+| `00h` | End | — | Ends the list |
+| `01h` | Colour | r, g, b, a (1 byte each) | Sets the colour; `a` is opacity, 255 opaque |
+| `02h` | Width | w (1 byte) | Sets the line width in sixteenths; 0 counts as 1 |
+| `03h` | Origin | x, y | Sets the origin, which is added to every later coordinate (but not to a later origin) |
+| `04h` | Move | x, y | Sets the current point |
+| `05h` | Line | x, y | Draws a line from the current point to (x, y), which becomes the current point |
+| `06h` | Circle | radius (2 bytes, unsigned) | Draws a circle outline centred on the current point |
+| `07h` | Disc | radius (2 bytes, unsigned) | Draws a filled circle centred on the current point |
+| `08h` | Rectangle | x, y | Fills the rectangle with opposite corners at the current point and (x, y) |
+| `09h` | Triangle | x1, y1, x2, y2 | Fills the triangle formed by the current point and the two given points |
+
+- Lines and circle outlines use the current width and have round ends, so a
+  line to the current point draws a dot.
+- The sum of a coordinate and the origin wraps to 16 bits. The current
+  point is stored after the origin has been added, so a later Origin command
+  does not move it.
+- A circle outline is centred on its radius: half the width falls inside
+  and half outside.
+- Circle, disc, rectangle and triangle leave the current point unchanged.
+- Shapes are drawn in list order, each over the earlier ones, blended by
+  opacity.
+- The list ends at an End command, at the end of the submitted bytes, at an
+  unknown opcode, or at a command whose operands are cut off by the end of
+  the list. Commands before that point are drawn.
+
+### 8.4 Charges
+
+A submit costs 1 T-state per byte of its length, wherever the list ends. A clear, or a rejected command,
+costs nothing extra.
+
+### 8.5 Determinism
+
+The device's state is the address, the length, the result and the copy of
+the list. It takes no input from the host.
+
+### 8.6 Layers
+
+The host combines the displays in a fixed order, from the bottom:
+
+1. the terminal's cell backgrounds;
+2. the vector display;
+3. the terminal's characters and cursor.
+
+So text is always drawn over vector shapes, and a cell's background colour
+is always behind them. A program that wants a panel of text to hide the
+shapes behind it draws a filled rectangle at the end of its list; the text
+still appears above it. Smoothing of edges and the exact colour of blended
+pixels are up to the host and cannot be observed by the program.
+
+---
+
+## 9. Conformance
 
 An implementation conforms to profile 1 if:
 
@@ -513,12 +613,12 @@ An implementation conforms to profile 1 if:
   registers, the slot registers and all device state after every frame equal
   those of the reference implementation.
 
-## 9. Not yet specified
+## 10. Not yet specified
 
 - Block copy (device 0, ports `08h`–`0Fh`) and its charge rate.
 - Font selection, combining marks and complex scripts in the terminal.
 - Names (signed pointers to blobs), ranges verified without fetching the
   whole blob, and cancelling a content request.
-- Devices 3, 5, 6, 9 and A.
+- Devices 5, 6, 9 and A.
 - Starting other machines, and messages between machines.
 - Snapshots.

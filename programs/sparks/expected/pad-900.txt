@@ -1,0 +1,60 @@
+  SPARKS                      SCORE 0006                      LIVES ♥ ♥ ♥
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- vectors: 305 list bytes --
+line 64 64 10176 64 w 32 c 466ebeff
+line 10176 64 10176 7616 w 32 c 466ebeff
+line 10176 7616 64 7616 w 32 c 466ebeff
+line 64 7616 64 64 w 32 c 466ebeff
+disc 7151 3516 r 52 c ffe15aff
+circle 7151 3516 r 100 w 20 c ffbe3caa
+disc 9535 2284 r 52 c ffe15aff
+circle 9535 2284 r 134 w 20 c ffbe3c44
+disc 3813 2839 r 52 c ffe15aff
+circle 3813 2839 r 82 w 20 c ffbe3ce0
+disc 6704 6898 r 52 c ffe15aff
+circle 6704 6898 r 94 w 20 c ffbe3cbc
+disc 7082 3512 r 52 c ffe15aff
+circle 7082 3512 r 108 w 20 c ffbe3c92
+disc 7037 2284 r 52 c ffe15aff
+circle 7037 2284 r 114 w 20 c ffbe3c80
+disc 9784 2064 r 52 c ffe15aff
+circle 9784 2064 r 90 w 20 c ffbe3cc8
+disc 4544 7384 r 52 c ffe15aff
+circle 4544 7384 r 82 w 20 c ffbe3ce0
+line 8082 1100 9860 1326 w 48 c ff5032ff
+disc 8971 1213 r 56 c ffaa82ff
+line 4291 3118 4452 3204 w 56 c ff9628dc
+triangle 4011 2968 4431 3059 4291 3118 c 3cc8ff7f
+triangle 4011 2968 4291 3118 4319 3267 c 3cc8ff7f
+line 4011 2968 4431 3059 w 20 c c8f5ffff
+line 4431 3059 4291 3118 w 20 c c8f5ffff
+line 4291 3118 4319 3267 w 20 c c8f5ffff
+line 4319 3267 4011 2968 w 20 c c8f5ffff

@@ -7,6 +7,7 @@ use crate::image::Image;
 use crate::memory::Memory;
 use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::Terminal;
+use crate::vector::Vector;
 
 /// T-states added to the budget each frame (SPEC 1).
 pub const TSTATES_PER_FRAME: i64 = 300_000;
@@ -57,6 +58,7 @@ struct Hardware {
     memory: Memory,
     system: System,
     terminal: Option<Terminal>,
+    vector: Option<Vector>,
     content: Option<Content>,
     interrupt_request: bool,
     /// T-states of the current step, including device charges.
@@ -92,6 +94,7 @@ impl Z80Bus for Hardware {
             0 => self.memory.port_in(reg),
             1 => self.system.port_in(reg),
             2 => self.terminal.as_mut().map_or(0xFF, |t| t.port_in(reg)),
+            3 => self.vector.as_ref().map_or(0xFF, |v| v.port_in(reg)),
             4 => self.content.as_ref().map_or(0xFF, |c| c.port_in(reg)),
             _ => 0xFF,
         }
@@ -107,6 +110,11 @@ impl Z80Bus for Hardware {
                 if let Some(t) = &mut self.terminal {
                     // SPEC 1.3: charges count as extra T-states of the I/O instruction.
                     self.step_tstates += t.port_out(reg, data) as u64;
+                }
+            }
+            3 => {
+                if let Some(v) = &mut self.vector {
+                    self.step_tstates += v.port_out(reg, data, &self.memory) as u64;
                 }
             }
             4 => {
@@ -178,6 +186,7 @@ impl Machine {
                 memory: Memory::new(&image.rom, image.ram_pages),
                 system: System::default(),
                 terminal: image.has_device(2).then(Terminal::default),
+                vector: image.has_device(3).then(Vector::default),
                 content: image.has_device(4).then(Content::default),
                 interrupt_request: false,
                 step_tstates: 0,
@@ -263,6 +272,23 @@ impl Machine {
     /// The terminal, or `None` if the image does not list device 2.
     pub fn terminal(&self) -> Option<&Terminal> {
         self.hw.terminal.as_ref()
+    }
+
+    /// The vector display, or `None` if the image does not list device 3.
+    pub fn vector(&self) -> Option<&Vector> {
+        self.hw.vector.as_ref()
+    }
+
+    /// The display list device 3 holds (SPEC 8.2): empty if the device is
+    /// absent or cleared. What the host shows for the frame just run.
+    pub fn vector_list(&self) -> &[u8] {
+        self.hw.vector.as_ref().map_or(&[], Vector::list)
+    }
+
+    /// Changes whenever [`Machine::vector_list`] changes, so a host can skip
+    /// re-uploading an unchanged list.
+    pub fn vector_generation(&self) -> u64 {
+        self.hw.vector.as_ref().map_or(0, Vector::generation)
     }
 
     /// The content device, or `None` if the image does not list device 4.

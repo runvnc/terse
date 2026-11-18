@@ -146,6 +146,27 @@ fn reader_image_is_up_to_date() {
     );
 }
 
+/// The checked-in sparks.terse is what programs/sparks/build.sh makes from
+/// sparks.c and programs/lib. Skipped when SDCC is not installed.
+#[test]
+fn sparks_image_is_up_to_date() {
+    if Command::new("sdcc").arg("--version").output().is_err() {
+        eprintln!("skipped: sdcc is not installed, so programs/sparks/sparks.terse is not checked");
+        return;
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sparks-build");
+    std::fs::create_dir_all(&out).unwrap();
+    let built = Command::new("sh").arg(dir.join("build.sh")).arg(&out).env("TERSE", TERSE).output().unwrap();
+    assert!(built.status.success(), "build.sh failed: {}", String::from_utf8_lossy(&built.stderr));
+    let fresh = std::fs::read(out.join("sparks.terse")).unwrap();
+    let checked_in = std::fs::read(dir.join("sparks.terse")).unwrap();
+    assert!(
+        fresh == checked_in,
+        "programs/sparks/sparks.terse is out of date with sparks.c and programs/lib; run programs/sparks/build.sh"
+    );
+}
+
 /// `--events`: scripted input for `terse run`.
 #[test]
 fn run_with_scripted_events() {
