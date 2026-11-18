@@ -45,6 +45,9 @@ pub fn run(image: Program, content: Option<ContentService>) -> Result<ExitCode, 
     if let Some(e) = app.error {
         return Err(e);
     }
+    if let Some(fault) = app.machine.fault() {
+        eprintln!("terse-host: fault: {fault}");
+    }
     Ok(ExitCode::from(app.machine.exit_code().unwrap_or(0)))
 }
 
