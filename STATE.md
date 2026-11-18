@@ -154,11 +154,11 @@ From this repository's implementation (the reference):
 
 - `programs/hello/hello.terse` at reset (no frame run): serialization
   18,810 bytes, hash
-  `ab421354b6fa650e97b0a4ea0beade795da9e0e21ee53aa3643bd04520ce6bdd`.
+  `24808d34532edb2af0f2b40ed0598331e9962ae702b13f0494ea575126f7046c`.
 - The same after 1 frame with no input:
-  `cd5633205e64a1cc94a864b857af59fbe04fa81476c740c83f0f5c33dcb23c43`;
+  `486c6a6f26323a50f7a6f81674cc88c96cba54fc57bef5fd81bc0c6d679222ef`;
   after 30 frames:
-  `94d70c61cfd74e7b293e03a6a7c7fdcc81956b8e90c4e3f5cd238a36284076fe`.
+  `ef94d0c9ae6cdcc6ab4c001bd1fcd8f7a9676265868cc9a8e6fa11d8d14f1322`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
 

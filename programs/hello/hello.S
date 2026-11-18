@@ -248,7 +248,7 @@ texts:  .byte 2, 2, 11, 0
         .byte 4, 2, 8, 0
         .asciz "Type to echo text below. Enter: new line, Backspace, Esc: exit."
         .byte 6, 2, 7, 0
-        .asciz "Palette entries 0-15, written through the cell pointer:"
+        .asciz "Palette entries 0-15, written with cells_write:"
         .byte 9, 2, 7, 0
         .asciz "frame"
         .byte 0xFF

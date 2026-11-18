@@ -578,7 +578,7 @@ recorded sessions.
 
 | Program | ROM | RAM | Busiest frame | Typical frame | Host time per frame |
 |---|---|---|---|---|---|
-| hello | 889 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
+| hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,356 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
 | reader | 10,292 bytes | 9 pages | 62,269 (50%, wrapping an article) | 277 (0.2%) | 36 µs (with the content service) |
 | sparks | 5,856 bytes | 1 page | 8,641 (6.9%, frame 0); 5,240 (4.2%) after | 2,072 (1.7%) | 11 µs (p99 17 µs) |
