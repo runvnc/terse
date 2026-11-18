@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const TERSE: &str = env!("CARGO_BIN_EXE_terse");
-/// The scripted run: every phase, the stress phase included, ends by frame 110.
+/// The scripted run: every phase ends by frame 145 (the stress phase in 108).
 const FRAMES: &str = "200";
 /// PASS lines on the results screen: one per section.
-const SECTIONS: usize = 26;
+const SECTIONS: usize = 28;
 
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/conform")
@@ -95,11 +95,11 @@ fn state_hashes_match() {
     golden("expected-hashes.txt", &got);
 }
 
-/// The sections the program checks itself all pass, and the final screen
-/// and display list are as expected.
+/// The sections the program checks itself all pass, and the final screen,
+/// display list and page are as expected.
 #[test]
 fn every_section_passes() {
-    let screen = run(&["--dump", "--dump-vectors"]);
+    let screen = run(&["--dump", "--dump-vectors", "--dump-page"]);
     assert!(screen.contains("All sections pass."), "{screen}");
     assert!(!screen.contains("FAIL"), "{screen}");
     assert_eq!(screen.matches("PASS ").count(), SECTIONS, "{screen}");

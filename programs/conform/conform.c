@@ -10,7 +10,15 @@
  * covers what the program cannot see (the palette, the display list, the
  * registers). After the checks comes a stress phase (full-budget frames that
  * rewrite every cell and submit a new 16,384-byte display list each frame),
- * then the results screen. Esc exits with the number of failed sections.
+ * then the page device, then the results screen. Esc exits with the number
+ * of failed sections.
+ *
+ * The page checks hold on any host, whatever its fonts: an event arrives,
+ * the same document at the same width gives the same height, a narrower
+ * rectangle a height no smaller, a clear 0, presses over the big anchored
+ * text at the top left give its id and buttons. The exact heights and the
+ * frames they arrive in (the reference layout, SPEC 11.6, in a headless
+ * run) are in RAM, so the state hashes cover them.
  *
  * Self-contained: its own crt0.S and conform.ld, no programs/lib, so that
  * library changes do not change this image.
@@ -22,7 +30,12 @@
  *   14-31   the budget: timed loops (ROM, RAM, scroll carry, write)
  *   32-45   content requests (completions arrive one frame after submit)
  *   49-108  stress (STRESS_START + 1, STRESS_A + STRESS_B frames)
- *   109-    the results; Esc exits. */
+ *   110     page calls (PAGE_START); the frame ends with a document
+ *   111-118 height events (headless: one a frame in 111-114, none in
+ *           115-117 while the width is 0, one in 118)
+ *   140     pointer presses over the page (PAGE_CLICK), read at 141;
+ *           a clear, its height event at 142
+ *   142-    the results; Esc exits. */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -59,6 +72,7 @@ enum {
     T_GET_COLOURS, T_CELLS_READ, T_CELLS_WRITE, T_PALETTE_SET, T_SIZE,
     V_SUBMIT = 0x300, V_CLEAR, V_STYLE, V_PERSISTENCE, V_FILL,
     C_SUBMIT = 0x400,
+    P_SUBMIT = 0x700, P_CLEAR, P_REGION, P_SCROLL, P_BACKGROUND,
 };
 
 static inline uint32_t call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
@@ -68,6 +82,18 @@ static inline uint32_t call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
     register uint32_t a2 __asm__("a2") = z;
     register uint32_t a7 __asm__("a7") = n;
     __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+/* A call with four arguments (a0-a3). */
+static inline uint32_t call4(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t w)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a3 __asm__("a3") = w;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a7) : "memory");
     return a0;
 }
 
@@ -969,7 +995,7 @@ static void t_system(void)
     begin();
     static const uint32_t unknown[] = {
         0x000, 0x0FF, 0x107, 0x1FF, 0x20A, 0x2FF, 0x305, 0x3FF, 0x401, 0x4FF,
-        0x500, 0x501, 0x5FF, 0x600, 0x700, 0xA00, 0xFF00, 0x10100, 0x10200, 0xFFFFFFFF,
+        0x500, 0x501, 0x5FF, 0x600, 0x800, 0xA00, 0xFF00, 0x10100, 0x10200, 0xFFFFFFFF,
     };
     for (uint32_t i = 0; i < sizeof unknown / sizeof unknown[0]; i++) {
         uint32_t a1, r = call2(unknown[i], 0x1234, 0x5678, &a1);
@@ -1699,6 +1725,169 @@ static void t_stress(void)
     report("stress frames run");
 }
 
+/* ============================================================== 10. page */
+
+#define PAGE_START 110  /* the calls; then the height events */
+#define PAGE_CLICK 140  /* conform.events presses the pointer in this frame */
+#define ANCHOR_ID 0x2A17
+#define PX 40           /* the rectangle: x, y, the wide and narrow widths, height */
+#define PY 40
+#define PW 560
+#define PW_NARROW 140
+#define PH 400
+
+/* Big anchored text at the top left (the press target, wherever a host's
+ * fonts put it), then a paragraph that wraps to more lines when the
+ * rectangle is narrower. */
+#define PAGE_TEXT                                                                  \
+    "The page device lays out this paragraph with the host's own fonts. The "      \
+    "conformance image only learns its height, which arrives as an event after "   \
+    "the submit, and the anchor of text under a pointer press. A narrower "        \
+    "rectangle gives more lines and so a greater height; a clear gives a height "  \
+    "of zero."
+#define PAGE_TEXT_LEN (sizeof PAGE_TEXT - 1)
+static const struct {
+    uint8_t head[54];
+    char text[PAGE_TEXT_LEN] __attribute__((nonstring)); /* no NUL */
+    uint8_t end;
+} page_doc = {
+    {
+        0x03, 48, 0x02, 0, 1, 0x04, 255, 220, 120, 0x07, ANCHOR_ID & 0xFF, ANCHOR_ID >> 8,
+        0x01, 19, 0, 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M',
+        0x07, 0, 0, 0x02, 0, 0, 0x03, 14, 0x04, 229, 229, 229, 0x05, 0, 0, 8, 0,
+        0x01, PAGE_TEXT_LEN & 0xFF, PAGE_TEXT_LEN >> 8,
+    },
+    PAGE_TEXT,
+    0x00,
+};
+static uint8_t page_ram[sizeof page_doc];
+/* The frame each height event arrived in, and the heights (in RAM, so the
+ * state hash covers the exact frames of the headless run). */
+static uint32_t page_frames[8], page_heights[8], page_events;
+
+/* Waits for a height event (08h) until frame `last`; returns it, or
+ * 0xFFFFFFFF (and a failed check) if none came. Other events are dropped;
+ * more than one height event in a frame fails a check. */
+static uint32_t page_height(uint32_t last)
+{
+    static uint8_t e[4];
+    for (;;) {
+        uint32_t n = 0, h = 0;
+        while (call(NEXT_EVENT, A(e), 0, 0) == 1) {
+            if (e[0] == 8) {
+                n++;
+                h = e[1] | (uint32_t)e[2] << 8 | (uint32_t)e[3] << 16;
+            }
+        }
+        ck(n <= 1);
+        if (n) {
+            if (page_events < 8) {
+                page_frames[page_events] = frame();
+                page_heights[page_events] = h;
+            }
+            page_events++;
+            return h;
+        }
+        if (frame() >= last) {
+            ck(0);
+            return 0xFFFFFFFF;
+        }
+        wait();
+    }
+}
+
+/* Whether a height event is queued (they are all taken). */
+static uint32_t page_pending(void)
+{
+    static uint8_t e[4];
+    uint32_t n = 0;
+    while (call(NEXT_EVENT, A(e), 0, 0) == 1)
+        n += e[0] == 8;
+    return n;
+}
+
+static void t_page(void)
+{
+    /* The calls, in one frame. */
+    begin();
+    wait_until(PAGE_START);
+    ck(page_pending() == 0); /* nothing changed yet: no height */
+    memcpy(page_ram, &page_doc, sizeof page_doc);
+    ck(call4(P_REGION, 600, 400, 100, 100) == 0);         /* clamped to 40 x 80 */
+    ck(call4(P_REGION, 0xFFFFFFFF, 0xFFFFFFFF, 5, 5) == 0); /* to 640, 480, 0, 0 */
+    ck(call(P_SUBMIT, A(&page_doc), sizeof page_doc, 0) == 0); /* from ROM */
+    ck(call(P_SUBMIT, A(page_ram), sizeof page_doc, 0) == 0); /* from RAM */
+    ck(call(P_SUBMIT, A(page_ram), 0, 0) == 1);           /* length 0 */
+    ck(call(P_SUBMIT, A(page_ram), 65537, 0) == 1);       /* too long */
+    ck(call(P_SUBMIT, 0, 0, 0) == 1);                     /* the length first */
+    ck(call(P_SUBMIT, 0, 5, 0) == ERR_BUFFER);            /* null */
+    ck(call(P_SUBMIT, RAM_END - 4, 8, 0) == ERR_BUFFER);  /* past the end of RAM */
+    ck(call(P_SUBMIT, ROM_END - 4, 8, 0) == ERR_BUFFER);  /* past the end of ROM */
+    ck(call(P_SUBMIT, RAM_BASE - 2, 4, 0) == ERR_BUFFER);
+    ck(call(P_SUBMIT, RAM_END - 65535, 65536, 0) == ERR_BUFFER);
+    ck(call(P_SUBMIT, RAM_END - 65536, 65536, 0) == 0);   /* 65,536 bytes ending at the end of RAM */
+    ck(call(P_SUBMIT, RAM_END - 1, 1, 0) == 0);           /* the last byte */
+    ck(call(P_SUBMIT, ROM_END - 1, 1, 0) == 0);           /* the last byte of ROM */
+    ck(call(P_SCROLL, 0x7FFFFFFF, 0, 0) == 0);
+    ck(call(P_BACKGROUND, 0x80402010, 0, 0) == 0);
+    ck(call(P_CLEAR, 0, 0, 0) == 0);
+    ck(call(P_CLEAR, 0, 0, 0) == 0);
+    ck(call(0x705, 0, 0, 0) == ERR_UNKNOWN);
+    ck(call(0x7FF, 0, 0, 0) == ERR_UNKNOWN);
+    /* The state the frame ends with: the document, the wide rectangle, a
+     * negative scroll value (shown as 0). */
+    ck(call4(P_REGION, PX, PY, PW, PH) == 0);
+    ck(call(P_SUBMIT, A(page_ram), sizeof page_doc, 0) == 0);
+    ck(call(P_SCROLL, (uint32_t)-40, 0, 0) == 0);
+    report("page: calls, rejections, buffers");
+
+    /* Height events: only what any host's layout must satisfy. */
+    begin();
+    uint32_t last = PAGE_CLICK - 1, wide, h;
+    wide = page_height(last); /* the frame after the submit */
+    ck(wide > 0 && wide != 0xFFFFFFFF);
+    call(P_SUBMIT, A(page_ram), sizeof page_doc, 0); /* the same bytes: a new document */
+    ck(page_height(last) == wide);
+    call4(P_REGION, PX, PY, PW_NARROW, PH);          /* narrower: more lines */
+    h = page_height(last);
+    ck(h >= wide && h != 0xFFFFFFFF);
+    call4(P_REGION, PX, PY, PW, PH);
+    ck(page_height(last) == wide);
+    call4(P_REGION, PX, PY, 0, PH);                  /* no width: no layout, no event */
+    call(P_SUBMIT, A(page_ram), sizeof page_doc, 0);
+    for (int i = 0; i < 3; i++) {
+        wait();
+        ck(page_pending() == 0);
+    }
+    call4(P_REGION, PX, PY, PW, PH);                 /* a width again: the event */
+    ck(page_height(last) == wide);
+
+    /* Anchor events: the presses of conform.events in frame PAGE_CLICK. */
+    wait_until(PAGE_CLICK + 1);
+    static uint8_t e[4], prev[4];
+    uint32_t anchors = 0;
+    while (call(NEXT_EVENT, A(e), 0, 0) == 1) {
+        if (e[0] == 9) {
+            /* After the pointer event of the press, with its buttons. */
+            ck(prev[0] == 4 && (prev[3] >> 3 & 7) == e[3]);
+            ck((e[1] | e[2] << 8) == ANCHOR_ID);
+            ck(e[3] == (anchors ? 2 : 1));
+            anchors++;
+        }
+        memcpy(prev, e, 4);
+    }
+    ck(anchors == 2);
+    val_u(anchors);
+
+    /* A clear: height 0. Then the page is hidden, with a negative scroll
+     * value (a clear keeps it). */
+    call(P_CLEAR, 0, 0, 0);
+    ck(page_height(PAGE_CLICK + 10) == 0);
+    call4(P_REGION, 0, 0, 0, 0);
+    call(P_SCROLL, (uint32_t)-40, 0, 0);
+    report("page: height and anchor events");
+}
+
 /* ================================================================== main */
 
 static uint8_t final_list[512];
@@ -1719,13 +1908,14 @@ int main(void)
     t_content();
     show_all();
     t_stress();
+    t_page();
 
     /* The results. */
     uint32_t failed = 0;
     for (uint32_t i = 0; i < n_results; i++)
         failed += results[i].fails != 0;
     show_all();
-    tw("\n\n");
+    tw("\n");
     if (failed) {
         colours(9, 0x100);
         tw("Sections failed: ");

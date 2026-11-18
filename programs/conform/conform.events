@@ -27,3 +27,13 @@
 12 pad 0 1 0 0
 13 pad 0 off
 13 pad 2 off
+
+# The page (conform.c t_page): in frame 140, presses over the big anchored
+# text at the rectangle's top left, with the primary and then the secondary
+# button (each gives a page-anchor event after its pointer event), over
+# plain text and over no text (neither gives one); read at frame 141.
+140 click 52 64
+140 pointer 52 64 2
+140 pointer 52 64 0
+140 click 52 150
+140 click 590 430
