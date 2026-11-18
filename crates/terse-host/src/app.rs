@@ -29,6 +29,7 @@ pub fn run(
     content: Option<ContentService>,
     selftest: Option<SelfTest>,
     no_trails: bool,
+    force_phosphor: bool,
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
@@ -50,6 +51,7 @@ pub fn run(
         selftest,
         refresh_hz: None,
         no_trails,
+        force_phosphor,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -184,6 +186,8 @@ struct App {
     refresh_hz: Option<f64>,
     /// `--no-trails`: the phosphor style without persistence.
     no_trails: bool,
+    /// `--force-phosphor`: the phosphor presentation whatever the style.
+    force_phosphor: bool,
 }
 
 impl App {
@@ -194,7 +198,15 @@ impl App {
             return;
         }
         if self.machine.stopped().is_some() {
-            // A fault stays on screen until the window is closed.
+            // A fault stays on screen until the window is closed; the
+            // afterglow goes on fading.
+            if let Some(gfx) = &mut self.gfx
+                && gfx.renderer.phosphor()
+            {
+                let viewport = gfx.viewport();
+                gfx.renderer.accumulate(&gfx.device, &gfx.queue, viewport);
+                gfx.window.request_redraw();
+            }
             return;
         }
         let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
@@ -338,6 +350,7 @@ impl ApplicationHandler for App {
         match Gfx::new(event_loop, &self.title) {
             Ok(mut gfx) => {
                 gfx.renderer.set_no_trails(self.no_trails);
+                gfx.renderer.set_force_phosphor(self.force_phosphor);
                 self.refresh_hz = gfx
                     .window
                     .current_monitor()
