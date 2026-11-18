@@ -136,14 +136,24 @@ fn phosphor_session() {
     assert_eq!(styles, want.map(|(f, p)| (f, p, 160)));
     let got = screen(&m);
     golden("phosphor-900.txt", &got);
-    // The shapes are drawn as outlines; the list and the HUD are those of
-    // the keyboard session.
+    // The shapes are drawn as outlines; the HUD is that of the keyboard
+    // session, and so is the list, except that in the phosphor style the
+    // arena border and the craft's four lines are drawn twice (overdraw is
+    // brighter there, SPEC 10.6).
     let mut k = Machine::new(&Image::parse(IMAGE).unwrap());
     let mut h = Headless::new(None, Script::parse(&recorded("keys.txt")).unwrap());
     for _ in 0..900 {
         h.frame(&mut k);
     }
-    assert_eq!(m.vector_list(), k.vector_list());
+    use terse_core::vector::decode;
+    let (phosphor, clean): (Vec<_>, Vec<_>) = (decode(m.vector_list()).collect(), decode(k.vector_list()).collect());
+    assert_eq!(phosphor.len(), clean.len() + 8);
+    let mut once = phosphor.clone();
+    once.drain(4..8);
+    once.truncate(once.len() - 4);
+    assert_eq!(once, clean);
+    assert_eq!(phosphor[..4], phosphor[4..8]);
+    assert_eq!(phosphor[phosphor.len() - 8..phosphor.len() - 4], phosphor[phosphor.len() - 4..]);
     assert_eq!(m.terminal().unwrap().text(), k.terminal().unwrap().text());
 }
 

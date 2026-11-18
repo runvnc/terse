@@ -18,7 +18,7 @@ use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
 use crate::renderer::{GlyphSource, Renderer};
 use crate::selftest::SelfTest;
-use crate::{FONT_PX, displayed_terminal, fault_exit, request_device};
+use crate::{FONT_PX, Looks, displayed_terminal, fault_exit, request_device};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -28,8 +28,7 @@ pub fn run(
     image: Image,
     content: Option<ContentService>,
     selftest: Option<SelfTest>,
-    no_trails: bool,
-    force_phosphor: bool,
+    looks: Looks,
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
@@ -50,8 +49,9 @@ pub fn run(
         random: fresh_random(),
         selftest,
         refresh_hz: None,
-        no_trails,
-        force_phosphor,
+        no_trails: looks.no_trails,
+        force_phosphor: looks.force_phosphor,
+        font: looks.font,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -86,10 +86,10 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(event_loop: &ActiveEventLoop, title: &str) -> Result<Self, String> {
+    fn new(event_loop: &ActiveEventLoop, title: &str, font: Option<&str>) -> Result<Self, String> {
         // Size the window for the grid at the primary monitor's scale.
         let scale = event_loop.primary_monitor().map_or(1.0, |m| m.scale_factor());
-        let glyphs = SystemGlyphs::new(FONT_PX * scale as f32)?;
+        let glyphs = SystemGlyphs::new(FONT_PX * scale as f32, font)?;
         eprintln!("terse-host: font {}", glyphs.primary_family());
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
@@ -188,6 +188,8 @@ struct App {
     no_trails: bool,
     /// `--force-phosphor`: the phosphor presentation whatever the style.
     force_phosphor: bool,
+    /// `--font`: the font for the grid instead of the monospace font.
+    font: Option<String>,
 }
 
 impl App {
@@ -347,7 +349,7 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
-        match Gfx::new(event_loop, &self.title) {
+        match Gfx::new(event_loop, &self.title, self.font.as_deref()) {
             Ok(mut gfx) => {
                 gfx.renderer.set_no_trails(self.no_trails);
                 gfx.renderer.set_force_phosphor(self.force_phosphor);

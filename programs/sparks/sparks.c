@@ -482,18 +482,23 @@ static void step(void)
         flash--;
 }
 
-/* One display list for the frame. */
+/* One display list for the frame. In the phosphor style lines add light,
+ * so the arena border and the craft are drawn twice there (passes = 2):
+ * they shine brighter than the sparks, as on a vector monitor. */
 static void draw(void)
 {
+    int passes = phosphor ? 2 : 1;
     vec_begin(list);
     /* Arena border. */
     vec_colour(70, 110, 190, 255);
     vec_width(32);
-    vec_move(AX0, AY0);
-    vec_line(AX1, AY0);
-    vec_line(AX1, AY1);
-    vec_line(AX0, AY1);
-    vec_line(AX0, AY0);
+    for (int n = 0; n < passes; n++) {
+        vec_move(AX0, AY0);
+        vec_line(AX1, AY0);
+        vec_line(AX1, AY1);
+        vec_line(AX0, AY1);
+        vec_line(AX0, AY0);
+    }
     if (flash) {
         vec_colour(255, 40, 40, flash * 8);
         vec_rect(AX1, AY1);
@@ -548,10 +553,12 @@ static void draw(void)
         vec_tri(bx, by, rx, ry);
         vec_colour(200, 245, 255, alpha);
         vec_width(20);
-        vec_line(lx, ly);
-        vec_line(bx, by);
-        vec_line(rx, ry);
-        vec_line(nx, ny);
+        for (int n = 0; n < passes; n++) {
+            vec_line(lx, ly);
+            vec_line(bx, by);
+            vec_line(rx, ry);
+            vec_line(nx, ny);
+        }
     }
     /* The title and game-over boxes: their cell backgrounds are below every
      * shape (SPEC 10.5), so a near-opaque panel of the same colour, last in

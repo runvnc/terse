@@ -11,22 +11,26 @@
 //!   that falls to about 10% within three frames, and a slow, dim tail whose
 //!   per-frame factor is persistence / 256. Each frame both are multiplied
 //!   by their factor, minus [`EPSILON`] so they really reach black, and then
-//!   the beam is deposited into them: `afterglow = max(afterglow × decay,
-//!   beam × deposit)`. Depositing with `max` rather than `+` is the
+//!   the summed beam is deposited into them: `afterglow = max(afterglow ×
+//!   decay, beam × deposit)`. Depositing with `max` rather than `+` is the
 //!   normalisation: a shape that stays put holds its afterglow at exactly
 //!   `beam × DEPOSIT`, so it shows at `beam × (1 + DEPOSIT)` = 1.2 × and never
 //!   brightens over time, while a trail left behind starts at `DEPOSIT` of
-//!   the beam and fades from there.
+//!   the beam and fades from there. The beam is the sum of every stroke and
+//!   glyph, so a line drawn twice leaves a trail twice as bright.
 //!
-//! Displayed light is `beam + afterglow`, through a tone curve that is
-//! linear up to [`TONE_KNEE`] and rolls off softly towards 1 above it, so a
-//! bright trail fades smoothly instead of sitting clamped at white and then
-//! vanishing. Only light above [`SPILL_FROM`] (crossings and pivots, where
-//! two beams add up) spills into the other channels and turns white-hot.
+//! The beam is additive: each stroke adds a sharp core ([`CORE_WIDTH`] of
+//! its width) and a tight halo, a little more at its end points ([`DWELL`]),
+//! so repeated and crossing lines add up. Displayed light is `beam +
+//! afterglow + bloom`, where the bloom is all of that light blurred
+//! ([`BLOOM`]), through a tone curve that is linear up to [`TONE_KNEE`] and
+//! then has a long shoulder towards 1, leaving headroom for repetitions.
+//! Only light above [`SPILL_FROM`] (a line drawn three or more times, bright
+//! crossings) spills into the other channels and turns white-hot.
 //!
 //! A moving shape would leave a row of separate copies, one per frame. When
 //! a frame's list has the same opcode sequence as the previous frame's
-//! (the same shapes, only moved), the afterglow is deposited from
+//! (the same shapes, only moved), the afterglow also takes deposits from
 //! [`SUBSTEPS`] (more for a fast shape, up to [`MAX_SUBSTEPS`]) positions
 //! interpolated between the two frames, each already decayed by the
 //! fraction of a frame since it was "drawn", so the trail is a continuous
@@ -39,23 +43,55 @@ use terse_core::Primitive;
 /// 1.2 units when the width asks for more than 2.
 pub const CORE_WIDTH: f32 = 0.6;
 /// Brightness of the core (linear light, times the colour and opacity).
-pub const CORE: f32 = 1.0;
-/// Peak brightness of the halo, at the core's edge, relative to the core.
-pub const HALO: f32 = 0.12;
+/// Beam light adds up linearly before the tone curve, so a line drawn twice
+/// (or two lines crossing) is twice the light: see [`TONE_KNEE`].
+pub const CORE: f32 = 1.2;
+/// Peak brightness of each stroke's own tight halo, at the core's edge,
+/// relative to the core. (The wider glow is [`BLOOM`], over the whole screen.)
+pub const HALO: f32 = 0.14;
 /// The halo's exponential fall-off length, in sixteenths of a screen unit.
 pub const HALO_FALLOFF: f32 = 7.0;
 /// How far past the core's edge the halo reaches (it is smoothed to zero
 /// over the outer half), in sixteenths: 1.5 screen units.
 pub const HALO_REACH: f32 = 24.0;
 
+/// Vertex dwell: the beam lingers where a stroke starts and ends, so the
+/// light at an end point is 1 + DWELL times the stroke's. Where several
+/// different lines meet (a polygon's corner), their ends share it: each
+/// gives (1 + DWELL) / n there, so a corner is 1 + DWELL times one line, not
+/// n times. Identical lines drawn again count as one line for this, so a
+/// line drawn twice keeps twice the light at its corners too.
+pub const DWELL: f32 = 0.5;
+/// Radius of the dwell spot (a Gaussian) as a share of the core's half
+/// width, and its least radius in pixels so it shows at any size.
+pub const DWELL_SIZE: f32 = 1.6;
+pub const DWELL_MIN_PX: f32 = 0.7;
+
 /// Brightness of glyphs and the cursor (times the foreground colour).
-pub const GLYPH: f32 = 1.0;
-/// The faint bloom around glyphs: the average of eight samples at
-/// [`GLYPH_BLOOM_RADIUS`] screen units around each pixel, times this.
-pub const GLYPH_BLOOM: f32 = 0.16;
+pub const GLYPH: f32 = 1.1;
+/// The tight halo around glyphs, like a stroke's [`HALO`]: the average of
+/// eight samples at [`GLYPH_BLOOM_RADIUS`] screen units around each pixel,
+/// times this. Glyphs also get the screen's [`BLOOM`].
+pub const GLYPH_BLOOM: f32 = 0.12;
 pub const GLYPH_BLOOM_RADIUS: f32 = 1.0;
 
-/// Share of the beam the afterglow keeps (both components together).
+/// The bloom: all light on the screen (beam and afterglow, glyphs and
+/// shapes alike) blurred by a Gaussian of [`BLOOM_SIGMA`] screen units and
+/// added back times this. It is linear in the light, so a brighter or
+/// overdrawn line has a brighter bloom that stays visible further out.
+pub const BLOOM: f32 = 0.55;
+pub const BLOOM_SIGMA: f32 = 1.4;
+/// Most taps on each side of a blur pass (a very large window blurs less).
+pub const BLOOM_MAX_TAPS: f32 = 40.0;
+/// Light above this (in the brightest channel; one static stroke's core is
+/// [`CORE`] × (1 + [`DEPOSIT`]) = 1.44) whitens the bloom: the excess times
+/// [`BLOOM_WHITE`] is added to every channel before blurring, so a doubled
+/// line's glow is a little whiter than a single one's.
+pub const BLOOM_WHITE_FROM: f32 = 1.0;
+pub const BLOOM_WHITE: f32 = 0.35;
+
+/// Share of the beam the afterglow keeps (both components together). It is
+/// taken from the summed beam, so an overdrawn line leaves a brighter trail.
 pub const DEPOSIT: f32 = 0.2;
 /// The fast component's share of the deposit; the slow tail has the rest.
 pub const FAST_SHARE: f32 = 0.6;
@@ -79,13 +115,17 @@ pub const DEPOSIT_BUDGET: usize = crate::vectors::MAX_PRIMITIVES * SUBSTEPS as u
 /// a screen unit, on either axis: 40 units) is not smeared; it teleported.
 pub const MAX_SMEAR: i32 = 40 * 16;
 
-/// Tone curve: linear light up to the knee, then `knee + (1 - knee) ×
-/// (1 - exp(-(x - knee) / (1 - knee)))`, which approaches 1.
-pub const TONE_KNEE: f32 = 0.6;
+/// Tone curve: linear light up to the knee, then a long shoulder,
+/// `knee + (1 - knee) × u / (1 + u)` with `u = (x - knee) / (1 - knee)`,
+/// which approaches 1 slowly. One static white stroke (about 1.44) shows
+/// at about 225 in sRGB, two at 240, four at 247: each repetition is
+/// brighter, and its bloom (linear) much more so.
+pub const TONE_KNEE: f32 = 0.35;
 /// Light above this (in the brightest channel) spills into all channels,
-/// times [`SPILL`]: only where beams add up, not along an ordinary line
-/// (whose beam plus afterglow is at most 1.2).
-pub const SPILL_FROM: f32 = 1.5;
+/// times [`SPILL`]: a saturated colour turns white only from about three
+/// times one static stroke's light (crossings of bright lines, a line drawn
+/// three times or more), not at a single repetition (2 × 1.44 = 2.88).
+pub const SPILL_FROM: f32 = 3.0;
 pub const SPILL: f32 = 0.5;
 
 /// The slow component's per-frame factor for a persistence (SPEC 8.7).
@@ -101,9 +141,17 @@ pub fn wgsl() -> String {
         ("HALO", HALO),
         ("HALO_FALLOFF", HALO_FALLOFF),
         ("HALO_REACH", HALO_REACH),
+        ("DWELL", DWELL),
+        ("DWELL_SIZE", DWELL_SIZE),
+        ("DWELL_MIN_PX", DWELL_MIN_PX),
         ("GLYPH", GLYPH),
         ("GLYPH_BLOOM", GLYPH_BLOOM),
         ("GLYPH_BLOOM_RADIUS", GLYPH_BLOOM_RADIUS),
+        ("BLOOM", BLOOM),
+        ("BLOOM_SIGMA", BLOOM_SIGMA),
+        ("BLOOM_MAX_TAPS", BLOOM_MAX_TAPS),
+        ("BLOOM_WHITE_FROM", BLOOM_WHITE_FROM),
+        ("BLOOM_WHITE", BLOOM_WHITE),
         ("DEPOSIT", DEPOSIT),
         ("FAST_SHARE", FAST_SHARE),
         ("EPSILON", EPSILON),
@@ -117,7 +165,12 @@ pub fn wgsl() -> String {
 /// Tone curve (the shaders have the same; this one is for tests).
 #[cfg(test)]
 pub fn tone(x: f32) -> f32 {
-    if x <= TONE_KNEE { x } else { TONE_KNEE + (1.0 - TONE_KNEE) * (1.0 - (-(x - TONE_KNEE) / (1.0 - TONE_KNEE)).exp()) }
+    if x <= TONE_KNEE {
+        x
+    } else {
+        let u = (x - TONE_KNEE) / (1.0 - TONE_KNEE);
+        TONE_KNEE + (1.0 - TONE_KNEE) * u / (1.0 + u)
+    }
 }
 
 /// The opcodes of a display list in order (SPEC 8.3), operands skipped:
@@ -142,11 +195,13 @@ pub fn opcodes(list: &[u8]) -> Vec<u8> {
     out
 }
 
-/// One afterglow deposit: a shape (a line or circle) and the light it adds
-/// to the fast and slow components, per unit of beam.
+/// One afterglow deposit of a moving shape at an earlier position: the
+/// shape (a line or circle), the index of the shape it comes from, and the
+/// light it adds to the fast and slow components, per unit of beam.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Deposit {
     pub shape: Primitive,
+    pub index: usize,
     pub fast: f32,
     pub slow: f32,
 }
@@ -201,29 +256,59 @@ fn between(prev: &Primitive, cur: &Primitive, t: f32) -> Option<Primitive> {
     }
 }
 
-/// The afterglow deposits of one machine frame: `cur` (the outlines drawn
-/// now) once at full deposit, or, when `smear` (same opcodes as the last
-/// frame, so `prev` lines up with `cur`), each shape at [`SUBSTEPS`] or
-/// more positions from just after `prev` to `cur`, the earlier ones already
-/// decayed for the part of a frame since. `slow_decay` is the slow
-/// component's per-frame factor.
+/// The afterglow deposits of one machine frame besides the current beam
+/// (which the renderer deposits whole, summed): when `smear` (same opcodes
+/// as the last frame, so `prev` lines up with `cur`), each moving shape at
+/// the [`SUBSTEPS`] − 1 or more positions from just after `prev` up to (not
+/// including) `cur`, already decayed for the part of a frame since.
+/// `slow_decay` is the slow component's per-frame factor.
 pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, slow_decay: f32, out: &mut Vec<Deposit>) {
     out.clear();
-    let (fast, slow) = (DEPOSIT * FAST_SHARE, DEPOSIT * (1.0 - FAST_SHARE));
     let smear = smear && prev.len() == cur.len() && prev != cur;
+    if !smear {
+        return;
+    }
+    let (fast, slow) = (DEPOSIT * FAST_SHARE, DEPOSIT * (1.0 - FAST_SHARE));
     let most = if cur.len() * MAX_SUBSTEPS as usize <= DEPOSIT_BUDGET { MAX_SUBSTEPS } else { SUBSTEPS };
     for (i, shape) in cur.iter().enumerate() {
-        if smear && let Some(d) = moved(&prev[i], shape).filter(|&d| d > 0) {
+        if let Some(d) = moved(&prev[i], shape).filter(|&d| d > 0) {
             let steps = ((d as u32).div_ceil(SMEAR_SPACING as u32)).clamp(SUBSTEPS, most);
             for s in 1..steps {
                 let t = s as f32 / steps as f32;
                 let Some(p) = between(&prev[i], shape, t) else { break };
                 let age = 1.0 - t;
-                out.push(Deposit { shape: p, fast: fast * FAST_DECAY.powf(age), slow: slow * slow_decay.powf(age) });
+                out.push(Deposit { shape: p, index: i, fast: fast * FAST_DECAY.powf(age), slow: slow * slow_decay.powf(age) });
             }
         }
-        out.push(Deposit { shape: *shape, fast, slow });
     }
+}
+
+/// The vertex dwell of each shape ([`DWELL`]): for a line, how many
+/// different lines end at its start (bits 0-3) and at its end (bits 4-7),
+/// itself included, at most 15; 0 for anything else. Lines with the same
+/// two end points count once, whatever their colour or width; a line of
+/// length 0 is one end.
+pub fn dwell_ends(shapes: &[Primitive], out: &mut Vec<u32>) {
+    use std::collections::{HashMap, HashSet};
+    out.clear();
+    let ends = |p: &Primitive| match *p {
+        Primitive::Line { x0, y0, x1, y1, .. } => Some(((x0, y0), (x1, y1))),
+        _ => None,
+    };
+    let mut lines = HashSet::new();
+    let mut at: HashMap<(i16, i16), u32> = HashMap::new();
+    for (a, b) in shapes.iter().filter_map(ends) {
+        if lines.insert(if a <= b { (a, b) } else { (b, a) }) {
+            *at.entry(a).or_default() += 1;
+            if b != a {
+                *at.entry(b).or_default() += 1;
+            }
+        }
+    }
+    out.extend(shapes.iter().map(|p| match ends(p) {
+        Some((a, b)) => at[&a].min(15) | at[&b].min(15) << 4,
+        None => 0,
+    }));
 }
 
 #[cfg(test)]
@@ -242,11 +327,30 @@ mod tests {
         assert!((FAST_DECAY.powi(3) - 0.1).abs() < 0.01);
         // A static line shows at no more than 1.2 x its beam (max deposit).
         assert!(1.0 + DEPOSIT <= 1.2 + 1e-6);
-        // Below the spill point, even with a halo on top.
-        assert!(CORE * (1.0 + DEPOSIT) + HALO < SPILL_FROM);
+        // A line drawn twice stays below the spill point (the halo is
+        // outside the core, at most HALO of it); three times goes past it.
+        let one = CORE * (1.0 + DEPOSIT);
+        assert!(2.0 * one < SPILL_FROM && 3.0 * one > SPILL_FROM);
         // Default width 16 sixteenths: core under 1.2 units.
         assert!(CORE_WIDTH * 32.0 <= 1.2 * 16.0 + 1e-3);
         assert!(HALO_REACH <= 1.5 * 16.0);
+        // Vertex dwell is subtle.
+        assert!((0.3..=0.5).contains(&DWELL));
+    }
+
+    /// Repetition counts: 1, 2, 3 and 4 times one static stroke are each
+    /// brighter after the tone curve (in sRGB, 8 bits: 226, 239, 244, 247
+    /// for white; the bloom, which stays below the knee, grows linearly).
+    #[test]
+    fn repetitions_have_headroom() {
+        let srgb = |c: f32| 255.0 * if c <= 0.0031308 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+        let one = CORE * (1.0 + DEPOSIT);
+        let shown: Vec<f32> = (1..=4).map(|n| srgb(tone(n as f32 * one))).collect();
+        assert!(shown[0] > 215.0 && shown[0] < 235.0, "{shown:?}");
+        assert!(shown.windows(2).all(|w| w[1] - w[0] >= 2.5), "{shown:?}");
+        // A mid-brightness channel (half of full) gains a lot from a repeat.
+        let half = |n: f32| srgb(tone(n * 0.5 * one));
+        assert!(half(2.0) - half(1.0) > 20.0);
     }
 
     #[test]
@@ -254,13 +358,36 @@ mod tests {
         assert_eq!(tone(0.0), 0.0);
         assert_eq!(tone(0.3), 0.3);
         let mut last = 0.0;
-        for i in 1..400 {
+        for i in 1..1000 {
             let v = tone(i as f32 * 0.01);
             assert!(v > last && v < 1.0, "{i}");
             last = v;
         }
-        // Continuous at the knee.
-        assert!((tone(TONE_KNEE + 1e-4) - TONE_KNEE).abs() < 2e-4);
+        // Continuous at the knee, with slope 1.
+        assert!((tone(TONE_KNEE + 1e-4) - TONE_KNEE - 1e-4).abs() < 2e-5);
+    }
+
+    #[test]
+    fn dwell_counts_distinct_lines_at_each_end() {
+        let l = |x0, y0, x1, y1| Primitive::Line { x0, y0, x1, y1, width: 16, rgba: C };
+        // A triangle drawn twice, a lone line, a dot and a circle.
+        let tri = [l(0, 0, 100, 0), l(100, 0, 50, 80), l(50, 80, 0, 0)];
+        let mut shapes: Vec<Primitive> = tri.iter().chain(&tri).copied().collect();
+        shapes.push(l(0, 0, 0, 0));
+        shapes.push(l(500, 500, 600, 500));
+        shapes.push(Primitive::Circle { x: 0, y: 0, radius: 9, width: 16, rgba: C });
+        // The same line reversed counts as the same line.
+        shapes.push(l(100, 0, 0, 0));
+        let mut out = Vec::new();
+        dwell_ends(&shapes, &mut out);
+        // (0, 0): two triangle sides and the dot.
+        assert_eq!(out[0], 3 | 2 << 4);
+        assert_eq!(out[3], out[0]);
+        assert_eq!(out[1], 2 | 2 << 4);
+        assert_eq!(out[6], 3 | 3 << 4);
+        assert_eq!(out[7], 1 | 1 << 4);
+        assert_eq!(out[8], 0);
+        assert_eq!(out[9], 2 | 3 << 4);
     }
 
     #[test]
@@ -276,14 +403,15 @@ mod tests {
     #[test]
     fn moving_shapes_smear() {
         let mut out = Vec::new();
+        // The earlier positions only: the current one is in the beam.
         deposits(&[line(0)], &[line(64)], true, 0.5, &mut out);
-        assert_eq!(out.len(), SUBSTEPS as usize);
+        assert_eq!(out.len(), SUBSTEPS as usize - 1);
         // Faster: more steps, up to the most.
         deposits(&[line(0)], &[line(10 * SMEAR_SPACING as i16)], true, 0.5, &mut out);
-        assert_eq!(out.len(), 10);
+        assert_eq!(out.len(), 9);
         deposits(&[line(0)], &[line(MAX_SMEAR as i16)], true, 0.5, &mut out);
-        assert_eq!(out.len(), MAX_SUBSTEPS as usize);
-        deposits(&[line(0)], &[line(64)], true, 0.5, &mut out);
+        assert_eq!(out.len(), MAX_SUBSTEPS as usize - 1);
+        deposits(&[line(0), line(9)], &[line(64), line(9)], true, 0.5, &mut out);
         let xs: Vec<i16> = out
             .iter()
             .map(|d| match d.shape {
@@ -291,16 +419,17 @@ mod tests {
                 _ => unreachable!(),
             })
             .collect();
-        assert_eq!(xs, vec![16, 32, 48, 64]);
-        // Older positions have decayed; the current one has the full deposit.
+        assert_eq!(xs, vec![16, 32, 48]);
+        assert!(out.iter().all(|d| d.index == 0));
+        // Older positions have decayed more, all below the full deposit.
         assert!(out.windows(2).all(|w| w[0].fast < w[1].fast && w[0].slow < w[1].slow));
-        assert_eq!(out[3].fast, DEPOSIT * FAST_SHARE);
-        // A different structure, a teleport or no movement: deposited once.
+        assert!(out[2].fast < DEPOSIT * FAST_SHARE);
+        // A different structure, a teleport or no movement: nothing extra.
         deposits(&[line(0)], &[line(64)], false, 0.5, &mut out);
-        assert_eq!(out.len(), 1);
+        assert!(out.is_empty());
         deposits(&[line(0)], &[line(4000)], true, 0.5, &mut out);
-        assert_eq!(out.len(), 1);
+        assert!(out.is_empty());
         deposits(&[line(64)], &[line(64)], true, 0.5, &mut out);
-        assert_eq!(out.len(), 1);
+        assert!(out.is_empty());
     }
 }

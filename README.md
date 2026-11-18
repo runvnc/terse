@@ -77,7 +77,7 @@ the bytes are verified against the ID. `--store` defaults to
 are supported. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host <image|id> [--no-trails] [--force-phosphor] [--relay ws://...] [--store <dir>] [--config <dir>]`
+`terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
 opens a window and runs the image at 60 frames/s of virtual time. The screen
 (SPEC 7) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
@@ -96,6 +96,7 @@ it stays open, shows the fault on the bottom row (white on red) and in the title
 and the process then ends by SIGTERM like `terse run`. `--no-trails` shows the
 phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
+`--font` draws the grid with another font (see [Fonts](#fonts)).
 `--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>]` runs
 headless exactly like `terse run` and writes a PNG, of the grid's native size or
 `W` × `H` pixels with the screen letterboxed in it; in the phosphor style the
@@ -406,21 +407,46 @@ machine state (in the state hash, STATE.md 1.7); the afterglow is not, and the
 program cannot see it.
 
 How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`):
-the beam's bright core is 0.6 of the stated width with a halo of 0.12 of the core
-that is gone 1.5 units past the edge; glyphs and the cursor are drawn as light with
-a faint bloom. The afterglow is two floating-point textures, a fast component (×0.46
-per frame, so about 10% after three frames) and a slow tail (× persistence / 256),
-each fed with 0.2 of the beam — taken as a maximum, not added, so a shape that stays
-put is never brighter than 1.2 times its beam — and each losing a small epsilon per
-frame so trails really reach black. When a list keeps its sequence of opcodes from
-one frame to the next, the afterglow is deposited at 4 to 16 positions interpolated
-between the old and new coordinates, so a moving shape leaves a continuous smear,
-not separate copies (not for jumps of more than 40 units); the live beam is drawn
-only where the shape is now. The sum goes through a soft tone curve, and only light
-above 1.5 spills into white. The afterglow advances once per machine frame, not per
-presented frame, so it does not depend on the display's refresh rate. A ring moving
-12 units a frame at persistence 160 leaves a trail whose peak, in sRGB, is 237 live,
-then 82, 58, 39, 23, 9, 1 and 0 in the six frames after it vanishes.
+each line and circle adds a bright core 0.6 of the stated width (1.2 times its
+colour) with a tight halo of 0.14 of the core that is gone 1.5 units past the edge,
+and glyphs and the cursor add their light the same way. Light adds up linearly, so
+a line drawn twice is twice the light, and crossings are brighter. The beam dwells
+at a line's end points: a lone end is 1.5 times as bright, and where different lines
+meet (a polygon's corners) they share that, so a corner is also about 1.5 times one
+line (an identical line drawn again counts in full). The afterglow is two
+floating-point textures, a fast component (×0.46 per frame, so about 10% after three
+frames) and a slow tail (× persistence / 256), each fed with 0.2 of the whole beam —
+taken as a maximum, not added, so a shape that stays put is never brighter than 1.2
+times its beam, while a line drawn twice leaves a trail twice as bright — and each
+losing a small epsilon per frame so trails really reach black. When a list keeps its
+sequence of opcodes from one frame to the next, the afterglow is also deposited at 3
+to 15 positions interpolated between the old and new coordinates, so a moving shape
+leaves a continuous smear, not separate copies (not for jumps of more than 40 units);
+the live beam is drawn only where the shape is now. All of that light is blurred (a
+Gaussian of 1.4 screen units) and added back at 0.55 as the bloom, the same for text
+and shapes; above one stroke's brightness the blurred light is whitened a little, so
+a doubled line's glow is whiter. The sum goes through a tone curve that is linear up
+to 0.35 and then has a long shoulder towards 1, so repetitions keep getting brighter,
+and only light above 3 (about three times a static stroke) spills into white, so a
+saturated colour turns white only at heavy overdraw. The afterglow advances once per
+machine frame, not per presented frame, so it does not depend on the display's
+refresh rate.
+
+Measured on a 260-unit line of width 1 unit, in the grid's native size (880 × 660,
+where the core is under a pixel wide) and at twice that: the peak in sRGB, and how
+many pixels across the line are at least 100 and at least 40 (core and bloom):
+
+| Line | native: peak | ≥100 | ≥40 | 2×: peak | ≥100 | ≥40 |
+|---|---|---|---|---|---|---|
+| cyan (0, 180, 255), once | 0, 156, 202 | 4 | 8 | 21, 194, 224 | 6 | 16 |
+| twice | 31, 198, 226 | 6 | 10 | 66, 222, 239 | 12 | 18 |
+| four times | 92, 225, 240 | 8 | 10 | 225, 243, 248 | 14 | 22 |
+| white, once | 202 | 4 | 8 | 224 | 6 | 16 |
+| twice | 226 | 6 | 10 | 239 | 12 | 18 |
+| four times | 240 | 8 | 10 | 248 | 14 | 22 |
+
+A program can therefore brighten a line by drawing it more than once (SPEC 10.6);
+Sparks does that with its arena border and craft.
 
 `--no-trails` turns the afterglow off, for anyone who finds it distracting;
 `--force-phosphor` shows any program this way. In the clean style none of this
@@ -432,6 +458,29 @@ Try it in Sparks (P switches style):
     cargo run --release -p terse-host -- programs/sparks/sparks.terse --no-trails
     cargo run --release -p terse-host -- programs/sparks/sparks.terse --events programs/sparks/sessions/phosphor.txt --frames 900 --screenshot /tmp/phosphor.png
     cargo run --release -p terse-host -- programs/reader/reader.terse --force-phosphor
+
+## Fonts
+
+`terse-host` draws the terminal grid with the system's monospace font (the
+`monospace` family as [fontdb](https://crates.io/crates/fontdb) resolves it, which
+need not be what `fc-match monospace` says), falling back to other installed fonts
+for characters it lacks (CJK, symbols). `--font` picks another one, by family name
+as `fc-list` shows it or by the path of a `.ttf`, `.otf` or `.ttc` file; in a window
+`terse-host` prints the font it uses on stderr:
+
+    fc-list : family | sort -u
+    cargo run --release -p terse-host -- programs/reader/reader.terse --font "DejaVu Sans Mono"
+    cargo run --release -p terse-host -- programs/reader/reader.terse --font "Noto Sans"
+    cargo run --release -p terse-host -- programs/reader/reader.terse --font /usr/share/fonts/liberation/LiberationSerif-Regular.ttf
+    cargo run --release -p terse-host -- programs/hello/hello.terse --font "DejaVu Serif" --screenshot /tmp/serif.png --frames 30
+
+A monospace font sets the cell size from its own advance, as the default does.
+A proportional font is only a look test: the machine's terminal is still a grid, so
+the cell stays the size the default monospace font gives, the font is sized so its
+text body (ascent to descent) is as tall as that font's, and each glyph is centred in
+its cell (a wide character in its two cells), squeezed horizontally only if it would
+not fit (`m` and `W` usually are). Characters the font lacks come from the fallbacks
+as usual.
 
 ## Sparks
 
@@ -451,6 +500,10 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
 - Controller 0: d-pad left/right or the left stick turns, A, d-pad up or the stick
   pushed up thrusts, A or Start starts, Y switches the display style, X switches
   fill.
+
+In the phosphor style Sparks draws the arena border and the craft twice, so they
+shine brighter than the sparks (overdraw adds light, SPEC 10.6); the list is
+otherwise the same in both styles.
 
 The HUD (row 0) and the title and game-over boxes are terminal text on coloured
 cell backgrounds, so the layer order shows: shapes pass over the backgrounds and
@@ -475,8 +528,8 @@ recording headless:
 
 Measured with `cargo test --release -p terse-cli --test sparks budget -- --nocapture`:
 the busiest frame is frame 0 (setting up, 8,641 units, 6.9% of the budget); after
-that at most 5,240 (4.2%), a typical frame 2,072 (1.7%), about 11 µs of host time
-(p99 17 µs). ROM 5,856 bytes, 1 RAM page.
+that at most 5,249 (4.2%), a typical frame 2,078 (1.7%), about 11 µs of host time
+(p99 17 µs). ROM 5,876 bytes, 1 RAM page.
 
 ## Conformance image
 
@@ -581,7 +634,7 @@ recorded sessions.
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,356 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
 | reader | 10,292 bytes | 9 pages | 62,269 (50%, wrapping an article) | 277 (0.2%) | 36 µs (with the content service) |
-| sparks | 5,856 bytes | 1 page | 8,641 (6.9%, frame 0); 5,240 (4.2%) after | 2,072 (1.7%) | 11 µs (p99 17 µs) |
+| sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
 | conform | 34,626 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 
 Host cost per budget unit, for a frame spent entirely in one kind of call

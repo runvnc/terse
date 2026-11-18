@@ -33,11 +33,12 @@ const PHOSPHOR_FRAMES: u64 = 600;
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
-  terse-host <image|id> [--no-trails] [--force-phosphor] [--relay ws://...] [--store <dir>] [--config <dir>]
+  terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--relay ws://...]
+             [--store <dir>] [--config <dir>]
   terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--no-trails]
-             [--force-phosphor] [--relay ws://...] [--store <dir>] [--config <dir>]
+             [--force-phosphor] [--font <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]
   terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--no-trails]
-             [--force-phosphor] [--store <dir>] [--config <dir>]
+             [--force-phosphor] [--font <family|file>] [--store <dir>] [--config <dir>]
   --config holds the feed subscriptions (default $XDG_CONFIG_HOME/terse, else ~/.config/terse);
   --events is scripted input, as for `terse run`; --size is the picture's size in pixels
   (default: the grid at the font's size), the screen letterboxed in it at 4:3.
@@ -45,7 +46,9 @@ const USAGE: &str = "usage:
   the image's name with .events, if that file exists) and prints per-frame timings;
   --csv writes them per frame. --no-trails: the phosphor display style (SPEC 8.7) without
   persistence. --force-phosphor: show the phosphor presentation (the whole screen as a glowing
-  tube) whatever style the program sets; for testing.";
+  tube) whatever style the program sets; for testing. --font: draw the grid with this font (a
+  family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
+  a proportional font keeps the grid, each glyph centred in its cell.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -63,6 +66,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut frames = None;
     let mut size = None;
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
+    let mut font = None;
     let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -71,6 +75,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--selftest" => selftest = true,
             "--no-trails" => no_trails = true,
             "--force-phosphor" => force_phosphor = true,
+            "--font" => font = Some(it.next().ok_or(USAGE)?),
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relay = Some(it.next().ok_or(USAGE)?),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
@@ -131,7 +136,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         };
         let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
         let test = selftest::SelfTest::new(script, frames, csv);
-        return app::run(image, content, Some(test), no_trails, force_phosphor);
+        return app::run(image, content, Some(test), Looks { no_trails, force_phosphor, font });
     }
     if csv.is_some() {
         return Err(USAGE.into());
@@ -145,21 +150,23 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 None => Script::default(),
             };
-            let looks = Looks { no_trails, force_phosphor };
+            let looks = Looks { no_trails, force_phosphor, font };
             take_screenshot(&image, content, script, Path::new(&out), frames, size, looks)?;
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() && size.is_none() => {
-            app::run(image, content, None, no_trails, force_phosphor)
+            app::run(image, content, None, Looks { no_trails, force_phosphor, font })
         }
         _ => Err(USAGE.into()),
     }
 }
 
 /// The user's presentation options.
-struct Looks {
-    no_trails: bool,
-    force_phosphor: bool,
+pub struct Looks {
+    pub no_trails: bool,
+    pub force_phosphor: bool,
+    /// `--font`: a family name or font file instead of the monospace font.
+    pub font: Option<String>,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -240,7 +247,7 @@ fn take_screenshot(
     let info = adapter.get_info();
     eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX)?));
+    let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX, looks.font.as_deref())?));
     renderer.set_no_trails(looks.no_trails);
     renderer.set_force_phosphor(looks.force_phosphor);
     let (width, height) = size.unwrap_or(renderer.grid_size());

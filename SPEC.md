@@ -697,7 +697,9 @@ oscilloscope tube:
 - The screen is black: cell background colours are not drawn.
 - Shapes are drawn as outlines (section 10.3) and add light to what is
   beneath them instead of covering it; where lines cross, the crossing is
-  brighter. Opacity acts as brightness.
+  brighter. Opacity acts as brightness. Hosts should make overlapping and
+  repeated lines add up to visibly brighter light, so a program can brighten
+  a line by drawing it more than once.
 - The terminal's characters and cursor are light on the same tube, in their
   foreground colour, drawn in the same way as the shapes.
 - The beam is a sharp line with a faint bloom: its bright core is narrower

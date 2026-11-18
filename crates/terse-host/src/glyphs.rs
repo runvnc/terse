@@ -1,9 +1,17 @@
-//! Glyphs from system fonts: the fontconfig monospace font, with fallback to
-//! other installed fonts for characters it lacks (e.g. CJK).
+//! Glyphs from system fonts: the fontconfig monospace font (or one chosen
+//! with `--font`), with fallback to other installed fonts for characters it
+//! lacks (e.g. CJK).
+//!
+//! A proportional font (`--font`, for trying the look) still fills the
+//! fixed grid: the cell is the one the default monospace font gives, the
+//! size is chosen so the font's text body (ascent to descent) is as tall as
+//! that font's, and each glyph is centred in its cell (or two cells, for a
+//! wide character), squeezed horizontally only if it would overflow.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use fontdb::{Database, Family, ID, Query, Style, Weight};
+use fontdb::{Database, Family, ID, Query, Source, Style, Weight};
 use fontdue::{Font, FontSettings};
 
 use crate::renderer::GlyphSource;
@@ -14,6 +22,9 @@ pub struct SystemGlyphs {
     cell: (u32, u32),
     baseline: f32,
     primary: ID,
+    /// The primary face is proportional: its glyphs are centred in the
+    /// cell and squeezed horizontally to fit (see the module comment).
+    proportional: bool,
     /// Other regular-weight upright faces, monospaced ones first.
     fallbacks: Vec<ID>,
     fonts: HashMap<ID, Option<Font>>,
@@ -25,16 +36,37 @@ pub struct SystemGlyphs {
 }
 
 impl SystemGlyphs {
-    /// `px` is the font size in pixels.
-    pub fn new(px: f32) -> Result<Self, String> {
+    /// `px` is the font size in pixels (for a proportional `font`, that of
+    /// the default monospace font it stands in for). `font` is a family
+    /// name or the path of a font file; `None`: the system's monospace font.
+    pub fn new(px: f32, font: Option<&str>) -> Result<Self, String> {
+        let base_px = px;
         let mut db = Database::new();
         db.load_system_fonts();
-        let regular = |families: &[Family]| {
+        let regular = |db: &Database, families: &[Family]| {
             db.query(&Query { families, weight: Weight::NORMAL, style: Style::Normal, ..Query::default() })
         };
-        let primary = regular(&[Family::Monospace])
-            .or_else(|| db.faces().find(|f| f.monospaced).map(|f| f.id))
-            .ok_or("no monospace font found on this system")?;
+        let monospace = regular(&db, &[Family::Monospace]).or_else(|| db.faces().find(|f| f.monospaced).map(|f| f.id));
+        let primary = match font {
+            None => monospace.ok_or("no monospace font found on this system")?,
+            Some(name) if Path::new(name).is_file() => {
+                let ids = db.load_font_source(Source::File(name.into()));
+                // The regular upright face of a collection, else its first.
+                let regular_face = ids.iter().copied().find(|&id| {
+                    db.face(id).is_some_and(|f| f.style == Style::Normal && f.weight == Weight::NORMAL)
+                });
+                regular_face.or(ids.first().copied()).ok_or(format!("{name}: not a font file this host can read"))?
+            }
+            Some(name) => regular(&db, &[Family::Name(name)])
+                .or_else(|| {
+                    // Any face of the family, upright ones first.
+                    let named = |f: &&fontdb::FaceInfo| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name));
+                    let faces: Vec<_> = db.faces().filter(named).collect();
+                    faces.iter().find(|f| f.style == Style::Normal).or(faces.first()).map(|f| f.id)
+                })
+                .ok_or(format!("no font family named {name:?} (fc-list : family lists them)"))?,
+        };
+        let proportional = !db.face(primary).is_some_and(|f| f.monospaced);
 
         let mut fallbacks: Vec<_> = db
             .faces()
@@ -50,19 +82,41 @@ impl SystemGlyphs {
             cell: (1, 1),
             baseline: 0.0,
             primary,
+            proportional,
             fallbacks,
             fonts: HashMap::new(),
             last_fallback: None,
             missing: HashSet::new(),
         };
-        let font = glyphs.font(primary).ok_or("cannot load the monospace font")?;
-        let line = font.horizontal_line_metrics(px).ok_or("monospace font has no line metrics")?;
-        let advance = font.metrics('0', px).advance_width;
         // SPEC 5.4: screen units are square and a cell is 8 x 16 of them, so
-        // the cell is exactly 1:2. Its width is the font's advance; the text
-        // body (ascent to descent) is centred in the height, which is within
-        // a pixel or two of the font's line height for usual monospace fonts.
+        // the cell is exactly 1:2. Its width is the monospace font's advance
+        // (for a proportional font, the default monospace font's, else 0.6
+        // of the size); the text body (ascent to descent) is centred in the
+        // height, which is within a pixel or two of the font's line height
+        // for usual monospace fonts.
+        let reference = match (proportional, monospace) {
+            (true, Some(mono)) => glyphs.font(mono).and_then(|f| {
+                let line = f.horizontal_line_metrics(px)?;
+                Some((f.metrics('0', px).advance_width, line.ascent - line.descent))
+            }),
+            _ => None,
+        };
+        let font = glyphs.font(primary).ok_or("cannot load the font")?;
+        let line = font.horizontal_line_metrics(px).ok_or("the font has no line metrics")?;
+        let advance = match (proportional, reference) {
+            (false, _) => font.metrics('0', px).advance_width,
+            (true, Some((advance, _))) => advance,
+            (true, None) => 0.6 * px,
+        };
+        // A proportional font is sized so its body matches the reference's.
+        let body_px = |px: f32| font.horizontal_line_metrics(px).map_or(px, |l| l.ascent - l.descent);
+        let px = match reference {
+            Some((_, body)) if proportional => px * body / body_px(px),
+            _ => px,
+        };
+        let line = if px == base_px { line } else { font.horizontal_line_metrics(px).unwrap_or(line) };
         let width = advance.round().max(1.0) as u32;
+        glyphs.px = px;
         glyphs.cell = (width, 2 * width);
         let body = line.ascent - line.descent;
         glyphs.baseline = (line.ascent + (glyphs.cell.1 as f32 - body) / 2.0).round();
@@ -70,7 +124,8 @@ impl SystemGlyphs {
     }
 
     pub fn primary_family(&self) -> String {
-        self.db.face(self.primary).and_then(|f| f.families.first()).map_or(String::new(), |(n, _)| n.clone())
+        let name = self.db.face(self.primary).and_then(|f| f.families.first()).map_or(String::new(), |(n, _)| n.clone());
+        if self.proportional { format!("{name} (proportional, centred in the cells)") } else { name }
     }
 
     fn font(&mut self, id: ID) -> Option<&Font> {
@@ -126,10 +181,14 @@ impl GlyphSource for SystemGlyphs {
     fn rasterize(&mut self, ch: char, cells: u32, out: &mut [u8]) {
         let Some(id) = self.face_for(ch) else { return };
         let (cw, ch_px, baseline, px) = ((self.cell.0 * cells) as i32, self.cell.1 as i32, self.baseline, self.px);
+        let squeeze = self.proportional && id == self.primary;
         let font = self.font(id).expect("face_for loaded it");
+        let advance = font.metrics(ch, px).advance_width;
+        if squeeze {
+            return squeezed(font, ch, px, cw, ch_px, baseline, out);
+        }
         // Shrink glyphs wider than their cells (e.g. a wide character drawn
         // in one cell because no continuation cell follows it).
-        let advance = font.metrics(ch, px).advance_width;
         let scale = if advance > cw as f32 * 1.05 { cw as f32 / advance } else { 1.0 };
         let (m, bitmap) = font.rasterize(ch, px * scale);
         // Centre shrunk glyphs vertically around the normal text body.
@@ -157,6 +216,46 @@ impl GlyphSource for SystemGlyphs {
                     *o = (*o).max(v);
                 }
             }
+        }
+    }
+}
+
+/// A proportional font's glyph `ch` in a `cw` × `ch_px` cell area: centred
+/// horizontally by its advance, and if that is wider than the area,
+/// squeezed horizontally (each output column the average of the glyph's
+/// columns it covers) to fit; never stretched. Box drawing is not special:
+/// proportional fonts rarely make it join across cells anyway.
+fn squeezed(font: &Font, ch: char, px: f32, cw: i32, ch_px: i32, baseline: f32, out: &mut [u8]) {
+    let (m, bitmap) = font.rasterize(ch, px);
+    if m.width == 0 || m.height == 0 {
+        return;
+    }
+    let s = if m.advance_width > cw as f32 { cw as f32 / m.advance_width } else { 1.0 };
+    // Glyph space x (pixels from the pen position) to output column.
+    let left = (cw as f32 - m.advance_width * s) / 2.0;
+    let y0 = baseline.round() as i32 - m.ymin - m.height as i32;
+    for tx in 0..cw {
+        // The span of glyph space this column covers, in bitmap columns.
+        let g0 = (tx as f32 - left) / s - m.xmin as f32;
+        let g1 = (tx as f32 + 1.0 - left) / s - m.xmin as f32;
+        let (first, last) = (g0.floor().max(0.0) as usize, (g1.ceil() as usize).min(m.width));
+        if first >= last {
+            continue;
+        }
+        for ty in 0..ch_px {
+            let y = ty - y0;
+            if !(0..m.height as i32).contains(&y) {
+                continue;
+            }
+            let row = &bitmap[y as usize * m.width..][..m.width];
+            let mut sum = 0.0;
+            for (x, &v) in row.iter().enumerate().take(last).skip(first) {
+                let overlap = (g1.min(x as f32 + 1.0) - g0.max(x as f32)).max(0.0);
+                sum += overlap * v as f32;
+            }
+            let v = (sum / (g1 - g0)).round().min(255.0) as u8;
+            let o = &mut out[(ty * cw + tx) as usize];
+            *o = (*o).max(v);
         }
     }
 }

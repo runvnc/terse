@@ -12,9 +12,11 @@
 //! once per machine frame: the beam (added to this frame's glyph light) and
 //! the afterglow's fast and slow components, which are first faded (a
 //! full-screen pass that blends with a constant and subtracts a little),
-//! then take the deposit of this frame's beam with a `max` blend. Each line
-//! and circle has a thin bright core and a faint, tight halo. The renderer
-//! composites the textures.
+//! then take the deposit of this frame's whole beam (glyphs and shapes,
+//! summed) with a `max` blend, and of the earlier positions of moving
+//! shapes. Each line and circle adds a thin bright core and a faint, tight
+//! halo, a little brighter at a line's end points (vertex dwell). The
+//! renderer blurs the light for the bloom and composites the textures.
 
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
 use terse_core::vector::{MAX_LIST, decode, decode_outlines};
@@ -38,7 +40,9 @@ const KIND_TRIANGLE: u32 = 4;
 
 /// One instance: kind, a = (x0, y0, x1, y1), b = (x2, y2, radius, width),
 /// all in sixteenths, then r, g, b, a. An afterglow deposit (always a line or
-/// circle) carries its fast and slow deposit in place of (x2, y2).
+/// circle) carries its fast and slow deposit in place of (x2, y2). In the
+/// phosphor style bits 8-15 of the kind hold a line's vertex dwell
+/// (`phosphor::dwell_ends`).
 const INSTANCE_BYTES: usize = 40;
 
 const SHADER: &str = r#"
@@ -62,16 +66,18 @@ struct Out {
     @location(2) @interpolate(flat) shape: vec3<f32>,  // radius, half width, sixteenths per pixel
     @location(3) @interpolate(flat) color: vec4<f32>,
     @location(4) @interpolate(flat) deposit: vec2<f32>,  // fast, slow (afterglow deposits)
+    @location(5) @interpolate(flat) dwell: u32,  // lines sharing each end (phosphor::dwell_ends)
 }
 
 @vertex
 fn vs(
     @builtin(vertex_index) vi: u32,
-    @location(0) kind: u32,
+    @location(0) kind_dwell: u32,
     @location(1) a: vec4<f32>,
     @location(2) b: vec4<f32>,
     @location(3) color: vec4<f32>,
 ) -> Out {
+    let kind = kind_dwell & 0xFFu;
     let p0 = a.xy;
     let p1 = a.zw;
     let p2 = b.xy;
@@ -126,6 +132,7 @@ fn vs(
     out.shape = vec3<f32>(r, hw, px_mean);
     out.color = color;
     out.deposit = b.xy;
+    out.dwell = kind_dwell >> 8u;
     return out;
 }
 
@@ -178,10 +185,29 @@ fn to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
+// Vertex dwell (phosphor style): the factor on a line's light near its end
+// points, where the beam lingers: 1 + DWELL at a lone end, shared between the
+// n different lines that end at the same point. hw is the core's half width.
+fn dwell(in: Out, q: vec2<f32>, hw: f32) -> f32 {
+    if in.kind != 0u || in.dwell == 0u {
+        return 1.0;
+    }
+    let r = max(DWELL_SIZE * hw, DWELL_MIN_PX * in.shape.z);
+    let p0 = in.ends.xy;
+    let p1 = in.ends.zw;
+    let n0 = f32(max(in.dwell & 15u, 1u));
+    let n1 = f32(max((in.dwell >> 4u) & 15u, 1u));
+    var w = 1.0 + ((1.0 + DWELL) / n0 - 1.0) * exp(-dot(q - p0, q - p0) / (r * r));
+    if any(p0 != p1) {
+        w += ((1.0 + DWELL) / n1 - 1.0) * exp(-dot(q - p1, q - p1) / (r * r));
+    }
+    return max(w, 0.0);
+}
+
 // Phosphor style: the light a line or circle (the only kinds an outline list
 // holds) adds at this pixel, before colour; 0 outside its reach. A thin
 // bright core (CORE_WIDTH of the stated width) and a faint halo that is
-// gone HALO_REACH past the core's edge.
+// gone HALO_REACH past the core's edge, with the vertex dwell.
 fn beam_light(in: Out) -> f32 {
     let q = (in.pos.xy - u.origin) / u.scale;
     let px = in.shape.z;
@@ -203,7 +229,7 @@ fn beam_light(in: Out) -> f32 {
     }
     let edge = max(d - hw, 0.0);
     let halo = HALO * exp(-edge / HALO_FALLOFF) * (1.0 - smoothstep(0.5 * HALO_REACH, HALO_REACH, edge));
-    return max(CORE * stroke(hw / px, d / px), halo);
+    return max(CORE * stroke(hw / px, d / px), CORE * halo) * dwell(in, q, hw);
 }
 
 // The beam: this frame's light, added into the beam texture.
@@ -247,20 +273,21 @@ fn fs_fade() -> @location(0) vec4<f32> {
     return vec4<f32>(EPSILON);
 }
 
-// The glyph light, which is all the beam texture holds when this runs,
+// This frame's whole beam (glyphs and shapes, summed, so overdraw counts)
 // deposited into the afterglow (max blend).
 @group(0) @binding(1) var beam: texture_2d<f32>;
 
 @fragment
-fn fs_glyph_deposit(@builtin(position) pos: vec4<f32>) -> Afterglow {
+fn fs_beam_deposit(@builtin(position) pos: vec4<f32>) -> Afterglow {
     let c = textureLoad(beam, vec2<i32>(pos.xy), 0) * DEPOSIT;
     return Afterglow(c * FAST_SHARE, c * (1.0 - FAST_SHARE));
 }
 "#;
 
 /// Instance bytes for one primitive; `deposit` (fast, slow) goes in place
-/// of the unused (x2, y2) of a line or circle.
-fn instance(p: &Primitive, deposit: [f32; 2], out: &mut Vec<u8>) {
+/// of the unused (x2, y2) of a line or circle, `dwell` in bits 8-15 of the
+/// kind.
+fn instance(p: &Primitive, deposit: [f32; 2], dwell: u32, out: &mut Vec<u8>) {
     let f = |v: i16| v as f32;
     let [df, ds] = deposit;
     let (kind, a, b, rgba) = match *p {
@@ -278,7 +305,7 @@ fn instance(p: &Primitive, deposit: [f32; 2], out: &mut Vec<u8>) {
             (KIND_TRIANGLE, [f(x0), f(y0), f(x1), f(y1)], [f(x2), f(y2), 0.0, 0.0], rgba)
         }
     };
-    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(&(kind | dwell << 8).to_le_bytes());
     for v in a.iter().chain(&b) {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -298,7 +325,8 @@ pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
 
 /// The phosphor textures of one machine frame (all [`PHOSPHOR_FORMAT`],
 /// the size of the screen): the beam, which holds this frame's glyph light
-/// on entry, and the afterglow's two components; `beam_group` is
+/// on entry (and all of its light on return), and the afterglow's two
+/// components; `beam_group` is
 /// [`VectorLayer::beam_bind_group`] of the beam.
 pub struct PhosphorTargets<'a> {
     pub beam: &'a wgpu::TextureView,
@@ -313,13 +341,13 @@ pub struct VectorLayer {
     params: wgpu::Buffer,
     /// Phosphor style (own parameters, as its textures are not the
     /// target's size): the beam (additive), the afterglow deposits (max into
-    /// both components), the fade, and the glyph light's deposit.
+    /// both components), the fade, and the whole beam's deposit.
     beam_pipeline: wgpu::RenderPipeline,
     deposit_pipeline: wgpu::RenderPipeline,
     phosphor_bind_group: wgpu::BindGroup,
     phosphor_params: wgpu::Buffer,
     fade_pipeline: wgpu::RenderPipeline,
-    glyph_deposit_pipeline: wgpu::RenderPipeline,
+    beam_deposit_pipeline: wgpu::RenderPipeline,
     beam_layout: wgpu::BindGroupLayout,
     instances: wgpu::Buffer,
     count: u32,
@@ -330,6 +358,8 @@ pub struct VectorLayer {
     /// The primitives uploaded and the list's opcodes; the same for the
     /// previous machine frame of the phosphor style.
     shapes: Vec<Primitive>,
+    /// The vertex dwell of each of `shapes` (outlines only).
+    dwell: Vec<u32>,
     opcodes: Vec<u8>,
     prev_shapes: Vec<Primitive>,
     prev_opcodes: Vec<u8>,
@@ -510,7 +540,7 @@ impl VectorLayer {
             })
         };
         let fade_pipeline = full_screen("phosphor fade", &[], "fs_fade", &[target(PHOSPHOR_FORMAT, fade)]);
-        let glyph_deposit_pipeline = full_screen("glyph deposit", &[Some(&beam_layout)], "fs_glyph_deposit", &both);
+        let beam_deposit_pipeline = full_screen("beam deposit", &[Some(&beam_layout)], "fs_beam_deposit", &both);
         VectorLayer {
             pipeline,
             bind_group,
@@ -520,13 +550,14 @@ impl VectorLayer {
             phosphor_bind_group,
             phosphor_params,
             fade_pipeline,
-            glyph_deposit_pipeline,
+            beam_deposit_pipeline,
             beam_layout,
             instances,
             count: 0,
             deposit_instances,
             uploaded: None,
             shapes: Vec::new(),
+            dwell: Vec::new(),
             opcodes: Vec::new(),
             prev_shapes: Vec::new(),
             prev_opcodes: Vec::new(),
@@ -535,7 +566,7 @@ impl VectorLayer {
         }
     }
 
-    /// The bind group through which the glyph light in `beam` is deposited.
+    /// The bind group through which the light in `beam` is deposited.
     pub fn beam_bind_group(&self, device: &wgpu::Device, beam: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("phosphor beam"),
@@ -555,9 +586,15 @@ impl VectorLayer {
         self.uploaded = Some((generation, outlines));
         decode_shapes(list, outlines, &mut self.shapes);
         self.opcodes = phosphor::opcodes(list);
+        if outlines {
+            phosphor::dwell_ends(&self.shapes, &mut self.dwell);
+        } else {
+            self.dwell.clear();
+            self.dwell.resize(self.shapes.len(), 0);
+        }
         self.scratch.clear();
-        for p in &self.shapes {
-            instance(p, [0.0; 2], &mut self.scratch);
+        for (p, &dwell) in self.shapes.iter().zip(&self.dwell) {
+            instance(p, [0.0; 2], dwell, &mut self.scratch);
         }
         self.count = self.shapes.len() as u32;
         if !self.scratch.is_empty() {
@@ -588,12 +625,12 @@ impl VectorLayer {
         pass.draw(0..6, 0..self.count);
     }
 
-    /// One machine frame of the phosphor style (SPEC 8.7, `phosphor.rs`),
+    /// One machine frame of the phosphor style (SPEC 10.6, `phosphor.rs`),
     /// recorded into `encoder`; the textures are `size` pixels, exactly the
     /// screen. The afterglow fades (or is cleared if `clear`, or with
-    /// persistence 0: no trail), takes the deposit of the glyph light in the
-    /// beam and of the uploaded outlines (smeared from the previous frame's
-    /// positions if only they moved), then the outlines are added to the beam.
+    /// persistence 0: no trail), the uploaded outlines are added to the beam,
+    /// then the afterglow takes the deposit of the whole beam and of the
+    /// earlier positions of shapes that only moved since the last frame.
     /// With `advance` false only the beam is redrawn and nothing fades.
     #[allow(clippy::too_many_arguments)]
     pub fn phosphor_frame(
@@ -608,9 +645,9 @@ impl VectorLayer {
     ) {
         let rect = (0.0, 0.0, size.0 as f32, size.1 as f32);
         queue.write_buffer(&self.phosphor_params, 0, &params_bytes(size, rect, true));
+        let trails = persistence > 0;
+        let slow_decay = phosphor::slow_decay(persistence);
         if advance {
-            let trails = persistence > 0;
-            let slow_decay = phosphor::slow_decay(persistence);
             for (view, keep) in [(targets.fast, FAST_DECAY), (targets.slow, slow_decay)] {
                 let fade = trails && !clear;
                 let mut pass = pass(encoder, "phosphor fade", &[(view, !fade)]);
@@ -621,39 +658,41 @@ impl VectorLayer {
                     pass.draw(0..3, 0..1);
                 }
             }
-            if trails {
-                let smear = !clear && self.opcodes == self.prev_opcodes;
-                phosphor::deposits(&self.prev_shapes, &self.shapes, smear, slow_decay, &mut self.deposits);
-                self.scratch.clear();
-                for d in &self.deposits {
-                    instance(&d.shape, [d.fast, d.slow], &mut self.scratch);
-                }
-                if !self.scratch.is_empty() {
-                    queue.write_buffer(&self.deposit_instances, 0, &self.scratch);
-                }
-                let mut pass = pass(encoder, "afterglow deposit", &[(targets.fast, false), (targets.slow, false)]);
-                pass.set_pipeline(&self.glyph_deposit_pipeline);
-                pass.set_bind_group(0, targets.beam_group, &[]);
-                pass.draw(0..3, 0..1);
-                if !self.deposits.is_empty() {
-                    let n = self.deposits.len() as u32;
-                    pass.set_pipeline(&self.deposit_pipeline);
-                    pass.set_bind_group(0, &self.phosphor_bind_group, &[]);
-                    pass.set_vertex_buffer(0, self.deposit_instances.slice(..(n as u64 * INSTANCE_BYTES as u64)));
-                    pass.draw(0..6, 0..n);
-                }
-            }
-            self.prev_shapes.clone_from(&self.shapes);
-            self.prev_opcodes.clone_from(&self.opcodes);
         }
-        if self.count == 0 {
+        if self.count > 0 {
+            let mut pass = pass(encoder, "beam", &[(targets.beam, false)]);
+            pass.set_pipeline(&self.beam_pipeline);
+            pass.set_bind_group(0, &self.phosphor_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.instances.slice(..(self.count as u64 * INSTANCE_BYTES as u64)));
+            pass.draw(0..6, 0..self.count);
+        }
+        if !advance {
             return;
         }
-        let mut pass = pass(encoder, "beam", &[(targets.beam, false)]);
-        pass.set_pipeline(&self.beam_pipeline);
-        pass.set_bind_group(0, &self.phosphor_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instances.slice(..(self.count as u64 * INSTANCE_BYTES as u64)));
-        pass.draw(0..6, 0..self.count);
+        if trails {
+            let smear = !clear && self.opcodes == self.prev_opcodes;
+            phosphor::deposits(&self.prev_shapes, &self.shapes, smear, slow_decay, &mut self.deposits);
+            self.scratch.clear();
+            for d in &self.deposits {
+                instance(&d.shape, [d.fast, d.slow], self.dwell[d.index], &mut self.scratch);
+            }
+            if !self.scratch.is_empty() {
+                queue.write_buffer(&self.deposit_instances, 0, &self.scratch);
+            }
+            let mut pass = pass(encoder, "afterglow deposit", &[(targets.fast, false), (targets.slow, false)]);
+            pass.set_pipeline(&self.beam_deposit_pipeline);
+            pass.set_bind_group(0, targets.beam_group, &[]);
+            pass.draw(0..3, 0..1);
+            if !self.deposits.is_empty() {
+                let n = self.deposits.len() as u32;
+                pass.set_pipeline(&self.deposit_pipeline);
+                pass.set_bind_group(0, &self.phosphor_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.deposit_instances.slice(..(n as u64 * INSTANCE_BYTES as u64)));
+                pass.draw(0..6, 0..n);
+            }
+        }
+        self.prev_shapes.clone_from(&self.shapes);
+        self.prev_opcodes.clone_from(&self.opcodes);
     }
 }
 
@@ -664,13 +703,16 @@ mod tests {
     #[test]
     fn instance_layout() {
         let mut out = Vec::new();
-        instance(&Primitive::Circle { x: -16, y: 32, radius: 48, width: 3, rgba: [1, 2, 3, 4] }, [0.0; 2], &mut out);
+        instance(&Primitive::Circle { x: -16, y: 32, radius: 48, width: 3, rgba: [1, 2, 3, 4] }, [0.0; 2], 0, &mut out);
         assert_eq!(out.len(), INSTANCE_BYTES);
         assert_eq!(&out[0..4], &KIND_CIRCLE.to_le_bytes());
         assert_eq!(&out[4..8], &(-16f32).to_le_bytes());
         assert_eq!(&out[28..32], &48f32.to_le_bytes());
         assert_eq!(&out[32..36], &3f32.to_le_bytes());
         assert_eq!(&out[36..40], &[1, 2, 3, 4]);
+        out.clear();
+        instance(&Primitive::Line { x0: 0, y0: 0, x1: 1, y1: 1, width: 3, rgba: [0; 4] }, [0.0; 2], 0x21, &mut out);
+        assert_eq!(&out[0..4], &(KIND_LINE | 0x21 << 8).to_le_bytes());
     }
 
     /// The densest lists fit the instance buffer: all rectangles in the

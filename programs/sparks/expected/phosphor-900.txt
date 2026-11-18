@@ -29,7 +29,11 @@
 
 
 -- vector style: phosphor, persistence 160 --
--- vectors: 288 list bytes --
+-- vectors: 333 list bytes --
+line 64 64 10176 64 w 32 c 466ebeff
+line 10176 64 10176 7616 w 32 c 466ebeff
+line 10176 7616 64 7616 w 32 c 466ebeff
+line 64 7616 64 64 w 32 c 466ebeff
 line 64 64 10176 64 w 32 c 466ebeff
 line 10176 64 10176 7616 w 32 c 466ebeff
 line 10176 7616 64 7616 w 32 c 466ebeff
@@ -58,6 +62,10 @@ line 7270 2395 6965 2303 w 48 c 3cc8ff7f
 line 6965 2303 7270 2395 w 48 c 3cc8ff7f
 line 7270 2395 7327 2536 w 48 c 3cc8ff7f
 line 7327 2536 6965 2303 w 48 c 3cc8ff7f
+line 6965 2303 7396 2310 w 20 c c8f5ffff
+line 7396 2310 7270 2395 w 20 c c8f5ffff
+line 7270 2395 7327 2536 w 20 c c8f5ffff
+line 7327 2536 6965 2303 w 20 c c8f5ffff
 line 6965 2303 7396 2310 w 20 c c8f5ffff
 line 7396 2310 7270 2395 w 20 c c8f5ffff
 line 7270 2395 7327 2536 w 20 c c8f5ffff

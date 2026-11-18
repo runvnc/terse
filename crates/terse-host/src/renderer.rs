@@ -19,10 +19,12 @@
 //! `phosphor.rs`) treats the whole screen as one tube. Cell backgrounds are
 //! not drawn. Once per machine frame (`accumulate`) the glyphs and cursor
 //! are drawn as light in their foreground colour (a third mode of the same
-//! shader, with a faint bloom) into the beam texture, then `vectors.rs`
-//! fades the afterglow, deposits the beam into it and adds the shapes to
-//! the beam. The glyph pass then shows beam + afterglow through a tone
-//! curve on black instead of steps 1-3.
+//! shader, with a faint halo) into the beam texture, then `vectors.rs`
+//! fades the afterglow, adds the shapes to the beam and deposits the beam
+//! into the afterglow. Two more modes of the shader blur beam + afterglow
+//! (horizontally, then vertically) into the bloom texture. The glyph pass
+//! then shows beam + afterglow + bloom through a tone curve on black
+//! instead of steps 1-3.
 
 use std::collections::HashMap;
 
@@ -62,7 +64,9 @@ struct Params {
     atlas_cols: u32,
     flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB, bit 2: background mode,
                             // bit 3: show the phosphor light instead (glyph mode),
-                            // bit 4: glyph light mode (into the beam texture)
+                            // bit 4: glyph light mode (into the beam texture),
+                            // bit 5: bloom, horizontal pass (from the phosphor light),
+                            // bit 6: bloom, vertical pass (from bloom_src)
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -75,6 +79,8 @@ struct Params {
 @group(0) @binding(5) var beam: texture_2d<f32>;
 @group(0) @binding(6) var glow_fast: texture_2d<f32>;
 @group(0) @binding(7) var glow_slow: texture_2d<f32>;
+// The bloom (glyph mode), or the horizontal pass's result (vertical pass).
+@group(0) @binding(8) var bloom_src: texture_2d<f32>;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -133,21 +139,66 @@ fn glyph_glow(q: vec2<f32>) -> vec3<f32> {
 
 fn tone(x: vec3<f32>) -> vec3<f32> {
     let k = TONE_KNEE;
-    let soft = k + (1.0 - k) * (1.0 - exp(-(x - k) / (1.0 - k)));
+    let u = (x - k) / (1.0 - k);
+    let soft = k + (1.0 - k) * u / (1.0 + u);
     return select(soft, x, x <= vec3<f32>(k));
 }
 
-// The phosphor screen at pos (sRGB-encoded): beam plus afterglow, white-hot
-// only where it is far brighter than one beam, through the tone curve.
+// The phosphor light at a texel: beam plus afterglow (whose components may
+// be below zero: dark).
+fn phosphor_light(at: vec2<i32>) -> vec3<f32> {
+    return textureLoad(beam, at, 0).rgb
+        + max(textureLoad(glow_fast, at, 0).rgb, vec3<f32>(0.0))
+        + max(textureLoad(glow_slow, at, 0).rgb, vec3<f32>(0.0));
+}
+
+// What the bloom blurs: the light, whitened where it is brighter than one
+// stroke, so a repeated line's glow is whiter.
+fn bloom_source(at: vec2<i32>) -> vec3<f32> {
+    let light = phosphor_light(at);
+    let peak = max(light.r, max(light.g, light.b));
+    return light + vec3<f32>(max(peak - BLOOM_WHITE_FROM, 0.0) * BLOOM_WHITE);
+}
+
+// One pass of the bloom's Gaussian blur at texel `at`: of bloom_source
+// along x, or of bloom_src along y. The phosphor textures are the grid
+// rectangle, p.size pixels for 640 screen units across.
+fn bloom_pass(at: vec2<i32>, horizontal: bool) -> vec3<f32> {
+    var size = vec2<i32>(textureDimensions(bloom_src));
+    var dir = vec2<i32>(0, 1);
+    if horizontal {
+        size = vec2<i32>(textureDimensions(beam));
+        dir = vec2<i32>(1, 0);
+    }
+    let sigma = max(BLOOM_SIGMA * p.size.x / 640.0, 0.5);
+    let n = i32(min(ceil(3.0 * sigma), BLOOM_MAX_TAPS));
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var i = -n; i <= n; i++) {
+        let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
+        total += w;
+        let s = at + dir * i;
+        if all(s >= vec2<i32>(0)) && all(s < size) {
+            if horizontal {
+                sum += w * bloom_source(s);
+            } else {
+                sum += w * textureLoad(bloom_src, s, 0).rgb;
+            }
+        }
+    }
+    return sum / total;
+}
+
+// The phosphor screen at pos (sRGB-encoded): beam plus afterglow plus bloom,
+// white-hot only where it is far brighter than one beam, through the tone
+// curve.
 fn phosphor_screen(pos: vec2<f32>) -> vec3<f32> {
     let at = vec2<i32>(floor(pos - p.origin));
     let size = vec2<i32>(textureDimensions(beam));
     if any(at < vec2<i32>(0)) || any(at >= size) {
         return vec3<f32>(0.0);
     }
-    var light = textureLoad(beam, at, 0).rgb
-        + max(textureLoad(glow_fast, at, 0).rgb, vec3<f32>(0.0))
-        + max(textureLoad(glow_slow, at, 0).rgb, vec3<f32>(0.0));
+    var light = phosphor_light(at) + BLOOM * textureLoad(bloom_src, at, 0).rgb;
     let peak = max(light.r, max(light.g, light.b));
     light += vec3<f32>(max(peak - SPILL_FROM, 0.0) * SPILL);
     return to_srgb(tone(light));
@@ -157,6 +208,9 @@ fn phosphor_screen(pos: vec2<f32>) -> vec3<f32> {
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.flags & 16u) != 0u {
         return vec4<f32>(glyph_glow(pos.xy), 0.0);
+    }
+    if (p.flags & 96u) != 0u {
+        return vec4<f32>(bloom_pass(vec2<i32>(floor(pos.xy)), (p.flags & 32u) != 0u), 0.0);
     }
     if (p.flags & 8u) != 0u {
         var screen = phosphor_screen(pos.xy);
@@ -276,6 +330,9 @@ pub struct Renderer {
     light_pipeline: wgpu::RenderPipeline,
     light_bind_group: wgpu::BindGroup,
     light_params: wgpu::Buffer,
+    /// The bloom's two passes (with the glyph light pipeline): their params;
+    /// the bind groups are in `PhosphorTextures`.
+    bloom_params: [wgpu::Buffer; 2],
     /// The layer of backgrounds and shapes, its size, and the glyph-mode
     /// bind group that reads it; made for the viewport on first use.
     layer: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
@@ -299,14 +356,18 @@ pub struct Renderer {
     cursor: Option<(u32, u32)>,
 }
 
-/// The phosphor textures: beam and the afterglow's components, and the
-/// bind group that deposits the beam's glyph light.
+/// The phosphor textures: beam and the afterglow's components, the bind
+/// group that deposits the beam, and the bloom: the horizontal pass's
+/// result, the bloom itself and the two passes' bind groups.
 struct PhosphorTextures {
     size: (u32, u32),
     beam: wgpu::TextureView,
     fast: wgpu::TextureView,
     slow: wgpu::TextureView,
     beam_group: wgpu::BindGroup,
+    blurred: wgpu::TextureView,
+    bloom: wgpu::TextureView,
+    bloom_groups: [wgpu::BindGroup; 2],
 }
 
 fn texture(
@@ -388,6 +449,7 @@ impl Renderer {
         let params_buffer = uniform("params");
         let background_params = uniform("background params");
         let light_params = uniform("glyph light params");
+        let bloom_params = [uniform("bloom params x"), uniform("bloom params y")];
 
         let float = wgpu::TextureSampleType::Float { filterable: false };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -410,6 +472,7 @@ impl Renderer {
                 texture_entry(5, float),
                 texture_entry(6, float),
                 texture_entry(7, float),
+                texture_entry(8, float),
             ],
         });
         // Background and glyph light modes never read `under` or the
@@ -418,7 +481,7 @@ impl Renderer {
         let unused_phosphor = texture(device, "unused phosphor", (1, 1), PHOSPHOR_FORMAT);
         let stand_ins = |params| {
             let u = &unused_phosphor;
-            Self::bind_group(device, &layout, params, [&cell_texture, &atlas_texture, &palette_texture, &unused, u, u, u])
+            Self::bind_group(device, &layout, params, [&cell_texture, &atlas_texture, &palette_texture, &unused, u, u, u, u])
         };
         let background_bind_group = stand_ins(&background_params);
         let light_bind_group = stand_ins(&light_params);
@@ -472,6 +535,7 @@ impl Renderer {
             light_pipeline: pipeline_for(PHOSPHOR_FORMAT),
             light_bind_group,
             light_params,
+            bloom_params,
             layer: None,
             phosphor: None,
             vectors: VectorLayer::new(device, LAYER_FORMAT),
@@ -489,12 +553,13 @@ impl Renderer {
     }
 
     /// The terminal shader's bind group: params, cells, atlas, palette, the
-    /// layer below the glyphs and the phosphor textures (beam, fast, slow).
+    /// layer below the glyphs and the phosphor textures (beam, fast, slow,
+    /// and the bloom or the bloom's horizontal pass).
     fn bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         params: &wgpu::Buffer,
-        textures: [&wgpu::Texture; 7],
+        textures: [&wgpu::Texture; 8],
     ) -> wgpu::BindGroup {
         let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }];
@@ -572,6 +637,9 @@ impl Renderer {
             flags: shown | 16,
         };
         queue.write_buffer(&self.light_params, 0, &params.bytes());
+        for (buffer, flags) in self.bloom_params.iter().zip([32, 64]) {
+            queue.write_buffer(buffer, 0, &Params { flags, ..params }.bytes());
+        }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("phosphor") });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -597,6 +665,25 @@ impl Renderer {
         self.vectors.phosphor_frame(queue, &mut encoder, &targets, t.size, persistence, clear, advance);
         if advance {
             self.phosphor_stale = false;
+        }
+        // The bloom of all that light, x then y.
+        for (target, group) in [(&t.blurred, &t.bloom_groups[0]), (&t.bloom, &t.bloom_groups[1])] {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bloom"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.light_pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
     }
@@ -712,14 +799,31 @@ impl Renderer {
             })
         };
         let (beam, fast, slow) = (phosphor("phosphor beam"), phosphor("afterglow fast"), phosphor("afterglow slow"));
+        let (blurred, bloom) = (phosphor("bloom x"), phosphor("bloom"));
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let beam_view = view(&beam);
+        let unused = texture(device, "unused layer", (1, 1), LAYER_FORMAT);
+        let unused_phosphor = texture(device, "unused phosphor", (1, 1), PHOSPHOR_FORMAT);
+        let bloom_group = |params, textures: [&wgpu::Texture; 4]| {
+            let [b, f, s, src] = textures;
+            let fixed = [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &unused];
+            let [c, a, p, u] = fixed;
+            Self::bind_group(device, &self.bind_group_layout, params, [c, a, p, u, b, f, s, src])
+        };
+        let u = &unused_phosphor;
+        let bloom_groups = [
+            bloom_group(&self.bloom_params[0], [&beam, &fast, &slow, u]),
+            bloom_group(&self.bloom_params[1], [u, u, u, &blurred]),
+        ];
         self.phosphor = Some(PhosphorTextures {
             size,
             beam_group: self.vectors.beam_bind_group(device, &beam_view),
             beam: beam_view,
             fast: view(&fast),
             slow: view(&slow),
+            blurred: view(&blurred),
+            bloom: view(&bloom),
+            bloom_groups,
         });
         self.phosphor_stale = true;
         let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -736,7 +840,7 @@ impl Renderer {
             device,
             &self.bind_group_layout,
             &self.params_buffer,
-            [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex, &beam, &fast, &slow],
+            [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex, &beam, &fast, &slow, &bloom],
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         self.layer = Some((viewport, view.clone(), group.clone()));
