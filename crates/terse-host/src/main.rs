@@ -4,6 +4,7 @@ mod app;
 mod gamepad;
 mod glyphs;
 mod keymap;
+mod page;
 mod phosphor;
 mod renderer;
 mod selftest;
@@ -33,8 +34,8 @@ const PHOSPHOR_FRAMES: u64 = 600;
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
-  terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--relay ws://...]
-             [--store <dir>] [--config <dir>]
+  terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>]
+             [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]
   terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--no-trails]
              [--force-phosphor] [--font <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]
   terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--no-trails]
@@ -48,7 +49,9 @@ const USAGE: &str = "usage:
   persistence. --force-phosphor: show the phosphor presentation (the whole screen as a glowing
   tube) whatever style the program sets; for testing. --font: draw the grid with this font (a
   family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
-  a proportional font keeps the grid, each glyph centred in its cell.";
+  a proportional font keeps the grid, each glyph centred in its cell. --page-sans, --page-serif,
+  --page-mono: the fonts of the page device's three faces (default: the system's sans-serif, serif
+  and monospace families); every form of the command takes them.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -67,6 +70,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut size = None;
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
     let mut font = None;
+    let mut page_fonts = page::PageFonts::default();
     let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -76,6 +80,9 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--no-trails" => no_trails = true,
             "--force-phosphor" => force_phosphor = true,
             "--font" => font = Some(it.next().ok_or(USAGE)?),
+            "--page-sans" => page_fonts.sans = Some(it.next().ok_or(USAGE)?),
+            "--page-serif" => page_fonts.serif = Some(it.next().ok_or(USAGE)?),
+            "--page-mono" => page_fonts.mono = Some(it.next().ok_or(USAGE)?),
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relay = Some(it.next().ok_or(USAGE)?),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
@@ -136,7 +143,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         };
         let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
         let test = selftest::SelfTest::new(script, frames, csv);
-        return app::run(image, content, Some(test), Looks { no_trails, force_phosphor, font });
+        return app::run(image, content, Some(test), Looks { no_trails, force_phosphor, font, page_fonts });
     }
     if csv.is_some() {
         return Err(USAGE.into());
@@ -150,12 +157,12 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 None => Script::default(),
             };
-            let looks = Looks { no_trails, force_phosphor, font };
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts };
             take_screenshot(&image, content, script, Path::new(&out), frames, size, looks)?;
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() && size.is_none() => {
-            app::run(image, content, None, Looks { no_trails, force_phosphor, font })
+            app::run(image, content, None, Looks { no_trails, force_phosphor, font, page_fonts })
         }
         _ => Err(USAGE.into()),
     }
@@ -167,6 +174,8 @@ pub struct Looks {
     pub force_phosphor: bool,
     /// `--font`: a family name or font file instead of the monospace font.
     pub font: Option<String>,
+    /// `--page-sans`, `--page-serif`, `--page-mono`: the page's fonts.
+    pub page_fonts: page::PageFonts,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -254,10 +263,26 @@ fn take_screenshot(
 
     let mut machine = Machine::new(image);
     let mut headless = Headless::new(content, script);
+    // SPEC 11: the page laid out with this host's fonts, between frames, so
+    // the run is reproducible and the picture shows the finished layout.
+    renderer.set_page_animation(false);
+    let mut page_layout = None;
+    if image.has_device(7) {
+        let typesetter = page::Typesetter::new(&looks.page_fonts)?;
+        eprintln!("terse-host: page fonts: {}", typesetter.describe());
+        let layouter = page::SyncLayouter::new(typesetter);
+        page_layout = Some(layouter.latest.clone());
+        headless = headless.with_layouter(Box::new(layouter));
+    }
+    let shown = |machine: &Machine| {
+        let doc = machine.page().and_then(|p| p.document());
+        page_layout.as_ref().filter(|_| doc.is_some()).and_then(|l| l.lock().unwrap().clone())
+    };
     for f in 0..frames {
         let stopped = headless.frame(&mut machine).stopped.is_some();
         if frames - f <= PHOSPHOR_FRAMES {
             renderer.update_vectors(&queue, machine.vector());
+            renderer.update_page(machine.page(), shown(&machine));
             if renderer.phosphor() {
                 renderer.update(&queue, &displayed_terminal(&machine));
                 renderer.accumulate(&device, &queue, (width, height));
@@ -270,6 +295,7 @@ fn take_screenshot(
 
     renderer.update(&queue, &displayed_terminal(&machine));
     renderer.update_vectors(&queue, machine.vector());
+    renderer.update_page(machine.page(), shown(&machine));
     // The beam of what is shown now (e.g. a fault reported after the last
     // frame), without advancing the afterglow.
     renderer.refresh_beam(&device, &queue, (width, height));

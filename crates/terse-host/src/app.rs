@@ -16,6 +16,7 @@ use winit::window::{Window, WindowId};
 use crate::gamepad::Gamepads;
 use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
+use crate::page::PageWorker;
 use crate::renderer::{GlyphSource, Renderer};
 use crate::selftest::SelfTest;
 use crate::{FONT_PX, Looks, displayed_terminal, fault_exit, request_device};
@@ -32,6 +33,8 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
+    // SPEC 11.4: the page is laid out on its own thread.
+    let page = image.has_device(7).then(|| PageWorker::start(looks.page_fonts.clone()));
     let mut app = App {
         machine: Machine::new(&image),
         content,
@@ -52,6 +55,9 @@ pub fn run(
         no_trails: looks.no_trails,
         force_phosphor: looks.force_phosphor,
         font: looks.font,
+        page,
+        pointer_px: None,
+        trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -190,6 +196,12 @@ struct App {
     force_phosphor: bool,
     /// `--font`: the font for the grid instead of the monospace font.
     font: Option<String>,
+    /// The page device's layout worker, if the image has the device.
+    page: Option<PageWorker>,
+    /// The pointer in window pixels (for the page's anchors).
+    pointer_px: Option<(f64, f64)>,
+    /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
+    trace: bool,
 }
 
 impl App {
@@ -216,8 +228,41 @@ impl App {
         let mut controllers = self.gamepads.poll();
         if let Some(t) = &self.selftest {
             // The script is the only input (coalesced_input sent nothing).
-            self.pending.extend_from_slice(t.script.events(self.machine.frame()));
+            for &e in t.script.events(self.machine.frame()) {
+                self.pending.push(e);
+                // A scripted press over anchored text (SPEC 11.5).
+                if e.kind == Event::POINTER {
+                    let (x, y, b) = e.pointer_parts();
+                    let pressed = b & !self.buttons != 0;
+                    self.buttons = b;
+                    if let Some(gfx) = self.gfx.as_ref().filter(|_| pressed && self.page.is_some()) {
+                        let anchor = gfx.renderer.page_anchor_at_units(x as f32 + 0.5, y as f32 + 0.5);
+                        if anchor != 0 {
+                            self.pending.push(Event::page_anchor(anchor, b));
+                        }
+                    }
+                }
+            }
             controllers = t.script.controllers(self.machine.frame());
+        }
+        // SPEC 11.5: a layout of the current page finished: its height first.
+        if let Some(worker) = &mut self.page {
+            match worker.poll(self.machine.page()) {
+                Ok(Some(e)) => {
+                    if self.trace {
+                        let h = e.a as u32 | (e.b as u32) << 8 | (e.c as u32) << 16;
+                        let ms = worker.shown.as_ref().map_or(0.0, |l| l.ms);
+                        eprintln!("page: frame {}: height {h} queued (layout {ms:.1} ms)", self.machine.frame());
+                    }
+                    self.pending.insert(0, e);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    self.error = Some(format!("page fonts: {e}"));
+                    event_loop.exit();
+                    return;
+                }
+            }
         }
         let start = Instant::now();
         // SPEC 7.3: whatever finished since the last frame completes now.
@@ -226,6 +271,15 @@ impl App {
             FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions, controllers };
         let result = self.machine.run_frame(&input);
         self.pending.clear();
+        if let Some(worker) = &mut self.page {
+            let generation = self.machine.page().map(|p| p.generation());
+            if let Some(e) = worker.after_frame(self.machine.page()) {
+                self.pending.push(e);
+            }
+            if self.trace && worker.busy(self.machine.page()) {
+                eprintln!("page: frame {}: layout pending (generation {generation:?})", self.machine.frame() - 1);
+            }
+        }
         if getrandom::fill(&mut self.random[..result.random_used]).is_err() {
             self.random[..result.random_used].fill(0);
         }
@@ -237,6 +291,7 @@ impl App {
         if let Some(gfx) = &mut self.gfx {
             gfx.renderer.update(&gfx.queue, &displayed_terminal(&self.machine));
             gfx.renderer.update_vectors(&gfx.queue, self.machine.vector());
+            gfx.renderer.update_page(self.machine.page(), self.page.as_ref().and_then(|w| w.shown.clone()));
             // SPEC 8.7: the trail fades once per machine frame.
             let viewport = gfx.viewport();
             gfx.renderer.accumulate(&gfx.device, &gfx.queue, viewport);
@@ -304,6 +359,7 @@ impl App {
     fn pointer_moved(&mut self, pos: PhysicalPosition<f64>) {
         let Some(gfx) = &self.gfx else { return };
         self.pointer = Some(gfx.renderer.screen_pos(gfx.viewport(), pos.x, pos.y));
+        self.pointer_px = Some((pos.x, pos.y));
     }
 
     /// winit's deltas are positive when content should move right and down,
@@ -340,6 +396,16 @@ impl App {
         if let Some((x, y)) = self.pointer {
             self.pending.push(Event::pointer(x, y, self.buttons));
             self.pointer_sent = self.pointer;
+        }
+        // SPEC 11.5: a press over anchored text, as the page is shown now.
+        if state == ElementState::Pressed
+            && self.page.is_some()
+            && let (Some(gfx), Some((x, y))) = (&self.gfx, self.pointer_px)
+        {
+            let anchor = gfx.renderer.page_anchor_at(gfx.viewport(), x, y);
+            if anchor != 0 {
+                self.pending.push(Event::page_anchor(anchor, self.buttons));
+            }
         }
     }
 }

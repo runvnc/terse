@@ -30,6 +30,7 @@ use std::collections::HashMap;
 
 use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
+use crate::page::{HostLayout, PageLayer};
 use crate::phosphor;
 use crate::vectors::{PHOSPHOR_FORMAT, PhosphorTargets, VectorLayer};
 
@@ -340,6 +341,8 @@ pub struct Renderer {
     /// the layer's viewport; made with the layer.
     phosphor: Option<PhosphorTextures>,
     vectors: VectorLayer,
+    /// The page device (SPEC 11): between the backgrounds and the shapes.
+    page: PageLayer,
     /// The presentation: phosphor or clean, and the persistence.
     style: (bool, u8),
     /// The user turned trails off (persistence treated as 0).
@@ -539,6 +542,7 @@ impl Renderer {
             layer: None,
             phosphor: None,
             vectors: VectorLayer::new(device, LAYER_FORMAT),
+            page: PageLayer::new(device, LAYER_FORMAT),
             style: (false, 0),
             no_trails: false,
             force_phosphor: false,
@@ -584,6 +588,33 @@ impl Renderer {
         let outlines = outlined(style.0, vector);
         let (list, generation) = vector.map_or((&[][..], 0), |v| (v.list(), v.generation()));
         self.vectors.update(queue, list, generation, outlines);
+    }
+
+    /// Takes the page device's state and the layout to show (once per
+    /// machine frame, after `update_vectors`).
+    pub fn update_page(&mut self, page: Option<&terse_core::Page>, layout: Option<std::sync::Arc<HostLayout>>) {
+        self.page.set(page, layout);
+    }
+
+    /// Whether the page's scroll is animated (not for screenshots).
+    pub fn set_page_animation(&mut self, on: bool) {
+        self.page.set_animate(on);
+    }
+
+    /// The page's anchor under a position in screen units, as shown.
+    pub fn page_anchor_at_units(&self, x: f32, y: f32) -> u16 {
+        self.page.anchor_at(x, y)
+    }
+
+    /// The page's anchor under a viewport position (SPEC 11.5), as shown.
+    pub fn page_anchor_at(&self, viewport: (u32, u32), x: f64, y: f64) -> u16 {
+        let (ox, oy, w, h) = self.grid_rect(viewport);
+        let sx = (x as f32 - ox) / w * SCREEN_WIDTH as f32;
+        let sy = (y as f32 - oy) / h * SCREEN_HEIGHT as f32;
+        if !(0.0..SCREEN_WIDTH as f32).contains(&sx) || !(0.0..SCREEN_HEIGHT as f32).contains(&sy) {
+            return 0;
+        }
+        self.page.anchor_at(sx, sy)
     }
 
     /// Treat the persistence as 0 (the user turned trails off, SPEC 8.7).
@@ -658,6 +689,24 @@ impl Renderer {
             pass.set_pipeline(&self.light_pipeline);
             pass.set_bind_group(0, &self.light_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        // The page's text is light on the same tube (SPEC 10.6); no background.
+        self.page.prepare(device, queue, (0.0, 0.0, w, h), t.size, true);
+        if self.page.quads() > 0 {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("page light"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &t.beam,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            self.page.draw(&mut pass, true);
         }
         let persistence = if self.no_trails { 0 } else { self.style.1 };
         let targets = PhosphorTargets { beam: &t.beam, beam_group: &t.beam_group, fast: &t.fast, slow: &t.slow };
@@ -889,6 +938,7 @@ impl Renderer {
         // Phosphor style: no backgrounds, and the glyphs and shapes are in
         // the phosphor textures.
         if !self.style.0 {
+            self.page.prepare(device, queue, rect, viewport, false);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("backgrounds and shapes"),
                 color_attachments: &[attachment(&layer, wgpu::LoadOp::Clear(wgpu::Color::BLACK))],
@@ -900,6 +950,8 @@ impl Renderer {
             pass.set_pipeline(&self.background_pipeline);
             pass.set_bind_group(0, &self.background_bind_group, &[]);
             pass.draw(0..3, 0..1);
+            // SPEC 10.5: the page lies between the backgrounds and the shapes.
+            self.page.draw(&mut pass, false);
             self.vectors.draw(queue, &mut pass, viewport, rect);
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
