@@ -137,7 +137,7 @@ otherwise.
 
 Let `V` be the offset after this section.
 
-### 1.7 Vector display (1 or 12 + m bytes)
+### 1.7 Vector display (1 or 14 + m bytes)
 
 | Offset | Size | Field |
 |---|---|---|
@@ -145,8 +145,12 @@ Let `V` be the offset after this section.
 | V + 1 | 4 | List address register (u32, 24-bit value; ports 30h–32h) |
 | V + 5 | 2 | List length register (u16; ports 33h–34h) |
 | V + 7 | 1 | Result of the last command (port 35h) |
-| V + 8 | 4 | m (u32): length of the list the device holds, 0–16,384 |
-| V + 12 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
+| V + 8 | 1 | Style (port 36h): `00h` clean, `01h` phosphor |
+| V + 9 | 1 | Persistence (port 37h); 160 after reset |
+| V + 10 | 4 | m (u32): length of the list the device holds, 0–16,384 |
+| V + 14 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
+
+The phosphor trail (SPEC 8.7) is presentation and is not included.
 
 Let `C` be the offset after this section.
 
@@ -172,7 +176,7 @@ Each request record is 51 bytes:
 | 47 | 4 | `size` read at submit (u32; put), else zero |
 
 That is the end of the serialization. Its length is
-`45 + 35 + 11 + 12 + L + 39 + 4n` plus 1 or 10,383 (terminal), 1 or 12 + m
+`45 + 35 + 11 + 12 + L + 39 + 4n` plus 1 or 10,383 (terminal), 1 or 14 + m
 (vector) and 1 or 412 (content).
 
 ## 2. What is left out, and why

@@ -21,8 +21,9 @@ fn expected_dir() -> PathBuf {
 /// What `terse run --dump --dump-vectors` prints.
 fn screen(m: &Machine) -> String {
     let list = m.vector_list();
+    let style = m.vector().and_then(|v| v.style_line()).map_or(String::new(), |l| l + "\n");
     format!(
-        "{}-- vectors: {} list bytes --\n{}",
+        "{}{style}-- vectors: {} list bytes --\n{}",
         m.terminal().unwrap().text(),
         list.len(),
         terse_core::vector::dump(list)
@@ -110,6 +111,31 @@ fn controller_session() {
     }
     assert!(s.screens[0].1.contains("SCORE"));
     assert!(!s.screens[1].1.contains("SCORE 0000"), "the recorded player scores");
+}
+
+/// `sessions/phosphor.txt`: the keyboard session with P pressed (phosphor
+/// style, SPEC 8.7), then controller Y twice. The style is the program's
+/// state but changes nothing else: the screen is the keyboard session's.
+#[test]
+fn phosphor_session() {
+    let script = std::fs::read_to_string(sessions_dir().join("phosphor.txt")).unwrap();
+    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let mut h = Headless::new(None, Script::parse(&script).unwrap());
+    let mut styles = Vec::new();
+    for f in 1..=900 {
+        h.frame(&mut m);
+        if [10, 11, 600, 601, 700, 701].contains(&f) {
+            let v = m.vector().unwrap();
+            styles.push((f, v.phosphor(), v.persistence()));
+        }
+    }
+    // After f frames have run (frames 0 to f - 1): the press of frame 10 counts from 11 on.
+    let want = [(10, false), (11, true), (600, true), (601, false), (700, false), (701, true)];
+    assert_eq!(styles, want.map(|(f, p)| (f, p, 160)));
+    let got = screen(&m);
+    golden("phosphor-900.txt", &got);
+    let keys = std::fs::read_to_string(expected_dir().join("keys-900.txt")).unwrap();
+    assert_eq!(got.replace("-- vector style: phosphor, persistence 160 --\n", ""), keys);
 }
 
 /// `terse run --dump --dump-vectors` prints the same screen.

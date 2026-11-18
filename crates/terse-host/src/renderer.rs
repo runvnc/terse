@@ -14,12 +14,18 @@
 //!
 //! With no shapes the layer holds exactly the background colours, so the
 //! result is the same as the earlier single pass.
+//!
+//! In the phosphor style (SPEC 8.7) step 2 is replaced: the shapes are drawn
+//! once per machine frame into a persistent float texture the size of the
+//! screen (`accumulate`, see `vectors.rs`), and step 3 adds that light to
+//! the layer in linear space (bright light bleeds towards white) before
+//! mixing in the glyphs.
 
 use std::collections::HashMap;
 
-use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal};
+use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
-use crate::vectors::VectorLayer;
+use crate::vectors::{PHOSPHOR_FORMAT, VectorLayer};
 
 /// Format of the offscreen layer of backgrounds and shapes.
 const LAYER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -50,7 +56,8 @@ struct Params {
     grid: vec2<u32>,        // columns, rows
     cursor: vec2<u32>,
     atlas_cols: u32,
-    flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB, bit 2: background mode
+    flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB, bit 2: background mode,
+                            // bit 3: add the phosphor light (glyph mode)
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -58,6 +65,7 @@ struct Params {
 @group(0) @binding(2) var atlas: texture_2d<f32>;
 @group(0) @binding(3) var palette: texture_2d<f32>;
 @group(0) @binding(4) var under: texture_2d<f32>;  // backgrounds and shapes (glyph mode)
+@group(0) @binding(5) var phosphor: texture_2d<f32>;  // linear light over the grid rectangle
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -74,6 +82,27 @@ fn to_linear(c: vec3<f32>) -> vec3<f32> {
     let lo = c / 12.92;
     let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
     return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+// The layer (sRGB-encoded) with the phosphor light added. Where a channel
+// passes 1, the excess spills into the others, so the core of a bright line
+// turns white-hot.
+fn lit(below: vec3<f32>, pos: vec2<f32>) -> vec3<f32> {
+    let at = vec2<i32>(floor(pos - p.origin));
+    let size = vec2<i32>(textureDimensions(phosphor));
+    if any(at < vec2<i32>(0)) || any(at >= size) {
+        return below;
+    }
+    var light = textureLoad(phosphor, at, 0).rgb;
+    let peak = max(light.r, max(light.g, light.b));
+    light += vec3<f32>(max(peak - 1.0, 0.0) * 0.4);
+    return to_srgb(min(to_linear(below) + light, vec3<f32>(1.0)));
 }
 
 @fragment
@@ -99,7 +128,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             coverage = 1.0;
         }
         // Blend in sRGB space, as terminals usually do.
-        let below = textureLoad(under, vec2<u32>(pos.xy), 0).rgb;
+        var below = textureLoad(under, vec2<u32>(pos.xy), 0).rgb;
+        if (p.flags & 8u) != 0u {
+            below = lit(below, pos.xy);
+        }
         color = mix(below, palette_rgb(c.b), coverage);
     }
     if (p.flags & 2u) != 0u && !background {
@@ -181,7 +213,16 @@ pub struct Renderer {
     /// The layer of backgrounds and shapes, its size, and the glyph-mode
     /// bind group that reads it; made for the viewport on first use.
     layer: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
+    /// The phosphor texture (SPEC 8.7), the size of the grid rectangle of
+    /// the layer's viewport; made with the layer.
+    phosphor: Option<((u32, u32), wgpu::TextureView)>,
     vectors: VectorLayer,
+    /// The vector display's style: phosphor or clean, and the persistence.
+    style: (bool, u8),
+    /// The user turned trails off (persistence treated as 0).
+    no_trails: bool,
+    /// The phosphor texture must be cleared before the next frame's light.
+    phosphor_stale: bool,
     cell_texture: wgpu::Texture,
     atlas_texture: wgpu::Texture,
     palette_texture: wgpu::Texture,
@@ -287,15 +328,18 @@ impl Renderer {
                 texture_entry(2, float),
                 texture_entry(3, float),
                 texture_entry(4, float),
+                texture_entry(5, float),
             ],
         });
-        // Background mode never reads `under`; it gets a 1 × 1 stand-in.
+        // Background mode never reads `under` or `phosphor`; they get 1 × 1
+        // stand-ins.
         let unused = texture(device, "unused layer", (1, 1), LAYER_FORMAT);
+        let unused_phosphor = texture(device, "unused phosphor", (1, 1), PHOSPHOR_FORMAT);
         let background_bind_group = Self::bind_group(
             device,
             &layout,
             &background_params,
-            [&cell_texture, &atlas_texture, &palette_texture, &unused],
+            [&cell_texture, &atlas_texture, &palette_texture, &unused, &unused_phosphor],
         );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -344,7 +388,11 @@ impl Renderer {
             bind_group_layout: layout,
             params_buffer,
             layer: None,
+            phosphor: None,
             vectors: VectorLayer::new(device, LAYER_FORMAT),
+            style: (false, 0),
+            no_trails: false,
+            phosphor_stale: true,
             cell_texture,
             atlas_texture,
             palette_texture,
@@ -354,13 +402,13 @@ impl Renderer {
         }
     }
 
-    /// The terminal shader's bind group: params, cells, atlas, palette and
-    /// the layer below the glyphs.
+    /// The terminal shader's bind group: params, cells, atlas, palette, the
+    /// layer below the glyphs and the phosphor texture.
     fn bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         params: &wgpu::Buffer,
-        textures: [&wgpu::Texture; 4],
+        textures: [&wgpu::Texture; 5],
     ) -> wgpu::BindGroup {
         let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }];
@@ -370,10 +418,41 @@ impl Renderer {
         device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("terminal"), layout, entries: &entries })
     }
 
-    /// Uploads the vector display list (SPEC 8), unless `generation` (see
-    /// `Machine::vector_generation`) shows it is unchanged.
-    pub fn update_vectors(&mut self, queue: &wgpu::Queue, list: &[u8], generation: u64) {
-        self.vectors.update(queue, list, generation);
+    /// Takes the vector display's style (SPEC 8.7) and uploads its list
+    /// (SPEC 8), unless the list's generation shows it is unchanged. `None`:
+    /// the image has no vector display.
+    pub fn update_vectors(&mut self, queue: &wgpu::Queue, vector: Option<&Vector>) {
+        let style = vector.map_or((false, 0), |v| (v.phosphor(), v.persistence()));
+        if style.0 != self.style.0 {
+            // Switching style starts the phosphor afresh.
+            self.phosphor_stale = true;
+        }
+        self.style = style;
+        let (list, generation) = vector.map_or((&[][..], 0), |v| (v.list(), v.generation()));
+        self.vectors.update(queue, list, generation, style.0);
+    }
+
+    /// Treat the persistence as 0 (the user turned trails off, SPEC 8.7).
+    pub fn set_no_trails(&mut self, no_trails: bool) {
+        self.no_trails = no_trails;
+    }
+
+    /// Phosphor style: one machine frame of light into the phosphor texture
+    /// for `viewport` (fade, then the list uploaded last), submitted at
+    /// once. Call once per machine frame after `update_vectors`, so trails
+    /// do not depend on how often frames are presented. Does nothing in the
+    /// clean style.
+    pub fn accumulate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, viewport: (u32, u32)) {
+        if !self.style.0 {
+            return;
+        }
+        self.layer(device, viewport);
+        let Some((size, view)) = &self.phosphor else { return };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("phosphor") });
+        let persistence = if self.no_trails { 0 } else { self.style.1 };
+        self.vectors.accumulate(queue, &mut encoder, view, *size, persistence, self.phosphor_stale);
+        self.phosphor_stale = false;
+        queue.submit([encoder.finish()]);
     }
 
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
@@ -470,6 +549,22 @@ impl Renderer {
         {
             return (view.clone(), group.clone());
         }
+        // The phosphor texture covers the grid rectangle, which starts at a
+        // whole pixel; a new one starts dark.
+        let (_, _, w, h) = self.grid_rect(viewport);
+        let size = ((w.ceil() as u32).max(1), (h.ceil() as u32).max(1));
+        let phosphor = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("phosphor"),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: PHOSPHOR_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.phosphor = Some((size, phosphor.create_view(&wgpu::TextureViewDescriptor::default())));
+        self.phosphor_stale = true;
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("layer"),
             size: wgpu::Extent3d { width: viewport.0, height: viewport.1, depth_or_array_layers: 1 },
@@ -484,7 +579,7 @@ impl Renderer {
             device,
             &self.bind_group_layout,
             &self.params_buffer,
-            [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex],
+            [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex, &phosphor],
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         self.layer = Some((viewport, view.clone(), group.clone()));
@@ -511,10 +606,15 @@ impl Renderer {
             grid: [COLS as u32, ROWS as u32],
             cursor: [cursor.0, cursor.1],
             atlas_cols: ATLAS_COLS,
-            flags: shown | if self.target_is_srgb { 2 } else { 0 },
+            flags: shown | if self.target_is_srgb { 2 } else { 0 } | if self.style.0 { 8 } else { 0 },
         };
         queue.write_buffer(&self.params_buffer, 0, &params.bytes());
         queue.write_buffer(&self.background_params, 0, &Params { flags: 4, ..params }.bytes());
+        if self.style.0 && self.layer.as_ref().is_none_or(|(size, ..)| *size != viewport) {
+            // Resized since the last machine frame: start the new phosphor
+            // texture with this frame's light rather than show it dark.
+            self.accumulate(device, queue, viewport);
+        }
         let (layer, glyph_group) = self.layer(device, viewport);
 
         let attachment = |view, load| {
@@ -537,7 +637,10 @@ impl Renderer {
             pass.set_pipeline(&self.background_pipeline);
             pass.set_bind_group(0, &self.background_bind_group, &[]);
             pass.draw(0..3, 0..1);
-            self.vectors.draw(queue, &mut pass, viewport, rect);
+            // Phosphor style: the shapes are in the phosphor texture.
+            if !self.style.0 {
+                self.vectors.draw(queue, &mut pass, viewport, rect);
+            }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glyphs"),

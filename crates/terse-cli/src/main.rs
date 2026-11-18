@@ -259,6 +259,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         // SPEC 8: the list device 3 holds at the end of the last frame, one
         // primitive per line.
         if args.has("--dump-vectors") {
+            if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
+                println!("{line}");
+            }
             let list = machine.vector_list();
             println!("-- vectors: {} list bytes --", list.len());
             print!("{}", terse_core::vector::dump(list));

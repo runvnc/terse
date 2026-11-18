@@ -33,7 +33,8 @@ Requires a Rust toolchain (edition 2024). If `cargo` is not on your `PATH`
   `--dump` (a wide character's continuation cell is skipped), and exits with the
   machine's exit code. `--dump-vectors` adds the display list device 3 holds, after
   a `-- vectors: N list bytes --` line, one decoded primitive per line (see
-  [Vector display](#vector-display)).
+  [Vector display](#vector-display)); in the phosphor style a
+  `-- vector style: phosphor, persistence N --` line comes first.
   Content requests (device 4) are carried out between frames and always complete at
   the start of the next frame, so runs are reproducible. For an image with device 4
   the feeds (SPEC 7.7) are those subscribed in `--config` (see [Feeds](#feeds)):
@@ -61,7 +62,7 @@ are supported.
 - The arrival order of entries (the timeline, SPEC 7.7) is kept in
   `<store>/feeds/arrivals`.
 
-`terse-host <image|id> [--relay ws://...] [--store <dir>] [--config <dir>]` opens a
+`terse-host <image|id> [--no-trails] [--relay ws://...] [--store <dir>] [--config <dir>]` opens a
 window and runs the image at 60 frames/s of virtual time. The screen (SPEC 5.4) is
 shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels (11 × 22 at
 the default font size; the glyphs are rasterised at that size, so text is crisp at
@@ -73,9 +74,11 @@ game controllers through [gilrs](https://crates.io/crates/gilrs), numbered in
 order of connection. Content requests run on a background thread and complete at
 the first frame after they finish; with `--relay` the subscribed feeds sync in the
 background and new entries are announced with a feeds-updated event. The window
-closes when the program writes the exit port. `--screenshot <out.png> --frames N
+closes when the program writes the exit port. `--no-trails` shows the phosphor
+display style without its trails (see [Phosphor style](#phosphor-style)). `--screenshot <out.png> --frames N
 [--events <file>] [--size <W>x<H>]` runs headless exactly like `terse run` and writes a
-PNG, of the grid's native size or `W` × `H` pixels with the screen letterboxed in it.
+PNG, of the grid's native size or `W` × `H` pixels with the screen letterboxed in it;
+in the phosphor style the trail is built up over the last 600 frames, as in the window.
 `--selftest <image|id> [--frames N] [--events <file>] [--csv <file>]` runs N frames
 (default 200) in the window with vsync, with only the scripted input (default: the
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
@@ -369,6 +372,40 @@ From C (`programs/lib/terse.h`), the builder appends to a buffer you own:
 Each builder call is a few dozen to 150 T-states (assembly); `vec_tri`, `vec_rect`,
 `vec_circle`, `vec_origin`, `vec_end` and `vec_clear()` are the rest.
 
+### Phosphor style
+
+Port 36h selects the display style (SPEC 8.7): `00h` clean, as above, or `01h`
+phosphor, which imitates a vector monitor. Shapes add light instead of covering
+(opacity is brightness; crossings are brighter), lines and circles glow, nothing
+is filled, and light lingers: every frame the previous picture is multiplied by
+persistence / 256 (port 37h, 160 after reset) before the new list is drawn. From C:
+`vec_style(VEC_STYLE_PHOSPHOR)`, `vec_persistence(200)`. The style and persistence
+are machine state (in the state hash, STATE.md 1.7); the trail is not, and the
+program cannot see it.
+
+`terse_core::vector::decode_outlines` turns a list into what the phosphor style
+draws: a disc becomes a circle, a rectangle four lines and a triangle three, at
+the width in effect, so every host outlines fills the same way. `terse-host` keeps
+a floating-point (RGBA16F, linear light) texture the size of the screen. Once per
+machine frame, not per presented frame, so trails do not depend on the display's
+refresh rate, it multiplies the texture by persistence / 256 (a full-screen pass
+blending with a constant) and adds the outlines: a core at the stated width and an
+exponential glow out to three times the width (at least two screen units past
+the edge). The texture is added to the cell backgrounds in linear light, where a
+channel above 1 spills into the others so bright cores turn white; glyphs are
+drawn on top as usual. Each frame's light is scaled by 1 - persistence / 512, so
+something that stays put settles at about 1.8 times its own light at the default
+persistence (not 2.7) while a moving shape stays bright. Switching style clears
+the texture; resizing the window starts a new one. `--no-trails` treats the
+persistence as 0, for anyone who finds trails distracting. In the clean style
+none of this runs, and the picture is pixel-for-pixel what it was before.
+
+Try it in Sparks (P switches style):
+
+    cargo run --release -p terse-host -- programs/sparks/sparks.terse
+    cargo run --release -p terse-host -- programs/sparks/sparks.terse --no-trails
+    cargo run --release -p terse-host -- programs/sparks/sparks.terse --events programs/sparks/sessions/phosphor.txt --frames 900 --screenshot /tmp/phosphor.png
+
 ## Sparks
 
 `programs/sparks` is a small game for the vector display, in C. Steer a small
@@ -381,13 +418,17 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
     cargo run --release -p terse-host -- programs/sparks/sparks.terse
 
 - Keyboard: Left/Right turn, Up thrusts, Enter starts (and restarts after game
-  over), Esc quits.
+  over), Esc quits, P switches between the clean and the
+  [phosphor](#phosphor-style) display style.
 - Controller 0: d-pad left/right or the left stick turns, A, d-pad up or the stick
-  pushed up thrusts, A or Start starts.
+  pushed up thrusts, A or Start starts, Y switches the display style.
 
 The HUD (row 0) and the title and game-over boxes are terminal text on coloured
 cell backgrounds, so the layer order shows: shapes pass over the backgrounds and
-under the text. The Z80 does all the geometry: a 256-entry sine table and an
+under the text. In the clean style a near-opaque grey rectangle, last in the list,
+hides the shapes behind the boxes; in the phosphor style it becomes a grey frame,
+the shapes show through the box (light cannot be covered) and the text stays
+readable because glyphs are drawn above every shape. The Z80 does all the geometry: a 256-entry sine table and an
 assembly multiply (`fmul`, about 500 T-states) rotate the sweepers and the craft,
 in sixteenths so motion is smooth; the device only receives finished coordinates.
 Randomness is a xorshift generator stirred with port 1Ch, so a run is a function
@@ -398,7 +439,9 @@ the reader); a test fails if `sparks.terse` is out of date. The tests
 (`crates/terse-cli/tests/sparks.rs`) replay two recorded 3,600-frame sessions in
 `programs/sparks/sessions/` (`keys.txt` with the keyboard, `pad.txt` with `pad`
 lines), recorded by a player that only looks at the display list (`cargo test -p
-terse-cli --test sparks record_sessions -- --ignored`). They compare the terminal
+terse-cli --test sparks record_sessions -- --ignored`), and `phosphor.txt`, the
+first 1,000 frames of `keys.txt` with P pressed and controller Y pressed twice,
+which must play the same game (`expected/phosphor-900.txt`). They compare the terminal
 and the decoded display list with `programs/sparks/expected/` (`UPDATE_GOLDEN=1`
 rewrites them), check a replay is identical, and that no frame overruns. To watch a
 recording headless:
@@ -409,7 +452,7 @@ recording headless:
 Measured with `cargo test -p terse-cli --test sparks budget -- --nocapture`: the
 busiest frame is frame 0 (setting up, 37% of the 300,000 T-states); after that at
 most 27%, the demo with six sweepers and eight sparks at most 24%, the median frame
-15%. The display list is about 320 bytes (at most 410). ROM 6,990 bytes, 4 RAM
+15%. The display list is about 320 bytes (at most 410). ROM 7,050 bytes, 4 RAM
 pages.
 
 ## Conformance image
@@ -461,7 +504,9 @@ What it does, by frame (the scripted input is in the frames named):
   it, wide characters at columns 78 and 79 and on the last row, overwriting half of
   a wide pair, malformed UTF-8 (the WHATWG cases, U+FFFF, above U+FFFF), the cell
   pointer (wrap, values of 9,600 and more), palette writes and index wrap;
-- the vector display: a list with every opcode (and bytes after End), every
+- the vector display: a list with every opcode (and bytes after End), the style
+  and persistence ports (phosphor style, an ignored style value, persistence 200;
+  the style goes back to clean when the stress phase starts), every
   rejection (length 0 and 16,385, ranges past the end of RAM, unknown commands), a
   16,384-byte list ending at the last byte of RAM, lists cut short and ending at an
   unknown opcode;

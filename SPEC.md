@@ -532,17 +532,19 @@ right is (10240, 7680). Anything outside the screen is not shown.
 | `34h` | write | List length, bits 8–15 |
 | `35h` | write | Command: `01h` submit, `02h` clear |
 | `35h` | read | Result of the last command: `00h` done, `01h` rejected |
+| `36h` | write | Style: `00h` clean, `01h` phosphor (section 8.7); other values are ignored |
+| `37h` | write | Persistence, 0–255 (section 8.7) |
 
 The address is a linear RAM address (section 7.1). **Submit** copies `length`
 bytes from RAM into the device, replacing the previous list. It is rejected,
 and the previous list kept, if the length is 0 or more than 16,384 or any
 part of the range is outside RAM. **Clear** empties the list. Any other
-command value is rejected. Ports `30h`–`34h` cannot be read (they return
-`FFh`).
+command value is rejected. Ports `30h`–`34h`, `36h` and `37h` cannot be read
+(they return `FFh`).
 
 The list that the device holds at the end of a frame is the one the host
 shows for that frame. After reset the list is empty, the address and length
-are 0 and the result is `00h`.
+are 0, the result is `00h`, the style is clean and the persistence is 160.
 
 ### 8.3 Display list
 
@@ -585,8 +587,8 @@ costs nothing extra.
 
 ### 8.5 Determinism
 
-The device's state is the address, the length, the result and the copy of
-the list. It takes no input from the host.
+The device's state is the address, the length, the result, the style, the
+persistence and the copy of the list. It takes no input from the host.
 
 ### 8.6 Layers
 
@@ -601,6 +603,29 @@ is always behind them. A program that wants a panel of text to hide the
 shapes behind it draws a filled rectangle at the end of its list; the text
 still appears above it. Smoothing of edges and the exact colour of blended
 pixels are up to the host and cannot be observed by the program.
+
+### 8.7 Phosphor style
+
+In the phosphor style the display imitates a vector monitor or oscilloscope
+tube:
+
+- Shapes add light to what is beneath them instead of covering it; where
+  lines cross, the crossing is brighter. Opacity acts as brightness.
+- Lines have a soft glow around them.
+- Nothing is filled: a disc is drawn as a circle outline, and a rectangle or
+  triangle as its outline, all with the current width.
+- Light lingers. Each frame, the light left by earlier frames is multiplied
+  by persistence ÷ 256 before the current list is drawn on top. With
+  persistence 0 there is no trail.
+
+How bright one frame's light is against the trail, the shape of the glow
+and exactly where an outline sits on a shape's edge are up to the host.
+Terminal text does not glow.
+
+The trail is part of how the host presents the display, not machine state,
+and the program cannot observe it. A host should let the user turn trails
+off. The layer order of section 8.6 is unchanged. In the clean style the
+persistence value has no effect.
 
 ---
 

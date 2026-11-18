@@ -23,20 +23,27 @@ use crate::renderer::Renderer;
 /// Font size in logical pixels.
 const FONT_PX: f32 = 18.0;
 
+/// The machine frames whose phosphor light (SPEC 8.7) a `--screenshot`
+/// draws: a trail fades below 2% within 60 frames at persistence 240, and
+/// below 10% within 600 at 255.
+const PHOSPHOR_FRAMES: u64 = 600;
+
 /// How long `--screenshot` waits for feeds to catch up before frame 0.
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
-  terse-host <image|id> [--relay ws://...] [--store <dir>] [--config <dir>]
-  terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>]
+  terse-host <image|id> [--no-trails] [--relay ws://...] [--store <dir>] [--config <dir>]
+  terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--no-trails]
              [--relay ws://...] [--store <dir>] [--config <dir>]
-  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--store <dir>] [--config <dir>]
+  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--no-trails]
+             [--store <dir>] [--config <dir>]
   --config holds the feed subscriptions (default $XDG_CONFIG_HOME/terse, else ~/.config/terse);
   --events is scripted input, as for `terse run`; --size is the picture's size in pixels
   (default: the grid at the font's size), the screen letterboxed in it at 4:3.
   --selftest runs N frames (default 200) in the window with only the scripted input (default:
   the image's name with .events, if that file exists) and prints per-frame timings;
-  --csv writes them per frame.";
+  --csv writes them per frame. --no-trails: the phosphor display style (SPEC 8.7) without
+  persistence.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -53,13 +60,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut screenshot = None;
     let mut frames = None;
     let mut size = None;
-    let (mut selftest, mut csv) = (false, None);
+    let (mut selftest, mut csv, mut no_trails) = (false, None, false);
     let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
+            "--no-trails" => no_trails = true,
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relay = Some(it.next().ok_or(USAGE)?),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
@@ -120,7 +128,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         };
         let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
         let test = selftest::SelfTest::new(script, frames, csv);
-        return app::run(image, content, Some(test));
+        return app::run(image, content, Some(test), no_trails);
     }
     if csv.is_some() {
         return Err(USAGE.into());
@@ -134,10 +142,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 None => Script::default(),
             };
-            take_screenshot(&image, content, script, Path::new(&out), frames, size)?;
+            take_screenshot(&image, content, script, Path::new(&out), frames, size, no_trails)?;
             Ok(ExitCode::SUCCESS)
         }
-        (None, None) if events.is_none() && size.is_none() => app::run(image, content, None),
+        (None, None) if events.is_none() && size.is_none() => app::run(image, content, None, no_trails),
         _ => Err(USAGE.into()),
     }
 }
@@ -172,6 +180,8 @@ async fn request_device(
 /// Runs `frames` frames headless, exactly as `terse run` does (scripted
 /// events, time 0, no random bytes, content requests completed at the next
 /// frame, feeds caught up first), and renders the terminal offscreen to a PNG.
+/// In the phosphor style the trail is built up over the last
+/// `PHOSPHOR_FRAMES` frames, as the window would have shown it.
 fn take_screenshot(
     image: &Image,
     mut content: Option<ContentService>,
@@ -179,30 +189,36 @@ fn take_screenshot(
     out: &Path,
     frames: u64,
     size: Option<(u32, u32)>,
+    no_trails: bool,
 ) -> Result<(), String> {
     if let Some(c) = content.as_mut().filter(|c| c.following())
         && let Err(e) = c.wait_caught_up(SYNC_DEADLINE)
     {
         eprintln!("terse-host: feeds: {e}; running with the entries held locally");
     }
-    let mut machine = Machine::new(image);
-    let mut headless = Headless::new(content, script);
-    for _ in 0..frames {
-        if headless.frame(&mut machine).exit.is_some() {
-            break;
-        }
-    }
-
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let (adapter, device, queue) = pollster::block_on(request_device(Default::default(), &instance))?;
     let info = adapter.get_info();
     eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
-
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX)?));
-    renderer.update(&queue, &terminal_or_blank(&machine));
-    renderer.update_vectors(&queue, machine.vector_list(), machine.vector_generation());
+    renderer.set_no_trails(no_trails);
     let (width, height) = size.unwrap_or(renderer.grid_size());
+
+    let mut machine = Machine::new(image);
+    let mut headless = Headless::new(content, script);
+    for f in 0..frames {
+        if headless.frame(&mut machine).exit.is_some() {
+            break;
+        }
+        if frames - f <= PHOSPHOR_FRAMES && machine.vector().is_some_and(|v| v.phosphor()) {
+            renderer.update_vectors(&queue, machine.vector());
+            renderer.accumulate(&device, &queue, (width, height));
+        }
+    }
+
+    renderer.update(&queue, &terminal_or_blank(&machine));
+    renderer.update_vectors(&queue, machine.vector());
 
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("screenshot"),

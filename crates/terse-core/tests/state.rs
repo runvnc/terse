@@ -41,13 +41,13 @@ fn layout_starts_with_domain_and_image_id() {
     assert_eq!(m.state_hash(), *blake3::hash(&bytes).as_bytes());
     // 13 + 32, CPU 26 + 9, frame loop 4 + 2 + 4 + 1, memory 8 + 4 + RAM,
     // system 4 + 1 + 32 + 2, terminal 1 + 9600 + 6 + 2 + 768 + 2 + 4,
-    // vector 1 + 4 + 2 + 1 + 4, content 1 + 2 + 1 + 8 * 51.
+    // vector 1 + 4 + 2 + 1 + 2 + 4, content 1 + 2 + 1 + 8 * 51.
     let ram = 4 * 8192;
-    let want = 45 + 35 + 11 + 12 + ram + 39 + 10_383 + 12 + 412;
+    let want = 45 + 35 + 11 + 12 + ram + 39 + 10_383 + 14 + 412;
     assert_eq!(bytes.len(), want);
     // Without devices 2-4 each section is one zero byte.
     let bare = machine_with(&asm("halt\n"), &[]).state_bytes();
-    assert_eq!(bare.len(), want - 10_382 - 11 - 411);
+    assert_eq!(bare.len(), want - 10_382 - 13 - 411);
 }
 
 #[test]
@@ -183,6 +183,8 @@ fn vector_state() {
     differs("vector address", "ld a,{}\n out (31h),a\n xor a\n halt\n", "1", "2");
     differs("vector length", "ld a,{}\n out (33h),a\n xor a\n halt\n", "1", "2");
     differs("vector result", "ld a,{}\n out (35h),a\n xor a\n halt\n", "2", "3");
+    differs("vector style", "ld a,{}\n out (36h),a\n xor a\n halt\n", "0", "1");
+    differs("vector persistence", "ld a,{}\n out (37h),a\n xor a\n halt\n", "1", "2");
     // Lists: one byte of RAM, submitted, then RAM restored.
     differs(
         "vector list",

@@ -24,7 +24,12 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// Runs `image` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).
-pub fn run(image: Image, content: Option<ContentService>, selftest: Option<SelfTest>) -> Result<ExitCode, String> {
+pub fn run(
+    image: Image,
+    content: Option<ContentService>,
+    selftest: Option<SelfTest>,
+    no_trails: bool,
+) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
     let mut app = App {
@@ -44,6 +49,7 @@ pub fn run(image: Image, content: Option<ContentService>, selftest: Option<SelfT
         random: vec![0; MAX_RANDOM_READS_PER_FRAME],
         selftest,
         refresh_hz: None,
+        no_trails,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -162,6 +168,8 @@ struct App {
     random: Vec<u8>,
     selftest: Option<SelfTest>,
     refresh_hz: Option<f64>,
+    /// `--no-trails`: the phosphor style without persistence.
+    no_trails: bool,
 }
 
 impl App {
@@ -196,7 +204,10 @@ impl App {
         let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
             gfx.renderer.update(&gfx.queue, &terminal_or_blank(&self.machine));
-            gfx.renderer.update_vectors(&gfx.queue, self.machine.vector_list(), self.machine.vector_generation());
+            gfx.renderer.update_vectors(&gfx.queue, self.machine.vector());
+            // SPEC 8.7: the trail fades once per machine frame.
+            let viewport = gfx.viewport();
+            gfx.renderer.accumulate(&gfx.device, &gfx.queue, viewport);
             gfx.window.request_redraw();
         }
         if let Some(t) = &mut self.selftest {
@@ -299,7 +310,8 @@ impl ApplicationHandler for App {
             return;
         }
         match Gfx::new(event_loop, &self.title) {
-            Ok(gfx) => {
+            Ok(mut gfx) => {
+                gfx.renderer.set_no_trails(self.no_trails);
                 self.refresh_hz = gfx
                     .window
                     .current_monitor()

@@ -5,12 +5,25 @@
 //! list order (source-over, by opacity) and clipped to the screen rectangle.
 //! The screen is the terminal grid's rectangle, which the renderer keeps at
 //! 4:3, so screen units are square (SPEC 5.4) and a circle is round.
+//!
+//! The phosphor style (SPEC 8.7) draws the list's outlines
+//! (`terse_core::vector::decode_outlines`) into a float texture the size of
+//! the screen, once per machine frame: the texture is first multiplied by
+//! persistence / 256 (a full-screen pass that blends with a constant), then
+//! every line and circle adds its light, a bright core at the stated width
+//! and an exponential glow around it. The renderer composites the texture.
 
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
-use terse_core::vector::{MAX_LIST, decode};
+use terse_core::vector::{MAX_LIST, decode, decode_outlines};
 
-/// Most primitives a list can hold: a circle or disc command is 3 bytes.
-pub const MAX_PRIMITIVES: usize = MAX_LIST / 3 + 1;
+/// Most primitives a list can give: a rectangle command is 5 bytes and four
+/// outline lines in the phosphor style (otherwise a 3-byte circle or disc
+/// is the densest).
+pub const MAX_PRIMITIVES: usize = MAX_LIST / 5 * 4 + 4;
+
+/// Format of the phosphor texture: linear light, unclamped, so long trails
+/// fade smoothly and overlaps can exceed 1 (shown white-hot).
+pub const PHOSPHOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 const KIND_LINE: u32 = 0;
 const KIND_CIRCLE: u32 = 1;
@@ -30,6 +43,8 @@ struct Params {
     origin: vec2<f32>,    // the screen's top left in framebuffer pixels
     viewport: vec2<f32>,  // framebuffer size in pixels
     scale: vec2<f32>,     // pixels per sixteenth, x and y
+    glow: f32,            // 1 for the phosphor style: quads leave room for the glow
+    gain: f32,            // phosphor style: brightness of this frame's light
 }
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -63,8 +78,11 @@ fn vs(
     var corner = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
     let c = corner[vi];
     let s = vec2<f32>(f32(c & 1u), f32(c >> 1u)) * 2.0 - 1.0;
-    // Room for the antialiased edge.
-    let ext = max(hw, 0.5 * px_max) + 1.5 * px_max;
+    // Room for the antialiased edge, or for the glow.
+    var ext = max(hw, 0.5 * px_max) + 1.5 * px_max;
+    if u.glow > 0.0 {
+        ext = max(ext, glow_radius(hw) + 1.5 * px_max);
+    }
     var q: vec2<f32>;
     switch kind {
         case 0u: {
@@ -103,6 +121,13 @@ fn vs(
     return out;
 }
 
+// Phosphor glow (sixteenths): it reaches this far from the centre line of a
+// stroke with half width hw (three times the width, at least two screen
+// units past the edge), falling off exponentially.
+fn glow_radius(hw: f32) -> f32 {
+    return max(6.0 * hw, hw + 32.0);
+}
+
 // Coverage of a pixel whose centre is d pixels from the centre line of a
 // stroke hw pixels wide on each side; strokes thinner than a pixel fade
 // instead of thinning.
@@ -139,6 +164,61 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(in.color.rgb, in.color.a * cover);
 }
+
+fn to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+// Brightness of the core and of the glow at the edge of the core.
+const CORE: f32 = 1.1;
+const HALO: f32 = 0.4;
+
+// Phosphor style: the light a line or circle (the only kinds an outline list
+// holds) adds at this pixel, in linear RGB; opacity is brightness.
+@fragment
+fn fs_phosphor(in: Out) -> @location(0) vec4<f32> {
+    let q = (in.pos.xy - u.origin) / u.scale;
+    let px = in.shape.z;
+    let hw = in.shape.y;
+    var d: f32;
+    switch in.kind {
+        case 0u: {
+            let pa = q - in.ends.xy;
+            let ba = in.ends.zw - in.ends.xy;
+            let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+            d = length(pa - ba * h);
+        }
+        case 1u: {
+            d = abs(length(q - in.ends.xy) - in.shape.x);
+        }
+        default: {
+            discard;
+        }
+    }
+    let r = glow_radius(hw);
+    let k = (r - hw) / 3.0;
+    let halo = exp(-max(d - hw, 0.0) / k) * (1.0 - smoothstep(0.6 * r, r, d));
+    let light = max(CORE * stroke(hw / px, d / px), HALO * halo);
+    if light <= 0.0 {
+        discard;
+    }
+    return vec4<f32>(to_linear(in.color.rgb) * in.color.a * light * u.gain, 0.0);
+}
+
+// A triangle covering the target, for the fade.
+@vertex
+fn vs_full(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
+}
+
+// The fade: the blend keeps the target times the blend constant.
+@fragment
+fn fs_fade() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0);
+}
 "#;
 
 /// Instance bytes for one primitive.
@@ -170,22 +250,46 @@ pub struct VectorLayer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     params: wgpu::Buffer,
+    /// Phosphor style: additive, glowing shapes into the phosphor texture
+    /// (own parameters, as that texture is not the target's size), and the
+    /// fade.
+    phosphor_pipeline: wgpu::RenderPipeline,
+    phosphor_bind_group: wgpu::BindGroup,
+    phosphor_params: wgpu::Buffer,
+    fade_pipeline: wgpu::RenderPipeline,
     instances: wgpu::Buffer,
     count: u32,
-    /// The list generation last uploaded.
-    uploaded: Option<u64>,
+    /// The list generation last uploaded, and whether as outlines.
+    uploaded: Option<(u64, bool)>,
     scratch: Vec<u8>,
+}
+
+/// The shader's parameters for a target of `viewport` pixels in which the
+/// screen is `rect`.
+fn params_bytes(viewport: (u32, u32), rect: (f32, f32, f32, f32), glow: bool, gain: f32) -> Vec<u8> {
+    let (x, y, w, h) = rect;
+    let mut bytes = Vec::with_capacity(32);
+    // Equal for a 4:3 rectangle (Renderer::grid_size).
+    let (sx, sy) = (w / (SCREEN_WIDTH as f32 * 16.0), h / (SCREEN_HEIGHT as f32 * 16.0));
+    for v in [x, y, viewport.0 as f32, viewport.1 as f32, sx, sy, glow as u32 as f32, gain] {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes
 }
 
 impl VectorLayer {
     /// `format` is the format of the layer the shapes are drawn into.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("vector params"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let params = uniform("vector params");
+        let phosphor_params = uniform("phosphor params");
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("vector instances"),
             size: (MAX_PRIMITIVES * INSTANCE_BYTES) as u64,
@@ -205,11 +309,15 @@ impl VectorLayer {
                 count: None,
             }],
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vectors"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }],
-        });
+        let group = |params: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("vectors"),
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }],
+            })
+        };
+        let bind_group = group(&params);
+        let phosphor_bind_group = group(&phosphor_params);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("vectors"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -220,29 +328,69 @@ impl VectorLayer {
             immediate_size: 0,
         });
         let attributes = wgpu::vertex_attr_array![0 => Uint32, 1 => Float32x4, 2 => Float32x4, 3 => Unorm8x4];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("vectors"),
-            layout: Some(&pipeline_layout),
+        let shapes = |fs, format, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("vectors"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: INSTANCE_BYTES as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attributes,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = shapes("fs", format, wgpu::BlendState::ALPHA_BLENDING);
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let phosphor_pipeline = shapes("fs_phosphor", PHOSPHOR_FORMAT, wgpu::BlendState { color: add, alpha: add });
+        let keep = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::Constant,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let fade_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("phosphor fade"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("phosphor fade"),
+            layout: Some(&fade_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs"),
+                entry_point: Some("vs_full"),
                 compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: INSTANCE_BYTES as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &attributes,
-                })],
+                buffers: &[],
             },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs"),
+                entry_point: Some("fs_fade"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    format: PHOSPHOR_FORMAT,
+                    blend: Some(wgpu::BlendState { color: keep, alpha: keep }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -253,6 +401,10 @@ impl VectorLayer {
             pipeline,
             bind_group,
             params,
+            phosphor_pipeline,
+            phosphor_bind_group,
+            phosphor_params,
+            fade_pipeline,
             instances,
             count: 0,
             uploaded: None,
@@ -260,15 +412,18 @@ impl VectorLayer {
         }
     }
 
-    /// Uploads the display list, unless `generation` says it is unchanged.
-    pub fn update(&mut self, queue: &wgpu::Queue, list: &[u8], generation: u64) {
-        if self.uploaded == Some(generation) {
+    /// Uploads the display list, unless `generation` says it is unchanged;
+    /// with `outlines`, as the phosphor style draws it.
+    pub fn update(&mut self, queue: &wgpu::Queue, list: &[u8], generation: u64, outlines: bool) {
+        if self.uploaded == Some((generation, outlines)) {
             return;
         }
-        self.uploaded = Some(generation);
+        self.uploaded = Some((generation, outlines));
         self.scratch.clear();
         let mut count = 0;
-        for p in decode(list).take(MAX_PRIMITIVES) {
+        let primitives: &mut dyn Iterator<Item = Primitive> =
+            if outlines { &mut decode_outlines(list) } else { &mut decode(list) };
+        for p in primitives.take(MAX_PRIMITIVES) {
             instance(&p, &mut self.scratch);
             count += 1;
         }
@@ -285,13 +440,7 @@ impl VectorLayer {
             return;
         }
         let (x, y, w, h) = rect;
-        let mut bytes = Vec::with_capacity(32);
-        // Equal for a 4:3 rectangle (Renderer::grid_size).
-        let (sx, sy) = (w / (SCREEN_WIDTH as f32 * 16.0), h / (SCREEN_HEIGHT as f32 * 16.0));
-        for v in [x, y, viewport.0 as f32, viewport.1 as f32, sx, sy, 0.0, 0.0] {
-            bytes.extend_from_slice(&v.to_le_bytes());
-        }
-        queue.write_buffer(&self.params, 0, &bytes);
+        queue.write_buffer(&self.params, 0, &params_bytes(viewport, rect, false, 0.0));
         // Clip to the screen rectangle (SPEC 8.1).
         let x0 = x.max(0.0).floor() as u32;
         let y0 = y.max(0.0).floor() as u32;
@@ -303,6 +452,56 @@ impl VectorLayer {
         pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.instances.slice(..(self.count as u64 * INSTANCE_BYTES as u64)));
+        pass.draw(0..6, 0..self.count);
+    }
+
+    /// One machine frame of the phosphor style (SPEC 8.7), recorded into
+    /// `encoder`: `target` (a [`PHOSPHOR_FORMAT`] texture of `size` pixels
+    /// that is exactly the screen) is multiplied by `persistence` / 256, or
+    /// cleared if `clear`, then the uploaded list (outlines) adds its light.
+    pub fn accumulate(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        persistence: u8,
+        clear: bool,
+    ) {
+        let rect = (0.0, 0.0, size.0 as f32, size.1 as f32);
+        // A shape that stays put builds up to gain / (1 - keep) times its
+        // light; the gain keeps that from washing everything out to white
+        // at the default persistence while a moving shape stays bright.
+        let keep = persistence as f32 / 256.0;
+        let gain = 1.0 - 0.5 * keep;
+        queue.write_buffer(&self.phosphor_params, 0, &params_bytes(size, rect, true, gain));
+        let fade = !clear && persistence > 0;
+        let load = if fade { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("phosphor"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if fade {
+            let keep = keep as f64;
+            pass.set_pipeline(&self.fade_pipeline);
+            pass.set_blend_constant(wgpu::Color { r: keep, g: keep, b: keep, a: keep });
+            pass.draw(0..3, 0..1);
+        }
+        if self.count == 0 {
+            return;
+        }
+        pass.set_pipeline(&self.phosphor_pipeline);
+        pass.set_bind_group(0, &self.phosphor_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..(self.count as u64 * INSTANCE_BYTES as u64)));
         pass.draw(0..6, 0..self.count);
     }
@@ -322,5 +521,16 @@ mod tests {
         assert_eq!(&out[28..32], &48f32.to_le_bytes());
         assert_eq!(&out[32..36], &3f32.to_le_bytes());
         assert_eq!(&out[36..40], &[1, 2, 3, 4]);
+    }
+
+    /// The densest lists fit the instance buffer: all rectangles in the
+    /// phosphor style (4 lines per 5 bytes), all discs otherwise.
+    #[test]
+    fn densest_lists_fit() {
+        let rects: Vec<u8> = [8u8, 1, 0, 1, 0].iter().copied().cycle().take(MAX_LIST).collect();
+        assert_eq!(decode_outlines(&rects).count(), MAX_LIST / 5 * 4);
+        let discs: Vec<u8> = [7u8, 1, 0].iter().copied().cycle().take(MAX_LIST).collect();
+        assert_eq!(decode(&discs).count(), MAX_LIST / 3);
+        assert!(MAX_LIST / 5 * 4 <= MAX_PRIMITIVES && MAX_LIST / 3 <= MAX_PRIMITIVES);
     }
 }

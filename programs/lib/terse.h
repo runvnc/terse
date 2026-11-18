@@ -165,11 +165,16 @@ __sfr __at 0x32 VEC_ADDR2;
 __sfr __at 0x33 VEC_LEN_LO; /* list length, 1 to 16384 */
 __sfr __at 0x34 VEC_LEN_HI;
 __sfr __at 0x35 VEC_CMD;    /* write: VEC_SUBMIT or VEC_CLEAR; read: VEC_DONE or VEC_REJECTED */
+__sfr __at 0x36 VEC_STYLE;  /* write: VEC_STYLE_CLEAN or VEC_STYLE_PHOSPHOR (SPEC 8.7) */
+__sfr __at 0x37 VEC_PERSISTENCE; /* write: 0-255, trail kept per frame in 256ths; 160 at reset */
 #define VEC_SUBMIT 0x01
 #define VEC_CLEAR 0x02
 #define VEC_DONE 0x00
 #define VEC_REJECTED 0x01
 #define VEC_MAX_LIST 16384
+#define VEC_STYLE_CLEAN 0x00
+#define VEC_STYLE_PHOSPHOR 0x01
+#define VEC_PERSISTENCE_DEFAULT 160
 
 /* Coordinates are signed sixteenths of a screen unit: the screen is
  * 10240 x 7680 (VEC_UNIT per screen unit, a cell is 128 x 256). */
@@ -217,6 +222,11 @@ uint8_t vec_submit(uint32_t addr, uint16_t len);
 /* Submits the list built since vec_begin(buf); `buf` must show RAM. */
 uint8_t vec_submit_list(const uint8_t *buf);
 #define vec_clear() (VEC_CMD = VEC_CLEAR)
+/* Phosphor style (SPEC 8.7): shapes add light, glow, are not filled and
+ * leave a trail that fades by persistence / 256 each frame. The program
+ * cannot see the trail; the user may turn it off. */
+#define vec_style(s) (VEC_STYLE = (s))
+#define vec_persistence(p) (VEC_PERSISTENCE = (p))
 
 /* Device 4, content (SPEC 7). A request block must lie in RAM. */
 __sfr __at 0x40 CONTENT_BLOCK_LO;

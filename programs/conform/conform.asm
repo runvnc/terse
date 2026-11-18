@@ -725,7 +725,13 @@ ops_system:
         T_IN V_L1,0FFh
         T_IN V_CMD,0
         T_IN 36h,0FFh
+        T_IN 37h,0FFh
         T_IN 3Fh,0FFh
+        T_OUT 36h,1             ; phosphor style (SPEC 8.7) until the stress phase
+        T_OUT 36h,2             ; ignored
+        T_OUT 37h,200           ; persistence
+        T_IN 36h,0FFh
+        T_IN 37h,0FFh
         T_IN C_B0,0FFh
         T_IN C_B1,0FFh
         T_IN C_SUB,0
@@ -1620,7 +1626,13 @@ ops_vector:
         T_IN V_L0,0FFh
         T_IN V_L1,0FFh
         T_IN 36h,0FFh
+        T_IN 37h,0FFh
         T_IN 3Fh,0FFh
+        T_OUT 36h,1             ; phosphor style (SPEC 8.7) until the stress phase
+        T_OUT 36h,2             ; ignored
+        T_OUT 37h,200           ; persistence
+        T_IN 36h,0FFh
+        T_IN 37h,0FFh
         T_OUT V_L0,0            ; length 0
         T_OUT V_L1,0
         T_OUT V_CMD,1
@@ -2197,7 +2209,9 @@ bad_blocks:
 ; changing) and submits a new 16,384-byte display list: STRESS_A frames of a
 ; list of 4,257 lines, rectangles, triangles, circles and discs, then
 ; STRESS_B frames of 5,456 translucent discs that each cover the screen.
-stress: call build_list_a
+stress: xor a
+        out (36h),a             ; clean style again
+        call build_list_a
         call build_list_b
         ld hl,0
         ld (sframe),hl

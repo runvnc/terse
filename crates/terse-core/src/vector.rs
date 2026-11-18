@@ -18,6 +18,11 @@ pub const CMD_CLEAR: u8 = 0x02;
 /// Results (port 35h reads).
 pub const RESULT_DONE: u8 = 0x00;
 pub const RESULT_REJECTED: u8 = 0x01;
+/// Styles (port 36h writes, SPEC 8.7).
+pub const STYLE_CLEAN: u8 = 0x00;
+pub const STYLE_PHOSPHOR: u8 = 0x01;
+/// Persistence after reset (port 37h, SPEC 8.2).
+pub const DEFAULT_PERSISTENCE: u8 = 160;
 
 /// Display-list opcodes (SPEC 8.3).
 pub mod op {
@@ -33,17 +38,35 @@ pub mod op {
     pub const TRIANGLE: u8 = 0x09;
 }
 
-/// The device state (SPEC 8.5): address, length, result and the list copy.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The device state (SPEC 8.5): address, length, result, style,
+/// persistence and the list copy.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vector {
     /// Linear RAM address, 24 bits.
     addr: u32,
     length: u16,
     result: u8,
+    style: u8,
+    persistence: u8,
     list: Vec<u8>,
     /// Changes whenever the list's contents change (not part of the
     /// machine state; for hosts that cache what they upload).
     generation: u64,
+}
+
+impl Default for Vector {
+    /// The state after reset (SPEC 8.2).
+    fn default() -> Self {
+        Vector {
+            addr: 0,
+            length: 0,
+            result: RESULT_DONE,
+            style: STYLE_CLEAN,
+            persistence: DEFAULT_PERSISTENCE,
+            list: Vec::new(),
+            generation: 0,
+        }
+    }
 }
 
 impl Vector {
@@ -56,6 +79,9 @@ impl Vector {
             0x3 => self.length = (self.length & 0xFF00) | value as u16,
             0x4 => self.length = (self.length & 0x00FF) | (value as u16) << 8,
             0x5 => return self.command(value, memory),
+            // SPEC 8.2: other style values are ignored.
+            0x6 if value == STYLE_CLEAN || value == STYLE_PHOSPHOR => self.style = value,
+            0x7 => self.persistence = value,
             _ => {}
         }
         0
@@ -105,12 +131,36 @@ impl Vector {
         &self.list
     }
 
-    /// Address, length, result and list (STATE.md, vector section); not the
-    /// generation counter.
+    /// The style (port 36h): [`STYLE_CLEAN`] or [`STYLE_PHOSPHOR`].
+    pub fn style(&self) -> u8 {
+        self.style
+    }
+
+    /// True in the phosphor style (SPEC 8.7).
+    pub fn phosphor(&self) -> bool {
+        self.style == STYLE_PHOSPHOR
+    }
+
+    /// The persistence (port 37h), 0-255; the trail is multiplied by
+    /// persistence / 256 each frame (SPEC 8.7).
+    pub fn persistence(&self) -> u8 {
+        self.persistence
+    }
+
+    /// The line `terse run --dump-vectors` prints before the list when the
+    /// style is not clean: `-- vector style: phosphor, persistence N --`.
+    pub fn style_line(&self) -> Option<String> {
+        self.phosphor().then(|| format!("-- vector style: phosphor, persistence {} --", self.persistence))
+    }
+
+    /// Address, length, result, style, persistence and list (STATE.md,
+    /// vector section); not the generation counter.
     pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.addr.to_le_bytes());
         out.extend_from_slice(&self.length.to_le_bytes());
         out.push(self.result);
+        out.push(self.style);
+        out.push(self.persistence);
         out.extend_from_slice(&(self.list.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.list);
     }
@@ -123,6 +173,11 @@ impl Vector {
     /// The list decoded into primitives.
     pub fn primitives(&self) -> Decoder<'_> {
         decode(&self.list)
+    }
+
+    /// The list decoded into outlines, as the phosphor style draws it.
+    pub fn outlines(&self) -> Outlines<'_> {
+        decode_outlines(&self.list)
     }
 }
 
@@ -251,6 +306,54 @@ pub fn dump(list: &[u8]) -> String {
     decode(list).map(|p| format!("{p}\n")).collect()
 }
 
+/// The list as the phosphor style draws it (SPEC 8.7): nothing is filled. A
+/// disc becomes a circle, a rectangle four lines and a triangle three lines,
+/// each with the width in effect at that command; lines and circles pass
+/// through. Every host draws phosphor shapes from this, so they agree on
+/// which outlines a fill becomes.
+pub fn decode_outlines(list: &[u8]) -> Outlines<'_> {
+    Outlines { decoder: decode(list), queued: [None; 4], next: 4 }
+}
+
+/// Iterator over the outline primitives of a list; see [`decode_outlines`].
+/// It yields only [`Primitive::Line`] and [`Primitive::Circle`].
+#[derive(Clone, Debug)]
+pub struct Outlines<'a> {
+    decoder: Decoder<'a>,
+    /// Lines of the last rectangle or triangle not yet returned, from `next`.
+    queued: [Option<Primitive>; 4],
+    next: usize,
+}
+
+impl Iterator for Outlines<'_> {
+    type Item = Primitive;
+
+    fn next(&mut self) -> Option<Primitive> {
+        while self.next < self.queued.len() {
+            self.next += 1;
+            if let Some(p) = self.queued[self.next - 1] {
+                return Some(p);
+            }
+        }
+        let p = self.decoder.next()?;
+        // The width the decoder holds now is the one in effect at `p`.
+        let width = self.decoder.width;
+        let (corners, n, rgba) = match p {
+            Primitive::Line { .. } | Primitive::Circle { .. } => return Some(p),
+            Primitive::Disc { x, y, radius, rgba } => return Some(Primitive::Circle { x, y, radius, width, rgba }),
+            Primitive::Rect { x0, y0, x1, y1, rgba } => ([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], 4, rgba),
+            Primitive::Triangle { x0, y0, x1, y1, x2, y2, rgba } => ([(x0, y0), (x1, y1), (x2, y2), (0, 0)], 3, rgba),
+        };
+        self.queued = [None; 4];
+        for i in 0..n {
+            let ((x0, y0), (x1, y1)) = (corners[i], corners[(i + 1) % n]);
+            self.queued[i] = Some(Primitive::Line { x0, y0, x1, y1, width, rgba });
+        }
+        self.next = 1;
+        self.queued[0]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,7 +461,8 @@ mod tests {
         let v = Vector::default();
         assert_eq!(v.port_in(5), RESULT_DONE);
         assert!(v.list().is_empty());
-        for reg in [0, 1, 2, 3, 4, 6, 0xF] {
+        assert_eq!((v.style(), v.persistence()), (STYLE_CLEAN, 160));
+        for reg in [0, 1, 2, 3, 4, 6, 7, 8, 0xF] {
             assert_eq!(v.port_in(reg), 0xFF, "port 3{reg:X}h is write-only or undefined");
         }
     }
@@ -427,5 +531,69 @@ mod tests {
         assert!(v.list().is_empty());
         assert_ne!(v.generation(), g);
         assert_eq!(v.primitives().count(), 0);
+    }
+
+    #[test]
+    fn style_and_persistence() {
+        let m = ram_with(&[], 0);
+        let mut v = Vector::default();
+        assert_eq!((v.style(), v.persistence()), (STYLE_CLEAN, DEFAULT_PERSISTENCE));
+        assert!(!v.phosphor());
+        assert_eq!(v.style_line(), None);
+        assert_eq!(v.port_out(6, STYLE_PHOSPHOR, &m), 0);
+        assert!(v.phosphor());
+        assert_eq!(v.style_line().unwrap(), "-- vector style: phosphor, persistence 160 --");
+        // Values other than 0 and 1 are ignored.
+        for ignored in [2, 0x80, 0xFF] {
+            v.port_out(6, ignored, &m);
+            assert_eq!(v.style(), STYLE_PHOSPHOR);
+        }
+        v.port_out(6, STYLE_CLEAN, &m);
+        assert_eq!(v.style(), STYLE_CLEAN);
+        for p in [0, 1, 255] {
+            assert_eq!(v.port_out(7, p, &m), 0);
+            assert_eq!(v.persistence(), p);
+        }
+        // Write-only; neither touches the result or the list.
+        assert_eq!((v.port_in(6), v.port_in(7), v.port_in(5)), (0xFF, 0xFF, RESULT_DONE));
+        assert!(v.list().is_empty());
+        let mut state = Vec::new();
+        v.write_state(&mut state);
+        assert_eq!(&state[7..9], &[STYLE_CLEAN, 255]);
+    }
+
+    #[test]
+    fn outlines() {
+        let c = [1, 2, 3, 4];
+        let list = [
+            cmd(op::COLOUR, &c),
+            cmd(op::WIDTH, &[24]),
+            cmd(op::MOVE, &xy(10, 20)),
+            cmd(op::DISC, &500u16.to_le_bytes()),
+            cmd(op::RECT, &xy(30, 40)),
+            cmd(op::WIDTH, &[0]),
+            [cmd(op::TRIANGLE, &xy(50, 20)), xy(10, 60).to_vec()].concat(),
+            cmd(op::CIRCLE, &7u16.to_le_bytes()),
+            cmd(op::LINE, &xy(-1, -2)),
+        ]
+        .concat();
+        let line = |x0, y0, x1, y1, width| Primitive::Line { x0, y0, x1, y1, width, rgba: c };
+        let want = [
+            Primitive::Circle { x: 10, y: 20, radius: 500, width: 24, rgba: c },
+            line(10, 20, 30, 20, 24),
+            line(30, 20, 30, 40, 24),
+            line(30, 40, 10, 40, 24),
+            line(10, 40, 10, 20, 24),
+            line(10, 20, 50, 20, 1),
+            line(50, 20, 10, 60, 1),
+            line(10, 60, 10, 20, 1),
+            Primitive::Circle { x: 10, y: 20, radius: 7, width: 1, rgba: c },
+            line(10, 20, -1, -2, 1),
+        ];
+        assert_eq!(decode_outlines(&list).collect::<Vec<_>>(), want);
+        // Lists without fills are unchanged.
+        let plain = [cmd(op::LINE, &xy(5, 5)), cmd(op::CIRCLE, &[9, 0])].concat();
+        assert_eq!(decode_outlines(&plain).collect::<Vec<_>>(), all(&plain));
+        assert_eq!(decode_outlines(&[]).count(), 0);
     }
 }
