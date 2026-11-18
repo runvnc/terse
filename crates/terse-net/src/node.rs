@@ -140,6 +140,8 @@ pub struct Node {
     feeds: FeedStore,
     subscriptions: Subscriptions,
     identity: Option<Identity>,
+    /// Where the identity is kept, so one can be created when first needed.
+    identity_path: Option<PathBuf>,
     auto_limit: u32,
     /// The last `seq` given to an own entry, so publishes in flight do not
     /// reuse one.
@@ -168,6 +170,7 @@ impl Node {
             ready: Vec::new(),
             subscriptions: Subscriptions::default(),
             identity: None,
+            identity_path: None,
             auto_limit: AUTO_DOWNLOAD_LIMIT,
             last_seq: 0,
             follow: Follow { generation: 0, connected: false, retry_at: None, retry_in: FIRST_RETRY, settled: false },
@@ -206,6 +209,33 @@ impl Node {
     /// The identity whose feed `publish_article` writes to.
     pub fn set_identity(&mut self, identity: Identity) {
         self.identity = Some(identity);
+    }
+
+    /// Keeps the identity in `path` (`identity.key` in the config
+    /// directory): loads it if the file exists; otherwise
+    /// [`Node::ensure_identity`] creates it there when first needed.
+    pub fn set_identity_path(&mut self, path: PathBuf) -> Result<(), String> {
+        if path.exists() {
+            self.identity = Some(Identity::load(&path)?);
+        }
+        self.identity_path = Some(path);
+        Ok(())
+    }
+
+    /// The identity's feed key, if there is an identity.
+    pub fn identity_key(&self) -> Option<FeedKey> {
+        self.identity.as_ref().map(Identity::feed_key)
+    }
+
+    /// The identity, created (and saved) if there is none yet and the node
+    /// has an identity path.
+    pub fn ensure_identity(&mut self) -> Result<FeedKey, String> {
+        if self.identity.is_none() {
+            let path = self.identity_path.as_ref().ok_or("no identity and nowhere to keep one")?;
+            // Another process may have created it meanwhile.
+            self.identity = Some(if path.exists() { Identity::load(path)? } else { Identity::create(path)? });
+        }
+        Ok(self.identity_key().unwrap())
     }
 
     pub fn set_auto_download_limit(&mut self, bytes: u32) {
@@ -264,6 +294,21 @@ impl Node {
         }
     }
 
+    /// Starts publishing blob `id`, which must be in the local store, as the
+    /// next entry of the identity's feed (creating the identity if needed):
+    /// `NotFound` if the store does not hold it.
+    pub fn start_publish_blob(&mut self, token: Token, id: BlobId, title: &str, time: u32) {
+        let data = match self.store.read(&id) {
+            Ok(Some(bytes)) if blob_id(&bytes) == id => bytes,
+            Ok(_) => return self.ready.push((token, Done::NotFound)),
+            Err(_) => return self.ready.push((token, Done::Failed)),
+        };
+        if self.ensure_identity().is_err() {
+            return self.ready.push((token, Done::Failed));
+        }
+        self.start_publish_article(token, &Draft { data, title: title.into(), reply_to: None, time });
+    }
+
     fn publish_entry(&mut self, token: Token, mut entry: Entry) {
         let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
         let Ok(highest) = self.feeds.highest(&entry.feed) else { return self.ready.push((token, Done::Failed)) };
@@ -281,7 +326,14 @@ impl Node {
 
     fn store_own_entry(&mut self, token: Token, signed: &SignedEntry) {
         let done = match self.insert(signed) {
-            Ok(Insert::New | Insert::Duplicate) => Done::Published { seq: signed.entry.seq, blob: signed.entry.blob },
+            Ok(insert @ (Insert::New | Insert::Duplicate)) => {
+                // A new entry of a subscribed feed, like one from the relay
+                // (its article is in the store).
+                if insert == Insert::New && self.subscriptions.contains(&signed.entry.feed) {
+                    self.events.push(FeedEvent::Entry { entry: signed.entry.clone(), article: Article::Local });
+                }
+                Done::Published { seq: signed.entry.seq, blob: signed.entry.blob }
+            }
             _ => Done::Failed,
         };
         self.ready.push((token, done));

@@ -3,6 +3,7 @@
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
 //! - [`identity`]: Ed25519 feed identities and the secret key file (NETWORK 4.1).
+//! - [`local`]: finding a relay when none is named.
 //! - [`entry`]: feed entries, signing and validation (NETWORK 4.2).
 //! - [`feeds`]: stored entries and the subscription list.
 //! - [`protocol`]: relay message encoding (NETWORK 3, 4.3).
@@ -17,6 +18,7 @@ pub mod blob;
 pub mod entry;
 pub mod feeds;
 pub mod identity;
+pub mod local;
 pub mod node;
 pub mod protocol;
 pub mod relay;
@@ -29,5 +31,5 @@ pub use entry::{Entry, SignedEntry};
 pub use feeds::{FeedStore, Subscriptions};
 pub use identity::{FeedKey, Identity};
 pub use node::{Article, Done, Draft, FeedEvent, Node};
-pub use service::{ContentService, FeedCommand};
-pub use store::{BlobStore, default_config_dir, default_store_dir};
+pub use service::{Asked, Consent, ContentService, FeedCommand, Prompt};
+pub use store::{BlobStore, default_config_dir, default_data_dir, default_store_dir};

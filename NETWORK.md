@@ -122,6 +122,12 @@ received first is kept.
   received for them.
 - When connected to a relay it subscribes to each feed with `after` set to
   the highest `seq` it holds.
+- **Subscribing** (by the user, or by a program with the user's consent:
+  SPEC.md section 9.5) adds the feed to the list and, when connected,
+  subscribes to it at once the same way; for a feed the host holds nothing
+  of, `after` is 0, so the relay sends every entry it holds (a relay keeps
+  at least the 256 most recent of each feed, section 4.3). Unsubscribing
+  removes the feed from the list and unsubscribes on the connection.
 - **Automatic download:** when the host receives an entry for a subscribed
   feed whose size is at most 16,384 bytes (the user may change this limit),
   it gets the blob without being asked. If the blob's length differs from the
@@ -132,8 +138,12 @@ received first is kept.
   the timeline that programs read (SPEC.md section 9.5). Unsubscribing
   removes a feed's entries from the timeline but not from the record;
   subscribing again puts them back where they were.
-- Publishing an article: the host puts the blob, then signs and publishes an
-  entry with the next `seq`.
+- Publishing an article (by the user, or by a program with the user's
+  consent: SPEC.md section 9.5): the host puts the blob, then signs and
+  publishes an entry with the next `seq` (one more than the highest it holds
+  or has used for its own feed). The entry is stored locally like a
+  received one; if the host subscribes to its own feed it is in the
+  timeline at once.
 
 ### 4.5 Articles
 
@@ -145,12 +155,11 @@ reading instant.
 
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
-- Letting programs subscribe and publish, with the user's consent. (Reading
-  feeds is specified: SPEC.md section 9.5.)
 - Finding replies to an article, ranking, moderation and spam limits.
 - Key rotation and several feeds per identity.
 - An article markup format.
 - Names: signed, versioned pointers from a public key and a name to a blob.
 - Messages and topics.
-- Relay discovery, relay-to-relay exchange and direct links between hosts.
+- Relay discovery (a host is told which relay to use, or finds one on its
+  own machine), relay-to-relay exchange and direct links between hosts.
 - Abuse limits beyond blob size.

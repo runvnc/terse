@@ -30,6 +30,7 @@ fn serve(requests: Vec<Request>, blobs: &[&[u8]]) -> Vec<Completion> {
                 RequestKind::Subscriptions { .. } | RequestKind::Timeline { .. } => {
                     Outcome::Records { total: 0, data: Vec::new() }
                 }
+                _ => Outcome::Refused,
             };
             Completion { handle, outcome }
         })

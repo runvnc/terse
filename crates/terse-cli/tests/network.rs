@@ -1,14 +1,15 @@
 //! End to end over a relay on an ephemeral loopback port (NETWORK 2, 3):
 //! `terse put` from one store, `terse get` and `terse run` by ID from others.
 
+mod common;
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use terse_net::BlobStore;
 
-const TERSE: &str = env!("CARGO_BIN_EXE_terse");
 
 fn programs() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs")
@@ -24,7 +25,7 @@ fn start_relay(store: &Path) -> String {
 }
 
 fn terse(args: &[&str]) -> Output {
-    Command::new(TERSE).args(args).output().unwrap()
+    common::terse_command().args(args).output().unwrap()
 }
 
 fn terse_ok(args: &[&str]) -> String {

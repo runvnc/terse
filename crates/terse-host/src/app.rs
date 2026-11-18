@@ -1,16 +1,18 @@
 //! The windowed host: winit event loop, 60 frames/s of virtual time, input.
 
+use std::collections::VecDeque;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use terse_core::system::QUEUE_CAPACITY;
 use terse_core::{COLS, Event, FrameInput, Image, MAX_RANDOM_PER_FRAME, Machine, ROWS, buttons};
 use terse_net::ContentService;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{ModifiersState, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::gamepad::Gamepads;
@@ -19,9 +21,40 @@ use crate::keymap::{hid_usage, modifier_bits};
 use crate::page::PageWorker;
 use crate::renderer::{GlyphSource, Renderer};
 use crate::selftest::SelfTest;
-use crate::{FONT_PX, Looks, displayed_terminal, fault_exit, request_device};
+use crate::{FONT_PX, Looks, consent, displayed_terminal, fault_exit, request_device};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
+
+/// The most pasted characters held for delivery.
+const MAX_PASTE: usize = 1 << 20;
+
+/// The characters of pasted text the program receives: newlines (a CR LF
+/// pair or a lone CR counts as one) and no other control characters.
+pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
+    let mut prev = '\0';
+    text.chars().filter_map(move |c| {
+        let out = match c {
+            '\r' => Some('\n'),
+            '\n' if prev == '\r' => None,
+            '\n' => Some('\n'),
+            c if c.is_control() => None,
+            c => Some(c),
+        };
+        prev = c;
+        out
+    })
+}
+
+/// The answer a key press gives the consent prompt: Y yes; N or Esc no;
+/// any other key (Enter included) nothing.
+fn prompt_answer(event: &KeyEvent) -> Option<bool> {
+    match &event.logical_key {
+        Key::Named(NamedKey::Escape) => Some(false),
+        Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(true),
+        Key::Character(c) if c.eq_ignore_ascii_case("n") => Some(false),
+        _ => None,
+    }
+}
 
 /// Runs `image` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).
@@ -33,12 +66,17 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
+    let program = image.title_lossy();
     // SPEC 11.4: the page is laid out on its own thread.
     let page = image.has_device(7).then(|| PageWorker::start(looks.page_fonts.clone()));
     let mut app = App {
         machine: Machine::new(&image),
         content,
         title,
+        program,
+        paste: VecDeque::new(),
+        swallowed: Vec::new(),
+        clipboard: None,
         gfx: None,
         error: None,
         pending: Vec::new(),
@@ -171,6 +209,14 @@ struct App {
     /// Carries out content requests (device 4) off the frame loop.
     content: Option<ContentService>,
     title: String,
+    /// The image's title, as the consent prompt names it.
+    program: String,
+    /// Pasted text not yet delivered, fed in as the event queue has room.
+    paste: VecDeque<char>,
+    /// Keys (HID usages) whose presses went to the host (the prompt, a
+    /// paste), so their releases do too.
+    swallowed: Vec<u8>,
+    clipboard: Option<arboard::Clipboard>,
     gfx: Option<Gfx>,
     error: Option<String>,
     /// Input events collected since the last frame.
@@ -267,6 +313,12 @@ impl App {
         let start = Instant::now();
         // SPEC 7.3: whatever finished since the last frame completes now.
         let completions = self.content.as_mut().map_or_else(Vec::new, ContentService::take_finished);
+        // Pasted text, as much as the queue has room for (with space for
+        // the completions' events and a page anchor), the rest later.
+        let room = QUEUE_CAPACITY
+            .saturating_sub(self.machine.system().queue().len() + self.pending.len() + completions.len() + 1);
+        let n = room.min(self.paste.len());
+        self.pending.extend(self.paste.drain(..n).map(Event::text));
         let input =
             FrameInput { events: &self.pending, unix_time, random: &self.random, completions: &completions, controllers };
         let result = self.machine.run_frame(&input);
@@ -289,7 +341,17 @@ impl App {
         let emulate = start.elapsed();
         let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
-            gfx.renderer.update(&gfx.queue, &displayed_terminal(&self.machine));
+            let shown = displayed_terminal(&self.machine);
+            match self.content.as_ref().and_then(|c| c.prompt().map(|p| (p, c.prompts_waiting()))) {
+                Some((prompt, waiting)) => {
+                    gfx.renderer.update(&gfx.queue, &consent::with_prompt(&shown, &self.program, prompt, waiting));
+                    gfx.renderer.set_overlay(Some(consent::FIRST_ROW));
+                }
+                None => {
+                    gfx.renderer.update(&gfx.queue, &shown);
+                    gfx.renderer.set_overlay(None);
+                }
+            }
             gfx.renderer.update_vectors(&gfx.queue, self.machine.vector());
             gfx.renderer.update_page(self.machine.page(), self.page.as_ref().and_then(|w| w.shown.clone()));
             // SPEC 8.7: the trail fades once per machine frame.
@@ -318,15 +380,62 @@ impl App {
             return;
         }
         let pressed = event.state == ElementState::Pressed;
-        if let PhysicalKey::Code(code) = event.physical_key
-            && let Some(usage) = hid_usage(code)
-        {
+        let usage = match event.physical_key {
+            PhysicalKey::Code(code) => hid_usage(code),
+            _ => None,
+        };
+        // SPEC 9.5: while the host asks for consent, the keyboard is the host's.
+        if pressed && self.content.as_ref().is_some_and(|c| c.prompt().is_some()) {
+            self.swallowed.extend(usage);
+            if !event.repeat
+                && let Some(allow) = prompt_answer(&event)
+            {
+                self.content.as_mut().unwrap().answer(allow);
+            }
+            return;
+        }
+        // The release of a key whose press the host took.
+        if !pressed && let Some(u) = usage {
+            if let Some(i) = self.swallowed.iter().position(|&s| s == u) {
+                self.swallowed.swap_remove(i);
+                return;
+            }
+        }
+        // Paste: Ctrl+V or Shift+Insert gives the clipboard's text as text events.
+        let ctrl_v = self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyV);
+        let shift_insert = self.modifiers.shift_key() && event.physical_key == PhysicalKey::Code(KeyCode::Insert);
+        if pressed && (ctrl_v || shift_insert) {
+            self.swallowed.extend(usage);
+            self.paste_clipboard();
+            return;
+        }
+        if let Some(usage) = usage {
             let mods = modifier_bits(self.modifiers);
             self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
         }
         if pressed && let Some(text) = &event.text {
             self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
         }
+    }
+
+    /// Queues the clipboard's text for delivery as text events (SPEC 5):
+    /// newlines kept, other control characters dropped.
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(c) => self.clipboard = Some(c),
+                Err(e) => return eprintln!("terse-host: clipboard: {e}"),
+            }
+        }
+        let text = match self.clipboard.as_mut().unwrap().get_text() {
+            Ok(t) => t,
+            Err(e) => return eprintln!("terse-host: clipboard: {e}"),
+        };
+        let room = MAX_PASTE.saturating_sub(self.paste.len());
+        self.paste.extend(paste_chars(&text).take(room));
     }
 
     /// Pointer movement and wheel steps gathered since the last frame,
@@ -477,5 +586,14 @@ impl ApplicationHandler for App {
             }
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pasted_text_keeps_newlines_only() {
+        let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
+        assert_eq!(got, "ab\nc\nd\ne[0mé日");
     }
 }

@@ -11,6 +11,63 @@ through a relay; this repository is the first prototype of all three.
 Shell commands below are written for fish; they also work in bash and zsh
 unless they set variables (`set X value` in fish is `X=value` in bash).
 
+## Getting started
+
+With a Rust toolchain (see [Build, run, test](#build-run-test) if `cargo` is
+not on your `PATH`), one command builds everything and opens the feed reader
+with three sample articles:
+
+    cargo run --release -p terse-host -- --demo
+
+The first time, this creates your feed key (`~/.config/terse/identity.key`),
+subscribes you to your own feed, and publishes the three articles to it. It
+uses a relay found as described below, starting one inside `terse-host` if
+none is running. Running `--demo` again publishes nothing new. After that,
+`cargo run --release -p terse-host` (no image named) runs the reader.
+
+In the reader: Up and Down choose an article, Enter opens it, Esc goes back
+(and quits from the timeline); F manages the feeds you follow; ? (or F1)
+shows help and your own feed key; T on the help page publishes a test
+article. See [The reader](#the-reader).
+
+**The consent prompt.** A program may ask the host to subscribe to a feed,
+unsubscribe from one, or publish an article in your name (SPEC 9.5). The
+host then shows its own prompt over the bottom four rows of the window,
+naming the program and what it asks (a feed key such as `3fa9c2…c21e07`,
+or the article's title and size). Press Y to allow, N or Esc to refuse;
+Enter does nothing. While the prompt is up, the keyboard goes to the host,
+not to the program, and the program can neither see nor draw over the
+prompt. Several requests are asked about one at a time.
+
+**Which relay.** Without `--relay`, `terse-host` uses, in this order: the URL
+in the file `relay` in the config directory (`terse relay set <url>` writes
+it); a relay already accepting connections on `ws://127.0.0.1:7878`; or one
+it starts itself on that port, for as long as it runs, with its store in
+`~/.local/share/terse/relay` (`$XDG_DATA_HOME/terse/relay`). It prints one
+line on stderr saying which. `--relay none` runs without a network. The
+`terse` commands that use a relay (`put`, `get`, `info`, `feed publish`,
+`feed sync`, `feed read`) look for one the same way, but never start one.
+
+**Sharing with someone else.** One of you runs a relay that the other can
+reach, listening on all interfaces (it listens on loopback only by default),
+before starting `terse-host`, which then finds it on port 7878:
+
+    cargo run --release -p terse-relay -- --listen 0.0.0.0:7878 --store ~/terse-relay
+
+The other names it once, then runs the reader as usual:
+
+    cargo run --release -p terse-cli --bin terse -- relay set ws://their-host:7878
+    cargo run --release -p terse-host
+
+Exchange feed keys (press ? in the reader to see yours in full; read it out
+or send it), then in the reader press F, then S, type or paste the other's
+key (Ctrl+V or Shift+Insert pastes into the program), press Enter and
+answer Y. Everything the other has published, and everything they publish
+from then on, appears in your timeline. The relay protocol is plain
+WebSocket (`ws://`) without encryption or accounts: anyone who can reach
+the relay can read and publish through it; entries are signed, so nobody
+can publish in your name.
+
 ## Build, run, test
 
 Requires a Rust toolchain (edition 2024). If `cargo` is not on your `PATH`
@@ -35,7 +92,7 @@ images were built with clang and LLD 23.1.4.
 
 `terse` commands:
 
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -54,7 +111,9 @@ images were built with clang and LLD 23.1.4.
   with `--relay`, `run` first syncs them until caught up (NETWORK 4.3; a warning and
   the local entries if that fails within 60 s), then keeps following them while the
   machine runs; an entry stored during frame N is announced by a feeds-updated event
-  in frame N + 1.
+  in frame N + 1. A program's requests to subscribe, unsubscribe or publish (SPEC 9.5)
+  cannot be asked about headless: `--consent` says how they are answered (default
+  `deny`: status Refused). `run` uses a relay only with `--relay`.
   `--hash` prints the machine's state hash ([STATE.md](STATE.md)) after the last
   frame as 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame
   whose frame counter is a multiple of N (after frames N, 2N, …). `--bench` prints,
@@ -69,11 +128,15 @@ images were built with clang and LLD 23.1.4.
   shell's numeric status (143 in fish and bash) could be mistaken for a program
   that exits with 143.
 - `info <image|id>` prints the header fields and the image ID (BLAKE3-256).
-- `put <file>` stores a blob (and sends it to `--relay`) and prints its ID;
+- `put <file>` stores a blob (and sends it to the relay) and prints its ID;
   `get <id> [-o <file>]` fetches one; `hash <file>` prints a file's blob ID.
+  `info`, `put` and `get` take `--relay ws://...|none`, `--store` and `--config`, and
+  find a relay as [Getting started](#getting-started) says when `--relay` is not given.
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
 - `key new|show` and `feed …`: feeds, see [Feeds](#feeds).
+- `relay set <ws://host:port>` writes the relay URL to `<config>/relay`; `relay show`
+  prints it (exit status 1 if there is none).
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relay;
 the bytes are verified against the ID. `--store` defaults to
@@ -81,8 +144,16 @@ the bytes are verified against the ID. `--store` defaults to
 are supported. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
-opens a window and runs the image at 60 frames/s of virtual time. The screen
+`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]`
+opens a window and runs the image at 60 frames/s of virtual time; with no image it
+runs the reader, which is built into the binary (`programs/reader/reader.terse`), and
+with `--demo` it first sets up the sample articles ([Getting started](#getting-started)).
+The relay is found or started as Getting started says. `--consent` answers the
+program's requests to subscribe, unsubscribe and publish: `ask` (the default) shows the
+host's prompt, `allow` and `deny` answer every one without asking. Ctrl+V and
+Shift+Insert paste: the clipboard's text goes to the program as text events (SPEC 5),
+newlines kept and other control characters dropped, fed in only as fast as the event
+queue has room, so none is lost. The screen
 (SPEC 7) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
@@ -102,12 +173,13 @@ phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 `--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
 `--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
-`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>]` runs
-headless like `terse run` (but the page is laid out with this host's fonts, between
+`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo]` runs
+headless like `terse run` (relay only with `--relay`; consent `deny` unless given; with
+`ask` a prompt is left unanswered and shown in the picture) (but the page is laid out with this host's fonts, between
 frames, so the picture shows the finished layout) and writes a PNG, of the grid's native size or
 `W` × `H` pixels with the screen letterboxed in it; in the phosphor style the
 afterglow is built up over the last 600 frames, as in the window.
-`--selftest <image|id> [--frames N] [--events <file>] [--csv <file>]` runs N frames
+`--selftest <image|id> [--frames N] [--events <file>] [--csv <file>] [--consent allow|deny]` runs N frames
 (default 200) in the window with vsync, with only the scripted input (default: the
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
 ignored), and prints timings: see [Conformance image](#conformance-image).
@@ -137,9 +209,10 @@ A feed is a numbered series of signed entries from one Ed25519 key, each pointin
 to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
 `feed` commands take `--relay`, `--store` and `--config`:
 
-- `--config <dir>` holds the secret key (`identity.key`, mode 0600, never printed)
-  and the subscription list (`subscriptions`). Default `$XDG_CONFIG_HOME/terse`,
-  else `~/.config/terse`.
+- `--config <dir>` holds the secret key (`identity.key`, mode 0600, never printed),
+  the subscription list (`subscriptions`) and the relay URL (`relay`). Default
+  `$XDG_CONFIG_HOME/terse`, else `~/.config/terse`. A host creates the identity
+  itself when a program first publishes.
 - Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`.
 
 Commands:
@@ -149,7 +222,7 @@ Commands:
 - `feed publish <file> --title <t> [--reply-to <blob id>]` puts the article and
   publishes the next entry of your feed; prints `seq N blob <id>`.
 - `feed subscribe <key>`, `feed unsubscribe <key>`, `feed subscriptions`.
-- `feed sync [--watch] [--auto-download <bytes>]` connects to `--relay`, receives
+- `feed sync [--watch] [--auto-download <bytes>]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
   articles up to 16,384 bytes (or `--auto-download`). One line per new entry:
   time (UTC, as claimed by the author), feed key prefix, seq, size, article
@@ -200,15 +273,20 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          bytes, controllers, content completions) are passed in.
     crates/terse-net/    host side of device 4 and feeds: blob store, identities, entries,
                          feed store, relay protocol, relay client (behind a small
-                         Transport trait), content service thread
-    crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay
+                         Transport trait), content service thread (with the consent
+                         policy and the queue of requests waiting for an answer),
+                         local.rs (finding a relay: the config file, the local port)
+    crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay (a library too:
+                         `terse-host` runs one in-process when it finds none)
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
                          conform.rs)
     crates/terse-host/   `terse-host`: winit + wgpu window; renderer.rs is the
                          window-independent renderer (terminal, vectors.rs's shapes, the
-                         phosphor tube: SPEC 10.5, 10.6); page.rs lays the page out with
-                         cosmic-text on a worker thread and draws it
+                         phosphor tube: SPEC 10.5, 10.6, and the host's overlay); page.rs
+                         lays the page out with cosmic-text on a worker thread and draws
+                         it; consent.rs the consent prompt; setup.rs the relay choice and
+                         --demo, whose articles are in demo/
     programs/lib/        what a program needs: crt0.S, terse.ld (the memory map), terse.h
                          and terse.c (the calls, a display-list builder, content requests)
     programs/hello/      demo program in assembly: hello.S, build.sh, the built hello.terse
@@ -310,20 +388,44 @@ sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 
 ## The reader
 
-`programs/reader` is a feed reader written in C: the timeline of the subscribed
-feeds, newest first, on the terminal, and articles typeset on the
-[page](#page). Keys: Up/Down, PageUp/PageDown, Home/End and the wheel move; Enter or
-a click on the selected entry opens it; Esc, Backspace or Left go back; Esc in the
-list quits. A row shows the age
-of the entry (or its UTC date and time when the host gives no clock), the first 8
-hex digits of the feed key, `✓` if the article is in the local store, `↳` for a
-reply, and the title; `•` marks entries that arrived while it runs, until opened.
-New entries appear without a key press.
+`programs/reader` is a feed reader written in C, and the program `terse-host` runs
+when no image is named. Every view is typeset on the [page](#page) in the sans face;
+the terminal shows only the status row (row 29: key hints, the position such as
+`2/3`, or the outcome of the last action) and, while a feed key is typed, row 28.
 
-**The article view.** The title bar (row 0) and the status bar (row 29) stay on the
-terminal; the page fills the rows between, as a centred column 512 units wide (about
-68 characters of 15-unit body text in the reference layout, a comfortable measure),
-with a transparent background. It shows the title (26 units, bold), a grey line
+- **Timeline** (newest first): one entry per paragraph, the title, then a dimmer line
+  with the feed key's short form (`3fa9c2…c21e07`), the date and time (UTC), the
+  size, and `↳ reply` or `not downloaded` when they apply. The selected entry is in
+  amber. Up/Down, PgUp/PgDn, Home/End and the wheel (3 entries a step) move the
+  selection; Enter, or a click on an entry, opens it; F feeds; ? or F1 help; T
+  publishes a test article; Esc quits. With no entries, a page says so and which
+  keys to press. New entries appear without a key press.
+- **Feeds** (F): the subscribed feeds, each with its short key (`you` marks your own),
+  the highest entry number and how many entries are held. S opens the key entry on
+  row 28: type or paste a feed key (whitespace is ignored, so the grouped form from
+  the help page pastes as is); Enter subscribes (the host asks you), Esc cancels,
+  Backspace deletes; a malformed key is reported on the status row. U unsubscribes
+  from the selected feed. Esc, Backspace or Left go back.
+- **Help** (? or F1): the keys of every view and your own feed key in full, in the
+  monospaced face, in groups of eight hex digits. T publishes a test article
+  ("Test article N", a few paragraphs with the frame and time in them): the reader
+  puts it (op 02h), publishes it (op 07h), and if you do not yet follow your own
+  feed, subscribes to it (op 05h) so that the article shows in the timeline; each
+  step's outcome (published, refused, failed) appears on the status row. T also
+  works from the timeline and feeds views.
+
+The timeline and feeds lists are virtual: the page holds a heading and only the
+entries from the top of the visible window on (at most 24), every one laid out the
+same way (one title line of 16 units and one detail line of 12, neither wrapped), so
+the height of the whole document, which the page's height event reports, divided by
+the number of entries plus one gives the height of an entry with the host's fonts.
+From that the reader knows how many entries are fully visible and scrolls the window
+to keep the selection in it; each move submits a new, small document.
+
+**The article view.** The status bar (row 29) stays on the terminal; the page fills
+the rows above it, as a centred column 512 units wide (about 68 characters of 15-unit
+body text in the reference layout, a comfortable measure), on an opaque dark
+background. It shows the title (26 units, bold), a grey line
 (feed key prefix, entry number, date, size, and `↳ reply` for a reply), a rule, then
 the article. The body is split into blocks at blank lines; a block in which some
 line starts with a space or tab is preformatted (monospace, no wrapping, line breaks
@@ -332,9 +434,10 @@ spaces. Bare `http://` and `https://` URLs (up to whitespace, `<`, `>` or `"`, w
 trailing punctuation and unbalanced closing brackets left out) get an anchor and a
 link colour; pressing one shows the URL in the status bar, since there is no
 browser. Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
-line (428), the wheel by 60 a step, Home/End to the ends; the reader clamps its
-scroll value with the height from the page's height event and shows the percentage
-read in the status bar (none until the first height arrives; nothing waits for it).
+line, the wheel by 60 a step, Home/End to the ends; the reader clamps its scroll
+value with the height from the page's height event and shows in the status bar how
+far it is scrolled, 0% at the top and 100% at the bottom (nothing until the first
+height arrives, and nothing when the article fits; nothing waits for it).
 
 The document is built over several frames (at most about 80,000 units of work a
 frame) and submitted after the first frame's share, then whole when it is complete,
@@ -376,19 +479,28 @@ Two authors and a reader on one machine, each with their own store and config:
 
     # Headless, with scripted keys: select the second entry and open it.
     printf '10 press down\n12 press enter\n' > /tmp/terse-demo/keys.txt
-    $T run programs/reader/reader.terse $R --events /tmp/terse-demo/keys.txt --frames 30 --dump
+    $T run programs/reader/reader.terse $R --events /tmp/terse-demo/keys.txt --frames 30 --dump --dump-page
 
-    # Publish while terse-host runs: the entry appears at the top, marked •.
+    # Publish while terse-host runs: the entry appears at the top.
     $T feed publish /tmp/terse-demo/a.txt --title "Live" $A
 
 Measured with the golden-test fixture (`cargo test --release -p terse-cli --test
-reader timing -- --nocapture`), headless with the reference layout: an
-already-local 6 KB article is submitted in the frame after Enter and its height
-arrives in the next; a 48 KiB article is submitted partly in the frame after Enter
-and whole ten frames later. The busiest frame (the first building frame of the
-48 KiB article) uses 86,511 units (69% of 125,000), a typical frame 268; no frame
-runs out of budget. ROM 12,692 bytes, 17 RAM pages (the 64 KiB document and the
-48 KiB article).
+reader -- --nocapture`), headless with the reference layout: a Down key submits the
+document with the new selection in the same frame and its height arrives in the
+next; the list is drawn 3 frames after reset; an already-local article is submitted
+2 frames after Enter (a stand-in page with its title in the Enter frame) and its
+height arrives in the next; the whole height of a 48 KiB article arrives 13 frames
+after Enter. The busiest frame uses 78,769 units (63% of 125,000, building the
+document of an article of wide characters); outside the article view at most 28,833
+(23%, publishing a test article); a typical frame 111; no frame runs out of budget.
+ROM 23,108 bytes, 22 RAM pages (the 64 KiB document, the 48 KiB article, the
+timeline records).
+
+In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
+entries, 13 Down then 13 Up presses 8 frames apart, the list window scrolling): every
+list document was laid out in 0.6–0.7 ms and its height queued at the start of the
+frame after the key's frame, so the new highlight is on screen in the next presented
+frame, one frame (about 17 ms at 60 Hz) after the key; 290 of 290 frames presented.
 
 In the window (`TERSE_PAGE_TRACE=1 terse-host --selftest …` with a script that
 presses Enter on the 2.6 KB fixture article in frame 12, release build): submitted
@@ -759,7 +871,7 @@ recorded sessions.
 |---|---|---|---|---|---|
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 12,692 bytes | 17 pages | 86,511 (69%, building a 48 KiB article's document) | 268 (0.2%) | 71 µs (with the content service) |
+| reader | 23,108 bytes | 22 pages | 78,769 (63%, building an article's document) | 111 (0.1%) | — |
 | sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 

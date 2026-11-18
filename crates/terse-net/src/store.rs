@@ -143,6 +143,14 @@ pub fn default_store_dir() -> Option<PathBuf> {
     Some(user_dir("LOCALAPPDATA", "XDG_CACHE_HOME", ".cache")?.join("blobs"))
 }
 
+/// The default directory for data a host keeps for itself (the relay
+/// `terse-host` starts keeps its store in `relay` there):
+/// `$XDG_DATA_HOME/terse`, else `~/.local/share/terse` (`%LOCALAPPDATA%\terse`
+/// on Windows).
+pub fn default_data_dir() -> Option<PathBuf> {
+    user_dir("LOCALAPPDATA", "XDG_DATA_HOME", ".local/share")
+}
+
 /// The default directory for the identity and subscriptions:
 /// `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`%APPDATA%\terse` on
 /// Windows).

@@ -1,20 +1,40 @@
 /* reader.c: a feed reader for Terse (machine profile 1, RV32IMC).
  *
- * Lists the timeline of the feeds the host subscribes to (SPEC 9), newest
- * first, on the terminal, and shows an article (NETWORK 4.5: plain UTF-8)
- * on the page device (SPEC 11) as a centred column of typeset text.
+ * Shows the timeline of the feeds the host subscribes to (SPEC 9), newest
+ * first, the subscribed feeds, a help page and articles (NETWORK 4.5: plain
+ * UTF-8), all on the page device (SPEC 11) in the sans face. The terminal
+ * shows only the status row (29: key hints, the reading position, the
+ * outcome of a request) and, while a feed key is being typed, the entry row
+ * (28). The rows under the page are blank, in the colour of the page's
+ * background (xterm 234, (28, 28, 28)), which is opaque.
  *
- * Every frame it handles the queued events, does a bounded share of the
- * work in hand (turning article bytes into the page document), draws every
- * terminal row that changed and waits for the next frame. A row is built
- * as 80 cells in RAM and written with one cells call (SPEC 8.2).
+ * Every frame it handles the queued events, rebuilds and submits the page's
+ * document if what it shows changed, does a bounded share of the work in
+ * hand (turning article bytes into the page document), draws the terminal
+ * rows that changed and waits for the next frame.
  *
- * The article view: row 0 (the title) and row 29 (status) are terminal
- * rows; the page's rectangle covers rows 1-28 (y 16-464), x 64-576: 512
- * units, about 68 characters of 15-unit body text, centred, with a
- * transparent background, and the cells under it blank. The document is
- * the title (26 units, bold), a grey line (feed key, sequence number, date,
- * size), a rule, then the article. Its text, by this rule:
+ * The lists (timeline and feeds). A program never learns where the page put
+ * a line, only the height of the whole document, so a list is virtualised:
+ * its document holds a header slot and the entries from `top` on that fit
+ * on the screen, plus one more (partly shown), and it is submitted again
+ * whenever the selection or `top` changes. Every slot has the same shape:
+ * one no-wrap paragraph with SLOT_SPACE above it, a line of SLOT_TITLE text,
+ * a line break and a line of SLOT_META text, no trailing break. A line's
+ * height depends only on face and size, so a list document of s slots is s
+ * times one slot high: the height event of a list document gives the slot
+ * height e = H / s exactly, and floor(rectangle height / e) - 1 entries are
+ * wholly visible. Until a height arrives e is estimated (1.35 x the sizes);
+ * a height that is not a whole number of slots, or gives an implausible
+ * slot, belongs to another document and is ignored. Titles are cut at the
+ * rectangle's edge (no wrap); control characters and line or paragraph
+ * separators in them become spaces, so a slot always has two lines. Each
+ * entry is an anchor (its index + 1): a click on it opens it (timeline) or
+ * selects it (feeds). The selection is shown by colour.
+ *
+ * The article view: the page's rectangle covers rows 0-28 (y 0-464), x
+ * 64-576: 512 units, about 68 characters of 15-unit body text, centred.
+ * The document is the title (26 units, bold), a grey line (feed key, entry
+ * number, date, size), a rule, then the article. Its text, by this rule:
  *   - Lines end at LF. A line of only spaces, tabs and CRs is blank; blank
  *     lines separate blocks (any number of them, one break).
  *   - A block in which any line starts with a space or a tab is
@@ -34,7 +54,8 @@
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
- * much is shown.
+ * much is shown. While the article is fetched (or if it cannot be), a
+ * short document with its title and a message stands in.
  *
  * Building the document costs about 9 units per byte of prose (more for
  * short paragraphs and links), so it is spread over frames: each frame
@@ -42,40 +63,53 @@
  * never below the real one. The document is submitted at the end of the
  * first frame of building, partial if need be (so the first screenful
  * appears at once), and again, whole, when it is complete; the 48 KiB
- * fixture article takes 11 frames. The program keeps the scroll value itself: Up/Down move one
- * body line (LINE units), PgUp/PgDn/Space the rectangle less a line, the
- * wheel three lines a step, Home/End the ends. It clamps the value to
- * 0 .. height - 448 with the latest height event (08h) and calls `scroll`
- * whenever it changes, also after each submit (which resets it). Until the
- * first height arrives, moves are only kept from going below 0, End is
- * remembered (it also follows the height of the whole document when it
- * comes) and the status row shows no percentage.
+ * fixture article takes 11 frames. The program keeps the scroll value
+ * itself: Up/Down move one body line (LINE units), PgUp/PgDn/Space the
+ * rectangle less a line, the wheel three lines a step, Home/End the ends.
+ * It clamps the value to 0 .. height - 464 with the latest height event
+ * (08h) and calls `scroll` whenever it changes, also after each submit
+ * (which resets it). Until the first height arrives, moves are only kept
+ * from going below 0, End is remembered (it also follows the height of the
+ * whole document when it comes) and the status row shows no position. The
+ * position is 0% at the top and 100% at the end, and not shown when the
+ * document fits. The help page scrolls the same way.
+ *
+ * Feeds: the subscriptions (op 03h: key and highest seq), how many
+ * timeline entries each has (counted by reading the whole timeline, one
+ * request a frame) and a "you" mark on the host's own feed (op 08h). S
+ * opens the entry row for a feed key (typed or pasted; whitespace is
+ * ignored; Enter subscribes, op 05h), U unsubscribes from the selected
+ * feed (op 06h). T (in every view but the article) publishes a test
+ * article: put (02h), publish (07h), identity again (08h) and, if the own
+ * feed is not subscribed, subscribe to it, so that the article shows in
+ * the timeline. The host asks the user about each subscribe, unsubscribe
+ * and publish; the status row says what came of it.
  *
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
- * timeline buffer, up to 48 KiB of the article (ART_CAP) and the 64 KiB
- * document. The timeline buffer holds one request's worth of records: 70
- * entries with 120-byte titles to 147 with empty ones. */
+ * timeline buffer, a 16 KiB buffer for counting, 16 KiB of subscription
+ * records, up to 48 KiB of the article (ART_CAP), the 64 KiB article
+ * document and an 8 KiB document for the other views. The timeline buffer
+ * holds one request's worth of records: 70 entries with 120-byte titles to
+ * 147 with empty ones. */
 
 #include <stdint.h>
 #include "terse.h"
 
 #define COLS TERM_COLS
-#define LIST_ROWS 28 /* rows 1-28; 0 is the title bar, 29 the status bar */
+#define ENTRY_ROW 28
 #define STATUS_ROW 29
 
 /* xterm palette indexes (SPEC 8.5). */
 #define C_TEXT 252
 #define C_DIM 244
-#define C_BG 0
+#define C_BG 234 /* (28, 28, 28): the page's background */
 #define C_BAR_FG 231
 #define C_BAR_BG 24
 #define C_BAR_DIM 109
-#define C_SEL_BG 238
-#define C_KEY 139
-#define C_LOCAL 71
-#define C_REPLY 73
-#define C_NEW 220
-#define C_ERROR 203
+#define C_ENTRY_BG 237
+#define C_OK 120
+#define C_ERROR 210
+#define C_INFO 229
 
 /* Timeline records (SPEC 9.5): L, flags, then the entry (NETWORK 4.2). */
 #define R_FLAGS 1
@@ -90,15 +124,19 @@
 
 #define TL_BUF_LEN 16384
 #define MAX_RECORDS 148 /* TL_BUF_LEN / 111, the smallest record */
+#define MAX_SUBS 455    /* 16,384 / 36 */
 
 #define ART_CAP 49152u
 #define CHUNK 16384u
 
-/* The page: the rectangle, in screen units, and the document. */
+/* The page. Lists: a wide column; the article, help and the empty
+ * timeline: a centred column 512 units wide. Both cover rows 0-28. */
+#define PAGE_H 464
+#define LIST_X 32
+#define LIST_W 576
 #define RECT_X 64
-#define RECT_Y 16
 #define RECT_W 512
-#define RECT_H 448
+#define RECT_H PAGE_H
 #define LINE 20 /* one line of body text: what Up and Down move */
 #define TITLE_SIZE 26
 #define META_SIZE 12
@@ -109,7 +147,18 @@
 #define NOTE_SIZE 13
 #define DOC_CAP 65536u
 #define DOC_RESERVE 128 /* kept for the closing note and End */
+#define LDOC_CAP 8192u
 #define MAX_LINKS 512
+/* List slots: sizes, the space above each and the estimate of its height
+ * (1.35 x each size, rounded up) until the first height event; heights
+ * that give a slot outside E_MIN .. E_MAX are not a list's. */
+#define SLOT_TITLE 16
+#define SLOT_META 12
+#define SLOT_SPACE 8
+#define E_GUESS (SLOT_SPACE + 22 + 17)
+#define E_MIN (SLOT_SPACE + SLOT_TITLE + SLOT_META)
+#define E_MAX (SLOT_SPACE + 3 * (SLOT_TITLE + SLOT_META))
+#define MAX_VIS 24
 /* Building the document is paid for from BUILD_UNITS estimated budget
  * units a frame, so that a frame that also draws every row and submits the
  * whole document ends well within its budget. The estimates (measured, and
@@ -124,13 +173,19 @@
 #define W_BLOCK 400
 #define W_LINK 900
 
-enum { LIST, ARTICLE };
+/* Keys (USB HID). */
+#define KEY_F 0x09
+#define KEY_S 0x16
+#define KEY_T 0x17
+#define KEY_U 0x18
+#define KEY_F1 0x3A
+
+enum { TIMELINE, FEEDS, HELP, ARTICLE };
 enum { FETCHING, READY, NOT_FOUND, FAILED };
 
 static uint8_t view;
 static uint32_t now; /* Unix time of this frame; 0 if the host has none */
 static terse_event ev;
-static uint8_t last_buttons;
 
 static uint8_t dirty[TERM_ROWS];
 /* The row being drawn: its cells, the column of the next character and the
@@ -139,30 +194,68 @@ static uint32_t cells[COLS];
 static uint8_t row_at, col;
 static uint32_t attr; /* the colours, as in a cell: fg << 16 | bg << 24 */
 
+/* The status message (the outcome of a request), shown instead of the key
+ * hints until the next key; msg_n 0: none. */
+static char msg[120];
+static uint8_t msg_n, msg_fg;
+
 /* --- Timeline ---------------------------------------------------------- */
 
-static content_req tl_req, sub_req;
-static uint8_t tl_handle, sub_handle;
+static content_req tl_req, sub_req, cnt_req, id_req, op_req;
+static uint8_t tl_handle, sub_handle, cnt_handle, id_handle, op_handle;
 static uint8_t tl_buf[TL_BUF_LEN];
-static uint8_t sub_buf[36];
 static uint16_t rec_at[MAX_RECORDS];
 static uint16_t tl_base, tl_count, tl_total; /* window: tl_base .. +tl_count */
 static uint16_t tl_req_base;
 static uint8_t tl_loaded, tl_refresh, tl_again;
-static uint16_t subs_total;
-
-static uint16_t sel, top, drawn_sel, drawn_top;
-static uint8_t sel_id[8]; /* feed key prefix and seq of the selection */
+static uint8_t sel_id[36]; /* feed key and seq of the selection */
 static uint8_t sel_id_ok;
-static uint16_t new_top;  /* entries above this index arrived while running */
-static uint8_t seen[16][8]; /* new entries opened since */
-static uint8_t seen_next;
+
+/* --- Feeds ------------------------------------------------------------- */
+
+static uint8_t sub_buf[MAX_SUBS * 36];
+static uint16_t subs_n, subs_total;
+static uint8_t subs_loaded, sub_again;
+/* Entries per feed (same index as sub_buf), counted from cnt_pos on. */
+static uint16_t counts[MAX_SUBS];
+static uint8_t cnt_buf[TL_BUF_LEN];
+static uint32_t cnt_pos;
+static uint8_t cnt_done, cnt_again;
+static uint8_t own_key[32], own_known;
+
+/* The request that changes something (one at a time). */
+enum { OP_IDLE, OP_PUT, OP_PUBLISH, OP_IDENT, OP_SELF_SUB, OP_SUB, OP_UNSUB };
+static uint8_t op_state;
+static uint8_t op_key[32];
+static char test_title[24];
+static uint8_t test_tlen;
+static uint32_t test_seq, tests;
+
+/* The feed key being typed: the non-blank characters (ASCII, anything else
+ * as 0x80), how many there were. */
+#define ENTRY_CAP 100
+static uint8_t entry, entry_buf[ENTRY_CAP];
+static uint16_t entry_n;
+
+/* --- Lists ------------------------------------------------------------- */
+
+typedef struct {
+    uint16_t sel, top;
+} listpos;
+static listpos tlp, fdp;
+static uint16_t slot_e = E_GUESS;
+static uint16_t rect_h = PAGE_H;
+static uint8_t last_slots; /* slots of the list document shown, 0 if not a list */
+static uint8_t page_dirty; /* the view's document must be built and submitted again */
+static uint8_t region_x;   /* the rectangle set: 0 none, else its x */
+static uint16_t region_h;
+static uint8_t ldoc[LDOC_CAP];
 
 /* --- Article ----------------------------------------------------------- */
 
 static content_req art_req;
 static uint8_t art_handle, art_state;
-static uint8_t art_title[121], art_tlen, art_feed[4], art_reply, art_local;
+static uint8_t art_title[121], art_tlen, art_feed[32], art_reply, art_local;
 static uint32_t art_seq, art_time, art_size;
 static uint8_t art_blob[32];
 static uint16_t art_have, art_want;
@@ -185,7 +278,8 @@ static uint32_t b_work;    /* units left for this frame */
 static const uint8_t *b_colour; /* the colour of the block's text */
 static uint16_t link_at[MAX_LINKS], link_len[MAX_LINKS], links;
 
-static uint8_t doc_state; /* 0: nothing submitted; 1: a part; 2: all of it */
+/* The scrolled views (article, help). */
+static uint8_t doc_state; /* 0: nothing (of this view's) submitted; 1: a part; 2: all of it */
 static uint32_t page_h;   /* the latest height (event 08h), if page_h_known */
 static uint8_t page_h_known;
 static int32_t scroll, scroll_sent;
@@ -199,6 +293,13 @@ static const uint8_t rgb_rule[3] = {70, 70, 70};
 static const uint8_t rgb_body[3] = {218, 218, 218};
 static const uint8_t rgb_pre[3] = {190, 205, 165};
 static const uint8_t rgb_link[3] = {110, 170, 255};
+static const uint8_t rgb_head[3] = {255, 255, 255};
+static const uint8_t rgb_entry[3] = {225, 225, 225};
+static const uint8_t rgb_sel[3] = {255, 200, 95};
+static const uint8_t rgb_sel_meta[3] = {205, 170, 110};
+static const uint8_t rgb_you[3] = {120, 210, 140};
+static const uint8_t rgb_key[3] = {200, 215, 235};
+static const uint8_t rgb_error[3] = {255, 135, 120};
 
 /* --- Text -------------------------------------------------------------- */
 
@@ -250,9 +351,10 @@ static uint8_t width(uint32_t cp)
     return term_is_wide(cp) ? 2 : 1;
 }
 
-/* A line of ASCII text being put together (a date, the article's details). */
-static char tb[96];
-static uint8_t tb_n;
+/* Text being put together: a line of the page, a message, the test
+ * article. */
+static char tb[720];
+static uint16_t tb_n;
 
 static void tb_s(const char *s)
 {
@@ -296,12 +398,46 @@ static void tb_hex(const uint8_t *b, uint8_t n)
     }
 }
 
+/* A feed key's short form: its first and last 6 hex digits. */
+static void tb_key(const uint8_t *k)
+{
+    tb_hex(k, 3);
+    tb_s("\xE2\x80\xA6");
+    tb_hex(k + 29, 3);
+}
+
+/* A size: "812 bytes", "6.1 KB", "1.0 MB" (KB = 1024 bytes). */
+static void tb_size(uint32_t n)
+{
+    uint32_t tenths;
+    const char *unit = " KB";
+    if (n < 1024) {
+        tb_u(n);
+        tb_s(n == 1 ? " byte" : " bytes");
+        return;
+    }
+    tenths = (n * 10 + 512) / 1024;
+    if (tenths >= 10240) {
+        tenths = (n / 1024 * 10 + 512) / 1024;
+        unit = " MB";
+    }
+    tb_u(tenths / 10);
+    tb_s(".");
+    tb_u(tenths % 10);
+    tb_s(unit);
+}
+
+static const char *plural(uint32_t n)
+{
+    return n == 1 ? "" : "s";
+}
+
 static const uint8_t month_days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-/* `t` as a UTC date and time: "YYYY-MM-DD HH:MM" (or "MM-DD HH:MM"). The
- * machine has a clock but no time zone. Every fourth year is a leap year,
- * which holds from 1901 to 2099. */
-static void tb_date(uint32_t t, uint8_t with_year)
+/* `t` as a UTC date and time: "YYYY-MM-DD HH:MM". The machine has a clock
+ * but no time zone. Every fourth year is a leap year, which holds from 1901
+ * to 2099. */
+static void tb_date(uint32_t t)
 {
     uint32_t days = t / 86400, secs = t % 86400, year, month = 0, leap, len;
     /* 1970-1973 is 365 + 365 + 366 + 365 days. */
@@ -321,10 +457,8 @@ static void tb_date(uint32_t t, uint8_t with_year)
         days -= len;
         month++;
     }
-    if (with_year) {
-        tb_u(year);
-        tb_s("-");
-    }
+    tb_u(year);
+    tb_s("-");
     tb_two(month + 1);
     tb_s("-");
     tb_two(days + 1);
@@ -332,6 +466,24 @@ static void tb_date(uint32_t t, uint8_t with_year)
     tb_two(secs / 3600);
     tb_s(":");
     tb_two(secs % 3600 / 60);
+}
+
+static uint32_t get32(const uint8_t *p)
+{
+    return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* The status message: tb, in colour fg. */
+static void say(uint8_t fg)
+{
+    uint16_t n = tb_n > sizeof msg ? sizeof msg : tb_n;
+    /* Cut between characters. */
+    while (n < tb_n && n && ((uint8_t)tb[n] & 0xC0) == 0x80)
+        n--;
+    memcpy(msg, tb, n);
+    msg_n = n;
+    msg_fg = fg;
+    dirty[STATUS_ROW] = 1;
 }
 
 /* --- Drawing ------------------------------------------------------------ */
@@ -422,14 +574,7 @@ static void put_u32(uint32_t v)
     puts_(u32_str(v));
 }
 
-static void put_hex(const uint8_t *b, uint8_t n)
-{
-    tb_n = 0;
-    tb_hex(b, n);
-    put_ascii((const uint8_t *)tb, tb_n);
-}
-
-/* A title in at most `room` columns, with an ellipsis if cut. A title
+/* UTF-8 text in at most `room` columns, with an ellipsis if cut. Text
  * never has more columns than bytes. */
 static void put_title(const uint8_t *t, uint8_t n, uint8_t room)
 {
@@ -464,325 +609,6 @@ static void put_title(const uint8_t *t, uint8_t n, uint8_t room)
         put(cp);
     else
         put1(0x2026);
-}
-
-static uint32_t get32(const uint8_t *p)
-{
-    return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-/* The age of an entry, right-aligned in 11 columns; the date if the host
- * gives no time or the entry claims to be from the future. */
-static void put_age(uint32_t t)
-{
-    uint32_t d = now - t;
-    const char *unit;
-    const char *s;
-    uint8_t n;
-    if (now == 0 || now < t) {
-        tb_n = 0;
-        tb_date(t, 0);
-        put_ascii((const uint8_t *)tb, tb_n);
-        return;
-    }
-    if (d < 60) {
-        spaces(3);
-        puts_("just now");
-        return;
-    }
-    if (d < 3600) {
-        d /= 60;
-        unit = "m ago";
-    } else if (d < 86400) {
-        d /= 3600;
-        unit = "h ago";
-    } else {
-        d /= 86400;
-        unit = "d ago";
-    }
-    s = u32_str(d);
-    for (n = 0; s[n]; n++)
-        ;
-    spaces(11 - 5 - n);
-    puts_(s);
-    puts_(unit);
-}
-
-/* --- Timeline ------------------------------------------------------------ */
-
-static uint8_t in_window(uint16_t i)
-{
-    return i >= tl_base && i - tl_base < tl_count;
-}
-
-static uint8_t *record(uint16_t i)
-{
-    return tl_buf + rec_at[i - tl_base];
-}
-
-static void record_id(const uint8_t *r, uint8_t *id)
-{
-    memcpy(id, r + R_FEED, 4);
-    memcpy(id + 4, r + R_SEQ, 4);
-}
-
-static uint8_t same_id(const uint8_t *a, const uint8_t *b)
-{
-    return memcmp(a, b, 8) == 0;
-}
-
-static uint8_t is_new(uint16_t i, const uint8_t *r)
-{
-    uint8_t id[8], k;
-    if (i >= new_top)
-        return 0;
-    record_id(r, id);
-    for (k = 0; k < 16; k++)
-        if (same_id(seen[k], id))
-            return 0;
-    return 1;
-}
-
-static void mark_rows(uint8_t from, uint8_t to)
-{
-    while (from <= to)
-        dirty[from++] = 1;
-}
-
-static void load_timeline(uint16_t first)
-{
-    tl_req_base = first;
-    tl_handle = content_feed(&tl_req, CONTENT_TIMELINE, first, TL_BUF_LEN, tl_buf);
-}
-
-static void load_subscriptions(void)
-{
-    sub_handle = content_feed(&sub_req, CONTENT_SUBSCRIPTIONS, 0, sizeof sub_buf, sub_buf);
-}
-
-static void keep_visible(void)
-{
-    if (sel < top)
-        top = sel;
-    if (sel >= top + LIST_ROWS)
-        top = sel - LIST_ROWS + 1;
-}
-
-static void timeline_done(uint8_t status)
-{
-    uint32_t at = 0, n = 0, total, i;
-    uint16_t old_total = tl_total;
-    tl_handle = 0;
-    if (status != STATUS_DONE)
-        return;
-    while (at < tl_req.length && n < MAX_RECORDS) {
-        rec_at[n++] = at;
-        at += 1 + tl_buf[at];
-    }
-    total = tl_req.size;
-    tl_base = tl_req_base;
-    tl_count = n;
-    tl_total = total > 0xFFFF ? 0xFFFF : total;
-    if (tl_refresh && tl_loaded) {
-        /* New entries arrive at index 0 (SPEC 9.5): the selection keeps its
-         * entry, found by its identity or else moved down by the arrivals. */
-        if (tl_total > old_total) {
-            new_top += tl_total - old_total;
-            sel += tl_total - old_total;
-        }
-        for (i = 0; sel_id_ok && i < tl_count; i++) {
-            uint8_t id[8];
-            record_id(tl_buf + rec_at[i], id);
-            if (same_id(id, sel_id)) {
-                sel = tl_base + i;
-                break;
-            }
-        }
-    }
-    tl_refresh = 0;
-    tl_loaded = 1;
-    if (sel >= tl_total)
-        sel = tl_total ? tl_total - 1 : 0;
-    if (top + LIST_ROWS > tl_total)
-        top = tl_total > LIST_ROWS ? tl_total - LIST_ROWS : 0;
-    keep_visible();
-    if (view == LIST) {
-        drawn_top = top;
-        mark_rows(0, STATUS_ROW);
-    }
-    if (tl_again) {
-        tl_again = 0;
-        tl_refresh = 1;
-        load_timeline(tl_base);
-    }
-}
-
-/* Loads the part of the timeline on screen if the window does not hold it. */
-static void ensure_window(void)
-{
-    uint16_t last = top + LIST_ROWS - 1;
-    if (tl_handle || !tl_loaded || tl_total == 0)
-        return;
-    if (last >= tl_total)
-        last = tl_total - 1;
-    if (!in_window(top) || !in_window(last))
-        load_timeline(top > 32 ? top - 32 : 0);
-}
-
-static void feeds_updated(void)
-{
-    load_subscriptions();
-    if (tl_handle) {
-        tl_again = 1; /* reload once this load is in */
-        return;
-    }
-    tl_refresh = 1;
-    load_timeline(tl_base);
-}
-
-static void bar_row(uint8_t row)
-{
-    row_start(row, C_BAR_FG, C_BAR_BG);
-}
-
-static void draw_list_title(void)
-{
-    bar_row(0);
-    puts_(" Terse reader");
-    ink(C_BAR_DIM);
-    puts_("  ·  ");
-    ink(C_BAR_FG);
-    put_u32(tl_total);
-    puts_(tl_total == 1 ? " entry" : " entries");
-    ink(C_BAR_DIM);
-    puts_("  ·  ");
-    ink(C_BAR_FG);
-    put_u32(subs_total);
-    puts_(subs_total == 1 ? " subscription" : " subscriptions");
-    pad_to(COLS - 22);
-    ink(C_LOCAL);
-    puts_("✓");
-    ink(C_BAR_FG);
-    puts_(" local ");
-    ink(C_REPLY);
-    puts_("↳");
-    ink(C_BAR_FG);
-    puts_(" reply ");
-    ink(C_NEW);
-    puts_("•");
-    ink(C_BAR_FG);
-    puts_(" new ");
-    row_end();
-}
-
-static void draw_list_status(void)
-{
-    bar_row(STATUS_ROW);
-    puts_(" ↑↓ PgUp PgDn Home End wheel: move   Enter/click: open   Esc: quit");
-    if (tl_handle) {
-        pad_to(COLS - 10);
-        puts_("loading…");
-    }
-    row_end();
-}
-
-static const char *const empty_text[] = {
-    "No entries yet.",
-    "",
-    "The timeline shows the articles of the feeds this host subscribes to,",
-    "newest first. To subscribe, run on the host:",
-    "",
-    "    terse feed subscribe <feed key>",
-    "",
-    "and run this program with a relay (--relay ws://…). New entries appear",
-    "here as they arrive; no need to restart.",
-};
-
-static void draw_list_row(uint8_t row)
-{
-    uint16_t i = top + row - 1;
-    uint8_t *r, flags;
-    row_start(row, C_TEXT, i == sel && i < tl_total ? C_SEL_BG : C_BG);
-    if (tl_loaded && tl_total == 0) {
-        if (row >= 4 && row - 4 < sizeof empty_text / sizeof empty_text[0]) {
-            spaces(6);
-            puts_(empty_text[row - 4]);
-        }
-    } else if (!tl_loaded && row == 2) {
-        spaces(2);
-        puts_("Loading the timeline…");
-    } else if (i < tl_total && !in_window(i)) {
-        ink(C_DIM);
-        spaces(2);
-        puts_("…");
-    } else if (i < tl_total) {
-        uint8_t k, reply = 0;
-        r = record(i);
-        flags = r[R_FLAGS];
-        if (i == sel) {
-            record_id(r, sel_id);
-            sel_id_ok = 1;
-        }
-        ink(C_NEW);
-        put1(is_new(i, r) ? 0x2022 : ' ');
-        ink(C_DIM);
-        put_age(get32(r + R_TIME));
-        spaces(1);
-        ink(C_KEY);
-        put_hex(r + R_FEED, 4);
-        spaces(1);
-        ink(C_LOCAL);
-        put1(flags & TIMELINE_LOCAL ? 0x2713 : ' ');
-        ink(C_REPLY);
-        for (k = 0; k < 32; k++)
-            reply |= r[R_REPLY + k];
-        put1(reply ? 0x21B3 : ' ');
-        spaces(1);
-        ink(C_TEXT);
-        put_title(r + R_TITLE, r[R_N], COLS - col);
-    }
-    row_end();
-}
-
-static void select_entry(uint16_t i)
-{
-    if (tl_total == 0)
-        return;
-    if (i >= tl_total)
-        i = tl_total - 1;
-    if (i != sel)
-        sel_id_ok = 0; /* set again when its row is drawn */
-    sel = i;
-    keep_visible();
-}
-
-static void move_by(int32_t delta)
-{
-    int32_t i = (int32_t)sel + delta;
-    select_entry(i < 0 ? 0 : i > 0xFFFF ? 0xFFFF : (uint16_t)i);
-}
-
-static void scroll_list(int32_t delta)
-{
-    int32_t t = (int32_t)top + delta;
-    uint16_t max = tl_total > LIST_ROWS ? tl_total - LIST_ROWS : 0;
-    top = t < 0 ? 0 : t > max ? max : (uint16_t)t;
-    if (sel < top)
-        select_entry(top);
-    else if (sel >= top + LIST_ROWS)
-        select_entry(top + LIST_ROWS - 1);
-}
-
-/* Page up or down: the selection keeps its row unless the list cannot
- * scroll further, when it moves instead. */
-static void page_list(int32_t delta)
-{
-    uint16_t old_top = top, row = sel - top;
-    scroll_list(delta);
-    if (top == old_top)
-        move_by(delta);
-    else
-        select_entry(top + row);
 }
 
 /* --- The document ------------------------------------------------------ */
@@ -862,44 +688,6 @@ static void put_link(uint32_t i, uint32_t len)
     } else {
         b_shown = i + doc_text(art + i, len);
     }
-}
-
-/* The title, the details line and the rule. */
-static void doc_head(void)
-{
-    doc_font(DOC_SANS, DOC_BOLD);
-    doc_size(TITLE_SIZE);
-    doc_rgb(rgb_title);
-    if (art_tlen)
-        doc_text(art_title, art_tlen);
-    else
-        doc_text("Untitled", 8);
-    doc_paragraph(DOC_START, 0, 6, 0);
-    doc_font(DOC_SANS, 0);
-    doc_size(META_SIZE);
-    doc_rgb(rgb_meta);
-    tb_n = 0;
-    tb_s("feed ");
-    tb_hex(art_feed, 4);
-    tb_s("  \xC2\xB7  #");
-    tb_u(art_seq);
-    tb_s("  \xC2\xB7  ");
-    tb_date(art_time, 1);
-    tb_s(" UTC  \xC2\xB7  ");
-    tb_u(art_size);
-    tb_s(" bytes");
-    doc_text(tb, tb_n);
-    if (art_reply) {
-        doc_rgb(rgb_reply);
-        doc_text("  \xE2\x86\xB3 reply", 11);
-    }
-    doc_paragraph(DOC_START, 0, 10, 0);
-    doc_rgb(rgb_rule);
-    doc_rule();
-    doc_size(BODY_SIZE);
-    doc_rgb(rgb_body);
-    b_colour = rgb_body;
-    b_was_pre = 0;
 }
 
 /* The first byte in [p, e) that is `a` or `b`, or e: a word at a time
@@ -1176,7 +964,696 @@ static void build(void)
     }
 }
 
+/* --- Pages ------------------------------------------------------------- */
+
+static void doc_s(const char *s)
+{
+    uint32_t n = 0;
+    while (s[n])
+        n++;
+    doc_text(s, n);
+}
+
+/* Sets the rectangle (x RECT_X or LIST_X, rows 0 .. h) if it changed. */
+static void region(uint8_t x, uint16_t h)
+{
+    if (region_x != x || region_h != h) {
+        page_region(x, 0, x == LIST_X ? LIST_W : RECT_W, h);
+        region_x = x;
+        region_h = h;
+    }
+}
+
+static void ldoc_begin(void)
+{
+    doc_begin(ldoc, LDOC_CAP - 1); /* the last byte for End */
+}
+
+static void ldoc_submit(void)
+{
+    doc_limit = ldoc + LDOC_CAP;
+    doc_overflow = 0;
+    doc_end();
+    page_submit(ldoc, doc_length(ldoc));
+}
+
+/* A list document of `slots` slots, in the list's rectangle. */
+static void list_submit(uint8_t slots)
+{
+    region(LIST_X, rect_h);
+    ldoc_submit();
+    last_slots = slots;
+}
+
+/* Any other document, in the centred column. */
+static void column_submit(void)
+{
+    region(RECT_X, PAGE_H);
+    ldoc_submit();
+    last_slots = 0;
+}
+
+/* A slot (see the top): its paragraph and first line's font, colour and
+ * anchor; slot_meta ends the first line and starts the second; slot_end
+ * ends the anchor. */
+static void slot_begin(const uint8_t *rgb, uint8_t flags, uint16_t anchor)
+{
+    doc_paragraph(DOC_START, 0, SLOT_SPACE, DOC_NOWRAP);
+    doc_font(DOC_SANS, flags);
+    doc_size(SLOT_TITLE);
+    doc_rgb(rgb);
+    if (anchor)
+        doc_anchor(anchor);
+}
+
+static void slot_meta(const uint8_t *rgb)
+{
+    doc_text("\n", 1);
+    doc_font(DOC_SANS, 0);
+    doc_size(SLOT_META);
+    doc_rgb(rgb);
+}
+
+static void slot_end(uint16_t anchor)
+{
+    if (anchor)
+        doc_anchor(0);
+}
+
+/* A title on one line: control characters and line and paragraph
+ * separators (U+2028, U+2029) become spaces; no title is "Untitled". */
+static void doc_title(const uint8_t *t, uint8_t n)
+{
+    uint8_t buf[120], k = 0, i, c;
+    if (!n) {
+        doc_s("Untitled");
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        c = t[i];
+        if (c < 0x20 || c == 0x7F) {
+            c = ' ';
+        } else if (c == 0xE2 && i + 2 < n && t[i + 1] == 0x80 && (t[i + 2] == 0xA8 || t[i + 2] == 0xA9)) {
+            c = ' ';
+            i += 2;
+        }
+        buf[k++] = c;
+    }
+    doc_text(buf, k);
+}
+
+/* --- Lists ------------------------------------------------------------- */
+
+/* Entries wholly visible below the header slot. */
+static uint16_t vis(void)
+{
+    uint16_t n = rect_h / slot_e;
+    n = n >= 2 ? n - 1 : 1;
+    return n > MAX_VIS ? MAX_VIS : n;
+}
+
+/* Keeps the selection in the list and visible, and the screen filled. */
+static void lp_keep(listpos *p, uint16_t total)
+{
+    uint16_t v = vis();
+    if (!total) {
+        p->sel = p->top = 0;
+        return;
+    }
+    if (p->sel >= total)
+        p->sel = total - 1;
+    if (p->sel < p->top)
+        p->top = p->sel;
+    if (p->sel >= p->top + v)
+        p->top = p->sel - v + 1;
+    if (p->top + v > total)
+        p->top = total > v ? total - v : 0;
+}
+
+static void lp_set(listpos *p, uint16_t total, int32_t sel, int32_t top)
+{
+    listpos old = *p;
+    p->sel = sel < 0 ? 0 : sel >= total ? (total ? total - 1 : 0) : sel;
+    p->top = top < 0 ? 0 : top > 0xFFFF ? 0xFFFF : top;
+    lp_keep(p, total);
+    if (old.sel != p->sel || old.top != p->top)
+        page_dirty = 1;
+}
+
+/* Up, Down, PgUp, PgDn (the selection keeps its place on the screen unless
+ * the list cannot scroll further, when it moves instead), Home, End. */
+static uint8_t lp_key(listpos *p, uint16_t total, uint8_t code)
+{
+    int32_t s = p->sel, t = p->top, v = vis(), max = total > v ? total - v : 0, d, nt;
+    switch (code) {
+    case KEY_UP: s--; break;
+    case KEY_DOWN: s++; break;
+    case KEY_PAGE_UP:
+    case KEY_PAGE_DOWN:
+        d = code == KEY_PAGE_UP ? -v : v;
+        nt = t + d < 0 ? 0 : t + d > max ? max : t + d;
+        if (nt == t) {
+            s += d;
+        } else {
+            s += nt - t;
+            t = nt;
+        }
+        break;
+    case KEY_HOME: s = 0; break;
+    case KEY_END: s = total; break;
+    default: return 0;
+    }
+    lp_set(p, total, s, t);
+    return 1;
+}
+
+/* The wheel scrolls three entries a step; the selection stays on screen. */
+static void lp_wheel(listpos *p, uint16_t total, int8_t steps)
+{
+    int32_t v = vis(), max = total > v ? total - v : 0, t = p->top + steps * 3, s = p->sel;
+    t = t < 0 ? 0 : t > max ? max : t;
+    if (s < t)
+        s = t;
+    if (s > t + v - 1)
+        s = t + v - 1;
+    lp_set(p, total, s, t);
+}
+
+/* A height event in a list view: the slot height, if it is a list's. */
+static void list_height(uint32_t h)
+{
+    uint16_t e, before;
+    if (!last_slots || h % last_slots)
+        return;
+    e = h / last_slots;
+    if (e < E_MIN || e > E_MAX || e == slot_e)
+        return;
+    before = vis();
+    slot_e = e;
+    if (vis() != before)
+        page_dirty = 1;
+    lp_keep(&tlp, tl_total);
+    lp_keep(&fdp, subs_n);
+}
+
+/* --- Timeline ------------------------------------------------------------ */
+
+static uint8_t in_window(uint16_t i)
+{
+    return i >= tl_base && i - tl_base < tl_count;
+}
+
+static uint8_t *record(uint16_t i)
+{
+    return tl_buf + rec_at[i - tl_base];
+}
+
+static void record_id(const uint8_t *r, uint8_t *id)
+{
+    memcpy(id, r + R_FEED, 36); /* the feed key and seq */
+}
+
+static void load_timeline(uint16_t first)
+{
+    tl_req_base = first;
+    tl_handle = content_feed(&tl_req, CONTENT_TIMELINE, first, TL_BUF_LEN, tl_buf);
+}
+
+static void count_request(void)
+{
+    cnt_handle = content_feed(&cnt_req, CONTENT_TIMELINE, cnt_pos, TL_BUF_LEN, cnt_buf);
+}
+
+/* Counts each feed's entries in the timeline again. */
+static void start_count(void)
+{
+    if (cnt_handle) {
+        cnt_again = 1; /* when this one is in: its buffer is in use */
+        return;
+    }
+    memset(counts, 0, sizeof counts);
+    cnt_pos = 0;
+    cnt_done = 0;
+    count_request();
+}
+
+static void load_subscriptions(void)
+{
+    if (sub_handle) {
+        sub_again = 1;
+        return;
+    }
+    sub_handle = content_feed(&sub_req, CONTENT_SUBSCRIPTIONS, 0, sizeof sub_buf, sub_buf);
+}
+
+/* The subscriptions and the timeline again (after a change). */
+static void reload(void)
+{
+    load_subscriptions();
+    if (tl_handle) {
+        tl_again = 1; /* reload once this load is in */
+        return;
+    }
+    tl_refresh = 1;
+    load_timeline(tl_base);
+}
+
+static void timeline_done(uint8_t status)
+{
+    uint32_t at = 0, n = 0, total, i;
+    uint16_t old_total = tl_total;
+    uint8_t id[36];
+    tl_handle = 0;
+    if (status == STATUS_DONE) {
+        while (at < tl_req.length && n < MAX_RECORDS) {
+            rec_at[n++] = at;
+            at += 1 + tl_buf[at];
+        }
+        total = tl_req.size;
+        tl_base = tl_req_base;
+        tl_count = n;
+        tl_total = total > 0xFFFF ? 0xFFFF : total;
+        if (tl_refresh && tl_loaded) {
+            /* New entries arrive at index 0 (SPEC 9.5): the selection keeps
+             * its entry, found by its identity or else moved down by the
+             * arrivals. */
+            if (tl_total > old_total)
+                tlp.sel += tl_total - old_total;
+            for (i = 0; sel_id_ok && i < tl_count; i++) {
+                record_id(tl_buf + rec_at[i], id);
+                if (memcmp(id, sel_id, 36) == 0) {
+                    tlp.sel = tl_base + i;
+                    break;
+                }
+            }
+        }
+        tl_refresh = 0;
+        tl_loaded = 1;
+        lp_keep(&tlp, tl_total);
+        page_dirty = 1;
+    }
+    if (tl_again) {
+        tl_again = 0;
+        tl_refresh = 1;
+        load_timeline(tl_base);
+    }
+}
+
+/* Loads the part of the timeline on screen if the window does not hold it. */
+static void ensure_window(void)
+{
+    uint16_t last = tlp.top + vis();
+    if (tl_handle || !tl_loaded || tl_total == 0)
+        return;
+    if (last >= tl_total)
+        last = tl_total - 1;
+    if (!in_window(tlp.top) || !in_window(last))
+        load_timeline(tlp.top > 32 ? tlp.top - 32 : 0);
+}
+
+/* The subscription record of `key`, or -1 (records are in key order). */
+static int32_t find_sub(const uint8_t *key)
+{
+    int32_t lo = 0, hi = (int32_t)subs_n - 1, mid, c;
+    while (lo <= hi) {
+        mid = (lo + hi) >> 1;
+        c = memcmp(sub_buf + mid * 36, key, 32);
+        if (!c)
+            return mid;
+        if (c < 0)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    return -1;
+}
+
+static int32_t own_index(void)
+{
+    return own_known ? find_sub(own_key) : -1;
+}
+
+static void subs_done(uint8_t status)
+{
+    sub_handle = 0;
+    if (status == STATUS_DONE) {
+        subs_n = sub_req.length / 36;
+        subs_total = sub_req.size;
+        subs_loaded = 1;
+        lp_keep(&fdp, subs_n);
+        if (view == FEEDS)
+            start_count();
+        page_dirty = 1;
+    }
+    if (sub_again) {
+        sub_again = 0;
+        load_subscriptions();
+    }
+}
+
+static void count_done(uint8_t status)
+{
+    uint32_t at = 0, n = 0;
+    int32_t k;
+    cnt_handle = 0;
+    if (cnt_again) {
+        cnt_again = 0;
+        start_count();
+        return;
+    }
+    if (status == STATUS_DONE) {
+        while (at < cnt_req.length) {
+            k = find_sub(cnt_buf + at + R_FEED);
+            if (k >= 0)
+                counts[k]++;
+            n++;
+            at += 1 + cnt_buf[at];
+        }
+        cnt_pos += n;
+        if (n && cnt_pos < cnt_req.size) {
+            count_request();
+            return;
+        }
+    }
+    cnt_done = 1;
+    if (view == FEEDS)
+        page_dirty = 1;
+}
+
+/* The header slot: a title and a line of details. */
+static void header_slot(const char *title)
+{
+    slot_begin(rgb_head, DOC_BOLD, 0);
+    doc_s(title);
+    slot_meta(rgb_meta);
+    doc_text(tb, tb_n);
+}
+
+/* The friendly page for an empty timeline. */
+static void empty_doc(void)
+{
+    ldoc_begin();
+    doc_paragraph(DOC_START, 0, 48, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(TITLE_SIZE);
+    doc_rgb(rgb_title);
+    doc_s("No articles yet");
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_font(DOC_SANS, 0);
+    doc_size(BODY_SIZE);
+    doc_rgb(rgb_body);
+    doc_s("The timeline shows the articles of the feeds this host subscribes to, newest first. "
+          "New articles appear here as they arrive.");
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_s("Press F to see your feeds and subscribe to one by its key.");
+    doc_paragraph(DOC_START, 0, 10, 0);
+    doc_s("Press T to publish a test article of your own; it shows up here.");
+    doc_paragraph(DOC_START, 0, 10, 0);
+    doc_s("Press ? for help, Esc to quit.");
+    column_submit();
+}
+
+static void timeline_doc(void)
+{
+    uint16_t i, end, slots = 1;
+    uint8_t *r, k, reply, s;
+    if (!tl_loaded)
+        return;
+    if (!tl_total) {
+        empty_doc();
+        return;
+    }
+    ldoc_begin();
+    tb_n = 0;
+    tb_u(tl_total);
+    tb_s(" article");
+    tb_s(plural(tl_total));
+    tb_s("  \xC2\xB7  ");
+    tb_u(subs_total);
+    tb_s(" feed");
+    tb_s(plural(subs_total));
+    header_slot("Timeline");
+    end = tlp.top + vis() + 1;
+    if (end > tl_total)
+        end = tl_total;
+    for (i = tlp.top; i < end; i++, slots++) {
+        s = i == tlp.sel;
+        if (!in_window(i)) {
+            slot_begin(rgb_meta, 0, 0);
+            doc_s("\xE2\x80\xA6");
+            slot_meta(rgb_meta);
+            doc_s("loading");
+            continue;
+        }
+        r = record(i);
+        if (s) {
+            record_id(r, sel_id);
+            sel_id_ok = 1;
+        }
+        slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
+        doc_title(r + R_TITLE, r[R_N]);
+        slot_meta(s ? rgb_sel_meta : rgb_meta);
+        tb_n = 0;
+        tb_key(r + R_FEED);
+        tb_s("  \xC2\xB7  ");
+        tb_date(get32(r + R_TIME));
+        tb_s("  \xC2\xB7  ");
+        tb_size(get24(r + R_SIZE));
+        for (k = reply = 0; k < 32; k++)
+            reply |= r[R_REPLY + k];
+        if (reply)
+            tb_s("  \xC2\xB7  \xE2\x86\xB3 reply");
+        if (!(r[R_FLAGS] & TIMELINE_LOCAL))
+            tb_s("  \xC2\xB7  not downloaded");
+        doc_text(tb, tb_n);
+        slot_end(i + 1);
+    }
+    list_submit(slots);
+    dirty[STATUS_ROW] = 1; /* the position */
+}
+
+static void feeds_doc(void)
+{
+    uint16_t i, end, slots = 1;
+    int32_t own = own_index();
+    const uint8_t *r;
+    uint32_t seq;
+    uint8_t s;
+    ldoc_begin();
+    tb_n = 0;
+    tb_u(subs_total);
+    tb_s(" subscription");
+    tb_s(plural(subs_total));
+    if (own_known) {
+        tb_s("  \xC2\xB7  your key ");
+        tb_key(own_key);
+    } else {
+        tb_s("  \xC2\xB7  no key of your own yet");
+    }
+    header_slot("Feeds");
+    if (!subs_n) {
+        slot_begin(rgb_entry, 0, 0);
+        doc_s("No subscriptions yet");
+        slot_meta(rgb_meta);
+        doc_s("Press S to subscribe to a feed by its key, or T to publish a test article");
+        slots++;
+    }
+    end = fdp.top + vis() + 1;
+    if (end > subs_n)
+        end = subs_n;
+    for (i = fdp.top; i < end; i++, slots++) {
+        r = sub_buf + i * 36;
+        s = i == fdp.sel;
+        slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
+        tb_n = 0;
+        tb_key(r);
+        doc_text(tb, tb_n);
+        if (i == own) {
+            doc_rgb(rgb_you);
+            doc_s("  you");
+        }
+        slot_meta(s ? rgb_sel_meta : rgb_meta);
+        tb_n = 0;
+        seq = get32(r + 32);
+        if (seq) {
+            tb_s("highest #");
+            tb_u(seq);
+        } else {
+            tb_s("no entries yet");
+        }
+        tb_s("  \xC2\xB7  ");
+        if (cnt_done) {
+            tb_u(counts[i]);
+            tb_s(" article");
+            tb_s(plural(counts[i]));
+            tb_s(" held");
+        } else {
+            tb_s("counting\xE2\x80\xA6");
+        }
+        doc_text(tb, tb_n);
+        slot_end(i + 1);
+    }
+    list_submit(slots);
+}
+
+/* --- Help -------------------------------------------------------------- */
+
+static void help_head(const char *s)
+{
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(17);
+    doc_rgb(rgb_head);
+    doc_s(s);
+}
+
+static void help_line(const char *keys, const char *what)
+{
+    doc_paragraph(DOC_START, 12, 4, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(14);
+    doc_rgb(rgb_sel);
+    doc_s(keys);
+    doc_font(DOC_SANS, 0);
+    doc_rgb(rgb_body);
+    doc_s("   ");
+    doc_s(what);
+}
+
+static const char *const help_keys[] = {
+    0, "Timeline",
+    "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "move the selection",
+    "Enter, click", "open the article",
+    "F", "feeds",
+    "? or F1", "this help",
+    "T", "publish a test article",
+    "Esc", "quit",
+    0, "Article",
+    "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
+    "Click a link", "show its address",
+    "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
+    0, "Feeds",
+    "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel, click", "select a feed",
+    "S", "subscribe: type or paste a feed key, then Enter (Esc cancels)",
+    "U", "unsubscribe from the selected feed",
+    "T, ? or F1", "as in the timeline",
+    "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
+    0, "Help",
+    "T", "publish a test article, and subscribe to your own feed so that it shows in the timeline",
+    "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "scroll",
+    "F", "feeds",
+    "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
+};
+
+/* The help page: your feed key, then the keys of every view. */
+static void help_doc(void)
+{
+    uint8_t g;
+    uint16_t i;
+    ldoc_begin();
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(24);
+    doc_rgb(rgb_title);
+    doc_s("Help");
+    help_head("Your feed key");
+    doc_font(DOC_SANS, 0);
+    doc_size(BODY_SIZE);
+    doc_rgb(rgb_body);
+    if (own_known) {
+        /* Two lines of four groups of eight hex digits; a key pasted into
+         * the subscribe entry may hold spaces and line breaks. */
+        doc_paragraph(DOC_START, 12, 8, DOC_NOWRAP);
+        doc_font(DOC_MONO, 0);
+        doc_rgb(rgb_key);
+        tb_n = 0;
+        for (g = 0; g < 8; g++) {
+            tb_hex(own_key + g * 4, 4);
+            tb_s(g == 3 ? "\n" : g == 7 ? "" : " ");
+        }
+        doc_text(tb, tb_n);
+        doc_paragraph(DOC_START, 0, 8, 0);
+        doc_font(DOC_SANS, 0);
+        doc_size(13);
+        doc_rgb(rgb_meta);
+        doc_s("Others subscribe to your feed with this key: in this reader, F, then S, then paste it.");
+    } else {
+        doc_paragraph(DOC_START, 0, 6, 0);
+        doc_s("This host has no feed key yet. Press T to publish a test article: that creates one.");
+    }
+    for (i = 0; i < sizeof help_keys / sizeof help_keys[0]; i += 2) {
+        if (help_keys[i])
+            help_line(help_keys[i], help_keys[i + 1]);
+        else
+            help_head(help_keys[i + 1]);
+    }
+    doc_paragraph(DOC_START, 0, 16, 0);
+    doc_font(DOC_SANS, 0);
+    doc_size(13);
+    doc_rgb(rgb_meta);
+    doc_s("Subscribing, unsubscribing and publishing need your consent: the host asks you with its own "
+          "prompt, and the status row says what came of it.");
+    column_submit();
+    doc_state = 2;
+    page_h_known = 0;
+    scroll = scroll_sent = 0;
+    to_end = 0;
+}
+
 /* --- Article ----------------------------------------------------------- */
+
+/* The title, the details line and the rule. */
+static void doc_head(void)
+{
+    doc_paragraph(DOC_START, 0, 14, 0);
+    doc_font(DOC_SANS, DOC_BOLD);
+    doc_size(TITLE_SIZE);
+    doc_rgb(rgb_title);
+    if (art_tlen)
+        doc_text(art_title, art_tlen);
+    else
+        doc_s("Untitled");
+    doc_paragraph(DOC_START, 0, 6, 0);
+    doc_font(DOC_SANS, 0);
+    doc_size(META_SIZE);
+    doc_rgb(rgb_meta);
+    tb_n = 0;
+    tb_key(art_feed);
+    tb_s("  \xC2\xB7  #");
+    tb_u(art_seq);
+    tb_s("  \xC2\xB7  ");
+    tb_date(art_time);
+    tb_s(" UTC  \xC2\xB7  ");
+    tb_size(art_size);
+    doc_text(tb, tb_n);
+    if (art_reply) {
+        doc_rgb(rgb_reply);
+        doc_s("  \xE2\x86\xB3 reply");
+    }
+    doc_paragraph(DOC_START, 0, 10, 0);
+    doc_rgb(rgb_rule);
+    doc_rule();
+    doc_size(BODY_SIZE);
+    doc_rgb(rgb_body);
+    b_colour = rgb_body;
+    b_was_pre = 0;
+}
+
+/* The article's head and a message, while there is no article text. */
+static void article_message(const char *text, const uint8_t *rgb, uint8_t back)
+{
+    ldoc_begin();
+    doc_head();
+    doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
+    doc_rgb(rgb);
+    doc_s(text);
+    if (back) {
+        doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
+        doc_rgb(rgb_meta);
+        doc_s("Esc: back to the timeline");
+    }
+    column_submit();
+}
 
 static uint32_t max_scroll(void)
 {
@@ -1204,8 +1681,8 @@ static void scroll_by(int32_t delta)
 
 static void page_laid_out(uint32_t h)
 {
-    /* Before the first submit (a height left from the list) or 0 (no
-     * document, which this view never has once it submitted): not ours. */
+    /* Before the first submit (a height left from another view) or 0 (no
+     * document): not ours. */
     if (!doc_state || !h)
         return;
     page_h = h;
@@ -1224,16 +1701,16 @@ static void request_chunk(void)
 
 static void open_article(uint16_t i)
 {
-    uint8_t *r, id[8];
+    uint8_t *r, k;
     if (i >= tl_total || !in_window(i) || art_handle)
         return;
     r = record(i);
     art_tlen = r[R_N];
     memcpy(art_title, r + R_TITLE, art_tlen);
-    memcpy(art_feed, r + R_FEED, 4);
+    memcpy(art_feed, r + R_FEED, 32);
     memcpy(art_blob, r + R_BLOB, 32);
     art_reply = 0;
-    for (uint8_t k = 0; k < 32; k++)
+    for (k = 0; k < 32; k++)
         art_reply |= r[R_REPLY + k];
     art_local = r[R_FLAGS] & TIMELINE_LOCAL;
     art_seq = get32(r + R_SEQ);
@@ -1242,12 +1719,9 @@ static void open_article(uint16_t i)
     art_want = art_size > ART_CAP ? ART_CAP : art_size;
     art_have = 0;
     art_state = FETCHING;
-    record_id(r, id);
-    if (is_new(i, r)) {
-        memcpy(seen[seen_next], id, 8);
-        seen_next = (seen_next + 1) & 15;
-    }
     request_chunk();
+    view = ARTICLE;
+    article_message(art_local ? "Reading the article\xE2\x80\xA6" : "Fetching the article from the relay\xE2\x80\xA6", rgb_meta, 0);
     /* The document: its head now, the article as it arrives. */
     doc_begin(doc, DOC_CAP - DOC_RESERVE);
     doc_head();
@@ -1259,18 +1733,28 @@ static void open_article(uint16_t i)
     scroll = scroll_sent = 0;
     to_end = 0;
     link_shown = 0;
-    page_region(RECT_X, RECT_Y, RECT_W, RECT_H);
-    view = ARTICLE;
-    mark_rows(0, STATUS_ROW);
+    dirty[STATUS_ROW] = 1;
 }
 
 static void article_done(uint8_t status)
 {
     uint32_t size;
+    const char *m;
     art_handle = 0;
     if (status == STATUS_NOT_FOUND || status == STATUS_FAILED || status == STATUS_BAD_REQUEST) {
         art_state = status == STATUS_NOT_FOUND ? NOT_FOUND : FAILED;
-        mark_rows(1, STATUS_ROW);
+        if (view != ARTICLE)
+            return;
+        m = art_state == NOT_FOUND ? "Not found: neither this host nor its relay has the article."
+                                   : "Could not fetch the article (no relay, network error or timeout).";
+        if (doc_state == 0) {
+            article_message(m, rgb_error, 1);
+        } else {
+            tb_n = 0;
+            tb_s(m);
+            say(C_ERROR);
+        }
+        dirty[STATUS_ROW] = 1;
         return;
     }
     size = art_req.size;
@@ -1282,104 +1766,368 @@ static void article_done(uint8_t status)
         request_chunk();
     else
         art_want = art_have;
-    if (art_state == FETCHING)
-        mark_rows(1, STATUS_ROW);
     art_state = READY;
 }
 
-/* Rows 1-28 under the page: blank, or a message while there is no text. */
-static void draw_article_row(uint8_t row)
-{
-    row_start(row, C_TEXT, C_BG);
-    if (art_state == FETCHING) {
-        if (row == 2) {
-            spaces(2);
-            puts_(art_local ? "Reading the article…" : "Fetching the article from the relay…");
-        }
-    } else if (art_state != READY) {
-        if (row == 2) {
-            spaces(2);
-            ink(C_ERROR);
-            puts_(art_state == NOT_FOUND ? "Not found: neither this host nor its relay has the article."
-                                         : "Could not fetch the article (no relay, network error or timeout).");
-        } else if (row == 4) {
-            spaces(2);
-            ink(C_DIM);
-            puts_("Esc: back to the list");
-        }
-    }
-    row_end();
-}
-
-static void draw_article_title(void)
-{
-    bar_row(0);
-    spaces(1);
-    put_title(art_title, art_tlen, COLS - 2);
-    row_end();
-}
-
-/* How far down the page the bottom of the rectangle is, in per cent. */
+/* How far through the page the rectangle is: 0% at the top, 100% at the
+ * end (only when the page does not fit). */
 static uint32_t percent(void)
 {
     int32_t s = scroll;
-    if (page_h <= RECT_H)
-        return 100;
+    uint32_t m = max_scroll();
     if (s < 0)
         s = 0;
-    if ((uint32_t)s > max_scroll())
-        s = max_scroll();
-    return ((uint32_t)s + RECT_H) * 100 / page_h;
+    if ((uint32_t)s > m)
+        s = m;
+    return (uint32_t)s * 100 / m;
 }
 
-static void draw_article_status(void)
+/* --- Requests that change something ------------------------------------- */
+
+static void op_start(uint8_t state, uint8_t handle)
+{
+    op_handle = handle;
+    op_state = handle ? state : OP_IDLE;
+}
+
+static uint8_t op_busy(void)
+{
+    if (!op_state)
+        return 0;
+    tb_n = 0;
+    tb_s("Busy: the previous request is not answered yet");
+    say(C_ERROR);
+    return 1;
+}
+
+static void say_key(const char *before, const uint8_t *key, const char *after, uint8_t fg)
+{
+    tb_n = 0;
+    tb_s(before);
+    tb_key(key);
+    tb_s(after);
+    say(fg);
+}
+
+static void published(void)
+{
+    tb_n = 0;
+    tb_s("Published \xE2\x80\x9C");
+    tb_s(test_title);
+    tb_s("\xE2\x80\x9D as #");
+    tb_u(test_seq);
+}
+
+/* T: put a short sample article (it differs with the frame and time),
+ * then publish it (op_done carries on). */
+static void test_publish(void)
+{
+    int32_t k;
+    uint32_t n, frame = terse_frame();
+    if (op_busy())
+        return;
+    k = own_index();
+    n = k >= 0 ? get32(sub_buf + k * 36 + 32) + 1 : tests + 1;
+    tb_n = 0;
+    tb_s("Test article ");
+    tb_u(n);
+    memcpy(test_title, tb, tb_n);
+    test_title[tb_n] = 0;
+    test_tlen = tb_n;
+    tb_n = 0;
+    tb_s("This is a test article, published from the Terse reader to check that publishing works. "
+         "It was written in frame ");
+    tb_u(frame);
+    if (now) {
+        tb_s(", at ");
+        tb_date(now);
+        tb_s(" UTC");
+    }
+    tb_s(".\n\nA second paragraph gives it some shape. The reader splits an article into paragraphs at "
+         "blank lines and wraps each one to the width of the page, but keeps the lines of a block\n"
+         "that has indented lines:\n\n    frame  ");
+    tb_u(frame);
+    tb_s("\n    time   ");
+    tb_u(now);
+    tb_s("\n\nThe last paragraph has a link, https://example.com/terse, which shows its address when "
+         "pressed.\n");
+    op_start(OP_PUT, content_put(&op_req, tb, tb_n));
+    tb_n = 0;
+    tb_s("Publishing \xE2\x80\x9C");
+    tb_s(test_title);
+    tb_s("\xE2\x80\x9D\xE2\x80\xA6");
+    say(C_INFO);
+}
+
+static void unsubscribe(void)
+{
+    if (!subs_n) {
+        tb_n = 0;
+        tb_s("No feed to unsubscribe from");
+        say(C_ERROR);
+        return;
+    }
+    if (op_busy())
+        return;
+    memcpy(op_key, sub_buf + fdp.sel * 36, 32);
+    op_start(OP_UNSUB, content_follow(&op_req, CONTENT_UNSUBSCRIBE, op_key));
+    say_key("Unsubscribing from ", op_key, "\xE2\x80\xA6 (the host asks you)", C_INFO);
+}
+
+static void op_done(uint8_t st)
+{
+    uint8_t s = op_state;
+    op_handle = 0;
+    op_state = OP_IDLE;
+    tb_n = 0;
+    switch (s) {
+    case OP_PUT:
+        if (st != STATUS_DONE) {
+            tb_s("Could not store the test article");
+            say(C_ERROR);
+            break;
+        }
+        memcpy(op_key, op_req.id, 32);
+        op_start(OP_PUBLISH, content_publish(&op_req, op_key, test_title, test_tlen));
+        tb_s("Publishing \xE2\x80\x9C");
+        tb_s(test_title);
+        tb_s("\xE2\x80\x9D\xE2\x80\xA6 (the host asks you)");
+        say(C_INFO);
+        break;
+    case OP_PUBLISH:
+        if (st != STATUS_DONE) {
+            tb_s(st == STATUS_REFUSED ? "Publishing refused" : "Publishing failed");
+            say(C_ERROR);
+            break;
+        }
+        test_seq = op_req.size;
+        if (test_seq > tests)
+            tests = test_seq;
+        published();
+        say(C_OK);
+        /* Publishing creates the identity if there was none. */
+        op_start(OP_IDENT, content_identity(&op_req));
+        break;
+    case OP_IDENT:
+        if (st == STATUS_DONE) {
+            memcpy(own_key, op_req.id, 32);
+            own_known = 1;
+            page_dirty = 1;
+            if (subs_loaded && find_sub(own_key) < 0) {
+                op_start(OP_SELF_SUB, content_follow(&op_req, CONTENT_SUBSCRIBE, own_key));
+                published();
+                tb_s("; subscribing to your own feed so that it shows in the timeline\xE2\x80\xA6");
+                say(C_INFO);
+                break;
+            }
+        }
+        reload();
+        break;
+    case OP_SELF_SUB:
+        published();
+        if (st == STATUS_DONE)
+            tb_s(" and subscribed to your own feed");
+        else
+            tb_s(st == STATUS_REFUSED ? "; subscribing to your own feed was refused, so it is not in the timeline"
+                                      : "; subscribing to your own feed failed");
+        say(st == STATUS_DONE ? C_OK : C_ERROR);
+        reload();
+        break;
+    case OP_SUB:
+    case OP_UNSUB:
+        tb_s(s == OP_SUB ? "Subscrib" : "Unsubscrib");
+        if (st == STATUS_DONE) {
+            tb_s(s == OP_SUB ? "ed to " : "ed from ");
+            tb_key(op_key);
+            say(C_OK);
+            reload();
+        } else {
+            tb_s(s == OP_SUB ? "ing to " : "ing from ");
+            tb_key(op_key);
+            tb_s(st == STATUS_REFUSED ? " refused" : " failed");
+            say(C_ERROR);
+        }
+        break;
+    }
+}
+
+/* --- The feed key entry -------------------------------------------------- */
+
+static void entry_show(uint8_t on)
+{
+    entry = on;
+    entry_n = 0;
+    rect_h = on ? PAGE_H - 16 : PAGE_H;
+    lp_keep(&fdp, subs_n);
+    page_dirty = 1;
+    dirty[ENTRY_ROW] = dirty[STATUS_ROW] = 1;
+    if (!on)
+        term_cmd(TERM_CURSOR_OFF);
+}
+
+static uint8_t hex_value(uint8_t c)
+{
+    if ((uint8_t)(c - '0') < 10)
+        return c - '0';
+    c |= 0x20;
+    if ((uint8_t)(c - 'a') < 6)
+        return c - 'a' + 10;
+    return 255;
+}
+
+/* A character typed or pasted; blanks are left out. */
+static void entry_text(uint32_t cp)
+{
+    if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r')
+        return;
+    if (!entry_n && (cp == 's' || cp == 'S'))
+        return; /* the text of the S that opened the entry */
+    if (entry_n < ENTRY_CAP)
+        entry_buf[entry_n] = cp > 0x20 && cp < 0x7F ? cp : 0x80;
+    if (entry_n < 0xFFFF)
+        entry_n++;
+    dirty[ENTRY_ROW] = 1;
+    if (msg_n) {
+        msg_n = 0;
+        dirty[STATUS_ROW] = 1;
+    }
+}
+
+static void entry_submit(void)
+{
+    uint8_t key[32];
+    uint16_t i, n = entry_n < ENTRY_CAP ? entry_n : ENTRY_CAP;
+    tb_n = 0;
+    if (!entry_n) {
+        tb_s("Type or paste a feed key (64 hex digits), or Esc to cancel");
+        say(C_ERROR);
+        return;
+    }
+    for (i = 0; i < n; i++)
+        if (hex_value(entry_buf[i]) > 15)
+            break;
+    if (i < n) {
+        tb_s("Not a feed key: a key has only the hex digits 0-9 and a-f");
+        say(C_ERROR);
+        return;
+    }
+    if (entry_n != 64) {
+        tb_s("Not a feed key: ");
+        tb_u(entry_n);
+        tb_s(" hex digits, but a key has 64");
+        say(C_ERROR);
+        return;
+    }
+    for (i = 0; i < 32; i++)
+        key[i] = hex_value(entry_buf[2 * i]) << 4 | hex_value(entry_buf[2 * i + 1]);
+    if (find_sub(key) >= 0) {
+        entry_show(0);
+        say_key("Already subscribed to ", key, "", C_INFO);
+        return;
+    }
+    if (op_busy())
+        return;
+    entry_show(0);
+    memcpy(op_key, key, 32);
+    op_start(OP_SUB, content_follow(&op_req, CONTENT_SUBSCRIBE, op_key));
+    say_key("Subscribing to ", key, "\xE2\x80\xA6 (the host asks you)", C_INFO);
+}
+
+/* --- Terminal rows ------------------------------------------------------- */
+
+static void bar_row(uint8_t row)
+{
+    row_start(row, C_BAR_FG, C_BAR_BG);
+}
+
+static void draw_entry_row(void)
+{
+    uint16_t n = entry_n < ENTRY_CAP ? entry_n : ENTRY_CAP, from = 0, i;
+    if (!entry) {
+        row_start(ENTRY_ROW, C_TEXT, C_BG);
+        row_end();
+        return;
+    }
+    row_start(ENTRY_ROW, C_TEXT, C_ENTRY_BG);
+    puts_(" Feed key: ");
+    if (n > COLS - 13) {
+        from = n - (COLS - 14);
+        ink(C_DIM);
+        put1(0x2026);
+        ink(C_TEXT);
+    }
+    for (i = from; i < n; i++)
+        put1(entry_buf[i] < 0x80 ? entry_buf[i] : 0xFFFD);
+    i = col;
+    row_end();
+    term_goto(i, ENTRY_ROW);
+    term_cmd(TERM_CURSOR_ON);
+}
+
+static void draw_status(void)
 {
     bar_row(STATUS_ROW);
-    if (link_shown) {
+    if (view == ARTICLE && link_shown) {
         uint32_t n = link_len[link_shown - 1];
         puts_(" Link: ");
         put_title(art + link_at[link_shown - 1], n > 255 ? 255 : n, COLS - 1 - col);
+    } else if (msg_n) {
+        spaces(1);
+        ink(msg_fg);
+        put_title((const uint8_t *)msg, msg_n, COLS - 2);
+    } else if (entry) {
+        puts_(" Type or paste a feed key   Enter: subscribe   Esc: cancel");
+    } else if (view == TIMELINE) {
+        puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  F feeds  ? help  T publish a test  Esc quit");
+        if (tl_total) {
+            ink(C_BAR_DIM);
+            tb_n = 0;
+            tb_u(tlp.sel + 1);
+            tb_s("/");
+            tb_u(tl_total);
+            pad_to(COLS - 1 - tb_n);
+            put_title((const uint8_t *)tb, tb_n, tb_n);
+        }
+    } else if (view == FEEDS) {
+        puts_(" \xE2\x86\x91\xE2\x86\x93 move  S subscribe  U unsubscribe  T publish a test  ? help  Esc back");
     } else {
-        if (art_state == READY && page_h_known) {
+        if (doc_state && page_h_known && max_scroll()) {
             spaces(1);
             put_u32(percent());
-            puts_(doc_state == 2 ? "%" : "%…");
+            puts_(view == HELP || doc_state == 2 ? "%" : "%\xE2\x80\xA6");
         }
-        pad_to(COLS - 42);
-        puts_("↑↓ PgUp PgDn Home End wheel   Esc/←: back");
+        if (view == HELP) {
+            pad_to(COLS - 48);
+            puts_("\xE2\x86\x91\xE2\x86\x93 scroll  T publish a test  F feeds  Esc back");
+        } else {
+            pad_to(COLS - 42);
+            puts_("\xE2\x86\x91\xE2\x86\x93 PgUp PgDn Home End wheel   Esc/\xE2\x86\x90: back");
+        }
     }
     row_end();
-}
-
-static void close_article(void)
-{
-    page_clear();
-    page_region(0, 0, 0, 0);
-    view = LIST;
-    drawn_top = top;
-    mark_rows(0, STATUS_ROW);
 }
 
 /* --- Events and frames ------------------------------------------------- */
 
-static void key(uint8_t code)
+static void show(uint8_t v)
 {
-    if (view == LIST) {
-        switch (code) {
-        case KEY_UP: move_by(-1); break;
-        case KEY_DOWN: move_by(1); break;
-        case KEY_PAGE_UP: page_list(-LIST_ROWS); break;
-        case KEY_PAGE_DOWN: page_list(LIST_ROWS); break;
-        case KEY_HOME: select_entry(0); break;
-        case KEY_END: select_entry(0xFFFF); break;
-        case KEY_ENTER: open_article(sel); break;
-        }
+    if (view == v)
         return;
+    if (entry)
+        entry_show(0);
+    view = v;
+    link_shown = 0;
+    page_dirty = 1;
+    dirty[STATUS_ROW] = 1;
+    if (v == FEEDS) {
+        lp_keep(&fdp, subs_n);
+        start_count();
     }
-    if (link_shown) {
-        link_shown = 0;
-        dirty[STATUS_ROW] = 1;
-    }
+}
+
+/* Scrolling keys of the article and help. */
+static void scroll_key(uint8_t code)
+{
     switch (code) {
     case KEY_UP: scroll_by(-LINE); break;
     case KEY_DOWN: scroll_by(LINE); break;
@@ -1391,37 +2139,121 @@ static void key(uint8_t code)
         if (page_h_known)
             scroll_to(max_scroll());
         break;
-    case KEY_ESCAPE: case KEY_BACKSPACE: case KEY_LEFT: close_article(); break;
     }
 }
 
-static void pointer(void)
+/* Returns 1 to quit. */
+static uint8_t key(uint8_t code, uint8_t mods)
 {
-    uint8_t pressed = EV_POINTER_BUTTONS(ev) & ~last_buttons & BUTTON_PRIMARY;
-    uint8_t row = EV_POINTER_Y(ev) >> 4;
-    last_buttons = EV_POINTER_BUTTONS(ev);
-    if (!pressed || view != LIST || row < 1 || row > LIST_ROWS || top + row - 1 >= tl_total)
+    uint8_t back = code == KEY_ESCAPE || code == KEY_BACKSPACE || code == KEY_LEFT;
+    if (msg_n) {
+        msg_n = 0;
+        dirty[STATUS_ROW] = 1;
+    }
+    if (entry) {
+        if (code == KEY_ENTER) {
+            entry_submit();
+        } else if (code == KEY_ESCAPE) {
+            entry_show(0);
+        } else if (code == KEY_BACKSPACE && entry_n) {
+            entry_n--;
+            dirty[ENTRY_ROW] = 1;
+        }
+        return 0;
+    }
+    if (view == ARTICLE) {
+        if (link_shown) {
+            link_shown = 0;
+            dirty[STATUS_ROW] = 1;
+        }
+        if (back)
+            show(TIMELINE);
+        else
+            scroll_key(code);
+        return 0;
+    }
+    if (!(mods & (MOD_CONTROL | MOD_ALT | MOD_META))) {
+        switch (code) {
+        case KEY_F: show(FEEDS); return 0;
+        case KEY_F1: show(HELP); return 0;
+        case KEY_T: test_publish(); return 0;
+        case KEY_S:
+            if (view == FEEDS)
+                entry_show(1);
+            return 0;
+        case KEY_U:
+            if (view == FEEDS)
+                unsubscribe();
+            return 0;
+        }
+    }
+    if (view == TIMELINE) {
+        if (code == KEY_ESCAPE)
+            return 1;
+        if (code == KEY_ENTER)
+            open_article(tlp.sel);
+        else
+            lp_key(&tlp, tl_total, code);
+    } else if (back) {
+        show(TIMELINE);
+    } else if (view == FEEDS) {
+        lp_key(&fdp, subs_n, code);
+    } else {
+        scroll_key(code);
+    }
+    return 0;
+}
+
+static void anchor(uint16_t id, uint8_t buttons)
+{
+    if (!id || entry)
         return;
-    if (top + row - 1 == sel)
-        open_article(sel);
-    else
-        select_entry(top + row - 1);
+    if (view == ARTICLE) {
+        if (id <= links) {
+            link_shown = id;
+            dirty[STATUS_ROW] = 1;
+        }
+    } else if (!(buttons & BUTTON_PRIMARY)) {
+        return;
+    } else if (view == TIMELINE && id <= tl_total) {
+        lp_set(&tlp, tl_total, id - 1, tlp.top);
+        open_article(id - 1);
+    } else if (view == FEEDS && id <= subs_n) {
+        lp_set(&fdp, subs_n, id - 1, fdp.top);
+    }
+}
+
+/* A completion is for `r` if its handle is `h` and `r` is no longer
+ * pending: a request submitted since, which may have been given the same
+ * handle, is still pending. */
+static uint8_t done_for(uint8_t h, const content_req *r)
+{
+    return h && h == ev.a && r->status != STATUS_PENDING;
 }
 
 /* Returns 1 to quit. */
 static uint8_t handle_events(void)
 {
+    uint32_t cp;
     while (terse_event_pop(&ev)) {
         switch (ev.type) {
         case EV_KEY_DOWN:
-            if (view == LIST && ev.a == KEY_ESCAPE)
+            if (key(ev.a, ev.b))
                 return 1;
-            key(ev.a);
             break;
-        case EV_POINTER: pointer(); break;
+        case EV_TEXT:
+            cp = ev.a | (uint32_t)ev.b << 8 | (uint32_t)(ev.c & 0x1F) << 16;
+            if (entry)
+                entry_text(cp);
+            else if (cp == '?' && view != ARTICLE)
+                show(HELP);
+            break;
         case EV_WHEEL:
-            if (view == LIST) {
-                scroll_list((int8_t)ev.a * 3);
+            if (view == TIMELINE) {
+                lp_wheel(&tlp, tl_total, (int8_t)ev.a);
+            } else if (view == FEEDS) {
+                if (!entry)
+                    lp_wheel(&fdp, subs_n, (int8_t)ev.a);
             } else {
                 if (link_shown) {
                     link_shown = 0;
@@ -1431,25 +2263,31 @@ static uint8_t handle_events(void)
             }
             break;
         case EV_PAGE_LAID_OUT:
-            if (view == ARTICLE)
+            if (view == TIMELINE || view == FEEDS)
+                list_height(EV_PAGE_HEIGHT(ev));
+            else
                 page_laid_out(EV_PAGE_HEIGHT(ev));
             break;
-        case EV_PAGE_ANCHOR:
-            if (view == ARTICLE && EV_ANCHOR_ID(ev) && EV_ANCHOR_ID(ev) <= links) {
-                link_shown = EV_ANCHOR_ID(ev);
-                dirty[STATUS_ROW] = 1;
-            }
-            break;
-        case EV_FEEDS_UPDATED: feeds_updated(); break;
+        case EV_PAGE_ANCHOR: anchor(EV_ANCHOR_ID(ev), EV_ANCHOR_BUTTONS(ev)); break;
+        case EV_FEEDS_UPDATED: reload(); break;
         case EV_CONTENT_DONE:
-            if (ev.a == tl_handle)
+            if (done_for(tl_handle, &tl_req))
                 timeline_done(ev.b);
-            else if (ev.a == art_handle)
+            else if (done_for(art_handle, &art_req))
                 article_done(ev.b);
-            else if (ev.a == sub_handle) {
-                sub_handle = 0;
-                subs_total = sub_req.size;
-                dirty[0] = 1;
+            else if (done_for(sub_handle, &sub_req))
+                subs_done(ev.b);
+            else if (done_for(cnt_handle, &cnt_req))
+                count_done(ev.b);
+            else if (done_for(op_handle, &op_req))
+                op_done(ev.b);
+            else if (done_for(id_handle, &id_req)) {
+                id_handle = 0;
+                if (ev.b == STATUS_DONE) {
+                    memcpy(own_key, id_req.id, 32);
+                    own_known = 1;
+                    page_dirty = 1;
+                }
             }
             break;
         }
@@ -1457,62 +2295,30 @@ static uint8_t handle_events(void)
     return 0;
 }
 
-/* Brings the list position up to date, scrolling the terminal for a
- * one-row move (SPEC 8.4) so that only the new row is drawn. Rows 0 and 29
- * move with it and are redrawn. */
-static void follow(uint16_t want, uint16_t *drawn)
-{
-    if (want == *drawn)
-        return;
-    if (want == (uint16_t)(*drawn + 1)) {
-        term_cmd(TERM_SCROLL_UP);
-        dirty[0] = dirty[LIST_ROWS] = dirty[STATUS_ROW] = 1;
-    } else if ((uint16_t)(want + 1) == *drawn) {
-        term_cmd(TERM_SCROLL_DOWN);
-        dirty[0] = dirty[1] = dirty[STATUS_ROW] = 1;
-    } else {
-        mark_rows(0, STATUS_ROW);
-    }
-    *drawn = want;
-}
-
 static void render(void)
 {
-    uint8_t row;
-    if (view == LIST) {
+    if (view == TIMELINE)
         ensure_window();
-        follow(top, &drawn_top);
-        if (sel != drawn_sel) {
-            if (drawn_sel >= top && drawn_sel < top + LIST_ROWS)
-                dirty[drawn_sel - top + 1] = 1;
-            dirty[sel - top + 1] = 1;
-            drawn_sel = sel;
-        }
-        if (tl_handle)
-            dirty[STATUS_ROW] = 1;
-    } else {
-        build();
-        send_scroll();
+    if (page_dirty && view != ARTICLE) {
+        page_dirty = 0;
+        if (view == TIMELINE)
+            timeline_doc();
+        else if (view == FEEDS)
+            feeds_doc();
+        else
+            help_doc();
     }
-    for (row = 0; row < TERM_ROWS; row++) {
-        if (!dirty[row])
-            continue;
-        dirty[row] = 0;
-        if (view == LIST) {
-            if (row == 0)
-                draw_list_title();
-            else if (row == STATUS_ROW)
-                draw_list_status();
-            else
-                draw_list_row(row);
-        } else {
-            if (row == STATUS_ROW)
-                draw_article_status();
-            else if (row == 0)
-                draw_article_title();
-            else
-                draw_article_row(row);
-        }
+    if (view == ARTICLE)
+        build();
+    if (view == ARTICLE || view == HELP)
+        send_scroll();
+    if (dirty[STATUS_ROW]) {
+        dirty[STATUS_ROW] = 0;
+        draw_status();
+    }
+    if (dirty[ENTRY_ROW]) {
+        dirty[ENTRY_ROW] = 0;
+        draw_entry_row();
     }
 }
 
@@ -1521,10 +2327,11 @@ int main(void)
     term_cmd(TERM_CURSOR_OFF);
     term_color(C_TEXT, C_BG);
     term_cmd(TERM_CLEAR);
-    page_background(0, 0, 0, 0);
+    page_background(28, 28, 28, 255);
     load_subscriptions();
     load_timeline(0);
-    mark_rows(0, STATUS_ROW);
+    id_handle = content_identity(&id_req);
+    dirty[STATUS_ROW] = 1;
     for (;;) {
         now = terse_time();
         if (handle_events())
@@ -1532,7 +2339,9 @@ int main(void)
         render();
         terse_wait_frame();
     }
-    term_color(C_TEXT, C_BG);
+    page_clear();
+    page_region(0, 0, 0, 0);
+    term_color(C_TEXT, 0);
     term_cmd(TERM_CLEAR);
     term_cmd(TERM_CURSOR_ON);
     return 0;

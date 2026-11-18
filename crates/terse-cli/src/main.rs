@@ -9,17 +9,17 @@ use std::process::ExitCode;
 use terse_core::{DeviceReq, Image, Machine, Script, Stopped};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::service::Headless;
-use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
+use terse_net::{Consent, ContentService, Done, Node, blob_id, local, parse_hex, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
-            [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]
-  terse info <image|id> [--relay ws://...] [--store <dir>]
-  terse put <file> [--relay ws://...] [--store <dir>]
-  terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
+            [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
+  terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
+  terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
+  terse get <id> [-o <file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse hash <file>
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
   terse key new|show
@@ -29,8 +29,14 @@ const USAGE: &str = "usage:
   terse feed sync [--watch] [--auto-download <bytes>]
   terse feed list [<key>]
   terse feed read <key> <seq>
-  (key and feed commands all take [--relay ws://...] [--store <dir>] [--config <dir>];
-  sync needs --relay)
+  terse relay set <ws://host:port>
+  terse relay show
+  (key, feed and relay commands all take [--relay ws://...|none] [--store <dir>] [--config <dir>])
+
+Relay: info, put, get, feed publish, feed sync and feed read use --relay if given (`none`:
+no network), else the relay named in <config>/relay (`terse relay set` writes it), else a
+relay running on this machine (ws://127.0.0.1:7878), else none (sync then fails). `run`
+uses a relay only with --relay.
 
 <id> is a 64-hex-digit blob ID, looked up in the store, then the relay.
 <key> is a feed key (64 hex digits).
@@ -43,6 +49,8 @@ entries are kept in <store>/feeds.
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
+--consent: how `run` answers a program's requests to subscribe, unsubscribe or publish
+(SPEC 9.5), since nobody can be asked (default deny).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
 its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
@@ -50,7 +58,7 @@ its height and scroll, then the lines in view (y, height, x, the first span's fo
 tell a fault from any exit code (a shell's $status shows 143).";
 
 /// Options for commands that use the blob store and relay.
-const NET_OPTIONS: [&str; 2] = ["--relay", "--store"];
+const NET_OPTIONS: [&str; 3] = ["--relay", "--store", "--config"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -63,6 +71,7 @@ fn main() -> ExitCode {
         Some("pack") => pack(&args[1..]),
         Some("key") => feed::key(&args[1..]),
         Some("feed") => feed::feed(&args[1..]),
+        Some("relay") => feed::relay(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {
@@ -136,17 +145,36 @@ fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The blob store and relay from `--store` and `--relay`, opened on first use.
+/// The relay for a command: `--relay` (`none`: no network); with `find`,
+/// when it is not given, the one named in the config directory's `relay`
+/// file, else one running on this machine (README, "Getting started").
+pub(crate) fn relay_url(args: &Args, find: bool) -> Result<Option<String>, String> {
+    let given = args.get("--relay");
+    if !find {
+        return Ok(given.filter(|&u| u != "none").map(str::to_string));
+    }
+    let config = args.get("--config").map(PathBuf::from).or_else(terse_net::default_config_dir);
+    let found = local::find_relay(given, config.as_deref(), local::local_port())?;
+    if matches!(found, local::Found::ConfigFile(..) | local::Found::Local(_)) {
+        eprintln!("terse: {}", found.describe());
+    }
+    Ok(found.url().map(str::to_string))
+}
+
+/// The blob store and relay from `--store` and `--relay`, opened on first
+/// use; `find`: look for a relay when `--relay` is not given.
 struct Net<'a> {
     args: &'a Args,
     node: Option<Node>,
+    find: bool,
 }
 
 impl Net<'_> {
     fn node(&mut self) -> Result<&mut Node, String> {
         if self.node.is_none() {
             let store = self.args.get("--store").map(PathBuf::from);
-            self.node = Some(Node::open(store, self.args.get("--relay"), DEFAULT_TIMEOUT)?);
+            let relay = relay_url(self.args, self.find)?;
+            self.node = Some(Node::open(store, relay.as_deref(), DEFAULT_TIMEOUT)?);
         }
         Ok(self.node.as_mut().unwrap())
     }
@@ -189,6 +217,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--relay",
         "--store",
         "--config",
+        "--consent",
         "--hash",
         "--hash-every",
         "--bench",
@@ -197,7 +226,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         return Err("--dump-vectors and --dump-page need --dump".into());
     }
     let script = load_script(args.get("--events"))?;
-    let mut net = Net { args: &args, node: None };
+    let mut net = Net { args: &args, node: None, find: false };
     let image = load_image(args.one_positional()?, &mut net)?;
     let frames: Option<u64> = match args.get("--frames") {
         Some(n) => Some(n.parse().map_err(|_| format!("bad frame count {n}"))?),
@@ -208,12 +237,19 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
 
+    let consent = match args.get("--consent") {
+        None => Consent::Deny,
+        Some(c) => Consent::parse(c).filter(|&c| c != Consent::Ask).ok_or(format!("bad --consent {c} (allow or deny)"))?,
+    };
+
     let mut machine = Machine::new(&image);
     let content = if image.has_device(4) {
-        // SPEC 7.7: the feeds are those of the --config subscriptions.
+        // SPEC 9.5: the feeds are those of the --config subscriptions, and
+        // the identity is the one kept there.
         let mut node = net.take()?;
         node.set_subscriptions(feed::load_subscriptions(&args)?);
-        let mut content = ContentService::start(node);
+        node.set_identity_path(feed::identity_path(&args)?)?;
+        let mut content = ContentService::start_with_consent(node, consent);
         // Start from a caught-up store, so that a run sees what the relay
         // holds when it starts; later entries arrive while it runs.
         if content.following()
@@ -341,7 +377,7 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     args.check_known(&NET_OPTIONS)?;
     let path = args.one_positional()?;
-    let image = load_image(path, &mut Net { args: &args, node: None })?;
+    let image = load_image(path, &mut Net { args: &args, node: None, find: true })?;
     let devices: Vec<String> =
         image.devices.iter().map(|d| format!("{}:{}", d.slot, d.version)).collect();
     println!("file:      {path}");
@@ -362,7 +398,7 @@ fn put(args: &[String]) -> Result<ExitCode, String> {
     if !terse_net::blob::valid_size(data.len()) {
         return Err(format!("a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
     }
-    let mut net = Net { args: &args, node: None };
+    let mut net = Net { args: &args, node: None, find: true };
     match net.node()?.publish(&data) {
         Done::Put(id) => {
             println!("{}", to_hex(&id));
@@ -374,10 +410,10 @@ fn put(args: &[String]) -> Result<ExitCode, String> {
 
 fn get(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["-o", "--relay", "--store"])?;
+    args.check_known(&["-o", "--relay", "--store", "--config"])?;
     let arg = args.one_positional()?;
     let id = parse_hex(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits)"))?;
-    let bytes = Net { args: &args, node: None }.fetch(id)?;
+    let bytes = Net { args: &args, node: None, find: true }.fetch(id)?;
     match args.get("-o") {
         Some(out) => write(out, &bytes)?,
         None => std::io::stdout().write_all(&bytes).map_err(|e| e.to_string())?,

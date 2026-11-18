@@ -268,12 +268,17 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define CONTENT_PUT 0x02
 #define CONTENT_SUBSCRIPTIONS 0x03
 #define CONTENT_TIMELINE 0x04
+#define CONTENT_SUBSCRIBE 0x05
+#define CONTENT_UNSUBSCRIBE 0x06
+#define CONTENT_PUBLISH 0x07
+#define CONTENT_IDENTITY 0x08
 
 #define STATUS_PENDING 0x00
 #define STATUS_DONE 0x01
 #define STATUS_NOT_FOUND 0x02
 #define STATUS_FAILED 0x03
 #define STATUS_BAD_REQUEST 0x04
+#define STATUS_REFUSED 0x05
 
 /* The 52-byte request block; it must lie in RAM. */
 typedef struct {
@@ -294,6 +299,21 @@ uint32_t get24(const uint8_t *p);
 static inline uint8_t content_submit(content_req *r) { return terse_call(CALL_CONTENT_SUBMIT, (uint32_t)r, 0, 0); }
 uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf);
 uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf);
+/* Puts `size` bytes (ROM or RAM, copied at submit); on completion r->id is
+ * the blob's ID. */
+uint8_t content_put(content_req *r, const void *data, uint32_t size);
+/* Subscribes to (CONTENT_SUBSCRIBE) or unsubscribes from
+ * (CONTENT_UNSUBSCRIBE) the feed `key` (32 bytes). The host asks the user;
+ * STATUS_REFUSED if the answer is no (SPEC 9.5). */
+uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
+/* Publishes blob `blob` (already in the host's store: put it first) as the
+ * next entry of the host's feed, with a title of `len` bytes of UTF-8 (at
+ * most 120, copied at submit). The host asks the user; on completion
+ * r->size is the entry's seq. */
+uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len);
+/* The host's own feed key, in r->id on completion; STATUS_NOT_FOUND if the
+ * host has no identity yet. */
+uint8_t content_identity(content_req *r);
 
 /* Device 7, page (SPEC 11): typeset text in a rectangle. */
 #define PAGE_DONE 0x00

@@ -12,7 +12,6 @@ const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [--
   --feed-entries: entries kept per feed, at least 256 (default 1024)
   Feed entries are kept in <dir>/feeds.";
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:7878";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -25,7 +24,8 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Vec<String>) -> Result<(), String> {
-    let (mut listen, mut store, mut limit, mut cap) = (DEFAULT_LISTEN.to_string(), None, None, DEFAULT_FEED_CAP);
+    let default_listen = terse_net::local::local_addr(terse_net::local::DEFAULT_PORT).to_string();
+    let (mut listen, mut store, mut limit, mut cap) = (default_listen, None, None, DEFAULT_FEED_CAP);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().ok_or(format!("{a} needs a value\n{USAGE}"));

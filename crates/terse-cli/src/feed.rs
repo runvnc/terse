@@ -17,7 +17,7 @@ use terse_net::{
     default_config_dir, parse_hex, to_hex,
 };
 
-use crate::{Args, USAGE, read};
+use crate::{Args, USAGE, read, relay_url};
 
 /// `feed sync` without `--watch` gives up if not caught up (NETWORK 4.3)
 /// after this long.
@@ -34,7 +34,7 @@ fn config_dir(args: &Args) -> Result<PathBuf, String> {
     args.get("--config").map(PathBuf::from).or_else(default_config_dir).ok_or("no config directory (use --config)".into())
 }
 
-fn identity_path(args: &Args) -> Result<PathBuf, String> {
+pub fn identity_path(args: &Args) -> Result<PathBuf, String> {
     Ok(config_dir(args)?.join("identity.key"))
 }
 
@@ -50,10 +50,10 @@ pub fn load_subscriptions(args: &Args) -> Result<Subscriptions, String> {
     Subscriptions::load(config_dir(args)?.join("subscriptions"))
 }
 
-/// A node on `--store` and `--relay` with the saved subscriptions.
-fn open_node(args: &Args) -> Result<Node, String> {
+/// A node on `--store` and `relay` with the saved subscriptions.
+fn open_node(args: &Args, relay: Option<&str>) -> Result<Node, String> {
     let store = args.get("--store").map(PathBuf::from);
-    let mut node = Node::open(store, args.get("--relay"), DEFAULT_TIMEOUT)?;
+    let mut node = Node::open(store, relay, DEFAULT_TIMEOUT)?;
     node.set_subscriptions(load_subscriptions(args)?);
     if let Some(n) = args.get("--auto-download") {
         node.set_auto_download_limit(n.parse().map_err(|_| format!("bad byte count {n}"))?);
@@ -99,6 +99,36 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
+/// `terse relay set <url>` / `terse relay show`: the relay named in the
+/// config directory's `relay` file.
+pub fn relay(args: &[String]) -> Result<ExitCode, String> {
+    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    let args = Args::parse(rest, &[])?;
+    known(&args, &[])?;
+    let config = config_dir(&args)?;
+    match (command.as_str(), args.positional.as_slice()) {
+        ("set", [url]) => {
+            let path = terse_net::local::write_relay_file(&config, url)?;
+            eprintln!("terse: relay saved in {}", path.display());
+            println!("{url}");
+        }
+        ("show", []) => match terse_net::local::read_relay_file(&config)? {
+            Some(url) => println!("{url}"),
+            None => {
+                let port = terse_net::local::local_port();
+                eprintln!(
+                    "terse: no relay set in {}; commands use {} if a relay runs there",
+                    config.join(terse_net::local::RELAY_FILE).display(),
+                    terse_net::local::local_url(port)
+                );
+                return Ok(ExitCode::from(1));
+            }
+        },
+        _ => return Err(USAGE.into()),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn now() -> u32 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
 }
@@ -119,12 +149,14 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
     let identity = load_identity(&args)?;
-    let mut node = open_node(&args)?;
+    let relay = relay_url(&args, true)?;
+    let mut node = Node::open(args.get("--store").map(PathBuf::from), relay.as_deref(), DEFAULT_TIMEOUT)?;
+    node.set_subscriptions(load_subscriptions(&args)?);
     node.set_identity(identity);
     match node.publish_article(&Draft { data, title, reply_to, time: now() }) {
         Done::Published { seq, blob } => {
-            if args.get("--relay").is_none() {
-                eprintln!("terse: no --relay: stored locally only");
+            if relay.is_none() {
+                eprintln!("terse: no relay: stored locally only");
             }
             println!("seq {seq} blob {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
@@ -155,7 +187,7 @@ fn subscriptions(args: &[String]) -> Result<ExitCode, String> {
     if !args.positional.is_empty() {
         return Err(USAGE.into());
     }
-    let node = open_node(&args)?;
+    let node = open_node(&args, None)?;
     for key in node.subscriptions().feeds() {
         let seqs = node.feed_store().seqs(key).map_err(|e| e.to_string())?;
         let latest = seqs.last().map_or("-".into(), |s| format!("#{s}"));
@@ -219,8 +251,9 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
         return Err(USAGE.into());
     }
     let watch = args.has("--watch");
-    let relay = args.require("--relay")?.to_string();
-    let node = open_node(&args)?;
+    let relay = relay_url(&args, true)?
+        .ok_or("no relay: give --relay, name one with `terse relay set <url>`, or start terse-relay on this machine")?;
+    let node = open_node(&args, Some(&relay))?;
     if node.subscriptions().is_empty() {
         return Err("no subscriptions (add one with `terse feed subscribe <key>`)".into());
     }
@@ -285,7 +318,8 @@ fn read_article(args: &[String]) -> Result<ExitCode, String> {
     let [key, seq] = args.positional.as_slice() else { return Err(USAGE.into()) };
     let key = parse_feed_key(key)?;
     let seq: u32 = seq.trim_start_matches('#').parse().map_err(|_| format!("bad seq {seq}"))?;
-    let mut node = Node::open(args.get("--store").map(PathBuf::from), args.get("--relay"), DEFAULT_TIMEOUT)?;
+    let relay = relay_url(&args, true)?;
+    let mut node = Node::open(args.get("--store").map(PathBuf::from), relay.as_deref(), DEFAULT_TIMEOUT)?;
     let bytes = node.feed_store().get(&key, seq).map_err(|e| e.to_string())?;
     let entry = bytes
         .and_then(|b| entry::decode(&b).ok())

@@ -1,4 +1,3 @@
- Tea in three languages: お茶, الشاي
 
 
 
@@ -27,24 +26,25 @@
 
 
 
- 100%                                 ↑↓ PgUp PgDn Home End wheel   Esc/←: back
--- page: height 436, scroll 0 (stored 0), region 64 16 512 448 --
-    0  33     0   sans26b |Tea in three languages: お茶, الشاي
-   39  15     0   sans12 |feed 0b513ad9  ·  #2  ·  2026-11-17 18:20 UTC  ·  1239 bytes
-   64   8     0  -- rule --
-   82  19     0   sans15 |Tea is drunk almost everywhere, but every culture has made it its
-  101  19     0   sans15 |own. This page describes the same simple ritual in three languages,
-  120  19     0   sans15 |each paragraph laid out in its own direction.
-  149  19     0   sans15 |日本では、緑茶は毎日の生活に欠かせない飲み物です。朝の一杯は心を落ち
-  168  19     0   sans15 |着かせ、一日の始まりを静かに告げてくれます。急須でいれたお茶は、ペッ
-  187  19     0   sans15 |トボトルのお茶とはまったく違う香りがします。
-  216  19     0   sans15 |الشاي جزء أساسي من الحياة اليومية في كثير من البلدان العربية.
-  235  19     0   sans15 |يُقدَّم للضيوف ترحيبًا بهم، وغالبًا ما يُحضَّر بالنعناع الطازج أو
-  254  19     0   sans15 |الهيل. وفي المساء تجتمع العائلة حول إبريق الشاي لتتحدث عن أحداث
-  273  19     0   sans15 |اليوم.
-  302  19     0   sans15 |In Japanese the word for tea is お茶 (ocha); in Arabic it is شاي
-  321  19     0   sans15 |(shay). Both words travelled along the old trade routes from China,
-  340  19     0   sans15 |where the plant was first grown.
-  369  19     0   sans15 |茶道では、一つひとつの動作に意味があります。お湯を注ぐ音さえも、もて
-  388  19     0   sans15 |なしの一部なのです。
-  417  19     0   sans15 |وفي المغرب يُصبّ الشاي من ارتفاع عالٍ ليتكوّن على سطحه زبد خفيف.
+
+                                      ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+-- page: height 450, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |Tea in three languages: お茶, الشاي
+   53  15     0   sans12 |0b513a…e39f2d  ·  #2  ·  2026-11-17 18:20 UTC  ·  1.2 KB
+   78   8     0  -- rule --
+   96  19     0   sans15 |Tea is drunk almost everywhere, but every culture has made it its
+  115  19     0   sans15 |own. This page describes the same simple ritual in three languages,
+  134  19     0   sans15 |each paragraph laid out in its own direction.
+  163  19     0   sans15 |日本では、緑茶は毎日の生活に欠かせない飲み物です。朝の一杯は心を落ち
+  182  19     0   sans15 |着かせ、一日の始まりを静かに告げてくれます。急須でいれたお茶は、ペッ
+  201  19     0   sans15 |トボトルのお茶とはまったく違う香りがします。
+  230  19     0   sans15 |الشاي جزء أساسي من الحياة اليومية في كثير من البلدان العربية.
+  249  19     0   sans15 |يُقدَّم للضيوف ترحيبًا بهم، وغالبًا ما يُحضَّر بالنعناع الطازج أو
+  268  19     0   sans15 |الهيل. وفي المساء تجتمع العائلة حول إبريق الشاي لتتحدث عن أحداث
+  287  19     0   sans15 |اليوم.
+  316  19     0   sans15 |In Japanese the word for tea is お茶 (ocha); in Arabic it is شاي
+  335  19     0   sans15 |(shay). Both words travelled along the old trade routes from China,
+  354  19     0   sans15 |where the plant was first grown.
+  383  19     0   sans15 |茶道では、一つひとつの動作に意味があります。お湯を注ぐ音さえも、もて
+  402  19     0   sans15 |なしの一部なのです。
+  431  19     0   sans15 |وفي المغرب يُصبّ الشاي من ارتفاع عالٍ ليتكوّن على سطحه زبد خفيف.

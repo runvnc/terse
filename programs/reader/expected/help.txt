@@ -1,0 +1,49 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
+-- page: height 788, scroll 0 (stored 0), region 64 0 512 464 --
+   16  30     0   sans24b |Help
+   62  22     0   sans17b |Your feed key
+   92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
+  111  19    12   mono15 |afc8ad82 c8839b76 44359b9e ba9a4b3a
+  138  17     0   sans13 |Others subscribe to your feed with this key: in this reader, F, then S, then
+  155  17     0   sans13 |paste it.
+  188  22     0   sans17b |Timeline
+  214  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
+  236  18    12   sans14b |Enter, click   open the article
+  258  18    12   sans14b |F   feeds
+  280  18    12   sans14b |? or F1   this help
+  302  18    12   sans14b |T   publish a test article
+  324  18    12   sans14b |Esc   quit
+  358  22     0   sans17b |Article
+  384  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll
+  406  18    12   sans14b |Click a link   show its address
+  428  18    12   sans14b |Esc, Backspace, ←   back to the timeline
+  462  22     0   sans17b |Feeds

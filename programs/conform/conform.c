@@ -1446,7 +1446,7 @@ static void t_content(void)
         uint32_t length, addr, size;
     } bad[] = {
         {0x00, 1, RAM_BASE, 1},              /* unknown op */
-        {0x05, 1, RAM_BASE, 1},
+        {0x09, 1, RAM_BASE, 1},
         {0xFF, 1, RAM_BASE, 1},
         {0x01, 0, RAM_BASE, 0},              /* get, length 0 */
         {0x01, 16385, RAM_BASE, 0},          /* get, length 16,385 */

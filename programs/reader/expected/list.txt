@@ -1,14 +1,3 @@
- Terse reader  ·  10 entries  ·  2 subscriptions          ✓ local ↳ reply • new
- 11-17 19:40 0b513ad9 ✓  Emoji � and tabs�in a title
- 11-17 19:30 66be7e33 ✓  A big article (over 48 KiB)
- 11-17 19:20 0b513ad9 ✓  A title long enough that the list has to cut it short …
- 11-17 19:10 66be7e33    An article that is not in the store
- 11-17 19:00 0b513ad9 ✓↳ Re: Welcome to the Terse reader
- 11-17 18:50 66be7e33 ✓  A long article
- 11-17 18:40 0b513ad9 ✓  日本語の記事：テスト
- 11-17 18:30 66be7e33 ✓  Welcome to the Terse reader
- 11-17 18:20 0b513ad9 ✓  Tea in three languages: お茶, الشاي
- 11-17 18:10 66be7e33 ✓  Keeping a sourdough starter alive
 
 
 
@@ -27,5 +16,38 @@
 
 
 
- ↑↓ PgUp PgDn Home End wheel: move   Enter/click: open   Esc: quit
--- page: height 0, scroll 0 (stored 0), region 0 0 0 0 --
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  Enter open  F feeds  ? help  T publish a test  Esc quit          1/10
+-- page: height 473, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Timeline
+   28  15     0   sans12 |10 articles  ·  2 feeds
+   51  20     0   sans16 |[Emoji 😀 and tabs in a title]{1}
+   71  15     0   sans12 |[0b513a…e39f2d  ·  2026-11-17 19:40  ·  6 bytes]{1}
+   94  20     0   sans16 |[A big article (over 48 KiB)]{2}
+  114  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 19:30  ·  50.8 KB]{2}
+  137  20     0   sans16 |[A title long enough that the list has to cut it short with an ellipsis, wide characters: 長い題名]{3}
+  157  15     0   sans12 |[0b513a…e39f2d  ·  2026-11-17 19:20  ·  7 bytes]{3}
+  180  20     0   sans16 |[An article that is not in the store]{4}
+  200  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 19:10  ·  4 bytes  ·  not downloaded]{4}
+  223  20     0   sans16 |[Re: Welcome to the Terse reader]{5}
+  243  15     0   sans12 |[0b513a…e39f2d  ·  2026-11-17 19:00  ·  25 bytes  ·  ↳ reply]{5}
+  266  20     0   sans16 |[A long article]{6}
+  286  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 18:50  ·  6.0 KB]{6}
+  309  20     0   sans16 |[日本語の記事：テスト]{7}
+  329  15     0   sans12 |[0b513a…e39f2d  ·  2026-11-17 18:40  ·  41 bytes]{7}
+  352  20     0   sans16 |[Welcome to the Terse reader]{8}
+  372  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 18:30  ·  53 bytes]{8}
+  395  20     0   sans16 |[Tea in three languages: お茶, الشاي]{9}
+  415  15     0   sans12 |[0b513a…e39f2d  ·  2026-11-17 18:20  ·  1.2 KB]{9}
+  438  20     0   sans16 |[Keeping a sourdough starter alive]{10}
+  458  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 18:10  ·  2.5 KB]{10}

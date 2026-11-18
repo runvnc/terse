@@ -1,0 +1,107 @@
+This is a longer article, several screens of it, so that you can try the
+reader's scrolling: Up and Down move a line at a time, Page Up and Page Down
+(or Space) a screen, Home and End go to the ends, and the mouse wheel works
+too. The status line shows how far through the article you are. It is also
+a short tour of how Terse works, from the bottom up.
+
+The machine
+
+Terse is a virtual computer. Its processor runs the RISC-V instruction set,
+the 32-bit base with multiplication and the compressed encodings, which is
+small enough to implement in an afternoon and well supported by ordinary
+compilers. A program is a single image of at most 128 KiB of code and
+constants, and it gets up to a mebibyte of memory. There is no operating
+system inside the machine and no interrupts: a program does its work for a
+frame, then waits for the next one.
+
+Every frame has a budget of 125,000 units of work. An instruction costs one
+unit when it is fetched from read-only memory and four when it is fetched
+from RAM; calls to devices cost a few units plus a little for every byte
+they copy. When the budget runs out, the machine simply pauses the program
+until the next frame. This is what makes a Terse program behave the same on
+a fast desktop and a slow phone: it can never ask for more than its share,
+and a host that can deliver the budget sixty times a second runs every
+program at full speed.
+
+The budget also makes runs reproducible. The machine has no clock of its own
+and no hidden source of randomness. Everything that comes from outside, from
+key presses and the time of day to the bytes of a downloaded article,
+arrives as an input at the start of a frame. Record the inputs and you can
+replay the run exactly, instruction for instruction, on any host; the state
+of the whole machine can be hashed after every frame and compared.
+
+The devices
+
+A program reaches the outside world through a handful of devices. The
+terminal is a grid of eighty columns and thirty rows of coloured cells, the
+simplest way to put text on the screen. The vector display draws lines,
+circles and filled shapes, and can imitate the glow of an old vector monitor.
+The page device, which is showing you this article, takes a short list of
+styled text, a paragraph here, a font change there, and lays it out with
+proportional fonts, proper shaping and bidirectional text, at whatever width
+the program chooses.
+
+Layout is the host's business, because fonts differ from one computer to the
+next. The program never learns where a word ended up; it only learns the
+height of the whole document, and it learns that through an input event, so
+that a recorded run still replays exactly although the fonts were different.
+That is enough to scroll, to show how far you have read, and to keep a list
+lined up, and it keeps the program small.
+
+The content device fetches and publishes blobs. A blob is up to a mebibyte
+of bytes named by its hash, so a program asks for exactly the bytes it
+wants and the host can fetch them from anywhere: its own cache, a relay, a
+friend's computer. Whatever the source, the host checks the hash before the
+program sees a single byte. A program image is itself a blob, so a program
+can be started by its hash alone.
+
+Feeds
+
+A feed is a numbered series of small signed entries, each pointing to an
+article. The feed is named by a public key, and only the holder of the
+matching secret key can add to it. Entries are tiny, a few hundred bytes,
+and carry the title, the size of the article, the time the author claims and
+the hash of the article itself. Hosts subscribe to feeds through a relay and
+download small articles as soon as their entries arrive, so that reading
+never has to wait for the network.
+
+A relay is deliberately simple. It stores blobs and entries, checks the
+signatures, and passes new entries on to whoever subscribed. It does not
+decide what you see, and it cannot change an article without the hash
+giving it away, or forge an entry without the author's key. If a relay goes
+away, any other relay holding the same entries serves just as well.
+
+Programs read feeds through the content device: the list of feeds the host
+follows, and the timeline of their entries, newest first. They may also ask
+the host to subscribe, to unsubscribe, or to publish an article in the
+user's name. Those three requests change what the user follows or say
+something on the user's behalf, so the host asks the user each time, with a
+prompt it draws itself at the bottom of the screen. The program cannot draw
+that prompt, read it or answer it.
+
+Why so small?
+
+Everything about Terse is meant to be small enough to understand and to
+implement again. The machine fits in a few thousand lines; the network
+protocol fits on a page; a program like this reader is a single file of C.
+Small parts make it possible to check them, to port them, and to trust that
+a program written today will still run, unchanged and at the same speed,
+on whatever computers come next.
+
+The cost of that smallness is that a lot of things are left out on purpose:
+there are no images on the page yet, no links that the host follows by
+itself, no way to copy text out of a program. Some of these will come, each
+as a small, carefully specified device; some never will.
+
+Trying it with a friend
+
+The quickest way to share articles is a relay that both of you can reach.
+One of you runs terse-relay on a machine the other can connect to, and the
+other names it with terse relay set followed by its address. Then exchange
+feed keys (press ? to see yours), and subscribe to each other's feeds with F
+and then S. New articles appear in the timeline within moments of being
+published, and they stay readable when the network is gone, because the
+reader keeps a copy.
+
+That is the end of this article. Press End to check that the status line
+says 100%, then Esc to go back to the timeline.

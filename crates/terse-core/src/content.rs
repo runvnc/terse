@@ -20,6 +20,10 @@ pub const OP_GET: u8 = 0x01;
 pub const OP_PUT: u8 = 0x02;
 pub const OP_SUBSCRIPTIONS: u8 = 0x03;
 pub const OP_TIMELINE: u8 = 0x04;
+pub const OP_SUBSCRIBE: u8 = 0x05;
+pub const OP_UNSUBSCRIBE: u8 = 0x06;
+pub const OP_PUBLISH: u8 = 0x07;
+pub const OP_IDENTITY: u8 = 0x08;
 
 /// A subscriptions record: feed key and highest `seq` (SPEC 9.5).
 pub const SUBSCRIPTION_RECORD: usize = 36;
@@ -40,6 +44,7 @@ pub mod status {
     pub const NOT_FOUND: u8 = 0x02;
     pub const FAILED: u8 = 0x03;
     pub const BAD_REQUEST: u8 = 0x04;
+    pub const REFUSED: u8 = 0x05;
 }
 
 // Request block field offsets (SPEC 9.1).
@@ -87,6 +92,16 @@ pub enum RequestKind {
     Subscriptions { offset: u32, length: u16 },
     /// Timeline records from index `offset`, at most `length` bytes (SPEC 9.5).
     Timeline { offset: u32, length: u16 },
+    /// Subscribe to the feed `feed`; needs the user's consent (SPEC 9.5).
+    Subscribe { feed: [u8; 32] },
+    /// Unsubscribe from the feed `feed`; needs the user's consent.
+    Unsubscribe { feed: [u8; 32] },
+    /// Publish blob `blob` as the next entry of the host's own feed, with
+    /// `title` (valid UTF-8, at most 120 bytes, copied at submit); needs the
+    /// user's consent.
+    Publish { blob: [u8; 32], title: Vec<u8> },
+    /// The host's own feed key.
+    Identity,
 }
 
 /// The host's answer to a pending request (SPEC 9.2), an input to the machine
@@ -109,8 +124,17 @@ pub enum Outcome {
     /// that exist and the whole records delivered from the requested index,
     /// as many as fit in `length` (SPEC 9.5).
     Records { total: u32, data: Vec<u8> },
+    /// A subscribe or unsubscribe succeeded.
+    Done,
+    /// A publish succeeded: the new entry's `seq`, written to `size`.
+    Published { seq: u32 },
+    /// An identity request succeeded: the host's feed key, written to `id`.
+    Identity { key: [u8; 32] },
     NotFound,
     Failed,
+    /// The user (or the host) did not allow a subscribe, unsubscribe or
+    /// publish (SPEC 9.5).
+    Refused,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,6 +143,9 @@ enum Pending {
     Get { id: [u8; 32], offset: u32, length: u16, addr: u32 },
     Put { id: [u8; 32], size: u32 },
     Records { op: u8, offset: u32, length: u16, addr: u32 },
+    /// Subscribe, unsubscribe, publish and identity: the `id` read at submit
+    /// (zero for identity) and a publish's title length.
+    Feed { op: u8, id: [u8; 32], title_len: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,6 +226,23 @@ impl Content {
             // accepted, after step 3.
             OP_PUT => ((1..=MAX_BLOB as u32).contains(&size) && readable(rom, ram, addr, size as usize).is_some())
                 .then(|| (Pending::Put { id: [0; 32], size }, RequestKind::Put { data: Vec::new() })),
+            OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_IDENTITY => {
+                let id: [u8; 32] = if b[OP] == OP_IDENTITY { [0; 32] } else { b[ID..ID + 32].try_into().unwrap() };
+                let kind = match b[OP] {
+                    OP_SUBSCRIBE => RequestKind::Subscribe { feed: id },
+                    OP_UNSUBSCRIBE => RequestKind::Unsubscribe { feed: id },
+                    _ => RequestKind::Identity,
+                };
+                Some((Pending::Feed { op: b[OP], id, title_len: 0 }, kind))
+            }
+            // The title is copied (and charged) only once the request is
+            // accepted, after step 3.
+            OP_PUBLISH => (length as usize <= MAX_TITLE
+                && readable(rom, ram, addr, length as usize).is_some_and(|t| std::str::from_utf8(t).is_ok()))
+            .then(|| {
+                let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
+                (Pending::Feed { op: OP_PUBLISH, id, title_len: length as u8 }, RequestKind::Publish { blob: id, title: Vec::new() })
+            }),
             _ => None,
         };
         let Some((mut pending, mut kind)) = request else {
@@ -212,6 +256,9 @@ impl Content {
             *data = readable(rom, ram, addr, size as usize).unwrap().to_vec();
             *id = *blake3::hash(data).as_bytes();
         }
+        if let RequestKind::Publish { title, .. } = &mut kind {
+            *title = readable(rom, ram, addr, length as usize).unwrap().to_vec();
+        }
 
         // Step 4.
         ram[block + STATUS] = status::PENDING;
@@ -219,6 +266,7 @@ impl Content {
         self.slots[index] = Some(Slot { block: block_addr, pending });
         let taken = match &kind {
             RequestKind::Put { data } => data.len(),
+            RequestKind::Publish { title, .. } => title.len(),
             _ => 0,
         };
         self.submitted.push(Request { handle, kind });
@@ -290,6 +338,16 @@ impl Content {
                 ram[block + ID..block + ID + 32].copy_from_slice(id);
                 status::DONE
             }
+            (&Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE, .. }, Outcome::Done) => status::DONE,
+            (&Pending::Feed { op: OP_PUBLISH, .. }, &Outcome::Published { seq }) => {
+                put32(ram, SIZE, seq);
+                status::DONE
+            }
+            (&Pending::Feed { op: OP_IDENTITY, .. }, Outcome::Identity { key }) => {
+                ram[block + ID..block + ID + 32].copy_from_slice(key);
+                status::DONE
+            }
+            (&Pending::Feed { op: OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH, .. }, Outcome::Refused) => status::REFUSED,
             (_, Outcome::NotFound) => status::NOT_FOUND,
             (_, Outcome::Failed) => status::FAILED,
             _ => return None,
@@ -310,6 +368,7 @@ impl Content {
                     Pending::Get { id, offset, length, addr } => (OP_GET, *block, id, offset, length as u32, addr, 0),
                     Pending::Put { id, size } => (OP_PUT, *block, id, 0, 0, 0, size),
                     Pending::Records { op, offset, length, addr } => (op, *block, [0; 32], offset, length as u32, addr, 0),
+                    Pending::Feed { op, id, title_len } => (op, *block, id, 0, title_len as u32, 0, 0),
                 },
             };
             out.push(op);
@@ -464,7 +523,7 @@ mod tests {
         let ram_end = RAM_BASE + RAM_LEN as u32;
         let bad = [
             block(0, [0; 32], 0, 1, 0x1000, 1),
-            block(5, [0; 32], 0, 1, 0x1000, 1),
+            block(9, [0; 32], 0, 1, 0x1000, 1),
             block(0xFF, [0; 32], 0, 1, 0x1000, 1),
             get(0, 0),
             feed(OP_SUBSCRIPTIONS, 0, 0),
@@ -754,5 +813,134 @@ mod tests {
         rig.submit(BLOCK, Some(&feed(OP_TIMELINE, 0, 1000)));
         rig.complete(&[Completion { handle: 1, outcome: Outcome::Failed }]);
         assert_eq!(status(&rig, BLOCK), status::FAILED);
+    }
+
+    fn feed_op(op: u8, id: [u8; 32], length: u32, addr: u32) -> [u8; BLOCK_LEN] {
+        block(op, id, 0, length, addr, 0)
+    }
+
+    fn done(handle: u8, outcome: Outcome) -> Completion {
+        Completion { handle, outcome }
+    }
+
+    /// SPEC 9.5: subscribe, unsubscribe, publish and identity are submitted
+    /// like the other requests and complete with their own outcomes.
+    #[test]
+    fn subscribe_unsubscribe_publish_identity() {
+        let mut rig = Rig::new();
+        rig.write(DATA, "Hello, ünïcode".as_bytes());
+        let title_len = "Hello, ünïcode".len() as u32;
+        assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_SUBSCRIBE, [3; 32], 0, 0))), (1, 0));
+        assert_eq!(rig.submit(BLOCK + 64, Some(&feed_op(OP_UNSUBSCRIBE, [4; 32], 0, 0))), (2, 0));
+        assert_eq!(rig.submit(BLOCK + 128, Some(&feed_op(OP_PUBLISH, [5; 32], title_len, DATA))), (3, title_len as usize));
+        // The title is copied at submit.
+        rig.write(DATA, b"XXXXX");
+        assert_eq!(rig.submit(BLOCK + 192, Some(&feed_op(OP_IDENTITY, [6; 32], 0, 0))), (4, 0));
+        // A publish with no title, from ROM, and at the end of ROM (empty).
+        assert_eq!(rig.submit(BLOCK + 256, Some(&feed_op(OP_PUBLISH, [7; 32], 3, ROM_BASE))).0, 5);
+        assert_eq!(rig.submit(BLOCK + 320, Some(&feed_op(OP_PUBLISH, [8; 32], 0, ROM_BASE + ROM.len() as u32))).0, 6);
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::Subscribe { feed: [3; 32] } },
+                Request { handle: 2, kind: RequestKind::Unsubscribe { feed: [4; 32] } },
+                Request { handle: 3, kind: RequestKind::Publish { blob: [5; 32], title: "Hello, ünïcode".into() } },
+                Request { handle: 4, kind: RequestKind::Identity },
+                Request { handle: 5, kind: RequestKind::Publish { blob: [7; 32], title: b"rom".to_vec() } },
+                Request { handle: 6, kind: RequestKind::Publish { blob: [8; 32], title: Vec::new() } },
+            ]
+        );
+        // Outcomes that do not fit the request are ignored.
+        assert_eq!(rig.complete(&[done(1, Outcome::Published { seq: 1 })]), (1, 0));
+        assert_eq!(rig.complete(&[done(3, Outcome::Done)]), (1, 0));
+        assert_eq!(rig.complete(&[done(4, Outcome::Refused)]), (1, 0), "identity needs no consent");
+        assert_eq!(rig.complete(&[done(4, Outcome::Done)]), (1, 0));
+        assert_eq!(rig.complete(&[got(2, 1, &[0])]), (1, 0));
+        assert_eq!(rig.content.pending_handles(), [1, 2, 3, 4, 5, 6]);
+
+        let (ignored, _) = rig.complete(&[
+            done(1, Outcome::Done),
+            done(2, Outcome::Done),
+            done(3, Outcome::Published { seq: 0x0102_0304 }),
+            done(4, Outcome::Identity { key: [0xAB; 32] }),
+        ]);
+        assert_eq!(ignored, 0);
+        assert_eq!(rig.events(), [(5, 1, 1, 0), (5, 2, 1, 0), (5, 3, 1, 0), (5, 4, 1, 0)]);
+        assert_eq!(rig.read(BLOCK + 128 + SIZE as u32, 4), [4, 3, 2, 1], "size is the new seq");
+        assert_eq!(rig.read(BLOCK + 128 + ID as u32, 32), [5; 32], "id untouched");
+        assert_eq!(rig.read(BLOCK + 192 + ID as u32, 32), [0xAB; 32], "id is the host's key");
+        assert_eq!(rig.read(BLOCK + 2, 50), feed_op(OP_SUBSCRIBE, [3; 32], 0, 0)[2..], "only the status written");
+        assert_eq!(rig.content.pending_handles(), [5, 6]);
+    }
+
+    #[test]
+    fn refused_and_not_found() {
+        let mut rig = Rig::new();
+        for (op, h) in [(OP_SUBSCRIBE, 1u32), (OP_UNSUBSCRIBE, 2), (OP_PUBLISH, 3), (OP_IDENTITY, 4)] {
+            assert_eq!(rig.submit(BLOCK + h * 64, Some(&feed_op(op, [1; 32], 0, DATA))).0, h as u8);
+        }
+        rig.complete(&[
+            done(1, Outcome::Refused),
+            done(2, Outcome::Refused),
+            done(3, Outcome::NotFound),
+            done(4, Outcome::NotFound),
+        ]);
+        assert_eq!(rig.events(), [(5, 1, 5, 0), (5, 2, 5, 0), (5, 3, 2, 0), (5, 4, 2, 0)]);
+        assert_eq!(status(&rig, BLOCK + 64), status::REFUSED);
+        assert_eq!(status(&rig, BLOCK + 192), status::NOT_FOUND);
+        rig.submit(BLOCK, Some(&feed_op(OP_PUBLISH, [1; 32], 0, DATA)));
+        rig.complete(&[done(1, Outcome::Refused)]);
+        assert_eq!(status(&rig, BLOCK), status::REFUSED);
+        // Refused is not an answer to a get.
+        rig.submit(BLOCK, Some(&get(0, 1)));
+        assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0));
+    }
+
+    #[test]
+    fn bad_publish_requests() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        rig.write(DATA, &[0xC3, 0x28]); // malformed UTF-8
+        rig.write(DATA + 16, &[b'a'; 121]);
+        for b in [
+            feed_op(OP_PUBLISH, [1; 32], 2, DATA),               // not UTF-8
+            feed_op(OP_PUBLISH, [1; 32], 121, DATA + 16),        // longer than 120 bytes
+            feed_op(OP_PUBLISH, [1; 32], 2, ram_end - 1),        // past the end of RAM
+            feed_op(OP_PUBLISH, [1; 32], 4, ROM_BASE + ROM.len() as u32 - 3), // past the end of ROM
+            feed_op(OP_PUBLISH, [1; 32], 0, 0),                  // nowhere
+            feed_op(OP_PUBLISH, [1; 32], 1, u32::MAX),
+        ] {
+            assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+        }
+        assert!(rig.content.pending_handles().is_empty());
+        assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_PUBLISH, [1; 32], 120, DATA + 16))), (1, 120));
+    }
+
+    /// STATE.md 1.8: the pending records of the new operations.
+    #[test]
+    fn state_records_of_feed_operations() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"title");
+        rig.submit(BLOCK, Some(&feed_op(OP_SUBSCRIBE, [3; 32], 99, DATA)));
+        rig.submit(BLOCK + 64, Some(&feed_op(OP_PUBLISH, [5; 32], 5, DATA)));
+        rig.submit(BLOCK + 128, Some(&feed_op(OP_IDENTITY, [6; 32], 0, DATA)));
+        let mut out = Vec::new();
+        rig.content.write_state(&mut out);
+        assert_eq!(out.len(), 8 * 53);
+        let rec = |i: usize| &out[i * 53..(i + 1) * 53];
+        let want = |op: u8, block: u32, id: [u8; 32], length: u32| {
+            let mut r = vec![op];
+            r.extend_from_slice(&block.to_le_bytes());
+            r.extend_from_slice(&id);
+            r.extend_from_slice(&[0; 4]);
+            r.extend_from_slice(&length.to_le_bytes());
+            r.extend_from_slice(&[0; 8]);
+            r
+        };
+        assert_eq!(rec(0), want(OP_SUBSCRIBE, BLOCK, [3; 32], 0));
+        assert_eq!(rec(1), want(OP_PUBLISH, BLOCK + 64, [5; 32], 5));
+        assert_eq!(rec(2), want(OP_IDENTITY, BLOCK + 128, [0; 32], 0));
+        assert!(rec(3).iter().all(|&b| b == 0));
     }
 }

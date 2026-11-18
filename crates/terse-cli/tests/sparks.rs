@@ -8,13 +8,11 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use terse_core::{FrameResult, Image, Machine, RAM_BASE, Script};
 use terse_net::service::Headless;
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/sparks/sparks.terse");
-const TERSE: &str = env!("CARGO_BIN_EXE_terse");
 
 fn expected_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/expected")
@@ -162,7 +160,7 @@ fn phosphor_session() {
 fn cli_dump_matches() {
     let events = sessions_dir().join("keys.txt");
     let image = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/sparks.terse");
-    let out = Command::new(TERSE)
+    let out = common::terse_command()
         .args(["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "900"])
         .args(["--dump", "--dump-vectors"])
         .output()
@@ -191,7 +189,7 @@ fn state_hashes() {
 
     let events = sessions_dir().join("keys.txt");
     let image = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/sparks.terse");
-    let out = Command::new(TERSE)
+    let out = common::terse_command()
         .args(["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "1800"])
         .args(["--hash-every", "900", "--hash"])
         .output()

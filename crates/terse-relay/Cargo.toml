@@ -15,3 +15,4 @@ tungstenite = { version = "0.30", default-features = false, features = ["handsha
 
 [dev-dependencies]
 tempfile = "3"
+terse-core.workspace = true

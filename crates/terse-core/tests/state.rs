@@ -175,3 +175,61 @@ fn group(n: usize) -> String {
     }
     out
 }
+
+/// SPEC 9.5: subscribe, publish and identity requests are inputs like any
+/// other completion: the same inputs replay to the same hashes, the pending
+/// records are in the state, and a different answer gives a different state.
+#[test]
+fn feed_operations_replay() {
+    if !common::have_tools() {
+        return;
+    }
+    let base = "    li a7, 0x100\n    ecall\n";
+    // Subscribe (op 5, id byte 0 = s1) at 100000h; publish (op 7, title
+    // "hi" at 100100h) at 100040h; identity (op 8) at 100080h.
+    let src = |key: u8| {
+        format!(
+            "    li t0, 0x100000\n    li t1, 5\n    sb t1, 0(t0)\n    li t1, {key}\n    sb t1, 4(t0)\n    mv a0, t0\n    \
+             li a7, 0x400\n    ecall\n\
+             li t2, 0x100100\n    li t1, 0x6968\n    sh t1, 0(t2)\n    li t0, 0x100040\n    li t1, 7\n    sb t1, 0(t0)\n    \
+             li t1, 2\n    sw t1, 40(t0)\n    sw t2, 44(t0)\n    mv a0, t0\n    li a7, 0x400\n    ecall\n\
+             li t0, 0x100080\n    li t1, 8\n    sb t1, 0(t0)\n    mv a0, t0\n    li a7, 0x400\n    ecall\n\
+             1:  {base}    j 1b\n"
+        )
+    };
+    let answers = |subscribe: Outcome| {
+        vec![
+            Completion { handle: 1, outcome: subscribe },
+            Completion { handle: 2, outcome: Outcome::Published { seq: 3 } },
+            Completion { handle: 3, outcome: Outcome::Identity { key: [0x5A; 32] } },
+        ]
+    };
+    let run = |key: u8, subscribe: Outcome| -> Vec<[u8; 32]> {
+        let want = if subscribe == Outcome::Refused { 5 } else { 1 };
+        let mut m = Machine::new(&common::program(&assemble(&src(key)), 2, &ALL));
+        let mut hashes = Vec::new();
+        m.run_frame(&FrameInput::default());
+        let requests = m.take_content_requests();
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert_eq!(requests[1].kind, terse_core::RequestKind::Publish { blob: [0; 32], title: b"hi".to_vec() });
+        hashes.push(m.state_hash());
+        let done = answers(subscribe);
+        let r = m.run_frame(&FrameInput { completions: &done, ..Default::default() });
+        assert_eq!(r.completions_ignored, 0);
+        hashes.push(m.state_hash());
+        m.run_frame(&FrameInput::default());
+        hashes.push(m.state_hash());
+        let ram = m.ram();
+        assert_eq!((ram[1], ram[0x41], ram[0x81]), (want, 1, 1), "statuses");
+        assert_eq!(&ram[0x40 + 48..0x40 + 52], &[3, 0, 0, 0], "size is the seq");
+        assert_eq!(&ram[0x80 + 4..0x80 + 36], &[0x5A; 32], "id is the key");
+        hashes
+    };
+    let a = run(7, Outcome::Done);
+    assert_eq!(a, run(7, Outcome::Done), "the same inputs replay exactly");
+    let other_key = run(8, Outcome::Done);
+    assert_ne!(a[0], other_key[0], "the pending subscribe's feed key is state");
+    let refused = run(7, Outcome::Refused);
+    assert_eq!(a[0], refused[0]);
+    assert_ne!(a[1], refused[1], "refused and done differ");
+}

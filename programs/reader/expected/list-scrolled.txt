@@ -1,0 +1,53 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  Enter open  F feeds  ? help  T publish a test  Esc quit         13/30
+-- page: height 473, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Timeline
+   28  15     0   sans12 |30 articles  ·  2 feeds
+   51  20     0   sans16 |[Entry 25]{5}
+   71  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 22:20  ·  17 bytes]{5}
+   94  20     0   sans16 |[Entry 24]{6}
+  114  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 22:10  ·  17 bytes]{6}
+  137  20     0   sans16 |[Entry 23]{7}
+  157  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 22:00  ·  17 bytes]{7}
+  180  20     0   sans16 |[Entry 22]{8}
+  200  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:50  ·  17 bytes]{8}
+  223  20     0   sans16 |[Entry 21]{9}
+  243  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:40  ·  17 bytes]{9}
+  266  20     0   sans16 |[Entry 20]{10}
+  286  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:30  ·  17 bytes]{10}
+  309  20     0   sans16 |[Entry 19]{11}
+  329  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:20  ·  17 bytes]{11}
+  352  20     0   sans16 |[Entry 18]{12}
+  372  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:10  ·  17 bytes]{12}
+  395  20     0   sans16 |[Entry 17]{13}
+  415  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 21:00  ·  17 bytes]{13}
+  438  20     0   sans16 |[Entry 16]{14}
+  458  15     0   sans12 |[66be7e…0c473a  ·  2026-11-17 20:50  ·  17 bytes]{14}

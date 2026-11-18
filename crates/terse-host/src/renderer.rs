@@ -67,7 +67,8 @@ struct Params {
                             // bit 3: show the phosphor light instead (glyph mode),
                             // bit 4: glyph light mode (into the beam texture),
                             // bit 5: bloom, horizontal pass (from the phosphor light),
-                            // bit 6: bloom, vertical pass (from bloom_src)
+                            // bit 6: bloom, vertical pass (from bloom_src),
+                            // bits 8-15: the first row of the host's overlay (glyph mode; 0: none)
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -205,8 +206,56 @@ fn phosphor_screen(pos: vec2<f32>) -> vec3<f32> {
     return to_srgb(tone(light));
 }
 
+// The host's overlay (its consent prompt): fixed colours, not the
+// program's palette. Foreground codes 0 text, 1 key, 2 dim; background
+// codes 0 base, 3 band (sRGB).
+fn overlay_fg(code: u32) -> vec3<f32> {
+    switch code {
+        case 1u: { return vec3<f32>(1.0, 0.80, 0.26); }
+        case 2u: { return vec3<f32>(0.66, 0.70, 0.78); }
+        default: { return vec3<f32>(0.96, 0.96, 0.98); }
+    }
+}
+
+fn overlay_bg(code: u32) -> vec3<f32> {
+    if code == 3u {
+        return vec3<f32>(0.20, 0.23, 0.33);
+    }
+    return vec3<f32>(0.09, 0.10, 0.14);
+}
+
+// The overlay's colour at `pos`, or a negative red if `pos` is not in it.
+fn overlay(pos: vec2<f32>) -> vec3<f32> {
+    let first = p.flags >> 8u;
+    let rel = (pos - p.origin) / p.size;
+    if first == 0u || any(rel < vec2<f32>(0.0)) || any(rel >= vec2<f32>(1.0)) {
+        return vec3<f32>(-1.0);
+    }
+    let g = rel * vec2<f32>(p.grid);
+    let cell = min(vec2<u32>(g), p.grid - 1u);
+    if cell.y < first {
+        return vec3<f32>(-1.0);
+    }
+    let px = min(vec2<u32>(fract(g) * vec2<f32>(p.cell_px)), p.cell_px - 1u);
+    let c = textureLoad(cells, cell, 0);
+    let slot = c.r | (c.g << 8u);
+    let origin = vec2<u32>(slot % p.atlas_cols, slot / p.atlas_cols) * p.cell_px;
+    let coverage = textureLoad(atlas, origin + px, 0).r;
+    return mix(overlay_bg(c.a), overlay_fg(c.b), coverage);
+}
+
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    // Glyph mode only (not the background, light or bloom passes).
+    if (p.flags & 116u) == 0u && (p.flags >> 8u) != 0u {
+        var o = overlay(pos.xy);
+        if o.r >= 0.0 {
+            if (p.flags & 2u) != 0u {
+                o = to_linear(o);
+            }
+            return vec4<f32>(o, 1.0);
+        }
+    }
     if (p.flags & 16u) != 0u {
         return vec4<f32>(glyph_glow(pos.xy), 0.0);
     }
@@ -357,6 +406,9 @@ pub struct Renderer {
     cell_data: Vec<u8>,
     glyph_scratch: Vec<u8>,
     cursor: Option<(u32, u32)>,
+    /// The first row of the host's overlay (its prompt), drawn over
+    /// everything in its own colours; 0 for none.
+    overlay: u32,
 }
 
 /// The phosphor textures: beam and the afterglow's components, the bind
@@ -553,6 +605,7 @@ impl Renderer {
             cell_data: vec![0; COLS * ROWS * 4],
             glyph_scratch: vec![0; glyph_bytes],
             cursor: None,
+            overlay: 0,
         }
     }
 
@@ -779,6 +832,12 @@ impl Renderer {
         self.cursor = terminal.cursor_visible().then_some((col as u32, row as u32));
     }
 
+    /// Draws the rows from `first` on as the host's overlay: the cells as
+    /// uploaded, in the overlay's own colours, over the page and shapes.
+    pub fn set_overlay(&mut self, first: Option<usize>) {
+        self.overlay = first.map_or(0, |r| r.clamp(1, ROWS - 1) as u32);
+    }
+
     /// The atlas slot for `code` (for a wide glyph, the slot of its left half).
     fn slot_for(&mut self, queue: &wgpu::Queue, code: u16, wide: bool) -> u16 {
         let ch = match char::from_u32(code as u32) {
@@ -918,7 +977,8 @@ impl Renderer {
             atlas_cols: ATLAS_COLS,
             flags: shown | if self.target_is_srgb { 2 } else { 0 } | if self.style.0 { 8 } else { 0 },
         };
-        queue.write_buffer(&self.params_buffer, 0, &params.bytes());
+        let glyph_params = Params { flags: params.flags | self.overlay << 8, ..params };
+        queue.write_buffer(&self.params_buffer, 0, &glyph_params.bytes());
         queue.write_buffer(&self.background_params, 0, &Params { flags: 4, ..params }.bytes());
         if self.style.0 && self.layer.as_ref().is_none_or(|(size, ..)| *size != viewport) {
             // Resized since the last machine frame: start the new phosphor

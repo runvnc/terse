@@ -310,7 +310,10 @@ full is dropped.
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
 - **Modifiers:** bit 0 Shift, bit 1 Control, bit 2 Alt, bit 3 Meta.
 - **Text** carries one Unicode scalar value produced by the host's text
-  input, after keyboard layout and input-method composition.
+  input, after keyboard layout and input-method composition. Text the user
+  pastes arrives the same way, one event per character (U+000A for a line
+  break; other control characters are dropped), no faster than the queue
+  has room for.
 - **Pointer** positions are in screen units (section 7): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current
@@ -497,14 +500,14 @@ any alignment.
 
 | Offset | Size | Field | Written by |
 |---|---|---|---|
-| 0 | 1 | `op`: `01h` get, `02h` put (`03h`, `04h`: section 9.5) | program |
+| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`08h`: section 9.5) | program |
 | 1 | 1 | `status` (section 9.3) | device |
 | 2 | 2 | Reserved; ignored | — |
-| 4 | 32 | `id`: blob hash | program for get; device for put |
+| 4 | 32 | `id`: get and publish: blob hash; subscribe and unsubscribe: feed key. Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
 | 36 | 4 | `offset`: get: byte offset into the blob; records: index of the first record | program |
-| 40 | 4 | `length`: get and records: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob ends first. | both |
-| 44 | 4 | `addr`: address of the data. Get and records: the `length` bytes there must lie in RAM. Put: the `size` bytes there must lie wholly in ROM or wholly in RAM. | program |
-| 48 | 4 | `size`: get: blob size, written on completion. Put: 1 to 1,048,576, read at submit. Records: the number of records that exist, written on completion. | both |
+| 40 | 4 | `length`: get and records: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob ends first. Publish: the title's length, 0 to 120, read at submit. | both |
+| 44 | 4 | `addr`: address of the data. Get and records: the `length` bytes there must lie in RAM. Put: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. | program |
+| 48 | 4 | `size`: get: blob size, written on completion. Put: 1 to 1,048,576, read at submit. Records: the number of records that exist, written on completion. Publish: the new entry's `seq`, written on completion. | both |
 
 ### 9.2 Submit and completion
 
@@ -513,13 +516,15 @@ any alignment.
 1. If the 52 bytes at `a0` do not lie wholly in RAM, the submit is rejected
    (it returns 0) and nothing is written.
 2. If the request is invalid (unknown `op`, a length or size out of range, a
-   data range not wholly where section 9.1 requires), the device writes
-   status `04h` to the block and rejects the submit.
+   data range not wholly where section 9.1 requires, a publish title that
+   is not valid UTF-8), the device writes status `04h` to the block and
+   rejects the submit.
 3. If eight requests are already pending, the submit is rejected and the
    block is not changed.
 4. Otherwise the device writes status `00h`, assigns the lowest free handle
    (1–8), which the call returns, and the request becomes pending. For put,
-   the device copies the `size` bytes at `addr` at this moment.
+   the device copies the `size` bytes at `addr` at this moment; for publish,
+   the title.
 
 At the start of a later frame (never the frame of the submit), in step 1 of
 section 1.4, the host may complete any pending requests. Completing a
@@ -530,6 +535,9 @@ request:
 - subscriptions and timeline, on success: copies the records to `addr`,
   writes `length` and `size` (section 9.5);
 - put, on success: writes `id`;
+- subscribe and unsubscribe, on success: nothing more;
+- publish, on success: writes `size`;
+- identity, on success: writes `id`;
 - in every case writes `status`, frees the handle, and queues a content-done
   event (section 5). If the event queue is full the event is dropped; the
   block is still updated.
@@ -548,25 +556,32 @@ end of the blob completes with status `01h` and `length` 0.
 | `02h` | Not found |
 | `03h` | Failed (network error or timeout; the host decides when to give up) |
 | `04h` | Bad request |
+| `05h` | Refused: the user said no, or the host does not permit it (section 9.5) |
 
 ### 9.4 Determinism
 
 Completions (which handle, in which frame, with what status, size and bytes)
-are inputs to the machine, alongside those of section 4.
+are inputs to the machine, alongside those of section 4. A request waiting
+for the user's consent (section 9.5) is simply pending; the user's answer
+reaches the machine only as its completion.
 
 ### 9.5 Feeds
 
-Two further operations read the feeds the host has subscribed to
-(`NETWORK.md` section 4). They use the same request block, call, handles and
-completion rules as get. `id` is not used. Managing subscriptions and
-publishing are done by the host, not by programs, in v0.
+Six further operations use the feeds of `NETWORK.md` section 4, with the
+same request block, call, handles and completion rules as get and put.
+Two read the feeds the host has subscribed to; three change them, with the
+user's consent; one tells the program the host's own feed key.
 
 | `op` | Operation |
 |---|---|
 | `03h` | Subscriptions |
 | `04h` | Timeline |
+| `05h` | Subscribe |
+| `06h` | Unsubscribe |
+| `07h` | Publish |
+| `08h` | Identity |
 
-For both, `length` is the size of the buffer at `addr` (1 to 16,384) and
+**Reading.** For subscriptions and timeline, `id` is not used; `length` is the size of the buffer at `addr` (1 to 16,384) and
 `offset` is the index of the first record wanted. The device delivers as many
 whole records as fit, writes the number of bytes delivered to `length` and the
 total number of records that exist to `size`.
@@ -593,6 +608,43 @@ feed the host has unsubscribed from are not included. Each record is:
 The host has already verified every entry it delivers. When new entries
 arrive, the program is told by a feeds-updated event (section 5) and can
 read the timeline again.
+
+**Subscribe** (`05h`) adds the feed whose key is `id` to the host's
+subscriptions, and **unsubscribe** (`06h`) removes it (`NETWORK.md` section
+4.4). `offset`, `length`, `addr` and `size` are not used. The host completes
+with status `01h` once the subscription list has changed (the entries
+arrive later, each announced as usual by a feeds-updated event); at once,
+without asking, if the list already is as asked (subscribing to a feed
+already subscribed, unsubscribing from one that is not); and with `05h`
+without asking if `id` is not a valid feed key (`NETWORK.md` section 4.1).
+
+**Publish** (`07h`) publishes the blob whose hash is `id` as the next entry
+of the host's own feed (`NETWORK.md` section 4.4): kind article, the size of
+the blob, no reply-to, the title copied at submit and the time from the
+host's clock. The blob must already be in the host's store (a program puts
+it first with op `02h`); if it is not, the request completes with status
+`02h`, without asking. The host signs the entry with its own key, creating
+its identity first if it has none. On success `size` is the new entry's
+`seq`.
+
+**Identity** (`08h`): on completion `id` is the host's own feed key, or the
+status is `02h` if the host has no identity yet. `offset`, `length`, `addr`
+and `size` are not used.
+
+**Consent.** Subscribe, unsubscribe and publish change what the user
+follows or speak in the user's name, so the host asks the user before it
+carries one out, and the request stays pending until the user answers. The
+host draws its own prompt over the bottom of the screen, on top of
+everything the program shows; the program cannot draw it, read it or
+answer it. The prompt names the image's title and what is asked: the feed
+key (for example as its first and last six hex digits, `3fa9c2…c21e07`), or
+the article's title and size. While a prompt is shown the keyboard's input
+goes to the host, not to the program; Y allows, N or Escape refuses, and
+other keys (Enter included) do nothing. One request is asked about at a
+time; others wait, in increasing handle order. A refusal completes the
+request with status `05h`. A host where nobody can answer (a headless run)
+completes such requests as its user configured it to (by default with
+`05h`). Identity needs no consent.
 
 ---
 
@@ -928,7 +980,7 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes) or publish (its title), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get or records request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -973,6 +1025,9 @@ These numbers are placeholders until weak hosts have been measured:
 - Font selection, combining marks and complex scripts in the terminal.
 - Names (signed pointers to blobs), ranges verified without fetching the
   whole blob, and cancelling a content request.
+- For the requests that need consent (section 9.5): telling the program
+  that one waits for the user, remembering a user's answer for later
+  requests, and publishing replies or other kinds of entry.
 - Devices 5, 6 and 10.
 - On the page: images, links the host follows itself, selecting and copying
   text, fonts beyond the three faces, and a way for a program to learn where

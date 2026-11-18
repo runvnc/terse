@@ -1,17 +1,17 @@
 //! The `terse` command line: info, run (dump, exit code, fault, scripted
 //! events), pack, and the blob store without a relay.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
-const TERSE: &str = env!("CARGO_BIN_EXE_terse");
+use std::path::{Path, PathBuf};
+
 
 fn hello_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/hello")
 }
 
 fn terse(args: &[&str]) -> std::process::Output {
-    Command::new(TERSE).args(args).output().unwrap()
+    common::terse_command().args(args).output().unwrap()
 }
 
 /// Runs `terse` and requires success.

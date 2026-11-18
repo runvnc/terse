@@ -1,16 +1,17 @@
 //! Feeds end to end (NETWORK 4) over an in-process relay on an ephemeral
 //! loopback port, with `terse` run as separate author and reader processes.
 
+mod common;
+
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use terse_net::{BlobStore, Entry, Identity, blob_id, protocol, to_hex};
 
-const TERSE: &str = env!("CARGO_BIN_EXE_terse");
 
 fn start_relay(store: &Path) -> String {
     let relay = Arc::new(terse_relay::Relay::new(BlobStore::open(store, None).unwrap(), terse_relay::DEFAULT_FEED_CAP));
@@ -21,7 +22,7 @@ fn start_relay(store: &Path) -> String {
 }
 
 fn terse(args: &[&str]) -> Output {
-    Command::new(TERSE).args(args).output().unwrap()
+    common::terse_command().args(args).output().unwrap()
 }
 
 fn terse_ok(args: &[&str]) -> String {
@@ -142,7 +143,7 @@ fn author_and_reader() {
     assert_eq!(reader.feed(&["sync"], Some(&url)), "");
 
     // Watch mode: a new article arrives by push and is downloaded.
-    let mut watcher = Command::new(TERSE)
+    let mut watcher = common::terse_command()
         .args(reader.feed_args(&["sync", "--watch"], Some(&url)))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -225,11 +226,12 @@ fn reader_follows_feeds_while_running() {
     // From an empty store: synced before the first frame.
     let image = reader_image();
     let screen = terse_ok(&[
-        "run", image.to_str().unwrap(), "--frames", "10", "--dump", "--relay", &url, "--store", reader.store(),
-        "--config", reader.config.path().to_str().unwrap(),
+        "run", image.to_str().unwrap(), "--frames", "10", "--dump", "--dump-page", "--relay", &url, "--store",
+        reader.store(), "--config", reader.config.path().to_str().unwrap(),
     ]);
-    assert!(screen.lines().next().unwrap().contains("1 entry  ·  1 subscription"), "{screen}");
-    assert!(screen.lines().nth(1).unwrap().contains(&format!("{} ✓  First from the relay", &key[..8])), "{screen}");
+    assert!(screen.contains("|1 article  ·  1 feed\n"), "{screen}");
+    assert!(screen.contains("|[First from the relay]{1}"), "{screen}");
+    assert!(screen.contains(&format!("|[{}…{}  ·  ", &key[..6], &key[58..])), "{screen}");
 
     // While running: a live entry, without any key press.
     let store = BlobStore::open(reader.store.path(), None).unwrap();
@@ -245,16 +247,20 @@ fn reader_follows_feeds_while_running() {
     }
     publish("two.txt", "Second, while running");
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !machine.terminal().unwrap().text().contains("Second, while running") && Instant::now() < deadline {
+    let page = |machine: &terse_core::Machine| {
+        let p = machine.page().unwrap();
+        let layout = p.document().map(|d| terse_core::page::reference_layout(d, p.region().w)).unwrap_or_default();
+        layout.dump(p)
+    };
+    while !page(&machine).contains("Second, while running") && Instant::now() < deadline {
         headless.frame(&mut machine);
         std::thread::sleep(Duration::from_millis(5));
     }
     for _ in 0..10 {
         headless.frame(&mut machine);
     }
-    let screen = machine.terminal().unwrap().text();
-    let lines: Vec<&str> = screen.lines().collect();
-    assert!(lines[0].contains("2 entries"), "{screen}");
-    assert!(lines[1].starts_with('•') && lines[1].ends_with("Second, while running"), "new, marked: {screen}");
-    assert!(lines[2].contains("First from the relay"), "{screen}");
+    let screen = page(&machine);
+    assert!(screen.contains("|2 articles  ·  1 feed\n"), "{screen}");
+    let (second, first) = (screen.find("[Second, while running]{1}"), screen.find("[First from the relay]{2}"));
+    assert!(second.is_some() && first.is_some() && second < first, "newest first: {screen}");
 }

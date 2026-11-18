@@ -164,6 +164,36 @@ uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length
     return content_submit(r);
 }
 
+uint8_t content_put(content_req *r, const void *data, uint32_t size)
+{
+    r->op = CONTENT_PUT;
+    r->addr = (uint32_t)data;
+    r->size = size;
+    return content_submit(r);
+}
+
+uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
+{
+    r->op = op;
+    memcpy(r->id, key, 32);
+    return content_submit(r);
+}
+
+uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len)
+{
+    r->op = CONTENT_PUBLISH;
+    memcpy(r->id, blob, 32);
+    r->addr = (uint32_t)title;
+    r->length = len;
+    return content_submit(r);
+}
+
+uint8_t content_identity(content_req *r)
+{
+    r->op = CONTENT_IDENTITY;
+    return content_submit(r);
+}
+
 /* Device 3 display-list builder. The list is packed: coordinates are
  * little-endian 16-bit values at any alignment. */
 uint8_t *vec_ptr;

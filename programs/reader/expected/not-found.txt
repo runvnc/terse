@@ -1,8 +1,8 @@
- An article that is not in the store
 
-  Not found: neither this host nor its relay has the article.
 
-  Esc: back to the list
+
+
+
 
 
 
@@ -28,4 +28,9 @@
 
 
                                       ↑↓ PgUp PgDn Home End wheel   Esc/←: back
--- page: height 0, scroll 0 (stored 0), region 64 16 512 448 --
+-- page: height 144, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |An article that is not in the store
+   53  15     0   sans12 |66be7e…0c473a  ·  #7  ·  2026-11-17 19:10 UTC  ·  4 bytes
+   78   8     0  -- rule --
+   96  19     0   sans15 |Not found: neither this host nor its relay has the article.
+  125  19     0   sans15 |Esc: back to the timeline

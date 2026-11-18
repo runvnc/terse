@@ -1,4 +1,4 @@
- A big article (over 48 KiB)
+
 
 
 
@@ -28,20 +28,20 @@
 
 
  100%                                 ↑↓ PgUp PgDn Home End wheel   Esc/←: back
--- page: height 22058, scroll 21610 (stored 21610), region 64 16 512 448 --
-21600  19     0   sans15 |Line 743 of the big article, which needs more than one request.
-21629  19     0   sans15 |Line 744 of the big article, which needs more than one request.
-21658  19     0   sans15 |Line 745 of the big article, which needs more than one request.
-21687  19     0   sans15 |Line 746 of the big article, which needs more than one request.
-21716  19     0   sans15 |Line 747 of the big article, which needs more than one request.
-21745  19     0   sans15 |Line 748 of the big article, which needs more than one request.
-21774  19     0   sans15 |Line 749 of the big article, which needs more than one request.
-21803  19     0   sans15 |Line 750 of the big article, which needs more than one request.
-21832  19     0   sans15 |Line 751 of the big article, which needs more than one request.
-21861  19     0   sans15 |Line 752 of the big article, which needs more than one request.
-21890  19     0   sans15 |Line 753 of the big article, which needs more than one request.
-21919  19     0   sans15 |Line 754 of the big article, which needs more than one request.
-21948  19     0   sans15 |Line 755 of the big article, which needs more than one request.
-21977  19     0   sans15 |Line 756 of the big article, which needs more than one request.
-22006  19     0   sans15 |Line 757 of 
-22041  17     0   sans13i |[… the article continues: this reader shows 49152 of its 52000 bytes]
+-- page: height 22072, scroll 21608 (stored 21608), region 64 0 512 464 --
+21614  19     0   sans15 |Line 743 of the big article, which needs more than one request.
+21643  19     0   sans15 |Line 744 of the big article, which needs more than one request.
+21672  19     0   sans15 |Line 745 of the big article, which needs more than one request.
+21701  19     0   sans15 |Line 746 of the big article, which needs more than one request.
+21730  19     0   sans15 |Line 747 of the big article, which needs more than one request.
+21759  19     0   sans15 |Line 748 of the big article, which needs more than one request.
+21788  19     0   sans15 |Line 749 of the big article, which needs more than one request.
+21817  19     0   sans15 |Line 750 of the big article, which needs more than one request.
+21846  19     0   sans15 |Line 751 of the big article, which needs more than one request.
+21875  19     0   sans15 |Line 752 of the big article, which needs more than one request.
+21904  19     0   sans15 |Line 753 of the big article, which needs more than one request.
+21933  19     0   sans15 |Line 754 of the big article, which needs more than one request.
+21962  19     0   sans15 |Line 755 of the big article, which needs more than one request.
+21991  19     0   sans15 |Line 756 of the big article, which needs more than one request.
+22020  19     0   sans15 |Line 757 of 
+22055  17     0   sans13i |[… the article continues: this reader shows 49152 of its 52000 bytes]

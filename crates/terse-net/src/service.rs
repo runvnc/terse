@@ -3,7 +3,7 @@
 //! collects completions and feed events without blocking. Blocking waits are
 //! for headless and command-line use.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use terse_core::page::{Layouter, PageInput};
 use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
 
-use crate::identity::FeedKey;
+use crate::identity::{FeedKey, valid_feed_key};
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
 
 /// How long the worker sleeps between reconnection checks while following
@@ -29,15 +29,65 @@ pub enum FeedCommand {
 
 enum Work {
     Content(Request),
+    /// A request the user has allowed (SPEC 9.5).
+    Consented(Request),
     Feed(FeedCommand),
+}
+
+/// How the host answers the requests that need the user's consent
+/// (subscribe, unsubscribe, publish; SPEC 9.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Consent {
+    /// Ask the user: the request waits in [`ContentService::prompt`] until
+    /// [`ContentService::answer`].
+    Ask,
+    Allow,
+    Deny,
+}
+
+impl Consent {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "ask" => Some(Consent::Ask),
+            "allow" => Some(Consent::Allow),
+            "deny" => Some(Consent::Deny),
+            _ => None,
+        }
+    }
+}
+
+/// What a program asks for, as the host's prompt describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Subscribe(FeedKey),
+    Unsubscribe(FeedKey),
+    /// Publish an article (`size` bytes) with this title.
+    Publish { title: String, size: u32 },
+}
+
+/// A request waiting for the user's answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prompt {
+    pub handle: u8,
+    pub asked: Asked,
+}
+
+enum Finished {
+    Done(Completion),
+    Ask(Prompt, Request),
 }
 
 pub struct ContentService {
     jobs: Sender<Work>,
-    finished: Receiver<Completion>,
+    finished: Receiver<Finished>,
     events: Receiver<FeedEvent>,
-    /// Requests submitted and not yet returned by `take_finished`/`wait_finished`.
+    /// Requests submitted and not yet returned by `take_finished`/`wait_finished`
+    /// (nor waiting for the user's answer).
     outstanding: usize,
+    /// Requests waiting for the user's answer, the first one shown.
+    prompts: VecDeque<(Prompt, Request)>,
+    /// Requests the user refused, to complete with the next ones.
+    refused: Vec<Completion>,
     /// The node has a relay and subscriptions.
     following: bool,
 }
@@ -46,20 +96,74 @@ pub struct ContentService {
 enum Job {
     Get { handle: u8, offset: u32, length: u16 },
     Put { handle: u8 },
-    Publish,
+    /// A program's publish (SPEC 9.5).
+    Publish { handle: u8 },
+    /// `FeedCommand::Publish`, reported as a feed event.
+    FeedPublish,
 }
 
 impl ContentService {
+    /// A service that refuses every request needing consent (for headless
+    /// runs, where nobody can answer).
     pub fn start(node: Node) -> Self {
+        Self::start_with_consent(node, Consent::Deny)
+    }
+
+    pub fn start_with_consent(node: Node, consent: Consent) -> Self {
         let following = node.following();
         let (jobs, job_rx) = mpsc::channel();
         let (done_tx, finished) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
         thread::Builder::new()
             .name("terse-content".into())
-            .spawn(move || worker(node, job_rx, done_tx, event_tx))
+            .spawn(move || worker(node, consent, job_rx, done_tx, event_tx))
             .expect("spawn content thread");
-        ContentService { jobs, finished, events, outstanding: 0, following }
+        ContentService {
+            jobs,
+            finished,
+            events,
+            outstanding: 0,
+            prompts: VecDeque::new(),
+            refused: Vec::new(),
+            following,
+        }
+    }
+
+    /// The request the user is asked about now, if any (one at a time, the
+    /// others queued in handle order).
+    pub fn prompt(&self) -> Option<&Prompt> {
+        self.prompts.front().map(|(p, _)| p)
+    }
+
+    /// How many requests wait for an answer, the one shown included.
+    pub fn prompts_waiting(&self) -> usize {
+        self.prompts.len()
+    }
+
+    /// The user's answer to the request shown by [`Self::prompt`]: carried
+    /// out if allowed, completed with status Refused if not.
+    pub fn answer(&mut self, allow: bool) {
+        let Some((prompt, request)) = self.prompts.pop_front() else { return };
+        if allow {
+            self.outstanding += 1;
+            let _ = self.jobs.send(Work::Consented(request));
+        } else {
+            self.refused.push(Completion { handle: prompt.handle, outcome: Outcome::Refused });
+        }
+    }
+
+    fn receive(&mut self, f: Finished, done: &mut Vec<Completion>) {
+        self.outstanding -= 1;
+        match f {
+            Finished::Done(c) => done.push(c),
+            Finished::Ask(prompt, request) => {
+                // Queued in handle order among those not yet shown.
+                let at = (1..self.prompts.len().max(1))
+                    .find(|&i| self.prompts[i].0.handle > prompt.handle)
+                    .unwrap_or(self.prompts.len());
+                self.prompts.insert(at, (prompt, request));
+            }
+        }
     }
 
     /// Whether the node follows feeds through a relay.
@@ -117,21 +221,21 @@ impl ContentService {
 
     /// Completions finished so far; never blocks.
     pub fn take_finished(&mut self) -> Vec<Completion> {
-        let done: Vec<Completion> = self.finished.try_iter().collect();
-        self.outstanding -= done.len();
+        let mut done = std::mem::take(&mut self.refused);
+        while let Ok(f) = self.finished.try_recv() {
+            self.receive(f, &mut done);
+        }
         done
     }
 
     /// Blocks until every submitted request has finished (each is bounded by
-    /// the relay timeout). For headless runs that must not depend on timing.
+    /// the relay timeout) or waits for the user's answer. For headless runs
+    /// that must not depend on timing.
     pub fn wait_finished(&mut self) -> Vec<Completion> {
-        let mut done = Vec::with_capacity(self.outstanding);
+        let mut done = std::mem::take(&mut self.refused);
         while self.outstanding > 0 {
             match self.finished.recv() {
-                Ok(c) => {
-                    done.push(c);
-                    self.outstanding -= 1;
-                }
+                Ok(f) => self.receive(f, &mut done),
                 Err(_) => break,
             }
         }
@@ -169,6 +273,11 @@ impl Headless {
         self
     }
 
+    /// The content service, if the machine has the content device.
+    pub fn content(&self) -> Option<&ContentService> {
+        self.content.as_ref()
+    }
+
     /// The layouter, holding the latest layout of the page.
     pub fn page_layouter(&self) -> &dyn Layouter {
         self.page.layouter()
@@ -203,14 +312,95 @@ fn completion(job: Job, done: Done) -> Completion {
             (handle, Outcome::Got { size: blob.len() as u32, data: blob[start..end].to_vec() })
         }
         (Job::Put { handle }, Done::Put(id)) => (handle, Outcome::Put { id }),
-        (Job::Get { handle, .. } | Job::Put { handle }, Done::NotFound) => (handle, Outcome::NotFound),
-        (Job::Get { handle, .. } | Job::Put { handle }, _) => (handle, Outcome::Failed),
-        (Job::Publish, _) => unreachable!("publishes are reported as feed events"),
+        (Job::Publish { handle }, Done::Published { seq, .. }) => (handle, Outcome::Published { seq }),
+        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, Done::NotFound) => {
+            (handle, Outcome::NotFound)
+        }
+        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, _) => (handle, Outcome::Failed),
+        (Job::FeedPublish, _) => unreachable!("publishes are reported as feed events"),
     };
     Completion { handle, outcome }
 }
 
-fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, events: Sender<FeedEvent>) {
+fn now() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
+}
+
+/// What the worker does with a subscribe, unsubscribe or publish request.
+enum Step {
+    Complete(Outcome),
+    Ask(Asked),
+    /// Carried out: a publish in progress.
+    Started,
+}
+
+/// SPEC 9.5: requests that change nothing complete at once without asking
+/// (subscribing to a feed already subscribed, unsubscribing from one that
+/// is not); an invalid feed key is refused and a blob not in the store is
+/// not found, also without asking. The rest are asked about, unless the
+/// policy (or the user's answer, `consented`) decides.
+fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Request, token: Token) -> Step {
+    let decided = if consented { Consent::Allow } else { consent };
+    let asked = match &request.kind {
+        RequestKind::Subscribe { feed } if !valid_feed_key(feed) => return Step::Complete(Outcome::Refused),
+        RequestKind::Subscribe { feed } if node.subscriptions().contains(feed) => return Step::Complete(Outcome::Done),
+        RequestKind::Unsubscribe { feed } if !node.subscriptions().contains(feed) => {
+            return Step::Complete(Outcome::Done);
+        }
+        RequestKind::Subscribe { feed } => Asked::Subscribe(*feed),
+        RequestKind::Unsubscribe { feed } => Asked::Unsubscribe(*feed),
+        RequestKind::Publish { blob, title } => match node.store().read(blob) {
+            Ok(Some(bytes)) => Asked::Publish { title: String::from_utf8_lossy(title).into_owned(), size: bytes.len() as u32 },
+            Ok(None) => return Step::Complete(Outcome::NotFound),
+            Err(_) => return Step::Complete(Outcome::Failed),
+        },
+        _ => unreachable!("only subscribe, unsubscribe and publish need consent"),
+    };
+    match decided {
+        Consent::Deny => Step::Complete(Outcome::Refused),
+        Consent::Ask => Step::Ask(asked),
+        Consent::Allow => match &request.kind {
+            // A subscription list that cannot be saved fails.
+            RequestKind::Subscribe { feed } => {
+                Step::Complete(if node.subscribe(*feed).is_ok() { Outcome::Done } else { Outcome::Failed })
+            }
+            RequestKind::Unsubscribe { feed } => {
+                Step::Complete(if node.unsubscribe(feed).is_ok() { Outcome::Done } else { Outcome::Failed })
+            }
+            RequestKind::Publish { blob, title } => {
+                node.start_publish_blob(token, *blob, &String::from_utf8_lossy(title), now());
+                Step::Started
+            }
+            _ => unreachable!(),
+        },
+    }
+}
+
+/// Carries out (or asks about) a subscribe, unsubscribe or publish; false
+/// if the service is gone.
+fn feed_request(
+    node: &mut Node,
+    consent: Consent,
+    consented: bool,
+    request: Request,
+    token: Token,
+    pending: &mut HashMap<Token, Job>,
+    finished: &Sender<Finished>,
+) -> bool {
+    let handle = request.handle;
+    match feed_step(node, consent, consented, &request, token) {
+        Step::Complete(outcome) => finished.send(Finished::Done(Completion { handle, outcome })).is_ok(),
+        Step::Ask(asked) => finished.send(Finished::Ask(Prompt { handle, asked }, request)).is_ok(),
+        Step::Started => {
+            pending.insert(token, Job::Publish { handle });
+            true
+        }
+    }
+}
+
+fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Sender<Finished>, events: Sender<FeedEvent>) {
     let mut pending: HashMap<Token, Job> = HashMap::new();
     let mut next: Token = 0;
     loop {
@@ -236,6 +426,30 @@ fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, ev
         };
         next += 1;
         match work {
+            Some(Work::Content(Request { handle, kind: RequestKind::Identity })) => {
+                let outcome = match node.identity_key() {
+                    Some(key) => Outcome::Identity { key },
+                    None => Outcome::NotFound,
+                };
+                if finished.send(Finished::Done(Completion { handle, outcome })).is_err() {
+                    return;
+                }
+            }
+            Some(Work::Content(
+                r @ Request {
+                    kind: RequestKind::Subscribe { .. } | RequestKind::Unsubscribe { .. } | RequestKind::Publish { .. },
+                    ..
+                },
+            )) => {
+                if !feed_request(&mut node, consent, false, r, next, &mut pending, &finished) {
+                    return;
+                }
+            }
+            Some(Work::Consented(r)) => {
+                if !feed_request(&mut node, consent, true, r, next, &mut pending, &finished) {
+                    return;
+                }
+            }
             Some(Work::Content(Request { handle, kind: RequestKind::Get { id, offset, length } })) => {
                 pending.insert(next, Job::Get { handle, offset, length });
                 node.start_get(next, id);
@@ -247,18 +461,18 @@ fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, ev
             // SPEC 9.5: answered at once from the node's own state.
             Some(Work::Content(Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
                 let (total, data) = node.subscription_records(offset, length);
-                if finished.send(Completion { handle, outcome: Outcome::Records { total, data } }).is_err() {
+                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
                     return;
                 }
             }
             Some(Work::Content(Request { handle, kind: RequestKind::Timeline { offset, length } })) => {
                 let (total, data) = node.timeline_records(offset, length);
-                if finished.send(Completion { handle, outcome: Outcome::Records { total, data } }).is_err() {
+                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
                     return;
                 }
             }
             Some(Work::Feed(FeedCommand::Publish(draft))) => {
-                pending.insert(next, Job::Publish);
+                pending.insert(next, Job::FeedPublish);
                 node.start_publish_article(next, &draft);
             }
             // A subscription list that cannot be saved still applies to
@@ -269,13 +483,13 @@ fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, ev
         }
         for (token, done) in node.poll() {
             let sent = match pending.remove(&token) {
-                Some(Job::Publish) => events
+                Some(Job::FeedPublish) => events
                     .send(match done {
                         Done::Published { seq, blob } => FeedEvent::Published { seq, blob },
                         done => FeedEvent::PublishFailed(done),
                     })
                     .is_ok(),
-                Some(job) => finished.send(completion(job, done)).is_ok(),
+                Some(job) => finished.send(Finished::Done(completion(job, done))).is_ok(),
                 None => true,
             };
             if !sent {
@@ -362,5 +576,122 @@ mod tests {
         assert_eq!((*total, data.len(), data[0], data[1]), (2, 2 + 109 + 3, 1 + 109 + 3, 1));
         assert_eq!(&data[2 + 109..], b"one");
         assert!(!service.feeds_updated(), "own publishing is not a new entry of a followed feed");
+    }
+
+    fn feed_requests(node: Node, consent: Consent, kinds: Vec<RequestKind>) -> (ContentService, Vec<Completion>) {
+        let mut service = ContentService::start_with_consent(node, consent);
+        service.submit(kinds.into_iter().enumerate().map(|(i, kind)| Request { handle: i as u8 + 1, kind }).collect());
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        (service, done)
+    }
+
+    fn outcomes(done: &[Completion]) -> Vec<Outcome> {
+        done.iter().map(|c| c.outcome.clone()).collect()
+    }
+
+    /// SPEC 9.5: with consent denied, subscribe and publish are refused;
+    /// requests that change nothing, unknown blobs and the identity are
+    /// answered without asking.
+    #[test]
+    fn consent_denied() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let article = store.put(b"article").unwrap();
+        let mut node = Node::new(store, None);
+        let a = crate::Identity::from_seed([1; 32]).feed_key();
+        let b = crate::Identity::from_seed([2; 32]).feed_key();
+        node.set_subscriptions(crate::Subscriptions::in_memory([a]));
+        let (_, done) = feed_requests(
+            node,
+            Consent::Deny,
+            vec![
+                RequestKind::Subscribe { feed: b },
+                RequestKind::Subscribe { feed: a },
+                RequestKind::Unsubscribe { feed: b },
+                RequestKind::Unsubscribe { feed: a },
+                RequestKind::Publish { blob: article, title: b"t".to_vec() },
+                RequestKind::Publish { blob: [9; 32], title: b"t".to_vec() },
+                RequestKind::Identity,
+                RequestKind::Subscribe { feed: [0; 32] },
+            ],
+        );
+        assert_eq!(
+            outcomes(&done),
+            [
+                Outcome::Refused,
+                Outcome::Done,
+                Outcome::Done,
+                Outcome::Refused,
+                Outcome::Refused,
+                Outcome::NotFound,
+                Outcome::NotFound,
+                Outcome::Refused,
+            ]
+        );
+    }
+
+    #[test]
+    fn consent_allowed_subscribes_and_publishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let article = store.put(b"An article.").unwrap();
+        let mut node = Node::new(store, None);
+        let subs = config.path().join("subscriptions");
+        node.set_subscriptions(crate::Subscriptions::load(&subs).unwrap());
+        node.set_identity_path(config.path().join("identity.key")).unwrap();
+        let b = crate::Identity::from_seed([2; 32]).feed_key();
+        let (mut service, done) = feed_requests(
+            node,
+            Consent::Allow,
+            vec![RequestKind::Subscribe { feed: b }, RequestKind::Publish { blob: article, title: "Tïtle".into() }],
+        );
+        assert_eq!(outcomes(&done), [Outcome::Done, Outcome::Published { seq: 1 }]);
+        // The identity was created; the subscription saved.
+        let me = crate::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
+        assert_eq!(std::fs::read_to_string(&subs).unwrap().trim(), crate::to_hex(&b));
+        service.submit(vec![Request { handle: 1, kind: RequestKind::Identity }]);
+        assert_eq!(outcomes(&service.wait_finished()), [Outcome::Identity { key: me }]);
+        let held = crate::FeedStore::beside_blobs(dir.path()).entries(&me).unwrap();
+        assert_eq!((held.len(), held[0].entry.title.as_str(), held[0].entry.blob), (1, "Tïtle", article));
+    }
+
+    /// Asked: one prompt at a time, in handle order; a yes carries the
+    /// request out, a no refuses it.
+    #[test]
+    fn consent_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let article = store.put(b"12345").unwrap();
+        let mut node = Node::new(store, None);
+        node.set_identity(crate::Identity::from_seed([3; 32]));
+        let b = crate::Identity::from_seed([2; 32]).feed_key();
+        let (mut service, done) = feed_requests(
+            node,
+            Consent::Ask,
+            vec![
+                RequestKind::Subscribe { feed: b },
+                RequestKind::Publish { blob: article, title: b"T".to_vec() },
+                RequestKind::Identity,
+            ],
+        );
+        assert_eq!(done.len(), 1, "only the identity is answered: {done:?}");
+        assert_eq!(service.prompts_waiting(), 2);
+        assert_eq!(service.prompt(), Some(&Prompt { handle: 1, asked: Asked::Subscribe(b) }));
+        service.answer(false);
+        assert_eq!(service.prompt(), Some(&Prompt { handle: 2, asked: Asked::Publish { title: "T".into(), size: 5 } }));
+        service.answer(true);
+        assert_eq!(service.prompt(), None);
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        assert_eq!(
+            done,
+            [
+                Completion { handle: 1, outcome: Outcome::Refused },
+                Completion { handle: 2, outcome: Outcome::Published { seq: 1 } }
+            ]
+        );
+        assert_eq!(service.outstanding(), 0);
     }
 }

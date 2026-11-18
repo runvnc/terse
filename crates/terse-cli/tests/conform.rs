@@ -8,10 +8,11 @@
 //! `conform_image_is_up_to_date` rebuilds it and compares, and is skipped
 //! when clang cannot target riscv32 or ld.lld or llvm-objcopy is missing.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const TERSE: &str = env!("CARGO_BIN_EXE_terse");
 /// The scripted run: every phase ends by frame 145 (the stress phase in 108).
 const FRAMES: &str = "200";
 /// PASS lines on the results screen: one per section.
@@ -30,7 +31,7 @@ fn path(name: &str) -> String {
 fn run(extra: &[&str]) -> String {
     let store = tempfile::tempdir().unwrap();
     let config = tempfile::tempdir().unwrap();
-    let out = Command::new(TERSE)
+    let out = common::terse_command()
         .args(["run", &path("conform.terse"), "--events", &path("conform.events"), "--frames", FRAMES])
         .args(["--store", store.path().to_str().unwrap(), "--config", config.path().to_str().unwrap()])
         .args(extra)
@@ -78,7 +79,7 @@ fn conform_image_is_up_to_date() {
     let out = Command::new("sh")
         .arg(path("build.sh"))
         .arg(tmp.path())
-        .env("TERSE", TERSE)
+        .env("TERSE", env!("CARGO_BIN_EXE_terse"))
         .output()
         .unwrap();
     assert!(out.status.success(), "build.sh: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

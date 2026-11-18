@@ -1,6 +1,7 @@
 //! `terse-host`: runs a Terse image in a window, or renders a screenshot.
 
 mod app;
+mod consent;
 mod gamepad;
 mod glyphs;
 mod keymap;
@@ -8,6 +9,7 @@ mod page;
 mod phosphor;
 mod renderer;
 mod selftest;
+mod setup;
 mod vectors;
 
 use std::path::{Path, PathBuf};
@@ -17,7 +19,10 @@ use std::time::Duration;
 use terse_core::{Image, Machine, Script, Terminal};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::service::Headless;
-use terse_net::{ContentService, Node, Subscriptions, default_config_dir, parse_hex};
+use terse_net::{
+    Consent, ContentService, Node, Subscriptions, default_config_dir, default_data_dir, default_store_dir, local,
+    parse_hex,
+};
 
 use crate::glyphs::SystemGlyphs;
 use crate::renderer::Renderer;
@@ -33,16 +38,34 @@ const PHOSPHOR_FRAMES: u64 = 600;
 /// How long `--screenshot` waits for feeds to catch up before frame 0.
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
+/// The reader (programs/reader), run when no image is named.
+const READER: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
+
 const USAGE: &str = "usage:
-  terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>]
-             [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]
-  terse-host <image|id> --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--no-trails]
-             [--force-phosphor] [--font <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]
-  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--no-trails]
-             [--force-phosphor] [--font <family|file>] [--store <dir>] [--config <dir>]
-  --config holds the feed subscriptions (default $XDG_CONFIG_HOME/terse, else ~/.config/terse);
-  --events is scripted input, as for `terse run`; --size is the picture's size in pixels
-  (default: the grid at the font's size), the screen letterboxed in it at 4:3.
+  terse-host [<image|id>] [--demo] [--relay ws://...|none] [--consent ask|allow|deny] [--store <dir>]
+             [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
+             [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
+  terse-host [<image|id>] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--demo]
+             [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--no-trails]
+             [--force-phosphor] [--font <family|file>]
+  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--consent allow|deny]
+             [--no-trails] [--force-phosphor] [--font <family|file>] [--store <dir>] [--config <dir>]
+  With no image, runs the feed reader built into terse-host (programs/reader).
+  --demo: before the window opens, make sure you have a feed key, subscribe to your own feed and,
+  if it has no articles yet, publish three sample articles to it; then run the reader.
+  Relay (windowed runs): --relay if given (none: no network); else the URL in <config>/relay
+  (`terse relay set <url>` writes it); else a relay already running on ws://127.0.0.1:7878;
+  else one started inside terse-host on that port, with its store in $XDG_DATA_HOME/terse/relay
+  (else ~/.local/share/terse/relay). One line on stderr says which. --screenshot and --selftest
+  use a relay only with --relay.
+  --consent: how requests by the program to subscribe, unsubscribe or publish (SPEC 9.5) are
+  answered: ask shows the host's prompt at the bottom of the window (Y allows, N or Esc refuses);
+  default ask in the window, deny for --screenshot and --selftest (where nobody can answer; a
+  --screenshot with ask shows the prompt, unanswered).
+  --store: the blob store (default $XDG_CACHE_HOME/terse/blobs, else ~/.cache/terse/blobs).
+  --config holds your feed key and subscriptions (default $XDG_CONFIG_HOME/terse, else
+  ~/.config/terse). --events is scripted input, as for `terse run`; --size is the picture's size
+  in pixels (default: the grid at the font's size), the screen letterboxed in it at 4:3.
   --selftest runs N frames (default 200) in the window with only the scripted input (default:
   the image's name with .events, if that file exists) and prints per-frame timings;
   --csv writes them per frame. --no-trails: the phosphor display style (SPEC 8.7) without
@@ -51,7 +74,8 @@ const USAGE: &str = "usage:
   family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
   a proportional font keeps the grid, each glyph centred in its cell. --page-sans, --page-serif,
   --page-mono: the fonts of the page device's three faces (default: the system's sans-serif, serif
-  and monospace families); every form of the command takes them.";
+  and monospace families); every form of the command takes them.
+  Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the program as typed text.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -72,11 +96,17 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut font = None;
     let mut page_fonts = page::PageFonts::default();
     let (mut relay, mut store, mut config, mut events) = (None, None, None, None);
+    let (mut consent, mut demo) = (None, false);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
+            "--demo" => demo = true,
+            "--consent" => {
+                let v = it.next().ok_or(USAGE)?;
+                consent = Some(Consent::parse(&v).ok_or(format!("bad --consent {v} (ask, allow or deny)"))?);
+            }
             "--no-trails" => no_trails = true,
             "--force-phosphor" => force_phosphor = true,
             "--font" => font = Some(it.next().ok_or(USAGE)?),
@@ -101,14 +131,41 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ => return Err(USAGE.into()),
         }
     }
-    let path = image_path.ok_or(USAGE)?;
+    let windowed = !selftest && screenshot.is_none();
+    if (selftest && image_path.is_none()) || (demo && (image_path.is_some() || selftest)) {
+        return Err(USAGE.into());
+    }
+    let consent = match consent {
+        Some(Consent::Ask) if selftest => return Err("--selftest cannot ask for consent (allow or deny)".into()),
+        Some(c) => c,
+        None if windowed => Consent::Ask,
+        None => Consent::Deny,
+    };
+    let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
+    let store = store.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
+    // The relay: in a window, found or started as README "Getting started"
+    // says; otherwise only --relay.
+    let relay = if windowed {
+        let chosen = setup::choose_relay(relay.as_deref(), &config, local::local_port(), default_data_dir().as_deref())?;
+        eprintln!("terse-host: {}", chosen.describe());
+        chosen.url().map(str::to_string)
+    } else {
+        relay.filter(|r| r != "none")
+    };
+    if demo {
+        setup::prepare_demo(&store, &config, relay.as_deref())?;
+    }
     // The blob store and relay, opened only when needed.
-    let open_node = || Node::open(store.clone(), relay.as_deref(), DEFAULT_TIMEOUT);
+    let open_node = || Node::open(Some(store.clone()), relay.as_deref(), DEFAULT_TIMEOUT);
     let mut node = None;
+    let path = image_path.clone().unwrap_or_else(|| "reader".into());
     // NETWORK 2: an image may be started by its ID.
-    let bytes = match parse_hex(&path) {
-        Some(id) if !Path::new(&path).exists() => node.insert(open_node()?).fetch_bytes(id)?,
-        _ => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
+    let bytes = match &image_path {
+        None => READER.to_vec(),
+        Some(path) => match parse_hex(path) {
+            Some(id) if !Path::new(path).exists() => node.insert(open_node()?).fetch_bytes(id)?,
+            _ => std::fs::read(path).map_err(|e| format!("{path}: {e}"))?,
+        },
     };
     let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
     let content = match image.has_device(4) {
@@ -118,11 +175,13 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 Some(node) => node,
                 None => open_node()?,
             };
-            // SPEC 7.7: the feeds are those of the subscription list, which
-            // the node also follows on the relay (NETWORK 4.4).
-            let dir = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
-            node.set_subscriptions(Subscriptions::load(dir.join("subscriptions"))?);
-            Some(ContentService::start(node))
+            // SPEC 9.5: the feeds are those of the subscription list, which
+            // the node also follows on the relay (NETWORK 4.4); publishing
+            // uses (and if need be creates) the identity in the config
+            // directory.
+            node.set_subscriptions(Subscriptions::load(config.join("subscriptions"))?);
+            node.set_identity_path(config.join("identity.key"))?;
+            Some(ContentService::start_with_consent(node, consent))
         }
     };
 
@@ -293,7 +352,16 @@ fn take_screenshot(
         }
     }
 
-    renderer.update(&queue, &displayed_terminal(&machine));
+    // A consent prompt still waiting for an answer (`--consent ask`) is
+    // shown as the window would show it.
+    let terminal = displayed_terminal(&machine);
+    match headless.content().and_then(|c| c.prompt().map(|p| (p, c.prompts_waiting()))) {
+        Some((prompt, waiting)) => {
+            renderer.update(&queue, &consent::with_prompt(&terminal, &image.title_lossy(), prompt, waiting));
+            renderer.set_overlay(Some(consent::FIRST_ROW));
+        }
+        None => renderer.update(&queue, &terminal),
+    }
     renderer.update_vectors(&queue, machine.vector());
     renderer.update_page(machine.page(), shown(&machine));
     // The beam of what is shown now (e.g. a fault reported after the last

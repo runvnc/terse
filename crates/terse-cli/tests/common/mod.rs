@@ -146,3 +146,20 @@ impl FrameStats {
 pub fn pct(units: u64) -> f64 {
     units as f64 * 100.0 / BUDGET_PER_FRAME as f64
 }
+
+/// The `terse` binary, isolated from the user's own setup: its default
+/// config, cache and data directories are in a temporary directory, and the
+/// local relay it looks for is on a port nothing listens on (never 7878).
+pub fn terse_command() -> Command {
+    static ENV: OnceLock<(tempfile::TempDir, u16)> = OnceLock::new();
+    let (home, port) = ENV.get_or_init(|| {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        (tempfile::tempdir().unwrap(), port)
+    });
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_terse"));
+    for var in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"] {
+        cmd.env(var, home.path().join(var));
+    }
+    cmd.env(terse_net::local::PORT_ENV, port.to_string());
+    cmd
+}
