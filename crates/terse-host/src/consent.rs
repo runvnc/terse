@@ -152,7 +152,7 @@ mod tests {
         assert_eq!((size_text(812), size_text(6150), size_text(1_048_576)), ("812 bytes".into(), "6.1 KB".into(), "1.0 MB".into()));
         assert_eq!(fit("a\u{1b}b", 10), "a\u{FFFD}b");
         assert_eq!(fit("日本語の題名", 7), "日本語…");
-        let p = Prompt { handle: 1, asked: Asked::Publish { title: "x".repeat(120), size: 2000 } };
+        let p = Prompt { tag: 0, handle: 1, asked: Asked::Publish { title: "x".repeat(120), size: 2000 } };
         let t = with_prompt(&Terminal::default(), "reader", &p, 3);
         let text = t.text();
         let rows: Vec<&str> = text.lines().collect();

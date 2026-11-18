@@ -10,14 +10,17 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use fontdb::{Database, Family, ID, Query, Source, Style, Weight};
 use fontdue::{Font, FontSettings};
 
 use crate::renderer::GlyphSource;
 
+/// Glyphs at one size. Copies at other sizes (`resized`, one per machine
+/// screen) share the fonts and what was learned about them.
+#[derive(Clone)]
 pub struct SystemGlyphs {
-    db: Database,
     px: f32,
     cell: (u32, u32),
     baseline: f32,
@@ -25,6 +28,12 @@ pub struct SystemGlyphs {
     /// The primary face is proportional: its glyphs are centred in the
     /// cell and squeezed horizontally to fit (see the module comment).
     proportional: bool,
+    faces: Arc<Mutex<Faces>>,
+}
+
+/// The fonts, loaded once for every size.
+struct Faces {
+    db: Database,
     /// Other regular-weight upright faces, monospaced ones first.
     fallbacks: Vec<ID>,
     fonts: HashMap<ID, Option<Font>>,
@@ -33,6 +42,8 @@ pub struct SystemGlyphs {
     last_fallback: Option<ID>,
     /// Characters no face has, so they are not scanned for again.
     missing: HashSet<char>,
+    /// The face found for a character that the primary lacks.
+    found: HashMap<char, ID>,
 }
 
 impl SystemGlyphs {
@@ -76,17 +87,13 @@ impl SystemGlyphs {
         fallbacks.sort();
         let fallbacks = fallbacks.into_iter().map(|(_, _, id)| id).collect();
 
-        let mut glyphs = SystemGlyphs {
+        let mut faces = Faces {
             db,
-            px,
-            cell: (1, 1),
-            baseline: 0.0,
-            primary,
-            proportional,
             fallbacks,
             fonts: HashMap::new(),
             last_fallback: None,
             missing: HashSet::new(),
+            found: HashMap::new(),
         };
         // SPEC 5.4: screen units are square and a cell is 8 x 16 of them, so
         // the cell is exactly 1:2. Its width is the monospace font's advance
@@ -95,13 +102,13 @@ impl SystemGlyphs {
         // height, which is within a pixel or two of the font's line height
         // for usual monospace fonts.
         let reference = match (proportional, monospace) {
-            (true, Some(mono)) => glyphs.font(mono).and_then(|f| {
+            (true, Some(mono)) => faces.font(mono).and_then(|f| {
                 let line = f.horizontal_line_metrics(px)?;
                 Some((f.metrics('0', px).advance_width, line.ascent - line.descent))
             }),
             _ => None,
         };
-        let font = glyphs.font(primary).ok_or("cannot load the font")?;
+        let font = faces.font(primary).ok_or("cannot load the font")?;
         let line = font.horizontal_line_metrics(px).ok_or("the font has no line metrics")?;
         let advance = match (proportional, reference) {
             (false, _) => font.metrics('0', px).advance_width,
@@ -116,18 +123,20 @@ impl SystemGlyphs {
         };
         let line = if px == base_px { line } else { font.horizontal_line_metrics(px).unwrap_or(line) };
         let width = advance.round().max(1.0) as u32;
-        glyphs.px = px;
-        glyphs.cell = (width, 2 * width);
+        let cell = (width, 2 * width);
         let body = line.ascent - line.descent;
-        glyphs.baseline = (line.ascent + (glyphs.cell.1 as f32 - body) / 2.0).round();
-        Ok(glyphs)
+        let baseline = (line.ascent + (cell.1 as f32 - body) / 2.0).round();
+        Ok(SystemGlyphs { px, cell, baseline, primary, proportional, faces: Arc::new(Mutex::new(faces)) })
     }
 
     pub fn primary_family(&self) -> String {
-        let name = self.db.face(self.primary).and_then(|f| f.families.first()).map_or(String::new(), |(n, _)| n.clone());
+        let faces = self.faces.lock().unwrap();
+        let name = faces.db.face(self.primary).and_then(|f| f.families.first()).map_or(String::new(), |(n, _)| n.clone());
         if self.proportional { format!("{name} (proportional, centred in the cells)") } else { name }
     }
+}
 
+impl Faces {
     fn font(&mut self, id: ID) -> Option<&Font> {
         let db = &self.db;
         self.fonts
@@ -146,12 +155,15 @@ impl SystemGlyphs {
     /// last had one, else the first fallback that does. Coverage is checked
     /// with ttf-parser so fallback fonts are only fully loaded when needed;
     /// that scan reads every font file, so its results are remembered.
-    fn face_for(&mut self, ch: char) -> Option<ID> {
-        if self.font(self.primary).is_some_and(|f| f.has_glyph(ch)) {
-            return Some(self.primary);
+    fn face_for(&mut self, primary: ID, ch: char) -> Option<ID> {
+        if self.font(primary).is_some_and(|f| f.has_glyph(ch)) {
+            return Some(primary);
         }
         if self.missing.contains(&ch) {
             return None;
+        }
+        if let Some(&id) = self.found.get(&ch) {
+            return Some(id);
         }
         if let Some(id) = self.last_fallback
             && self.font(id).is_some_and(|f| f.has_glyph(ch))
@@ -169,6 +181,7 @@ impl SystemGlyphs {
             return None;
         };
         self.last_fallback = Some(id);
+        self.found.insert(ch, id);
         self.font(id).map(|_| id)
     }
 }
@@ -178,11 +191,26 @@ impl GlyphSource for SystemGlyphs {
         self.cell
     }
 
+    fn resized(&self, width: u32) -> Box<dyn GlyphSource> {
+        let mut g = self.clone();
+        g.px = self.px * width as f32 / self.cell.0 as f32;
+        g.cell = (width, 2 * width);
+        // The text body centred in the cell, as at the native size.
+        let px = g.px;
+        let line = self.faces.lock().unwrap().font(g.primary).and_then(|f| f.horizontal_line_metrics(px));
+        if let Some(line) = line {
+            let body = line.ascent - line.descent;
+            g.baseline = (line.ascent + (g.cell.1 as f32 - body) / 2.0).round();
+        }
+        Box::new(g)
+    }
+
     fn rasterize(&mut self, ch: char, cells: u32, out: &mut [u8]) {
-        let Some(id) = self.face_for(ch) else { return };
+        let mut faces = self.faces.lock().unwrap();
+        let Some(id) = faces.face_for(self.primary, ch) else { return };
         let (cw, ch_px, baseline, px) = ((self.cell.0 * cells) as i32, self.cell.1 as i32, self.baseline, self.px);
         let squeeze = self.proportional && id == self.primary;
-        let font = self.font(id).expect("face_for loaded it");
+        let font = faces.font(id).expect("face_for loaded it");
         let advance = font.metrics(ch, px).advance_width;
         if squeeze {
             return squeezed(font, ch, px, cw, ch_px, baseline, out);

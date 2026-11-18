@@ -6,10 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use terse_core::{DeviceReq, Image, Machine, Script, Stopped};
+use terse_core::{DeviceReq, Image, Machine, Script, Stopped, System};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::service::Headless;
-use terse_net::{Consent, ContentService, Done, Node, blob_id, local, parse_hex, to_hex};
+use terse_net::{Consent, ContentService, Done, HeadlessSystem, Node, blob_id, builtin, local, parse_hex, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -17,6 +16,7 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
+  terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse get <id> [-o <file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]
@@ -64,6 +64,13 @@ find it (default: as in your current profile, else unlisted), the description fr
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
+--shell runs a system (SPEC 12): the image (default: the built-in shell, programs/shell) is the shell,
+with device 8; the built-in programs (reader, sparks, fetch, hello), and each --builtin image after
+them, are put into the store and offered to it. Scripted events are the host's input: `home` is the
+home key, pointer positions are in the whole screen's units, and the system routes them. --dump
+prints the shell's screen, then for each machine whose rectangle is not empty a line
+`-- machine <handle> <state> <x> <y> <w> <h> <title> --` and its screen; --hash prints the shell's
+hash, --hash-all also `<handle> <hash>` for each machine started (`-` while it has no image).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
 its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
@@ -230,7 +237,7 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--bench"])?;
+    let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-all", "--bench", "--shell"])?;
     args.check_known(&[
         "--frames",
         "--dump",
@@ -243,15 +250,25 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--consent",
         "--no-feed-relays",
         "--hash",
+        "--hash-all",
         "--hash-every",
         "--bench",
+        "--shell",
+        "--builtin",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
     }
+    let shell = args.has("--shell");
+    if !shell && (args.has("--builtin") || args.has("--hash-all")) {
+        return Err("--builtin and --hash-all need --shell".into());
+    }
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None, find: false };
-    let image = load_image(args.one_positional()?, &mut net)?;
+    let image = match args.positional.as_slice() {
+        [] if shell => Image::parse(builtin::SHELL).map_err(|e| format!("built-in shell: {e}"))?,
+        _ => load_image(args.one_positional()?, &mut net)?,
+    };
     let frames: Option<u64> = match args.get("--frames") {
         Some(n) => Some(n.parse().map_err(|_| format!("bad frame count {n}"))?),
         None => None,
@@ -266,11 +283,16 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some(c) => Consent::parse(c).filter(|&c| c != Consent::Ask).ok_or(format!("bad --consent {c} (allow or deny)"))?,
     };
 
-    let mut machine = Machine::new(&image);
-    let content = if image.has_device(4) {
+    // A shell needs the store for the images it starts (SPEC 12.2).
+    let mut builtins = Vec::new();
+    let content = if image.has_device(4) || shell {
         // SPEC 9.5: the feeds are those of the --config subscriptions, and
         // the identity is the one kept there.
         let mut node = net.take()?;
+        if shell {
+            let extra = args.all("--builtin").map(|a| image_bytes(a, &mut node)).collect::<Result<Vec<_>, _>>()?;
+            builtins = builtin::install(node.store(), &extra)?;
+        }
         node.set_subscriptions(feed::load_subscriptions(&args)?);
         node.set_identity_path(feed::identity_path(&args)?)?;
         node.set_nicknames(feed::load_nicknames(&args)?);
@@ -286,16 +308,19 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     } else {
         None
     };
-    // Headless runs are reproducible (see `Headless`).
-    let mut headless = Headless::new(content, script);
+    let mut system = System::new(&image, shell, builtins);
+    // Headless runs are reproducible (see `HeadlessSystem`).
+    let mut headless = HeadlessSystem::new(content, script);
     let mut stopped = None;
     let mut times = Vec::new();
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
         let start = std::time::Instant::now();
-        stopped = headless.frame(&mut machine).stopped;
+        headless.frame(&mut system);
+        stopped = system.stopped();
         if args.has("--bench") {
             times.push(start.elapsed());
         }
+        let machine = system.shell();
         if let Some(n) = hash_every
             && machine.frame() % n == 0
         {
@@ -305,7 +330,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             break;
         }
     }
-    if let Some(fault) = machine.fault() {
+    if let Some(fault) = system.shell().fault() {
         eprintln!("terse: fault: {fault}");
     }
     if stopped.is_none() && frames.is_none() {
@@ -315,37 +340,31 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if args.has("--bench") {
         bench_report(&mut times);
     }
-    if args.has("--hash") {
-        println!("{}", to_hex(&machine.state_hash()));
+    if args.has("--hash") || args.has("--hash-all") {
+        println!("{}", to_hex(&system.shell().state_hash()));
+    }
+    if args.has("--hash-all") {
+        for (h, child) in system.children() {
+            match &child.machine {
+                Some(m) => println!("{h} {}", to_hex(&m.state_hash())),
+                None => println!("{h} -"),
+            }
+        }
     }
     if args.has("--dump") {
-        match machine.terminal() {
-            Some(t) => print!("{}", t.text()),
-            None => eprintln!("terse: image has no terminal device"),
-        }
-        // SPEC 10: the list device 3 holds at the end of the last frame, one
-        // shape per line, as the host draws it.
-        if args.has("--dump-vectors") {
-            if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
-                println!("{line}");
-            }
-            println!("-- vectors: {} list bytes --", machine.vector_list().len());
-            if let Some(v) = machine.vector() {
-                print!("{}", v.dump());
-            }
-        }
-        // SPEC 11.6: the page as the reference layout shows it.
-        if args.has("--dump-page") {
-            match machine.page() {
-                Some(page) => {
-                    let width = page.region().w;
-                    let layout = page
-                        .document()
-                        .map(|doc| terse_core::page::reference_layout(doc, width))
-                        .unwrap_or_default();
-                    print!("{}", layout.dump(page));
+        dump(system.shell(), &args);
+        if let Some(dev) = system.shell().machines() {
+            for (h, child) in system.children() {
+                let slot = dev.slot(h);
+                let r = slot.rect;
+                if r.w == 0 || r.h == 0 {
+                    continue;
                 }
-                None => println!("-- page: image has no page device --"),
+                let state = terse_core::machines::state::name(slot.state);
+                println!("-- machine {h} {state} {} {} {} {} {} --", r.x, r.y, r.w, r.h, child.title);
+                if let Some(m) = &child.machine {
+                    dump(m, &args);
+                }
             }
         }
     }
@@ -353,6 +372,47 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some(Stopped::Fault(_)) => Ok(fault_exit()),
         Some(Stopped::Exit(code)) => Ok(ExitCode::from(code)),
         None => Ok(ExitCode::SUCCESS),
+    }
+}
+
+/// An image's bytes from a file, or by ID from the node (NETWORK 2).
+fn image_bytes(arg: &str, node: &mut Node) -> Result<Vec<u8>, String> {
+    let bytes = match parse_hex(arg) {
+        Some(id) if !Path::new(arg).exists() => node.fetch_bytes(id)?,
+        _ => read(arg)?,
+    };
+    Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))?;
+    Ok(bytes)
+}
+
+/// `--dump`: one machine's terminal, and its vectors and page if asked.
+fn dump(machine: &Machine, args: &Args) {
+    match machine.terminal() {
+        Some(t) => print!("{}", t.text()),
+        None => eprintln!("terse: image has no terminal device"),
+    }
+    // SPEC 10: the list device 3 holds at the end of the last frame, one
+    // shape per line, as the host draws it.
+    if args.has("--dump-vectors") {
+        if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
+            println!("{line}");
+        }
+        println!("-- vectors: {} list bytes --", machine.vector_list().len());
+        if let Some(v) = machine.vector() {
+            print!("{}", v.dump());
+        }
+    }
+    // SPEC 11.6: the page as the reference layout shows it.
+    if args.has("--dump-page") {
+        match machine.page() {
+            Some(page) => {
+                let width = page.region().w;
+                let layout =
+                    page.document().map(|doc| terse_core::page::reference_layout(doc, width)).unwrap_or_default();
+                print!("{}", layout.dump(page));
+            }
+            None => println!("-- page: image has no page device --"),
+        }
     }
 }
 

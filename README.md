@@ -4,7 +4,9 @@ A small virtual computer: a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
 of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device
-that fetches and publishes blobs and reads feeds. `SPEC.md` is the authoritative design, `STATE.md` defines the
+that fetches and publishes blobs and reads feeds. Several machines can run
+side by side as one system: a shell program starts them and lays their screens
+out as tiles. `SPEC.md` is the authoritative design, `STATE.md` defines the
 machine state hash, and `NETWORK.md` describes how hosts move blobs and feeds
 through a relay; this repository is the first prototype of all three.
 
@@ -14,8 +16,8 @@ unless they set variables (`set X value` in fish is `X=value` in bash).
 ## Getting started
 
 With a Rust toolchain (see [Build, run, test](#build-run-test) if `cargo` is
-not on your `PATH`), one command builds everything and opens the feed reader
-with four sample articles:
+not on your `PATH`), one command builds everything, sets up four sample
+articles and opens the shell:
 
     cargo run --release -p terse-host -- --demo
 
@@ -23,11 +25,22 @@ The first time, this creates your feed key (`~/.config/terse/identity.key`),
 subscribes you to your own feed, and publishes the four articles to it. It
 uses a relay found as described below, starting one inside `terse-host` if
 none is running. Running `--demo` again publishes nothing new. After that,
-`cargo run --release -p terse-host` (no image named) runs the reader. If your
+`cargo run --release -p terse-host` (no image named) opens the shell. If your
 feed got the first three samples from an earlier `--demo`, publish the fourth
 (drawings in an article, see [Writing an article](#writing-an-article)) yourself:
 
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
+
+**The shell.** The window opens on the launcher: the programs built into
+`terse-host` (reader, sparks, fetch, hello). Up and Down choose one, Enter
+starts it as a machine of its own, and it gets the keyboard. Start more the
+same way: **F12 is the home key**, which always brings you back to the
+launcher (no program ever sees F12). The bar at the top shows each machine:
+its handle, title and share of the frame budget, the focused one in blue.
+In the launcher, Esc goes back to the selected machine, Tab selects the next
+one, X stops it, P pauses it, Z zooms it, L changes the layout (master and
+stack, grid, zoom); a click on a machine's picture gives it the keyboard.
+See [The shell](#the-shell).
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
 (and quits from the timeline); F manages the feeds you follow; ? (or F1)
@@ -36,8 +49,8 @@ article. See [The reader](#the-reader).
 
 **The consent prompt.** A program may ask the host to subscribe to a feed,
 unsubscribe from one, or publish an article in your name (SPEC 9.5). The
-host then shows its own prompt over the bottom four rows of the window,
-naming the program and what it asks (a feed key such as `3fa9c2…c21e07`,
+host then shows its own prompt over the bottom four rows of the window, over
+every machine's picture, naming the program and what it asks (a feed key such as `3fa9c2…c21e07`,
 or the article's title and size). Press Y to allow, N or Esc to refuse;
 Enter does nothing. While the prompt is up, the keyboard goes to the host,
 not to the program, and the program can neither see nor draw over the
@@ -66,7 +79,7 @@ before starting `terse-host`, which then finds it on port 7878:
 
     cargo run --release -p terse-relay -- --listen 0.0.0.0:7878 --store ~/terse-relay
 
-The other names it once, then runs the reader as usual:
+The other names it once, then runs the shell (and the reader in it) as usual:
 
     cargo run --release -p terse-cli --bin terse -- relay add ws://their-host:7878
     cargo run --release -p terse-host
@@ -104,6 +117,21 @@ images were built with clang and LLD 23.1.4.
 
 `terse` commands:
 
+- `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
+  below runs a system (SPEC 12): the image (default: the built-in shell,
+  `programs/shell`) is the shell, with device 8. The built-in programs (reader,
+  sparks, fetch, hello, then each `--builtin` image) are put into the store
+  (`--store`; use a temporary one for tests) and offered to the shell. The
+  script's events are the host's input and the system routes them: `home` is the
+  home key, pointer positions are in units of the whole screen, keys and text go to
+  the machine with the focus. Images the shell starts are loaded between frames, so
+  a machine started in frame N runs from frame N + 1. `--dump` prints the shell's
+  screen, then for each machine with a rectangle a line `-- machine <handle>
+  <state> <x> <y> <w> <h> <title> --` and its screen (and vectors and page with
+  `--dump-vectors`, `--dump-page`); `--hash` prints the shell's state hash and
+  `--hash-all` also `<handle> <hash>` per machine started (`-` while loading or
+  failed). The exit status is the shell's. Without `--shell`, an image runs alone,
+  as follows.
 - `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
@@ -160,22 +188,32 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id>] [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--store <dir>] [--config <dir>]`
-opens a window and runs the image at 60 frames/s of virtual time; with no image it
-runs the reader, which is built into the binary (`programs/reader/reader.terse`), and
-with `--demo` it first sets up the sample articles ([Getting started](#getting-started)).
+`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--store <dir>] [--config <dir>]`
+opens a window and runs at 60 frames/s of virtual time. With no image it runs the
+shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
+which starts the built-in programs (reader, sparks, fetch and hello, also built in, and
+each `--builtin` image), all put into the store at start; `--shell <image>` uses
+another image as the shell. With an image named it runs that image alone, as a single
+machine, with every key (F12 included) going to it. With `--demo` it first sets up the
+sample articles ([Getting started](#getting-started)). `--size` is the window's size
+in pixels.
 The relays are found or started as Getting started says. `--no-prefetch` turns off
 fetching the `terse:` links of automatically downloaded articles (NETWORK 4.4). `--consent` answers the
 program's requests to subscribe, unsubscribe, publish, set its profile and set a
 nickname: `ask` (the default) shows the
-host's prompt, `allow` and `deny` answer every one without asking. Ctrl+V and
-Shift+Insert paste: the clipboard's text goes to the program as text events (SPEC 5),
+host's prompt, `allow` and `deny` answer every one without asking. Keys go to the
+host's prompt first, then F12 (the home key, with a shell), then to the machine with
+the focus. Ctrl+V and
+Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC 5),
 newlines kept and other control characters dropped, fed in only as fast as the event
 queue has room, so none is lost. The screen
 (SPEC 7) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
-scaled uniformly, centred and letterboxed in a window of any other shape. Input:
+scaled uniformly, centred and letterboxed in a window of any other shape. With a shell,
+the shell's screen fills the window at 4:3 whatever its size, and each machine's
+picture is drawn in its rectangle with glyphs rasterised for its size, its own page
+layout (laid out for 640 units and scaled) and its own phosphor tube. Input:
 keyboard and text; the pointer in screen units (window pixels map to 640x480
 through the same rectangle, clamped at the edges, movement at most once a frame);
 the wheel (line and pixel deltas, one step per terminal row of travel); game
@@ -191,13 +229,15 @@ phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 `--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
 `--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
-`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo]` runs
+`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo]`
+(with no image or `--shell [<image>]`: the shell and its machines) runs
 headless like `terse run` (relay only with `--relay`; consent `deny` unless given; with
 `ask` a prompt is left unanswered and shown in the picture) (but the page is laid out with this host's fonts, between
 frames, so the picture shows the finished layout) and writes a PNG, of the grid's native size or
 `W` × `H` pixels with the screen letterboxed in it; in the phosphor style the
 afterglow is built up over the last 600 frames, as in the window.
-`--selftest <image|id> [--frames N] [--events <file>] [--csv <file>] [--consent allow|deny]` runs N frames
+`--selftest <image|id> [--frames N] [--events <file>] [--csv <file>] [--consent allow|deny]` (or
+`--selftest --shell [<image>]`, the system) runs N frames
 (default 200) in the window with vsync, with only the scripted input (default: the
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
 ignored), and prints timings: see [Conformance image](#conformance-image).
@@ -310,7 +350,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          parsing, and the devices: system.rs, terminal.rs, vector.rs (device
                          3 and the one display-list decoder, with the fill cap), content.rs,
                          page.rs (device 7: the document decoder, the reference layout, when
-                         to report the height).
+                         to report the height), machines.rs (device 8); shell.rs: the
+                         System (the shell and its machines: frame order, latching, input
+                         routing), driven by a host's Driver.
                          wide.rs holds the Unicode 16.0 East Asian Width W/F table. No GUI,
                          threads, clock, I/O or OS randomness; inputs (events, time, random
                          bytes, controllers, content completions) are passed in.
@@ -319,17 +361,19 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          Transport trait), node.rs (several relays, feed relays, search),
                          profile.rs (display names, profile documents, nicknames), content
                          service thread (with the consent policy and the queue of requests
-                         waiting for an answer), local.rs (finding relays: the config
-                         file, the local port)
+                         waiting for an answer; requests tagged by machine; HeadlessSystem),
+                         local.rs (finding relays: the config file, the local port),
+                         builtin.rs (the shell and built-in programs every host carries)
     crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay, with peers and
                          search (a library too: `terse-host` runs one in-process when it
                          finds none)
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
-                         conform.rs)
+                         shell.rs, conform.rs)
     crates/terse-host/   `terse-host`: winit + wgpu window; renderer.rs is the
-                         window-independent renderer (terminal, vectors.rs's shapes, the
-                         phosphor tube: SPEC 10.5, 10.6, and the host's overlay); page.rs
+                         window-independent renderer of one screen (terminal, vectors.rs's
+                         shapes, the phosphor tube: SPEC 10.5, 10.6, and the host's overlay);
+                         screens.rs draws a system's screens together (SPEC 12.3); page.rs
                          lays the page out with cosmic-text on a worker thread and draws
                          it; consent.rs the consent prompt; setup.rs the relay choice and
                          --demo, whose articles are in demo/
@@ -341,6 +385,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          build.sh writes message_id.h, then fetch.terse
     programs/reader/     the feed reader, in C: reader.c, build.sh, the built reader.terse
                          and the golden screens in expected/
+    programs/shell/      the shell (device 8), in C: shell.c, build.sh, the built
+                         shell.terse and the golden screens in expected/
     programs/sparks/     a game for the vector display, in C: sparks.c, build.sh, the
                          built sparks.terse, recorded sessions in sessions/ and the golden
                          screens in expected/
@@ -398,7 +444,7 @@ sources and the same clang give the same image, and each program's test fails if
 its checked-in `.terse` is not what its sources build to (and is skipped when
 clang lacks the riscv32 target).
 
-Costs to keep in mind (SPEC 12): an instruction from ROM costs 1 unit, one from
+Costs to keep in mind (SPEC 13): an instruction from ROM costs 1 unit, one from
 RAM 4; a call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write`
 costs 1 per byte, and a scroll or clear 150. Writing a whole row with one `write`
 or `term_cells_write` is far cheaper than a call per character.
@@ -417,6 +463,7 @@ its arguments. Blank lines and text after `#` are ignored (except in `text`).
     10 click <x> <y>                            pointer with the primary button, then released
     10 wheel <vertical> [<horizontal>]          wheel steps; positive is down and right
     10 feeds-updated                            a feeds-updated event
+    10 home                                     the home key (with --shell only)
     10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]  controller n (0-3) from this frame on
     10 pad <n> off                              controller n disconnected
 
@@ -424,7 +471,9 @@ its arguments. Blank lines and text after `#` are ignored (except in `text`).
 `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`,
 `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`. The events of a
 frame are delivered in the order written. A cell (column, row) starts at screen
-unit (column × 8, row × 16).
+unit (column × 8, row × 16). With `--shell`, pointer positions are in units of the
+whole screen (the shell's), and are mapped into a machine's units when they fall on
+its picture.
 
 A `pad` line connects controller `n` and sets its whole state (SPEC 6) until the
 next `pad` line for it; controllers are disconnected until their first one.
@@ -466,10 +515,43 @@ panel:
 chart, a badge and a diagram. A reader that does not draw figures shows their text,
 so an article still reads as plain text.
 
+## The shell
+
+`programs/shell` is the program `terse-host` runs when no image is named: a small C
+program (8 KB of ROM, 2 RAM pages) with device 8 (SPEC 12), which starts the host's
+built-in programs as machines of their own (at most 8) and shows them as tiles.
+Everything about the layout is the shell's; the host only runs the machines, draws
+each one's screen where the shell placed it, and routes input.
+
+- **The bar** (row 0): the home segment `⌂`, then one segment per machine: its handle,
+  a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and
+  the units it used in its last frame as a share of the budget; the machine with the
+  keyboard in blue, the one selected in the launcher in amber; the clock (UTC) at the
+  right. A click on a segment gives that machine the keyboard; one on `⌂` opens the
+  launcher.
+- **Tiles**: below the bar, each machine's picture (its whole screen, scaled) at the
+  top of its tile, a blue frame around the one with the keyboard. Layouts: master and
+  stack (the first machine on the left half, the others stacked on the right; the
+  default), grid, and zoom (one machine over the whole area, the others hidden but
+  still running).
+- **The launcher** (on the page, while the shell has the keyboard: at start, and after
+  F12, the home key): the built-in programs by title, then the machines with their
+  state (a faulted one with the fault kind and `pc`). The tiles move to the right of
+  it. Up/Down move the cursor; Enter starts the program under it (the new machine gets
+  the keyboard) or gives the keyboard to the machine under it; Esc gives it back to
+  the selected machine; Tab or Right / Shift+Tab or Left select the next / previous
+  machine; X stops the selected machine; P pauses or resumes it; Z zooms it (Z again
+  goes back); L cycles the layouts; 1–8 select a machine by handle. A click on a
+  program starts it, one on a machine selects and focuses it.
+- A click on a machine's picture gives it the keyboard (the click also reaches the
+  machine). A machine that exits or faults keeps its tile, with its last picture (a
+  fault shown on its bottom row), until X stops it; the keyboard then goes back to the
+  shell.
+
 ## The reader
 
-`programs/reader` is a feed reader written in C, and the program `terse-host` runs
-when no image is named. Every view is typeset on the [page](#page) in the sans face;
+`programs/reader` is a feed reader written in C, the first of the built-in programs
+the shell offers. Every view is typeset on the [page](#page) in the sans face;
 the terminal shows only the status row (row 29: key hints, the position such as
 `2/3`, or the outcome of the last action) and, while a feed key is typed, row 28.
 
@@ -977,7 +1059,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   fill cap stops the fills), frames 79–108 the worst legal case: fills totalling
   just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
   3,268 translucent lines of width 255 across the screen, about 109 screens of line
-  area (lines are not capped, SPEC 15).
+  area (lines are not capped, SPEC 16).
 
 **Responsiveness (window).** `terse-host --selftest` runs the image in the normal
 window with vsync and the same script, and prints for each machine frame the
@@ -1018,6 +1100,26 @@ recorded sessions.
 | reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
 | sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
+| shell | 8,380 bytes | 2 pages | 11,251 (9.0%, the launcher rebuilt with 4 machines) | 388 (0.3%) | — |
+
+A system in a 1320 × 990 window (`terse-host --selftest --shell --size 1320x990`,
+1,200 frames, RTX 2060; the machines started by script in the first 300 frames;
+steady state is frames 400 on): emulation is all the machines' frames,
+render-submit the upload of every screen and the encoding and submission of the
+picture.
+
+| Machines | Emulation p50 / p99 / max | Render-submit p50 / p99 / max | Steady state, emulation + render p50 / p99 |
+|---|---|---|---|
+| 1 (reader on an article) | 0.26 / 0.32 / 6.3 ms | 1.5 / 1.7 / 18 ms | 1.7 / 1.9 ms |
+| 4 (2 readers, sparks in phosphor, hello) | 0.75 / 0.92 / 6.4 ms | 3.3 / 3.6 / 628 ms | 4.2 / 4.4 ms |
+| 8 (3 readers, 3 sparks in phosphor, 2 hellos, grid) | 1.37 / 1.65 / 7.0 ms | 5.5 / 8.1 / 642 ms | 6.9 / 7.3 ms |
+
+The frames over 16.7 ms are the ones in which a machine first appears (a renderer
+of its own, its glyphs: 15–19 ms), in which a new machine makes the others' tiles
+change size (glyphs and textures for the new size: 13–15 ms), and the first frame
+showing hello's CJK and Greek text (600–640 ms looking through the system's fonts for
+the characters the monospace font lacks; `terse-host hello.terse` alone pays the
+same at its first frame).
 
 Host cost per budget unit, for a frame spent entirely in one kind of call
 (`cargo test --release -p terse-core --test charges -- --ignored --nocapture

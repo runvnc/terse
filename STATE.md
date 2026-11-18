@@ -1,6 +1,6 @@
 # Terse machine state hash — v0 (draft)
 
-Status: part of SPEC section 13 (Conformance). It lets two implementations of
+Status: part of SPEC section 14 (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
 Nth). The first frame whose hashes differ is where the implementations diverge.
@@ -134,7 +134,7 @@ Let `P` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| P | 1 | Present (flag): the image lists device 7. If `00h`, the section ends here (and the serialization). |
+| P | 1 | Present (flag): the image lists device 7. If `00h`, the section ends here. |
 | P + 1 | 2 | Rectangle x (u16), as clamped by `region` (SPEC 11.2) |
 | P + 3 | 2 | Rectangle y (u16) |
 | P + 5 | 2 | Rectangle width (u16) |
@@ -148,9 +148,43 @@ Nothing about the layout is included: the height a host computed, the lines,
 the anchors' positions. They reach the machine only as events (SPEC 11.5),
 which are in the queue and RAM like any other input.
 
+Let `M` be the offset after this section.
+
+### 1.10 Machines (0, 1 or 523 + 32b bytes)
+
+This section is there only if the image lists device 8; for any other image
+the serialization ends at `M`, so the hashes of images without device 8 are
+as they were before device 8 existed.
+
+| Offset | Size | Field |
+|---|---|---|
+| M | 1 | Present (flag): the machine has device 8 (it is the shell of a system, SPEC 12.1). If `00h`, the section ends here. |
+| M + 1 | 1 | Focus: a handle 1–8, or 0 for the shell |
+| M + 2 | 8 × 57 | Handle 1, then 2, …, 8 |
+| M + 458 | 1 | b: the number of built-in programs, 0–255 |
+| M + 459 | 32 × b | Their image IDs, in `builtin` order |
+
+Each handle's record is 57 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | State (SPEC 12.1) |
+| 1 | 1 | Run flag |
+| 2 | 2 | Rectangle x (u16), as clamped by `place` |
+| 4 | 2 | Rectangle y (u16) |
+| 6 | 2 | Rectangle width (u16) |
+| 8 | 2 | Rectangle height (u16) |
+| 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC 12.2): exit code, fault kind, reserved, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
+
+A handle not in use is all zero. The machines a shell starts are not part of
+its state: each has a state of its own, serialized as for any machine (it
+never has device 8, so its section 1.10 is `00h` if its image lists device 8,
+and absent otherwise).
+
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector), 1 or 425 (content) and 1 or 21 + d (page).
+(vector), 1 or 425 (content), 1 or 21 + d (page) and 0, 1 or 523 + 32b
+(machines).
 
 ## 2. What is left out, and why
 
@@ -172,6 +206,10 @@ That is the end of the serialization. Its length is
   caches.
 - **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
   10.6). The vector list bytes are included; how they are drawn is not.
+- **A system's host bookkeeping** (SPEC 12): which machines exist, their
+  images while they load, the order of their frames, what the host shows.
+  The shell sees all of it that it can observe through device 8's records
+  and events, which are in its state and queue.
 - **The page's layout** (SPEC 11.4): it depends on the host's fonts. The
   document bytes (with its figures' path commands), rectangle, scroll value
   and background are included; how figures are drawn is not; the height a
@@ -196,4 +234,6 @@ zeros), all controllers disconnected, no completions — what `terse run` uses.
 
 `terse run <image> --hash` prints the hash after the last frame, and
 `--hash-every N` prints `<frame counter> <hash>` after every frame whose
-counter is a multiple of N.
+counter is a multiple of N. For a system (`terse run --shell`) these are
+the shell's hashes; `--hash-all` also prints `<handle> <hash>` for each
+machine the shell started (`-` for one that has no image yet).

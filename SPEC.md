@@ -2,14 +2,15 @@
 
 Status: draft for the first prototype. Everything here may change until v1;
 after v1 a published machine profile and published device versions never
-change. Section 14 lists the numbers that are placeholders until hosts have
+change. Section 15 lists the numbers that are placeholders until hosts have
 been measured.
 
 Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
 of at most 128 KiB, at most 1 MiB of RAM, a fixed budget of work per frame,
 and a set of host-side devices reached through system calls. One program runs
 in one machine. Programs are identified by the hash of their image and have
-no dependencies.
+no dependencies. A host may run several machines as one system, in which one
+machine, the shell, starts the others and lays out their screens (section 12).
 
 Design rules that every part of this spec follows:
 
@@ -23,7 +24,7 @@ Design rules that every part of this spec follows:
    host renders can be read back by the program.
 4. **Every unit of budget costs a host about the same.** Device calls are
    charged so that a frame spent in calls costs a host no more than a frame
-   spent executing instructions (section 12).
+   spent executing instructions (section 13).
 5. **Small enough to reimplement.** An independent implementation of this
    document should be a few thousand lines.
 
@@ -108,7 +109,7 @@ does the following, in order:
    6), and applies the content completions it has for this frame
    (section 9.2).
 2. Adds 125,000 to the budget, subtracts the charge for content delivered
-   in step 1 (section 12), and runs the CPU while the budget is greater
+   in step 1 (section 13), and runs the CPU while the budget is greater
    than zero.
 3. Ends the frame: the frame counter increases by one, and the host presents
    the terminal, the vector display and the page as they are at this moment.
@@ -117,7 +118,7 @@ Rules:
 
 - An instruction fetched from ROM costs 1 unit; one fetched from RAM costs
   4. An `ecall` costs 1 (or 4 from RAM) plus the charge of the call it makes
-  (section 12).
+  (section 13).
 - An instruction that starts with a positive budget runs to completion, so
   the budget can end below zero. A negative remainder carries into the next
   frame; it may be larger than a frame's budget, in which case that frame
@@ -133,6 +134,10 @@ Rules:
 
 A host that falls behind real time lets virtual time lag. It must not run
 extra frames to catch up.
+
+In a system of several machines (section 12) each machine has its own
+budget, carry and frame counter; section 12.5 says in what order their
+frames run.
 
 ### 1.5 Stopping and faults
 
@@ -195,9 +200,10 @@ by the ROM contents.
 | 5 | Messages | — | reserved |
 | 6 | Sound | — | reserved |
 | 7 | Page | 0 | specified (section 11) |
+| 8 | Machines | 0 | specified (section 12); only the shell of a system has it |
 | 10 | 3D vector display | — | reserved |
 
-Other slots are free; 0, 8, 9 and 11–255 are not devices in v0.
+Other slots are free; 0, 9 and 11–255 are not devices in v0.
 
 ---
 
@@ -222,7 +228,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
   (section 10.2), and a content request block not in RAM is rejected with
   handle 0 (section 9.2).
 - Buffers need no alignment.
-- Every call is charged, also when it fails (section 12).
+- Every call is charged, also when it fails (section 13).
 
 ### 3.2 Call table
 
@@ -256,8 +262,15 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
 | `703h` | `scroll` | `a0` = y | 0 |
 | `704h` | `background` | `a0` = colour | 0 |
+| `800h` | `start` | `a0` = address of an image ID (32 bytes, read) | a handle 1–8, or 0 if none is free |
+| `801h` | `stop` | `a0` = handle | 1, or 0 if the handle is not in use |
+| `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if the handle is not in use |
+| `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused |
+| `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
+| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1–8 |
+| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
 
-Sections 4 to 11 define each call.
+Sections 4 to 12 define each call.
 
 ---
 
@@ -305,6 +318,9 @@ full is dropped.
 | `07h` | Feeds updated | 0 | 0 | 0 |
 | `08h` | Page laid out | height bits 0–7 | bits 8–15 | bits 16–23 |
 | `09h` | Page anchor | anchor id bits 0–7 | bits 8–15 | buttons |
+| `0Ah` | Machine changed | handle | new state | 0 |
+| `0Bh` | Home | 0 | 0 | 0 |
+| `0Ch` | Machine pressed | handle | buttons | 0 |
 
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
@@ -332,6 +348,8 @@ full is dropped.
   the timeline's "local" flags are already correct.
 - **Page laid out** and **page anchor** come from the page device
   (section 11.5).
+- **Machine changed**, **home** and **machine pressed** are sent only to the
+  shell of a system (section 12.4).
 
 ## 6. Controllers
 
@@ -393,7 +411,7 @@ cell.
 
 - **`write`** puts characters (section 8.3) from the bytes of the buffer,
   in order, and returns how many bytes it consumed. Each byte is charged as
-  it is consumed (section 12), and the call stops after the byte whose charge
+  it is consumed (section 13), and the call stops after the byte whose charge
   brings the budget to zero or below, so it may consume fewer bytes than
   asked; it always consumes at least one byte of a non-empty buffer. The
   program calls `write` again with the rest (the machine pauses first if the
@@ -706,7 +724,8 @@ user sees, so the host asks the user before it carries one out, and the
 request stays pending until the user answers. The host draws its own prompt
 over the bottom of the screen, on top of everything the program shows; the
 program cannot draw it, read it or answer it. The prompt names the image's
-title and what is asked: the feed key (for example as its first and last
+title (in a system, that of the machine whose request it is) and what is
+asked: the feed key (for example as its first and last
 six hex digits, `3fa9c2…c21e07`); the article's title and size; the display
 name and whether it will be searchable; or the feed key and the nickname.
 While a prompt is shown the keyboard's input goes to the host, not to the
@@ -824,6 +843,9 @@ leaves the terminal cells under its rectangle blank). A program that wants a pan
 shapes behind it draws a filled rectangle at the end of its list; the text
 still appears above it. Smoothing of edges and the exact colour of blended
 pixels are up to the host and cannot be observed by the program.
+
+In a system (section 12) each machine's screen is combined in this order on
+its own, with its own style; section 12.3 says how the screens are combined.
 
 ### 10.6 Phosphor style
 
@@ -1113,7 +1135,199 @@ section 11.5.
 
 ---
 
-## 12. Charges
+## 12. Device 8 — Machines (version 0)
+
+A host may run several machines as one **system**. One of them, the
+**shell**, starts the others, decides where their screens are shown and
+which of them receives the keyboard, through device 8. The host provides
+the mechanism (running the machines, drawing their screens, routing input);
+how screens are laid out and what the user is offered is the shell's
+business.
+
+### 12.1 The shell and its machines
+
+A host starts a system with one image, the shell. The shell has device 8 if
+its image lists (8, 0). Every other machine has device 8 absent (its calls
+return `FFFF_FFFFh`, section 3.1), also if its image lists it; so does an
+image a host runs on its own, outside a system. How the user names the shell
+is up to the host.
+
+The shell starts machines under **handles** 1 to 8. Each is a complete,
+separate machine: its own ROM, RAM, devices, event queue, content request
+handles (section 9), budget and frame counter. Machines share nothing but
+what the host keeps behind the content device (its store, feeds, identity).
+Each machine's screen is the whole 640 × 480 units (section 7).
+
+A handle is **in use** from the `start` that returns it until a `stop` of it,
+and is then in one of these states:
+
+| Value | State | Meaning |
+|---|---|---|
+| 0 | none | not in use |
+| 1 | loading | started; the host does not have the image yet |
+| 2 | running | runs a frame in every system frame |
+| 3 | paused | runs no frames and receives no input |
+| 4 | exited | stopped by `exit` (section 1.5) |
+| 5 | faulted | stopped by a fault (section 1.5) |
+| 6 | failed | the image could not be had, is not an image the host can run, or the host has no room for another machine |
+
+Each handle also has a **run flag** and a **rectangle** (x, y, width,
+height in the shell's screen units). The system has a **focus**: a handle,
+or 0 for the shell; it is 0 at reset.
+
+### 12.2 Calls
+
+- **`start`** reads the 32-byte image ID at `a0`, which must lie wholly in
+  ROM or wholly in RAM (else `FFFF_FFFEh`). If every handle is in use it
+  returns 0. Otherwise the lowest handle not in use becomes loading, with the
+  run flag set, the rectangle (0, 0, 0, 0) and that image ID, and the call
+  returns it. The host then looks for the blob with that ID, in its store
+  first and then as section 9 does for a get, and checks it as an image
+  (section 2); a later frame takes the result into account (section 12.5):
+  the handle becomes running (paused if the run flag is clear) with a
+  machine reset with that image (section 1.3), or failed. The host may take
+  any number of frames to get the image.
+- **`stop`** with a handle in use: the machine ceases to exist and the
+  handle is not in use (state none, run flag clear, rectangle and record
+  zero); if it had the focus, the focus becomes 0. Its pending content
+  requests are never completed, and the host withdraws its consent prompts
+  for them. Returns 1, or 0 for any other `a0`.
+- **`place`** sets the rectangle of a handle in use, clamped to the screen as
+  the page's `region` is (section 11.2). Returns 1, or 0 (and nothing
+  changes) for a handle not in use.
+- **`run`** with a handle that is loading, running or paused: `a1` = 1 sets
+  the run flag, 0 clears it; a running handle becomes paused, a paused one
+  running, at once; a loading one keeps its state. Returns 1; returns 0 and
+  changes nothing for any other handle or any other `a1`.
+- **`focus`** with `a0` = 0 gives the focus to the shell; with a handle that
+  is loading, running or paused, to that handle. Returns 1; returns 0 and
+  changes nothing for any other `a0`.
+- **`info`** writes a 48-byte record of handle `a0` to the buffer, which must
+  lie wholly in RAM (else `FFFF_FFFEh`), and returns 1; for `a0` outside 1–8
+  it writes nothing and returns 0.
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 1 | State |
+  | 1 | 1 | Exit code if exited, else 0 |
+  | 2 | 1 | Fault kind if faulted, numbered as in `STATE.md` 1.3 (1 illegal instruction … 6 misaligned), else 0 |
+  | 3 | 1 | Reserved, 0 |
+  | 4 | 4 | Units the machine used in its last frame (section 1.4, delivered content included), 0 before its first |
+  | 8 | 4 | The machine's frame counter |
+  | 12 | 4 | Fault `pc` if faulted, else 0 |
+  | 16 | 32 | The image ID given to `start`; zeros for a handle not in use |
+
+  The record is as the host latched it at the start of the frame (section
+  12.5), with the changes the shell's own calls made since.
+- **`builtin`** writes the image ID of the host's built-in program number
+  `a0` to the buffer, 32 bytes wholly in RAM (else `FFFF_FFFEh`), and
+  returns 1; past the last program it writes nothing and returns 0. The
+  built-in programs are images the host has in its store, in an order it
+  chooses, the same for the whole run. A shell learns a program's title by
+  getting the first 32 bytes of its image with the content device.
+
+### 12.3 Screens
+
+A machine's **picture** is its screen scaled uniformly into its rectangle
+(x, y, w, h) and centred. If w × 480 ≤ h × 640, the picture is
+pw = w wide and ph = ⌊w × 480 / 640⌋ high, otherwise pw = ⌊h × 640 / 480⌋
+and ph = h; it starts at px = x + ⌊(w − pw) / 2⌋, py = y + ⌊(h − ph) / 2⌋.
+If pw or ph is 0 nothing is shown. A machine that is running, paused,
+exited or faulted has a picture; one that is loading or failed has none.
+Exited and faulted machines show the screen as it was at their last frame.
+
+The host shows, from the bottom:
+
+1. the shell's screen, over the whole of the host's screen as a single
+   machine's would be, combined as section 10.5 says;
+2. each machine's picture, in increasing handle order, each a complete
+   screen (its own layers, style, afterglow and page, sections 10.5, 10.6,
+   11) scaled into its picture and covering what is below it; outside the
+   picture, the rest of the rectangle shows what is below;
+3. the host's own prompts (section 9.5), over everything; a consent prompt
+   names the image title of the machine whose request it is.
+
+How the host scales a screen (fonts rasterised for the picture's size,
+smoothing) is presentation (section 8.6).
+
+### 12.4 Input
+
+The host's input events (section 5) are in the shell's screen units. In each
+frame, before the shell runs, they are routed in order by the focus and the
+pictures as they are at that moment:
+
+| Input | Goes to |
+|---|---|
+| Key down, key up, text, wheel | the machine with the focus if it is running; the shell if the focus is 0; otherwise nobody |
+| Pointer, over a picture | the machine whose picture it is (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
+| Pointer, over no picture | the shell, unchanged |
+| Controllers (section 6) | the machine with the focus; every other machine reads every controller as not connected |
+| Content done, feeds updated, page events | each machine its own (sections 9, 11.5) |
+
+A position (x, y) over a picture (px, py, pw, ph) is mapped to
+x′ = ⌊(2(x − px) + 1) × 640 / (2pw)⌋ and y′ = ⌊(2(y − py) + 1) × 480 / (2ph)⌋.
+A pointer event that presses a button (sets a button bit that was clear in
+the previous pointer event, wherever that went) over a picture also gives
+the shell a machine pressed event, in the place among the shell's events
+that the pointer event had in the input.
+
+**The home key.** A host reserves one key (or other input) as its home key;
+which one is up to the host. It is never delivered to any machine as a key
+event. When it is pressed, the focus becomes 0 and a home event is queued
+for the shell.
+
+**Events for the shell** (section 5):
+
+| Type | Name | `a` | `b` | `c` |
+|---|---|---|---|---|
+| `0Ah` | Machine changed | handle | the new state | 0 |
+| `0Bh` | Home | 0 | 0 | 0 |
+| `0Ch` | Machine pressed | handle | buttons | 0 |
+
+Machine changed is sent for every change of state the shell did not make
+with a call: loading to running, paused or failed; running to exited or
+faulted. When the machine with the focus becomes exited, faulted or failed,
+the focus becomes 0 (and no home event is sent).
+
+### 12.5 Frames
+
+For each system frame the host does the following, in order:
+
+1. **Latch.** For each handle in use, in increasing order: a loading handle
+   whose image the host now has, or has failed to get, becomes running
+   (paused if the run flag is clear) or failed; a running handle whose
+   machine stopped in an earlier frame becomes exited or faulted, with its
+   exit code or fault kind and `pc`. Each of these changes queues a machine
+   changed event for the shell, ahead of the frame's input. Each record then
+   takes the machine's units and frame counter (section 12.2).
+2. **Route** the frame's input (section 12.4).
+3. **The shell** runs its frame (section 1.4).
+4. **Starts and stops** the shell made in its frame are carried out in the
+   order it made them. A machine started in this frame is loading: its first
+   frame is at the earliest in the next system frame, the one in whose step
+   1 it becomes running.
+5. **The machines** that are running now, in increasing handle order, each
+   run one frame (section 1.4) with a full budget and their own carry. So a
+   `run`, `stop` or `place` made by the shell takes effect in the same
+   frame; a `focus` takes effect for the next frame's routing.
+
+Paused, loading, exited, faulted and failed machines run no frames, and
+their frame counters do not advance. When the shell stops (section 1.5), the
+system stops: no machine runs any more frames.
+
+### 12.6 Determinism
+
+Each machine is deterministic given its own inputs (sections 4 and 9.4). For
+the shell they include the machine changed, home and machine pressed events
+and what device 8 returns that the shell did not set itself: the latched
+records (states, exit codes, faults, units, frame counters) and the
+built-in programs. Device 8's state is part of the shell's state (`STATE.md`
+1.10); a started machine's state is its own and holds nothing of the
+system.
+
+---
+
+## 13. Charges
 
 Every call is charged in budget units on top of the `ecall` instruction
 itself (1 from ROM, 4 from RAM). Charges are subtracted from the budget as
@@ -1124,7 +1338,7 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `info` (48, when written) and `builtin` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, records (subscriptions, timeline, names) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -1137,7 +1351,7 @@ costs a host no more per unit than a frame of instructions from ROM;
 
 ---
 
-## 13. Conformance
+## 14. Conformance
 
 An implementation conforms to profile 1 if:
 
@@ -1154,19 +1368,20 @@ or FAIL line per section) and its last phase is a deliberate worst case for a
 host (full-budget frames, every cell rewritten, maximum-size display lists at
 the fill cap), for measuring how a host holds its frame rate.
 
-## 14. Provisional values
+## 15. Provisional values
 
 These numbers are placeholders until weak hosts have been measured:
 
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
-- the charges of section 12 (4 per call, 1 per `write` byte, 1 per 4 bytes
+- the charges of section 13 (4 per call, 1 per `write` byte, 1 per 4 bytes
   copied, 150 per clear or scroll);
 - the fill cap, 4 × 640 × 480 square units (section 10.4);
 - the figure caps: 256 paths, the area (8 × the figure's, at most
-  4 × 640 × 480) and the length (65,536) of section 11.3.
+  4 × 640 × 480) and the length (65,536) of section 11.3;
+- the number of machines a shell can start, 8 (section 12).
 
-## 15. Not yet specified
+## 16. Not yet specified
 
 - Font selection, combining marks and complex scripts in the terminal.
 - Named pointers (a signed, versioned pointer from a key and a name to a
@@ -1187,5 +1402,8 @@ These numbers are placeholders until weak hosts have been measured:
   does not apply to them, so a legal list of about 3,000 maximum-width lines
   across the whole screen still costs a host far more fill than four
   screens.
-- Starting other machines, and messages between machines.
+- In a system (section 12): communication between machines; a machine
+  asking the shell to start another; budgets other than one full budget per
+  machine per frame; giving a machine less than the whole screen; sound for
+  several machines; what a host shows for a machine with no picture.
 - Snapshots.

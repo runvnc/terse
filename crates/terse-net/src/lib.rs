@@ -2,6 +2,7 @@
 //!
 //! - [`article`]: `terse:` links in articles (NETWORK 4.5).
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
+//! - [`builtin`]: the shell and the built-in programs (SPEC 12).
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
 //! - [`identity`]: Ed25519 feed identities and the secret key file (NETWORK 4.1).
 //! - [`local`]: finding a relay when none is named.
@@ -19,6 +20,7 @@
 
 pub mod article;
 pub mod blob;
+pub mod builtin;
 pub mod entry;
 pub mod feeds;
 pub mod identity;
@@ -36,5 +38,5 @@ pub use entry::{Entry, SignedEntry};
 pub use feeds::{FeedStore, Subscriptions};
 pub use identity::{FeedKey, Identity};
 pub use node::{Article, Done, Draft, FeedEvent, Node};
-pub use service::{Asked, Consent, ContentService, FeedCommand, Prompt};
+pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt};
 pub use store::{BlobStore, default_config_dir, default_data_dir, default_store_dir};

@@ -47,6 +47,9 @@ pub trait GlyphSource {
     /// character) into `out` (`cells * width * height` bytes, row major,
     /// already zeroed). Unknown characters may be left blank.
     fn rasterize(&mut self, ch: char, cells: u32, out: &mut [u8]);
+    /// The same glyphs for a cell `width` pixels wide (and twice as high),
+    /// for a screen shown smaller or larger than the native size.
+    fn resized(&self, width: u32) -> Box<dyn GlyphSource>;
 }
 
 const ATLAS_COLS: u32 = 64;
@@ -356,6 +359,24 @@ fn screen_pos(rect: (f32, f32, f32, f32), x: f64, y: f64) -> (u16, u16) {
     (unit(x, ox, w, SCREEN_WIDTH), unit(y, oy, h, SCREEN_HEIGHT))
 }
 
+/// The shader module `label` for `device`, compiled from `source` the first
+/// time: every machine's screen has a renderer of its own (SPEC 12.3), and
+/// they share their shaders.
+pub fn shader_module(device: &wgpu::Device, label: &'static str, source: impl FnOnce() -> String) -> wgpu::ShaderModule {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<(wgpu::Device, &'static str), wgpu::ShaderModule>>> = OnceLock::new();
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    cache
+        .entry((device.clone(), label))
+        .or_insert_with(|| {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(source().into()),
+            })
+        })
+        .clone()
+}
+
 /// Whether the list is drawn as outlines: in the phosphor presentation
 /// (`phosphor`, which may be forced), or as `Vector::outlined` says (fill
 /// off in the clean style).
@@ -385,7 +406,7 @@ pub struct Renderer {
     bloom_params: [wgpu::Buffer; 2],
     /// The layer of backgrounds and shapes, its size, and the glyph-mode
     /// bind group that reads it; made for the viewport on first use.
-    layer: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
+    layer: Option<(((u32, u32), (u32, u32)), wgpu::TextureView, wgpu::BindGroup)>,
     /// The phosphor textures (SPEC 8.7), the size of the grid rectangle of
     /// the layer's viewport; made with the layer.
     phosphor: Option<PhosphorTextures>,
@@ -409,6 +430,14 @@ pub struct Renderer {
     /// The first row of the host's overlay (its prompt), drawn over
     /// everything in its own colours; 0 for none.
     overlay: u32,
+    /// Where the screen is drawn in the target, if not the grid rectangle
+    /// of the whole viewport (a machine's tile, SPEC 12.3).
+    rect: Option<(f32, f32, f32, f32)>,
+    /// The glyph pass clears the target first (the screen drawn first).
+    clears: bool,
+    /// 1 × 1 stand-ins for the textures a pass does not read.
+    unused: wgpu::Texture,
+    unused_phosphor: wgpu::Texture,
 }
 
 /// The phosphor textures: beam and the afterglow's components, the bind
@@ -541,11 +570,7 @@ impl Renderer {
         let background_bind_group = stand_ins(&background_params);
         let light_bind_group = stand_ins(&light_params);
 
-        let source = format!("{}{SHADER}", phosphor::wgsl());
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("terminal"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        let shader = shader_module(device, "terminal", || format!("{}{SHADER}", phosphor::wgsl()));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("terminal"),
             bind_group_layouts: &[Some(&layout)],
@@ -606,7 +631,65 @@ impl Renderer {
             glyph_scratch: vec![0; glyph_bytes],
             cursor: None,
             overlay: 0,
+            rect: None,
+            clears: true,
+            unused,
+            unused_phosphor,
         }
+    }
+
+    /// Whether this screen is drawn first, clearing the target (else over
+    /// what the target holds).
+    pub fn set_clears(&mut self, clears: bool) {
+        self.clears = clears;
+    }
+
+    /// The glyph source for cells `width` pixels wide (for another screen).
+    pub fn glyphs_for(&self, width: u32) -> Box<dyn GlyphSource> {
+        self.glyphs.resized(width)
+    }
+
+    /// Draws the screen into `rect` (pixels of the target) instead of the
+    /// grid rectangle of the viewport, with glyphs rasterised for that size;
+    /// `None` goes back to the viewport's grid rectangle.
+    pub fn set_rect(&mut self, device: &wgpu::Device, rect: Option<(f32, f32, f32, f32)>) {
+        self.rect = rect;
+        if let Some((_, _, w, _)) = rect {
+            // Whole pixels per cell, never more than the cell shown: a glyph
+            // is then drawn at its size or a fraction of a pixel larger.
+            self.set_cell_width(device, ((w / COLS as f32).floor() as u32).max(2));
+        }
+    }
+
+    /// Rasterises the glyphs for cells `width` pixels wide from now on.
+    fn set_cell_width(&mut self, device: &wgpu::Device, width: u32) {
+        if self.cell_px.0 == width {
+            return;
+        }
+        self.glyphs = self.glyphs.resized(width);
+        self.cell_px = self.glyphs.cell_size();
+        let (w, h) = self.cell_px;
+        self.atlas_texture = texture(device, "glyph atlas", (ATLAS_COLS * w, ATLAS_ROWS * h), wgpu::TextureFormat::R8Unorm);
+        self.atlas = Atlas { slots: HashMap::new(), next: 1 };
+        self.glyph_scratch = vec![0; (2 * w * h) as usize];
+        let u = &self.unused_phosphor;
+        let textures = [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &self.unused, u, u, u, u];
+        self.background_bind_group = Self::bind_group(device, &self.bind_group_layout, &self.background_params, textures);
+        self.light_bind_group = Self::bind_group(device, &self.bind_group_layout, &self.light_params, textures);
+        // The layer's bind groups read the atlas too.
+        self.layer = None;
+        self.phosphor = None;
+    }
+
+    /// The rectangle drawn into, as a scissor in whole pixels of a
+    /// `viewport` target; `None` if nothing of it is inside.
+    fn scissor(&self, viewport: (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+        let (x, y, w, h) = self.grid_rect(viewport);
+        let x0 = (x.max(0.0).floor() as u32).min(viewport.0);
+        let y0 = (y.max(0.0).floor() as u32).min(viewport.1);
+        let x1 = ((x + w).ceil().max(0.0) as u32).min(viewport.0);
+        let y1 = ((y + h).ceil().max(0.0) as u32).min(viewport.1);
+        (x1 > x0 && y1 > y0).then(|| (x0, y0, x1 - x0, y1 - y0))
     }
 
     /// The terminal shader's bind group: params, cells, atlas, palette, the
@@ -665,17 +748,6 @@ impl Renderer {
         self.page.anchor_at(x, y)
     }
 
-    /// The page's anchor under a viewport position (SPEC 11.5), as shown.
-    pub fn page_anchor_at(&self, viewport: (u32, u32), x: f64, y: f64) -> u16 {
-        let (ox, oy, w, h) = self.grid_rect(viewport);
-        let sx = (x as f32 - ox) / w * SCREEN_WIDTH as f32;
-        let sy = (y as f32 - oy) / h * SCREEN_HEIGHT as f32;
-        if !(0.0..SCREEN_WIDTH as f32).contains(&sx) || !(0.0..SCREEN_HEIGHT as f32).contains(&sy) {
-            return 0;
-        }
-        self.page.anchor_at(sx, sy)
-    }
-
     /// Treat the persistence as 0 (the user turned trails off, SPEC 8.7).
     pub fn set_no_trails(&mut self, no_trails: bool) {
         self.no_trails = no_trails;
@@ -699,17 +771,40 @@ impl Renderer {
     /// not depend on how often frames are presented. Does nothing in the
     /// clean style.
     pub fn accumulate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, viewport: (u32, u32)) {
-        self.phosphor_frame(device, queue, viewport, true);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("phosphor") });
+        self.phosphor_frame(device, queue, &mut encoder, viewport, true);
+        queue.submit([encoder.finish()]);
+    }
+
+    /// `accumulate`, recorded into `encoder` (several screens' light in
+    /// one submission).
+    pub fn accumulate_into(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        viewport: (u32, u32),
+    ) {
+        self.phosphor_frame(device, queue, encoder, viewport, true);
     }
 
     /// Phosphor presentation: redraws the beam from the terminal and list
     /// uploaded since the last `accumulate`, without advancing the afterglow
     /// (e.g. to show a fault reported after the last machine frame).
     pub fn refresh_beam(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, viewport: (u32, u32)) {
-        self.phosphor_frame(device, queue, viewport, false);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("phosphor") });
+        self.phosphor_frame(device, queue, &mut encoder, viewport, false);
+        queue.submit([encoder.finish()]);
     }
 
-    fn phosphor_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, viewport: (u32, u32), advance: bool) {
+    fn phosphor_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        viewport: (u32, u32),
+        advance: bool,
+    ) {
         if !self.style.0 {
             return;
         }
@@ -730,7 +825,6 @@ impl Renderer {
         for (buffer, flags) in self.bloom_params.iter().zip([32, 64]) {
             queue.write_buffer(buffer, 0, &Params { flags, ..params }.bytes());
         }
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("phosphor") });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("glyph light"),
@@ -770,7 +864,7 @@ impl Renderer {
         let persistence = if self.no_trails { 0 } else { self.style.1 };
         let targets = PhosphorTargets { beam: &t.beam, beam_group: &t.beam_group, fast: &t.fast, slow: &t.slow };
         let clear = self.phosphor_stale;
-        self.vectors.phosphor_frame(queue, &mut encoder, &targets, t.size, persistence, clear, advance);
+        self.vectors.phosphor_frame(queue, encoder, &targets, t.size, persistence, clear, advance);
         if advance {
             self.phosphor_stale = false;
         }
@@ -793,7 +887,6 @@ impl Renderer {
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        queue.submit([encoder.finish()]);
     }
 
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
@@ -875,7 +968,12 @@ impl Renderer {
     }
 
     fn grid_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32) {
-        grid_rect(self.grid_size(), viewport)
+        self.rect.unwrap_or_else(|| grid_rect(self.grid_size(), viewport))
+    }
+
+    /// The rectangle the screen is drawn in, in viewport pixels.
+    pub fn screen_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32) {
+        self.grid_rect(viewport)
     }
 
     /// A viewport position in screen units (SPEC 5.4), through the same
@@ -889,17 +987,23 @@ impl Renderer {
         (self.grid_rect(viewport).3 / ROWS as f32) as f64
     }
 
+    /// What the layer and the phosphor textures are made for: the
+    /// viewport and the size of the grid rectangle in whole pixels.
+    fn layer_key(&self, viewport: (u32, u32)) -> ((u32, u32), (u32, u32)) {
+        let (_, _, w, h) = self.grid_rect(viewport);
+        (viewport, ((w.ceil() as u32).max(1), (h.ceil() as u32).max(1)))
+    }
+
     /// The layer for `viewport` and the glyph-mode bind group reading it.
     fn layer(&mut self, device: &wgpu::Device, viewport: (u32, u32)) -> (wgpu::TextureView, wgpu::BindGroup) {
-        if let Some((size, view, group)) = &self.layer
-            && *size == viewport
+        // The phosphor textures cover the grid rectangle, which starts at a
+        // whole pixel; new ones start dark.
+        let size = self.layer_key(viewport).1;
+        if let Some((key, view, group)) = &self.layer
+            && *key == (viewport, size)
         {
             return (view.clone(), group.clone());
         }
-        // The phosphor textures cover the grid rectangle, which starts at a
-        // whole pixel; new ones start dark.
-        let (_, _, w, h) = self.grid_rect(viewport);
-        let size = ((w.ceil() as u32).max(1), (h.ceil() as u32).max(1));
         let phosphor = |label| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -916,15 +1020,13 @@ impl Renderer {
         let (blurred, bloom) = (phosphor("bloom x"), phosphor("bloom"));
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let beam_view = view(&beam);
-        let unused = texture(device, "unused layer", (1, 1), LAYER_FORMAT);
-        let unused_phosphor = texture(device, "unused phosphor", (1, 1), PHOSPHOR_FORMAT);
         let bloom_group = |params, textures: [&wgpu::Texture; 4]| {
             let [b, f, s, src] = textures;
-            let fixed = [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &unused];
+            let fixed = [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &self.unused];
             let [c, a, p, u] = fixed;
             Self::bind_group(device, &self.bind_group_layout, params, [c, a, p, u, b, f, s, src])
         };
-        let u = &unused_phosphor;
+        let u = &self.unused_phosphor;
         let bloom_groups = [
             bloom_group(&self.bloom_params[0], [&beam, &fast, &slow, u]),
             bloom_group(&self.bloom_params[1], [u, u, u, &blurred]),
@@ -957,12 +1059,14 @@ impl Renderer {
             [&self.cell_texture, &self.atlas_texture, &self.palette_texture, &tex, &beam, &fast, &slow, &bloom],
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        self.layer = Some((viewport, view.clone(), group.clone()));
+        self.layer = Some(((viewport, size), view.clone(), group.clone()));
         (view, group)
     }
 
     /// Records the draw into `encoder`, covering all of `target`
     /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC 8.6).
+    /// With a rectangle set (`set_rect`), only that rectangle is drawn,
+    /// over what the target holds.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -971,6 +1075,14 @@ impl Renderer {
         target: &wgpu::TextureView,
         viewport: (u32, u32),
     ) {
+        let scissor = if self.rect.is_some() {
+            match self.scissor(viewport) {
+                Some(s) => Some(s),
+                None => return,
+            }
+        } else {
+            None
+        };
         let rect = self.grid_rect(viewport);
         let (x, y, w, h) = rect;
         let (cursor, shown) = self.cursor.map_or(((0, 0), 0), |c| (c, 1));
@@ -986,7 +1098,7 @@ impl Renderer {
         let glyph_params = Params { flags: params.flags | self.overlay << 8, ..params };
         queue.write_buffer(&self.params_buffer, 0, &glyph_params.bytes());
         queue.write_buffer(&self.background_params, 0, &Params { flags: 4, ..params }.bytes());
-        if self.style.0 && self.layer.as_ref().is_none_or(|(size, ..)| *size != viewport) {
+        if self.style.0 && self.layer.as_ref().is_none_or(|(key, ..)| *key != self.layer_key(viewport)) {
             // Resized since the last machine frame: start the new phosphor
             // texture with this frame's light rather than show it dark.
             self.accumulate(device, queue, viewport);
@@ -1015,14 +1127,18 @@ impl Renderer {
             });
             pass.set_pipeline(&self.background_pipeline);
             pass.set_bind_group(0, &self.background_bind_group, &[]);
+            if let Some((x, y, w, h)) = scissor {
+                pass.set_scissor_rect(x, y, w, h);
+            }
             pass.draw(0..3, 0..1);
             // SPEC 10.5: the page lies between the backgrounds and the shapes.
             self.page.draw(&mut pass, false);
             self.vectors.draw(queue, &mut pass, viewport, rect);
         }
+        let load = if self.clears { wgpu::LoadOp::Clear(wgpu::Color::BLACK) } else { wgpu::LoadOp::Load };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glyphs"),
-            color_attachments: &[attachment(target, wgpu::LoadOp::Clear(wgpu::Color::BLACK))],
+            color_attachments: &[attachment(target, load)],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -1030,6 +1146,45 @@ impl Renderer {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &glyph_group, &[]);
+        if let Some((x, y, w, h)) = scissor {
+            pass.set_scissor_rect(x, y, w, h);
+        }
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Draws the host's overlay rows again over what the target holds (the
+    /// other machines' screens drawn after this one, SPEC 12.3); after
+    /// `render` in the same frame.
+    pub fn render_overlay(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, viewport: (u32, u32)) {
+        let Some((_, _, group)) = &self.layer else { return };
+        if self.overlay == 0 {
+            return;
+        }
+        let (x, y, w, h) = self.grid_rect(viewport);
+        let top = y + h * self.overlay as f32 / ROWS as f32;
+        let x0 = (x.max(0.0).floor() as u32).min(viewport.0);
+        let y0 = (top.max(0.0).floor() as u32).min(viewport.1);
+        let x1 = ((x + w).ceil() as u32).min(viewport.0);
+        let y1 = ((y + h).ceil() as u32).min(viewport.1);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("overlay"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.draw(0..3, 0..1);
     }
 }

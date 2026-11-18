@@ -41,6 +41,13 @@
 #define CALL_PAGE_REGION 0x702
 #define CALL_PAGE_SCROLL 0x703
 #define CALL_PAGE_BACKGROUND 0x704
+#define CALL_MACH_START 0x800
+#define CALL_MACH_STOP 0x801
+#define CALL_MACH_PLACE 0x802
+#define CALL_MACH_RUN 0x803
+#define CALL_MACH_FOCUS 0x804
+#define CALL_MACH_INFO 0x805
+#define CALL_MACH_BUILTIN 0x806
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -67,6 +74,19 @@ static inline uint32_t terse_call4(uint32_t n, uint32_t x, uint32_t y, uint32_t 
     return a0;
 }
 
+/* Five arguments (a0-a4). */
+static inline uint32_t terse_call5(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t v)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a3 __asm__("a3") = w;
+    register uint32_t a4 __asm__("a4") = v;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
 /* Two results: a0 in *lo's return, a1 in *second. */
 static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t *second)
 {
@@ -89,6 +109,11 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
 #define EV_FEEDS_UPDATED 0x07
 #define EV_PAGE_LAID_OUT 0x08
 #define EV_PAGE_ANCHOR 0x09
+/* For the shell (device 8, SPEC 12): machine a is now in state b; the
+ * host's home key; a pointer press (buttons b) over machine a's picture. */
+#define EV_MACHINE_CHANGED 0x0A
+#define EV_HOME 0x0B
+#define EV_MACHINE_PRESSED 0x0C
 
 /* USB HID key codes used by most programs. */
 #define KEY_ENTER 0x28
@@ -457,6 +482,42 @@ void path_close(void);
 /* Opcode `op` (PATH_MOVE ... PATH_CUBIC) and its `n` points, x and y
  * alternating in `xy`. */
 void path_points(uint8_t op, uint32_t n, const int16_t *xy);
+
+/* Device 8, machines (SPEC 12): only the shell has it. Handles 1-8. */
+#define MACH_MAX 8
+#define MACH_NONE 0
+#define MACH_LOADING 1
+#define MACH_RUNNING 2
+#define MACH_PAUSED 3
+#define MACH_EXITED 4
+#define MACH_FAULTED 5
+#define MACH_FAILED 6
+
+/* The 48-byte record of mach_info. */
+typedef struct {
+    uint8_t state, exit_code, fault_kind, reserved;
+    uint32_t units;    /* units used in the machine's last frame */
+    uint32_t frames;   /* its frame counter */
+    uint32_t fault_pc;
+    uint8_t image[32]; /* the image's blob ID */
+} mach_record;
+
+/* Starts the image with blob ID `id` (32 bytes): its handle, 0 if none is
+ * free. The machine is loading until the host has the image. */
+static inline uint32_t mach_start(const uint8_t *id) { return terse_call(CALL_MACH_START, (uint32_t)id, 0, 0); }
+static inline uint32_t mach_stop(uint32_t h) { return terse_call(CALL_MACH_STOP, h, 0, 0); }
+/* Shows machine h's screen in the rectangle (scaled to fit, centred);
+ * w or h 0 hides it. */
+static inline uint32_t mach_place(uint32_t h, uint32_t x, uint32_t y, uint32_t w, uint32_t ht)
+{
+    return terse_call5(CALL_MACH_PLACE, h, x, y, w, ht);
+}
+static inline uint32_t mach_run(uint32_t h, uint32_t run) { return terse_call(CALL_MACH_RUN, h, run, 0); }
+/* Keyboard and controllers go to machine h (0: the shell); 1 if done. */
+static inline uint32_t mach_focus(uint32_t h) { return terse_call(CALL_MACH_FOCUS, h, 0, 0); }
+static inline uint32_t mach_info(uint32_t h, mach_record *r) { return terse_call(CALL_MACH_INFO, h, (uint32_t)r, 0); }
+/* The blob ID of the host's nth built-in program: 1, or 0 past the end. */
+static inline uint32_t mach_builtin(uint32_t n, uint8_t *id) { return terse_call(CALL_MACH_BUILTIN, n, (uint32_t)id, 0); }
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

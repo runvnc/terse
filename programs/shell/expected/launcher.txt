@@ -1,0 +1,38 @@
+ ⌂                                                                         00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- launcher --
+PROGRAMS
+[reader]{100}
+[sparks]{101}
+[fetch]{102}
+[hello]{103}
+Up, Down choose · Enter start · the home key comes back
+here

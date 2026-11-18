@@ -9,18 +9,21 @@ mod keymap;
 mod page;
 mod phosphor;
 mod renderer;
+mod screens;
 mod selftest;
 mod setup;
 mod vectors;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use terse_core::{Image, Machine, Script, Terminal};
+use terse_core::{Image, Machine, Script, System, Terminal};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::service::Headless;
 use terse_net::{
+    HeadlessSystem, builtin,
     Consent, ContentService, Node, Subscriptions, default_config_dir, default_data_dir, default_store_dir, local,
     parse_hex,
 };
@@ -39,21 +42,25 @@ const PHOSPHOR_FRAMES: u64 = 600;
 /// How long `--screenshot` waits for feeds to catch up before frame 0.
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
-/// The reader (programs/reader), run when no image is named.
-const READER: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-
 const USAGE: &str = "usage:
-  terse-host [<image|id>] [--demo] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--consent ask|allow|deny]
-             [--store <dir>] [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
+  terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
+             [--no-feed-relays] [--no-prefetch] [--consent ask|allow|deny] [--store <dir>] [--config <dir>]
+             [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
-  terse-host [<image|id>] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--events <file>] [--demo]
-             [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--no-trails]
-             [--force-phosphor] [--font <family|file>]
-  terse-host --selftest <image|id> [--frames <N>] [--events <file>] [--csv <file>] [--consent allow|deny]
-             [--no-trails] [--force-phosphor] [--font <family|file>] [--store <dir>] [--config <dir>]
-  With no image, runs the feed reader built into terse-host (programs/reader).
+  terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>]
+             [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
+             [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--builtin <image|id>]...
+  terse-host --selftest <image|id> | --selftest --shell [<image|id>] [--frames <N>] [--events <file>] [--csv <file>]
+             [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>]
+             [--store <dir>] [--config <dir>] [--builtin <image|id>]...
+  With no image, runs the shell built into terse-host (programs/shell, SPEC 12): it starts the
+  built-in programs (reader, sparks, fetch, hello, and each --builtin image) as machines of their
+  own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
+  launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
+  --screenshot and --selftest, --shell alone is the built-in shell. <image> alone runs that image
+  as a single machine, as before.
   --demo: before the window opens, make sure you have a feed key, subscribe to your own feed and,
-  if it has no articles yet, publish four sample articles to it; then run the reader.
+  if it has no articles yet, publish four sample articles to it; then run the shell.
   Relays (windowed runs): the --relay options if given (several may be; none: no network); else
   the list in <config>/relays (`terse relay add <url>` writes it; an older <config>/relay is read
   if there is no list); else a relay already running on ws://127.0.0.1:7878; else one started
@@ -63,24 +70,26 @@ const USAGE: &str = "usage:
   --no-feed-relays. --screenshot and --selftest use relays only with --relay.
   --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
   terse: links in it (NETWORK 4.4).
-  --consent: how requests by the program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
-  answered: ask shows the host's prompt at the bottom of the window (Y allows, N or Esc refuses);
-  default ask in the window, deny for --screenshot and --selftest (where nobody can answer; a
-  --screenshot with ask shows the prompt, unanswered).
-  --store: the blob store (default $XDG_CACHE_HOME/terse/blobs, else ~/.cache/terse/blobs).
-  --config holds your feed key and subscriptions (default $XDG_CONFIG_HOME/terse, else
-  ~/.config/terse). --events is scripted input, as for `terse run`; --size is the picture's size
-  in pixels (default: the grid at the font's size), the screen letterboxed in it at 4:3.
+  --consent: how requests by a program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
+  answered: ask shows the host's prompt at the bottom of the window, naming the program (Y allows,
+  N or Esc refuses); default ask in the window, deny for --screenshot and --selftest (where nobody
+  can answer; a --screenshot with ask shows the prompt, unanswered).
+  --store: the blob store (default $XDG_CACHE_HOME/terse/blobs, else ~/.cache/terse/blobs); the
+  built-in programs are put into it at start. --config holds your feed key and subscriptions
+  (default $XDG_CONFIG_HOME/terse, else ~/.config/terse). --events is scripted input, as for
+  `terse run` (`home` is the home key). --size: the picture's size in pixels for --screenshot
+  (default: the grid at the font's size), the window's for the other forms; the screen is
+  letterboxed in it at 4:3.
   --selftest runs N frames (default 200) in the window with only the scripted input (default:
   the image's name with .events, if that file exists) and prints per-frame timings;
-  --csv writes them per frame. --no-trails: the phosphor display style (SPEC 8.7) without
+  --csv writes them per frame. --no-trails: the phosphor display style (SPEC 10.6) without
   persistence. --force-phosphor: show the phosphor presentation (the whole screen as a glowing
   tube) whatever style the program sets; for testing. --font: draw the grid with this font (a
   family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
   a proportional font keeps the grid, each glyph centred in its cell. --page-sans, --page-serif,
   --page-mono: the fonts of the page device's three faces (default: the system's sans-serif, serif
   and monospace families); every form of the command takes them.
-  Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the program as typed text.";
+  Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the focused program as typed text.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -103,12 +112,15 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
     let (mut feed_relays, mut prefetch) = (true, true);
     let (mut consent, mut demo) = (None, false);
+    let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
             "--demo" => demo = true,
+            "--shell" => shell_flag = true,
+            "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
             "--consent" => {
                 let v = it.next().ok_or(USAGE)?;
                 consent = Some(Consent::parse(&v).ok_or(format!("bad --consent {v} (ask, allow or deny)"))?);
@@ -140,7 +152,13 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     }
     let windowed = !selftest && screenshot.is_none();
-    if (selftest && image_path.is_none()) || (demo && (image_path.is_some() || selftest)) {
+    // No image: the built-in shell. --shell: the image named (if any) is
+    // the shell.
+    let shell = shell_flag || image_path.is_none();
+    if (selftest && image_path.is_none() && !shell_flag)
+        || (demo && (selftest || (image_path.is_some() && !shell_flag)))
+        || (!shell && !extra_builtins.is_empty())
+    {
         return Err(USAGE.into());
     }
     let consent = match consent {
@@ -173,17 +191,35 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         Ok::<Node, String>(node)
     };
     let mut node = None;
-    let path = image_path.clone().unwrap_or_else(|| "reader".into());
+    let path = image_path.clone().unwrap_or_else(|| "shell".into());
     // NETWORK 2: an image may be started by its ID.
+    let image_bytes = |arg: &str, node: &mut Option<Node>| -> Result<Vec<u8>, String> {
+        let bytes = match parse_hex(arg) {
+            Some(id) if !Path::new(arg).exists() => match node {
+                Some(n) => n.fetch_bytes(id)?,
+                None => node.insert(open_node()?).fetch_bytes(id)?,
+            },
+            _ => std::fs::read(arg).map_err(|e| format!("{arg}: {e}"))?,
+        };
+        Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))?;
+        Ok(bytes)
+    };
     let bytes = match &image_path {
-        None => READER.to_vec(),
-        Some(path) => match parse_hex(path) {
-            Some(id) if !Path::new(path).exists() => node.insert(open_node()?).fetch_bytes(id)?,
-            _ => std::fs::read(path).map_err(|e| format!("{path}: {e}"))?,
-        },
+        None => builtin::SHELL.to_vec(),
+        Some(p) => image_bytes(p, &mut node)?,
     };
     let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    let content = match image.has_device(4) {
+    // SPEC 12.2: the built-in programs, in the store for the shell.
+    let mut builtins = Vec::new();
+    if shell {
+        let extra = extra_builtins.iter().map(|a| image_bytes(a, &mut node)).collect::<Result<Vec<_>, _>>()?;
+        let n = match &node {
+            Some(n) => n,
+            None => node.insert(open_node()?),
+        };
+        builtins = builtin::install(n.store(), &extra)?;
+    }
+    let content = match image.has_device(4) || shell {
         false => None,
         true => {
             let mut node = match node {
@@ -200,9 +236,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Some(ContentService::start_with_consent(node, consent))
         }
     };
+    let program = app::Program { image, shell, builtins };
 
     if selftest {
-        if screenshot.is_some() || size.is_some() {
+        if screenshot.is_some() {
             return Err(USAGE.into());
         }
         // The script beside the image (conform.terse: conform.events), unless given.
@@ -218,7 +255,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         };
         let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
         let test = selftest::SelfTest::new(script, frames, csv);
-        return app::run(image, content, Some(test), Looks { no_trails, force_phosphor, font, page_fonts });
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size };
+        return app::run(program, content, Some(test), looks);
     }
     if csv.is_some() {
         return Err(USAGE.into());
@@ -232,12 +270,12 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 None => Script::default(),
             };
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts };
-            take_screenshot(&image, content, script, Path::new(&out), frames, size, looks)?;
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None };
+            take_screenshot(program, content, script, Path::new(&out), frames, size, looks)?;
             Ok(ExitCode::SUCCESS)
         }
-        (None, None) if events.is_none() && size.is_none() => {
-            app::run(image, content, None, Looks { no_trails, force_phosphor, font, page_fonts })
+        (None, None) if events.is_none() => {
+            app::run(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size })
         }
         _ => Err(USAGE.into()),
     }
@@ -251,6 +289,8 @@ pub struct Looks {
     pub font: Option<String>,
     /// `--page-sans`, `--page-serif`, `--page-mono`: the page's fonts.
     pub page_fonts: page::PageFonts,
+    /// `--size` of a window.
+    pub window: Option<(u32, u32)>,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -308,12 +348,12 @@ async fn request_device(
 }
 
 /// Runs `frames` frames headless, exactly as `terse run` does (scripted
-/// events, time 0, no random bytes, content requests completed at the next
-/// frame, feeds caught up first), and renders the terminal offscreen to a PNG.
-/// In the phosphor presentation the afterglow is built up over the last
-/// `PHOSPHOR_FRAMES` frames, as the window would have shown it.
+/// events, time 0, no random bytes, content requests and images completed at
+/// the next frame, feeds caught up first), and renders the screens offscreen
+/// to a PNG. In the phosphor presentation the afterglow is built up over the
+/// last `PHOSPHOR_FRAMES` frames, as the window would have shown it.
 fn take_screenshot(
-    image: &Image,
+    program: app::Program,
     mut content: Option<ContentService>,
     script: Script,
     out: &Path,
@@ -331,37 +371,41 @@ fn take_screenshot(
     let info = adapter.get_info();
     eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let mut renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX, looks.font.as_deref())?));
-    renderer.set_no_trails(looks.no_trails);
-    renderer.set_force_phosphor(looks.force_phosphor);
+    let renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX, looks.font.as_deref())?));
     let (width, height) = size.unwrap_or(renderer.grid_size());
-
-    let mut machine = Machine::new(image);
-    let mut headless = Headless::new(content, script);
+    let viewport = (width, height);
+    let mut screens = screens::Screens::new(renderer, format);
+    screens.set_no_trails(looks.no_trails);
+    screens.set_force_phosphor(looks.force_phosphor);
     // SPEC 11: the page laid out with this host's fonts, between frames, so
     // the run is reproducible and the picture shows the finished layout.
-    renderer.set_page_animation(false);
-    let mut page_layout = None;
-    if image.has_device(7) {
+    screens.set_page_animation(false);
+
+    let image = &program.image;
+    let mut system = System::new(image, program.shell, program.builtins);
+    let mut headless = HeadlessSystem::new(content, script);
+    // Each machine's page has its own layouter; the fonts are shared.
+    type Latest = Arc<Mutex<Option<Arc<page::HostLayout>>>>;
+    let latest: Arc<Mutex<HashMap<u32, Latest>>> = Arc::default();
+    if image.has_device(7) || program.shell {
         let typesetter = page::Typesetter::new(&looks.page_fonts)?;
         eprintln!("terse-host: page fonts: {}", typesetter.describe());
-        let layouter = page::SyncLayouter::new(typesetter);
-        page_layout = Some(layouter.latest.clone());
-        headless = headless.with_layouter(Box::new(layouter));
+        let typesetter = Arc::new(Mutex::new(typesetter));
+        let latest = latest.clone();
+        headless = headless.with_layouter(Box::new(move |serial| {
+            let layouter = page::SyncLayouter::shared(typesetter.clone());
+            latest.lock().unwrap().insert(serial, layouter.latest.clone());
+            Box::new(layouter)
+        }));
     }
-    let shown = |machine: &Machine| {
-        let doc = machine.page().and_then(|p| p.document());
-        page_layout.as_ref().filter(|_| doc.is_some()).and_then(|l| l.lock().unwrap().clone())
-    };
+    let shown = |serial: u32| latest.lock().unwrap().get(&serial).and_then(|l| l.lock().unwrap().clone());
     for f in 0..frames {
-        let stopped = headless.frame(&mut machine).stopped.is_some();
+        let done = headless.frame(&mut system);
+        let stopped = system.stopped().is_some();
         if frames - f <= PHOSPHOR_FRAMES {
-            renderer.update_vectors(&queue, machine.vector());
-            renderer.update_page(machine.page(), shown(&machine));
-            if renderer.phosphor() {
-                renderer.update(&queue, &displayed_terminal(&machine));
-                renderer.accumulate(&device, &queue, (width, height));
-            }
+            let mut ran: Vec<u32> = done.shell.iter().map(|_| 0).collect();
+            ran.extend(done.children.iter().filter_map(|(h, _)| Some(system.child(*h)?.serial)));
+            screens.update(&device, &queue, &system, viewport, &ran, &shown, None);
         }
         if stopped {
             break;
@@ -370,19 +414,18 @@ fn take_screenshot(
 
     // A consent prompt still waiting for an answer (`--consent ask`) is
     // shown as the window would show it.
-    let terminal = displayed_terminal(&machine);
-    match headless.content().and_then(|c| c.prompt().map(|p| (p, c.prompts_waiting()))) {
-        Some((prompt, waiting)) => {
-            renderer.update(&queue, &consent::with_prompt(&terminal, &image.title_lossy(), prompt, waiting));
-            renderer.set_overlay(Some(consent::FIRST_ROW));
-        }
-        None => renderer.update(&queue, &terminal),
-    }
-    renderer.update_vectors(&queue, machine.vector());
-    renderer.update_page(machine.page(), shown(&machine));
+    let prompt = headless.content().and_then(|c| {
+        let p = c.prompt()?;
+        let title = match p.tag {
+            0 => image.title_lossy(),
+            tag => system.children().find(|(_, c)| c.serial == tag).map_or(String::new(), |(_, c)| c.title.clone()),
+        };
+        Some((p, c.prompts_waiting(), title))
+    });
+    screens.update(&device, &queue, &system, viewport, &[], &shown, prompt);
     // The beam of what is shown now (e.g. a fault reported after the last
     // frame), without advancing the afterglow.
-    renderer.refresh_beam(&device, &queue, (width, height));
+    screens.refresh_beams(&device, &queue, viewport);
 
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("screenshot"),
@@ -405,7 +448,7 @@ fn take_screenshot(
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    renderer.render(&device, &queue, &mut encoder, &view, (width, height));
+    screens.render(&device, &queue, &mut encoder, &view, viewport);
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -434,6 +477,6 @@ fn take_screenshot(
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(&pixels).map_err(|e| e.to_string())?;
     writer.finish().map_err(|e| e.to_string())?;
-    eprintln!("terse-host: wrote {} ({width}x{height}) after {} frames", out.display(), machine.frame());
+    eprintln!("terse-host: wrote {} ({width}x{height}) after {} frames", out.display(), system.shell().frame());
     Ok(())
 }

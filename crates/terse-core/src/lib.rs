@@ -9,8 +9,10 @@ pub mod content;
 pub mod cpu;
 pub mod image;
 pub mod machine;
+pub mod machines;
 pub mod page;
 pub mod script;
+pub mod shell;
 pub mod system;
 pub mod terminal;
 pub mod vector;
@@ -25,6 +27,7 @@ pub use machine::{
 };
 pub use page::{Layout, Layouter, Page, PageInput, PageWatch, Region};
 pub use script::Script;
+pub use shell::{Child, Driver, System, SystemFrame, Who};
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};
 pub use terminal::{CONTINUATION, Cell, COLS, ROWS, Terminal};
 pub use vector::{Primitive, Vector};

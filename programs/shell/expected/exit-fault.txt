@@ -1,0 +1,107 @@
+ ⌂  1■hello          0% 2!crash          0%                                00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 1 exited 203 23 214 160 hello --
+ Terse · hello
+
+  héllo, wörld — 你好
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 00000004
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 2 faulted 423 23 214 160 crash --
+crash
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- launcher --
+PROGRAMS
+[reader]{100}
+[sparks]{101}
+[fetch]{102}
+[hello]{103}
+[crash]{104}
+MACHINES
+[1  hello]{1}[  exited 0]{1}
+[2  crash]{2}[  faulted]{2}
+[load at pc 00010014]{2}
+Enter start or focus · Esc back ·
+Tab next machine · X stop · P
+pause · Z zoom · L layout · 1-8
+select

@@ -12,6 +12,7 @@
 //! 10 click <x> <y>                            pointer with the primary button, then released
 //! 10 wheel <vertical> [<horizontal>]          wheel steps (06h); positive is down and right
 //! 10 feeds-updated                            feeds updated (07h)
+//! 10 home                                     the host's home key (SPEC 12.4; a system only)
 //! 10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]    controller n (0-3) state (SPEC 5.3)
 //! 10 pad <n> off                               controller n disconnected
 //! ```
@@ -179,6 +180,7 @@ impl Script {
                 events.push(Event::wheel(number(words.first(), "vertical steps")?, h));
             }
             "feeds-updated" => events.push(Event::feeds_updated()),
+            "home" => events.push(Event::home()),
             _ => return Err(format!("unknown command {command:?}")),
         }
         Ok(())
@@ -220,6 +222,7 @@ mod tests {
              7 wheel -2\n\
              7 wheel 1 -1\n\
              8 feeds-updated\n\
+             8 home\n\
              2 press f12\n",
         )
         .unwrap();
@@ -229,7 +232,7 @@ mod tests {
         assert_eq!(s.events(5), text);
         assert_eq!(s.events(6), [Event::pointer(639, 479, 5), Event::pointer(8, 16, 1), Event::pointer(8, 16, 0)]);
         assert_eq!(s.events(7), [Event::wheel(-2, 0), Event::wheel(1, -1)]);
-        assert_eq!(s.events(8), [Event::feeds_updated()]);
+        assert_eq!(s.events(8), [Event::feeds_updated(), Event::home()]);
         assert_eq!(s.events(2), [Event::key_down(0x45, 0), Event::key_up(0x45, 0)]);
         assert_eq!(s.events(9), []);
     }

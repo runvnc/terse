@@ -461,11 +461,7 @@ impl VectorLayer {
         };
         let bind_group = group(&params);
         let phosphor_bind_group = group(&phosphor_params);
-        let source = format!("{}{SHADER}", phosphor::wgsl());
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("vectors"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        let shader = crate::renderer::shader_module(device, "vectors", || format!("{}{SHADER}", phosphor::wgsl()));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vectors"),
             bind_group_layouts: &[Some(&layout)],

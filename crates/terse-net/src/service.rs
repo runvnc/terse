@@ -9,7 +9,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use terse_core::page::{Layouter, PageInput};
-use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
+use terse_core::system::CONTROLLERS;
+use terse_core::{
+    Completion, Controller, Driver, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script, System,
+    SystemFrame, Who,
+};
 
 use crate::identity::{FeedKey, valid_feed_key};
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
@@ -27,11 +31,16 @@ pub enum FeedCommand {
     Publish(Draft),
 }
 
+/// Requests carry a tag that their completions carry back: the machine
+/// they came from, for a host that runs several (SPEC 12). 0 for one.
 enum Work {
-    Content(Request),
+    Content(u32, Request),
     /// A request the user has allowed (SPEC 9.5).
-    Consented(Request),
+    Consented(u32, Request),
     Feed(FeedCommand),
+    /// A whole blob (an image a shell starts, SPEC 12.2), completed as a
+    /// get with handle 0.
+    Fetch(u32, [u8; 32]),
 }
 
 /// How the host answers the requests that need the user's consent
@@ -73,12 +82,14 @@ pub enum Asked {
 /// A request waiting for the user's answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
+    /// The tag the request was submitted with (its machine).
+    pub tag: u32,
     pub handle: u8,
     pub asked: Asked,
 }
 
 enum Finished {
-    Done(Completion),
+    Done(u32, Completion),
     Ask(Prompt, Request),
 }
 
@@ -92,7 +103,7 @@ pub struct ContentService {
     /// Requests waiting for the user's answer, the first one shown.
     prompts: VecDeque<(Prompt, Request)>,
     /// Requests the user refused, to complete with the next ones.
-    refused: Vec<Completion>,
+    refused: Vec<(u32, Completion)>,
     /// The node has a relay and subscriptions.
     following: bool,
 }
@@ -107,6 +118,8 @@ enum Job {
     Find { handle: u8, length: u16 },
     /// `FeedCommand::Publish`, reported as a feed event.
     FeedPublish,
+    /// A whole blob for `fetch`.
+    Fetch,
 }
 
 impl ContentService {
@@ -153,20 +166,28 @@ impl ContentService {
         let Some((prompt, request)) = self.prompts.pop_front() else { return };
         if allow {
             self.outstanding += 1;
-            let _ = self.jobs.send(Work::Consented(request));
+            let _ = self.jobs.send(Work::Consented(prompt.tag, request));
         } else {
-            self.refused.push(Completion { handle: prompt.handle, outcome: Outcome::Refused });
+            self.refused.push((prompt.tag, Completion { handle: prompt.handle, outcome: Outcome::Refused }));
         }
     }
 
-    fn receive(&mut self, f: Finished, done: &mut Vec<Completion>) {
+    /// Drops the prompts of requests submitted with `tag` (a machine that
+    /// ceased to exist, SPEC 12.2). Their requests are never completed.
+    pub fn cancel(&mut self, tag: u32) {
+        self.prompts.retain(|(p, _)| p.tag != tag);
+        self.refused.retain(|(t, _)| *t != tag);
+    }
+
+    fn receive(&mut self, f: Finished, done: &mut Vec<(u32, Completion)>) {
         self.outstanding -= 1;
         match f {
-            Finished::Done(c) => done.push(c),
+            Finished::Done(tag, c) => done.push((tag, c)),
             Finished::Ask(prompt, request) => {
-                // Queued in handle order among those not yet shown.
+                // Queued in (tag, handle) order among those not yet shown.
+                let key = (prompt.tag, prompt.handle);
                 let at = (1..self.prompts.len().max(1))
-                    .find(|&i| self.prompts[i].0.handle > prompt.handle)
+                    .find(|&i| (self.prompts[i].0.tag, self.prompts[i].0.handle) > key)
                     .unwrap_or(self.prompts.len());
                 self.prompts.insert(at, (prompt, request));
             }
@@ -201,11 +222,24 @@ impl ContentService {
     }
 
     pub fn submit(&mut self, requests: Vec<Request>) {
+        self.submit_tagged(0, requests);
+    }
+
+    /// Submits requests whose completions (and prompts) carry `tag`.
+    pub fn submit_tagged(&mut self, tag: u32, requests: Vec<Request>) {
         for r in requests {
             self.outstanding += 1;
             // The worker only stops when this service is dropped.
-            let _ = self.jobs.send(Work::Content(r));
+            let _ = self.jobs.send(Work::Content(tag, r));
         }
+    }
+
+    /// Fetches the whole blob `id` (from the store, else the relays);
+    /// completed, with `tag`, as handle 0 with `Outcome::Got`, `NotFound`
+    /// or `Failed`.
+    pub fn fetch(&mut self, tag: u32, id: [u8; 32]) {
+        self.outstanding += 1;
+        let _ = self.jobs.send(Work::Fetch(tag, id));
     }
 
     pub fn feed(&self, command: FeedCommand) {
@@ -228,6 +262,11 @@ impl ContentService {
 
     /// Completions finished so far; never blocks.
     pub fn take_finished(&mut self) -> Vec<Completion> {
+        self.take_finished_tagged().into_iter().map(|(_, c)| c).collect()
+    }
+
+    /// Completions finished so far, with their tags; never blocks.
+    pub fn take_finished_tagged(&mut self) -> Vec<(u32, Completion)> {
         let mut done = std::mem::take(&mut self.refused);
         while let Ok(f) = self.finished.try_recv() {
             self.receive(f, &mut done);
@@ -239,6 +278,11 @@ impl ContentService {
     /// the relay timeout) or waits for the user's answer. For headless runs
     /// that must not depend on timing.
     pub fn wait_finished(&mut self) -> Vec<Completion> {
+        self.wait_finished_tagged().into_iter().map(|(_, c)| c).collect()
+    }
+
+    /// [`Self::wait_finished`], with the completions' tags.
+    pub fn wait_finished_tagged(&mut self) -> Vec<(u32, Completion)> {
         let mut done = std::mem::take(&mut self.refused);
         while self.outstanding > 0 {
             match self.finished.recv() {
@@ -311,6 +355,146 @@ impl Headless {
     }
 }
 
+/// One machine's part of a [`HeadlessSystem`].
+struct HeadlessMachine {
+    page: PageInput,
+    completions: Vec<Completion>,
+    feeds_updated: bool,
+}
+
+/// Runs a [`System`] (a shell and the machines it starts, SPEC 12) the
+/// reproducible headless way, as [`Headless`] runs one machine: the script's
+/// events are the host's input, routed by the system; each machine has its
+/// own page events (laid out between frames), completions and feeds-updated
+/// events, all from the one content service; every content request and
+/// every image a shell starts is finished before the next frame, so a
+/// machine started in frame N is loaded at the start of frame N + 1.
+pub struct HeadlessSystem {
+    content: Option<ContentService>,
+    script: Script,
+    machines: HashMap<u32, HeadlessMachine>,
+    /// Images wanted in the frame just run: (serial, ID).
+    wanted: Vec<(u32, [u8; 32])>,
+    /// Images to deliver at the start of the next frame.
+    images: Vec<(u32, Result<terse_core::Image, String>)>,
+    /// Makes the layouter of each machine's page (default: the reference
+    /// layout).
+    layouter: Box<dyn Fn(u32) -> Box<dyn Layouter + Send>>,
+}
+
+impl HeadlessSystem {
+    pub fn new(content: Option<ContentService>, script: Script) -> Self {
+        HeadlessSystem {
+            content,
+            script,
+            machines: HashMap::new(),
+            wanted: Vec::new(),
+            images: Vec::new(),
+            layouter: Box::new(|_| Box::new(terse_core::page::ReferenceLayouter::default())),
+        }
+    }
+
+    /// Lays each machine's page out with a layouter from `make` (given the
+    /// machine's serial, 0 for the shell).
+    pub fn with_layouter(mut self, make: Box<dyn Fn(u32) -> Box<dyn Layouter + Send>>) -> Self {
+        self.layouter = make;
+        self
+    }
+
+    pub fn content(&self) -> Option<&ContentService> {
+        self.content.as_ref()
+    }
+
+    /// The layouter of machine `serial`'s page (0: the shell), once it has
+    /// run a frame.
+    pub fn page_layouter(&self, serial: u32) -> Option<&dyn Layouter> {
+        self.machines.get(&serial).map(|m| m.page.layouter())
+    }
+
+    /// Runs the system's next frame with the script's input for it, then
+    /// finishes every request and image fetch it made.
+    pub fn frame(&mut self, system: &mut System) -> SystemFrame {
+        for (serial, image) in self.images.drain(..) {
+            system.deliver_image(serial, image);
+        }
+        let frame = system.shell().frame();
+        let events = self.script.events(frame).to_vec();
+        let controllers = self.script.controllers(frame);
+        let result = system.frame(&events, controllers, self);
+        let wanted = std::mem::take(&mut self.wanted);
+        match &mut self.content {
+            None => {
+                self.images.extend(wanted.into_iter().map(|(serial, _)| (serial, Err("no content device".to_string()))))
+            }
+            Some(content) => {
+                for &(serial, id) in &wanted {
+                    content.fetch(serial, id);
+                }
+                for (tag, c) in content.wait_finished_tagged() {
+                    if c.handle == 0 && wanted.iter().any(|w| w.0 == tag) {
+                        self.images.push((tag, image_from(c.outcome)));
+                    } else if let Some(m) = self.machines.get_mut(&tag) {
+                        m.completions.push(c);
+                    }
+                }
+                if content.feeds_updated() {
+                    for (&serial, m) in self.machines.iter_mut() {
+                        if system.machine_by_serial(serial).is_some_and(|(_, m)| m.content().is_some()) {
+                            m.feeds_updated = true;
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+}
+
+/// The image a fetch delivered (SPEC 12.2: a missing blob or an invalid
+/// image fails the start).
+fn image_from(outcome: Outcome) -> Result<terse_core::Image, String> {
+    match outcome {
+        Outcome::Got { data, .. } => terse_core::Image::parse(&data).map_err(|e| e.to_string()),
+        Outcome::NotFound => Err("image not found".into()),
+        _ => Err("image fetch failed".into()),
+    }
+}
+
+impl Driver for HeadlessSystem {
+    fn frame(&mut self, who: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS]) -> FrameResult {
+        let layouter = &self.layouter;
+        let m = self.machines.entry(who.serial).or_insert_with(|| HeadlessMachine {
+            page: PageInput::new(layouter(who.serial)),
+            completions: Vec::new(),
+            feeds_updated: false,
+        });
+        let mut events = m.page.events(machine.page(), &events);
+        if std::mem::take(&mut m.feeds_updated) {
+            events.push(Event::feeds_updated());
+        }
+        let completions = std::mem::take(&mut m.completions);
+        let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
+        let result = machine.run_frame(&input);
+        m.page.after_frame(machine.page());
+        if let Some(content) = &mut self.content {
+            content.submit_tagged(who.serial, machine.take_content_requests());
+        }
+        result
+    }
+
+    fn want_image(&mut self, serial: u32, image: [u8; 32]) {
+        self.wanted.push((serial, image));
+    }
+
+    fn removed(&mut self, serial: u32) {
+        self.machines.remove(&serial);
+        self.images.retain(|i| i.0 != serial);
+        if let Some(content) = &mut self.content {
+            content.cancel(serial);
+        }
+    }
+}
+
 fn completion(job: Job, done: Done) -> Completion {
     let (handle, outcome) = match (job, done) {
         (Job::Get { handle, offset, length }, Done::Got(blob)) => {
@@ -329,6 +513,9 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle } | Job::Find { handle, .. }, _) => {
             (handle, Outcome::Failed)
         }
+        (Job::Fetch, Done::Got(blob)) => (0, Outcome::Got { size: blob.len() as u32, data: blob }),
+        (Job::Fetch, Done::NotFound) => (0, Outcome::NotFound),
+        (Job::Fetch, _) => (0, Outcome::Failed),
         (Job::FeedPublish, _) => unreachable!("publishes are reported as feed events"),
     };
     Completion { handle, outcome }
@@ -415,28 +602,30 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
 
 /// Carries out (or asks about) a subscribe, unsubscribe or publish; false
 /// if the service is gone.
+#[allow(clippy::too_many_arguments)]
 fn feed_request(
     node: &mut Node,
     consent: Consent,
     consented: bool,
+    tag: u32,
     request: Request,
     token: Token,
-    pending: &mut HashMap<Token, Job>,
+    pending: &mut HashMap<Token, (u32, Job)>,
     finished: &Sender<Finished>,
 ) -> bool {
     let handle = request.handle;
     match feed_step(node, consent, consented, &request, token) {
-        Step::Complete(outcome) => finished.send(Finished::Done(Completion { handle, outcome })).is_ok(),
-        Step::Ask(asked) => finished.send(Finished::Ask(Prompt { handle, asked }, request)).is_ok(),
+        Step::Complete(outcome) => finished.send(Finished::Done(tag, Completion { handle, outcome })).is_ok(),
+        Step::Ask(asked) => finished.send(Finished::Ask(Prompt { tag, handle, asked }, request)).is_ok(),
         Step::Started => {
-            pending.insert(token, Job::Publish { handle });
+            pending.insert(token, (tag, Job::Publish { handle }));
             true
         }
     }
 }
 
 fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Sender<Finished>, events: Sender<FeedEvent>) {
-    let mut pending: HashMap<Token, Job> = HashMap::new();
+    let mut pending: HashMap<Token, (u32, Job)> = HashMap::new();
     let mut next: Token = 0;
     loop {
         // Block for work only when nothing is waiting on the relay and no
@@ -461,16 +650,21 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         };
         next += 1;
         match work {
-            Some(Work::Content(Request { handle, kind: RequestKind::Identity })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Identity })) => {
                 let outcome = match node.identity_key() {
                     Some(key) => Outcome::Identity { key },
                     None => Outcome::NotFound,
                 };
-                if finished.send(Finished::Done(Completion { handle, outcome })).is_err() {
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
+            Some(Work::Fetch(tag, id)) => {
+                pending.insert(next, (tag, Job::Fetch));
+                node.start_get(next, id);
+            }
             Some(Work::Content(
+                tag,
                 r @ Request {
                     kind:
                         RequestKind::Subscribe { .. }
@@ -481,48 +675,51 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     ..
                 },
             )) => {
-                if !feed_request(&mut node, consent, false, r, next, &mut pending, &finished) {
+                if !feed_request(&mut node, consent, false, tag, r, next, &mut pending, &finished) {
                     return;
                 }
             }
-            Some(Work::Consented(r)) => {
-                if !feed_request(&mut node, consent, true, r, next, &mut pending, &finished) {
+            Some(Work::Consented(tag, r)) => {
+                if !feed_request(&mut node, consent, true, tag, r, next, &mut pending, &finished) {
                     return;
                 }
             }
-            Some(Work::Content(Request { handle, kind: RequestKind::Get { id, offset, length } })) => {
-                pending.insert(next, Job::Get { handle, offset, length });
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Get { id, offset, length } })) => {
+                pending.insert(next, (tag, Job::Get { handle, offset, length }));
                 node.start_get(next, id);
             }
-            Some(Work::Content(Request { handle, kind: RequestKind::Put { data } })) => {
-                pending.insert(next, Job::Put { handle });
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Put { data } })) => {
+                pending.insert(next, (tag, Job::Put { handle }));
                 node.start_put(next, &data);
             }
             // SPEC 9.5: answered at once from the node's own state.
-            Some(Work::Content(Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
                 let (total, data) = node.subscription_records(offset, length);
-                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
+                let outcome = Outcome::Records { total, data };
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(Request { handle, kind: RequestKind::Timeline { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Timeline { offset, length } })) => {
                 let (total, data) = node.timeline_records(offset, length);
-                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
+                let outcome = Outcome::Records { total, data };
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(Request { handle, kind: RequestKind::Names { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Names { offset, length } })) => {
                 let (total, data) = node.name_records(offset, length);
-                if finished.send(Finished::Done(Completion { handle, outcome: Outcome::Records { total, data } })).is_err() {
+                let outcome = Outcome::Records { total, data };
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(Request { handle, kind: RequestKind::Find { scope, query, length } })) => {
-                pending.insert(next, Job::Find { handle, length });
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Find { scope, query, length } })) => {
+                pending.insert(next, (tag, Job::Find { handle, length }));
                 node.start_find(next, scope, &query);
             }
             Some(Work::Feed(FeedCommand::Publish(draft))) => {
-                pending.insert(next, Job::FeedPublish);
+                pending.insert(next, (0, Job::FeedPublish));
                 node.start_publish_article(next, &draft);
             }
             // A subscription list that cannot be saved still applies to
@@ -533,19 +730,19 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         }
         for (token, done) in node.poll() {
             let sent = match pending.remove(&token) {
-                Some(Job::FeedPublish) => events
+                Some((_, Job::FeedPublish)) => events
                     .send(match done {
                         Done::Published { seq, blob } => FeedEvent::Published { seq, blob },
                         done => FeedEvent::PublishFailed(done),
                     })
                     .is_ok(),
-                Some(Job::Find { handle, length }) if matches!(done, Done::Found(_)) => {
+                Some((tag, Job::Find { handle, length })) if matches!(done, Done::Found(_)) => {
                     let Done::Found(found) = done else { unreachable!() };
                     let (total, data) = node.find_records(&found, length);
                     let outcome = Outcome::Records { total, data };
-                    finished.send(Finished::Done(Completion { handle, outcome })).is_ok()
+                    finished.send(Finished::Done(tag, Completion { handle, outcome })).is_ok()
                 }
-                Some(job) => finished.send(Finished::Done(completion(job, done))).is_ok(),
+                Some((tag, job)) => finished.send(Finished::Done(tag, completion(job, done))).is_ok(),
                 None => true,
             };
             if !sent {
@@ -811,9 +1008,9 @@ mod tests {
         );
         assert_eq!(done.len(), 1, "only the identity is answered: {done:?}");
         assert_eq!(service.prompts_waiting(), 2);
-        assert_eq!(service.prompt(), Some(&Prompt { handle: 1, asked: Asked::Subscribe(b) }));
+        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 1, asked: Asked::Subscribe(b) }));
         service.answer(false);
-        assert_eq!(service.prompt(), Some(&Prompt { handle: 2, asked: Asked::Publish { title: "T".into(), size: 5 } }));
+        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 2, asked: Asked::Publish { title: "T".into(), size: 5 } }));
         service.answer(true);
         assert_eq!(service.prompt(), None);
         let mut done = service.wait_finished();

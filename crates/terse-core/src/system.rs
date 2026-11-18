@@ -42,6 +42,9 @@ impl Event {
     pub const FEEDS_UPDATED: u8 = 0x07;
     pub const PAGE_LAID_OUT: u8 = 0x08;
     pub const PAGE_ANCHOR: u8 = 0x09;
+    pub const MACHINE_CHANGED: u8 = 0x0A;
+    pub const HOME: u8 = 0x0B;
+    pub const MACHINE_PRESSED: u8 = 0x0C;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -91,6 +94,22 @@ impl Event {
     /// A pointer button was pressed over text with anchor `id` (SPEC 11.5).
     pub fn page_anchor(id: u16, buttons: u8) -> Self {
         Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: buttons & 0x07 }
+    }
+
+    /// Machine `handle` is now in `state` (SPEC 12.4), for the shell.
+    pub fn machine_changed(handle: u8, state: u8) -> Self {
+        Event { kind: Self::MACHINE_CHANGED, a: handle, b: state, c: 0 }
+    }
+
+    /// The host's home key was pressed (SPEC 12.4). Also the host's input
+    /// to [`crate::System`] for that key.
+    pub fn home() -> Self {
+        Event { kind: Self::HOME, a: 0, b: 0, c: 0 }
+    }
+
+    /// A pointer button was pressed over machine `handle`'s picture (SPEC 12.4).
+    pub fn machine_pressed(handle: u8, buttons: u8) -> Self {
+        Event { kind: Self::MACHINE_PRESSED, a: handle, b: buttons & 0x07, c: 0 }
     }
 
     /// A content request finished (SPEC 7.3).

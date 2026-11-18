@@ -370,13 +370,14 @@ impl HostLayout {
 /// runs the machine like `terse run` does, but with these fonts). The
 /// latest layout is also kept in `latest` for drawing.
 pub struct SyncLayouter {
-    typesetter: Typesetter,
+    typesetter: Arc<Mutex<Typesetter>>,
     pub latest: Arc<Mutex<Option<Arc<HostLayout>>>>,
     generation: u64,
 }
 
 impl SyncLayouter {
-    pub fn new(typesetter: Typesetter) -> Self {
+    /// A layouter using fonts shared with others (one per machine).
+    pub fn shared(typesetter: Arc<Mutex<Typesetter>>) -> Self {
         SyncLayouter { typesetter, latest: Arc::new(Mutex::new(None)), generation: 0 }
     }
 }
@@ -384,7 +385,7 @@ impl SyncLayouter {
 impl Layouter for SyncLayouter {
     fn layout(&mut self, doc: &[u8], width: u16) -> u32 {
         self.generation += 1;
-        let layout = Arc::new(self.typesetter.layout((self.generation, width), doc, width));
+        let layout = Arc::new(self.typesetter.lock().unwrap().layout((self.generation, width), doc, width));
         let height = layout.reported_height();
         *self.latest.lock().unwrap() = Some(layout);
         height
@@ -399,16 +400,74 @@ impl Layouter for SyncLayouter {
     }
 }
 
-/// A layout request for the worker.
+/// A layout request for the thread: from which worker, and where the
+/// result goes.
 struct Job {
+    client: u64,
     key: LayoutKey,
     doc: Vec<u8>,
+    reply: Sender<Result<HostLayout, String>>,
 }
 
-/// Lays pages out on a worker thread for the windowed host and decides,
-/// with [`PageWatch`], when the height event is sent.
+/// The thread that lays out the pages of every machine of a windowed host,
+/// with one set of fonts.
+#[derive(Clone)]
+pub struct PageThread {
+    jobs: Sender<Job>,
+    clients: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl PageThread {
+    pub fn start(fonts: PageFonts) -> Self {
+        let (jobs, rx) = std::sync::mpsc::channel::<Job>();
+        std::thread::Builder::new()
+            .name("page layout".into())
+            .spawn(move || {
+                let mut typesetter = Typesetter::new(&fonts);
+                match &typesetter {
+                    Ok(t) => eprintln!("terse-host: page fonts: {}", t.describe()),
+                    Err(e) => eprintln!("terse-host: page fonts: {e}"),
+                }
+                while let Ok(job) = rx.recv() {
+                    // Only each worker's latest request matters (SPEC 11.5).
+                    let mut batch = vec![job];
+                    loop {
+                        match rx.try_recv() {
+                            Ok(newer) => match batch.iter_mut().find(|j| j.client == newer.client) {
+                                Some(older) => *older = newer,
+                                None => batch.push(newer),
+                            },
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => return,
+                        }
+                    }
+                    for job in batch {
+                        let result = match &mut typesetter {
+                            Ok(t) => Ok(t.layout(job.key, &job.doc, job.key.1)),
+                            Err(e) => Err(e.clone()),
+                        };
+                        let _ = job.reply.send(result);
+                    }
+                }
+            })
+            .expect("start the page layout thread");
+        PageThread { jobs, clients: Arc::new(std::sync::atomic::AtomicU64::new(0)) }
+    }
+
+    /// A worker for one machine's page.
+    pub fn worker(&self) -> PageWorker {
+        let (reply, done) = std::sync::mpsc::channel();
+        let client = self.clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        PageWorker { jobs: self.jobs.clone(), client, reply, done, watch: PageWatch::default(), requested: None, shown: None }
+    }
+}
+
+/// Lays one machine's page out on the [`PageThread`] and decides, with
+/// [`PageWatch`], when the height event is sent.
 pub struct PageWorker {
     jobs: Sender<Job>,
+    client: u64,
+    reply: Sender<Result<HostLayout, String>>,
     done: Receiver<Result<HostLayout, String>>,
     watch: PageWatch,
     /// The key last sent to the worker.
@@ -418,39 +477,6 @@ pub struct PageWorker {
 }
 
 impl PageWorker {
-    pub fn start(fonts: PageFonts) -> Self {
-        let (jobs, rx) = std::sync::mpsc::channel::<Job>();
-        let (tx, done) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name("page layout".into())
-            .spawn(move || {
-                let mut typesetter = match Typesetter::new(&fonts) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
-                };
-                eprintln!("terse-host: page fonts: {}", typesetter.describe());
-                while let Ok(mut job) = rx.recv() {
-                    // Only the latest request matters (SPEC 11.5).
-                    loop {
-                        match rx.try_recv() {
-                            Ok(newer) => job = newer,
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => return,
-                        }
-                    }
-                    let layout = typesetter.layout(job.key, &job.doc, job.key.1);
-                    if tx.send(Ok(layout)).is_err() {
-                        return;
-                    }
-                }
-            })
-            .expect("start the page layout thread");
-        PageWorker { jobs, done, watch: PageWatch::default(), requested: None, shown: None }
-    }
-
     /// Before a frame: takes finished layouts. Returns the height event to
     /// queue for this frame, if a layout of the current page finished; an
     /// error if the fonts could not be loaded.
@@ -488,16 +514,12 @@ impl PageWorker {
             Some(doc) => {
                 if self.requested != Some(key) {
                     self.requested = Some(key);
-                    let _ = self.jobs.send(Job { key, doc: doc.to_vec() });
+                    let job = Job { client: self.client, key, doc: doc.to_vec(), reply: self.reply.clone() };
+                    let _ = self.jobs.send(job);
                 }
                 None
             }
         }
-    }
-
-    /// Whether a layout is still being made for the current page.
-    pub fn busy(&self, page: Option<&Page>) -> bool {
-        page.is_some_and(|p| self.watch.wanted(p).is_some())
     }
 }
 
@@ -729,10 +751,7 @@ impl PageLayer {
         };
         let bind_group = group(&params);
         let light_bind_group = group(&light_params);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("page"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
+        let shader = crate::renderer::shader_module(device, "page", || SHADER.to_string());
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("page"),
             bind_group_layouts: &[Some(&layout)],

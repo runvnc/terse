@@ -1,0 +1,154 @@
+ ⌂  1 reader      0% 2 sparks      2% 3 fetch       0% 4 hello       0%    00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 1 running 3 23 314 235 reader --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
+-- machine 2 running 382 23 196 147 sparks --
+  SPARKS                      demo - Enter or Start to play
+
+
+
+
+
+
+
+
+
+
+
+                                   S P A R K S
+
+                     Collect the sparks, avoid the sweepers.
+                     Arrows or stick: turn. Up or A: thrust.
+                     Enter or Start: play.        Esc: quit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 3 running 382 176 196 147 fetch --
+ Terse · fetch
+
+Getting blob 471960666a1299b8… (message.txt)
+fetching… status 01 done
+size: 303 bytes. Text:
+
+Hello from a blob! These bytes were fetched by their BLAKE3-256 ID and
+checked by the host before the program saw them.
+
+  日本語: こんにちは、世界   中文: 你好，世界   한국어: 안녕하세요
+  Full width: ＴＥＲＳＥ   Box drawing: ┌──┬──┐ └──┴──┘
+
+Putting 256 bytes built in RAM… status 01 done
+blob ID: 4a495ba42461748e…
+
+Esc: exit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 4 running 381 329 197 148 hello --
+ Terse · hello
+
+  héllo, wörld — 你好
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 00000009
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

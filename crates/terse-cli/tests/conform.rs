@@ -1,4 +1,4 @@
-//! programs/conform: the conformance image (SPEC 13). The state hash
+//! programs/conform: the conformance image (SPEC 14). The state hash
 //! (STATE.md) every 10 frames of the scripted run must match
 //! `expected-hashes.txt`, the final screen (terminal and decoded display list)
 //! `expected-screen.txt`, and every section the program checks itself must

@@ -6,6 +6,7 @@ use std::fmt;
 use crate::content::{Completion, Content, Request, ram_range, readable};
 use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
 use crate::image::Image;
+use crate::machines::Machines;
 use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
@@ -17,7 +18,7 @@ pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
 /// Budget units added each frame (SPEC 1.4). Provisional.
 pub const BUDGET_PER_FRAME: i64 = 125_000;
 
-/// The charges of SPEC 12, in budget units. Provisional.
+/// The charges of SPEC 13, in budget units. Provisional.
 pub mod charge {
     /// Every call, on top of the `ecall` instruction itself.
     pub const CALL: u32 = 4;
@@ -48,6 +49,18 @@ pub const ERR_BUFFER: u32 = 0xFFFF_FFFE;
 /// Units charged for copying `bytes` bytes.
 pub fn copy_charge(bytes: usize) -> u32 {
     bytes.div_ceil(charge::COPY_BYTES_PER_UNIT) as u32
+}
+
+/// The fault kind's number (STATE.md 1.3; SPEC 12.2 `info`).
+pub fn fault_number(f: &Fault) -> u8 {
+    match f.kind {
+        FaultKind::Illegal(_) => 1,
+        FaultKind::Ebreak => 2,
+        FaultKind::Fetch => 3,
+        FaultKind::Load => 4,
+        FaultKind::Store => 5,
+        FaultKind::Misaligned => 6,
+    }
 }
 
 /// Call numbers: `a7 = (device slot << 8) | function` (SPEC 3.2).
@@ -158,6 +171,10 @@ pub struct Machine {
     vector: Option<Vector>,
     content: Option<Content>,
     page: Option<Page>,
+    /// Device 8, only for the shell (SPEC 12.1).
+    machines: Option<Machines>,
+    /// The image lists device 8 (STATE.md 1.10 is then present).
+    lists_machines: bool,
     /// The budget; zero or negative between frames (a negative remainder
     /// carries into the next frame).
     budget: i64,
@@ -184,12 +201,24 @@ impl Machine {
             vector: image.has_device(3).then(Vector::default),
             content: image.has_device(4).then(Content::default),
             page: image.has_device(7).then(Page::default),
+            machines: None,
+            lists_machines: image.has_device(crate::machines::SLOT),
             budget: 0,
             stopped: None,
             image_id: image.id,
             instructions: 0,
             calls: 0,
         }
+    }
+
+    /// The machine at reset as the shell (SPEC 12.1): device 8 is granted
+    /// if the image lists it; `builtins` are the IDs `builtin` returns.
+    pub fn new_shell(image: &Image, builtins: Vec<[u8; 32]>) -> Self {
+        let mut m = Machine::new(image);
+        if m.lists_machines {
+            m.machines = Some(Machines::new(builtins));
+        }
+        m
     }
 
     /// Runs one frame (SPEC 1.4). Does nothing once the machine has stopped.
@@ -425,6 +454,11 @@ impl Machine {
                 units += copy_charge(taken);
                 handle
             }
+            0x800..=0x8FF if self.machines.is_some() => {
+                let (r, extra) = self.machines.as_mut().unwrap().call(n, [a0, a1, a2, a3, x[14]], rom, ram);
+                units += extra;
+                r
+            }
             0x700..=0x7FF if self.page.is_some() => {
                 let page = self.page.as_mut().unwrap();
                 match n {
@@ -513,6 +547,15 @@ impl Machine {
         self.page.as_ref()
     }
 
+    /// Device 8, if this machine is the shell and the image lists it.
+    pub fn machines(&self) -> Option<&Machines> {
+        self.machines.as_ref()
+    }
+
+    pub fn machines_mut(&mut self) -> Option<&mut Machines> {
+        self.machines.as_mut()
+    }
+
     pub fn content(&self) -> Option<&Content> {
         self.content.as_ref()
     }
@@ -584,15 +627,8 @@ impl Machine {
         let (fkind, detail, pc, addr) = match fault {
             None => (0u8, 0u32, 0u32, 0u32),
             Some(f) => {
-                let (k, d) = match f.kind {
-                    FaultKind::Illegal(enc) => (1, enc),
-                    FaultKind::Ebreak => (2, 0),
-                    FaultKind::Fetch => (3, 0),
-                    FaultKind::Load => (4, 0),
-                    FaultKind::Store => (5, 0),
-                    FaultKind::Misaligned => (6, 0),
-                };
-                (k, d, f.pc, f.addr)
+                let d = if let FaultKind::Illegal(enc) = f.kind { enc } else { 0 };
+                (fault_number(&f), d, f.pc, f.addr)
             }
         };
         out.push(fkind);
@@ -620,6 +656,13 @@ impl Machine {
         out.push(self.page.is_some() as u8);
         if let Some(p) = &self.page {
             p.write_state(&mut out);
+        }
+        // Only for an image that lists device 8 (STATE.md 1.10).
+        if self.lists_machines {
+            out.push(self.machines.is_some() as u8);
+            if let Some(m) = &self.machines {
+                m.write_state(&mut out);
+            }
         }
         out
     }

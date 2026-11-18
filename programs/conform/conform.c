@@ -1,4 +1,4 @@
-/* conform.c: the Terse conformance image (SPEC 13), RV32IMC.
+/* conform.c: the Terse conformance image (SPEC 14), RV32IMC.
  *
  * Run with conform.events (README, "Conformance image"). Each section checks
  * what the program itself can observe and records one PASS or FAIL line; a
