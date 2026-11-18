@@ -10,7 +10,7 @@ mod common;
 use std::fmt::Write as _;
 use std::process::Command;
 
-use terse_rv::cpu::{Bus, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
+use terse_rv::cpu::{Bus, Code, Cpu, FaultKind, RAM_BASE, ROM_BASE, Stop};
 
 struct Rng(u64);
 
@@ -522,6 +522,13 @@ fn every_form_against_llvm_mc() {
             Stop::Fault(f) => Outcome::Fault(f.kind),
         };
         let got = State { x: cpu.x, pc: cpu.pc, ram };
+        // The same from decoded ROM.
+        let mut ram2 = case.init.ram.clone();
+        let mut cached = Cpu::new(case.init.pc, 0);
+        cached.x = case.init.x;
+        let mut budget2 = 1;
+        let stop2 = cached.run_cached(&Code::new(&rom), &mut Bus { rom: &rom, ram: &mut ram2 }, &mut budget2);
+        assert_eq!((stop2, &cached, &ram2, budget2), (stop, &cpu, &got.ram, budget), "{}: cached", case.asm);
         if outcome != case.outcome || got != case.want {
             let regs: Vec<String> = (0..32)
                 .filter(|&r| got.x[r] != case.want.x[r])

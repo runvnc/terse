@@ -7,7 +7,7 @@ use terse_core::terminal::{CELL_BYTES, COLS, ROWS, SCROLL_CLEAR_CHARGE};
 use terse_core::{FrameInput, FrameResult, Image, Request, Terminal, Vector};
 
 use crate::content::{RvContent, ram_range, readable};
-use crate::cpu::{Bus, Cpu, Fault, RAM_BASE, ROM_BASE, Stop};
+use crate::cpu::{Bus, Code, Cpu, Fault, RAM_BASE, ROM_BASE, Stop};
 
 /// Instructions a program may execute each frame (every instruction costs 1).
 pub const INSTRUCTIONS_PER_FRAME: i64 = 500_000;
@@ -60,6 +60,8 @@ const CELLS: u32 = (COLS * ROWS) as u32;
 pub struct RvMachine {
     cpu: Cpu,
     rom: Vec<u8>,
+    /// The ROM, decoded once.
+    code: Code,
     /// RAM, held in a profile-1 `Memory` so that device 3 reads it unchanged
     /// (its slot registers are never used).
     mem: Memory,
@@ -75,6 +77,8 @@ pub struct RvMachine {
     instructions: u64,
     /// Device calls made since reset.
     calls: u64,
+    /// Instructions executed at each pc, when profiling (see `set_profiling`).
+    profile: Option<std::collections::HashMap<u32, u64>>,
 }
 
 impl RvMachine {
@@ -84,6 +88,7 @@ impl RvMachine {
         RvMachine {
             cpu: Cpu::new(ROM_BASE, ram_end),
             rom: image.rom.clone(),
+            code: Code::new(&image.rom),
             mem,
             system: System::default(),
             terminal: image.has_device(2).then(Terminal::default),
@@ -94,6 +99,7 @@ impl RvMachine {
             image_id: image.id,
             instructions: 0,
             calls: 0,
+            profile: None,
         }
     }
 
@@ -134,13 +140,27 @@ impl RvMachine {
 
         self.budget += INSTRUCTIONS_PER_FRAME;
         let start = self.budget;
+        let mut charged = 0;
         while self.budget > 0 {
-            let before = self.budget;
             let stop = {
                 let mut bus = Bus { rom: &self.rom, ram: self.mem.ram_mut() };
-                self.cpu.run(&mut bus, &mut self.budget)
+                match &mut self.profile {
+                    None => self.cpu.run_cached(&self.code, &mut bus, &mut self.budget),
+                    Some(counts) => {
+                        // One instruction at a time, counting each pc.
+                        let (pc, mut one) = (self.cpu.pc, 1);
+                        let stop = self.cpu.run(&mut bus, &mut one);
+                        if one == 0 {
+                            *counts.entry(pc).or_default() += 1;
+                            self.budget -= 1;
+                        }
+                        match stop {
+                            Stop::Budget if self.budget > 0 => continue,
+                            s => s,
+                        }
+                    }
+                }
             };
-            self.instructions += (before - self.budget) as u64;
             match stop {
                 Stop::Budget => break,
                 Stop::Fault(f) => {
@@ -151,6 +171,7 @@ impl RvMachine {
                     self.calls += 1;
                     let (charge, wait) = self.ecall();
                     self.budget -= charge as i64;
+                    charged += charge as u64;
                     if wait {
                         result.halted_early = true;
                         break;
@@ -162,6 +183,7 @@ impl RvMachine {
             }
         }
         result.tstates = (start - self.budget) as u64;
+        self.instructions += result.tstates - charged;
         // Unused budget never carries forward; a negative remainder does.
         self.budget = self.budget.min(0);
 
@@ -424,6 +446,17 @@ impl RvMachine {
     /// Instructions executed since reset (device charges not included).
     pub fn instructions(&self) -> u64 {
         self.instructions
+    }
+
+    /// Turns on (or off, discarding it) a count of the instructions executed
+    /// at each address. Slow; for finding where a program's time goes.
+    pub fn set_profiling(&mut self, on: bool) {
+        self.profile = on.then(Default::default);
+    }
+
+    /// Instructions executed at each address since profiling was turned on.
+    pub fn profile(&self) -> Option<&std::collections::HashMap<u32, u64>> {
+        self.profile.as_ref()
     }
 
     /// Device calls (`ecall`s) since reset.

@@ -48,3 +48,27 @@ impl FrameMachine for Machine {
         Machine::take_content_requests(self)
     }
 }
+
+impl<M: FrameMachine + ?Sized> FrameMachine for Box<M> {
+    fn run_frame(&mut self, input: &FrameInput) -> FrameResult {
+        (**self).run_frame(input)
+    }
+    fn frame(&self) -> u32 {
+        (**self).frame()
+    }
+    fn exit_code(&self) -> Option<u8> {
+        (**self).exit_code()
+    }
+    fn terminal(&self) -> Option<&Terminal> {
+        (**self).terminal()
+    }
+    fn vector_list(&self) -> &[u8] {
+        (**self).vector_list()
+    }
+    fn vector_generation(&self) -> u64 {
+        (**self).vector_generation()
+    }
+    fn take_content_requests(&mut self) -> Vec<Request> {
+        (**self).take_content_requests()
+    }
+}

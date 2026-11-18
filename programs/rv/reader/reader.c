@@ -104,9 +104,9 @@ static uint8_t art_to_end; /* End was pressed before the wrapping finished */
 
 /* The reader position: rp points at offset rpos of the article. */
 static const uint8_t *rp;
-static uint16_t rpos;
+static uint32_t rpos;
 
-static void seek(uint16_t off)
+static void seek(uint32_t off)
 {
     rpos = off;
     rp = art + off;
@@ -140,6 +140,28 @@ static uint32_t run_room(uint32_t max, uint16_t limit)
 {
     uint32_t left = limit - rpos;
     return left < max ? left : max;
+}
+
+/* The common cases of art_char, quickly: a well-formed two-byte character
+ * (lead byte C2h-DFh) or three-byte one (lead E1h-ECh, EEh or EFh), with
+ * three bytes left before `limit`. Returns it and moves past it, or returns
+ * 0 and moves nowhere. (The profile-1 reader has this in assembly.) */
+static uint32_t decode_fast(uint32_t limit)
+{
+    const uint8_t *p = rp;
+    uint32_t b = p[0], c1, c2;
+    if (limit - rpos < 3 || b < 0xC2 || (p[1] & 0xC0) != 0x80)
+        return 0;
+    c1 = p[1] & 0x3F;
+    if (b < 0xE0) {
+        skip(2);
+        return (b & 0x1F) << 6 | c1;
+    }
+    if (b == 0xE0 || b == 0xED || b >= 0xF0 || (p[2] & 0xC0) != 0x80)
+        return 0;
+    c2 = p[2] & 0x3F;
+    skip(3);
+    return (b & 0x0F) << 12 | c1 << 6 | c2;
 }
 
 /* Decodes one character of the article before `limit`. Malformed UTF-8
@@ -210,7 +232,7 @@ static uint16_t printable(uint16_t cp)
     return cp < 0x20 || cp == 0x7F ? 0xFFFD : cp;
 }
 
-static uint8_t width(uint16_t cp)
+static uint8_t width(uint32_t cp)
 {
     if (cp < 0x1100)
         return 1;
@@ -791,7 +813,7 @@ static uint16_t wrap_line(uint16_t limit, uint8_t final)
 {
     /* Until all bytes are in, stop short of the end: a character might be cut. */
     uint16_t brk = 0, at, stop = final ? limit : limit - 3;
-    uint32_t c = 0, w;
+    uint32_t c = 0, w, cp;
     uint8_t b;
     if (!final && limit < 3)
         return NEED_MORE;
@@ -814,7 +836,8 @@ static uint16_t wrap_line(uint16_t limit, uint8_t final)
                 return rpos;
             w = b == '\t' ? 8 - (c & 7) : b == '\r' ? 0 : 1; /* other controls show as U+FFFD */
         } else {
-            w = width(art_char(limit));
+            cp = decode_fast(limit);
+            w = width(cp ? cp : art_char(limit));
         }
         if (c + w > COLS)
             return brk ? brk : at;
@@ -897,7 +920,9 @@ static void draw_text_row(uint8_t row)
                     continue;
                 cp = 0xFFFD;
             } else {
-                cp = art_char(end);
+                cp = decode_fast(end);
+                if (!cp)
+                    cp = art_char(end);
             }
             w = width(cp);
             if (col + w > COLS)
