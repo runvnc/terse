@@ -348,7 +348,8 @@ impl Machine {
                         fg as u32
                     }
                     call::TERM_CELLS_READ => {
-                        let len = a2 as usize * CELL_BYTES;
+                        // A count over 2,400 is refused before it is multiplied.
+                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
                         match ram_range(ram.len(), a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
                             None => ERR_BUFFER,
                             Some(at) => {
@@ -359,7 +360,7 @@ impl Machine {
                         }
                     }
                     call::TERM_CELLS_WRITE => {
-                        let len = a2 as usize * CELL_BYTES;
+                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
                         match readable(rom, ram, a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
                             None => ERR_BUFFER,
                             Some(bytes) => {
@@ -370,7 +371,7 @@ impl Machine {
                         }
                     }
                     call::TERM_PALETTE_SET => {
-                        let len = a2 as usize * 3;
+                        let len = if a2 <= 256 { a2 as usize * 3 } else { usize::MAX };
                         match readable(rom, ram, a1, len).filter(|_| a0 < 256 && a2 <= 256) {
                             None => ERR_BUFFER,
                             Some(bytes) => {

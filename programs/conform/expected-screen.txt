@@ -1,0 +1,44 @@
+Terse conformance image • conform.events
+PASS cpu: RV32I
+PASS cpu: M extension
+PASS cpu: compressed
+PASS RAM: run code, rewrite it, run again
+PASS terminal: print, cursor, controls
+PASS terminal: pending wrap
+PASS terminal: wide characters
+PASS terminal: malformed UTF-8
+PASS terminal: commands
+PASS terminal: cells, palette, buffers
+PASS vector: submit, reject, style, fill
+PASS system calls
+PASS unknown calls, absent devices
+PASS events: key, text, pointer, wheel, feeds
+PASS event queue overflow (70 -> 64) = 64
+PASS controllers
+PASS budget: ROM loop, calls per frame = 17856 17856 17857
+PASS budget: RAM loop, calls per frame = 7811 7811 7811
+PASS budget: scroll loop, deficit carried = 758 758 757
+PASS budget: bytes one frame's writes take = 124922
+PASS content: put, get, not found
+PASS content: delivery charge, ROM loop = 17856 17853
+PASS content: bad requests, blocks outside RAM
+PASS content: eight pending, ninth rejected
+PASS content: subscriptions, timeline
+PASS stress frames run = 60
+
+All sections pass.  Esc: exit (code = sections failed).
+
+-- vectors: 173 list bytes --
+line 256 6400 1920 6400 w 1 c 4080ffff
+line 1920 6400 1920 7360 w 48 c 4080ffff
+line 1920 7360 1920 7360 w 48 c 4080ffff
+disc 1920 7360 r 384 c ff000080
+circle 5120 3840 r 3200 w 32 c 00ff80ff
+rect 5120 3840 8640 5440 c ffc00060
+triangle 5120 3840 320 7040 1920 7520 c ffc00060
+disc 0 0 r 64 c ffffffff
+rect 0 0 10240 7680 c 30306020
+rect 0 0 10240 7680 c 30306020
+rect 0 0 10240 7680 c 30306020
+line 160 7520 10080 7520 w 16 c ffff00ff
+circle 5120 6400 r 512 w 16 c ffff00ff

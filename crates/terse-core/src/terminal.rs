@@ -296,8 +296,16 @@ impl Terminal {
                 1
             }
             0x04 => {
-                for col in self.col as usize..COLS {
-                    self.set_cell(col, self.row as usize, SPACE);
+                // Starting on the right half of a wide pair breaks the pair:
+                // its left half becomes a space and keeps its colours, as in
+                // SPEC 8.3 step 3.
+                let (col, row) = (self.col as usize, self.row as usize);
+                if col > 0 && self.is_pair(col - 1, row) {
+                    let i = (row * COLS + col - 1) * CELL_BYTES;
+                    self.cells[i..i + 2].copy_from_slice(&SPACE.to_le_bytes());
+                }
+                for c in col..COLS {
+                    self.set_cell(c, row, SPACE);
                 }
                 0
             }
@@ -855,6 +863,19 @@ mod tests {
         assert_eq!(t.palette()[1], [0xCD, 0, 0]);
         t.palette_set(7, &[10, 11, 12]);
         assert_eq!(t.palette()[7], [10, 11, 12]);
+    }
+
+    #[test]
+    fn clear_to_end_of_row_breaks_a_wide_pair() {
+        let mut t = Terminal::default();
+        t.set_colours(1, 2);
+        t.write("a你".as_bytes());
+        t.set_colours(3, 4);
+        t.set_cursor(2, 0);
+        t.command(0x04);
+        assert_eq!(t.cell(1, 0), Cell { ch: 0x20, fg: 1, bg: 2 }, "left half blanked, colours kept");
+        assert_eq!(t.cell(2, 0), Cell { ch: 0x20, fg: 3, bg: 4 });
+        assert_eq!(t.cell(0, 0).ch, 'a' as u16);
     }
 
     #[test]

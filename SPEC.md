@@ -451,7 +451,7 @@ and surrogates are malformed.
 | `01h` | Clear: every cell becomes a space with the current colours; cursor to (0, 0) |
 | `02h` | Scroll up one row; the bottom row is cleared |
 | `03h` | Scroll down one row; the top row is cleared |
-| `04h` | Clear from the cursor to the end of the row |
+| `04h` | Clear from the cursor to the end of the row; if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours |
 | `05h` | Show the cursor |
 | `06h` | Hide the cursor |
 
