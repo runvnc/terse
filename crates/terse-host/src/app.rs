@@ -144,7 +144,7 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(event_loop: &ActiveEventLoop, title: &str, looks: &Looks) -> Result<Self, String> {
+    fn new(event_loop: &ActiveEventLoop, title: &str, looks: &Looks, test: bool) -> Result<Self, String> {
         // Size the window for the grid at the primary monitor's scale.
         let scale = event_loop.primary_monitor().map_or(1.0, |m| m.scale_factor());
         let glyphs = SystemGlyphs::new(FONT_PX * scale as f32, looks.font.as_deref())?;
@@ -157,6 +157,14 @@ impl Gfx {
         let grid = PhysicalSize::new(cell_w * COLS as u32, cell_h * ROWS as u32);
         let inner = looks.window.map_or(grid, |(w, h)| PhysicalSize::new(w, h));
         let attributes = Window::default_attributes().with_title(title).with_inner_size(inner);
+        // The window's class (Wayland app ID): a self-test's differs, so a window manager
+        // rule can keep test windows out of the way.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let attributes = {
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            let class = if test { "terse-host-test" } else { "terse-host" };
+            WindowAttributesExtWayland::with_name(attributes, class, class)
+        };
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let options = wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() };
@@ -643,7 +651,7 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
-        match Gfx::new(event_loop, &self.title, &self.looks) {
+        match Gfx::new(event_loop, &self.title, &self.looks, self.selftest.is_some()) {
             Ok(gfx) => {
                 self.refresh_hz = gfx
                     .window
