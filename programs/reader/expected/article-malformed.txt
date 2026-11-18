@@ -1,0 +1,47 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+-- page: height 435, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |Malformed figures
+   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  475 bytes
+   78   8     0  -- rule --
+   96  19     0   sans15 |An arc:
+  125  17     0   mono13 |M10 10 A 5 5 0 0 1 20 20
+  152  19     0   sans15 |An exponent, a colour of four digits, a number with no command, a
+  171  19     0   sans15 |point out of range, a word with no colour, numbers left over:
+  200  17     0   mono13 |M1e2 0
+  227  17     0   mono13 |fill #abcd M0 0 L1 1
+  254  17     0   mono13 |10 10 M0 0
+  281  17     0   mono13 |M0 0 L2048 0
+  308  17     0   mono13 |M0 0 stroke
+  335  17     0   mono13 |M0 0 L1 1 2
+  362  19     0   sans15 |A bad size, and a figure that is not closed:
+  391  17     0   mono13 |M0 0
+  418  17     0   mono13 |M0 0 L10 10

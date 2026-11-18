@@ -557,9 +557,15 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = &mut self.gfx
                     && let Some((acquire, render)) = gfx.draw()
-                    && let Some(t) = &mut self.selftest
                 {
-                    t.presented(acquire, render, Instant::now());
+                    if self.trace {
+                        for line in gfx.renderer.take_page_figure_log() {
+                            eprintln!("page: frame {}: {line}", self.machine.frame());
+                        }
+                    }
+                    if let Some(t) = &mut self.selftest {
+                        t.presented(acquire, render, Instant::now());
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),

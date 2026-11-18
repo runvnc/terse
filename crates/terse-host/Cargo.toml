@@ -24,6 +24,7 @@ getrandom = "0.4"
 gilrs = "0.11"
 cosmic-text = "0.19"
 swash = "0.2"
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 
 [dev-dependencies]

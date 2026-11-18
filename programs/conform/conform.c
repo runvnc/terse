@@ -34,8 +34,10 @@
  *   111-118 height events (headless: one a frame in 111-114, none in
  *           115-117 while the width is 0, one in 118)
  *   140     pointer presses over the page (PAGE_CLICK), read at 141;
- *           a clear, its height event at 142
- *   142-    the results; Esc exits. */
+ *           then a document with a figure first, its height at 142
+ *   143     a press over the figure, read at 144; a clear, its height
+ *           event at 145
+ *   145-    the results; Esc exits. */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -1761,6 +1763,24 @@ static const struct {
     0x00,
 };
 static uint8_t page_ram[sizeof page_doc];
+
+/* A figure (SPEC 11.3) 200 x 100 units, end-aligned and anchored: a filled
+ * triangle with a stroke. It takes the place of the empty first paragraph,
+ * so it is the first 100 units of any host's layout, at x 360-560 of the
+ * wide rectangle; then the text of page_doc. */
+#define FIG_ANCHOR 0x0B0C
+static const uint8_t fig_head[] = {
+    0x07, FIG_ANCHOR & 0xFF, FIG_ANCHOR >> 8,
+    0x08, 200, 0, 100, 0, 2, 28, 0,
+    0x01, 255, 120, 40, 255,             /* Fill */
+    0x02, 255, 255, 255, 255, 32, 0,     /* Stroke, 2 units */
+    0x03, 0x40, 0x01, 0x40, 0x01,        /* Move 20, 20 */
+    0x04, 0x80, 0x0B, 0xA0, 0x00,        /* Line 184, 10 */
+    0x04, 0x20, 0x03, 0x80, 0x05,        /* Line 50, 88 */
+    0x07,                                /* Close */
+    0x07, 0, 0,
+};
+static uint8_t fig_ram[sizeof fig_head + sizeof page_doc];
 /* The frame each height event arrived in, and the heights (in RAM, so the
  * state hash covers the exact frames of the headless run). */
 static uint32_t page_frames[8], page_heights[8], page_events;
@@ -1879,10 +1899,23 @@ static void t_page(void)
     ck(anchors == 2);
     val_u(anchors);
 
+    /* A figure first: exactly its height more, whatever the fonts; a press
+     * over it gives its anchor (conform.events, frame PAGE_CLICK + 3). */
+    memcpy(fig_ram, fig_head, sizeof fig_head);
+    memcpy(fig_ram + sizeof fig_head, &page_doc, sizeof page_doc);
+    call(P_SUBMIT, A(fig_ram), sizeof fig_ram, 0);
+    ck(page_height(PAGE_CLICK + 2) == wide + 100);
+    wait_until(PAGE_CLICK + 4);
+    uint32_t fig_anchors = 0;
+    while (call(NEXT_EVENT, A(e), 0, 0) == 1)
+        if (e[0] == 9)
+            fig_anchors += (e[1] | e[2] << 8) == FIG_ANCHOR;
+    ck(fig_anchors == 1);
+
     /* A clear: height 0. Then the page is hidden, with a negative scroll
      * value (a clear keeps it). */
     call(P_CLEAR, 0, 0, 0);
-    ck(page_height(PAGE_CLICK + 10) == 0);
+    ck(page_height(PAGE_CLICK + 12) == 0);
     call4(P_REGION, 0, 0, 0, 0);
     call(P_SCROLL, (uint32_t)-40, 0, 0);
     report("page: height and anchor events");

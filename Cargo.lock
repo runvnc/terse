@@ -2499,6 +2499,7 @@ dependencies = [
  "terse-core",
  "terse-net",
  "terse-relay",
+ "tiny-skia",
  "ttf-parser",
  "wgpu",
  "winit",

@@ -4,11 +4,14 @@ frame, a text terminal, a page of typeset text and a content device that
 moves articles between hosts. Everything you see here was drawn by the
 program; the host only lays the text out with its own fonts.
 
+# Writing an article
+
 An article is plain text. Paragraphs are separated by blank lines, and the
 line breaks inside a paragraph do not matter: the reader joins the lines
-and the host wraps them to fit. A block whose lines are indented is kept
-exactly as written, in a monospaced face, which is handy for tables, code
-and the occasional bit of ASCII art:
+and the host wraps them to fit. A line that starts with # and a space is a
+heading, lines that start with - and a space are a list, and lines
+indented by four spaces are kept exactly as written, in a monospaced face,
+which is handy for tables, code and the occasional bit of ASCII art:
 
     Key          What it does
     Up, Down     move through the timeline
@@ -21,9 +24,15 @@ Bare links such as https://en.wikipedia.org/wiki/RISC-V are marked in a
 link colour. There is no browser here, so pressing one only shows the
 address in the status line, where you can read it and type it elsewhere.
 
+A block between two lines of three backquotes is kept as written too;
+one that starts with ```path holds a small drawing (see "Pictures in
+articles").
+
+# Feeds
+
 Each article belongs to a feed, a numbered series of entries signed with
 one person's key. Your host made a key for you when this demo started, and
-these three articles are the first entries of your own feed. Press F to see
+these articles are the first entries of your own feed. Press F to see
 the feeds you follow, and ? to see your key in full: give it to a friend
 and they can subscribe to whatever you publish.
 

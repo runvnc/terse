@@ -1,11 +1,11 @@
 /* reader.c: a feed reader for Terse (machine profile 1, RV32IMC).
  *
  * Shows the timeline of the feeds the host subscribes to (SPEC 9), newest
- * first, the subscribed feeds, a help page and articles (NETWORK 4.5: plain
- * UTF-8), all on the page device (SPEC 11) in the sans face. The terminal
- * shows only the status row (29: key hints, the reading position, the
- * outcome of a request) and, while a feed key is being typed, the entry row
- * (28). The rows under the page are blank, in the colour of the page's
+ * first, the subscribed feeds, a help page and articles (NETWORK 4.5: text
+ * with headings, lists, preformatted blocks and figures), all on the page
+ * device (SPEC 11) in the sans face. The terminal shows only the status
+ * row (29: key hints, the reading position, the outcome of a request) and,
+ * while a feed key is being typed, the entry row (28). The rows under the page are blank, in the colour of the page's
  * background (xterm 234, (28, 28, 28)), which is opaque.
  *
  * Every frame it handles the queued events, rebuilds and submits the page's
@@ -34,23 +34,35 @@
  * The article view: the page's rectangle covers rows 0-28 (y 0-464), x
  * 64-576: 512 units, about 68 characters of 15-unit body text, centred.
  * The document is the title (26 units, bold), a grey line (feed key, entry
- * number, date, size), a rule, then the article. Its text, by this rule:
- *   - Lines end at LF. A line of only spaces, tabs and CRs is blank; blank
- *     lines separate blocks (any number of them, one break).
- *   - A block in which any line starts with a space or a tab is
- *     preformatted: one paragraph in the monospace face (13 units) that
- *     does not wrap, its LFs and leading spaces kept.
- *   - Any other block is a prose paragraph: its LFs become spaces and the
- *     host wraps it.
- *   - Every paragraph has 10 units of space above it. The LF after a
+ * number, date, size), a rule, then the article, by the article format of
+ * NETWORK 4.5 (blocks, links, figures), shown this way:
+ *   - A paragraph: sans 15 units, wrapped; its lines joined with spaces
+ *     (the blanks at the start of each line dropped).
+ *   - A heading: sans bold 21 units, 18 units of space above it; a
+ *     subheading: sans bold 17, 14 above.
+ *   - A list item: a paragraph indented 10 units that begins with a bullet
+ *     and a space ("• "); 4 units above it after another item. (The page
+ *     indents every line of a paragraph alike, so wrapped lines align with
+ *     the bullet, not the text.)
+ *   - A preformatted block or a fence: monospace 13 units, not wrapped,
+ *     its lines (and blank lines, in a fence) as written.
+ *   - A figure: a Figure command, centred, of W x H units, or if W is over
+ *     512 (the column) 512 x round(H x 512 / W) (at least 1) with every
+ *     coordinate and width scaled by 512 / W after rounding to sixteenths,
+ *     halves away from zero (a width that comes to 0 is 1; the initial
+ *     stroke, 1 unit, is scaled too). Its path string becomes absolute
+ *     binary commands: H and V as Line, S as Cubic, T as Quadratic, the
+ *     relative forms resolved, a Move before the first segment after a Z
+ *     or a word (unless it is an M), colours as RGBA with fg the body text
+ *     colour (218, 218, 218), opaque; the document's text colour at the
+ *     figure is the body colour, so the initial stroke is fg. A figure
+ *     that is malformed, has no closing line, or whose commands do not fit
+ *     in the document (or in 65,535 bytes) is shown as its fence would be.
+ *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
- *   - A link is "http://" or "https://" not preceded by a letter or digit,
- *     with at least one character after the "//", running to the first
- *     byte that is not printable ASCII or is <, > or a double quote; then
- *     trailing . , ; : ! ? ' are dropped, and a trailing ) or ] when the
- *     link has more of it than of its opening bracket. The first 512 links
- *     get anchors 1, 2, ... and the link colour; pressing one (event 09h)
- *     shows its URL in the status row (there is no browser).
+ *   - Links: the first 512 get anchors 1, 2, ... and the link colour;
+ *     pressing one (event 09h) shows its URL in the status row (there is
+ *     no browser).
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
@@ -58,12 +70,13 @@
  * short document with its title and a message stands in.
  *
  * Building the document costs about 9 units per byte of prose (more for
- * short paragraphs and links), so it is spread over frames: each frame
+ * short lines and paragraphs, links and figures' path strings), so it is
+ * spread over frames: each frame
  * spends at most BUILD_UNITS on it, by an estimate of the cost that is
  * never below the real one. The document is submitted at the end of the
  * first frame of building, partial if need be (so the first screenful
  * appears at once), and again, whole, when it is complete; the 48 KiB
- * fixture article takes 11 frames. The program keeps the scroll value
+ * fixture article takes 13 frames. The program keeps the scroll value
  * itself: Up/Down move one body line (LINE units), PgUp/PgDn/Space the
  * rectangle less a line, the wheel three lines a step, Home/End the ends.
  * It clamps the value to 0 .. height - 464 with the latest height event
@@ -90,7 +103,8 @@
  * records, up to 48 KiB of the article (ART_CAP), the 64 KiB article
  * document and an 8 KiB document for the other views. The timeline buffer
  * holds one request's worth of records: 70 entries with 120-byte titles to
- * 147 with empty ones. */
+ * 147 with empty ones. A figure's path commands are built in place, in the
+ * article document where its Figure command will hold them. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -144,6 +158,14 @@
 #define PRE_SIZE 13
 #define PRE_INDENT 0
 #define PARA_SPACE 10
+#define H1_SIZE 21
+#define H1_SPACE 18
+#define H2_SIZE 17
+#define H2_SPACE 14
+#define ITEM_INDENT 10
+#define ITEM_SPACE 4
+/* A figure's coordinates: at most 2047 units either way, in sixteenths. */
+#define F_MAX (2047 * 16)
 #define NOTE_SIZE 13
 #define DOC_CAP 65536u
 #define DOC_RESERVE 128 /* kept for the closing note and End */
@@ -164,14 +186,21 @@
  * whole document ends well within its budget. The estimates (measured, and
  * rounded up): per byte looked at while finding blocks and while emitting
  * them (scanned a word at a time, and copied), per line, per LF or colon
- * met while emitting, per paragraph and per link. */
+ * met while emitting, per paragraph and per link; for a figure's path
+ * string, per separator byte, per byte of a number, per token, per segment
+ * converted and per figure. */
 #define BUILD_UNITS 80000
 #define W_FIND 3
 #define W_EMIT 6
-#define W_LINE 80
+#define W_LINE 200
 #define W_HIT 120
 #define W_BLOCK 400
 #define W_LINK 900
+#define W_PSEP 14
+#define W_PBYTE 20
+#define W_PTOKEN 100
+#define W_PSEG 360
+#define W_FIGURE 300
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
@@ -264,19 +293,44 @@ static uint8_t art[ART_CAP];
 /* The document and how far it is built (offsets into art). */
 static uint8_t doc[DOC_CAP];
 enum { B_FIND, B_EMIT, B_FINISH, B_DONE };
+/* Kinds of line (B_FIND) and of block. */
+enum { L_PLAIN, L_INDENT, L_ITEM, L_H1, L_H2, L_FENCE };
+enum { K_NONE, K_PARA, K_ITEM, K_H1, K_H2, K_PRE, K_FENCE, K_FIGURE };
+/* The text styles of blocks: face, flags, size, colour. */
+enum { S_BODY, S_PRE, S_H1, S_H2 };
 static uint8_t b_phase;
 static uint16_t b_line;    /* B_FIND: start of the next line to look at */
 static uint16_t b_scan;    /* B_FIND: where the search for its LF goes on */
-static uint8_t b_in_line;  /* B_FIND: 0 at a line start, 1 in its leading blanks, 2 in its text */
-static uint16_t b_lines;   /* lines in the block so far */
-static uint16_t b_start, b_end; /* the block: its first byte, the end of its last line */
-static uint8_t b_pre, b_was_pre;
+static uint8_t b_in_line;  /* B_FIND: 0 at a line start, 1 classifying it, 2 looking for its LF */
+static uint8_t b_lkind;    /* B_FIND: the kind of the line */
+static uint16_t b_lines;   /* lines in the block so far (a fence: lines between its fences) */
+static uint16_t b_start, b_end; /* the block's text: its first byte, the end of its last line */
+static uint16_t b_open;    /* the block's first line (a fence: its opening line) */
+static uint8_t b_kind, b_prev; /* the block's kind, the previous block's */
+static uint8_t b_closed;   /* a fence: its closing line was found */
+static uint8_t b_bad;      /* a figure: its opening line is malformed */
+static uint8_t b_style;    /* the style the document is in */
+static uint8_t b_skip;     /* B_EMIT: blanks at b_emit are dropped */
 static uint16_t b_emit;    /* B_EMIT: the next byte to look at */
 static uint16_t b_text;    /* B_EMIT: the first byte not yet in the document */
 static uint16_t b_shown;   /* the article bytes in the document */
 static uint32_t b_work;    /* units left for this frame */
 static const uint8_t *b_colour; /* the colour of the block's text */
 static uint16_t link_at[MAX_LINKS], link_len[MAX_LINKS], links;
+
+/* A figure being converted (B_EMIT of a K_FIGURE block): its size, the
+ * width it is scaled down from (0: not scaled), where its path commands
+ * go (in the document, after room for a Paragraph and the Figure head),
+ * the next byte of its path string, the command whose numbers are being
+ * read and how many are, a word whose operands are awaited, the current
+ * point, the subpath's start and the last control point (sixteenths, not
+ * scaled), and what the last segment was. */
+enum { FW_NONE, FW_FILL, FW_STROKE, FW_WIDTH };
+static uint16_t f_w, f_h, f_scale, f_pos;
+static uint8_t *f_base;
+static uint8_t f_cmd, f_argc, f_n, f_word, f_moved, f_need, f_last;
+static int32_t f_arg[6], f_cx, f_cy, f_sx, f_sy, f_qx, f_qy;
+static uint8_t f_rgba[4];
 
 /* The scrolled views (article, help). */
 static uint8_t doc_state; /* 0: nothing (of this view's) submitted; 1: a part; 2: all of it */
@@ -631,6 +685,8 @@ static void flush(uint32_t to)
     b_text = to;
 }
 
+static void doc_s(const char *s);
+
 static uint8_t is_alnum(uint8_t c)
 {
     return (uint8_t)(c - '0') < 10 || (uint8_t)((c | 0x20) - 'a') < 26;
@@ -738,58 +794,167 @@ static uint8_t is_blank(uint8_t c)
     return c == ' ' || c == '\t' || c == '\r';
 }
 
-/* B_FIND: looks for the next block in art[0 .. limit) (`final`: no more
- * bytes are coming). Returns 1 with b_start, b_end and b_pre set, or 0 if
- * it needs more bytes or this frame's share is used; at the end of the
- * article it moves on to B_FINISH. Resumable: b_in_line is 0 at the start
- * of a line, 1 in its leading blanks, 2 looking for its LF (b_scan). */
+static uint8_t is_digit(uint8_t c)
+{
+    return (uint8_t)(c - '0') < 10;
+}
+
+static uint8_t hex_value(uint8_t c)
+{
+    if (is_digit(c))
+        return c - '0';
+    c |= 0x20;
+    if ((uint8_t)(c - 'a') < 6)
+        return c - 'a' + 10;
+    return 255;
+}
+
+/* Whether art[from .. to) is all blanks. */
+static uint8_t blanks_only(uint32_t from, uint32_t to)
+{
+    spend((to - from) * W_FIND);
+    for (; from < to; from++)
+        if (!is_blank(art[from]))
+            return 0;
+    return 1;
+}
+
+/* A figure's size on its opening line: a decimal number 1-1024 at art[*i]
+ * (before `end`), ended by a blank or the end, and the blanks after it;
+ * 0 if there is none. */
+static uint16_t fence_number(uint32_t *i, uint32_t end)
+{
+    uint32_t k = *i, v = 0;
+    for (; k < end && is_digit(art[k]); k++) {
+        v = v * 10 + art[k] - '0';
+        if (v > 1024)
+            return 0;
+    }
+    if (k == *i || (k < end && !is_blank(art[k])))
+        return 0;
+    while (k < end && is_blank(art[k]))
+        k++;
+    *i = k;
+    return v;
+}
+
+/* The rest of a fence's opening line, art[i .. end): "path W H" makes the
+ * block a figure (b_bad if W or H is not right). */
+static void fence_info(uint32_t i, uint32_t end)
+{
+    spend((end - i) * W_FIND);
+    while (i < end && is_blank(art[i]))
+        i++;
+    if (end - i < 4 || memcmp(art + i, "path", 4) || (end - i > 4 && !is_blank(art[i + 4])))
+        return;
+    b_kind = K_FIGURE;
+    i += 4;
+    while (i < end && is_blank(art[i]))
+        i++;
+    f_w = fence_number(&i, end);
+    f_h = fence_number(&i, end);
+    b_bad = !f_w || !f_h || i < end;
+}
+
+/* The kind of block a line starts. */
+static const uint8_t block_of[] = {K_PARA, K_PRE, K_ITEM, K_H1, K_H2, K_FENCE};
+
+/* B_FIND: gathers the next block from art[0 .. limit) (`final`: no more
+ * bytes are coming). Returns 1 with b_kind, b_start, b_end, b_lines (and
+ * for a fence b_closed, for a figure f_w, f_h and b_bad) set, or 0 if it
+ * needs more bytes or this frame's share is used; at the end of the article
+ * it moves on to B_FINISH. Resumable: b_in_line is 0 at the start of a
+ * line, 1 while classifying it (b_scan: in its leading blanks), 2 looking
+ * for its LF (b_scan). A line that starts another block ends the one
+ * gathered and is looked at again for the next. */
 static uint8_t find_block(uint32_t limit, uint8_t final)
 {
     uint8_t *p;
     const uint8_t *e;
+    uint32_t q, next;
+    uint8_t fence, k, c, c1, c2;
     for (;;) {
         if (!b_work)
             return 0;
+        fence = b_kind >= K_FENCE;
         if (b_in_line == 0) {
+            if (b_line >= limit) {
+                if (!final)
+                    return 0;
+                if (b_kind)
+                    return 1;
+                b_phase = B_FINISH;
+                return 0;
+            }
             spend(W_LINE);
             b_scan = b_line;
             b_in_line = 1;
+        }
+        if (b_in_line == 1) {
+            c = art[b_line];
+            q = b_line;
+            if (!fence && (is_blank(c) || c == '\n')) {
+                p = art + b_scan;
+                e = art + limit;
+                if ((uint32_t)(e - p) > b_work / W_FIND)
+                    e = p + b_work / W_FIND;
+                while (p < e && is_blank(*p))
+                    p++;
+                spend((p - (art + b_scan)) * W_FIND);
+                b_scan = q = p - art;
+                if (q < limit && is_blank(art[q]))
+                    return 0; /* this frame's share is used */
+                if (q == limit && !final)
+                    return 0;
+                if (q == limit || art[q] == '\n') { /* a blank line */
+                    b_in_line = 0;
+                    b_line = q < limit ? q + 1 : q;
+                    if (b_kind)
+                        return 1;
+                    continue;
+                }
+                k = c == '\t' || (c == ' ' && q - b_line >= 4 && art[b_line + 1] == ' ' && art[b_line + 2] == ' '
+                                  && art[b_line + 3] == ' ')
+                        ? L_INDENT
+                        : L_PLAIN;
+            } else {
+                if (limit - b_line < 3 && !final)
+                    return 0;
+                c1 = b_line + 1 < limit ? art[b_line + 1] : 0;
+                c2 = b_line + 2 < limit ? art[b_line + 2] : 0;
+                if (c == '`' && c1 == '`' && c2 == '`')
+                    k = L_FENCE;
+                else if (fence)
+                    k = L_PLAIN;
+                else if (c == '#' && c1 == ' ')
+                    k = L_H1;
+                else if (c == '#' && c1 == '#' && c2 == ' ')
+                    k = L_H2;
+                else if ((c == '-' || c == '*') && c1 == ' ')
+                    k = L_ITEM;
+                else
+                    k = L_PLAIN;
+            }
+            b_lkind = k;
+            if (!fence) {
+                if (b_kind && !(k == L_PLAIN && (b_kind == K_PARA || b_kind == K_ITEM)) && !(k == L_INDENT && b_kind == K_PRE)) {
+                    b_in_line = 0; /* this line starts the next block */
+                    return 1;
+                }
+                if (!b_kind) {
+                    b_kind = block_of[k];
+                    b_start = k == L_PLAIN ? q : k == L_ITEM || k == L_H1 ? b_line + 2 : k == L_H2 ? b_line + 3 : b_line;
+                    b_open = b_line;
+                    b_lines = b_closed = b_bad = 0;
+                }
+            }
+            b_in_line = 2;
+            continue;
         }
         p = art + b_scan;
         e = art + limit;
         if ((uint32_t)(e - p) > b_work / W_FIND)
             e = p + b_work / W_FIND;
-        if (b_in_line == 1) {
-            uint32_t q;
-            while (p < e && is_blank(*p))
-                p++;
-            spend((p - (art + b_scan)) * W_FIND);
-            b_scan = q = p - art;
-            if (q < limit && is_blank(art[q]))
-                return 0; /* this frame's share is used */
-            if (q == limit && !final)
-                return 0;
-            if (q == limit || art[q] == '\n') { /* a blank line, or the end */
-                b_in_line = 0;
-                b_line = q < limit ? q + 1 : q;
-                if (b_lines)
-                    return 1;
-                if (q == limit) {
-                    b_phase = B_FINISH;
-                    return 0;
-                }
-                continue;
-            }
-            if (!b_lines) {
-                b_start = b_line;
-                b_pre = 0;
-            }
-            if (art[b_line] == ' ' || art[b_line] == '\t')
-                b_pre = 1;
-            b_lines++;
-            b_in_line = 2;
-            continue;
-        }
         p = find_lf(p, e);
         spend((p - (art + b_scan)) * W_FIND);
         b_scan = p - art;
@@ -797,44 +962,116 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
             return 0; /* this frame's share is used */
         if (b_scan == limit && !final)
             return 0;
-        b_end = b_scan;
-        b_line = b_scan < limit ? b_scan + 1 : b_scan;
+        next = b_scan < limit ? b_scan + 1 : b_scan;
+        q = b_line;
+        b_line = next;
         b_in_line = 0;
+        if (fence) {
+            if (q == b_open) {
+                fence_info(q + 3, b_scan);
+                b_start = next;
+            } else if (b_lkind == L_FENCE && blanks_only(q + 3, b_scan)) {
+                b_closed = 1;
+                return 1;
+            } else {
+                if (!b_lines)
+                    b_start = q;
+                b_end = b_scan;
+                b_lines++;
+            }
+        } else {
+            b_end = b_scan;
+            b_lines++;
+            if (b_kind == K_H1 || b_kind == K_H2)
+                return 1;
+        }
     }
 }
 
-/* B_EMIT: starts the block's paragraph. */
+static const uint8_t style_face[] = {DOC_SANS, DOC_MONO, DOC_SANS, DOC_SANS};
+static const uint8_t style_flags[] = {0, 0, DOC_BOLD, DOC_BOLD};
+static const uint8_t style_size[] = {BODY_SIZE, PRE_SIZE, H1_SIZE, H2_SIZE};
+static const uint8_t *const style_rgb[] = {rgb_body, rgb_pre, rgb_title, rgb_title};
+
+static void set_style(uint8_t s)
+{
+    if (s != b_style) {
+        doc_font(style_face[s], style_flags[s]);
+        doc_size(style_size[s]);
+        doc_rgb(style_rgb[s]);
+        b_style = s;
+    }
+    b_colour = style_rgb[s];
+}
+
+static void figure_start(void);
+
+/* B_EMIT: starts the block's paragraph (a figure: its conversion; a fence
+ * with nothing in it: nothing). */
 static void start_block(void)
 {
     spend(W_BLOCK);
-    if (b_pre) {
-        doc_font(DOC_MONO, 0);
-        doc_size(PRE_SIZE);
-        b_colour = rgb_pre;
-        doc_rgb(b_colour);
-        doc_paragraph(DOC_START, PRE_INDENT, PARA_SPACE, DOC_NOWRAP);
-    } else {
-        if (b_was_pre) {
-            doc_font(DOC_SANS, 0);
-            doc_size(BODY_SIZE);
-            b_colour = rgb_body;
-            doc_rgb(b_colour);
+    b_emit = b_text = b_start;
+    b_skip = b_kind < K_PRE;
+    switch (b_kind) {
+    case K_FIGURE:
+        if (b_closed && !b_bad) {
+            figure_start();
+            return;
         }
+        b_kind = K_FENCE;
+        /* fall through: shown as a fence */
+    case K_FENCE:
+        if (!b_lines) {
+            b_end = b_start;
+            return;
+        }
+        /* fall through */
+    case K_PRE:
+        set_style(S_PRE);
+        doc_paragraph(DOC_START, PRE_INDENT, PARA_SPACE, DOC_NOWRAP);
+        break;
+    case K_H1:
+        set_style(S_H1);
+        doc_paragraph(DOC_START, 0, H1_SPACE, 0);
+        break;
+    case K_H2:
+        set_style(S_H2);
+        doc_paragraph(DOC_START, 0, H2_SPACE, 0);
+        break;
+    case K_ITEM:
+        set_style(S_BODY);
+        doc_paragraph(DOC_START, ITEM_INDENT, b_prev == K_ITEM ? ITEM_SPACE : PARA_SPACE, 0);
+        doc_s("\xE2\x80\xA2 ");
+        break;
+    default:
+        set_style(S_BODY);
         doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
     }
-    b_was_pre = b_pre;
-    b_emit = b_text = b_start;
 }
 
-/* B_EMIT: the block's text, with LFs as spaces in prose and links marked.
- * Returns 1 when the block is in the document, 0 if this frame's share is
- * used (the text so far is added, cut between characters). */
+/* B_EMIT: the block's text, with LFs as spaces (and the blanks after them
+ * dropped) unless it is preformatted, and links marked. Returns 1 when the
+ * block is in the document, 0 if this frame's share is used (the text so
+ * far is added, cut between characters). */
 static uint8_t emit_block(void)
 {
     uint32_t end = b_end, i, k;
     uint8_t *p = art + b_emit, *e = art + end, *stop, *q;
+    uint8_t pre = b_kind >= K_PRE;
     for (;;) {
         stop = (uint32_t)(e - p) > b_work / W_EMIT ? p + b_work / W_EMIT : e;
+        if (b_skip) {
+            q = p;
+            while (q < stop && is_blank(*q))
+                q++;
+            spend((q - p) * W_EMIT);
+            p = q;
+            b_text = p - art;
+            if (p >= stop)
+                break;
+            b_skip = 0;
+        }
         q = find2(p, stop, '\n', ':');
         spend((q - p) * W_EMIT);
         p = q;
@@ -842,8 +1079,13 @@ static uint8_t emit_block(void)
             break;
         spend(W_HIT);
         if (*p == '\n') {
-            if (!b_pre)
+            if (!pre) {
                 *p = ' ';
+                if (p + 1 < e && is_blank(p[1])) {
+                    flush(p + 1 - art);
+                    b_skip = 1;
+                }
+            }
         } else {
             /* A link has "http:" or "https:" before its "//". */
             uint32_t c = p - art, at = c - 4, len;
@@ -875,6 +1117,283 @@ static uint8_t emit_block(void)
     flush(i);
     b_emit = i;
     return 0;
+}
+
+/* --- Figures ------------------------------------------------------------ */
+
+static uint8_t is_sep(uint8_t c)
+{
+    return c == ' ' || c == ',' || c == '\n' || c == '\t' || c == '\r';
+}
+
+/* A number at *pp (before e): its value in sixteenths of a unit, rounded,
+ * halves away from zero. Returns 0 if there is none or it is longer than
+ * 32 bytes. Digits after the sixth decimal do not change the rounding. */
+static uint8_t read_num(const uint8_t **pp, const uint8_t *e, int32_t *v)
+{
+    const uint8_t *p = *pp;
+    uint32_t ip = 0, fr = 0, den = 1, n = 0;
+    uint8_t neg = *p == '-';
+    if (e - p > 33)
+        e = p + 33;
+    if (*p == '-' || *p == '+')
+        p++;
+    for (; p < e && is_digit(*p); p++, n++)
+        if (ip < 100000)
+            ip = ip * 10 + *p - '0';
+    if (p < e && *p == '.')
+        for (p++; p < e && is_digit(*p); p++, n++)
+            if (den < 1000000) {
+                fr = fr * 10 + *p - '0';
+                den *= 10;
+            }
+    if (!n || p - *pp > 32)
+        return 0;
+    spend((p - *pp) * W_PBYTE);
+    ip = ip * 16 + (fr * 32 + den) / (2 * den);
+    *v = neg ? -(int32_t)ip : (int32_t)ip;
+    *pp = p;
+    return 1;
+}
+
+/* A colour at *pp: #rgb, #rrggbb, #rrggbbaa, none or fg, followed by a
+ * separator or the end. Returns 0 if malformed. */
+static uint8_t read_colour(const uint8_t **pp, const uint8_t *e, uint8_t *c)
+{
+    const uint8_t *p = *pp;
+    uint32_t v = 0, n = 0;
+    if (*p == '#') {
+        for (p++; p < e && hex_value(*p) < 16 && n < 9; p++, n++)
+            v = v << 4 | hex_value(*p);
+        if (n == 3)
+            v = ((v >> 8) * 0x11) << 24 | ((v >> 4 & 15) * 0x11) << 16 | ((v & 15) * 0x11) << 8 | 255;
+        else if (n == 6)
+            v = v << 8 | 255;
+        else if (n != 8)
+            return 0;
+    } else if (e - p >= 4 && !memcmp(p, "none", 4)) {
+        p += 4;
+    } else if (e - p >= 2 && p[0] == 'f' && p[1] == 'g') {
+        p += 2;
+        v = (uint32_t)rgb_body[0] << 24 | (uint32_t)rgb_body[1] << 16 | (uint32_t)rgb_body[2] << 8 | 255;
+    } else {
+        return 0;
+    }
+    if (p < e && !is_sep(*p))
+        return 0;
+    c[0] = v >> 24;
+    c[1] = v >> 16;
+    c[2] = v >> 8;
+    c[3] = v;
+    spend((p - *pp) * W_PBYTE);
+    *pp = p;
+    return 1;
+}
+
+/* A coordinate or width in sixteenths as drawn: scaled if the figure is. */
+static int32_t scaled(int32_t v)
+{
+    if (f_scale)
+        v = (v * RECT_W + (v < 0 ? -(f_scale / 2) : f_scale / 2)) / f_scale;
+    return v;
+}
+
+static const char cmd_letter[] = "MLHVCSQTZ";
+static const uint8_t cmd_args[] = {2, 2, 1, 1, 6, 4, 4, 2, 0};
+
+/* The segment of f_cmd with the numbers in f_arg, as absolute binary
+ * commands. Returns 0 if a point is out of range. */
+static uint8_t segment(void)
+{
+    uint8_t up = f_cmd & 0xDF, i = 0, k, n;
+    int32_t ox = f_cmd != up ? f_cx : 0, oy = f_cmd != up ? f_cy : 0, pt[6];
+    int16_t s[6];
+    spend(W_PSEG);
+    if (up == 'H' || up == 'V') {
+        pt[0] = up == 'H' ? f_arg[0] + ox : f_cx;
+        pt[1] = up == 'V' ? f_arg[0] + oy : f_cy;
+        n = 2;
+    } else {
+        if (up == 'S' || up == 'T') {
+            /* The reflection of the last control point, if the last
+             * segment was of the same family, else the current point. */
+            uint8_t same = f_last == (up == 'S' ? 'C' : 'Q');
+            pt[0] = same ? 2 * f_cx - f_qx : f_cx;
+            pt[1] = same ? 2 * f_cy - f_qy : f_cy;
+            i = 2;
+        }
+        n = i + f_argc;
+        for (k = 0; i < n; i++, k++)
+            pt[i] = f_arg[k] + (i & 1 ? oy : ox);
+    }
+    for (i = 0; i < n; i++) {
+        if (pt[i] > F_MAX || pt[i] < -F_MAX)
+            return 0;
+        s[i] = scaled(pt[i]);
+    }
+    if (up == 'M') {
+        f_sx = pt[0];
+        f_sy = pt[1];
+        f_moved = 1;
+    } else if (f_need) {
+        path_move(scaled(f_cx), scaled(f_cy));
+    }
+    f_need = 0;
+    path_points(up == 'M' ? PATH_MOVE : n == 2 ? PATH_LINE : n == 4 ? PATH_QUAD : PATH_CUBIC, n / 2, s);
+    f_last = n == 6 ? 'C' : n == 4 ? 'Q' : 0;
+    if (n > 2) {
+        f_qx = pt[n - 4];
+        f_qy = pt[n - 3];
+    }
+    f_cx = pt[n - 2];
+    f_cy = pt[n - 1];
+    return 1;
+}
+
+static void stroke(int32_t w);
+
+/* B_EMIT of a figure: path commands go after room for a Paragraph and the
+ * Figure's head, where the document will hold them; until the figure is
+ * complete, doc_ptr does not move, so a partial submit leaves it out and a
+ * malformed path leaves nothing behind. */
+static void figure_start(void)
+{
+    uint32_t cap;
+    set_style(S_BODY); /* the initial stroke is the text colour: fg */
+    f_base = doc_ptr + 5 + DOC_FIGURE_HEAD;
+    cap = doc_overflow || f_base > doc_limit ? 0 : doc_limit - f_base;
+    path_begin(f_base, cap > 0xFFFF ? 0xFFFF : cap);
+    f_pos = b_start;
+    f_cmd = f_n = f_word = f_moved = f_need = f_last = 0;
+    f_cx = f_cy = f_sx = f_sy = 0;
+    f_scale = f_w > RECT_W ? f_w : 0;
+    if (f_scale) { /* the initial stroke's width scales too */
+        memcpy(f_rgba, rgb_body, 3);
+        f_rgba[3] = 255;
+        stroke(16);
+    }
+}
+
+static void stroke(int32_t w)
+{
+    int32_t s = scaled(w);
+    path_stroke(f_rgba[0], f_rgba[1], f_rgba[2], f_rgba[3], w && !s ? 1 : s);
+    f_word = FW_NONE;
+}
+
+/* B_EMIT of a figure: converts its path string. Returns 0 if this frame's
+ * share is used, 1 when the path is converted, 2 if it is malformed (or
+ * does not fit). */
+static uint8_t figure_step(void)
+{
+    const uint8_t *p = art + f_pos, *e = art + b_end, *q, *s;
+    int32_t v;
+    uint8_t c, k;
+    for (;;) {
+        if (path_overflow)
+            return 2;
+        if (!b_work) {
+            f_pos = p - art;
+            return 0;
+        }
+        q = (uint32_t)(e - p) > b_work / W_PSEP ? p + b_work / W_PSEP : e;
+        for (s = p; p < q && is_sep(*p); p++)
+            ;
+        spend((p - s) * W_PSEP);
+        if (p == q && p < e) {
+            b_work = 0;
+            continue;
+        }
+        if (p == e) {
+            if (f_n || f_word == FW_FILL || f_word == FW_STROKE)
+                return 2;
+            if (f_word == FW_WIDTH)
+                stroke(16);
+            return path_overflow ? 2 : 1;
+        }
+        spend(W_PTOKEN);
+        c = *p;
+        if (f_word == FW_FILL || f_word == FW_STROKE) {
+            if (!read_colour(&p, e, f_rgba))
+                return 2;
+            if (f_word == FW_FILL) {
+                path_fill(f_rgba[0], f_rgba[1], f_rgba[2], f_rgba[3]);
+                f_word = FW_NONE;
+            } else {
+                f_word = FW_WIDTH;
+            }
+            continue;
+        }
+        if (is_digit(c) || c == '.' || c == '-' || c == '+') {
+            if (!read_num(&p, e, &v))
+                return 2;
+            if (f_word == FW_WIDTH) {
+                if (v < 0 || v > F_MAX)
+                    return 2;
+                stroke(v);
+                continue;
+            }
+            if (!f_cmd || (f_cmd & 0xDF) == 'Z')
+                return 2;
+            f_arg[f_n++] = v;
+            if (f_n == f_argc) {
+                f_n = 0;
+                if (!segment())
+                    return 2;
+                if ((f_cmd & 0xDF) == 'M')
+                    f_cmd += 'L' - 'M'; /* more pairs are lines */
+            }
+            continue;
+        }
+        if (f_word == FW_WIDTH)
+            stroke(16);
+        if (f_n)
+            return 2;
+        if (e - p > 4 && !memcmp(p, "fill", 4) && is_sep(p[4])) {
+            p += 4;
+            f_word = FW_FILL;
+        } else if (e - p > 6 && !memcmp(p, "stroke", 6) && is_sep(p[6])) {
+            p += 6;
+            f_word = FW_STROKE;
+        } else {
+            for (k = 0; k < 9 && cmd_letter[k] != (c & 0xDF); k++)
+                ;
+            if (k == 9 || (k && !f_moved))
+                return 2;
+            p++;
+            f_cmd = c;
+            f_argc = cmd_args[k];
+            if (k == 8) {
+                spend(W_PSEG);
+                path_close();
+                f_cx = f_sx;
+                f_cy = f_sy;
+                f_need = 1;
+                f_last = 0;
+            }
+            continue;
+        }
+        /* A word ends the path so far: what follows starts a new one. */
+        f_cmd = 0;
+        f_need = 1;
+    }
+}
+
+/* The converted figure into the document: scaled to the column if wider. */
+static void figure_end(void)
+{
+    uint16_t w = f_w, h = f_h;
+    if (f_scale) {
+        w = RECT_W;
+        h = (f_h * RECT_W + f_scale / 2) / f_scale;
+        if (!h)
+            h = 1;
+    }
+    spend(W_FIGURE);
+    doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
+    doc_figure(w, h, DOC_CENTRE, f_base, path_length(f_base));
+    if (!doc_overflow)
+        b_shown = b_end;
 }
 
 static void send_scroll(void)
@@ -950,9 +1469,18 @@ static void build(void)
             start_block();
             b_phase = B_EMIT;
         } else {
-            if (!emit_block())
+            uint8_t r = b_kind == K_FIGURE ? figure_step() : emit_block();
+            if (!r)
                 break;
-            b_lines = 0;
+            if (r == 2) { /* a malformed path: shown as a fence */
+                b_kind = K_FENCE;
+                start_block();
+                continue;
+            }
+            if (b_kind == K_FIGURE)
+                figure_end();
+            b_prev = b_kind;
+            b_kind = K_NONE;
             b_phase = B_FIND;
         }
     }
@@ -1636,7 +2164,7 @@ static void doc_head(void)
     doc_size(BODY_SIZE);
     doc_rgb(rgb_body);
     b_colour = rgb_body;
-    b_was_pre = 0;
+    b_style = S_BODY;
 }
 
 /* The article's head and a message, while there is no article text. */
@@ -1727,6 +2255,7 @@ static void open_article(uint16_t i)
     doc_head();
     b_phase = B_FIND;
     b_line = b_lines = b_in_line = 0;
+    b_kind = b_prev = K_NONE;
     b_shown = links = 0;
     doc_state = 0;
     page_h = page_h_known = 0;
@@ -1843,14 +2372,14 @@ static void test_publish(void)
         tb_date(now);
         tb_s(" UTC");
     }
-    tb_s(".\n\nA second paragraph gives it some shape. The reader splits an article into paragraphs at "
-         "blank lines and wraps each one to the width of the page, but keeps the lines of a block\n"
-         "that has indented lines:\n\n    frame  ");
+    tb_s(".\n\n## Some shape\n\nThe reader splits an article into paragraphs at blank lines and wraps "
+         "each one to the width of the page, but keeps\nindented lines as they are:\n\n    frame  ");
     tb_u(frame);
     tb_s("\n    time   ");
     tb_u(now);
-    tb_s("\n\nThe last paragraph has a link, https://example.com/terse, which shows its address when "
-         "pressed.\n");
+    tb_s("\n\n- a list item\n- and a figure:\n\n```path 120 32\nfill #3a6ea5 stroke none M0 4h120v24H0z "
+         "fill none stroke #fc6 2 M8 24 40 10 72 20 112 6\n```\n\nThe last paragraph has a link, "
+         "https://example.com/terse, which shows its address when pressed.\n");
     op_start(OP_PUT, content_put(&op_req, tb, tb_n));
     tb_n = 0;
     tb_s("Publishing \xE2\x80\x9C");
@@ -1963,16 +2492,6 @@ static void entry_show(uint8_t on)
     dirty[ENTRY_ROW] = dirty[STATUS_ROW] = 1;
     if (!on)
         term_cmd(TERM_CURSOR_OFF);
-}
-
-static uint8_t hex_value(uint8_t c)
-{
-    if ((uint8_t)(c - '0') < 10)
-        return c - '0';
-    c |= 0x20;
-    if ((uint8_t)(c - 'a') < 6)
-        return c - 'a' + 10;
-    return 255;
 }
 
 /* A character typed or pasted; blanks are left out. */

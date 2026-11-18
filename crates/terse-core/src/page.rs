@@ -34,6 +34,18 @@ pub mod op {
     pub const PARAGRAPH: u8 = 0x05;
     pub const RULE: u8 = 0x06;
     pub const ANCHOR: u8 = 0x07;
+    pub const FIGURE: u8 = 0x08;
+}
+
+/// Path opcodes inside a Figure (SPEC 11.3).
+pub mod path_op {
+    pub const FILL: u8 = 0x01;
+    pub const STROKE: u8 = 0x02;
+    pub const MOVE: u8 = 0x03;
+    pub const LINE: u8 = 0x04;
+    pub const QUAD: u8 = 0x05;
+    pub const CUBIC: u8 = 0x06;
+    pub const CLOSE: u8 = 0x07;
 }
 
 /// Font faces (SPEC 11.3).
@@ -224,12 +236,260 @@ pub struct Paragraph {
     pub runs: Vec<Run>,
     /// A rule paragraph: a line in this colour across the rectangle.
     pub rule: Option<[u8; 3]>,
+    /// A figure paragraph (then `align` is the figure's alignment).
+    pub figure: Option<Figure>,
 }
 
 impl Paragraph {
-    /// Whether the paragraph has any characters (a rule has none).
+    /// Whether the paragraph has any characters (a rule or figure has none).
     pub fn has_text(&self) -> bool {
         self.runs.iter().any(|r| !r.text.is_empty())
+    }
+
+    /// Whether it is a text paragraph (not a rule or a figure).
+    fn is_text(&self) -> bool {
+        self.rule.is_none() && self.figure.is_none()
+    }
+}
+
+/// Figure sizes are clamped to this range of screen units (SPEC 11.3).
+pub const MAX_FIGURE_SIDE: u16 = 1024;
+/// The per-figure cap on painted area in square screen units (SPEC 11.3).
+pub const FIGURE_AREA_CAP: u64 = 4 * 640 * 480;
+/// The per-figure cap on path length in screen units (SPEC 11.3).
+pub const FIGURE_LENGTH_CAP: u64 = 65_536;
+/// The most paths a figure draws (SPEC 11.3).
+pub const FIGURE_PATH_CAP: usize = 256;
+/// Initial stroke width in sixteenths (one screen unit).
+pub const DEFAULT_STROKE_WIDTH: u16 = 16;
+
+/// A figure as the document gives it (SPEC 11.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Figure {
+    /// Screen units, 1 to 1024.
+    pub width: u16,
+    pub height: u16,
+    /// The text colour when the figure appeared: the initial stroke colour.
+    pub rgb: [u8; 3],
+    /// 0: no anchor.
+    pub anchor: u16,
+    /// The path commands, as given.
+    pub path: Vec<u8>,
+}
+
+/// One segment of a figure path; points in sixteenths of a screen unit from
+/// the figure's top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Segment {
+    Move(i16, i16),
+    Line(i16, i16),
+    Quad(i16, i16, i16, i16),
+    Cubic(i16, i16, i16, i16, i16, i16),
+    Close,
+}
+
+/// A path to draw: its subpaths, filled (non-zero) then stroked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FigurePath {
+    /// Fill colour (r, g, b, a), if filled.
+    pub fill: Option<[u8; 4]>,
+    /// Stroke colour and width in sixteenths, if stroked.
+    pub stroke: Option<([u8; 4], u16)>,
+    /// Every subpath starts with a Move.
+    pub segments: Vec<Segment>,
+}
+
+impl FigurePath {
+    /// The area this path counts against the cap (SPEC 11.3), in square
+    /// screen units: the box of its points, clipped to the figure's box,
+    /// for its fill, and that box grown by half the stroke width, clipped,
+    /// for its stroke; each rounded up.
+    fn area(&self, width: u16, height: u16) -> u64 {
+        let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+        for s in &self.segments {
+            let pts: &[(i16, i16)] = &match *s {
+                Segment::Move(x, y) | Segment::Line(x, y) => vec![(x, y)],
+                Segment::Quad(a, b, x, y) => vec![(a, b), (x, y)],
+                Segment::Cubic(a, b, c, d, x, y) => vec![(a, b), (c, d), (x, y)],
+                Segment::Close => vec![],
+            };
+            for &(x, y) in pts {
+                x0 = x0.min(x as i64);
+                y0 = y0.min(y as i64);
+                x1 = x1.max(x as i64);
+                y1 = y1.max(y as i64);
+            }
+        }
+        if x0 > x1 {
+            return 0;
+        }
+        let (w, h) = (16 * width as i64, 16 * height as i64);
+        let clipped = |grow: i64| -> u64 {
+            let cw = (x1 + grow).min(w) - (x0 - grow).max(0);
+            let ch = (y1 + grow).min(h) - (y0 - grow).max(0);
+            if cw <= 0 || ch <= 0 { 0 } else { (cw as u64 * ch as u64).div_ceil(256) }
+        };
+        let mut area = 0;
+        if self.fill.is_some() {
+            area += clipped(0);
+        }
+        if let Some((_, sw)) = self.stroke {
+            area += clipped((sw as i64 + 1) / 2);
+        }
+        area
+    }
+}
+
+impl FigurePath {
+    /// The length this path counts against the cap (SPEC 11.3), in screen
+    /// units, rounded up: for each Line, Quadratic and Cubic, |dx| + |dy|
+    /// over the steps from its start through its control points to its end,
+    /// summed; then for the fill and for the stroke each, twice that plus
+    /// four times the width (for the fill, one unit) for each command.
+    fn length(&self) -> u64 {
+        let (mut len, mut n) = (0u64, 0u64);
+        let mut at = (0i64, 0i64);
+        fn step(to: (i16, i16), at: &mut (i64, i64), len: &mut u64) {
+            let to = (to.0 as i64, to.1 as i64);
+            *len += (to.0 - at.0).unsigned_abs() + (to.1 - at.1).unsigned_abs();
+            *at = to;
+        }
+        let mut start = (0i16, 0i16);
+        for s in &self.segments {
+            match *s {
+                Segment::Move(x, y) => {
+                    at = (x as i64, y as i64);
+                    start = (x, y);
+                }
+                Segment::Line(x, y) => {
+                    step((x, y), &mut at, &mut len);
+                    n += 1;
+                }
+                Segment::Quad(a, b, x, y) => {
+                    step((a, b), &mut at, &mut len);
+                    step((x, y), &mut at, &mut len);
+                    n += 1;
+                }
+                Segment::Cubic(a, b, c, d, x, y) => {
+                    step((a, b), &mut at, &mut len);
+                    step((c, d), &mut at, &mut len);
+                    step((x, y), &mut at, &mut len);
+                    n += 1;
+                }
+                Segment::Close => at = (start.0 as i64, start.1 as i64),
+            }
+        }
+        let mut total = 0;
+        if self.fill.is_some() {
+            total += 2 * len + 4 * DEFAULT_STROKE_WIDTH as u64 * n;
+        }
+        if let Some((_, w)) = self.stroke {
+            total += 2 * len + 4 * w as u64 * n;
+        }
+        total.div_ceil(16)
+    }
+}
+
+impl Figure {
+    /// The figure's area cap in square screen units: 8 × its area, at most
+    /// [`FIGURE_AREA_CAP`].
+    pub fn area_cap(&self) -> u64 {
+        (8 * self.width as u64 * self.height as u64).min(FIGURE_AREA_CAP)
+    }
+
+    /// Decodes the path commands (SPEC 11.3) into the paths to draw, in
+    /// order: up to an unknown opcode or cut-off operands, without paths
+    /// that draw nothing, and only as far as the caps allow (at most
+    /// [`FIGURE_PATH_CAP`] paths, area and length).
+    pub fn paths(&self) -> Vec<FigurePath> {
+        let b = &self.path;
+        let i16_at = |i: usize| i16::from_le_bytes([b[i], b[i + 1]]);
+        let mut out = Vec::new();
+        let mut fill: Option<[u8; 4]> = None;
+        let mut stroke: Option<([u8; 4], u16)> = Some(([self.rgb[0], self.rgb[1], self.rgb[2], 255], DEFAULT_STROKE_WIDTH));
+        let mut segments: Vec<Segment> = Vec::new();
+        // Current point, start of the open subpath (None: no open subpath).
+        let (mut cx, mut cy) = (0i16, 0i16);
+        let mut start: Option<(i16, i16)> = None;
+        let (mut total, mut total_len) = (0u64, 0u64);
+        let cap = self.area_cap();
+        let mut capped = false;
+        let mut flush = |segments: &mut Vec<Segment>, fill: Option<[u8; 4]>, stroke: Option<([u8; 4], u16)>| {
+            let draws = segments.iter().any(|s| !matches!(s, Segment::Move(..)));
+            if draws && !capped && (fill.is_some() || stroke.is_some()) {
+                let p = FigurePath { fill, stroke, segments: std::mem::take(segments) };
+                let area = p.area(self.width, self.height);
+                let len = p.length();
+                if total + area > cap || total_len + len > FIGURE_LENGTH_CAP || out.len() == FIGURE_PATH_CAP {
+                    capped = true;
+                } else {
+                    total += area;
+                    total_len += len;
+                    out.push(p);
+                }
+            }
+            segments.clear();
+        };
+        let mut at = 0;
+        while at < b.len() {
+            let n = match b[at] {
+                path_op::FILL => 4,
+                path_op::STROKE => 6,
+                path_op::MOVE | path_op::LINE => 4,
+                path_op::QUAD => 8,
+                path_op::CUBIC => 12,
+                path_op::CLOSE => 0,
+                _ => break,
+            };
+            if at + 1 + n > b.len() {
+                break;
+            }
+            let a = at + 1;
+            let opcode = b[at];
+            if matches!(opcode, path_op::LINE | path_op::QUAD | path_op::CUBIC) && start.is_none() {
+                segments.push(Segment::Move(cx, cy));
+                start = Some((cx, cy));
+            }
+            match opcode {
+                path_op::FILL | path_op::STROKE => {
+                    flush(&mut segments, fill, stroke);
+                    start = None;
+                    let rgba = [b[a], b[a + 1], b[a + 2], b[a + 3]];
+                    if opcode == path_op::FILL {
+                        fill = (rgba[3] != 0).then_some(rgba);
+                    } else {
+                        let w = u16::from_le_bytes([b[a + 4], b[a + 5]]);
+                        stroke = (rgba[3] != 0 && w != 0).then_some((rgba, w));
+                    }
+                }
+                path_op::MOVE => {
+                    (cx, cy) = (i16_at(a), i16_at(a + 2));
+                    segments.push(Segment::Move(cx, cy));
+                    start = Some((cx, cy));
+                }
+                path_op::LINE => {
+                    (cx, cy) = (i16_at(a), i16_at(a + 2));
+                    segments.push(Segment::Line(cx, cy));
+                }
+                path_op::QUAD => {
+                    (cx, cy) = (i16_at(a + 4), i16_at(a + 6));
+                    segments.push(Segment::Quad(i16_at(a), i16_at(a + 2), cx, cy));
+                }
+                path_op::CUBIC => {
+                    (cx, cy) = (i16_at(a + 8), i16_at(a + 10));
+                    segments.push(Segment::Cubic(i16_at(a), i16_at(a + 2), i16_at(a + 4), i16_at(a + 6), cx, cy));
+                }
+                _ => {
+                    if let Some(s) = start.take() {
+                        segments.push(Segment::Close);
+                        (cx, cy) = s;
+                    }
+                }
+            }
+            at += 1 + n;
+        }
+        flush(&mut segments, fill, stroke);
+        out
     }
 }
 
@@ -270,15 +530,20 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
             op::PARAGRAPH => 4,
             op::RULE => 0,
             op::ANCHOR => 2,
+            op::FIGURE => match doc.get(at + 6..at + 8) {
+                Some(n) => 7 + u16::from_le_bytes([n[0], n[1]]) as usize,
+                None => break,
+            },
             _ => break,
         };
         let Some(args) = doc.get(at + 1..at + 1 + operands) else { break };
         match doc[at] {
             op::TEXT => {
                 let last = paragraphs.last_mut().unwrap();
-                if last.rule.is_some() {
-                    // Text after a rule starts a paragraph like the latest one.
-                    paragraphs.push(Paragraph { runs: Vec::new(), rule: None, ..props.clone() });
+                if !last.is_text() {
+                    // Text after a rule or figure starts a paragraph like
+                    // the latest one.
+                    paragraphs.push(props.clone());
                 }
                 let p = paragraphs.last_mut().unwrap();
                 match p.runs.last_mut() {
@@ -309,11 +574,39 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
                     nowrap: args[3] & 1 != 0,
                     runs: Vec::new(),
                     rule: None,
+                    figure: None,
                 };
                 paragraphs.push(props.clone());
             }
             op::RULE => paragraphs.push(Paragraph { rule: Some(style.rgb), ..Paragraph::default() }),
             op::ANCHOR => style.anchor = u16::from_le_bytes([args[0], args[1]]),
+            op::FIGURE => {
+                let side = |i: usize| u16::from_le_bytes([args[i], args[i + 1]]).clamp(1, MAX_FIGURE_SIDE);
+                let figure = Figure {
+                    width: side(0),
+                    height: side(2),
+                    rgb: style.rgb,
+                    anchor: style.anchor,
+                    path: args[7..].to_vec(),
+                };
+                let align = match args[4] {
+                    1 => Align::Centre,
+                    2 => Align::End,
+                    _ => Align::Start,
+                };
+                // A figure takes the place of a paragraph that has no text
+                // yet (and its space); else it follows the current one with
+                // the space of the latest Paragraph command.
+                let last = paragraphs.last_mut().unwrap();
+                let space = if last.is_text() && !last.has_text() {
+                    let space = last.space;
+                    paragraphs.pop();
+                    space
+                } else {
+                    props.space
+                };
+                paragraphs.push(Paragraph { align, space, figure: Some(figure), ..Paragraph::default() });
+            }
             _ => unreachable!(),
         }
         at += 1 + operands;
@@ -346,6 +639,35 @@ pub struct Line {
     pub rule: Option<[u8; 3]>,
     /// Lines of a no-wrap paragraph may be wider than the rectangle.
     pub nowrap: bool,
+    /// A figure: its box on the line (the line is as high as the figure).
+    pub figure: Option<FigureBox>,
+}
+
+/// Where a figure was laid out: x in screen units from the rectangle's left
+/// edge, the size given and the width shown (clipped to the rectangle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FigureBox {
+    pub x: u32,
+    pub width: u16,
+    pub height: u16,
+    pub shown: u32,
+    pub anchor: u16,
+}
+
+impl FigureBox {
+    /// The box of a figure aligned in a rectangle `rect` units wide: start
+    /// is left, centre puts half the leftover width (rounded down) before
+    /// it, end all of it; a figure wider than the rectangle starts at its
+    /// left edge and is cut at its right.
+    pub fn place(figure: &Figure, align: Align, rect: u32) -> FigureBox {
+        let left = rect.saturating_sub(figure.width as u32);
+        let x = match align {
+            Align::Start => 0,
+            Align::Centre => left / 2,
+            Align::End => left,
+        };
+        FigureBox { x, width: figure.width, height: figure.height, shown: (figure.width as u32).min(rect - x), anchor: figure.anchor }
+    }
 }
 
 /// The reference layout of a document at a width (SPEC 11.6).
@@ -381,8 +703,15 @@ pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
     for p in parse(doc) {
         y = y.saturating_add(p.space as u32);
         if let Some(rgb) = p.rule {
-            layout.lines.push(Line { y, height: RULE_HEIGHT, spans: Vec::new(), rule: Some(rgb), nowrap: false });
+            layout.lines.push(Line { y, height: RULE_HEIGHT, spans: Vec::new(), rule: Some(rgb), nowrap: false, figure: None });
             y = y.saturating_add(RULE_HEIGHT);
+            continue;
+        }
+        if let Some(f) = &p.figure {
+            let b = FigureBox::place(f, p.align, width as u32);
+            let height = f.height as u32;
+            layout.lines.push(Line { y, height, spans: Vec::new(), rule: None, nowrap: false, figure: Some(b) });
+            y = y.saturating_add(height);
             continue;
         }
         if !p.has_text() {
@@ -432,7 +761,7 @@ pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
                     }
                     x += a;
                 }
-                layout.lines.push(Line { y, height, spans, rule: None, nowrap: p.nowrap });
+                layout.lines.push(Line { y, height, spans, rule: None, nowrap: p.nowrap, figure: None });
                 y = y.saturating_add(height);
             }
         }
@@ -505,18 +834,24 @@ impl Layout {
     /// left edge and the document's top; 0 if none.
     pub fn anchor_at(&self, x: u32, y: u32) -> u16 {
         let hx = 2 * x;
-        self.lines
-            .iter()
-            .filter(|l| l.y <= y && y < l.y + l.height)
-            .flat_map(|l| &l.spans)
-            .find(|s| s.x0 <= hx && hx < s.x1)
-            .map_or(0, |s| s.style.anchor)
+        for l in self.lines.iter().filter(|l| l.y <= y && y < l.y + l.height) {
+            if let Some(f) = l.figure {
+                if f.x <= x && x < f.x + f.shown {
+                    return f.anchor;
+                }
+            }
+            if let Some(s) = l.spans.iter().find(|s| s.x0 <= hx && hx < s.x1) {
+                return s.style.anchor;
+            }
+        }
+        0
     }
 
     /// The visible lines as text (`terse run --dump-page`): a header with the
     /// height and scroll, then one line per visible line:
     /// `<y> <height> <x>  <face><size>[b][i] |<text>`, with anchored text as
-    /// `[text]{id}`, a rule as `-- rule --`, and x in screen units.
+    /// `[text]{id}`, a rule as `-- rule --`, a figure as `-- figure WxH --`
+    /// (then `{id}` if anchored), and x in screen units.
     pub fn dump(&self, page: &Page) -> String {
         let r = page.region();
         let scroll = page.scroll_for(self.height);
@@ -537,6 +872,14 @@ impl Layout {
             let _ = write!(out, "{:5} {:3} ", line.y, line.height);
             if line.rule.is_some() {
                 out.push_str("    0  -- rule --\n");
+                continue;
+            }
+            if let Some(f) = line.figure {
+                let _ = write!(out, "{:5}  -- figure {}x{} --", f.x, f.width, f.height);
+                if f.anchor != 0 {
+                    let _ = write!(out, " {{{}}}", f.anchor);
+                }
+                out.push('\n');
                 continue;
             }
             let Some(first) = line.spans.first() else {
@@ -889,5 +1232,167 @@ mod tests {
         assert_eq!(ev[2], Event::page_anchor(0x1234, 1));
         assert_eq!(ev[4], Event::page_anchor(0x1234, 3));
         assert_eq!(ev.len(), 6);
+    }
+
+    fn figure(w: u16, h: u16, align: u8, path: &[u8]) -> Vec<u8> {
+        let mut v = vec![op::FIGURE];
+        v.extend_from_slice(&w.to_le_bytes());
+        v.extend_from_slice(&h.to_le_bytes());
+        v.push(align);
+        v.extend_from_slice(&(path.len() as u16).to_le_bytes());
+        v.extend_from_slice(path);
+        v
+    }
+
+    fn pt(op: u8, xy: &[i16]) -> Vec<u8> {
+        let mut v = vec![op];
+        for c in xy {
+            v.extend_from_slice(&c.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn figure_decodes_paths() {
+        use path_op::*;
+        let mut path = pt(LINE, &[160, 0]); // no Move: starts at (0, 0)
+        path.extend(pt(QUAD, &[1, 2, 3, 4]));
+        path.push(CLOSE);
+        path.extend(pt(LINE, &[5, 6])); // after Close: from the start point
+        path.extend_from_slice(&[FILL, 1, 2, 3, 4]);
+        path.extend(pt(MOVE, &[-16, 32]));
+        path.extend(pt(CUBIC, &[1, 2, 3, 4, 5, 6]));
+        path.extend_from_slice(&[STROKE, 9, 9, 9, 0, 40, 0]); // a = 0: no stroke
+        path.extend(pt(MOVE, &[0, 0])); // only a Move: draws nothing
+        path.extend_from_slice(&[FILL, 0, 0, 0, 0]); // no fill and no stroke
+        path.extend(pt(LINE, &[7, 7]));
+        path.extend_from_slice(&[STROKE, 5, 6, 7, 8, 0, 1, 0x7F]); // 0x7F: unknown, ends the path
+        path.extend(pt(LINE, &[1, 1]));
+        let mut doc = vec![op::COLOUR, 10, 20, 30, op::ANCHOR, 3, 0];
+        doc.extend(figure(100, 50, 1, &path));
+        let ps = parse(&doc);
+        assert_eq!(ps.len(), 1, "the figure took the empty first paragraph's place");
+        let f = ps[0].figure.as_ref().unwrap();
+        assert_eq!((f.width, f.height, f.rgb, f.anchor, ps[0].align), (100, 50, [10, 20, 30], 3, Align::Centre));
+        let paths = f.paths();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0].fill, None);
+        assert_eq!(paths[0].stroke, Some(([10, 20, 30, 255], 16)));
+        use Segment::*;
+        assert_eq!(paths[0].segments, [Move(0, 0), Line(160, 0), Quad(1, 2, 3, 4), Close, Move(0, 0), Line(5, 6)]);
+        assert_eq!(paths[1].fill, Some([1, 2, 3, 4]));
+        assert_eq!(paths[1].segments, [Move(-16, 32), Cubic(1, 2, 3, 4, 5, 6)]);
+        // A cut-off path command ends the path; the commands before are used.
+        let mut cut = pt(LINE, &[16, 16]);
+        cut.extend_from_slice(&[CUBIC, 1, 0, 2]);
+        let f = &parse(&figure(10, 10, 0, &cut))[0];
+        assert_eq!(f.figure.as_ref().unwrap().paths()[0].segments, [Move(0, 0), Line(16, 16)]);
+    }
+
+    #[test]
+    fn figure_limits_and_cut_off() {
+        let ps = parse(&figure(0, 5000, 9, &[]));
+        let f = ps[0].figure.as_ref().unwrap();
+        assert_eq!((f.width, f.height, ps[0].align), (1, MAX_FIGURE_SIDE, Align::Start));
+        // A Figure whose path bytes are cut off ends the document.
+        let mut doc = text("a");
+        let mut fig = figure(10, 10, 0, &[path_op::CLOSE; 4]);
+        fig.truncate(fig.len() - 1);
+        doc.extend(fig);
+        let ps = parse(&doc);
+        assert_eq!(ps.len(), 1);
+        assert!(ps[0].figure.is_none());
+        assert_eq!(parse(&[op::FIGURE, 1, 0, 1, 0, 0, 0]).len(), 1);
+    }
+
+    #[test]
+    fn figure_area_cap() {
+        use path_op::*;
+        // A 100 x 100 figure may paint 80,000 square units: eight full-box fills.
+        let mut path = vec![STROKE, 0, 0, 0, 0, 0, 0, FILL, 255, 0, 0, 255];
+        for _ in 0..10 {
+            path.extend(pt(MOVE, &[-160, -160]));
+            path.extend(pt(LINE, &[3200, 3200]));
+            path.extend(pt(LINE, &[0, 1600]));
+            path.extend_from_slice(&[FILL, 255, 0, 0, 255]);
+        }
+        let f = Figure { width: 100, height: 100, rgb: [0; 3], anchor: 0, path };
+        assert_eq!(f.area_cap(), 80_000);
+        assert_eq!(f.paths().len(), 8);
+        // A stroke counts its box grown by half its width; fill and stroke both count.
+        let mut path = vec![FILL, 1, 1, 1, 255, STROKE, 1, 1, 1, 255, 32, 0];
+        path.extend(pt(MOVE, &[160, 160]));
+        path.extend(pt(LINE, &[320, 160]));
+        let p = Figure { width: 100, height: 100, rgb: [0; 3], anchor: 0, path }.paths().remove(0);
+        // Fill: 10 x 0 = 0; stroke: 12 x 2 units = 24.
+        assert_eq!(p.area(100, 100), 24);
+        // Length: a 1000-unit line stroked 1 unit is 2 × 1000 + 4 = 2,004;
+        // filled too, twice that. 32 of the first fit in 65,536, 16 of the second.
+        let line = |fill: bool| {
+            let mut p = Vec::new();
+            for _ in 0..40 {
+                p.extend_from_slice(&[STROKE, 9, 9, 9, 255, 16, 0]);
+                if fill {
+                    p.extend_from_slice(&[FILL, 9, 9, 9, 255]);
+                }
+                p.extend(pt(MOVE, &[0, 0]));
+                p.extend(pt(LINE, &[16_000, 0]));
+            }
+            Figure { width: 1000, height: 1000, rgb: [0; 3], anchor: 0, path: p }.paths()
+        };
+        assert_eq!(line(false)[0].length(), 2_004);
+        assert_eq!(line(false).len(), 32);
+        assert_eq!(line(true).len(), 16);
+        // At most 256 paths.
+        let mut path = Vec::new();
+        for _ in 0..300 {
+            path.extend_from_slice(&[FILL, 1, 1, 1, 255]);
+            path.extend(pt(LINE, &[16, 16]));
+        }
+        assert_eq!(Figure { width: 100, height: 100, rgb: [0; 3], anchor: 0, path }.paths().len(), FIGURE_PATH_CAP);
+        // Big figures are capped at four screens.
+        let f = Figure { width: 1024, height: 1024, rgb: [0; 3], anchor: 0, path: vec![] };
+        assert_eq!(f.area_cap(), FIGURE_AREA_CAP);
+    }
+
+    #[test]
+    fn figure_reference_layout() {
+        let mut doc = vec![op::SIZE, 10];
+        doc.extend(text("ab"));
+        doc.extend(figure(40, 30, 1, &[]));
+        doc.extend(text("cd"));
+        doc.extend_from_slice(&[op::PARAGRAPH, 0, 0, 7, 0]);
+        doc.extend_from_slice(&[op::ANCHOR, 9, 0]);
+        doc.extend(figure(300, 20, 2, &[]));
+        doc.extend(text("ef"));
+        let l = reference_layout(&doc, 100);
+        let ys: Vec<(u32, u32)> = l.lines.iter().map(|l| (l.y, l.height)).collect();
+        // The first figure follows "ab" with the implicit paragraph's space
+        // (0); "cd" is a new paragraph; the second figure takes the empty
+        // paragraph's place (space 7); "ef" gets space 7 again.
+        assert_eq!(ys, [(0, 13), (13, 30), (43, 13), (63, 20), (90, 13)]);
+        assert_eq!(l.height, 103);
+        assert_eq!(l.lines[1].figure, Some(FigureBox { x: 30, width: 40, height: 30, shown: 40, anchor: 0 }));
+        assert_eq!(l.lines[3].figure, Some(FigureBox { x: 0, width: 300, height: 20, shown: 100, anchor: 9 }));
+        assert_eq!(l.anchor_at(99, 70), 9);
+        assert_eq!(l.anchor_at(40, 20), 0);
+        let mut p = Page::default();
+        p.set_region(0, 0, 100, 200);
+        p.submit(&doc);
+        let dump = l.dump(&p);
+        assert!(dump.contains("   13  30    30  -- figure 40x30 --\n"), "{dump}");
+        assert!(dump.contains("   63  20     0  -- figure 300x20 -- {9}\n"), "{dump}");
+    }
+
+    #[test]
+    fn state_covers_figures() {
+        let state = |path: &[u8]| {
+            let mut p = Page::default();
+            p.submit(&figure(10, 10, 0, path));
+            let mut out = Vec::new();
+            p.write_state(&mut out);
+            out
+        };
+        assert_ne!(state(&pt(path_op::LINE, &[1, 2])), state(&pt(path_op::LINE, &[1, 3])));
     }
 }

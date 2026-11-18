@@ -171,8 +171,9 @@ That is the end of the serialization. Its length is
 - **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
   10.6). The vector list bytes are included; how they are drawn is not.
 - **The page's layout** (SPEC 11.4): it depends on the host's fonts. The
-  document bytes, rectangle, scroll value and background are included; the
-  height a host reports is an input event.
+  document bytes (with its figures' path commands), rectangle, scroll value
+  and background are included; how figures are drawn is not; the height a
+  host reports is an input event.
 
 ## 3. Test vectors
 

@@ -1,0 +1,47 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 100%                                 ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+-- page: height 651, scroll 187 (stored 187), region 64 0 512 464 --
+  193  22     0   sans17b |A subheading
+  225  19    10   sans15 |• A list item, whose text goes on on the next line, with a link
+  244  19    10   sans15 |[https://example.com/item]{1}.
+  267  19    10   sans15 |• A second item
+  290  19    10   sans15 |• A third item and a lazy continuation of it.
+  319  17     0   mono13 |    Indented by four spaces:
+  336  17     0   mono13 | or by a tab, both preformatted.
+  363  19     0   sans15 |A paragraph after the preformatted lines.
+  392  17     0   mono13 |A fenced block keeps
+  409  17     0   mono13 |   its lines
+  426  17     0
+  443  17     0   mono13 |and its blank lines.
+  470  80   176  -- figure 160x80 --
+  560  17     0   mono13 |print("a fence with an info string")
+  595  27     0   sans21b |A heading that is a link: [https://example.com/h]{2}
+  632  19     0   sans15 |The end.

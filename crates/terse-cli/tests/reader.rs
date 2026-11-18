@@ -726,6 +726,12 @@ fn publish_a_test_article() {
     assert!(text.starts_with("Test article 1\n"), "{text}");
     assert!(text.contains("This is a test article, published from the Terse reader"), "{text}");
     assert!(text.contains("[https://example.com/terse]{1}"), "{text}");
+    assert!(text.contains("Some shape\n") && text.contains("• and a figure:\n"), "{text}");
+    assert!(text.trim_end().ends_with("shows its address when pressed."), "not cut: {text}");
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1, "{}", run.view());
+    assert_eq!((figs[0].width, figs[0].height), (120, 32));
+    all_drawn(&figs[0]);
     run.press("esc");
     // The identity it created, on the help page; a second test article.
     run.text("?");
@@ -1027,4 +1033,368 @@ fn wide_text_frames() {
 #[test]
 fn image_is_up_to_date() {
     common::check_up_to_date(IMAGE, &["reader/reader.c"], true, "reader", RAM_PAGES, &[(2, 0), (4, 0), (7, 0)]);
+}
+
+/// An article with every construct of the article format (NETWORK 4.5).
+pub const FORMATTED_TITLE: &str = "Every construct";
+pub const FORMATTED: &str = "\
+# A heading
+A paragraph right under the heading: its lines
+join with a space,
+   and blanks at the start of a line are dropped.
+
+## A subheading
+
+- A list item, whose text goes on
+  on the next line, with a link https://example.com/item.
+* A second item
+- A third item
+and a lazy continuation of it.
+
+    Indented by four spaces:
+\tor by a tab, both preformatted.
+A paragraph after the preformatted lines.
+
+```
+A fenced block keeps
+   its lines
+
+and its blank lines.
+```
+
+```path 160 80
+fill #20304a stroke none M0 0 H160 V80 H0 Z
+fill none stroke #ffcc66 2 M8 72 L40 30 72 50 104 12 152 20
+stroke fg M8 8 v64 h144
+fill #6aa84f80 stroke #6aa84f 1.5 m-32 -22 c10 0 15 5 15 15 s-5 15 -15 15 q-10 0 -12 -8 t2 -15 z
+```
+
+```python
+print(\"a fence with an info string\")
+```
+
+# A heading that is a link: https://example.com/h
+The end.
+";
+
+/// Opens the only article of a fixture with `text` (Enter in frame 12) and
+/// runs until `frames` frames after that.
+fn open_only(title: &str, text: &str, frames: u32) -> Run {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    f.publish(&alice(), title, text.as_bytes(), None);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(13 + frames);
+    run
+}
+
+/// The figures of the page's document.
+fn figures(run: &Run) -> Vec<terse_core::page::Figure> {
+    let doc = run.machine.page().unwrap().document().unwrap();
+    terse_core::page::parse(doc).into_iter().filter_map(|p| p.figure).collect()
+}
+
+/// Every path command of a figure is drawn: none is cut by the caps.
+fn all_drawn(fig: &terse_core::page::Figure) {
+    let (b, mut at, mut drawing) = (&fig.path, 0, 0);
+    while at < b.len() {
+        let n = match b[at] {
+            1 => 4,
+            2 => 6,
+            3 => 4,
+            4 => 4,
+            5 => 8,
+            6 => 12,
+            7 => 0,
+            op => panic!("opcode {op} at {at}"),
+        };
+        if (4..=7).contains(&b[at]) {
+            drawing += 1;
+        }
+        at += 1 + n;
+    }
+    assert_eq!(at, b.len(), "whole commands");
+    let drawn: usize = fig.paths().iter().map(|p| p.segments.iter().filter(|s| !matches!(s, terse_core::page::Segment::Move(..))).count()).sum();
+    assert_eq!(drawn, drawing, "every segment drawn, within the caps");
+}
+
+#[test]
+fn article_format() {
+    let mut run = open_only(FORMATTED_TITLE, FORMATTED, 10);
+    run.press("end");
+    let view = run.view();
+    golden("article-format", &view);
+    let run = open_only(FORMATTED_TITLE, FORMATTED, 10);
+    let top = run.view();
+    golden("article-format-top", &top);
+    assert!(top.contains("sans21b |A heading\n"), "{top}");
+    assert!(top.contains("sans15 |A paragraph right under the heading: its lines join with a space,\n"), "{top}");
+    assert!(top.contains("sans15 |and blanks at the start of a line are dropped.\n"), "{top}");
+    assert!(top.contains("sans17b |A subheading\n"), "{top}");
+    assert!(top.contains("   10   sans15 |• A list item, whose text goes on on the next line, with a link"), "{top}");
+    assert!(top.contains("|• A third item and a lazy continuation of it.\n"), "{top}");
+    assert!(top.contains("mono13 |    Indented by four spaces:\n"), "{top}");
+    let text = run.page_text();
+    assert!(text.contains("[https://example.com/item]{1}.\n"), "{text}");
+    assert!(text.contains("A fenced block keeps\n   its lines\n\nand its blank lines.\n"), "{text}");
+    assert!(text.contains("print(\"a fence with an info string\")\n"), "{text}");
+    assert!(!text.contains("```"), "{text}");
+    assert!(text.contains("A heading that is a link: [https://example.com/h]{2}\nThe end.\n"), "{text}");
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1);
+    assert_eq!((figs[0].width, figs[0].height), (160, 80));
+    assert_eq!(figs[0].rgb, [218, 218, 218], "the initial stroke: the body text colour");
+    all_drawn(&figs[0]);
+    // The path's commands, byte for byte.
+    let mut want: Vec<u8> = Vec::new();
+    let pt = |w: &mut Vec<u8>, op: u8, xy: &[i32]| {
+        w.push(op);
+        for v in xy {
+            w.extend_from_slice(&(*v as i16).to_le_bytes());
+        }
+    };
+    want.extend([1, 0x20, 0x30, 0x4a, 255]);
+    want.extend([2, 0, 0, 0, 0, 16, 0]);
+    let s = |v: i32| v * 16;
+    pt(&mut want, 3, &[0, 0]);
+    pt(&mut want, 4, &[s(160), 0]);
+    pt(&mut want, 4, &[s(160), s(80)]);
+    pt(&mut want, 4, &[0, s(80)]);
+    want.push(7);
+    want.extend([1, 0, 0, 0, 0]);
+    want.extend([2, 0xff, 0xcc, 0x66, 255, 32, 0]);
+    pt(&mut want, 3, &[s(8), s(72)]);
+    for (x, y) in [(40, 30), (72, 50), (104, 12), (152, 20)] {
+        pt(&mut want, 4, &[s(x), s(y)]);
+    }
+    want.extend([2, 218, 218, 218, 255, 16, 0]);
+    pt(&mut want, 3, &[s(8), s(8)]);
+    pt(&mut want, 4, &[s(8), s(72)]);
+    pt(&mut want, 4, &[s(152), s(72)]);
+    want.extend([1, 0x6a, 0xa8, 0x4f, 0x80]);
+    want.extend([2, 0x6a, 0xa8, 0x4f, 255, 24, 0]);
+    // m-32 -22 (from (152, 72)) c10 0 15 5 15 15 s-5 15 -15 15 q-10 0 -12 -8 t2 -15 z
+    pt(&mut want, 3, &[s(120), s(50)]);
+    pt(&mut want, 6, &[s(130), s(50), s(135), s(55), s(135), s(65)]);
+    // s: the first control point reflects (135, 55) about (135, 65).
+    pt(&mut want, 6, &[s(135), s(75), s(130), s(80), s(120), s(80)]);
+    pt(&mut want, 5, &[s(110), s(80), s(108), s(72)]);
+    // t: the control point reflects (110, 80) about (108, 72).
+    pt(&mut want, 5, &[s(106), s(64), s(110), s(57)]);
+    want.push(7);
+    assert_eq!(figs[0].path, want);
+}
+
+/// Figures the reader cannot draw are shown as the text of their fence.
+pub const MALFORMED: &str = "\
+An arc:
+
+```path 100 50
+M10 10 A 5 5 0 0 1 20 20
+```
+
+An exponent, a colour of four digits, a number with no command, a point
+out of range, a word with no colour, numbers left over:
+
+```path 100 50
+M1e2 0
+```
+
+```path 100 50
+fill #abcd M0 0 L1 1
+```
+
+```path 100 50
+10 10 M0 0
+```
+
+```path 100 50
+M0 0 L2048 0
+```
+
+```path 100 50
+M0 0 stroke
+```
+
+```path 100 50
+M0 0 L1 1 2
+```
+
+A bad size, and a figure that is not closed:
+
+```path 0 50
+M0 0
+```
+
+```path 100 50
+M0 0 L10 10
+";
+
+#[test]
+fn malformed_figures() {
+    let mut run = open_only("Malformed figures", MALFORMED, 10);
+    assert!(figures(&run).is_empty(), "no figure");
+    let text = run.page_text();
+    for pre in ["M10 10 A 5 5 0 0 1 20 20", "M1e2 0", "fill #abcd M0 0 L1 1", "10 10 M0 0", "M0 0 L2048 0", "M0 0 stroke", "M0 0 L1 1 2", "M0 0\n", "M0 0 L10 10"] {
+        assert!(text.contains(pre), "{pre}: {text}");
+    }
+    run.press("end");
+    golden("article-malformed", &run.view());
+    assert!(run.view().contains("mono13 |M0 0 L10 10\n"), "the unclosed figure, as preformatted text");
+}
+
+/// A figure wider than the column is scaled down to its width.
+#[test]
+fn wide_figure() {
+    let text = "Wide:\n\n```path 1024 300\nM1024 300 L0 0 stroke #fff 3 h-0.5 V-1.03 Q1023.97 100 1000 299.99\n```\n";
+    let run = open_only("A wide figure", text, 10);
+    let view = run.view();
+    golden("article-wide", &view);
+    assert!(view.contains("-- figure 512x150 --"), "{view}");
+    let figs = figures(&run);
+    assert_eq!((figs[0].width, figs[0].height), (512, 150));
+    all_drawn(&figs[0]);
+    // Scaled by 512/1024 after rounding to sixteenths (halves away from
+    // zero): -0.5 units is -8, so 0 - 8 = -8 sixteenths, -4 scaled;
+    // -1.03 is -16.48, so -16, -8 scaled; 1023.97 is 16383.52, so 16384,
+    // 8192 scaled; 299.99 is 4799.84, so 4800, 2400 scaled.
+    // First the initial stroke, its width scaled: 1 unit, 8 sixteenths.
+    let mut want = vec![2u8, 218, 218, 218, 255, 8, 0, 3];
+    for v in [8192i16, 2400, 0, 0] {
+        want.extend(v.to_le_bytes());
+        if want.len() == 12 {
+            want.push(4);
+        }
+    }
+    want.extend([2, 255, 255, 255, 255, 24, 0]); // 3 units, 48 sixteenths, scaled
+    want.push(3);
+    want.extend([0i16, 0].iter().flat_map(|v| v.to_le_bytes()));
+    want.push(4);
+    want.extend([-4i16, 0].iter().flat_map(|v| v.to_le_bytes()));
+    want.push(4);
+    want.extend([-4i16, -8].iter().flat_map(|v| v.to_le_bytes()));
+    want.push(5);
+    want.extend([8192i16, 800, 8000, 2400].iter().flat_map(|v| v.to_le_bytes()));
+    assert_eq!(figs[0].path, want);
+}
+
+/// A line chart of about 4 KB of path string (340 points with fractions).
+fn chart_article() -> String {
+    let mut path = String::from("fill #1d2a3a stroke none M0 0 H500 V260 H0 Z fill none stroke #8ab4f8 1.5 M10 130");
+    for i in 1..340 {
+        let y = 130 + ((i * 37) % 101) as i32 - 50;
+        path.push_str(&format!(" {}.{} {}.{}", 10 + i * 14 / 10, i % 10, y, (i * 7) % 10));
+    }
+    format!("A chart:\n\n```path 500 260\n{path}\n```\n\nAfter the chart.\n")
+}
+
+/// The ~4 KB path: the busiest frame of opening it.
+#[test]
+fn figure_frames() {
+    let text = chart_article();
+    assert!((3800..4600).contains(&text.len()), "{}", text.len());
+    let run = open_only("A chart", &text, 10);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1);
+    all_drawn(&figs[0]);
+    assert!(run.page_text().ends_with("After the chart.\n"), "{}", run.page_text());
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    let article: Vec<u32> = run.submits.iter().copied().filter(|&f| f > 12).collect();
+    eprintln!(
+        "reader: a {}-byte path string ({} bytes of commands): submits in frames {article:?} (Enter in 12), busiest frame {worst} units ({:.2}%)",
+        text.len(),
+        figs[0].path.len(),
+        common::pct(worst)
+    );
+}
+
+/// The costliest path strings, 40 KB of them in short figures and long
+/// ones: built over many frames, none out of budget, none much over the
+/// building share (the estimate is never below the real cost).
+#[test]
+fn figure_cost() {
+    let mut text = String::new();
+    // Many tiny figures.
+    for i in 0..150 {
+        text.push_str(&format!("```path 8 8\nM0 0 l1 1 z h{i}.5\n```\n"));
+    }
+    // Long ones: separators, numbers of many digits, words, relative
+    // commands and reflections.
+    let mut path = String::new();
+    while path.len() < 7000 {
+        path.push_str(",,  \n L0001.000001,-0.000001 q1 2 3 4 t 5 6 s1 2 3 4 c1 2 3 4 5 6 fill #123 stroke #12345678 0.5 m1 1 h1v1z\n");
+    }
+    for _ in 0..4 {
+        text.push_str(&format!("```path 100 100\nM0 0 {path}```\n\n"));
+    }
+    // Malformed at the very end.
+    text.push_str(&format!("```path 100 100\nM0 0 {path} A\n```\n"));
+    assert!(text.len() > 36000, "{}", text.len());
+    let run = open_only("Costly figures", &text, 60);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 154, "every well-formed figure");
+    let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+    let building: Vec<u64> = used[13..].iter().copied().filter(|&u| u > 1000).collect();
+    let worst = *used.iter().max().unwrap();
+    eprintln!("reader: 36 KB of path strings: built in {} frames; busiest frame {worst} units ({:.2}%)", building.len(), common::pct(worst));
+    assert!(run.results.iter().all(|r| r.waited), "{used:?}");
+    assert!(worst < 90_000, "the estimate is honest: {used:?}");
+    assert!(run.page_text().contains(" A\n"), "the malformed one as text");
+}
+
+/// Every kind of line in bulk (40 KB of it): no frame out of budget, none
+/// much over the building share.
+#[test]
+fn line_kinds_frames() {
+    for unit in ["  \t\n", "\n", "a\n\n", "- a\n", "# a\n", "    a\n", "a\n    b\n", "```\na\n```\n"] {
+        let run = open_only("Lines", &unit.repeat(40000 / unit.len()), 60);
+        let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+        assert!(run.results.iter().all(|r| r.waited), "{unit:?}: {used:?}");
+        assert!(*used.iter().max().unwrap() < 90_000, "{unit:?}: the estimate is honest: {used:?}");
+    }
+}
+
+/// The articles `terse-host --demo` publishes (crates/terse-host/demo):
+/// their figures are drawn whole, inside the column, and backquotes show
+/// only where they are meant to be read (in prose, and the indented
+/// sample).
+#[test]
+fn demo_articles() {
+    let demos = [
+        ("welcome", include_str!("../../terse-host/demo/welcome.txt"), 0, 1),
+        ("long", include_str!("../../terse-host/demo/long.txt"), 0, 0),
+        ("languages", include_str!("../../terse-host/demo/languages.txt"), 0, 0),
+        ("pictures", include_str!("../../terse-host/demo/pictures.txt"), 3, 2),
+    ];
+    for (name, text, n, fences) in demos {
+        let run = open_only(name, text, 10);
+        let figs = figures(&run);
+        assert_eq!(figs.len(), n, "{name}");
+        for fig in &figs {
+            assert!(fig.width <= RECT.2, "{name}: {}", fig.width);
+            all_drawn(fig);
+        }
+        let page = run.page_text();
+        assert_eq!(page.matches("```").count(), fences, "{name}: {page}");
+        if name == "pictures" {
+            golden("article-pictures", &run.view());
+            assert!(page.contains("    ```path 120 60\n    fill #e06c75 stroke fg 2 M10 50 L60 10 110 50 Z\n    ```\n"), "{page}");
+        }
+        if name == "long" {
+            assert!(run.view().contains("sans21b |The machine\n"), "{}", run.view());
+        }
+    }
+}
+
+/// CR LF line ends: the markers, fences and path strings work the same.
+#[test]
+fn crlf_article() {
+    let text = "# Title\r\n- item\r\n\r\n```path 20 10\r\nM0 0 L20 10\r\n```\r\nAfter.\r\n";
+    let run = open_only("CR LF", text, 10);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1, "{}", run.view());
+    assert_eq!(figs[0].path, [3, 0, 0, 0, 0, 4, 64, 1, 160, 0]);
+    let view = run.view();
+    assert!(view.contains("sans21b |Title\n") && view.contains("|• item\n") && view.contains("sans15 |After.\n"), "{view}");
 }

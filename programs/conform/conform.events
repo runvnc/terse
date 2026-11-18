@@ -37,3 +37,6 @@
 140 pointer 52 64 0
 140 click 52 150
 140 click 590 430
+
+# The figure (conform.c t_page): a press over it in frame 143, read at 144.
+143 click 590 130

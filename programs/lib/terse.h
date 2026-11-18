@@ -348,6 +348,7 @@ static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 #define DOC_OP_PARAGRAPH 0x05
 #define DOC_OP_RULE 0x06
 #define DOC_OP_ANCHOR 0x07
+#define DOC_OP_FIGURE 0x08
 
 /* Faces and font flags (doc_font), alignment and flags (doc_paragraph). */
 #define DOC_SANS 0
@@ -385,6 +386,42 @@ void doc_paragraph(uint8_t align, uint8_t indent, uint8_t space, uint8_t flags);
 void doc_rule(void);
 void doc_anchor(uint16_t id);
 void doc_end(void);
+/* A Figure command: a box of width x height screen units (1-1024), aligned
+ * DOC_START, DOC_CENTRE or DOC_END, drawn by the `n` bytes of path commands
+ * at `path` (built with path_*). Written whole or not at all. `path` may
+ * lie at doc_ptr + DOC_FIGURE_HEAD, where the bytes already are (build them
+ * there to save a copy), or anywhere else. */
+#define DOC_FIGURE_HEAD 8
+void doc_figure(uint16_t width, uint16_t height, uint8_t align, const void *path, uint16_t n);
+
+/* Path commands of a figure (SPEC 11.3): coordinates in sixteenths of a
+ * screen unit from the figure's top left. */
+#define PATH_FILL 0x01
+#define PATH_STROKE 0x02
+#define PATH_MOVE 0x03
+#define PATH_LINE 0x04
+#define PATH_QUAD 0x05
+#define PATH_CUBIC 0x06
+#define PATH_CLOSE 0x07
+
+/* Path builder, like the document builder: appends at path_ptr, never past
+ * path_limit; a command that does not fit sets path_overflow and is not
+ * written, nor is any later one. */
+extern uint8_t *path_ptr, *path_limit;
+extern uint8_t path_overflow;
+void path_begin(uint8_t *buf, uint32_t cap);
+#define path_length(buf) ((uint32_t)(path_ptr - (uint8_t *)(buf)))
+/* a = 0: no fill (no stroke); stroke width in sixteenths, 0: no stroke. */
+void path_fill(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+void path_stroke(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint16_t width);
+void path_move(int16_t x, int16_t y);
+void path_line(int16_t x, int16_t y);
+void path_quad(int16_t x1, int16_t y1, int16_t x, int16_t y);
+void path_cubic(int16_t x1, int16_t y1, int16_t x2, int16_t y2, int16_t x, int16_t y);
+void path_close(void);
+/* Opcode `op` (PATH_MOVE ... PATH_CUBIC) and its `n` points, x and y
+ * alternating in `xy`. */
+void path_points(uint8_t op, uint32_t n, const int16_t *xy);
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

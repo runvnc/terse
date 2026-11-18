@@ -717,7 +717,7 @@ point (0, 0).
   filled: a disc is drawn as a circle outline of the same radius, a
   rectangle as the four lines between its corners and a triangle as the
   three lines between its points, each with the width in effect at that
-  command.
+  command. The page's figures are outlined too (section 11.4).
 
 ### 10.4 Fill cap
 
@@ -766,8 +766,9 @@ oscilloscope tube:
   repeated lines add up to visibly brighter light, so a program can brighten
   a line by drawing it more than once.
 - The terminal's characters and cursor are light on the same tube, in their
-  foreground colour, drawn in the same way as the shapes. So is the page's
-  text, in its colours; the page's background is not drawn.
+  foreground colour, drawn in the same way as the shapes. So are the page's
+  text and figures (as outlines), in their colours; the page's background
+  is not drawn.
 - The beam is a sharp line with a faint bloom: its bright core is narrower
   than the stated width, and the glow around it is dim and short.
 - Light lingers. What the current list and text show is drawn at full
@@ -795,8 +796,9 @@ of the list. It takes no input from the host.
 ## 11. Device 7 — Page (version 0)
 
 Shows typeset prose: proportional fonts, shaped, bidirectional and broken
-into lines at the width of a rectangle on the screen. The program hands the
-device a **document**, a short binary list of styled text much like a
+into lines at the width of a rectangle on the screen, with figures drawn
+from paths between the paragraphs. The program hands the device a
+**document**, a short binary list of styled text and figures much like a
 display list, and a rectangle; the host lays the text out with its own fonts
 and draws the part that is scrolled into view. The device parses no markup
 language and does no layout for the program.
@@ -855,7 +857,8 @@ cut off; the commands before that are used.
 | `04h` | Colour | r, g, b | Sets the text colour |
 | `05h` | Paragraph | align (0 start, 1 centre, 2 end; anything else is 0), indent (1 byte), space (1 byte), flags (1 byte) | Starts a new paragraph with these properties |
 | `06h` | Rule | — | Starts a new paragraph that is a horizontal line across the rectangle, in the current colour |
-| `07h` | Anchor | id (2 bytes) | Later text belongs to anchor `id`; 0 is no anchor |
+| `07h` | Anchor | id (2 bytes) | Later text and figures belong to anchor `id`; 0 is no anchor |
+| `08h` | Figure | width (2 bytes), height (2 bytes), align (1 byte), n (2 bytes), then n bytes of path commands | A figure: a block of its own, width × height screen units |
 
 State at the start of a document: sans, no flags, size 14, colour
 (229, 229, 229), anchor 0, and an implicit first paragraph that is
@@ -879,6 +882,18 @@ anchor carry on across paragraphs.
   takes from its text (the first strong character, as in the Unicode
   bidirectional algorithm): left for left-to-right text, right for
   right-to-left text. Indent is measured from that start edge.
+- **Figure.** Width and height are clamped to 1–1024; align is 0 start
+  (left), 1 centre, 2 end (right), anything else 0. A figure ends the
+  current paragraph and is a block of its own, as high as its height, with
+  the space of the latest Paragraph command (or of the implicit first
+  paragraph) above it; if the current paragraph has no text yet, the figure
+  takes its place instead and that paragraph's space is the space above the
+  figure. Text after a figure starts a new paragraph as after a rule. The
+  figure is placed in the rectangle's whole width, without indent: centre
+  puts half the leftover width before it, end all of it. A figure wider than
+  the rectangle starts at its left edge and is cut off at its right edge,
+  not scaled. Drawing is clipped to the figure's box. The colour and anchor
+  in effect when the Figure command appears belong to the figure.
 - **Rule.** A rule paragraph is 8 screen units high with a line about one
   unit thick across the whole width of the rectangle at its middle; it has
   no space above it (put an empty Paragraph before it for a gap). Text that
@@ -887,8 +902,53 @@ anchor carry on across paragraphs.
 - **Line height** is the host's natural line height for the font and size;
   a line's height is that of the largest text on it. A line break at the end
   of a paragraph's text gives an empty last line.
-- **Anchors** mark text a pointer press reports (section 11.5); the host
-  draws anchored text like any other text, in its colour.
+- **Anchors** mark text and figures a pointer press reports (section
+  11.5); the host draws anchored text like any other text, in its colour.
+
+**Path commands.** A figure's n bytes are a sequence of path commands, each
+an opcode byte followed by its operands. Coordinates are signed 16-bit
+numbers in sixteenths of a screen unit from the figure's top left corner;
+colours are r, g, b, a (1 byte each, `a` the opacity).
+
+| Opcode | Command | Operands | Effect |
+|---|---|---|---|
+| `01h` | Fill | r, g, b, a | Ends the path; later paths are filled in this colour, not filled if `a` is 0 |
+| `02h` | Stroke | r, g, b, a, width (2 bytes, unsigned, sixteenths) | Ends the path; later paths are stroked in this colour and width, not stroked if `a` or the width is 0 |
+| `03h` | Move | x, y | Starts a subpath at (x, y) |
+| `04h` | Line | x, y | A straight segment to (x, y) |
+| `05h` | Quadratic | x1, y1, x, y | A quadratic Bézier segment to (x, y) with control point (x1, y1) |
+| `06h` | Cubic | x1, y1, x2, y2, x, y | A cubic Bézier segment to (x, y) with control points (x1, y1), (x2, y2) |
+| `07h` | Close | — | A straight segment back to the subpath's start, which ends the subpath; nothing if no subpath is open |
+
+- At the start of the commands: no fill; stroke in the document's text
+  colour at the Figure command, opaque, 16 (one unit) wide; current point
+  (0, 0). The path commands end at the end of the n bytes, at an unknown
+  opcode or at a command whose operands are cut off; the commands before
+  that are used.
+- Each segment starts at the current point and ends at its end point, which
+  becomes the current point. A segment with no subpath open (at the start,
+  after a Close, a Fill or a Stroke) starts a subpath at the current point.
+  After a Close the current point is the start of the subpath it closed.
+- A **path** is the subpaths between two Fill or Stroke commands (or the
+  start or end of the commands). Each path is filled with the non-zero rule,
+  then stroked, centred on its outline, with round joins and round ends;
+  later paths are drawn over earlier ones, blended by opacity. A path with no
+  segment, or with neither a fill nor a stroke, draws nothing.
+- **Caps.** Paths are drawn in order and counted against three caps per
+  figure; the first path that would take a total above its cap is not drawn,
+  and neither is any path after it. (1) At most 256 paths. (2) Area: a path
+  counts the box of all its points (start, control and end points), clipped
+  to the figure's box, once if it is filled, and that box grown by half the
+  stroke width on every side, clipped, once more if it is stroked; each box's
+  area in square screen units is its width times its height in sixteenths,
+  divided by 256 and rounded up. The total is at most 8 × width × height of
+  the figure and at most 4 × 640 × 480 = 1,228,800. (3) Length: a path's
+  length L is, over its Line, Quadratic and Cubic segments, the sum of
+  |dx| + |dy| of each step from the segment's start through its control
+  points to its end, in sixteenths. A path counts 2 × L + 4 × w × s if it is
+  filled, with w = 16, and again with w its stroke width if it is stroked,
+  where s is its number of segments; the counts are divided by 16 and
+  rounded up, and the total is at most 65,536.
 
 ### 11.4 Layout and presentation
 
@@ -897,16 +957,24 @@ three faces: shaping (ligatures, joining scripts such as Arabic), the
 Unicode bidirectional algorithm within each line, Unicode line breaking at
 the rectangle's width less the paragraph's indent, and fallback to other
 fonts for characters the chosen font lacks. It draws the background over the
-rectangle, then the lines that intersect the rectangle after scrolling,
-clipped to it. How the text looks (fonts, hinting, smoothing, how a line
-that does not fit is cut) is up to the host and cannot be observed by the
-program.
+rectangle, then the lines and figures that intersect the rectangle after
+scrolling, clipped to it. How the text looks (fonts, hinting, smoothing, how
+a line that does not fit is cut) and how figures are smoothed are up to the
+host and cannot be observed by the program.
+
+Figures are drawn as outlines when the vector display is in the phosphor
+style or in fill mode 1 (section 10.3; an image without the vector display
+has the clean style and fill mode 0): nothing is filled, and a path that is
+filled but not stroked is stroked one unit wide in its fill colour.
 
 Cost stays bounded: a document is at most 65,536 bytes; the host lays it out
 outside the machine's frames (a host may take several frames, on another
 thread, while the machine runs on and the previous layout or nothing is
-shown); the machine never waits for a layout and is not charged for it; and
-the host draws only the lines in view, so scrolling needs no new layout.
+shown); the machine never waits for a layout and is not charged for it; the
+host draws only the lines and figures in view, so scrolling needs no new
+layout; and the caps of section 11.3 bound the work of drawing each figure,
+which a host may also do outside the frames and only for the figures near
+the view (showing a figure some frames late).
 
 ### 11.5 Events
 
@@ -923,9 +991,11 @@ the host draws only the lines in view, so scrolling needs no new layout.
 - **Page anchor** (`09h`): sent when a pointer button is pressed while the
   pointer is over text whose anchor is not 0, as the page was last shown:
   `a`, `b` = the anchor id, low then high byte; `c` = the buttons, with the
-  same bits as in a pointer event. It follows the pointer event of that
-  press, which is sent as usual. "Over text" means within the extent of the
-  text's glyphs along the line and within the line's height.
+  same bits as in a pointer event; also when it is pressed over a figure
+  whose anchor is not 0. It follows the pointer event of that press, which
+  is sent as usual. "Over text" means within the extent of the text's
+  glyphs along the line and within the line's height; "over a figure",
+  within its box as shown (cut off at the rectangle's edge).
 
 A height event describes the document and width as they were at the end of
 an earlier frame. A program that submits again before reading it gets
@@ -958,7 +1028,10 @@ users see.
 - Centre puts a line's leftover width, halved and rounded down, before it;
   end puts all of it there. Paragraph space and indent are as in section
   11.3; a rule is 8 units high.
-- The height is the sum of the spaces, line heights and rules.
+- A figure is a line as high as the figure, placed as in section 11.3 (the
+  leftover width halved and rounded down for centre); a press within its
+  box hits its anchor.
+- The height is the sum of the spaces, line heights, rules and figures.
 
 ### 11.7 Determinism
 
@@ -1018,7 +1091,9 @@ These numbers are placeholders until weak hosts have been measured:
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
 - the charges of section 12 (4 per call, 1 per `write` byte, 1 per 4 bytes
   copied, 150 per clear or scroll);
-- the fill cap, 4 × 640 × 480 square units (section 10.4).
+- the fill cap, 4 × 640 × 480 square units (section 10.4);
+- the figure caps: 256 paths, the area (8 × the figure's, at most
+  4 × 640 × 480) and the length (65,536) of section 11.3.
 
 ## 15. Not yet specified
 
@@ -1029,7 +1104,8 @@ These numbers are placeholders until weak hosts have been measured:
   that one waits for the user, remembering a user's answer for later
   requests, and publishing replies or other kinds of entry.
 - Devices 5, 6 and 10.
-- On the page: images, links the host follows itself, selecting and copying
+- On the page: bitmap images, arcs and gradients in figures, links the host
+  follows itself, selecting and copying
   text, fonts beyond the three faces, and a way for a program to learn where
   an anchor was laid out (to scroll to it, or to move a keyboard focus from
   link to link).

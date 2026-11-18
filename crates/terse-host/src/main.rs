@@ -2,6 +2,7 @@
 
 mod app;
 mod consent;
+mod figures;
 mod gamepad;
 mod glyphs;
 mod keymap;
@@ -52,7 +53,7 @@ const USAGE: &str = "usage:
              [--no-trails] [--force-phosphor] [--font <family|file>] [--store <dir>] [--config <dir>]
   With no image, runs the feed reader built into terse-host (programs/reader).
   --demo: before the window opens, make sure you have a feed key, subscribe to your own feed and,
-  if it has no articles yet, publish three sample articles to it; then run the reader.
+  if it has no articles yet, publish four sample articles to it; then run the reader.
   Relay (windowed runs): --relay if given (none: no network); else the URL in <config>/relay
   (`terse relay set <url>` writes it); else a relay already running on ws://127.0.0.1:7878;
   else one started inside terse-host on that port, with its store in $XDG_DATA_HOME/terse/relay

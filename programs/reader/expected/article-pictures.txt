@@ -1,0 +1,42 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0%                                   ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+-- page: height 1257, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |pictures
+   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  3.2 KB
+   78   8     0  -- rule --
+   96  19     0   sans15 |An article can hold small pictures: shapes drawn with lines and
+  115  19     0   sans15 |curves, written into the text itself. The reader draws them on the
+  134  19     0   sans15 |page; a reader that does not know them shows their text instead.
+  153  19     0   sans15 |There are no image files: everything below is part of this article's
+  172  19     0   sans15 |few kilobytes.
+  209  27     0   sans21b |A chart
+  246  19     0   sans15 |Readers per day, for a week and two days:
+  275 220    16  -- figure 480x220 --

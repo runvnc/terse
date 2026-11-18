@@ -11,7 +11,7 @@
 //! pixels when drawn, so glyphs stay crisp while the page scrolls smoothly
 //! at sub-unit steps.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -24,9 +24,12 @@ use cosmic_text::{
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Angle, Format, Transform, Vector};
-use terse_core::page::{self as core_page, Align, LayoutKey, Layouter, Page, PageWatch, Paragraph};
+use terse_core::page::{
+    self as core_page, Align, FigureBox, FigurePath, LayoutKey, Layouter, Page, PageWatch, Paragraph,
+};
 use terse_core::{Event, SCREEN_HEIGHT, SCREEN_WIDTH};
 
+use crate::figures::{self, FigureKey, Rasterizer};
 use crate::phosphor;
 use crate::vectors::PHOSPHOR_FORMAT;
 
@@ -43,6 +46,16 @@ const ATLAS: u32 = 2048;
 /// heights are not animated.
 const SCROLL_EASE: f32 = 0.45;
 const SCROLL_JUMP: f32 = 3.0;
+/// Figures are rasterised while they are within this many rectangle
+/// heights of the view (above and below), and dropped beyond.
+const FIGURE_MARGIN: f32 = 0.5;
+/// The most pixels one figure's texture has; a bigger one is rasterised at
+/// a lower resolution and stretched.
+const FIGURE_PIXELS: f32 = 4.0 * 1024.0 * 1024.0;
+/// At most this many figure textures, and this many bytes (but at least
+/// one texture), are uploaded in one frame.
+const FIGURE_UPLOADS: usize = 32;
+const FIGURE_UPLOAD_BYTES: usize = 8 << 20;
 
 /// The fonts of the three faces (SPEC 11.3): family names as given (or as
 /// loaded from a file), `None` for the system's default of that kind.
@@ -160,7 +173,15 @@ impl Typesetter {
     pub fn layout(&mut self, key: LayoutKey, doc: &[u8], width: u16) -> HostLayout {
         let width = width as f32;
         let mut out =
-            HostLayout { key, height: 0.0, lines: Vec::new(), glyphs: Vec::new(), fonts: HashMap::new(), ms: 0.0 };
+            HostLayout {
+            key,
+            height: 0.0,
+            lines: Vec::new(),
+            glyphs: Vec::new(),
+            figures: Vec::new(),
+            fonts: HashMap::new(),
+            ms: 0.0,
+        };
         let start = std::time::Instant::now();
         let mut y = 0.0f32;
         for p in core_page::parse(doc) {
@@ -168,6 +189,21 @@ impl Typesetter {
             if let Some(rgb) = p.rule {
                 out.lines.push(HostLine { top: y, height: core_page::RULE_HEIGHT as f32, baseline: 0.0, x: 0.0, glyphs: 0..0, rule: Some(rgb) });
                 y += core_page::RULE_HEIGHT as f32;
+                continue;
+            }
+            if let Some(f) = &p.figure {
+                // SPEC 11.3: a block of its own, aligned in the rectangle and
+                // cut at its right edge; drawn from the decoded paths.
+                let b = FigureBox::place(f, p.align, width as u32);
+                out.figures.push(HostFigure {
+                    top: y,
+                    x: b.x as f32,
+                    width: b.shown as f32,
+                    height: f.height as f32,
+                    anchor: f.anchor,
+                    paths: Arc::new(f.paths()),
+                });
+                y += f.height as f32;
                 continue;
             }
             if !p.has_text() {
@@ -276,6 +312,18 @@ pub struct HostLine {
     pub rule: Option<[u8; 3]>,
 }
 
+/// A laid-out figure, in screen units: its box (x from the rectangle's
+/// left edge, top from the document's top, the width shown) and its paths.
+#[derive(Clone, Debug)]
+pub struct HostFigure {
+    pub top: f32,
+    pub x: f32,
+    pub width: f32,
+    pub height: f32,
+    pub anchor: u16,
+    pub paths: Arc<Vec<FigurePath>>,
+}
+
 /// A document laid out with the host's fonts.
 pub struct HostLayout {
     /// The document generation and width it was laid out for.
@@ -284,6 +332,8 @@ pub struct HostLayout {
     pub height: f32,
     pub lines: Vec<HostLine>,
     glyphs: Vec<HostGlyph>,
+    /// The figures, top to bottom.
+    pub figures: Vec<HostFigure>,
     /// The fonts the glyphs use, for rasterising them on another thread.
     fonts: HashMap<(ID, fontdb::Weight), Option<Arc<Font>>>,
     /// How long the layout took, in ms.
@@ -299,6 +349,11 @@ impl HostLayout {
     /// The anchor of the text at (x, y), screen units from the rectangle's
     /// left and the document's top; 0 if none.
     pub fn anchor_at(&self, x: f32, y: f32) -> u16 {
+        for f in &self.figures {
+            if f.anchor != 0 && f.top <= y && y < f.top + f.height && f.x <= x && x < f.x + f.width {
+                return f.anchor;
+            }
+        }
         for line in self.lines.iter().filter(|l| l.top <= y && y < l.top + l.height) {
             for g in &self.glyphs[line.glyphs.clone()] {
                 let x0 = line.x + g.glyph.x;
@@ -462,7 +517,7 @@ struct In {
     @location(0) rect: vec4<f32>,   // x0, y0, x1, y1 in target pixels
     @location(1) uv: vec4<f32>,     // u0, v0, u1, v1 in atlas texels
     @location(2) colour: vec4<f32>, // sRGB, alpha = opacity
-    @location(3) mode: u32,         // 0 solid, 1 coverage mask, 2 colour glyph
+    @location(3) mode: u32,         // 0 solid, 1 coverage mask, 2 colour glyph, 3 premultiplied image
 }
 struct Out {
     @builtin(position) pos: vec4<f32>,
@@ -498,6 +553,10 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     } else if in.mode == 2u {
         let t = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0);
         rgb = t.rgb;
+        a *= t.a;
+    } else if in.mode == 3u {
+        let t = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0);
+        rgb = t.rgb / max(t.a, 1.0 / 255.0);
         a *= t.a;
     }
     if (p.flags & 1u) != 0u {
@@ -555,6 +614,13 @@ pub struct PageView {
     pub background: [u8; 4],
 }
 
+/// A figure's texture, with bind groups for the clean and the light pipeline.
+struct FigureTexture {
+    _texture: wgpu::Texture,
+    groups: [wgpu::BindGroup; 2],
+    bytes: usize,
+}
+
 /// The page's GPU side: the glyph atlas and the quads of what is in view.
 pub struct PageLayer {
     clean_pipeline: wgpu::RenderPipeline,
@@ -580,6 +646,22 @@ pub struct PageLayer {
     animate: bool,
     /// The rectangle in target pixels for the scissor, if anything is drawn.
     scissor: Option<(u32, u32, u32, u32)>,
+    bind_layout: wgpu::BindGroupLayout,
+    /// Figures: the thread that rasterises them (started at the first),
+    /// their textures, those asked for, and the quads (instance index and
+    /// texture) prepared last, which follow the text's `text_count` quads.
+    rasterizer: Option<Rasterizer>,
+    figure_textures: HashMap<FigureKey, FigureTexture>,
+    figures_pending: HashSet<FigureKey>,
+    figures_ready: Vec<figures::Done>,
+    figure_log: Vec<String>,
+    figure_draws: Vec<(u32, FigureKey)>,
+    text_count: u32,
+    /// Whether filled shapes are drawn as outlines (the vector display's
+    /// fill mode 1); the phosphor style always outlines.
+    outlines: bool,
+    /// Rasterise figures at once, on this thread (for screenshots).
+    sync_figures: bool,
 }
 
 fn blend(c: wgpu::BlendComponent) -> wgpu::BlendState {
@@ -711,6 +793,16 @@ impl PageLayer {
             shown_scroll: None,
             animate: true,
             scissor: None,
+            bind_layout: layout,
+            rasterizer: None,
+            figure_textures: HashMap::new(),
+            figures_pending: HashSet::new(),
+            figures_ready: Vec::new(),
+            figure_log: Vec::new(),
+            figure_draws: Vec::new(),
+            text_count: 0,
+            outlines: false,
+            sync_figures: false,
         }
     }
 
@@ -723,9 +815,16 @@ impl PageLayer {
         })
     }
 
-    /// Whether scrolling is animated (not for screenshots).
+    /// Whether scrolling is animated and figures are rasterised on their
+    /// own thread (not for screenshots, which show the finished page).
     pub fn set_animate(&mut self, animate: bool) {
         self.animate = animate;
+        self.sync_figures = !animate;
+    }
+
+    /// Whether filled shapes are drawn as outlines (SPEC 10.3, fill mode 1).
+    pub fn set_outlines(&mut self, outlines: bool) {
+        self.outlines = outlines;
     }
 
     /// The scroll shown now, in screen units.
@@ -898,6 +997,16 @@ impl PageLayer {
             }
             break;
         }
+        self.text_count = (self.scratch.len() / INSTANCE_BYTES) as u32;
+        self.figure_draws.clear();
+        if let Some(layout) = layout {
+            let scroll = self.shown_scroll.unwrap_or(0.0);
+            let geometry = FigureGeometry { rx, ry, s, scroll, h: r.h as f32, outline: phosphor || self.outlines };
+            self.figures(device, queue, layout, geometry);
+        } else {
+            self.figure_textures.clear();
+            self.figures_pending.clear();
+        }
         let n = self.scratch.len() / INSTANCE_BYTES;
         if n > self.capacity {
             self.capacity = n.next_power_of_two();
@@ -924,8 +1033,135 @@ impl PageLayer {
         pass.set_pipeline(if phosphor { &self.light_pipeline } else { &self.clean_pipeline });
         pass.set_bind_group(0, if phosphor { &self.light_bind_group } else { &self.bind_group }, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..(self.count as u64 * INSTANCE_BYTES as u64)));
-        pass.draw(0..6, 0..self.count);
+        pass.draw(0..6, 0..self.text_count);
+        for (i, key) in &self.figure_draws {
+            if let Some(t) = self.figure_textures.get(key) {
+                pass.set_bind_group(0, &t.groups[phosphor as usize], &[]);
+                pass.draw(0..6, *i..*i + 1);
+            }
+        }
     }
+
+    /// The figures near the view: asks for those not yet rasterised (or
+    /// rasterises them at once, for screenshots), uploads those that came,
+    /// drops the textures of the others, and adds the quads of those in
+    /// view to the instances.
+    fn figures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, layout: &HostLayout, g: FigureGeometry) {
+        let FigureGeometry { rx, ry, s, scroll, h, outline } = g;
+        let top = scroll - FIGURE_MARGIN * h;
+        let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
+        let max_side = device.limits().max_texture_dimension_2d;
+        let mut wanted = HashSet::new();
+        let mut jobs = Vec::new();
+        let first = layout.figures.partition_point(|f| f.top + f.height <= top);
+        for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
+            // The quad in target pixels, and the texture's size: the same
+            // unless the figure is bigger than FIGURE_PIXELS or the GPU allows.
+            let (qw, qh) = ((f.width * s).ceil().max(1.0), (f.height * s).ceil().max(1.0));
+            let mut scale = s.min((FIGURE_PIXELS / (qw * qh)).sqrt() * s);
+            scale = scale.min(max_side as f32 / (f.width.max(f.height)));
+            let size = (((f.width * scale).ceil() as u32).clamp(1, max_side), ((f.height * scale).ceil() as u32).clamp(1, max_side));
+            let key: FigureKey = (layout.key, i, size, outline);
+            wanted.insert(key);
+            if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
+                self.figures_pending.insert(key);
+                jobs.push(figures::Job { key, paths: f.paths.clone(), scale });
+            }
+            if f.top < scroll + h && f.top + f.height > scroll {
+                let x = (rx + f.x * s).round();
+                let y = (ry + (f.top - scroll) * s).round();
+                let uv = [0.0, 0.0, size.0 as f32, size.1 as f32];
+                self.figure_draws.push(((self.scratch.len() / INSTANCE_BYTES) as u32, key));
+                push(&mut self.scratch, [x, y, x + qw, y + qh], uv, [255; 4], 3);
+            }
+        }
+        self.figure_textures.retain(|k, _| wanted.contains(k));
+        self.figures_pending.retain(|k| wanted.contains(k));
+        let mut done = Vec::new();
+        if self.sync_figures {
+            done.extend(jobs.iter().map(figures::run));
+        } else {
+            let r = self.rasterizer.get_or_insert_with(Rasterizer::start);
+            *r.wanted.lock().unwrap() = wanted.clone();
+            for job in jobs {
+                r.send(job);
+            }
+            done.extend(r.done.try_iter());
+        }
+        // Uploads: all at once for a screenshot, else a bounded amount a
+        // frame (the rest wait for the next).
+        self.figures_ready.extend(done);
+        let pending = &self.figures_pending;
+        self.figures_ready.retain(|d| pending.contains(&d.key));
+        let (mut bytes, mut n) = (0, 0);
+        while let Some(d) = self.figures_ready.first() {
+            if !self.sync_figures && n > 0 && (n == FIGURE_UPLOADS || bytes + d.data.len() > FIGURE_UPLOAD_BYTES) {
+                break;
+            }
+            let d = self.figures_ready.remove(0);
+            bytes += d.data.len();
+            n += 1;
+            self.figures_pending.remove(&d.key);
+            let texture = self.figure_texture(device, queue, d.key.2, &d.data);
+            self.figure_textures.insert(d.key, texture);
+            let (w, h) = d.key.2;
+            if self.figure_log.len() >= 256 {
+                continue; // nobody is reading it
+            }
+            self.figure_log.push(format!(
+                "figure {} ({w} x {h} px{}) rasterised in {:.1} ms; {} figures held, {} KiB",
+                d.key.1,
+                if d.key.3 { ", outlines" } else { "" },
+                d.ms,
+                self.figure_textures.len(),
+                self.figure_bytes() / 1024
+            ));
+        }
+    }
+
+    /// What the figures did since the last call, for `TERSE_PAGE_TRACE`.
+    pub fn take_figure_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.figure_log)
+    }
+
+    fn figure_texture(&self, device: &wgpu::Device, queue: &wgpu::Queue, (w, h): (u32, u32), data: &[u8]) -> FigureTexture {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("page figure"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            data,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: None },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = |params: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("page figure"),
+                layout: &self.bind_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+                ],
+            })
+        };
+        let groups = [group(&self.params), group(&self.light_params)];
+        FigureTexture { _texture: texture, groups, bytes: data.len() }
+    }
+
+    /// Bytes of figure textures held (for measurements).
+    pub fn figure_bytes(&self) -> usize {
+        self.figure_textures.values().map(|t| t.bytes).sum()
+    }
+
+
 
     /// The anchor under (x, y) in screen units as the page is shown now; 0
     /// if none.
@@ -943,6 +1179,19 @@ impl PageLayer {
     pub fn quads(&self) -> u32 {
         self.count
     }
+}
+
+/// Where the page is drawn, for its figures: the rectangle's corner in
+/// target pixels, pixels per unit, the scroll shown and the rectangle's
+/// height in units, and whether figures are outlined.
+#[derive(Clone, Copy)]
+struct FigureGeometry {
+    rx: f32,
+    ry: f32,
+    s: f32,
+    scroll: f32,
+    h: f32,
+    outline: bool,
 }
 
 fn push(out: &mut Vec<u8>, rect: [f32; 4], uv: [f32; 4], rgba: [u8; 4], mode: u32) {
@@ -1013,6 +1262,32 @@ mod tests {
         // Narrower: more lines, and never shorter.
         let narrow = t.layout((1, 40), &doc, 40);
         assert!(narrow.height > l.height);
+    }
+
+    #[test]
+    fn figures_are_blocks_with_anchors() {
+        let Some(mut t) = typesetter() else { return };
+        let mut doc = vec![op::SIZE, 20];
+        doc.extend(text("Above"));
+        doc.extend_from_slice(&[op::PARAGRAPH, 0, 0, 12, 0, op::ANCHOR, 4, 0]);
+        // 100 x 50, end-aligned, one Line command.
+        doc.extend_from_slice(&[op::FIGURE, 100, 0, 50, 0, 2, 5, 0, 4, 16, 0, 16, 0]);
+        doc.extend_from_slice(&[op::ANCHOR, 0, 0]);
+        doc.extend(text("Below"));
+        let l = t.layout((1, 400), &doc, 400);
+        let first = &l.lines[0];
+        assert_eq!(l.figures.len(), 1);
+        let f = &l.figures[0];
+        let top = first.top + first.height + 12.0;
+        assert_eq!((f.top, f.x, f.width, f.height), (top, 300.0, 100.0, 50.0));
+        assert_eq!(f.paths.len(), 1);
+        // Text after it: a paragraph like the latest one (space 12).
+        assert_eq!(l.lines[1].top, top + 50.0 + 12.0);
+        assert_eq!(l.anchor_at(350.0, top + 25.0), 4);
+        assert_eq!(l.anchor_at(250.0, top + 25.0), 0);
+        // Narrower than the figure: cut at the edge.
+        let n = t.layout((1, 60), &doc, 60);
+        assert_eq!((n.figures[0].x, n.figures[0].width), (0.0, 60.0));
     }
 
     #[test]

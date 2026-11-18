@@ -639,6 +639,7 @@ impl Renderer {
         }
         self.style = style;
         let outlines = outlined(style.0, vector);
+        self.page.set_outlines(outlines);
         let (list, generation) = vector.map_or((&[][..], 0), |v| (v.list(), v.generation()));
         self.vectors.update(queue, list, generation, outlines);
     }
@@ -647,6 +648,11 @@ impl Renderer {
     /// machine frame, after `update_vectors`).
     pub fn update_page(&mut self, page: Option<&terse_core::Page>, layout: Option<std::sync::Arc<HostLayout>>) {
         self.page.set(page, layout);
+    }
+
+    /// What the page's figures did since the last call (`TERSE_PAGE_TRACE`).
+    pub fn take_page_figure_log(&mut self) -> Vec<String> {
+        self.page.take_figure_log()
     }
 
     /// Whether the page's scroll is animated (not for screenshots).

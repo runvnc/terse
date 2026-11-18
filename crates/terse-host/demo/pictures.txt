@@ -1,0 +1,76 @@
+An article can hold small pictures: shapes drawn with lines and curves,
+written into the text itself. The reader draws them on the page; a reader
+that does not know them shows their text instead. There are no image
+files: everything below is part of this article's few kilobytes.
+
+# A chart
+
+Readers per day, for a week and two days:
+
+```path 480 220
+fill #24292f stroke none M0 0 H480 V220 H0 Z
+fill none stroke #3a4049 M40 40 H460 M40 90 H460 M40 140 H460
+stroke #7f8894 1.5 M40 20 V190 H460 M90 190 v6 M140 190 v6 M190 190 v6 M240 190 v6 M290 190 v6 M340 190 v6 M390 190 v6 M440 190 v6
+fill #61afef30 stroke none M40 170 L90 150 140 158 190 120 240 128 290 90 340 96 390 60 440 48 V190 H40 Z
+fill none stroke #61afef 2.5 M40 170 L90 150 140 158 190 120 240 128 290 90 340 96 390 60 440 48
+fill #61afef stroke #24292f 1.5
+M87 150 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M137 158 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M187 120 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M237 128 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M287 90 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M337 96 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M387 60 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+M437 48 c0 -1.66 1.34 -3 3 -3 s3 1.34 3 3 -1.34 3 -3 3 -3 -1.34 -3 -3 z
+```
+
+# A badge
+
+Two fills and an outline, all curves:
+
+```path 240 160
+fill #2c7a7b stroke none
+M50 80 C50 41.34 81.34 10 120 10 S190 41.34 190 80 158.66 150 120 150 50 118.66 50 80 Z
+fill #f6c945
+M70 96 C90 70 105 70 120 90 S150 110 170 84 L170 104 C150 130 135 130 120 110 S90 90 70 116 Z
+fill none stroke #e2e8f0 3
+M50 80 C50 41.34 81.34 10 120 10 S190 41.34 190 80 158.66 150 120 150 50 118.66 50 80 Z
+```
+
+# A diagram
+
+An author's article goes to a relay, and from there to every reader who
+follows the author:
+
+```path 480 80
+fill #2d333b stroke #61afef 1.5
+M18 10 h104 q8 0 8 8 v44 q0 8 -8 8 h-104 q-8 0 -8 -8 v-44 q0 -8 8 -8 z
+M188 10 h104 q8 0 8 8 v44 q0 8 -8 8 h-104 q-8 0 -8 -8 v-44 q0 -8 8 -8 z
+M358 10 h104 q8 0 8 8 v44 q0 8 -8 8 h-104 q-8 0 -8 -8 v-44 q0 -8 8 -8 z
+fill none stroke #98c379 2
+M134 40 H172 M164 33 L173 40 164 47
+M304 40 H342 M334 33 L343 40 334 47
+stroke fg 1.5
+M58 22 h18 l8 8 v28 h-26 z M76 22 v8 h8 M63 38 h16 M63 44 h16 M63 50 h10
+M222 26 c0 -3.3 8 -6 18 -6 s18 2.7 18 6 -8 6 -18 6 -18 -2.7 -18 -6 z
+M222 26 v28 c0 3.3 8 6 18 6 s18 -2.7 18 -6 v-28
+M392 24 h36 v24 h-36 z M410 48 v8 M400 58 h20
+```
+
+# How it is written
+
+A picture is a block that starts with a line of three backquotes, the
+word path and its width and height in screen units, and ends with a line
+of three backquotes. In between is path data as in SVG: M moves, L, H and
+V draw lines, C, S, Q and T draw curves, Z closes a shape, and lowercase
+letters take coordinates relative to the last point. The words fill and
+stroke, each with a colour such as #61afef (and for stroke a width), set
+how the shapes after them are drawn; fg is the colour of the text. This
+one is shown as text because it is indented by four spaces:
+
+    ```path 120 60
+    fill #e06c75 stroke fg 2 M10 50 L60 10 110 50 Z
+    ```
+
+A picture wider than the page is scaled down to fit. Arcs (A) are not
+supported yet: a picture with one is shown as text.

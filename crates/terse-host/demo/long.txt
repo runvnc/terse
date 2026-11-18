@@ -4,7 +4,7 @@ reader's scrolling: Up and Down move a line at a time, Page Up and Page Down
 too. The status line shows how far through the article you are. It is also
 a short tour of how Terse works, from the bottom up.
 
-The machine
+# The machine
 
 Terse is a virtual computer. Its processor runs the RISC-V instruction set,
 the 32-bit base with multiplication and the compressed encodings, which is
@@ -30,7 +30,7 @@ arrives as an input at the start of a frame. Record the inputs and you can
 replay the run exactly, instruction for instruction, on any host; the state
 of the whole machine can be hashed after every frame and compared.
 
-The devices
+# The devices
 
 A program reaches the outside world through a handful of devices. The
 terminal is a grid of eighty columns and thirty rows of coloured cells, the
@@ -55,7 +55,7 @@ friend's computer. Whatever the source, the host checks the hash before the
 program sees a single byte. A program image is itself a blob, so a program
 can be started by its hash alone.
 
-Feeds
+# Feeds
 
 A feed is a numbered series of small signed entries, each pointing to an
 article. The feed is named by a public key, and only the holder of the
@@ -79,7 +79,7 @@ something on the user's behalf, so the host asks the user each time, with a
 prompt it draws itself at the bottom of the screen. The program cannot draw
 that prompt, read it or answer it.
 
-Why so small?
+# Why so small?
 
 Everything about Terse is meant to be small enough to understand and to
 implement again. The machine fits in a few thousand lines; the network
@@ -89,11 +89,12 @@ a program written today will still run, unchanged and at the same speed,
 on whatever computers come next.
 
 The cost of that smallness is that a lot of things are left out on purpose:
-there are no images on the page yet, no links that the host follows by
-itself, no way to copy text out of a program. Some of these will come, each
-as a small, carefully specified device; some never will.
+there are no image files on the page, only small drawings written into
+the text; no links that the host follows by itself; no way to copy text
+out of a program. Some of these will come, each as a small, carefully
+specified device; some never will.
 
-Trying it with a friend
+# Trying it with a friend
 
 The quickest way to share articles is a relay that both of you can reach.
 One of you runs terse-relay on a machine the other can connect to, and the

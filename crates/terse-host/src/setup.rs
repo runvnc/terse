@@ -1,5 +1,5 @@
 //! What `terse-host` sets up before it runs a program: the relay (README,
-//! "Getting started") and, with `--demo`, the user's own feed with three
+//! "Getting started") and, with `--demo`, the user's own feed with four
 //! sample articles.
 
 use std::net::TcpListener;
@@ -74,11 +74,14 @@ struct Sample {
     text: &'static str,
 }
 
-/// Oldest first: the timeline shows the last one at the top.
-const SAMPLES: [Sample; 3] = [
+/// Oldest first: the timeline shows the last one at the top. Only a feed
+/// with no entries gets them (`prepare_demo`), so a sample added here
+/// reaches new users only; README says how others publish it themselves.
+const SAMPLES: [Sample; 4] = [
     Sample { title: "Welcome to Terse", text: include_str!("../demo/welcome.txt") },
     Sample { title: "How Terse works: a longer read", text: include_str!("../demo/long.txt") },
     Sample { title: "Hello in three languages: こんにちは, مرحبا", text: include_str!("../demo/languages.txt") },
+    Sample { title: "Pictures in articles", text: include_str!("../demo/pictures.txt") },
 ];
 
 /// How long `--demo` waits for the relay (catching up, publishing).
@@ -90,7 +93,7 @@ fn now() -> u32 {
 
 /// `--demo`: makes sure the identity exists, subscribes to the own feed and,
 /// if that feed has no entries (after catching up with the relay, if there
-/// is one), publishes the three sample articles. Returns how many it
+/// is one), publishes the sample articles. Returns how many it
 /// published.
 pub fn prepare_demo(store_dir: &Path, config: &Path, relay: Option<&str>) -> Result<usize, String> {
     let store = BlobStore::open(store_dir, None).map_err(|e| format!("{}: {e}", store_dir.display()))?;
@@ -169,7 +172,7 @@ mod tests {
         assert_eq!(none, Relay::Found(Found::Nothing));
     }
 
-    /// `--demo` twice: three entries, not six; with a relay, a second host
+    /// `--demo` twice: four entries, not eight; with a relay, a second host
     /// with a fresh store finds them there and publishes nothing.
     #[test]
     fn demo_publishes_once() {
@@ -178,21 +181,21 @@ mod tests {
         let url = local::local_url(listener.local_addr().unwrap().port());
         let relay = Arc::new(terse_relay::Relay::new(BlobStore::open(relay_dir.path(), None).unwrap(), 1024));
         std::thread::spawn(move || terse_relay::serve(listener, relay));
-        assert_eq!(prepare_demo(store.path(), config.path(), Some(&url)).unwrap(), 3);
+        assert_eq!(prepare_demo(store.path(), config.path(), Some(&url)).unwrap(), 4);
         assert_eq!(prepare_demo(store.path(), config.path(), Some(&url)).unwrap(), 0);
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let feeds = FeedStore::beside_blobs(store.path());
-        assert_eq!(feeds.seqs(&key).unwrap(), [1, 2, 3]);
+        assert_eq!(feeds.seqs(&key).unwrap(), [1, 2, 3, 4]);
         let subs = Subscriptions::load(config.path().join("subscriptions")).unwrap();
         assert_eq!(subs.feeds().collect::<Vec<_>>(), [&key]);
         // Same config, empty store: caught up from the relay, nothing new.
         let fresh = tempfile::tempdir().unwrap();
         assert_eq!(prepare_demo(fresh.path(), config.path(), Some(&url)).unwrap(), 0);
-        assert_eq!(FeedStore::beside_blobs(fresh.path()).seqs(&key).unwrap(), [1, 2, 3]);
-        assert_eq!(FeedStore::beside_blobs(relay_dir.path()).seqs(&key).unwrap(), [1, 2, 3]);
+        assert_eq!(FeedStore::beside_blobs(fresh.path()).seqs(&key).unwrap(), [1, 2, 3, 4]);
+        assert_eq!(FeedStore::beside_blobs(relay_dir.path()).seqs(&key).unwrap(), [1, 2, 3, 4]);
         // Without a relay too.
         let (store, config) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        assert_eq!(prepare_demo(store.path(), config.path(), None).unwrap(), 3);
+        assert_eq!(prepare_demo(store.path(), config.path(), None).unwrap(), 4);
         assert_eq!(prepare_demo(store.path(), config.path(), None).unwrap(), 0);
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let entries = FeedStore::beside_blobs(store.path()).entries(&key).unwrap();

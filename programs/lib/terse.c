@@ -455,3 +455,109 @@ void doc_end(void)
     if (p)
         p[0] = DOC_OP_END;
 }
+
+static void put16(uint8_t *p, uint32_t v)
+{
+    p[0] = v;
+    p[1] = v >> 8;
+}
+
+void doc_figure(uint16_t width, uint16_t height, uint8_t align, const void *path, uint16_t n)
+{
+    uint8_t *p = doc_room(DOC_FIGURE_HEAD + n);
+    if (p) {
+        p[0] = DOC_OP_FIGURE;
+        put16(p + 1, width);
+        put16(p + 3, height);
+        p[5] = align;
+        put16(p + 6, n);
+        if (p + DOC_FIGURE_HEAD != path)
+            memmove(p + DOC_FIGURE_HEAD, path, n);
+    }
+}
+
+/* Figure path builder. */
+uint8_t *path_ptr, *path_limit;
+uint8_t path_overflow;
+
+void path_begin(uint8_t *buf, uint32_t cap)
+{
+    path_ptr = buf;
+    path_limit = buf + cap;
+    path_overflow = 0;
+}
+
+/* Room for an n-byte command at path_ptr, its opcode written; or 0 (and
+ * path_overflow set). */
+static uint8_t *path_room(uint32_t n, uint8_t op)
+{
+    if (path_overflow || (uint32_t)(path_limit - path_ptr) < n) {
+        path_overflow = 1;
+        return 0;
+    }
+    uint8_t *p = path_ptr;
+    path_ptr = p + n;
+    p[0] = op;
+    return p + 1;
+}
+
+static void path_rgba(uint8_t *p, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    p[0] = r;
+    p[1] = g;
+    p[2] = b;
+    p[3] = a;
+}
+
+void path_fill(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    uint8_t *p = path_room(5, PATH_FILL);
+    if (p)
+        path_rgba(p, r, g, b, a);
+}
+
+void path_stroke(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint16_t width)
+{
+    uint8_t *p = path_room(7, PATH_STROKE);
+    if (p) {
+        path_rgba(p, r, g, b, a);
+        put16(p + 4, width);
+    }
+}
+
+void path_points(uint8_t op, uint32_t n, const int16_t *xy)
+{
+    uint8_t *p = path_room(1 + 4 * n, op);
+    if (p)
+        for (n *= 2; n; n--, xy++, p += 2)
+            put16(p, (uint16_t)*xy);
+}
+
+void path_move(int16_t x, int16_t y)
+{
+    int16_t xy[2] = {x, y};
+    path_points(PATH_MOVE, 1, xy);
+}
+
+void path_line(int16_t x, int16_t y)
+{
+    int16_t xy[2] = {x, y};
+    path_points(PATH_LINE, 1, xy);
+}
+
+void path_quad(int16_t x1, int16_t y1, int16_t x, int16_t y)
+{
+    int16_t xy[4] = {x1, y1, x, y};
+    path_points(PATH_QUAD, 2, xy);
+}
+
+void path_cubic(int16_t x1, int16_t y1, int16_t x2, int16_t y2, int16_t x, int16_t y)
+{
+    int16_t xy[6] = {x1, y1, x2, y2, x, y};
+    path_points(PATH_CUBIC, 3, xy);
+}
+
+void path_close(void)
+{
+    path_room(1, PATH_CLOSE);
+}

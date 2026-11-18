@@ -15,15 +15,19 @@ unless they set variables (`set X value` in fish is `X=value` in bash).
 
 With a Rust toolchain (see [Build, run, test](#build-run-test) if `cargo` is
 not on your `PATH`), one command builds everything and opens the feed reader
-with three sample articles:
+with four sample articles:
 
     cargo run --release -p terse-host -- --demo
 
 The first time, this creates your feed key (`~/.config/terse/identity.key`),
-subscribes you to your own feed, and publishes the three articles to it. It
+subscribes you to your own feed, and publishes the four articles to it. It
 uses a relay found as described below, starting one inside `terse-host` if
 none is running. Running `--demo` again publishes nothing new. After that,
-`cargo run --release -p terse-host` (no image named) runs the reader.
+`cargo run --release -p terse-host` (no image named) runs the reader. If your
+feed got the first three samples from an earlier `--demo`, publish the fourth
+(drawings in an article, see [Writing an article](#writing-an-article)) yourself:
+
+    cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
 (and quits from the timeline); F manages the feeds you follow; ? (or F1)
@@ -386,6 +390,40 @@ next `pad` line for it; controllers are disconnected until their first one.
 `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start, `14` A and left); the
 sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 
+## Writing an article
+
+An article is UTF-8 text that reads well as it is (NETWORK 4.5 is exact). Blank
+lines separate blocks; the markers count only at the start of a line:
+
+- a paragraph: lines joined with spaces and wrapped by the reader; bare
+  `http://` and `https://` URLs are links;
+- `# ` a heading, `## ` a subheading (one line each);
+- `- ` or `* ` a list item (one level; the lines after it continue it);
+- four spaces or a tab: preformatted lines, shown as written;
+- a line of three backquotes, then lines up to the next such line: a fence,
+  shown as written (anything after the opening backquotes is ignored, except
+  `path`);
+- `` ```path W H `` (W × H screen units, 1–1024): a figure, drawn from the path
+  string in it, up to the closing backquotes.
+
+The path string is SVG path data (`M L H V C S Q T Z`, lowercase relative, numbers
+with an optional sign and fraction, no exponents, coordinates in screen units within
+±2047) plus two words that set how what follows is drawn: `fill <colour>` and
+`stroke <colour> [<width>]`, where a colour is `#rgb`, `#rrggbb`, `#rrggbbaa`,
+`none` or `fg` (the text colour). Until the first word: no fill, stroke `fg`, width
+1. Arcs (`A`) are not supported yet; a figure with one, or with any other error, is
+shown as its text. For example, a filled triangle with a light outline on a dark
+panel:
+
+    ```path 160 90
+    fill #20304a stroke none M0 0 H160 V90 H0 Z
+    fill #e06c75 stroke fg 2 M30 75 L80 15 130 75 Z
+    ```
+
+`crates/terse-host/demo/pictures.txt` (the "Pictures in articles" sample) has a
+chart, a badge and a diagram. A reader that does not draw figures shows their text,
+so an article still reads as plain text.
+
 ## The reader
 
 `programs/reader` is a feed reader written in C, and the program `terse-host` runs
@@ -427,13 +465,12 @@ the rows above it, as a centred column 512 units wide (about 68 characters of 15
 body text in the reference layout, a comfortable measure), on an opaque dark
 background. It shows the title (26 units, bold), a grey line
 (feed key prefix, entry number, date, size, and `↳ reply` for a reply), a rule, then
-the article. The body is split into blocks at blank lines; a block in which some
-line starts with a space or tab is preformatted (monospace, no wrapping, line breaks
-and leading spaces kept), any other block is a paragraph whose line breaks become
-spaces. Bare `http://` and `https://` URLs (up to whitespace, `<`, `>` or `"`, with
-trailing punctuation and unbalanced closing brackets left out) get an anchor and a
-link colour; pressing one shows the URL in the status bar, since there is no
-browser. Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
+the article, formatted as [Writing an article](#writing-an-article) says:
+paragraphs wrapped, headings in bold (21 and 17 units), list items with a bullet,
+preformatted blocks and fences in monospace without wrapping, figures centred (one
+wider than the column scaled down to its 512 units). Bare `http://` and `https://`
+URLs get an anchor and a link colour; pressing one shows the URL in the status bar,
+since there is no browser. Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
 line, the wheel by 60 a step, Home/End to the ends; the reader clamps its scroll
 value with the height from the page's height event and shows in the status bar how
 far it is scrolled, 0% at the top and 100% at the bottom (nothing until the first
@@ -489,11 +526,11 @@ reader -- --nocapture`), headless with the reference layout: a Down key submits 
 document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
-height arrives in the next; the whole height of a 48 KiB article arrives 13 frames
-after Enter. The busiest frame uses 78,769 units (63% of 125,000, building the
-document of an article of wide characters); outside the article view at most 28,833
-(23%, publishing a test article); a typical frame 111; no frame runs out of budget.
-ROM 23,108 bytes, 22 RAM pages (the 64 KiB document, the 48 KiB article, the
+height arrives in the next; the whole height of a 48 KiB article arrives 15 frames
+after Enter. The busiest frame uses 74,809 units (60% of 125,000, building an
+article's document; 57,779 for an article with a 4 KB figure path); outside the article view at most 28,833
+(23%, publishing a test article); a typical frame 138; no frame runs out of budget.
+ROM 28,108 bytes, 22 RAM pages (the 64 KiB document, the 48 KiB article, the
 timeline records).
 
 In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
@@ -513,6 +550,20 @@ for 48 KiB, 34 ms for 64 KiB. Drawing the page while scrolling every other frame
 added about 0.3 ms per presented frame (render-submit p50 1.26 ms against 0.98 ms
 with the page still); the first frame that brings a new script into view (CJK, at
 first use of its font) took up to 23 ms once, rasterising its glyphs.
+
+Figures: `cargo test --release -p terse-host figure_raster_time -- --ignored
+--nocapture` rasterises hostile 64 KiB documents, each figure as costly as the caps
+of SPEC 11.3 allow in one way (full-height curves, 5,000 tiny cubics, 256 small
+paths, strokes 4,096 units wide, narrow full-height strips, many figures). One
+figure takes at most about 11 ms at 2 pixels per unit and 15 ms at 3 (outlines up
+to 14 ms); the figures of the first screen and its margin, the most a scroll asks
+for at once, 30 ms at 2 pixels per unit (six 640 × 128 figures of 256 paths each),
+all on the figure thread; layout of these documents takes under 0.5 ms. Before the
+caps, one figure of 5,000 big cubics took 0.5–0.9 s. In the window (`--selftest`,
+880 × 660, a test program scrolling 8 units a frame): render-submit p50 0.42 ms,
+p99 1.3 ms, max 2.6 ms through those six figures; through 2,340 figures 2 units
+high (some 480 in view, each its own texture and draw call), p50 1.2 ms, p99 3.7 ms,
+max 8.7 ms, 3 MiB of figure textures; no frame dropped in either.
 
 ## Vector display
 
@@ -625,8 +676,8 @@ Try it in Sparks (P switches style):
 Device 7 (SPEC 11) shows typeset prose: proportional fonts, shaped (ligatures,
 Arabic joining), bidirectional, broken into lines at the width of a rectangle the
 program chooses. The program builds a **document** (a short binary list like a
-display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor; at most 65,536
-bytes) in ROM or RAM and submits it (1 unit per 4 bytes); it sets the rectangle,
+display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor, Figure; at most
+65,536 bytes) in ROM or RAM and submits it (1 unit per 4 bytes); it sets the rectangle,
 the scroll value (screen units from the top of the document) and the background.
 The host lays the document out with its own fonts and draws the part in view,
 between the cell backgrounds and the vector shapes (SPEC 10.5). The program learns
@@ -652,7 +703,18 @@ and what the golden tests and the conformance hashes use. It is not what users s
        79  19     0   sans15 |Good typography is invisible. A reader who notices the type has been
 
 (y, line height and x in screen units, the font of the line's first span, then the
-text; anchored text is shown as `[text]{id}`).
+text; anchored text is shown as `[text]{id}`, a figure as `-- figure WxH --`).
+
+**Figures.** A Figure command is a block of its own in the flow, width × height
+screen units (up to 1024 each), aligned start, centre or end and cut off (not
+scaled) if wider than the rectangle. It holds path commands much like an SVG path
+in binary: Fill and Stroke (colour and opacity; stroke width), Move, Line,
+Quadratic, Cubic and Close, with coordinates in sixteenths of a unit from the
+figure's corner. Each run of subpaths between Fill/Stroke changes is filled
+(non-zero) and then stroked with round joins. Three caps per figure (256 paths, an
+area of 8 × the figure's, a total path length) keep a hostile document cheap to
+draw (SPEC 11.3). With the vector display in the phosphor style or fill mode 1,
+figures are outlines, and in the phosphor style they glow like the text.
 
 **In `terse-host`.** [cosmic-text](https://crates.io/crates/cosmic-text) lays the
 document out (HarfRust shaping, the Unicode bidirectional algorithm and line
@@ -672,15 +734,22 @@ families or font files given with `--page-sans`, `--page-serif` and `--page-mono
 the line height is the face's own (ascent + descent + gap), at least 1.3 × the size.
 `terse-host` prints the faces it uses. In the phosphor style the page's background
 is not drawn and its text is light on the tube, with the same bloom as terminal
-text. `--screenshot` lays the page out with the same fonts between frames, so the
-picture shows the finished page.
+text. Figures are rasterised with [tiny-skia](https://crates.io/crates/tiny-skia)
+(antialiased, at the window's pixel size) on their own thread, only those within
+half a rectangle height of the view; each gets a texture (at most 4 Mpixels; a
+bigger one is drawn at a lower resolution), and those that leave that band are
+dropped, so the memory held stays bounded whatever the document holds. A figure
+that has just come into view may appear a frame or two late. `--screenshot` lays
+the page out with the same fonts between frames, and rasterises figures at once,
+so the picture shows the finished page.
 
     fc-list : family | sort -u
     cargo run --release -p terse-host -- programs/reader/reader.terse --page-serif "DejaVu Serif"
     cargo run --release -p terse-host -- programs/reader/reader.terse --page-sans /usr/share/fonts/TTF/SomeFont.ttf
 
 Setting `TERSE_PAGE_TRACE=1` makes `terse-host` print, per frame, when a layout is
-pending and when its height event is queued (with the layout's time).
+pending and when its height event is queued (with the layout's time), and each
+figure as it is rasterised (with the time and the figure memory held).
 
 ## Fonts
 
@@ -871,7 +940,7 @@ recorded sessions.
 |---|---|---|---|---|---|
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 23,108 bytes | 22 pages | 78,769 (63%, building an article's document) | 111 (0.1%) | — |
+| reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
 | sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 

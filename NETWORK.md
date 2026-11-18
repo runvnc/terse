@@ -147,9 +147,103 @@ received first is kept.
 
 ### 4.5 Articles
 
-An article is a blob. In v0 it is plain UTF-8 text. Authors should keep
-articles to a few kilobytes; the automatic download limit is what keeps
-reading instant.
+An article is a blob of UTF-8 text that reads well as it is. Authors should
+keep articles to a few kilobytes; the automatic download limit is what
+keeps reading instant. A reader shows the text by these rules; text that
+matches no rule is ordinary text.
+
+**Lines.** Lines end at LF; a CR before the LF is ignored by these rules.
+Blanks are spaces, tabs and CRs. A line of only blanks is a blank line.
+The markers below count only at the very start of a line.
+
+**Blocks.** The text is a sequence of blocks. Blank lines separate them,
+and a block also ends before any line that it does not hold (by the table
+below), which then starts the next block.
+
+| Block | Starts with a line that | Holds |
+|---|---|---|
+| Heading | starts with `#` and a space | that one line, after the marker |
+| Subheading | starts with `##` and a space | that one line, after the marker |
+| List item | starts with `-` or `*` and a space | the line after the marker, and the ordinary lines after it |
+| Preformatted | starts with four spaces or a tab (an indented line) | that line and the indented lines after it |
+| Fence | starts with three backquotes (`` ``` ``) | the lines after it up to a closing line |
+| Paragraph | is any other non-blank line | that line and the ordinary lines after it |
+
+- An ordinary line is a non-blank line that starts none of the other
+  blocks. After a heading, a preformatted block or a fence it starts a
+  paragraph; after a list item it continues the item.
+- A paragraph's or list item's lines are joined into one: each line break
+  becomes a space and the blanks at the start of each line are dropped,
+  also on its first line. So are the blanks after a heading's marker. A
+  reader wraps them to its width.
+- A preformatted block's lines are shown as written (with their leading
+  blanks), in a monospaced face, not wrapped.
+- A fence ends at a closing line: three backquotes followed only by
+  blanks. Its lines are shown as written, blank lines included, like a
+  preformatted block; the opening and closing lines are not shown. A fence
+  with no closing line runs to the end of the article; one with no lines
+  shows nothing. What follows the backquotes on the opening line (its info
+  string) is ignored, except for `path`.
+- A link is `http://` or `https://` not preceded by a letter or digit, with
+  at least one character after the `//`, running to the first byte that is
+  not printable ASCII or is `<`, `>` or `"`; trailing `.` `,` `;` `:` `!`
+  `?` `'` are not part of it, nor is a trailing `)` or `]` when the link
+  holds more of it than of its opening bracket. Links count in every block
+  that shows text.
+- There is no inline markup: `*`, `_` and backquotes inside a line are
+  ordinary text.
+
+**Figures.** A fence whose info string is the word `path` (after optional
+blanks, and followed by a blank or the end of the line) is a figure. Its
+opening line goes on with the width W, blanks and the height H, then only
+blanks: decimal integers from 1 to 1024, the size of the drawing in screen
+units (SPEC.md section 7). Its lines hold a path string. The figure is
+drawn if the fence has a closing line and the opening line and the path
+string are well formed by the rules below; otherwise its lines are shown
+as a fence's. A reader that does not draw figures shows every figure as a
+fence, which is why a figure reads as text too.
+
+The path string is SVG path data with two additions:
+
+- Commands `M` (move), `L` (line), `H` and `V` (horizontal and vertical
+  line), `C` and `S` (cubic curve, and smooth cubic), `Q` and `T`
+  (quadratic curve, and smooth quadratic), `Z` (close the subpath), each
+  followed by its numbers, as in SVG: 2, 2, 1, 1, 6, 4, 4, 2 and 0. A
+  lowercase command takes its numbers relative to the current point. More
+  numbers after a command's last one repeat the command (after `M` or
+  `m`, as `L` or `l`). `S` and `T` reflect the last control point of an
+  immediately preceding `C` or `S` (for `S`) or `Q` or `T` (for `T`), else
+  use the current point. After `Z` the current point is the subpath's
+  start. Arcs (`A`) are not supported in v0.
+- The first command is `M` or `m` (a first `m` is relative to (0, 0)).
+- The words `fill <colour>` and `stroke <colour> [<width>]` may stand
+  wherever a command may. They set how the subpaths after them are drawn:
+  filled (non-zero winding) in the fill colour, then outlined in the
+  stroke colour and width. Until the first such word the fill is `none`
+  and the stroke is `fg` with width 1. A colour is `#rgb`, `#rrggbb`,
+  `#rrggbbaa` (hexadecimal, either case; `aa` is opacity, `ff` opaque;
+  the shorter forms are opaque), `none` (nothing drawn), or `fg` (the
+  reader's text colour, opaque). The width is a number from 0 to 2047 in
+  screen units; 0 draws no outline. A word ends the path so far: the
+  numbers after a word belong to it or to a new command, never repeat the
+  command before it.
+- Numbers: an optional sign, then digits with an optional decimal point
+  (`5`, `-0.5`, `.5`, `5.`), at most 32 characters; no exponents. Numbers
+  and commands are separated by any number of spaces, tabs, line breaks
+  and commas, or by nothing where that is unambiguous (`M10-5`, `L.5.5`
+  is 0.5 and 0.5, `L5 5L6 6`). A word and its colour are each followed by a
+  separator or the end.
+- Coordinates are screen units from the figure's top left, x right and y
+  down. Every number is rounded to the nearest sixteenth of a unit (halves
+  away from zero) before it is used, so relative coordinates add up
+  exactly. Every point a command reaches, control points included (also
+  the reflected ones of `S` and `T`), lies within ±2047 units.
+- Anything else (another letter, a number where none is expected, a
+  command without all its numbers, a colour or width that is malformed,
+  a word with no colour) makes the path string malformed.
+
+Drawing is clipped to the figure's box. A reader may scale a figure that
+is wider than its column down to fit, uniformly (widths included).
 
 ## 5. Not yet specified
 
@@ -157,7 +251,8 @@ reading instant.
   whole blob).
 - Finding replies to an article, ranking, moderation and spam limits.
 - Key rotation and several feeds per identity.
-- An article markup format.
+- Inline markup in articles (emphasis, inline code, link text), images
+  that are not drawn from paths, and arcs in figure paths.
 - Names: signed, versioned pointers from a public key and a name to a blob.
 - Messages and topics.
 - Relay discovery (a host is told which relay to use, or finds one on its
