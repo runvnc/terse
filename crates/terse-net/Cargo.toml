@@ -1,0 +1,16 @@
+[package]
+name = "terse-net"
+description = "Host-side content for Terse: blob store, relay protocol and client, content service (NETWORK.md)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+terse-core.workspace = true
+blake3 = { version = "1.8", default-features = false }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+ed25519-dalek = "2"
+getrandom = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

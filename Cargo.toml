@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/terse-core",
+    "crates/terse-net",
+    "crates/terse-relay",
+    "crates/terse-cli",
+    "crates/terse-host",
+    "crates/rustzx-z80",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+terse-core = { path = "crates/terse-core" }
+terse-net = { path = "crates/terse-net" }
+terse-relay = { path = "crates/terse-relay" }
+rustzx-z80 = { path = "crates/rustzx-z80" }
+
+[profile.dev.package.rustzx-z80]
+opt-level = 3
+
+[profile.dev.package.terse-core]
+opt-level = 2

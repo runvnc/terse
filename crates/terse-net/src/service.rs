@@ -1,0 +1,239 @@
+//! Carries out content requests (SPEC 7) and follows feeds (NETWORK 4.4) on a
+//! background thread, so the frame loop only ever submits requests and
+//! collects completions and feed events without blocking. Blocking waits are
+//! for headless and command-line use.
+
+use std::collections::HashMap;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread;
+use std::time::Duration;
+
+use terse_core::{Completion, Outcome, Request, RequestKind};
+
+use crate::identity::FeedKey;
+use crate::node::{Done, Draft, FeedEvent, Node, Token};
+
+/// How long the worker sleeps between reconnection checks while following
+/// feeds without a connection.
+const IDLE_WAIT: Duration = Duration::from_millis(20);
+
+/// Feed operations for the worker's node.
+#[derive(Clone, Debug)]
+pub enum FeedCommand {
+    Subscribe(FeedKey),
+    Unsubscribe(FeedKey),
+    /// Reported as `FeedEvent::Published` or `FeedEvent::PublishFailed`.
+    Publish(Draft),
+}
+
+enum Work {
+    Content(Request),
+    Feed(FeedCommand),
+}
+
+pub struct ContentService {
+    jobs: Sender<Work>,
+    finished: Receiver<Completion>,
+    events: Receiver<FeedEvent>,
+    /// Requests submitted and not yet returned by `take_finished`/`wait_finished`.
+    outstanding: usize,
+}
+
+/// What the worker needs to turn a `Done` into a completion.
+enum Job {
+    Get { handle: u8, offset: u32, length: u16 },
+    Put { handle: u8 },
+    Publish,
+}
+
+impl ContentService {
+    pub fn start(node: Node) -> Self {
+        let (jobs, job_rx) = mpsc::channel();
+        let (done_tx, finished) = mpsc::channel();
+        let (event_tx, events) = mpsc::channel();
+        thread::Builder::new()
+            .name("terse-content".into())
+            .spawn(move || worker(node, job_rx, done_tx, event_tx))
+            .expect("spawn content thread");
+        ContentService { jobs, finished, events, outstanding: 0 }
+    }
+
+    pub fn submit(&mut self, requests: Vec<Request>) {
+        for r in requests {
+            self.outstanding += 1;
+            // The worker only stops when this service is dropped.
+            let _ = self.jobs.send(Work::Content(r));
+        }
+    }
+
+    pub fn feed(&self, command: FeedCommand) {
+        let _ = self.jobs.send(Work::Feed(command));
+    }
+
+    /// Feed events so far; never blocks.
+    pub fn take_feed_events(&mut self) -> Vec<FeedEvent> {
+        self.events.try_iter().collect()
+    }
+
+    /// The next feed event, waiting up to `timeout`.
+    pub fn wait_feed_event(&mut self, timeout: Duration) -> Option<FeedEvent> {
+        self.events.recv_timeout(timeout).ok()
+    }
+
+    pub fn outstanding(&self) -> usize {
+        self.outstanding
+    }
+
+    /// Completions finished so far; never blocks.
+    pub fn take_finished(&mut self) -> Vec<Completion> {
+        let done: Vec<Completion> = self.finished.try_iter().collect();
+        self.outstanding -= done.len();
+        done
+    }
+
+    /// Blocks until every submitted request has finished (each is bounded by
+    /// the relay timeout). For headless runs that must not depend on timing.
+    pub fn wait_finished(&mut self) -> Vec<Completion> {
+        let mut done = Vec::with_capacity(self.outstanding);
+        while self.outstanding > 0 {
+            match self.finished.recv() {
+                Ok(c) => {
+                    done.push(c);
+                    self.outstanding -= 1;
+                }
+                Err(_) => break,
+            }
+        }
+        done
+    }
+}
+
+fn completion(job: Job, done: Done) -> Completion {
+    let (handle, outcome) = match (job, done) {
+        (Job::Get { handle, offset, length }, Done::Got(blob)) => {
+            let start = (offset as usize).min(blob.len());
+            let end = (start + length as usize).min(blob.len());
+            (handle, Outcome::Got { size: blob.len() as u32, data: blob[start..end].to_vec() })
+        }
+        (Job::Put { handle }, Done::Put(id)) => (handle, Outcome::Put { id }),
+        (Job::Get { handle, .. } | Job::Put { handle }, Done::NotFound) => (handle, Outcome::NotFound),
+        (Job::Get { handle, .. } | Job::Put { handle }, _) => (handle, Outcome::Failed),
+        (Job::Publish, _) => unreachable!("publishes are reported as feed events"),
+    };
+    Completion { handle, outcome }
+}
+
+fn worker(mut node: Node, jobs: Receiver<Work>, finished: Sender<Completion>, events: Sender<FeedEvent>) {
+    let mut pending: HashMap<Token, Job> = HashMap::new();
+    let mut next: Token = 0;
+    loop {
+        // Block for work only when nothing is waiting on the relay and no
+        // feed is followed.
+        let wait = if node.busy() || node.connected() {
+            Some(Duration::ZERO)
+        } else if node.following() {
+            Some(IDLE_WAIT)
+        } else {
+            None
+        };
+        let work = match wait {
+            Some(wait) => match jobs.recv_timeout(wait) {
+                Ok(w) => Some(w),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
+            },
+            None => match jobs.recv() {
+                Ok(w) => Some(w),
+                Err(_) => return,
+            },
+        };
+        next += 1;
+        match work {
+            Some(Work::Content(Request { handle, kind: RequestKind::Get { id, offset, length } })) => {
+                pending.insert(next, Job::Get { handle, offset, length });
+                node.start_get(next, id);
+            }
+            Some(Work::Content(Request { handle, kind: RequestKind::Put { data } })) => {
+                pending.insert(next, Job::Put { handle });
+                node.start_put(next, &data);
+            }
+            Some(Work::Feed(FeedCommand::Publish(draft))) => {
+                pending.insert(next, Job::Publish);
+                node.start_publish_article(next, &draft);
+            }
+            // A subscription list that cannot be saved still applies to
+            // this run.
+            Some(Work::Feed(FeedCommand::Subscribe(feed))) => drop(node.subscribe(feed)),
+            Some(Work::Feed(FeedCommand::Unsubscribe(feed))) => drop(node.unsubscribe(&feed)),
+            None => {}
+        }
+        for (token, done) in node.poll() {
+            let sent = match pending.remove(&token) {
+                Some(Job::Publish) => events
+                    .send(match done {
+                        Done::Published { seq, blob } => FeedEvent::Published { seq, blob },
+                        done => FeedEvent::PublishFailed(done),
+                    })
+                    .is_ok(),
+                Some(job) => finished.send(completion(job, done)).is_ok(),
+                None => true,
+            };
+            if !sent {
+                return;
+            }
+        }
+        for event in node.take_feed_events() {
+            if events.send(event).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blob::blob_id;
+    use crate::store::BlobStore;
+
+    #[test]
+    fn serves_ranges_from_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let id = store.put(b"0123456789").unwrap();
+        let mut service = ContentService::start(Node::new(store, None));
+        let get = |handle, offset, length| Request { handle, kind: RequestKind::Get { id, offset, length } };
+        service.submit(vec![
+            get(1, 2, 3),
+            get(2, 8, 100),
+            get(3, 10, 1),
+            Request { handle: 4, kind: RequestKind::Get { id: [0; 32], offset: 0, length: 1 } },
+            Request { handle: 5, kind: RequestKind::Put { data: b"new".to_vec() } },
+        ]);
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        let got = |size, data: &[u8]| Outcome::Got { size, data: data.to_vec() };
+        let outcomes: Vec<Outcome> = done.into_iter().map(|c| c.outcome).collect();
+        assert_eq!(
+            outcomes,
+            [got(10, b"234"), got(10, b"89"), got(10, b""), Outcome::NotFound, Outcome::Put { id: blob_id(b"new") }]
+        );
+        assert_eq!(service.outstanding(), 0);
+        assert!(service.take_finished().is_empty());
+    }
+
+    #[test]
+    fn publishes_articles_as_feed_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        node.set_identity(crate::Identity::from_seed([5; 32]));
+        let mut service = ContentService::start(node);
+        let draft = Draft { data: b"text".to_vec(), title: "t".into(), reply_to: None, time: 0 };
+        service.feed(FeedCommand::Publish(draft.clone()));
+        service.feed(FeedCommand::Publish(Draft { title: "x".repeat(121), ..draft }));
+        let timeout = std::time::Duration::from_secs(5);
+        assert_eq!(service.wait_feed_event(timeout), Some(FeedEvent::Published { seq: 1, blob: blob_id(b"text") }));
+        assert_eq!(service.wait_feed_event(timeout), Some(FeedEvent::PublishFailed(Done::Failed)));
+        assert!(service.take_feed_events().is_empty());
+    }
+}

@@ -1,0 +1,200 @@
+//! Feeds end to end (NETWORK 4) over an in-process relay on an ephemeral
+//! loopback port, with `terse` run as separate author and reader processes.
+
+use std::io::{BufRead, BufReader};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
+
+use terse_net::{BlobStore, Entry, Identity, blob_id, protocol, to_hex};
+
+const TERSE: &str = env!("CARGO_BIN_EXE_terse");
+
+fn start_relay(store: &Path) -> String {
+    let relay = Arc::new(terse_relay::Relay::new(BlobStore::open(store, None).unwrap(), terse_relay::DEFAULT_FEED_CAP));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || terse_relay::serve(listener, relay));
+    url
+}
+
+fn terse(args: &[&str]) -> Output {
+    Command::new(TERSE).args(args).output().unwrap()
+}
+
+fn terse_ok(args: &[&str]) -> String {
+    let out = terse(args);
+    assert!(out.status.success(), "terse {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// Publishes raw entry bytes as a client that is not a Terse host would.
+fn raw_publish(url: &str, entry: &[u8]) -> u8 {
+    let stream = TcpStream::connect(url.strip_prefix("ws://").unwrap()).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut ws = tungstenite::client::client(url, stream).unwrap().0;
+    ws.send(tungstenite::Message::binary(protocol::encode_publish(1, entry))).unwrap();
+    loop {
+        if let tungstenite::Message::Binary(b) = ws.read().unwrap() {
+            return b[5];
+        }
+    }
+}
+
+struct User {
+    store: tempfile::TempDir,
+    config: tempfile::TempDir,
+}
+
+impl User {
+    fn new() -> Self {
+        User { store: tempfile::tempdir().unwrap(), config: tempfile::tempdir().unwrap() }
+    }
+
+    fn store(&self) -> &str {
+        self.store.path().to_str().unwrap()
+    }
+
+    /// `terse feed <args> --store … --config …` (and `--relay` if given).
+    fn feed_args<'a>(&'a self, args: &[&'a str], relay: Option<&'a str>) -> Vec<&'a str> {
+        let mut all = vec!["feed"];
+        all.extend_from_slice(args);
+        all.extend(["--store", self.store(), "--config", self.config.path().to_str().unwrap()]);
+        if let Some(url) = relay {
+            all.extend(["--relay", url]);
+        }
+        all
+    }
+
+    fn feed(&self, args: &[&str], relay: Option<&str>) -> String {
+        terse_ok(&self.feed_args(args, relay))
+    }
+
+    fn has_blob(&self, data: &[u8]) -> bool {
+        self.store.path().join(to_hex(&blob_id(data))).exists()
+    }
+}
+
+#[test]
+fn author_and_reader() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let (author, reader) = (User::new(), User::new());
+
+    let config = author.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    assert_eq!(key.len(), 64);
+    assert_eq!(terse_ok(&["key", "show", "--config", config]).trim(), key);
+    assert!(!terse(&["key", "new", "--config", config]).status.success(), "refuses to overwrite");
+
+    // Three small articles and one over the 16,384-byte automatic download limit.
+    let articles: Vec<Vec<u8>> = vec![
+        b"First article.\n".to_vec(),
+        "二つ目の記事です。\n".as_bytes().to_vec(),
+        b"A reply.\n".to_vec(),
+        "long line\n".repeat(2000).into_bytes(),
+    ];
+    for (i, data) in articles.iter().enumerate() {
+        let file = author.store.path().join(format!("article{i}.txt"));
+        std::fs::write(&file, data).unwrap();
+        let first = to_hex(&blob_id(&articles[0]));
+        let mut args = vec!["publish", file.to_str().unwrap(), "--title", ["one", "二", "re: one", "big"][i]];
+        if i == 2 {
+            args.extend(["--reply-to", &first]);
+        }
+        let out = author.feed(&args, Some(&url));
+        assert_eq!(out, format!("seq {} blob {}\n", i + 1, to_hex(&blob_id(data))));
+    }
+
+    // The reader subscribes and syncs from an empty store.
+    assert!(reader.feed(&["subscribe", &key], None).starts_with("subscribed"));
+    assert_eq!(reader.feed(&["subscriptions"], None), format!("{key}  0 entries held, latest -\n"));
+    let synced = reader.feed(&["sync"], Some(&url));
+    let lines: Vec<&str> = synced.lines().collect();
+    assert_eq!(lines.len(), 4, "{synced}");
+    assert!(lines.iter().all(|l| l.contains(&key[..8])));
+    let state = |seq: u32| lines.iter().find(|l| l.contains(&format!("#{seq} "))).unwrap().to_string();
+    for seq in 1..=3 {
+        assert!(state(seq).contains(" local "), "{}", state(seq));
+    }
+    assert!(state(4).contains(" remote ") && state(4).contains("20000 B"), "{}", state(4));
+    assert!(state(2).ends_with("二"));
+    assert!((0..3).all(|i| reader.has_blob(&articles[i])));
+    assert!(!reader.has_blob(&articles[3]));
+
+    // Listing: newest first, articles held locally marked.
+    let listed = reader.feed(&["list"], None);
+    let seqs: Vec<&str> = listed.lines().map(|l| l.split_whitespace().nth(3).unwrap()).collect();
+    assert_eq!(seqs, ["#4", "#3", "#2", "#1"], "{listed}");
+    assert!(listed.lines().next().unwrap().contains(" remote "));
+    assert_eq!(reader.feed(&["list", &key], None), listed);
+
+    // Reading: from the store, or fetched on demand.
+    assert_eq!(reader.feed(&["read", &key, "2"], None).as_bytes(), articles[1]);
+    assert!(!terse(&reader.feed_args(&["read", &key, "4"], None)).status.success(), "no relay, not local");
+    assert_eq!(reader.feed(&["read", &key, "4"], Some(&url)).as_bytes(), articles[3]);
+    assert!(reader.has_blob(&articles[3]));
+    assert!(reader.feed(&["list"], None).lines().all(|l| l.contains(" local ")));
+
+    // Syncing again finds nothing new.
+    assert_eq!(reader.feed(&["sync"], Some(&url)), "");
+
+    // Watch mode: a new article arrives by push and is downloaded.
+    let mut watcher = Command::new(TERSE)
+        .args(reader.feed_args(&["sync", "--watch"], Some(&url)))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    let stdout = watcher.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let _ = tx.send((Instant::now(), line.unwrap()));
+        }
+    });
+    // Let it connect and subscribe, so the entry is pushed live rather than
+    // sent as backlog.
+    std::thread::sleep(Duration::from_millis(1000));
+    assert!(rx.try_recv().is_err());
+    let fresh = author.store.path().join("fresh.txt");
+    std::fs::write(&fresh, b"Breaking news.\n").unwrap();
+    author.feed(&["publish", fresh.to_str().unwrap(), "--title", "fresh"], Some(&url));
+    let published = Instant::now();
+    let (arrived, line) = rx.recv_timeout(Duration::from_secs(5)).expect("pushed entry");
+    let _ = watcher.kill();
+    let _ = watcher.wait();
+    assert!(line.contains("#5 ") && line.contains(" local ") && line.ends_with("fresh"), "{line}");
+    assert!(arrived - published < Duration::from_secs(1), "took {:?}", arrived - published);
+    assert!(reader.has_blob(b"Breaking news.\n"));
+
+    // A forged entry is refused by the relay; one planted in the relay's
+    // storage is sent, but rejected by the reader.
+    let identity = Identity::load(&author.config.path().join("identity.key")).unwrap();
+    let mut forged = Entry::article(identity.feed_key(), 6, 1, b"forged", None, "forged").sign(&identity).unwrap().bytes;
+    forged[44] ^= 1; // the blob ID, under the signature
+    assert_eq!(raw_publish(&url, &forged), protocol::status::REFUSED);
+    let planted = relay_dir.path().join("feeds").join(&key).join("0000000006");
+    std::fs::write(&planted, &forged).unwrap();
+    assert_eq!(reader.feed(&["sync"], Some(&url)), "");
+    assert!(reader.feed(&["list"], None).lines().all(|l| !l.contains("#6 ")));
+    assert!(!reader.store.path().join("feeds").join(&key).join("0000000006").exists());
+
+    // Size mismatch: an entry whose blob is not the size it claims. The blob
+    // is not downloaded or associated with the entry.
+    let data = b"nine byte";
+    let liar = author.store.path().join("liar.txt");
+    std::fs::write(&liar, data).unwrap();
+    terse_ok(&["put", liar.to_str().unwrap(), "--relay", &url, "--store", author.store()]);
+    let mut e = Entry::article(identity.feed_key(), 7, 2, data, None, "liar");
+    e.size = 4;
+    assert_eq!(raw_publish(&url, &e.sign(&identity).unwrap().bytes), protocol::status::DONE);
+    let synced = reader.feed(&["sync"], Some(&url));
+    assert!(synced.contains("#7 ") && synced.contains(" size-mismatch "), "{synced}");
+    assert!(!reader.has_blob(data));
+    let out = terse(&reader.feed_args(&["read", &key, "7"], Some(&url)));
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not this entry's article"));
+}

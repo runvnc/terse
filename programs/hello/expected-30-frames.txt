@@ -1,0 +1,30 @@
+ Terse · hello
+
+  héllo, wörld — 你好
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written through the cell pointer:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 0000001D
+
+> Hi wörld 你好
+> �ok
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,30 @@
+ Terse · fetch
+
+Getting blob 471960666a1299b8… (message.txt)
+fetching… status 01 done
+size: 303 bytes. Text:
+
+Hello from a blob! These bytes were fetched by their BLAKE3-256 ID and
+checked by the host before the program saw them.
+
+  日本語: こんにちは、世界   中文: 你好，世界   한국어: 안녕하세요
+  Full width: ＴＥＲＳＥ   Box drawing: ┌──┬──┐ └──┴──┘
+
+Putting 256 bytes built in RAM… status 01 done
+blob ID: 4a495ba42461748e…
+
+Esc: exit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+

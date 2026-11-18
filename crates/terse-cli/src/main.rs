@@ -1,0 +1,305 @@
+//! `terse`: headless runner, image tools and feeds.
+
+mod asm;
+mod feed;
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use terse_core::{DeviceReq, FrameInput, Image, Machine};
+use terse_net::relay::DEFAULT_TIMEOUT;
+use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
+
+/// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
+const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
+
+const USAGE: &str = "usage:
+  terse run <image|id> [--frames N] [--dump] [--relay ws://...] [--store <dir>]
+  terse info <image|id> [--relay ws://...] [--store <dir>]
+  terse put <file> [--relay ws://...] [--store <dir>]
+  terse get <id> [-o <file>] [--relay ws://...] [--store <dir>]
+  terse hash <file>
+  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
+  terse asm <source.asm> -o <out.bin>
+  terse key new|show
+  terse feed publish <file> --title <t> [--reply-to <id>]
+  terse feed subscribe|unsubscribe <key>
+  terse feed subscriptions
+  terse feed sync [--watch] [--auto-download <bytes>]
+  terse feed list [<key>]
+  terse feed read <key> <seq>
+  (key and feed commands all take [--relay ws://...] [--store <dir>] [--config <dir>];
+  sync needs --relay)
+
+<id> is a 64-hex-digit blob ID, looked up in the store, then the relay.
+<key> is a feed key (64 hex digits).
+--store defaults to $XDG_CACHE_HOME/terse/blobs (or ~/.cache/terse/blobs); feed
+entries are kept in <store>/feeds.
+--config holds the identity and subscriptions; it defaults to $XDG_CONFIG_HOME/terse
+(or ~/.config/terse).
+--auto-download: articles up to this size are fetched as entries arrive (default 16384).";
+
+/// Options for commands that use the blob store and relay.
+const NET_OPTIONS: [&str; 2] = ["--relay", "--store"];
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("run") => run(&args[1..]),
+        Some("info") => info(&args[1..]),
+        Some("put") => put(&args[1..]),
+        Some("get") => get(&args[1..]),
+        Some("hash") => hash(&args[1..]),
+        Some("pack") => pack(&args[1..]),
+        Some("asm") => assemble(&args[1..]),
+        Some("key") => feed::key(&args[1..]),
+        Some("feed") => feed::feed(&args[1..]),
+        _ => Err(USAGE.to_string()),
+    };
+    result.unwrap_or_else(|e| {
+        eprintln!("terse: {e}");
+        ExitCode::from(2)
+    })
+}
+
+/// Splits arguments into positionals and `--flag value` / `-o value` options.
+struct Args {
+    positional: Vec<String>,
+    options: Vec<(String, Option<String>)>,
+}
+
+impl Args {
+    /// `switches` are flags without a value.
+    fn parse(args: &[String], switches: &[&str]) -> Result<Self, String> {
+        let mut out = Args { positional: Vec::new(), options: Vec::new() };
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
+            if a.starts_with('-') {
+                let value = if switches.contains(&a.as_str()) {
+                    None
+                } else {
+                    Some(it.next().ok_or(format!("{a} needs a value"))?.clone())
+                };
+                out.options.push((a.clone(), value));
+            } else {
+                out.positional.push(a.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    fn has(&self, name: &str) -> bool {
+        self.options.iter().any(|(n, _)| n == name)
+    }
+
+    fn all(&self, name: &str) -> impl Iterator<Item = &str> {
+        self.options.iter().filter(move |(n, _)| n == name).filter_map(|(_, v)| v.as_deref())
+    }
+
+    fn get(&self, name: &str) -> Option<&str> {
+        self.all(name).last()
+    }
+
+    fn require(&self, name: &str) -> Result<&str, String> {
+        self.get(name).ok_or(format!("missing {name}\n{USAGE}"))
+    }
+
+    fn check_known(&self, known: &[&str]) -> Result<(), String> {
+        match self.options.iter().find(|(n, _)| !known.contains(&n.as_str())) {
+            Some((n, _)) => Err(format!("unknown option {n}\n{USAGE}")),
+            None => Ok(()),
+        }
+    }
+
+    fn one_positional(&self) -> Result<&str, String> {
+        match self.positional.as_slice() {
+            [p] => Ok(p),
+            _ => Err(USAGE.to_string()),
+        }
+    }
+}
+
+fn read(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("{path}: {e}"))
+}
+
+fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
+}
+
+/// The blob store and relay from `--store` and `--relay`, opened on first use.
+struct Net<'a> {
+    args: &'a Args,
+    node: Option<Node>,
+}
+
+impl Net<'_> {
+    fn node(&mut self) -> Result<&mut Node, String> {
+        if self.node.is_none() {
+            let store = self.args.get("--store").map(PathBuf::from);
+            self.node = Some(Node::open(store, self.args.get("--relay"), DEFAULT_TIMEOUT)?);
+        }
+        Ok(self.node.as_mut().unwrap())
+    }
+
+    fn take(mut self) -> Result<Node, String> {
+        self.node()?;
+        Ok(self.node.take().unwrap())
+    }
+
+    /// Fetches a whole, verified blob (NETWORK 2).
+    fn fetch(&mut self, id: [u8; 32]) -> Result<Vec<u8>, String> {
+        self.node()?.fetch_bytes(id)
+    }
+}
+
+/// Loads an image from a file, or by image ID (NETWORK 2).
+fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
+    let bytes = match parse_hex(arg) {
+        Some(id) if !Path::new(arg).exists() => net.fetch(id)?,
+        _ => read(arg)?,
+    };
+    Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))
+}
+
+fn run(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &["--dump"])?;
+    args.check_known(&["--frames", "--dump", "--relay", "--store"])?;
+    let mut net = Net { args: &args, node: None };
+    let image = load_image(args.one_positional()?, &mut net)?;
+    let frames: Option<u64> = match args.get("--frames") {
+        Some(n) => Some(n.parse().map_err(|_| format!("bad frame count {n}"))?),
+        None => None,
+    };
+
+    let mut machine = Machine::new(&image);
+    let mut content = if image.has_device(4) { Some(ContentService::start(net.take()?)) } else { None };
+    // Headless runs are reproducible: no events, time 0, random bytes 00h, and
+    // every content request completes at the start of the next frame.
+    let mut completions = Vec::new();
+    let mut exit = None;
+    for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
+        exit = machine.run_frame(&FrameInput { completions: &completions, ..Default::default() }).exit;
+        if exit.is_some() {
+            break;
+        }
+        if let Some(content) = &mut content {
+            content.submit(machine.take_content_requests());
+            completions = content.wait_finished();
+        }
+    }
+    if exit.is_none() && frames.is_none() {
+        eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
+    }
+
+    if args.has("--dump") {
+        match machine.terminal() {
+            Some(t) => print!("{}", t.text()),
+            None => eprintln!("terse: image has no terminal device"),
+        }
+    }
+    Ok(ExitCode::from(exit.unwrap_or(0)))
+}
+
+fn info(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&NET_OPTIONS)?;
+    let path = args.one_positional()?;
+    let image = load_image(path, &mut Net { args: &args, node: None })?;
+    let devices: Vec<String> =
+        image.devices.iter().map(|d| format!("{}:{}", d.slot, d.version)).collect();
+    println!("file:      {path}");
+    println!("title:     {}", image.title_lossy());
+    println!("format:    {}", terse_core::image::FORMAT_VERSION);
+    println!("profile:   {}", terse_core::image::PROFILE);
+    println!("rom_len:   {} bytes", image.rom.len());
+    println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
+    println!("devices:   {}", if devices.is_empty() { "-".into() } else { devices.join(" ") });
+    println!("id:        {}", image.id_hex());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn put(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&NET_OPTIONS)?;
+    let data = read(args.one_positional()?)?;
+    if !terse_net::blob::valid_size(data.len()) {
+        return Err(format!("a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
+    }
+    let mut net = Net { args: &args, node: None };
+    match net.node()?.publish(&data) {
+        Done::Put(id) => {
+            println!("{}", to_hex(&id));
+            Ok(ExitCode::SUCCESS)
+        }
+        _ => Err("put failed (store error, or the relay refused or did not answer)".into()),
+    }
+}
+
+fn get(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&["-o", "--relay", "--store"])?;
+    let arg = args.one_positional()?;
+    let id = parse_hex(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits)"))?;
+    let bytes = Net { args: &args, node: None }.fetch(id)?;
+    match args.get("-o") {
+        Some(out) => write(out, &bytes)?,
+        None => std::io::stdout().write_all(&bytes).map_err(|e| e.to_string())?,
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn hash(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&[])?;
+    println!("{}", to_hex(&blob_id(&read(args.one_positional()?)?)));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn parse_device(s: &str) -> Result<DeviceReq, String> {
+    let bad = || format!("bad device {s} (want slot:version)");
+    let (slot, version) = s.split_once(':').ok_or_else(bad)?;
+    Ok(DeviceReq {
+        slot: slot.parse().map_err(|_| bad())?,
+        version: version.parse().map_err(|_| bad())?,
+    })
+}
+
+fn pack(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "-o"])?;
+    if !args.positional.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    let rom = read(args.require("--rom")?)?;
+    let title = args.require("--title")?;
+    if title.len() > terse_core::image::TITLE_LEN {
+        return Err(format!("title is {} bytes, at most 16 allowed", title.len()));
+    }
+    let ram_pages = args.require("--ram-pages")?;
+    let ram_pages: u8 = ram_pages.parse().map_err(|_| format!("bad RAM page count {ram_pages}"))?;
+    let devices = args.all("--device").map(parse_device).collect::<Result<Vec<_>, _>>()?;
+    if devices.len() > terse_core::image::MAX_DEVICES {
+        return Err("more than 16 devices".into());
+    }
+    let file = Image::build(title, ram_pages, &devices, &rom);
+    // Validate exactly as a host would.
+    let image = Image::parse(&file).map_err(|e| e.to_string())?;
+    let out = args.require("-o")?;
+    write(out, &file)?;
+    println!("{out}: {} bytes, id {}", file.len(), image.id_hex());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn assemble(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&["-o"])?;
+    let src_path = args.one_positional()?;
+    let src = std::fs::read_to_string(src_path).map_err(|e| format!("{src_path}: {e}"))?;
+    let bin = asm::assemble(src_path, &src)?;
+    let out = args.require("-o")?;
+    write(out, &bin)?;
+    println!("{out}: {} bytes", bin.len());
+    Ok(ExitCode::SUCCESS)
+}
