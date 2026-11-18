@@ -2239,6 +2239,7 @@ dependencies = [
  "terse-core",
  "terse-net",
  "terse-relay",
+ "terse-rv",
  "tungstenite",
 ]
 
@@ -2263,6 +2264,7 @@ dependencies = [
  "pollster",
  "terse-core",
  "terse-net",
+ "terse-rv",
  "ttf-parser",
  "wgpu",
  "winit",
@@ -2287,6 +2289,17 @@ dependencies = [
  "tempfile",
  "terse-net",
  "tungstenite",
+]
+
+[[package]]
+name = "terse-rv"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "rustzx-z80",
+ "tempfile",
+ "terse-core",
+ "terse-net",
 ]
 
 [[package]]

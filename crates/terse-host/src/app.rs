@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use terse_core::{COLS, Event, FrameInput, Image, MAX_RANDOM_READS_PER_FRAME, Machine, ROWS, buttons};
+use terse_core::{COLS, Event, FrameInput, FrameMachine, MAX_RANDOM_READS_PER_FRAME, ROWS, buttons};
+use terse_rv::{AnyMachine, Program};
 use terse_net::ContentService;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -21,11 +22,11 @@ use crate::{FONT_PX, request_device, terminal_or_blank};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-pub fn run(image: Image, content: Option<ContentService>) -> Result<ExitCode, String> {
+pub fn run(image: Program, content: Option<ContentService>) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = format!("{} — Terse", image.title_lossy());
     let mut app = App {
-        machine: Machine::new(&image),
+        machine: AnyMachine::new(&image),
         content,
         title,
         gfx: None,
@@ -127,7 +128,7 @@ impl Gfx {
 }
 
 struct App {
-    machine: Machine,
+    machine: AnyMachine,
     /// Carries out content requests (device 4) off the frame loop.
     content: Option<ContentService>,
     title: String,

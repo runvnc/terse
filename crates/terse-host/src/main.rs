@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use terse_core::{Image, Machine, Script, Terminal};
+use terse_core::{FrameMachine, Script, Terminal};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::service::Headless;
 use terse_net::{ContentService, Node, Subscriptions, default_config_dir, parse_hex};
+use terse_rv::{AnyMachine, Program};
 
 use crate::glyphs::SystemGlyphs;
 use crate::renderer::Renderer;
@@ -72,7 +73,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         Some(id) if !Path::new(&path).exists() => node.insert(open_node()?).fetch_bytes(id)?,
         _ => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
     };
-    let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    let image = terse_rv::parse_image(&bytes).map_err(|e| format!("{path}: {e}"))?;
     let content = match image.has_device(4) {
         false => None,
         true => {
@@ -106,7 +107,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
-fn terminal_or_blank(machine: &Machine) -> std::borrow::Cow<'_, Terminal> {
+fn terminal_or_blank(machine: &AnyMachine) -> std::borrow::Cow<'_, Terminal> {
     match machine.terminal() {
         Some(t) => std::borrow::Cow::Borrowed(t),
         None => std::borrow::Cow::Owned(Terminal::default()),
@@ -136,7 +137,7 @@ async fn request_device(
 /// events, time 0, no random bytes, content requests completed at the next
 /// frame, feeds caught up first), and renders the terminal offscreen to a PNG.
 fn take_screenshot(
-    image: &Image,
+    image: &Program,
     mut content: Option<ContentService>,
     script: Script,
     out: &Path,
@@ -147,7 +148,7 @@ fn take_screenshot(
     {
         eprintln!("terse-host: feeds: {e}; running with the entries held locally");
     }
-    let mut machine = Machine::new(image);
+    let mut machine = AnyMachine::new(image);
     let mut headless = Headless::new(content, script);
     for _ in 0..frames {
         if headless.frame(&mut machine).exit.is_some() {

@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
+use terse_core::{Completion, Event, FrameInput, FrameMachine, FrameResult, Outcome, Request, RequestKind, Script};
 
 use crate::identity::FeedKey;
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
@@ -157,7 +157,7 @@ impl Headless {
     }
 
     /// Runs the machine's next frame, then carries out the requests it made.
-    pub fn frame(&mut self, machine: &mut Machine) -> FrameResult {
+    pub fn frame(&mut self, machine: &mut impl FrameMachine) -> FrameResult {
         let mut events = self.script.events(machine.frame()).to_vec();
         if std::mem::take(&mut self.feeds_updated) {
             events.push(Event::feeds_updated());
