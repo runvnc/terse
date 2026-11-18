@@ -1,4 +1,4 @@
-/* crt0 for Terse profile 2 (RV32IMC, RV-PROFILE.md).
+/* crt0 for Terse (machine profile 1, RV32IMC; SPEC.md section 1).
  *
  * The machine starts here, at the first byte of ROM (00010000h), with sp at
  * the end of RAM and every other register zero. RAM is zero at reset, so

@@ -153,12 +153,12 @@ That is the end of the serialization. Its length is
 From this repository's implementation (the reference):
 
 - `programs/hello/hello.terse` at reset (no frame run): serialization
-  HELLO_LEN bytes, hash
-  `HELLO_RESET`.
+  18,810 bytes, hash
+  `ab421354b6fa650e97b0a4ea0beade795da9e0e21ee53aa3643bd04520ce6bdd`.
 - The same after 1 frame with no input:
-  `HELLO_1`;
+  `cd5633205e64a1cc94a864b857af59fbe04fa81476c740c83f0f5c33dcb23c43`;
   after 30 frames:
-  `HELLO_30`.
+  `94d70c61cfd74e7b293e03a6a7c7fdcc81956b8e90c4e3f5cd238a36284076fe`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
 

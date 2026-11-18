@@ -1,30 +1,22 @@
-//! Golden tests for programs/rv/reader/reader.terse, the profile-2 port of
-//! the reader: the fixtures, scripts and expected screens of
-//! crates/terse-cli/tests/reader.rs (programs/reader/expected/, read only),
-//! run on `terse_rv::RvMachine`. Screens must be identical to the Z80
-//! reader's; they may be complete in earlier frames.
+//! programs/reader/reader.terse: golden screens (programs/reader/expected/;
+//! UPDATE_GOLDEN=1 rewrites them) with a store of fixture feeds, and the
+//! image is up to date.
 //!
-//! `timing` prints the measurements for the profile comparison (run with
-//! `--nocapture`).
+//! `timing` prints the article-open latency and the busiest and typical
+//! frame (run with `--nocapture`).
 
 mod common;
 
-use std::path::{Path, PathBuf};
-
-use terse_core::{Event, FrameInput, FrameResult, Script};
+use terse_core::{Event, FrameInput, FrameResult, Image, Machine, RAM_BASE, Script};
 use terse_net::{BlobStore, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id};
-use terse_rv::{INSTRUCTIONS_PER_FRAME, RAM_BASE, RvMachine};
 
-const IMAGE: &[u8] = include_bytes!("../../../programs/rv/reader/reader.terse");
+const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
+const RAM_PAGES: u8 = 9;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 
-fn new_machine() -> RvMachine {
-    RvMachine::new(&terse_rv::parse_image(IMAGE).unwrap())
-}
-
-fn expected_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/reader/expected")
+fn new_machine() -> Machine {
+    Machine::new(&Image::parse(IMAGE).unwrap())
 }
 
 fn alice() -> Identity {
@@ -106,7 +98,7 @@ impl Fixture {
 }
 
 struct Run {
-    machine: RvMachine,
+    machine: Machine,
     content: ContentService,
     script: Script,
     completions: Vec<terse_core::Completion>,
@@ -157,9 +149,7 @@ impl Run {
 }
 
 fn golden(name: &str, got: &str) {
-    let path = expected_dir().join(format!("{name}.txt"));
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    assert_eq!(got, want, "screen differs from {}", path.display());
+    common::golden(&format!("reader/expected/{name}.txt"), got);
 }
 
 fn row(screen: &str, n: usize) -> &str {
@@ -217,18 +207,20 @@ fn list_with_a_clock() {
 fn open_scroll_and_return() {
     let f = Fixture::populated();
     let mut run = Run::new(&f, "12 press down\n13 press down\n14 click 300 104\n16 press enter\n");
-    run.frames(30);
+    // Enter in frame 16; the golden is the screen once the article is
+    // wholly wrapped (the status bar shows the line count without "+").
+    run.frames(17);
+    while !row(&run.screen(), 29).contains('%') {
+        run.frames(1);
+    }
+    let wrapped = run.machine.frame();
+    assert!(wrapped <= 20, "wrapped after frame {wrapped}");
     let opened = run.screen();
-    // The Z80 golden was taken while the Z80 was still wrapping the article
-    // (its status bar says "lines 1–27 of 72+"); here the article is fully
-    // wrapped by then. Rows 0-28 are identical; the status bar is final.
-    let text_rows = |s: &str| s.lines().take(29).collect::<Vec<_>>().join("\n");
-    let want = std::fs::read_to_string(expected_dir().join("article.txt")).unwrap();
-    assert_eq!(text_rows(&opened), text_rows(&want));
-    assert!(row(&want, 29).contains("lines 1–27 of 72+"));
-    assert!(row(&opened, 29).starts_with(" lines 1–27 of 105  25%"), "{}", row(&opened, 29));
+    golden("article", &opened);
+    run.frames(30 - wrapped);
+    assert_eq!(run.screen(), opened);
     assert!(row(&opened, 0).contains("A long article"));
-    assert!(row(&opened, 29).contains("lines 1–27 of"));
+    assert!(row(&opened, 29).starts_with(" lines 1–27 of 105  25%"), "{}", row(&opened, 29));
     run.script = Script::parse("30 press pagedown\n32 wheel 1\n").unwrap();
     run.frames(10);
     let scrolled = run.screen();
@@ -291,9 +283,9 @@ fn refresh_keeps_the_selection() {
     assert!(row(&run.screen(), 1).starts_with(" ") && row(&run.screen(), 1).contains("Fresh news"));
 }
 
-/// Measurements for the comparison with the Z80 reader: frames and
-/// instructions to draw the list, the busiest frame of a session, Enter to
-/// a local article on screen, and the deepest stack.
+/// Measurements: frames to draw the list, Enter to the article's first
+/// page on screen and to its last line wrapped, the busiest and typical
+/// frame, and the deepest stack.
 #[test]
 fn timing() {
     let f = Fixture::populated();
@@ -301,42 +293,48 @@ fn timing() {
                   90 press pagedown\n95 wheel 2\n100 press end\n110 press esc\n120 press home\n121 press down\n\
                   123 press enter\n160 press end\n170 press esc\n";
     let mut run = Run::new(&f, script);
+    let start = std::time::Instant::now();
     run.frames(200);
+    let host = start.elapsed();
+    // screens[i] is the screen after frame i (frames count from 0). The
+    // first i from which the rows stay as they are until `to`: with the
+    // status bar, or without it.
     let settled = |from: usize, to: usize, status: bool| {
         let rows = |s: &str| s.lines().take(if status { 30 } else { 29 }).collect::<Vec<_>>().join("\n");
         let last = rows(&run.screens[to]);
         (from..=to).find(|&i| run.screens[i..=to].iter().all(|s| rows(s) == last)).unwrap()
     };
     let list_done = settled(0, 39, true);
-    let instructions: u64 = run.results[..=list_done].iter().map(|r| r.tstates).sum();
-    let worst = run.results.iter().enumerate().max_by_key(|(_, r)| r.tstates).unwrap();
-    let spilled = run.results.iter().filter(|r| !r.halted_early).count();
-    let mut sorted: Vec<u64> = run.results.iter().map(|r| r.tstates).collect();
-    sorted.sort_unstable();
+    let units: u64 = run.results[..=list_done].iter().map(|r| r.used).sum();
+    let spilled = run.results.iter().filter(|r| !r.waited).count();
+    let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+    let stats = common::FrameStats::new(&used);
+    let ram_end = RAM_BASE + run.machine.ram().len() as u32;
+    let min_sp = run.machine.cpu().min_sp;
+    // Frames from the one Enter arrives in to the one after which the
+    // article's first page is on screen, counting both (1: at once).
+    let open = settled(50, 89, false) - 50 + 1;
     eprintln!(
-        "rv reader: list of 8 entries drawn by frame {list_done} ({instructions} instructions from reset)\n\
-         rv reader: Enter (frame 50) to the ~6 KB article's first page on screen: {} frames, fully wrapped: {} frames\n\
-         rv reader: Enter (frame 123) to the >16 KiB article's first page: {} frames, fully wrapped: {} frames\n\
-         rv reader: busiest frame {} with {} instructions ({:.1}% of {INSTRUCTIONS_PER_FRAME}); median frame {}; \
-         frames not ending in wait_frame: {spilled}",
-        settled(50, 89, false) - 50 + 1,
+        "reader: list of 8 entries drawn in {} frames ({units} units from reset)\n\
+         reader: article-open latency (Enter to the ~6 KB article's first page on screen): {open} frames; \
+         fully wrapped: {} frames\n\
+         reader: Enter to the >16 KiB article's first page: {} frames, fully wrapped: {} frames\n\
+         reader: {}; frames not ending in wait_frame: {spilled}\n\
+         reader: deepest stack {} bytes; host {:.1} µs per frame (machine and content service)",
+        list_done + 1,
         settled(50, 89, true) - 50 + 1,
         settled(123, 159, false) - 123 + 1,
         settled(123, 159, true) - 123 + 1,
-        worst.0,
-        worst.1.tstates,
-        worst.1.tstates as f64 * 100.0 / INSTRUCTIONS_PER_FRAME as f64,
-        sorted[sorted.len() / 2],
+        stats.describe(),
+        ram_end - min_sp,
+        host.as_secs_f64() * 1e6 / 200.0,
     );
-    let ram_end = RAM_BASE + run.machine.ram().len() as u32;
-    let min_sp = run.machine.cpu().min_sp;
-    eprintln!("rv reader: stack reached {min_sp:08X}h ({} bytes)", ram_end - min_sp);
     assert_eq!(spilled, 0, "a frame's work ran into the next frame");
 }
 
 /// The costliest text: wide characters only, wrapped and redrawn page by
-/// page. Measured, not limited: on profile 2 a frame that runs out of
-/// instructions simply continues in the next.
+/// page. Measured, not limited: a frame that runs out of budget simply
+/// continues in the next.
 #[test]
 fn wide_text_frames() {
     let mut f = Fixture::new();
@@ -345,24 +343,20 @@ fn wide_text_frames() {
     let script = "14 press enter\n40 press pagedown\n41 press pagedown\n42 press end\n50 press home\n51 wheel 5\n";
     let mut run = Run::new(&f, script);
     run.frames(70);
-    let worst = run.results.iter().map(|r| r.tstates).max().unwrap();
-    let spilled = run.results.iter().filter(|r| !r.halted_early).count();
+    let worst = run.results.iter().map(|r| r.used).max().unwrap();
+    let spilled = run.results.iter().filter(|r| !r.waited).count();
     let busy: Vec<(usize, u64)> =
-        run.results.iter().map(|r| r.tstates).enumerate().filter(|&(_, t)| t > 20_000).collect();
+        run.results.iter().map(|r| r.used).enumerate().filter(|&(_, t)| t > 20_000).collect();
     eprintln!(
-        "rv reader: wide text, busiest frame {worst} instructions; frames not ending in wait_frame: {spilled}; \
-         frames over 20,000 instructions: {busy:?}"
+        "reader: wide text, busiest frame {worst} units ({:.2}%); frames not ending in wait_frame: {spilled}; \
+         frames over 20,000 units: {busy:?}",
+        common::pct(worst)
     );
     assert!(row(&run.screen(), 29).contains("lines 16–42 of"), "{}", run.screen());
 }
 
-/// reader.terse is up to date with its sources (skipped without the tools).
 #[test]
 fn image_is_up_to_date() {
-    if !common::have_tools() {
-        return;
-    }
-    let rom = common::build(&[common::workspace().join("programs/rv/reader/reader.c")], "-Os", true);
-    let image = terse_rv::parse_image(IMAGE).unwrap();
-    assert!(image.rom == rom, "programs/rv/reader/reader.terse is out of date: run programs/rv/reader/build.sh");
+    common::check_up_to_date(IMAGE, &["reader/reader.c"], true, "reader", RAM_PAGES, &[(2, 0), (4, 0)]);
 }
+

@@ -27,4 +27,4 @@ each line at a space so that no word is split unless it is longer than the row
 itself. 日本語の文章も二桁の幅で折り返されます。        A tab, then more words
 to fill the paragraph out to a few hundred bytes.
 
- lines 1–27 of 72+                    ↑↓ PgUp PgDn Home End wheel   Esc/←: back
+ lines 1–27 of 105  25%               ↑↓ PgUp PgDn Home End wheel   Esc/←: back

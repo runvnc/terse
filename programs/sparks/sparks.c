@@ -1,17 +1,18 @@
 /* sparks: steer a small craft around an arena, collect drifting sparks and
- * keep clear of the rotating sweepers. Profile 2 (RV32IMC, RV-PROFILE.md)
- * port of programs/sparks/sparks.c: the same game, frame for frame, in
- * plain C (no assembly multiply, no static scratch variables, no
- * multiplications spelled as shifts). Built with clang (see build.sh).
+ * keep clear of the rotating sweepers. Uses the terminal for the HUD and the
+ * 2D vector display (device 3) for everything else; built with clang (see
+ * build.sh).
  *
- * Coordinates are sixteenths of a screen unit (SPEC 8.1). Angles are 0-255
+ * Coordinates are sixteenths of a screen unit (SPEC 10.1). Angles are 0-255
  * (a full turn; 0 points right, 64 down), sines come from a table, and
  * fmul() scales by them. All randomness mixes in the host's random bytes,
  * so a run is reproducible from its recorded inputs.
  *
- * Controls: Left/Right turn, Up thrusts, Enter starts, Esc quits. Controller
- * 0: d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
- * starts. */
+ * Controls: Left/Right turn, Up thrusts, Enter starts, Esc quits, P switches
+ * between the clean and the phosphor display style (SPEC 10.6), F turns the
+ * fill of filled shapes off and on (outlines; SPEC 10.2). Controller 0:
+ * d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
+ * starts, Y switches the style, X the fill. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -103,7 +104,9 @@ static uint8_t state, lives, inv, flash, wait, tick, hud_dirty, until_next;
 static uint8_t digits[4];
 
 static terse_pad pad;
-static uint8_t key_left, key_right, key_up, key_start, pad_prev;
+static uint8_t key_left, key_right, key_up, key_start, pad_prev, xy_prev, phosphor, fill_off;
+#define KEY_F 0x09
+#define KEY_P 0x13
 
 static uint8_t list[1024];
 
@@ -291,6 +294,8 @@ static void input(void)
         case KEY_RIGHT: key_right = down; break;
         case KEY_UP: key_up = down; break;
         case KEY_ENTER: key_start |= down; break;
+        case KEY_P: phosphor ^= down; break;
+        case KEY_F: fill_off ^= down; break;
         case KEY_ESCAPE:
             if (down)
                 terse_exit(0);
@@ -305,6 +310,17 @@ static void input(void)
     pad_prev = b;
     if (edge & (PAD_A | 0x80))
         key_start = 1;
+    edge = pad.buttons & ~xy_prev;
+    xy_prev = pad.buttons;
+    if (edge & PAD_Y)
+        phosphor ^= 1;
+    if (edge & PAD_X)
+        fill_off ^= 1;
+    /* In the phosphor style the shapes are outlined and add light; the
+     * persistence stays at its default (160). With the fill off, filled
+     * shapes are outlines in the clean style too. */
+    vec_style(phosphor ? VEC_STYLE_PHOSPHOR : VEC_STYLE_CLEAN);
+    vec_fill(fill_off ? VEC_FILL_OFF : VEC_FILL_ON);
 
     turn = 0;
     if (key_left || (b & PAD_LEFT))
@@ -538,7 +554,7 @@ static void draw(void)
         vec_line(nx, ny);
     }
     /* The title and game-over boxes: their cell backgrounds are below every
-     * shape (SPEC 8.6), so a near-opaque panel of the same colour, last in
+     * shape (SPEC 10.5), so a near-opaque panel of the same colour, last in
      * the list, keeps the shapes behind the text from showing through. */
     if (state != PLAY) {
         vec_colour(48, 48, 48, 230);

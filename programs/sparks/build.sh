@@ -5,8 +5,8 @@
 #   ./build.sh [<out dir>]     default: this directory
 # Set TERSE to a built `terse` binary to skip cargo, or CARGO if cargo is
 # not on PATH; CLANG, LLD and OBJCOPY name the tools. The flags and the
-# order of the objects must stay those of crates/terse-rv/tests/common
-# (`build`), which checks that sparks.terse is up to date.
+# order of the objects are those of crates/terse-cli/tests/common/mod.rs
+# (`build_rom`), which checks that sparks.terse is up to date.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 lib="$here/../lib"
@@ -27,4 +27,4 @@ cflags="--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32 -Os -ffreestandi
 "${CLANG:-clang}" $cflags -c "$lib/terse.c" -o 2.o
 "${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o 1.o 2.o -o out.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary out.elf sparks.bin
-terse pack --rom sparks.bin --title sparks --ram-pages 4 --device 2:0 --device 3:0 -o "$out/sparks.terse"
+terse pack --rom sparks.bin --title sparks --ram-pages 1 --device 2:0 --device 3:0 -o "$out/sparks.terse"

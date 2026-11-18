@@ -1,13 +1,12 @@
-/* hello.S - Terse demo program for machine profile 2 (RV32IMC,
- * RV-PROFILE.md): the same screen as programs/hello/hello.asm (profile 1).
+/* hello.S - Terse demo program (machine profile 1, RV32IMC), in assembly.
  *
  * Shows a title bar, some UTF-8 text, palette entries 0-15 written straight
  * into cell memory, and a frame counter; echoes typed text; Esc exits.
- * Build with build.sh (clang, ld.lld, llvm-objcopy, `terse pack --profile 2`).
+ * Build with build.sh (clang, ld.lld, llvm-objcopy and `terse pack`).
  *
  * Devices are calls: a7 = (slot << 8) | function, arguments in a0-a2,
- * result in a0. Nothing is waiting on an interrupt: the program asks for the
- * next frame with wait_frame. */
+ * result in a0. Nothing waits on an interrupt: the program asks for the
+ * next frame with wait_frame. It uses no stack and needs one RAM page. */
 
     .equ WAIT_FRAME,    0x100
     .equ NEXT_EVENT,    0x101

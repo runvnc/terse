@@ -1,8 +1,8 @@
-/* Linker script for Terse profile 2 (RV-PROFILE.md section 2): code and
+/* Linker script for Terse (SPEC.md section 1.2): code and
  * constants in ROM from 00010000h, data and the stack in RAM from
- * 00100000h. The image's RAM size is set by `terse pack --ram-pages`; the
- * build checks that .bss ends well below it (the stack grows down from the
- * end of RAM). */
+ * 00100000h. The image's RAM size is set by `terse pack --ram-pages`; it
+ * must leave room above .bss (__bss_end) for the stack, which grows down
+ * from the end of RAM. Nothing checks this at link time. */
 
 OUTPUT_ARCH(riscv)
 ENTRY(_start)

@@ -1,14 +1,14 @@
-/* reader.c: a feed reader for Terse, machine profile 2 (RV32IMC).
+/* reader.c: a feed reader for Terse (machine profile 1, RV32IMC).
  *
- * A port of programs/reader/reader.c (profile 1, SDCC) to the profile-2
- * library: the same screens and behaviour. Lists the timeline of the feeds
- * the host subscribes to (SPEC 7.7), newest first, and shows an article
- * (NETWORK 4.5: plain UTF-8) word-wrapped to the grid.
+ * Lists the timeline of the feeds the host subscribes to (SPEC 9), newest
+ * first, and shows an article (NETWORK 4.5: plain UTF-8) word-wrapped to
+ * the grid.
  *
- * Every frame it handles the queued events, wraps all the article bytes it
- * holds, draws every row that changed and waits for the next frame. There is
- * no work budget: if a frame's work runs out of instructions the machine
- * simply carries on in the next frame.
+ * Every frame it handles the queued events, wraps up to 4 KiB more of the
+ * article bytes it holds, draws every row that changed and waits for the
+ * next frame. A row is built as 80 cells in RAM and written with one cells
+ * call (SPEC 8.2). Should a frame's work still run out of budget, the
+ * machine simply carries on in the next frame.
  *
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
  * timeline buffer, the line index (MAX_LINES offsets) and up to 48 KiB of
@@ -24,7 +24,7 @@
 #define TEXT_ROWS 27
 #define STATUS_ROW 29
 
-/* xterm palette indexes (SPEC 6.6). */
+/* xterm palette indexes (SPEC 8.5). */
 #define C_TEXT 252
 #define C_DIM 244
 #define C_BG 0
@@ -38,7 +38,7 @@
 #define C_NEW 220
 #define C_ERROR 203
 
-/* Timeline records (SPEC 7.7): L, flags, then the entry (NETWORK 4.2). */
+/* Timeline records (SPEC 9.5): L, flags, then the entry (NETWORK 4.2). */
 #define R_FLAGS 1
 #define R_FEED 2
 #define R_SEQ 34
@@ -56,6 +56,10 @@
 #define CHUNK 16384u
 #define MAX_LINES 2048
 #define NEED_MORE 0xFFFF
+/* Bytes of the article wrapped in one frame at most (about 11 units a byte
+ * of ASCII text), so that a frame that also redraws the whole page ends
+ * within its budget. */
+#define WRAP_PER_FRAME 2048
 
 enum { LIST, ARTICLE };
 enum { FETCHING, READY, NOT_FOUND, FAILED };
@@ -66,7 +70,11 @@ static terse_event ev;
 static uint8_t last_buttons;
 
 static uint8_t dirty[TERM_ROWS];
-static uint8_t col; /* column of the next character in the row being drawn */
+/* The row being drawn: its cells, the column of the next character and the
+ * colours it is drawn in. */
+static uint32_t cells[COLS];
+static uint8_t row_at, col;
+static uint32_t attr; /* the colours, as in a cell: fg << 16 | bg << 24 */
 
 /* --- Timeline ---------------------------------------------------------- */
 
@@ -120,17 +128,25 @@ static void skip(uint32_t n)
 
 /* --- Text -------------------------------------------------------------- */
 
-/* Counts the printable ASCII bytes (20h-7Eh) at `p`, at most `max`;
- * scan_space is one past the last space among them (0: none). */
+/* Counts the printable ASCII bytes (20h-7Eh) at `p`, at most `max`. */
+static uint32_t ascii_run(uint32_t max, const uint8_t *p)
+{
+    uint32_t n = 0;
+    while (n < max && (uint8_t)(p[n] - 0x20) < 0x5F)
+        n++;
+    return n;
+}
+
+/* As ascii_run; scan_space is one past the last space among them (0:
+ * none). */
 static uint32_t scan_space;
 
 static uint32_t scan_ascii(uint32_t max, const uint8_t *p)
 {
-    uint32_t n;
-    scan_space = 0;
-    for (n = 0; n < max && p[n] >= 0x20 && p[n] < 0x7F; n++)
-        if (p[n] == ' ')
-            scan_space = n + 1;
+    uint32_t n = ascii_run(max, p), k = n;
+    while (k && p[k - 1] != ' ')
+        k--;
+    scan_space = k;
     return n;
 }
 
@@ -166,7 +182,7 @@ static uint32_t decode_fast(uint32_t limit)
 
 /* Decodes one character of the article before `limit`. Malformed UTF-8
  * gives U+FFFD per maximal invalid prefix, and the byte that ended it is
- * decoded afresh (SPEC 6.3); characters above U+FFFF give U+FFFD. */
+ * decoded afresh (SPEC 8.3); characters above U+FFFF give U+FFFD. */
 static uint16_t art_char(uint16_t limit)
 {
     uint8_t b = *rp, need, lo = 0x80, hi = 0xBF, c;
@@ -248,44 +264,70 @@ static uint8_t width(uint32_t cp)
 
 static void row_start(uint8_t row, uint8_t f, uint8_t b)
 {
-    term_goto(0, row);
-    term_color(f, b);
+    row_at = row;
+    attr = (uint32_t)f << 16 | (uint32_t)b << 24;
     col = 0;
 }
 
 static void ink(uint8_t f)
 {
-    term_fg(f);
+    attr = (attr & 0xFF000000u) | (uint32_t)f << 16;
+}
+
+static void cell(uint32_t ch)
+{
+    if (col < COLS)
+        cells[col++] = ch | attr;
 }
 
 /* A character known to be narrow. */
 static void put1(uint16_t cp)
 {
-    term_put_cp(cp);
-    col++;
+    cell(cp);
+}
+
+/* Any character: a wide one takes its cell and a continuation cell. U+FFFF
+ * would be a continuation, so it shows as U+FFFD (as the write call shows
+ * it). */
+static void put_w(uint16_t cp, uint8_t w)
+{
+    if (cp == TERM_CONTINUATION)
+        cp = 0xFFFD;
+    cell(cp);
+    if (w == 2)
+        cell(TERM_CONTINUATION);
 }
 
 static void put(uint16_t cp)
 {
-    term_put_cp(cp);
-    col += width(cp);
+    put_w(cp, width(cp));
+}
+
+/* `n` printable ASCII bytes; they fit in the row. */
+static void put_ascii(const uint8_t *p, uint32_t n)
+{
+    uint32_t *c = cells + col, a = attr;
+    col += n;
+    while (n--)
+        *c++ = *p++ | a;
 }
 
 /* A string from this program: UTF-8, no wide characters. */
 static void puts_(const char *s)
 {
-    const char *e;
-    for (e = s; *e; e++)
-        if ((*e & 0xC0) != 0x80)
-            col++;
-    term_write(s, e - s);
+    const uint8_t *p = (const uint8_t *)s;
+    while (*p)
+        cell(title_char(&p));
 }
 
-static void spaces(uint8_t n)
+static void spaces(uint32_t n)
 {
-    static const char blank[COLS] = "                                                                                ";
-    term_write(blank, n);
+    uint32_t *c = cells + col, a = attr | ' ';
+    if (n > COLS - col)
+        n = COLS - col;
     col += n;
+    while (n--)
+        *c++ = a;
 }
 
 static void pad_to(uint8_t c)
@@ -294,12 +336,11 @@ static void pad_to(uint8_t c)
         spaces(c - col);
 }
 
-/* Clears the rest of the row, unless the row is full: the cursor then
- * still sits on column 79 (pending wrap, SPEC 6.3). */
+/* Clears the rest of the row in the current colours and writes it. */
 static void row_end(void)
 {
-    if (col < COLS)
-        term_cmd(TERM_CLEAR_EOL);
+    spaces(COLS - col);
+    term_cells_write((uint32_t)row_at * COLS, cells, COLS);
 }
 
 static char num[11];
@@ -323,14 +364,11 @@ static void put_u32(uint32_t v)
 static void put_hex(const uint8_t *b, uint8_t n)
 {
     static const char hex[] = "0123456789abcdef";
-    char out[8];
     uint8_t k;
     for (k = 0; k < n; k++) {
-        out[2 * k] = hex[b[k] >> 4];
-        out[2 * k + 1] = hex[b[k] & 15];
+        cell(hex[b[k] >> 4]);
+        cell(hex[b[k] & 15]);
     }
-    term_write(out, 2 * n);
-    col += 2 * n;
 }
 
 /* A title in at most `room` columns, with an ellipsis if cut. A title
@@ -344,7 +382,8 @@ static void put_title(const uint8_t *t, uint8_t n, uint8_t room)
         b = limit - w;
         if ((uint32_t)(end - p) < b)
             b = end - p;
-        b = term_put_ascii(b, p);
+        b = ascii_run(b, p);
+        put_ascii(p, b);
         p += b;
         w += b;
         if (p == end || w == limit)
@@ -354,11 +393,10 @@ static void put_title(const uint8_t *t, uint8_t n, uint8_t room)
         cw = width(cp);
         if (w + cw > limit)
             break;
-        term_put_cp(cp);
+        put_w(cp, cw);
         w += cw;
         p = q;
     }
-    col += w;
     if (p == end)
         return;
     /* Cut: unless just one character is left and it fits after all. */
@@ -377,9 +415,8 @@ static uint32_t get32(const uint8_t *p)
 
 static void two(uint32_t v)
 {
-    char d[2] = {'0' + v / 10, '0' + v % 10};
-    term_write(d, 2);
-    col += 2;
+    cell('0' + v / 10);
+    cell('0' + v % 10);
 }
 
 static const uint8_t month_days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -531,7 +568,7 @@ static void timeline_done(uint8_t status)
     tl_count = n;
     tl_total = total > 0xFFFF ? 0xFFFF : total;
     if (tl_refresh && tl_loaded) {
-        /* New entries arrive at index 0 (SPEC 7.7): the selection keeps its
+        /* New entries arrive at index 0 (SPEC 9.5): the selection keeps its
          * entry, found by its identity or else moved down by the arrivals. */
         if (tl_total > old_total) {
             new_top += tl_total - old_total;
@@ -835,6 +872,12 @@ static uint16_t wrap_line(uint16_t limit, uint8_t final)
             if (b == '\n')
                 return rpos;
             w = b == '\t' ? 8 - (c & 7) : b == '\r' ? 0 : 1; /* other controls show as U+FFFD */
+        } else if (b >= 0xE1 && b <= 0xEF && b != 0xED && limit - rpos >= 3 && (rp[1] & 0xC0) == 0x80
+                   && (rp[2] & 0xC0) == 0x80) {
+            /* Three bytes (CJK, kana, punctuation), inline. */
+            cp = (b & 0x0F) << 12 | (rp[1] & 0x3F) << 6 | (rp[2] & 0x3F);
+            skip(3);
+            w = cp - 0x3250u <= 0xA48Cu - 0x3250u ? 2 : width(cp);
         } else {
             cp = decode_fast(limit);
             w = width(cp ? cp : art_char(limit));
@@ -847,14 +890,14 @@ static uint16_t wrap_line(uint16_t limit, uint8_t final)
     }
 }
 
-/* Wraps every held byte that can be wrapped. */
+/* Wraps the held bytes that can be wrapped, WRAP_PER_FRAME at most. */
 static void wrap_all(void)
 {
     uint8_t final = art_have >= art_want;
-    uint16_t next;
+    uint16_t next, start = wrap_pos;
     if (art_state != READY || wrap_done)
         return;
-    for (;;) {
+    while (wrap_pos - start < WRAP_PER_FRAME) {
         if (line_count == MAX_LINES || (final && wrap_pos >= art_have)) {
             wrap_done = 1;
             if (art_to_end)
@@ -898,38 +941,52 @@ static void draw_text_row(uint8_t row)
             puts_("Esc: back to the list");
         }
     } else if (i < line_count) {
+        /* Cells straight into the row buffer, the commonest cases inline. */
+        const uint8_t *p = art + lines[i], *e;
+        uint32_t a = attr, k = 0, b;
         end = i + 1 < line_count ? lines[i + 1] : wrap_pos;
-        seek(lines[i]);
-        while (rpos < end) {
-            uint8_t b = *rp;
-            if (b >= 0x20 && b < 0x7F && col < COLS) {
-                uint32_t n = term_put_ascii(run_room(COLS - col, end), rp);
-                col += n;
-                skip(n);
+        e = art + end;
+        while (p < e) {
+            b = *p;
+            if (b - 0x20 < 0x5F) {
+                if (k == COLS)
+                    break; /* the row is full */
+                cells[k++] = b | a;
+                p++;
                 continue;
             }
             if (b < 0x80) {
-                skip(1);
-                if (b >= ' ' && b != 0x7F)
-                    break; /* the row is full */
+                p++;
                 if (b == '\t') {
-                    spaces(8 - (col & 7));
+                    for (b = 8 - (k & 7); b && k < COLS; b--)
+                        cells[k++] = a | ' ';
                     continue;
                 }
                 if (b == '\n' || b == '\r')
                     continue;
                 cp = 0xFFFD;
+            } else if (b >= 0xE1 && b <= 0xEF && b != 0xED && e - p >= 3 && (p[1] & 0xC0) == 0x80
+                       && (p[2] & 0xC0) == 0x80) {
+                /* Three bytes (CJK, kana, punctuation). */
+                cp = (b & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F);
+                p += 3;
             } else {
+                seek(p - art);
                 cp = decode_fast(end);
                 if (!cp)
                     cp = art_char(end);
+                p = rp;
             }
-            w = width(cp);
-            if (col + w > COLS)
+            w = cp - 0x3250u <= 0xA48Cu - 0x3250u ? 2 : width(cp);
+            if (k + w > COLS)
                 break;
-            term_put_cp(cp);
-            col += w;
+            if (cp == TERM_CONTINUATION)
+                cp = 0xFFFD;
+            cells[k++] = cp | a;
+            if (w == 2)
+                cells[k++] = TERM_CONTINUATION | a;
         }
+        col = k;
     } else if (i == line_count && wrap_done && (art_have < art_size || line_count == MAX_LINES)) {
         ink(C_DIM);
         puts_("[… the article continues: this reader holds ");
@@ -1090,7 +1147,7 @@ static uint8_t handle_events(void)
 }
 
 /* Brings the view position up to date, scrolling the terminal for a
- * one-row move (SPEC 6.4) so that only the new row is drawn. Rows 0 and 29
+ * one-row move (SPEC 8.4) so that only the new row is drawn. Rows 0 and 29
  * move with it and are redrawn. */
 static void follow(uint16_t want, uint16_t *drawn, uint8_t first, uint8_t last)
 {
