@@ -40,6 +40,8 @@ impl Event {
     pub const CONTENT_DONE: u8 = 0x05;
     pub const WHEEL: u8 = 0x06;
     pub const FEEDS_UPDATED: u8 = 0x07;
+    pub const PAGE_LAID_OUT: u8 = 0x08;
+    pub const PAGE_ANCHOR: u8 = 0x09;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -78,6 +80,17 @@ impl Event {
     /// The host stored new feed entries since the previous frame (SPEC 7.7).
     pub fn feeds_updated() -> Self {
         Event { kind: Self::FEEDS_UPDATED, a: 0, b: 0, c: 0 }
+    }
+
+    /// The page's height in screen units (SPEC 11.5), at most 24 bits.
+    pub fn page_laid_out(height: u32) -> Self {
+        let h = height.min(0xFF_FFFF);
+        Event { kind: Self::PAGE_LAID_OUT, a: h as u8, b: (h >> 8) as u8, c: (h >> 16) as u8 }
+    }
+
+    /// A pointer button was pressed over text with anchor `id` (SPEC 11.5).
+    pub fn page_anchor(id: u16, buttons: u8) -> Self {
+        Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: buttons & 0x07 }
     }
 
     /// A content request finished (SPEC 7.3).

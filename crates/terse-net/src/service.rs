@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use terse_core::page::{Layouter, PageInput};
 use terse_core::{Completion, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script};
 
 use crate::identity::FeedKey;
@@ -143,22 +144,39 @@ impl ContentService {
 /// 0, random bytes 00h, and every content request completed at the start of the
 /// next frame. A feeds-updated event is delivered in the frame after the one
 /// in which the host stored a new entry; entries stored before the first
-/// frame (the initial sync) are not announced.
+/// frame (the initial sync) are not announced. The page (device 7) is laid
+/// out between frames, with the reference layout unless a layouter is given,
+/// so its height event arrives in the frame after the change; a pointer
+/// press over anchored text is followed by its anchor event.
 pub struct Headless {
     content: Option<ContentService>,
     script: Script,
     completions: Vec<Completion>,
     feeds_updated: bool,
+    /// The page's events (SPEC 11.5), from the reference layout unless the
+    /// host gives its own layouter.
+    page: PageInput,
 }
 
 impl Headless {
     pub fn new(content: Option<ContentService>, script: Script) -> Self {
-        Headless { content, script, completions: Vec::new(), feeds_updated: false }
+        Headless { content, script, completions: Vec::new(), feeds_updated: false, page: PageInput::default() }
+    }
+
+    /// Lays the page out with `layouter` instead of the reference layout.
+    pub fn with_layouter(mut self, layouter: Box<dyn Layouter + Send>) -> Self {
+        self.page = PageInput::new(layouter);
+        self
+    }
+
+    /// The layouter, holding the latest layout of the page.
+    pub fn page_layouter(&self) -> &dyn Layouter {
+        self.page.layouter()
     }
 
     /// Runs the machine's next frame, then carries out the requests it made.
     pub fn frame(&mut self, machine: &mut Machine) -> FrameResult {
-        let mut events = self.script.events(machine.frame()).to_vec();
+        let mut events = self.page.events(machine.page(), self.script.events(machine.frame()));
         if std::mem::take(&mut self.feeds_updated) {
             events.push(Event::feeds_updated());
         }
@@ -166,6 +184,8 @@ impl Headless {
         let controllers = self.script.controllers(machine.frame());
         let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
         let result = machine.run_frame(&input);
+        // The height of a changed page is reported at the next frame.
+        self.page.after_frame(machine.page());
         if let Some(content) = &mut self.content {
             content.submit(machine.take_content_requests());
             self.completions = content.wait_finished();

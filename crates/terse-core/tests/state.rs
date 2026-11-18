@@ -9,7 +9,7 @@ use terse_core::{
     Completion, Controller, DeviceReq, Event, FrameInput, Image, Machine, Outcome, STATE_DOMAIN, Stopped, charge,
 };
 
-const ALL: [DeviceReq; 3] = [common::TERMINAL, common::VECTOR, common::CONTENT];
+const ALL: [DeviceReq; 4] = [common::TERMINAL, common::VECTOR, common::CONTENT, common::PAGE];
 
 fn u32_at(s: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(s[at..at + 4].try_into().unwrap())
@@ -44,12 +44,17 @@ fn layout_at_reset() {
     assert_eq!(&s[v..v + 8], &[1, 0, 160, 0, 0, 0, 0, 0], "vector: present, clean, 160, fill, empty");
     let c = v + 8;
     assert_eq!(s[c], 1);
-    assert_eq!(s.len(), c + 425);
-    assert_eq!(s.len(), 45 + 128 + 23 + 4 + l + 37 + 10_379 + 8 + 425);
+    let p = c + 425;
+    assert_eq!(
+        &s[p..],
+        &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0, 0, 0, 0],
+        "page: present, region 0, scroll 0, background FF000000h, no document"
+    );
+    assert_eq!(s.len(), 45 + 128 + 23 + 4 + l + 37 + 10_379 + 8 + 425 + 21);
 
     // Without devices each section is one flag.
     let bare = Machine::new(&common::program(&[0x01, 0x00], 1, &[]));
-    assert_eq!(bare.state().len(), 45 + 128 + 23 + 4 + 8192 + 37 + 3);
+    assert_eq!(bare.state().len(), 45 + 128 + 23 + 4 + 8192 + 37 + 4);
 }
 
 #[test]
@@ -116,6 +121,10 @@ fn sensitive_to_each_part() {
     differs(&format!("    li a0, 1\n    li a7, 0x302\n    ecall\n{base}"), &none, "style");
     differs(&format!("    li a0, 1\n    li a7, 0x304\n    ecall\n{base}"), &none, "fill mode");
     differs(&format!("    li a0, 9\n    li a7, 0x303\n    ecall\n{base}"), &none, "persistence");
+    differs(&format!("    li a0, 0x10000\n    li a1, 2\n    li a7, 0x700\n    ecall\n{base}"), &none, "page document");
+    differs(&format!("    li a2, 5\n    li a7, 0x702\n    ecall\n{base}"), &none, "page region");
+    differs(&format!("    li a0, -1\n    li a7, 0x703\n    ecall\n{base}"), &none, "page scroll");
+    differs(&format!("    li a0, 1\n    li a7, 0x704\n    ecall\n{base}"), &none, "page background");
     // A content get pending (op 1, length 1, addr in RAM, block at RAM).
     let get = "    li t0, 0x100000\n    li t1, 1\n    sb t1, 0(t0)\n    sw t1, 40(t0)\n    li t1, 0x100100\n    \
                sw t1, 44(t0)\n    mv a0, t0\n    li a7, 0x400\n    ecall\n";
@@ -127,8 +136,9 @@ fn sensitive_to_each_part() {
     let done = [Completion { handle: 1, outcome: Outcome::Got { size: 1, data: vec![9] } }];
     m.run_frame(&FrameInput { completions: &done, ..Default::default() });
     let s = m.state();
-    assert_ne!(pending[pending.len() - 425..], s[s.len() - 425..]);
-    assert!(s[s.len() - 424..].iter().all(|&b| b == 0), "slot 1 free again");
+    let content = |s: &[u8]| s[s.len() - 21 - 425..s.len() - 21].to_vec();
+    assert_ne!(content(&pending), content(&s));
+    assert!(content(&s)[1..].iter().all(|&b| b == 0), "slot 1 free again");
 }
 
 #[test]

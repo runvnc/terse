@@ -6,6 +6,7 @@ use std::fmt;
 use crate::content::{Completion, Content, Request, ram_range, readable};
 use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
 use crate::image::Image;
+use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
 use crate::vector::Vector;
@@ -16,7 +17,7 @@ pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
 /// Budget units added each frame (SPEC 1.4). Provisional.
 pub const BUDGET_PER_FRAME: i64 = 125_000;
 
-/// The charges of SPEC 11, in budget units. Provisional.
+/// The charges of SPEC 12, in budget units. Provisional.
 pub mod charge {
     /// Every call, on top of the `ecall` instruction itself.
     pub const CALL: u32 = 4;
@@ -77,6 +78,12 @@ pub mod call {
     pub const VEC_FILL: u32 = 0x304;
 
     pub const CONTENT_SUBMIT: u32 = 0x400;
+
+    pub const PAGE_SUBMIT: u32 = 0x700;
+    pub const PAGE_CLEAR: u32 = 0x701;
+    pub const PAGE_REGION: u32 = 0x702;
+    pub const PAGE_SCROLL: u32 = 0x703;
+    pub const PAGE_BACKGROUND: u32 = 0x704;
 }
 
 /// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
@@ -150,6 +157,7 @@ pub struct Machine {
     terminal: Option<Terminal>,
     vector: Option<Vector>,
     content: Option<Content>,
+    page: Option<Page>,
     /// The budget; zero or negative between frames (a negative remainder
     /// carries into the next frame).
     budget: i64,
@@ -175,6 +183,7 @@ impl Machine {
             terminal: image.has_device(2).then(Terminal::default),
             vector: image.has_device(3).then(Vector::default),
             content: image.has_device(4).then(Content::default),
+            page: image.has_device(7).then(Page::default),
             budget: 0,
             stopped: None,
             image_id: image.id,
@@ -262,7 +271,7 @@ impl Machine {
     /// the `ecall` instruction, whether the program waits for the next frame).
     fn ecall(&mut self) -> (u32, bool) {
         let x = &self.cpu.x;
-        let (n, a0, a1, a2) = (x[17], x[10], x[11], x[12]);
+        let (n, a0, a1, a2, a3) = (x[17], x[10], x[11], x[12], x[13]);
         let mut r1 = None;
         let mut units = charge::CALL;
         let mut wait = false;
@@ -416,6 +425,42 @@ impl Machine {
                 units += copy_charge(taken);
                 handle
             }
+            0x700..=0x7FF if self.page.is_some() => {
+                let page = self.page.as_mut().unwrap();
+                match n {
+                    call::PAGE_SUBMIT => {
+                        // The length is checked first; then the buffer.
+                        if a1 == 0 || a1 as usize > crate::page::MAX_DOCUMENT {
+                            crate::page::RESULT_REJECTED
+                        } else {
+                            match readable(rom, ram, a0, a1 as usize) {
+                                None => ERR_BUFFER,
+                                Some(bytes) => {
+                                    units += copy_charge(bytes.len());
+                                    page.submit(bytes)
+                                }
+                            }
+                        }
+                    }
+                    call::PAGE_CLEAR => {
+                        page.clear();
+                        0
+                    }
+                    call::PAGE_REGION => {
+                        page.set_region(a0, a1, a2, a3);
+                        0
+                    }
+                    call::PAGE_SCROLL => {
+                        page.set_scroll(a0);
+                        0
+                    }
+                    call::PAGE_BACKGROUND => {
+                        page.set_background(a0);
+                        0
+                    }
+                    _ => ERR_UNKNOWN,
+                }
+            }
             _ => ERR_UNKNOWN,
         };
         self.cpu.x[10] = r0;
@@ -461,6 +506,11 @@ impl Machine {
     /// Changes whenever `vector_list` changes.
     pub fn vector_generation(&self) -> u64 {
         self.vector.as_ref().map_or(0, Vector::generation)
+    }
+
+    /// Device 7, if the image lists it.
+    pub fn page(&self) -> Option<&Page> {
+        self.page.as_ref()
     }
 
     pub fn content(&self) -> Option<&Content> {
@@ -566,6 +616,10 @@ impl Machine {
         out.push(self.content.is_some() as u8);
         if let Some(c) = &self.content {
             c.write_state(&mut out);
+        }
+        out.push(self.page.is_some() as u8);
+        if let Some(p) = &self.page {
+            p.write_state(&mut out);
         }
         out
     }

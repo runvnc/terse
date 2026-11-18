@@ -1,6 +1,6 @@
 # Terse machine state hash — v0 (draft)
 
-Status: part of SPEC section 12 (Conformance). It lets two implementations of
+Status: part of SPEC section 13 (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
 Nth). The first frame whose hashes differ is where the implementations diverge.
@@ -113,7 +113,7 @@ Let `C` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| C | 1 | Present (flag): the image lists device 4. If `00h`, the section ends here (and the serialization). |
+| C | 1 | Present (flag): the image lists device 4. If `00h`, the section ends here. |
 | C + 1 | 8 × 53 | The request with handle 1, then 2, …, 8 |
 
 Each request record is 53 bytes:
@@ -128,9 +128,29 @@ Each request record is 53 bytes:
 | 45 | 4 | `addr` read at submit (get, subscriptions, timeline), else zero |
 | 49 | 4 | `size` read at submit (put), else zero |
 
+Let `P` be the offset after this section.
+
+### 1.9 Page (1 or 21 + d bytes)
+
+| Offset | Size | Field |
+|---|---|---|
+| P | 1 | Present (flag): the image lists device 7. If `00h`, the section ends here (and the serialization). |
+| P + 1 | 2 | Rectangle x (u16), as clamped by `region` (SPEC 11.2) |
+| P + 3 | 2 | Rectangle y (u16) |
+| P + 5 | 2 | Rectangle width (u16) |
+| P + 7 | 2 | Rectangle height (u16) |
+| P + 9 | 4 | Scroll value (u32), as stored, not clamped |
+| P + 13 | 4 | Background (u32), as given to `background`; `FF00_0000h` after reset |
+| P + 17 | 4 | d (u32): length of the document, 1–65,536, or 0 for no document |
+| P + 21 | d | The document (the bytes of the last accepted submit) |
+
+Nothing about the layout is included: the height a host computed, the lines,
+the anchors' positions. They reach the machine only as events (SPEC 11.5),
+which are in the queue and RAM like any other input.
+
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector) and 1 or 425 (content).
+(vector), 1 or 425 (content) and 1 or 21 + d (page).
 
 ## 2. What is left out, and why
 
@@ -147,18 +167,21 @@ That is the end of the serialization. Its length is
   caches.
 - **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
   10.6). The vector list bytes are included; how they are drawn is not.
+- **The page's layout** (SPEC 11.4): it depends on the host's fonts. The
+  document bytes, rectangle, scroll value and background are included; the
+  height a host reports is an input event.
 
 ## 3. Test vectors
 
 From this repository's implementation (the reference):
 
 - `programs/hello/hello.terse` at reset (no frame run): serialization
-  18,810 bytes, hash
-  `24808d34532edb2af0f2b40ed0598331e9962ae702b13f0494ea575126f7046c`.
+  18,811 bytes, hash
+  `0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be`.
 - The same after 1 frame with no input:
-  `486c6a6f26323a50f7a6f81674cc88c96cba54fc57bef5fd81bc0c6d679222ef`;
+  `d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe`;
   after 30 frames:
-  `ef94d0c9ae6cdcc6ab4c001bd1fcd8f7a9676265868cc9a8e6fa11d8d14f1322`.
+  `066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
 

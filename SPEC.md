@@ -2,7 +2,7 @@
 
 Status: draft for the first prototype. Everything here may change until v1;
 after v1 a published machine profile and published device versions never
-change. Section 13 lists the numbers that are placeholders until hosts have
+change. Section 14 lists the numbers that are placeholders until hosts have
 been measured.
 
 Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
@@ -23,7 +23,7 @@ Design rules that every part of this spec follows:
    host renders can be read back by the program.
 4. **Every unit of budget costs a host about the same.** Device calls are
    charged so that a frame spent in calls costs a host no more than a frame
-   spent executing instructions (section 11).
+   spent executing instructions (section 12).
 5. **Small enough to reimplement.** An independent implementation of this
    document should be a few thousand lines.
 
@@ -108,16 +108,16 @@ does the following, in order:
    6), and applies the content completions it has for this frame
    (section 9.2).
 2. Adds 125,000 to the budget, subtracts the charge for content delivered
-   in step 1 (section 11), and runs the CPU while the budget is greater
+   in step 1 (section 12), and runs the CPU while the budget is greater
    than zero.
 3. Ends the frame: the frame counter increases by one, and the host presents
-   the terminal and the vector display as they are at this moment.
+   the terminal, the vector display and the page as they are at this moment.
 
 Rules:
 
 - An instruction fetched from ROM costs 1 unit; one fetched from RAM costs
   4. An `ecall` costs 1 (or 4 from RAM) plus the charge of the call it makes
-  (section 11).
+  (section 12).
 - An instruction that starts with a positive budget runs to completion, so
   the budget can end below zero. A negative remainder carries into the next
   frame; it may be larger than a frame's budget, in which case that frame
@@ -194,9 +194,10 @@ by the ROM contents.
 | 4 | Content | 0 | specified (section 9) |
 | 5 | Messages | — | reserved |
 | 6 | Sound | — | reserved |
+| 7 | Page | 0 | specified (section 11) |
 | 10 | 3D vector display | — | reserved |
 
-Other slots are free; 0 and 7–9, 11–255 are not devices in v0.
+Other slots are free; 0, 8, 9 and 11–255 are not devices in v0.
 
 ---
 
@@ -221,7 +222,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
   (section 10.2), and a content request block not in RAM is rejected with
   handle 0 (section 9.2).
 - Buffers need no alignment.
-- Every call is charged, also when it fails (section 11).
+- Every call is charged, also when it fails (section 12).
 
 ### 3.2 Call table
 
@@ -250,8 +251,13 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
 | `400h` | `submit` | `a0` = address of a request block | a handle 1–8, or 0 if rejected |
+| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected |
+| `701h` | `clear` | — | 0 |
+| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
+| `703h` | `scroll` | `a0` = y | 0 |
+| `704h` | `background` | `a0` = colour | 0 |
 
-Sections 4 to 10 define each call.
+Sections 4 to 11 define each call.
 
 ---
 
@@ -297,6 +303,8 @@ full is dropped.
 | `05h` | Content done | request handle | status | 0 |
 | `06h` | Wheel | vertical steps, signed | horizontal steps, signed | 0 |
 | `07h` | Feeds updated | 0 | 0 | 0 |
+| `08h` | Page laid out | height bits 0–7 | bits 8–15 | bits 16–23 |
+| `09h` | Page anchor | anchor id bits 0–7 | bits 8–15 | buttons |
 
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
@@ -319,6 +327,8 @@ full is dropped.
   frame; a second in the same frame's input is dropped. It is sent after the
   automatic download of those entries' articles has finished or failed, so
   the timeline's "local" flags are already correct.
+- **Page laid out** and **page anchor** come from the page device
+  (section 11.5).
 
 ## 6. Controllers
 
@@ -343,8 +353,8 @@ A controller that is not connected reads as all zeros. Axis values are never
 
 The screen is 640 units wide and 480 high, with (0, 0) at the top left. A
 terminal cell is 8 units wide and 16 high, so the cell at (column, row) covers
-x from `column × 8` and y from `row × 16`. Pointer positions and the vector
-display use these units. Units are square: the host shows the screen at a
+x from `column × 8` and y from `row × 16`. Pointer positions, the vector
+display and the page use these units. Units are square: the host shows the screen at a
 4:3 shape, so a circle is round.
 
 ---
@@ -380,7 +390,7 @@ cell.
 
 - **`write`** puts characters (section 8.3) from the bytes of the buffer,
   in order, and returns how many bytes it consumed. Each byte is charged as
-  it is consumed (section 11), and the call stops after the byte whose charge
+  it is consumed (section 12), and the call stops after the byte whose charge
   brings the budget to zero or below, so it may consume fewer bytes than
   asked; it always consumes at least one byte of a non-empty buffer. The
   program calls `write` again with the rest (the machine pauses first if the
@@ -680,11 +690,14 @@ In the clean style the host combines the displays in a fixed order, from the
 bottom:
 
 1. the terminal's cell backgrounds;
-2. the vector display;
-3. the terminal's characters and cursor.
+2. the page (section 11): its background, then its text;
+3. the vector display;
+4. the terminal's characters and cursor.
 
-So text is always drawn over vector shapes, and a cell's background colour
-is always behind them. A program that wants a panel of text to hide the
+So terminal text is always drawn over vector shapes, and a cell's background
+colour is always behind them. The page lies between: shapes are drawn over
+it, and terminal characters over both (a program that shows the page usually
+leaves the terminal cells under its rectangle blank). A program that wants a panel of text to hide the
 shapes behind it draws a filled rectangle at the end of its list; the text
 still appears above it. Smoothing of edges and the exact colour of blended
 pixels are up to the host and cannot be observed by the program.
@@ -701,7 +714,8 @@ oscilloscope tube:
   repeated lines add up to visibly brighter light, so a program can brighten
   a line by drawing it more than once.
 - The terminal's characters and cursor are light on the same tube, in their
-  foreground colour, drawn in the same way as the shapes.
+  foreground colour, drawn in the same way as the shapes. So is the page's
+  text, in its colours; the page's background is not drawn.
 - The beam is a sharp line with a faint bloom: its bright core is narrower
   than the stated width, and the glow around it is dim and short.
 - Light lingers. What the current list and text show is drawn at full
@@ -726,7 +740,184 @@ of the list. It takes no input from the host.
 
 ---
 
-## 11. Charges
+## 11. Device 7 — Page (version 0)
+
+Shows typeset prose: proportional fonts, shaped, bidirectional and broken
+into lines at the width of a rectangle on the screen. The program hands the
+device a **document**, a short binary list of styled text much like a
+display list, and a rectangle; the host lays the text out with its own fonts
+and draws the part that is scrolled into view. The device parses no markup
+language and does no layout for the program.
+
+Layout is the host's business and differs between hosts, because fonts
+differ. The only fact about it a program learns is the laid-out height of
+the document, and it learns it through an input event (section 11.5), so a
+recorded run replays exactly whatever the fonts.
+
+### 11.1 Rectangle and scrolling
+
+The page is drawn inside its **rectangle** (x, y, width, height in screen
+units, section 7) and nothing of it outside. The document is laid out as one
+column as wide as the rectangle; the **scroll value** is the distance in
+screen units from the top of the document to the top of the rectangle. A
+rectangle with a width or height of 0 hides the page.
+
+### 11.2 Calls
+
+- **`submit`** copies `a1` bytes from address `a0` into the device,
+  replacing the document, sets the scroll value to 0, and returns 0. If the
+  length is 0 or more than 65,536 it returns 1 (rejected) and changes
+  nothing. Otherwise the bytes must lie wholly in ROM or wholly in RAM; if
+  they do not, the call returns `FFFF_FFFEh` and changes nothing (section
+  3.1). A submit of the same bytes again is still a new document
+  (section 11.5).
+- **`clear`** removes the document: the page shows only its background.
+  The scroll value is kept.
+- **`region`** sets the rectangle to x = `a0`, y = `a1`, width = `a2`,
+  height = `a3`, clamped so it lies on the screen: x to at most 640, y to at
+  most 480, the width to at most 640 − x and the height to at most 480 − y.
+- **`scroll`** sets the scroll value to `a0`, stored as given (32 bits).
+  When it presents the page, the host takes the value as a signed number and
+  clamps it to 0 … max(0, height − rectangle height), where height is the
+  document's laid-out height; the stored value does not change.
+- **`background`** sets the colour behind the text in the rectangle:
+  `a0` = r | g << 8 | b << 16 | a << 24, where `a` is opacity (255 opaque,
+  0 transparent, so the cell backgrounds show through).
+
+After reset there is no document, the rectangle is (0, 0, 0, 0) (hidden),
+the scroll value is 0 and the background is `FF00_0000h`, opaque black.
+
+### 11.3 Document
+
+A document is 1 to 65,536 bytes: a sequence of commands, each an opcode byte
+followed by its operands, little-endian. It ends at an End command, at the
+end of the bytes, at an unknown opcode or at a command whose operands are
+cut off; the commands before that are used.
+
+| Opcode | Command | Operands | Effect |
+|---|---|---|---|
+| `00h` | End | — | Ends the document |
+| `01h` | Text | n (2 bytes), then n bytes of UTF-8 | Adds the text to the current paragraph in the current font, size, colour and anchor |
+| `02h` | Font | face (1 byte: 0 sans, 1 serif, 2 monospace), flags (1 byte: bit 0 bold, bit 1 italic) | Sets the font for later text; an unknown face is 0; other flag bits are ignored |
+| `03h` | Size | size (1 byte) | Sets the font size in screen units, clamped to 6–96 |
+| `04h` | Colour | r, g, b | Sets the text colour |
+| `05h` | Paragraph | align (0 start, 1 centre, 2 end; anything else is 0), indent (1 byte), space (1 byte), flags (1 byte) | Starts a new paragraph with these properties |
+| `06h` | Rule | — | Starts a new paragraph that is a horizontal line across the rectangle, in the current colour |
+| `07h` | Anchor | id (2 bytes) | Later text belongs to anchor `id`; 0 is no anchor |
+
+State at the start of a document: sans, no flags, size 14, colour
+(229, 229, 229), anchor 0, and an implicit first paragraph that is
+start-aligned with indent 0, space 0 and wrapping. Font, size, colour and
+anchor carry on across paragraphs.
+
+- **Text.** Each Text command is decoded on its own: malformed UTF-8 becomes
+  U+FFFD as in the terminal (section 8.3; a sequence split across two Text
+  commands is malformed in both), but code points above U+FFFF are kept.
+  U+000A breaks the line inside the paragraph; U+0009 is a space; other
+  control characters (U+0000–U+001F, U+007F–U+009F) are ignored. Consecutive
+  spaces are kept.
+- **Paragraph properties.** `indent` is in screen units from the start edge
+  and applies to every line of the paragraph. `space` is the gap in screen
+  units above the paragraph, also for the first paragraph and also for a
+  paragraph with no text (which takes no other room), so an empty paragraph
+  is a vertical gap. Flags bit 0 is **no wrap**: lines break only at U+000A,
+  and a line wider than the rectangle is cut off at the rectangle's edge.
+  Other flag bits are ignored.
+- **Start and end** follow each paragraph's text direction, which the host
+  takes from its text (the first strong character, as in the Unicode
+  bidirectional algorithm): left for left-to-right text, right for
+  right-to-left text. Indent is measured from that start edge.
+- **Rule.** A rule paragraph is 8 screen units high with a line about one
+  unit thick across the whole width of the rectangle at its middle; it has
+  no space above it (put an empty Paragraph before it for a gap). Text that
+  follows a rule starts a new paragraph with the properties of the latest
+  Paragraph command (or those of the implicit first one).
+- **Line height** is the host's natural line height for the font and size;
+  a line's height is that of the largest text on it. A line break at the end
+  of a paragraph's text gives an empty last line.
+- **Anchors** mark text a pointer press reports (section 11.5); the host
+  draws anchored text like any other text, in its colour.
+
+### 11.4 Layout and presentation
+
+The host lays the document out with proportional fonts it chooses for the
+three faces: shaping (ligatures, joining scripts such as Arabic), the
+Unicode bidirectional algorithm within each line, Unicode line breaking at
+the rectangle's width less the paragraph's indent, and fallback to other
+fonts for characters the chosen font lacks. It draws the background over the
+rectangle, then the lines that intersect the rectangle after scrolling,
+clipped to it. How the text looks (fonts, hinting, smoothing, how a line
+that does not fit is cut) is up to the host and cannot be observed by the
+program.
+
+Cost stays bounded: a document is at most 65,536 bytes; the host lays it out
+outside the machine's frames (a host may take several frames, on another
+thread, while the machine runs on and the previous layout or nothing is
+shown); the machine never waits for a layout and is not charged for it; and
+the host draws only the lines in view, so scrolling needs no new layout.
+
+### 11.5 Events
+
+- **Page laid out** (`08h`): `a`, `b`, `c` are bits 0–7, 8–15 and 16–23 of
+  the document's height in screen units at the rectangle's current width,
+  FFFFFFh if it is larger. The host sends it at the start of a frame after
+  the one in which the program submitted a document, after a clear (height
+  0), and again whenever the height changes because the rectangle's width
+  changed. While the rectangle's width is 0 a document is not laid out, and
+  the event waits until there is a width. A host may skip intermediate
+  layouts when several changes come quickly, and then reports only the
+  latest, but it must eventually report the height for the latest document
+  and width once they stay unchanged. At most one is sent per frame.
+- **Page anchor** (`09h`): sent when a pointer button is pressed while the
+  pointer is over text whose anchor is not 0, as the page was last shown:
+  `a`, `b` = the anchor id, low then high byte; `c` = the buttons, with the
+  same bits as in a pointer event. It follows the pointer event of that
+  press, which is sent as usual. "Over text" means within the extent of the
+  text's glyphs along the line and within the line's height.
+
+A height event describes the document and width as they were at the end of
+an earlier frame. A program that submits again before reading it gets
+another one later, so the last height event it has read is the height of
+the last document only once no newer change is pending; a program should
+use it for clamping and showing progress, never for anything that must be
+exact. Both events are ordinary inputs (section 4): recorded with the rest,
+they make replay exact although layout differs between hosts.
+
+### 11.6 Reference layout
+
+A host without fonts (such as a headless test runner) lays out the
+document with this **reference layout**, which is a pure function of the
+document and the width; it is what `terse run` uses, and what makes its
+height events reproducible. It is a stand-in for testing and is not what
+users see.
+
+- Every character advances 0.5 × size; a wide character (section 8.1; every
+  code point above U+FFFF counts as wide) 1.0 × size. There is no
+  shaping, no kerning and no bidirectional reordering: all text runs left to
+  right, and start is left.
+- A line is ceil(1.25 × size) high for the largest size on it; an empty line
+  has the size in effect at its line break.
+- Wrapping is greedy at spaces (U+0020): a word goes on the line if the line
+  so far, the spaces before the word and the word fit in the width less the
+  indent; otherwise the line ends (the spaces are dropped) and the word
+  starts the next one. A word wider than a whole line is split between
+  characters, at least one character per line. Spaces at the start of a
+  paragraph or after a line break are kept.
+- Centre puts a line's leftover width, halved and rounded down, before it;
+  end puts all of it there. Paragraph space and indent are as in section
+  11.3; a rule is 8 units high.
+- The height is the sum of the spaces, line heights and rules.
+
+### 11.7 Determinism
+
+The device's state is the document bytes (or no document), the rectangle,
+the scroll value and the background. Nothing about layout is machine state;
+what the layout means for the program arrives only as the events of
+section 11.5.
+
+---
+
+## 12. Charges
 
 Every call is charged in budget units on top of the `ecall` instruction
 itself (1 from ROM, 4 from RAM). Charges are subtracted from the budget as
@@ -737,11 +928,12 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), an accepted page `submit` | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get or records request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
-Nothing else is charged: a rejected submit or put copies nothing, and the
-fields a completion writes to a request block are free.
+Nothing else is charged: a rejected submit or put copies nothing, the
+fields a completion writes to a request block are free, and so is laying out
+the page, which the host does outside the machine's frames (section 11.4).
 
 The charges are chosen so that a frame spent entirely in any one kind of call
 costs a host no more per unit than a frame of instructions from ROM;
@@ -749,7 +941,7 @@ costs a host no more per unit than a frame of instructions from ROM;
 
 ---
 
-## 12. Conformance
+## 13. Conformance
 
 An implementation conforms to profile 1 if:
 
@@ -766,22 +958,26 @@ or FAIL line per section) and its last phase is a deliberate worst case for a
 host (full-budget frames, every cell rewritten, maximum-size display lists at
 the fill cap), for measuring how a host holds its frame rate.
 
-## 13. Provisional values
+## 14. Provisional values
 
 These numbers are placeholders until weak hosts have been measured:
 
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
-- the charges of section 11 (4 per call, 1 per `write` byte, 1 per 4 bytes
+- the charges of section 12 (4 per call, 1 per `write` byte, 1 per 4 bytes
   copied, 150 per clear or scroll);
 - the fill cap, 4 × 640 × 480 square units (section 10.4).
 
-## 14. Not yet specified
+## 15. Not yet specified
 
 - Font selection, combining marks and complex scripts in the terminal.
 - Names (signed pointers to blobs), ranges verified without fetching the
   whole blob, and cancelling a content request.
 - Devices 5, 6 and 10.
+- On the page: images, links the host follows itself, selecting and copying
+  text, fonts beyond the three faces, and a way for a program to learn where
+  an anchor was laid out (to scroll to it, or to move a keyboard focus from
+  link to link).
 - A limit on the area covered by lines and circle outlines. The fill cap
   does not apply to them, so a legal list of about 3,000 maximum-width lines
   across the whole screen still costs a host far more fill than four

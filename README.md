@@ -259,7 +259,7 @@ sources and the same clang give the same image, and each program's test fails if
 its checked-in `.terse` is not what its sources build to (and is skipped when
 clang lacks the riscv32 target).
 
-Costs to keep in mind (SPEC 11): an instruction from ROM costs 1 unit, one from
+Costs to keep in mind (SPEC 12): an instruction from ROM costs 1 unit, one from
 RAM 4; a call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write`
 costs 1 per byte, and a scroll or clear 150. Writing a whole row with one `write`
 or `term_cells_write` is far cheaper than a call per character.
@@ -599,7 +599,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   fill cap stops the fills), frames 79–108 the worst legal case: fills totalling
   just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
   3,268 translucent lines of width 255 across the screen, about 109 screens of line
-  area (lines are not capped, SPEC 14).
+  area (lines are not capped, SPEC 15).
 
 **Responsiveness (window).** `terse-host --selftest` runs the image in the normal
 window with vsync and the same script, and prints for each machine frame the

@@ -15,7 +15,7 @@ use terse_net::{ContentService, Done, Node, blob_id, parse_hex, to_hex};
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
-  terse run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...]
+  terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]
   terse info <image|id> [--relay ws://...] [--store <dir>]
   terse put <file> [--relay ws://...] [--store <dir>]
@@ -43,6 +43,8 @@ entries are kept in <store>/feeds.
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
+--dump-page prints the page (device 7) as the reference layout lays it out: a header line with
+its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
 (SPEC 1.5), it prints the fault and ends by signal SIGTERM, so a parent process can
 tell a fault from any exit code (a shell's $status shows 143).";
@@ -177,11 +179,12 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--dump", "--dump-vectors", "--hash", "--bench"])?;
+    let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--bench"])?;
     args.check_known(&[
         "--frames",
         "--dump",
         "--dump-vectors",
+        "--dump-page",
         "--events",
         "--relay",
         "--store",
@@ -190,8 +193,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--hash-every",
         "--bench",
     ])?;
-    if args.has("--dump-vectors") && !args.has("--dump") {
-        return Err("--dump-vectors needs --dump".into());
+    if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
+        return Err("--dump-vectors and --dump-page need --dump".into());
     }
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None };
@@ -268,6 +271,20 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             println!("-- vectors: {} list bytes --", machine.vector_list().len());
             if let Some(v) = machine.vector() {
                 print!("{}", v.dump());
+            }
+        }
+        // SPEC 11.6: the page as the reference layout shows it.
+        if args.has("--dump-page") {
+            match machine.page() {
+                Some(page) => {
+                    let width = page.region().w;
+                    let layout = page
+                        .document()
+                        .map(|doc| terse_core::page::reference_layout(doc, width))
+                        .unwrap_or_default();
+                    print!("{}", layout.dump(page));
+                }
+                None => println!("-- page: image has no page device --"),
             }
         }
     }

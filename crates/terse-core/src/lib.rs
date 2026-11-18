@@ -9,6 +9,7 @@ pub mod content;
 pub mod cpu;
 pub mod image;
 pub mod machine;
+pub mod page;
 pub mod script;
 pub mod system;
 pub mod terminal;
@@ -22,6 +23,7 @@ pub use machine::{
     BUDGET_PER_FRAME, ERR_BUFFER, ERR_UNKNOWN, FrameInput, FrameResult, MAX_RANDOM_PER_FRAME, Machine, STATE_DOMAIN,
     Stopped, call, charge,
 };
+pub use page::{Layout, Layouter, Page, PageInput, PageWatch, Region};
 pub use script::Script;
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};
 pub use terminal::{CONTINUATION, Cell, COLS, ROWS, Terminal};

@@ -1,5 +1,5 @@
 //! Device 2, Terminal (SPEC 8). Its operations return how many clears and
-//! scrolls they did, which the machine charges for (SPEC 11).
+//! scrolls they did, which the machine charges for (SPEC 12).
 
 use crate::wide::is_wide;
 
