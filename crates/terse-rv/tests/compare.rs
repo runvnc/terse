@@ -465,7 +465,7 @@ fn report_host_cost() {
             times[i],
             times.len(),
             total / 1000.0,
-            total * 1000.0 / times.len() as f64
+            total / times.len() as f64
         );
     };
     for (label, file, rvfile) in [("sparks keys.txt", Z80_SPARKS, RV_SPARKS)] {
@@ -554,4 +554,46 @@ fn bench_rv_spin() {
     let program = common::program(&common::assemble(RV_SPIN), 4, &[]);
     let us = time_frames(|| Box::new(RvMachine::new(&program)), 200, 5);
     println!("RV spin: {us:.0} us a frame, {:.1} M instructions/s", INSTRUCTIONS_PER_FRAME as f64 / us);
+}
+
+/// Host cost of frames spent in device calls: the budget goes on charges,
+/// not instructions. Each program repeats one call on a 16 KiB RAM buffer
+/// of 'x' (or the 2,400 cells) for the whole frame.
+#[test]
+#[ignore]
+fn report_device_cost() {
+    if !common::have_tools() {
+        return;
+    }
+    let fill = "    li s0, 0x100000\n    li s1, 16384\n    li t0, 0x78\n    mv t1, s0\n    add t2, s0, s1\n\
+                1:  sb t0, 0(t1)\n    addi t1, t1, 1\n    bne t1, t2, 1b\n";
+    let cases = [
+        ("terminal write, 16 KiB a call", "2:  mv a0, s0\n    mv a1, s1\n    li a7, 0x200\n    ecall\n    j 2b\n"),
+        ("terminal cells_write, 2,400 cells a call", "2:  li a0, 0\n    mv a1, s0\n    li a2, 2400\n    li a7, 0x207\n    ecall\n    j 2b\n"),
+        ("terminal scroll up", "2:  li a0, 2\n    li a7, 0x201\n    ecall\n    j 2b\n"),
+        ("vector submit, 16 KiB a call", "2:  mv a0, s0\n    mv a1, s1\n    li a7, 0x300\n    ecall\n    j 2b\n"),
+        ("random, 16 KiB a call", "2:  mv a0, s0\n    mv a1, s1\n    li a7, 0x104\n    ecall\n    j 2b\n"),
+        ("unknown call", "2:  li a7, 0x999\n    ecall\n    j 2b\n"),
+    ];
+    let random = vec![7u8; terse_core::MAX_RANDOM_READS_PER_FRAME];
+    for (name, body) in cases {
+        let rom = common::assemble(&format!("{fill}{body}"));
+        let program = common::program(&rom, 4, &[common::TERMINAL, common::VECTOR]);
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            let mut m = RvMachine::new(&program);
+            m.run_frame(&FrameInput::default());
+            let t = Instant::now();
+            for _ in 0..20 {
+                m.run_frame(&FrameInput { random: &random, ..Default::default() });
+            }
+            best = best.min(t.elapsed().as_secs_f64() * 1e6 / 20.0);
+            assert!(m.fault().is_none());
+        }
+        let mut m = RvMachine::new(&program);
+        m.run_frame(&FrameInput::default());
+        let (i0, c0) = (m.instructions(), m.calls());
+        m.run_frame(&FrameInput::default());
+        println!("{name}: {best:.0} us a frame ({} instructions, {} calls a frame)", m.instructions() - i0, m.calls() - c0);
+    }
 }
