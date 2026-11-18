@@ -9,6 +9,9 @@ use crate::identity::{FeedKey, Identity};
 /// mistaken for one over anything else.
 pub const DOMAIN: &[u8] = b"terse-entry-0";
 pub const KIND_ARTICLE: u8 = 1;
+/// A profile (NETWORK 4.6): the title is the feed's display name and the
+/// blob its profile document.
+pub const KIND_PROFILE: u8 = 2;
 pub const MAX_TITLE: usize = 120;
 /// Bytes before the title.
 const HEAD: usize = 109;
@@ -51,6 +54,8 @@ pub enum Invalid {
     Seq,
     Kind,
     Size,
+    /// A profile entry whose title is not a valid display name.
+    Name,
     /// The feed key is not a usable Ed25519 public key.
     Key,
     Signature,
@@ -66,7 +71,8 @@ impl std::fmt::Display for Invalid {
             Self::TitleUtf8 => "title is not UTF-8",
             Self::Seq => "seq is 0",
             Self::Kind => "unknown kind",
-            Self::Size => "size is not 1 to 1,048,576",
+            Self::Size => "size is not 1 to 1,048,576 (4,096 for a profile)",
+            Self::Name => "a profile's title is not a valid display name",
             Self::Key => "feed key is not a usable Ed25519 public key",
             Self::Signature => "signature does not verify",
             Self::WrongIdentity => "identity does not own this feed",
@@ -91,6 +97,12 @@ impl Entry {
         }
     }
 
+    /// A profile entry (NETWORK 4.6) for the profile document `data`, with
+    /// display name `name`.
+    pub fn profile(feed: FeedKey, seq: u32, time: u32, data: &[u8], name: &str) -> Self {
+        Entry { kind: KIND_PROFILE, ..Self::article(feed, seq, time, data, None, name) }
+    }
+
     /// The validity rules that do not involve the signature.
     fn check(&self) -> Result<(), Invalid> {
         if self.title.len() > MAX_TITLE {
@@ -99,11 +111,16 @@ impl Entry {
         if self.seq == 0 {
             return Err(Invalid::Seq);
         }
-        if self.kind != KIND_ARTICLE {
-            return Err(Invalid::Kind);
-        }
-        if !(1..=MAX_BLOB as u32).contains(&self.size) {
+        let max = match self.kind {
+            KIND_ARTICLE => MAX_BLOB,
+            KIND_PROFILE => crate::profile::MAX_DOCUMENT,
+            _ => return Err(Invalid::Kind),
+        };
+        if !(1..=max as u32).contains(&self.size) {
             return Err(Invalid::Size);
+        }
+        if self.kind == KIND_PROFILE && !crate::profile::valid_name(&self.title) {
+            return Err(Invalid::Name);
         }
         Ok(())
     }
@@ -254,7 +271,7 @@ mod tests {
         assert_eq!(decode(&good[..HEAD + SIG - 1]), Err(Invalid::Length));
         assert_eq!(decode(&edited(HEAD - 1, 6)), Err(Invalid::Length), "n says 6, title is 5");
         assert_eq!(decode(&edited(32, 0)), Err(Invalid::Seq));
-        assert_eq!(decode(&edited(40, 2)), Err(Invalid::Kind));
+        assert_eq!(decode(&edited(40, 3)), Err(Invalid::Kind));
         assert_eq!(decode(&edited(40, 0)), Err(Invalid::Kind));
         let mut zero_size = good.clone();
         zero_size[41..44].fill(0);
@@ -266,6 +283,26 @@ mod tests {
         max[41..44].copy_from_slice(&(MAX_BLOB as u32).to_le_bytes()[..3]);
         assert!(decode(&resign(&id, max)).is_ok());
         assert_eq!(decode(&edited(HEAD, 0xFF)), Err(Invalid::TitleUtf8));
+        // A profile (kind 2): "Hello" is a valid name and 13 bytes a valid
+        // size; a name with a leading space, an empty one, one over 48
+        // bytes and a document over 4,096 bytes are not.
+        assert!(decode(&edited(40, KIND_PROFILE)).is_ok());
+        let profile = |title: &str, size: u32| {
+            let mut e = sample(&id);
+            e.kind = KIND_PROFILE;
+            e.size = size;
+            e.title = title.into();
+            let mut b = e.unsigned_bytes();
+            b.extend_from_slice(&[0; SIG]);
+            decode(&resign(&id, b))
+        };
+        assert!(profile("Ana", 4096).is_ok());
+        assert!(profile(&"x".repeat(48), 1).is_ok());
+        assert_eq!(profile(" Ana", 10), Err(Invalid::Name));
+        assert_eq!(profile("Ana\n", 10), Err(Invalid::Name));
+        assert_eq!(profile("", 10), Err(Invalid::Name));
+        assert_eq!(profile(&"x".repeat(49), 10), Err(Invalid::Name));
+        assert_eq!(profile("Ana", 4097), Err(Invalid::Size));
 
         // n over 120, with a matching length.
         let mut long = good[..HEAD].to_vec();

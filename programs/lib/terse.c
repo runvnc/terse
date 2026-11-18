@@ -194,6 +194,48 @@ uint8_t content_identity(content_req *r)
     return content_submit(r);
 }
 
+/* Content: names, search, profile and nicknames. */
+uint8_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf)
+{
+    return content_feed(r, CONTENT_NAMES, first, length, buf);
+}
+
+uint8_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen)
+{
+    const uint8_t *q = query;
+    uint8_t *b = buf;
+    if (qlen > buflen) {
+        r->status = STATUS_BAD_REQUEST;
+        return 0;
+    }
+    for (uint32_t i = 0; i < qlen; i++)
+        b[i] = q[i];
+    r->op = CONTENT_FIND;
+    r->offset = scope;
+    r->length = buflen;
+    r->addr = (uint32_t)buf;
+    r->size = qlen;
+    return content_submit(r);
+}
+
+uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed)
+{
+    r->op = CONTENT_SET_PROFILE;
+    r->offset = listed ? 1 : 0;
+    r->length = len;
+    r->addr = (uint32_t)name;
+    return content_submit(r);
+}
+
+uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len)
+{
+    r->op = CONTENT_SET_NICKNAME;
+    memcpy(r->id, key, 32);
+    r->length = len;
+    r->addr = (uint32_t)name;
+    return content_submit(r);
+}
+
 /* Device 3 display-list builder. The list is packed: coordinates are
  * little-endian 16-bit values at any alignment. */
 uint8_t *vec_ptr;

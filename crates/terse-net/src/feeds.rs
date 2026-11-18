@@ -166,12 +166,37 @@ impl FeedStore {
 
     /// Deletes all but the `keep` highest entries of a feed.
     pub fn prune(&self, feed: &FeedKey, keep: usize) -> io::Result<()> {
+        self.prune_keeping(feed, keep, None)
+    }
+
+    /// Deletes all but the `keep` highest entries of a feed, and never the
+    /// entry with `seq` `also` (a relay keeps the latest profile, NETWORK
+    /// 4.6).
+    pub fn prune_keeping(&self, feed: &FeedKey, keep: usize, also: Option<u32>) -> io::Result<()> {
         let seqs = self.seqs(feed)?;
         let excess = seqs.len().saturating_sub(keep);
-        for seq in &seqs[..excess] {
+        for seq in seqs[..excess].iter().filter(|&&s| Some(s) != also) {
             fs::remove_file(self.feed_dir(feed).join(seq_name(*seq)))?;
         }
         Ok(())
+    }
+
+    /// The profile in force for a feed (NETWORK 4.6): its valid kind-2
+    /// entry with the highest `seq`.
+    pub fn latest_profile(&self, feed: &FeedKey) -> io::Result<Option<SignedEntry>> {
+        for seq in self.seqs(feed)?.into_iter().rev() {
+            let Some(bytes) = self.get(feed, seq)? else { continue };
+            if bytes.get(40) != Some(&entry::KIND_PROFILE) {
+                continue;
+            }
+            if let Ok(e) = entry::decode(&bytes)
+                && e.entry.feed == *feed
+                && e.entry.seq == seq
+            {
+                return Ok(Some(e));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -296,9 +321,27 @@ mod tests {
 
         reopened.prune(&feed, 1).unwrap();
         assert_eq!(reopened.seqs(&feed).unwrap(), [3]);
+        assert_eq!(reopened.latest_profile(&feed).unwrap(), None);
         // No temporary files left behind.
         let names: Vec<_> = fs::read_dir(dir.path().join("feeds").join(to_hex(&feed))).unwrap().collect();
         assert_eq!(names.len(), 1);
+    }
+
+    /// The latest profile wins, and pruning can spare it.
+    #[test]
+    fn latest_profile_and_pruning() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = Identity::from_seed([4; 32]);
+        let feed = id.feed_key();
+        let store = FeedStore::beside_blobs(dir.path());
+        let profile = |seq: u32, name: &str| Entry::profile(feed, seq, seq, b"listed: yes\n", name).sign(&id).unwrap();
+        for e in [signed(&id, 1, "a"), profile(2, "Old"), profile(3, "New"), signed(&id, 4, "b"), signed(&id, 5, "c")] {
+            store.insert(&e).unwrap();
+        }
+        assert_eq!(store.latest_profile(&feed).unwrap().unwrap().entry.title, "New");
+        store.prune_keeping(&feed, 1, Some(3)).unwrap();
+        assert_eq!(store.seqs(&feed).unwrap(), [3, 5]);
+        assert_eq!(store.latest_profile(&feed).unwrap().unwrap().entry.seq, 3);
     }
 
     #[test]

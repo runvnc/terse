@@ -29,28 +29,40 @@ const USAGE: &str = "usage:
   terse feed sync [--watch] [--auto-download <bytes>]
   terse feed list [<key>]
   terse feed read <key> <seq>
-  terse relay set <ws://host:port>
-  terse relay show
-  (key, feed and relay commands all take [--relay ws://...|none] [--store <dir>] [--config <dir>])
+  terse feed nickname <key> [<name>]
+  terse profile set --name <n> [--listed|--unlisted] [--description <file>]
+  terse profile show [<key>]
+  terse find [--entries] <text>
+  terse relay add|remove|set <ws://host:port>
+  terse relay list|show
+  (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
+  [--config <dir>] [--no-feed-relays])
 
-Relay: info, put, get, feed publish, feed sync and feed read use --relay if given (`none`:
-no network), else the relay named in <config>/relay (`terse relay set` writes it), else a
-relay running on this machine (ws://127.0.0.1:7878), else none (sync then fails). `run`
-uses a relay only with --relay.
+Relays: info, put, get, feed publish, feed sync, feed read, profile set and find use the
+--relay options if given (several may be; `none`: no network), else the relays listed in
+<config>/relays (`terse relay add` and `set` write it; an older <config>/relay file is read
+if there is no list), else a relay running on this machine (ws://127.0.0.1:7878), else none
+(sync then fails). Puts and publishes go to every relay; gets ask them in turn. Feeds
+whose profile names relays are also followed there, unless --no-feed-relays. `run` uses
+relays only with --relay.
 
 <id> is a 64-hex-digit blob ID, looked up in the store, then the relay.
 <key> is a feed key (64 hex digits).
 --store defaults to $XDG_CACHE_HOME/terse/blobs (or ~/.cache/terse/blobs); feed
 entries are kept in <store>/feeds.
---config holds the identity and subscriptions; it defaults to $XDG_CONFIG_HOME/terse
-(or ~/.config/terse).
+--config holds the identity, subscriptions, nicknames and relay list; it defaults to
+$XDG_CONFIG_HOME/terse (or ~/.config/terse).
+profile set publishes your profile: the display name (1-48 bytes), --listed to let search
+find it (default: as in your current profile, else unlisted), the description from a file
+(default: kept), and relay lines for your relays that are not loopback addresses (the
+--relay options, else your relay list). Names are not unique: listings show the key too.
 --auto-download: articles up to this size are fetched as entries arrive (default 16384).
 --events: scripted input, one event per line (see README).
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
---consent: how `run` answers a program's requests to subscribe, unsubscribe or publish
-(SPEC 9.5), since nobody can be asked (default deny).
+--consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
+set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
 its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
@@ -58,7 +70,7 @@ its height and scroll, then the lines in view (y, height, x, the first span's fo
 tell a fault from any exit code (a shell's $status shows 143).";
 
 /// Options for commands that use the blob store and relay.
-const NET_OPTIONS: [&str; 3] = ["--relay", "--store", "--config"];
+const NET_OPTIONS: [&str; 4] = ["--relay", "--store", "--config", "--no-feed-relays"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -72,6 +84,8 @@ fn main() -> ExitCode {
         Some("key") => feed::key(&args[1..]),
         Some("feed") => feed::feed(&args[1..]),
         Some("relay") => feed::relay(&args[1..]),
+        Some("profile") => feed::profile(&args[1..]),
+        Some("find") => feed::find(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {
@@ -93,7 +107,7 @@ impl Args {
         let mut it = args.iter();
         while let Some(a) = it.next() {
             if a.starts_with('-') {
-                let value = if switches.contains(&a.as_str()) {
+                let value = if switches.contains(&a.as_str()) || a == "--no-feed-relays" {
                     None
                 } else {
                     Some(it.next().ok_or(format!("{a} needs a value"))?.clone())
@@ -145,20 +159,29 @@ fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The relay for a command: `--relay` (`none`: no network); with `find`,
-/// when it is not given, the one named in the config directory's `relay`
-/// file, else one running on this machine (README, "Getting started").
-pub(crate) fn relay_url(args: &Args, find: bool) -> Result<Option<String>, String> {
-    let given = args.get("--relay");
+/// The relays for a command: the `--relay` options (`none`: no network);
+/// with `find`, when there are none, the config directory's relay list,
+/// else one running on this machine (README, "Getting started").
+pub(crate) fn relay_urls(args: &Args, find: bool) -> Result<Vec<String>, String> {
+    let given: Vec<String> = args.all("--relay").map(str::to_string).collect();
     if !find {
-        return Ok(given.filter(|&u| u != "none").map(str::to_string));
+        // Without a list to fall back on, no --relay means no relay.
+        return if given.is_empty() { Ok(Vec::new()) } else { Ok(local::find_relays(&given, None, 0)?.urls()) };
     }
     let config = args.get("--config").map(PathBuf::from).or_else(terse_net::default_config_dir);
-    let found = local::find_relay(given, config.as_deref(), local::local_port())?;
+    let found = local::find_relays(&given, config.as_deref(), local::local_port())?;
     if matches!(found, local::Found::ConfigFile(..) | local::Found::Local(_)) {
         eprintln!("terse: {}", found.describe());
     }
-    Ok(found.url().map(str::to_string))
+    Ok(found.urls())
+}
+
+/// A node on `--store` and `relays`, with feed relays unless
+/// `--no-feed-relays`.
+pub(crate) fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
+    let mut node = Node::open(args.get("--store").map(PathBuf::from), relays, DEFAULT_TIMEOUT)?;
+    node.set_feed_relays(!args.has("--no-feed-relays"));
+    Ok(node)
 }
 
 /// The blob store and relay from `--store` and `--relay`, opened on first
@@ -172,9 +195,8 @@ struct Net<'a> {
 impl Net<'_> {
     fn node(&mut self) -> Result<&mut Node, String> {
         if self.node.is_none() {
-            let store = self.args.get("--store").map(PathBuf::from);
-            let relay = relay_url(self.args, self.find)?;
-            self.node = Some(Node::open(store, relay.as_deref(), DEFAULT_TIMEOUT)?);
+            let relays = relay_urls(self.args, self.find)?;
+            self.node = Some(open_node(self.args, &relays)?);
         }
         Ok(self.node.as_mut().unwrap())
     }
@@ -218,6 +240,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--store",
         "--config",
         "--consent",
+        "--no-feed-relays",
         "--hash",
         "--hash-every",
         "--bench",
@@ -249,6 +272,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         let mut node = net.take()?;
         node.set_subscriptions(feed::load_subscriptions(&args)?);
         node.set_identity_path(feed::identity_path(&args)?)?;
+        node.set_nicknames(feed::load_nicknames(&args)?);
         let mut content = ContentService::start_with_consent(node, consent);
         // Start from a caught-up store, so that a run sees what the relay
         // holds when it starts; later entries arrive while it runs.
@@ -410,7 +434,7 @@ fn put(args: &[String]) -> Result<ExitCode, String> {
 
 fn get(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["-o", "--relay", "--store", "--config"])?;
+    args.check_known(&["-o", "--relay", "--store", "--config", "--no-feed-relays"])?;
     let arg = args.one_positional()?;
     let id = parse_hex(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits)"))?;
     let bytes = Net { args: &args, node: None, find: true }.fetch(id)?;

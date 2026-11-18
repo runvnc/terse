@@ -90,6 +90,19 @@ fn malformed_requests() {
     assert_eq!(ask(&mut ws, long_get), [GET_REPLY, 6, 0, 0, 0, status::REFUSED]);
     // Unparseable: the connection is closed.
     assert!(closes_after(&url, Message::binary(vec![0x01, 0, 0])));
-    assert!(closes_after(&url, Message::binary(vec![0x55, 0, 0, 0, 0, 0])));
     assert!(closes_after(&url, Message::text("get")));
+    // A type the relay does not know is ignored (NETWORK 3), so is a reply
+    // type from a client that is not a peer; the connection stays usable.
+    ws.send(Message::binary(vec![0x55, 0, 0, 0, 0, 0])).unwrap();
+    ws.send(Message::binary(vec![0x08])).unwrap();
+    ws.send(Message::binary(protocol::encode_get_reply(1, status::DONE, b"x"))).unwrap();
+    assert_eq!(ask(&mut ws, protocol::encode_get(7, &[0; 32])), [GET_REPLY, 7, 0, 0, 0, status::NOT_FOUND]);
+    // Find: a bad scope, an empty or long query, a cut message: refused.
+    let refused = |req: u8| vec![protocol::FIND_REPLY, req, 0, 0, 0, status::REFUSED, 0];
+    assert_eq!(ask(&mut ws, protocol::encode_find(1, 3, b"a")), refused(1));
+    assert_eq!(ask(&mut ws, protocol::encode_find(2, 1, b"")), refused(2));
+    assert_eq!(ask(&mut ws, protocol::encode_find(3, 2, &[b'a'; 49])), refused(3));
+    assert_eq!(ask(&mut ws, protocol::encode_find(4, 1, &[0xFF])), refused(4), "not UTF-8");
+    assert_eq!(ask(&mut ws, protocol::encode_find(5, 1, b"ab")[..7].to_vec()), refused(5));
+    assert_eq!(ask(&mut ws, protocol::encode_find(6, 1, b"ab")), [protocol::FIND_REPLY, 6, 0, 0, 0, status::DONE, 0]);
 }

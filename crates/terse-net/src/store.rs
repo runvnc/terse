@@ -81,6 +81,11 @@ impl BlobStore {
 
     /// Stores a blob and returns its ID. Storing a blob already present is a no-op.
     pub fn put(&self, bytes: &[u8]) -> Result<BlobId, PutError> {
+        self.put_new(bytes).map(|(id, _)| id)
+    }
+
+    /// Stores a blob; returns its ID and whether it was not stored before.
+    pub fn put_new(&self, bytes: &[u8]) -> Result<(BlobId, bool), PutError> {
         if bytes.is_empty() {
             return Err(PutError::Empty);
         }
@@ -91,7 +96,7 @@ impl BlobStore {
         let path = self.path(&id);
         let mut used = self.used.lock().unwrap();
         if path.exists() {
-            return Ok(id);
+            return Ok((id, false));
         }
         if self.limit.is_some_and(|limit| *used + bytes.len() as u64 > limit) {
             return Err(PutError::Full);
@@ -109,7 +114,7 @@ impl BlobStore {
             return Err(PutError::Io(e));
         }
         *used += bytes.len() as u64;
-        Ok(id)
+        Ok((id, true))
     }
 
     /// Deletes a blob (e.g. one whose bytes no longer match its ID).

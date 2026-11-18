@@ -1,4 +1,5 @@
-//! Relay messages (NETWORK 3, 4.3). All are binary WebSocket messages.
+//! Relay messages (NETWORK 3, 4.3, 4.7, 5). All are binary WebSocket
+//! messages.
 
 use crate::blob::BlobId;
 use crate::identity::FeedKey;
@@ -8,11 +9,15 @@ pub const PUT: u8 = 0x02;
 pub const PUBLISH: u8 = 0x03;
 pub const SUBSCRIBE: u8 = 0x04;
 pub const UNSUBSCRIBE: u8 = 0x05;
+pub const FIND: u8 = 0x06;
+/// A relay announcing itself to another (NETWORK 5); no body, no reply.
+pub const PEER: u8 = 0x07;
 pub const GET_REPLY: u8 = 0x81;
 pub const PUT_REPLY: u8 = 0x82;
 pub const PUBLISH_REPLY: u8 = 0x83;
 pub const SUBSCRIBE_REPLY: u8 = 0x84;
 pub const UNSUBSCRIBE_REPLY: u8 = 0x85;
+pub const FIND_REPLY: u8 = 0x86;
 /// An entry pushed by the relay; it has no `req`.
 pub const ENTRY: u8 = 0x90;
 
@@ -32,7 +37,16 @@ pub enum Request<'a> {
     Publish { req: u32, entry: &'a [u8] },
     Subscribe { req: u32, feed: FeedKey, after: u32 },
     Unsubscribe { req: u32, feed: FeedKey },
+    /// `scope` and `query` are not yet checked.
+    Find { req: u32, scope: u8, query: &'a [u8] },
+    Peer,
 }
+
+/// Find scopes (NETWORK 4.7).
+pub const SCOPE_FEEDS: u8 = 1;
+pub const SCOPE_ENTRIES: u8 = 2;
+/// Most results in a find reply.
+pub const MAX_FIND_RESULTS: usize = 16;
 
 /// Why a client message could not be decoded.
 #[derive(Debug, PartialEq, Eq)]
@@ -42,6 +56,8 @@ pub enum Malformed {
     Refuse { reply: u8, req: u32 },
     /// Unparseable: the relay closes the connection.
     Close,
+    /// A type the relay does not know: ignored (NETWORK 3).
+    Unknown,
 }
 
 /// A relay message as the client sees it.
@@ -57,6 +73,8 @@ pub enum Reply {
     Subscribed { req: u32, highest: u32 },
     /// A pushed entry, not yet validated.
     Entry(Vec<u8>),
+    /// A find reply: the entries, not yet validated (empty unless done).
+    Found { req: u32, status: u8, entries: Vec<Vec<u8>> },
 }
 
 fn header(kind: u8, req: u32, extra: usize) -> Vec<u8> {
@@ -133,6 +151,31 @@ pub fn encode_status_reply(kind: u8, req: u32, status: u8) -> Vec<u8> {
     m
 }
 
+pub fn encode_find(req: u32, scope: u8, query: &[u8]) -> Vec<u8> {
+    let mut m = header(FIND, req, 2 + query.len());
+    m.push(scope);
+    m.push(query.len() as u8);
+    m.extend_from_slice(query);
+    m
+}
+
+/// Find reply: `status`, the count, then each entry with its length.
+pub fn encode_find_reply<E: AsRef<[u8]>>(req: u32, status: u8, entries: &[E]) -> Vec<u8> {
+    let entries = if status == status::DONE { entries } else { &[] };
+    let mut m = header(FIND_REPLY, req, 2 + entries.iter().map(|e| 2 + e.as_ref().len()).sum::<usize>());
+    m.push(status);
+    m.push(entries.len() as u8);
+    for e in entries {
+        m.extend_from_slice(&(e.as_ref().len() as u16).to_le_bytes());
+        m.extend_from_slice(e.as_ref());
+    }
+    m
+}
+
+pub fn encode_peer() -> Vec<u8> {
+    vec![PEER]
+}
+
 pub fn encode_entry(entry: &[u8]) -> Vec<u8> {
     [&[ENTRY], entry].concat()
 }
@@ -143,7 +186,17 @@ fn split(msg: &[u8]) -> Option<(u8, u32, &[u8])> {
     Some((kind, req, &rest[4..]))
 }
 
+/// Whether a message type is one this relay knows as a request.
+fn known_request(kind: u8) -> bool {
+    (GET..=PEER).contains(&kind)
+}
+
 pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
+    match msg.first() {
+        Some(&PEER) => return Ok(Request::Peer),
+        Some(&kind) if !known_request(kind) => return Err(Malformed::Unknown),
+        _ => {}
+    }
     match split(msg).ok_or(Malformed::Close)? {
         (GET, req, rest) => match <BlobId>::try_from(rest) {
             Ok(id) => Ok(Request::Get { req, id }),
@@ -161,8 +214,25 @@ pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
             Ok(feed) => Ok(Request::Unsubscribe { req, feed }),
             Err(_) => Err(Malformed::Refuse { reply: UNSUBSCRIBE_REPLY, req }),
         },
+        (FIND, req, [scope, n, query @ ..]) if query.len() == *n as usize => {
+            Ok(Request::Find { req, scope: *scope, query })
+        }
+        (FIND, req, _) => Err(Malformed::Refuse { reply: FIND_REPLY, req }),
         _ => Err(Malformed::Close),
     }
+}
+
+/// The entries of a done find reply's body (after the status).
+fn decode_found(mut body: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let (&count, rest) = body.split_first()?;
+    body = rest;
+    let mut entries = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let len = u16::from_le_bytes(body.get(..2)?.try_into().unwrap()) as usize;
+        entries.push(body.get(2..2 + len)?.to_vec());
+        body = &body[2 + len..];
+    }
+    body.is_empty().then_some(entries)
 }
 
 /// `None` for anything that is not a well-formed reply.
@@ -179,6 +249,8 @@ pub fn decode_reply(msg: &[u8]) -> Option<Reply> {
         PUT_REPLY if body.is_empty() => Some(Reply::Put { req, status, id: None }),
         SUBSCRIBE_REPLY if done => Some(Reply::Subscribed { req, highest: u32::from_le_bytes(body.try_into().ok()?) }),
         PUBLISH_REPLY | SUBSCRIBE_REPLY | UNSUBSCRIBE_REPLY if body.is_empty() => Some(Reply::Status { kind, req, status }),
+        FIND_REPLY if done => Some(Reply::Found { req, status, entries: decode_found(body)? }),
+        FIND_REPLY if body == [0] => Some(Reply::Found { req, status, entries: Vec::new() }),
         _ => None,
     }
 }
@@ -206,8 +278,11 @@ mod tests {
         assert_eq!(decode_request(&encode_put(5, b"")), Ok(Request::Put { req: 5, data: b"" }));
         assert_eq!(decode_request(&encode_get(5, &id)[..36]), Err(Malformed::Refuse { reply: GET_REPLY, req: 5 }));
         assert_eq!(decode_request(&[GET, 1, 2, 3]), Err(Malformed::Close));
-        assert_eq!(decode_request(&[0x7F, 1, 2, 3, 4]), Err(Malformed::Close));
+        assert_eq!(decode_request(&[0x7F, 1, 2, 3, 4]), Err(Malformed::Unknown));
+        assert_eq!(decode_request(&[0x08]), Err(Malformed::Unknown));
+        assert_eq!(decode_request(&[0x86, 1, 2, 3, 4, 1, 0]), Err(Malformed::Unknown));
         assert_eq!(decode_request(&[]), Err(Malformed::Close));
+        assert_eq!(decode_request(&[PEER]), Ok(Request::Peer));
 
         let reply = encode_get_reply(3, status::DONE, b"blob");
         assert_eq!(decode_reply(&reply), Some(Reply::Get { req: 3, status: 1, data: b"blob".to_vec() }));
@@ -249,5 +324,26 @@ mod tests {
         assert_eq!(encode_entry(b"abc"), [ENTRY, b'a', b'b', b'c']);
         assert_eq!(decode_reply(&encode_entry(b"abc")), Some(Reply::Entry(b"abc".to_vec())));
         assert_eq!(decode_reply(&[ENTRY]), Some(Reply::Entry(Vec::new())));
+    }
+
+    #[test]
+    fn find_messages() {
+        let find = encode_find(0x0403_0201, SCOPE_FEEDS, b"ana");
+        assert_eq!(find, [FIND, 1, 2, 3, 4, 1, 3, b'a', b'n', b'a']);
+        assert_eq!(decode_request(&find), Ok(Request::Find { req: 0x0403_0201, scope: 1, query: b"ana" }));
+        assert_eq!(decode_request(&find[..9]), Err(Malformed::Refuse { reply: FIND_REPLY, req: 0x0403_0201 }));
+        assert_eq!(decode_request(&find[..6]), Err(Malformed::Refuse { reply: FIND_REPLY, req: 0x0403_0201 }));
+        let reply = encode_find_reply(7, status::DONE, &[b"ab".to_vec(), b"c".to_vec()]);
+        assert_eq!(reply, [FIND_REPLY, 7, 0, 0, 0, 1, 2, 2, 0, b'a', b'b', 1, 0, b'c']);
+        assert_eq!(
+            decode_reply(&reply),
+            Some(Reply::Found { req: 7, status: 1, entries: vec![b"ab".to_vec(), b"c".to_vec()] })
+        );
+        assert_eq!(decode_reply(&reply[..reply.len() - 1]), None, "cut short");
+        assert_eq!(decode_reply(&[reply.clone(), vec![0]].concat()), None, "trailing byte");
+        let refused = encode_find_reply(7, status::REFUSED, &[b"x"]);
+        assert_eq!(refused, [FIND_REPLY, 7, 0, 0, 0, 3, 0]);
+        assert_eq!(decode_reply(&refused), Some(Reply::Found { req: 7, status: 3, entries: Vec::new() }));
+        assert_eq!(encode_peer(), [PEER]);
     }
 }

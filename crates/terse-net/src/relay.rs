@@ -57,6 +57,13 @@ fn is_timeout(e: &io::Error) -> bool {
 
 impl WsTransport {
     pub fn connect(url: &str, timeout: Duration) -> io::Result<Self> {
+        Self::connect_checked(url, timeout, false)
+    }
+
+    /// Connects; with `public_only`, refuses an address that is not public
+    /// ([`crate::profile::public_ip`]) once the host name is resolved (for
+    /// relays named in profiles, NETWORK 5).
+    pub fn connect_checked(url: &str, timeout: Duration, public_only: bool) -> io::Result<Self> {
         let rest = url
             .strip_prefix("ws://")
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{url}: only ws:// relays are supported")))?;
@@ -65,6 +72,9 @@ impl WsTransport {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{url}: no address")))?;
+        if public_only && !crate::profile::public_ip(addr.ip()) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{url}: not a public address")));
+        }
         let stream = TcpStream::connect_timeout(&addr, timeout)?;
         stream.set_read_timeout(Some(timeout))?;
         stream.set_write_timeout(Some(timeout))?;
@@ -73,6 +83,11 @@ impl WsTransport {
             .map_err(|e| io::Error::other(format!("{url}: WebSocket handshake failed: {e}")))?;
         ws.get_ref().set_read_timeout(Some(RECV_WAIT))?;
         Ok(WsTransport { ws })
+    }
+
+    /// The WebSocket (a relay's link to a peer uses it directly).
+    pub fn into_inner(self) -> WebSocket<TcpStream> {
+        self.ws
     }
 }
 
@@ -105,6 +120,8 @@ pub enum RelayReply {
     /// A subscribe succeeded; the relay holds entries up to `seq` `highest`
     /// (0: none).
     Subscribed { highest: u32 },
+    /// A find succeeded: the entries, not yet verified.
+    Found(Vec<Vec<u8>>),
     NotFound,
     Refused,
     /// Connection error, protocol error or timeout.
@@ -147,8 +164,29 @@ impl RelayClient {
 
     /// A client for a `ws://` relay URL.
     pub fn websocket(url: &str, timeout: Duration) -> Self {
+        Self::websocket_checked(url, timeout, false)
+    }
+
+    /// A client for a relay named in a profile: with `public_only`, it only
+    /// connects to public addresses.
+    pub fn websocket_checked(url: &str, timeout: Duration, public_only: bool) -> Self {
         let url = url.to_string();
-        Self::new(Box::new(move || Ok(Box::new(WsTransport::connect(&url, timeout)?) as Box<dyn Transport>)), timeout)
+        Self::new(
+            Box::new(move || Ok(Box::new(WsTransport::connect_checked(&url, timeout, public_only)?) as Box<dyn Transport>)),
+            timeout,
+        )
+    }
+
+    /// Searches the relay's index (NETWORK 4.7).
+    pub fn find(&mut self, scope: u8, query: &[u8]) -> u32 {
+        let req = self.next_req();
+        self.send(req, protocol::encode_find(req, scope, query));
+        req
+    }
+
+    /// Drops the connection (and fails every waiting request).
+    pub fn close(&mut self) {
+        self.disconnect();
     }
 
     /// Asks for a whole blob; returns the request number `poll` reports it under.
@@ -256,6 +294,8 @@ impl RelayClient {
                 Some(Reply::Put { req, status: status::DONE, id: Some(id) }) => (req, RelayReply::Put(id)),
                 Some(Reply::Status { req, status: status::DONE, .. }) => (req, RelayReply::Done),
                 Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
+                Some(Reply::Found { req, status: status::DONE, entries }) => (req, RelayReply::Found(entries)),
+                Some(Reply::Found { req, .. }) => (req, RelayReply::Refused),
                 Some(Reply::Get { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
                 Some(Reply::Get { req, .. } | Reply::Put { req, .. } | Reply::Status { req, .. }) => {
                     (req, RelayReply::Refused)

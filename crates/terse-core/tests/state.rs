@@ -6,7 +6,8 @@ mod common;
 
 use common::{assemble, frame};
 use terse_core::{
-    Completion, Controller, DeviceReq, Event, FrameInput, Image, Machine, Outcome, STATE_DOMAIN, Stopped, charge,
+    Completion, Controller, DeviceReq, Event, FrameInput, Image, Machine, Outcome, RequestKind, STATE_DOMAIN, Stopped,
+    charge,
 };
 
 const ALL: [DeviceReq; 4] = [common::TERMINAL, common::VECTOR, common::CONTENT, common::PAGE];
@@ -232,4 +233,74 @@ fn feed_operations_replay() {
     let refused = run(7, Outcome::Refused);
     assert_eq!(a[0], refused[0]);
     assert_ne!(a[1], refused[1], "refused and done differ");
+}
+
+/// SPEC 9.5 and 12: find, set profile and set nickname copy their query or
+/// name at submit and are charged for it (1 per 4 bytes); names and find are
+/// records requests; the same inputs replay to the same hashes.
+#[test]
+fn names_find_and_profile_operations_replay() {
+    if !common::have_tools() {
+        return;
+    }
+    let base = "    li a7, 0x100\n    ecall\n";
+    let submit = "    mv a0, t0\n    li a7, 0x400\n    ecall\n";
+    // "hihihihi" at 100100h; a3 = n, the query and name length. Find (op
+    // 0Ah, scope 2, 64-byte buffer) at 100000h; set profile (op 0Bh,
+    // listed) at 100040h; set nickname (op 0Ch, key byte 0 = 33h) at
+    // 100080h; names (op 09h, 64 bytes at 100200h) at 1000C0h.
+    let src = |n: u8| {
+        format!(
+            "    li t2, 0x100100\n    li t1, 0x69686968\n    sw t1, 0(t2)\n    sw t1, 4(t2)\n    li a3, {n}\n\
+             li t0, 0x100000\n    li t1, 10\n    sb t1, 0(t0)\n    li t1, 2\n    sw t1, 36(t0)\n    li t1, 64\n    \
+             sw t1, 40(t0)\n    sw t2, 44(t0)\n    sw a3, 48(t0)\n{submit}\
+             li t0, 0x100040\n    li t1, 11\n    sb t1, 0(t0)\n    li t1, 1\n    sw t1, 36(t0)\n    sw a3, 40(t0)\n    \
+             sw t2, 44(t0)\n{submit}\
+             li t0, 0x100080\n    li t1, 12\n    sb t1, 0(t0)\n    li t1, 0x33\n    sb t1, 4(t0)\n    sw a3, 40(t0)\n    \
+             sw t2, 44(t0)\n{submit}\
+             li t0, 0x1000C0\n    li t1, 9\n    sb t1, 0(t0)\n    li t1, 64\n    sw t1, 40(t0)\n    li t1, 0x100200\n    \
+             sw t1, 44(t0)\n{submit}\
+             1:  {base}    j 1b\n"
+        )
+    };
+    let mut record = vec![35, 2];
+    record.extend([0x44; 32]);
+    record.extend(b"hi");
+    let answers = [
+        Completion { handle: 1, outcome: Outcome::Records { total: 1, data: Vec::new() } },
+        Completion { handle: 2, outcome: Outcome::Published { seq: 4 } },
+        Completion { handle: 3, outcome: Outcome::Done },
+        Completion { handle: 4, outcome: Outcome::Records { total: 1, data: record.clone() } },
+    ];
+    let mut key = [0; 32];
+    key[0] = 0x33;
+    let run = |n: u8| -> (u64, Vec<[u8; 32]>) {
+        let mut m = Machine::new(&common::program(&assemble(&src(n)), 2, &ALL));
+        let used = m.run_frame(&FrameInput::default()).used;
+        let name = b"hihihihi"[..n as usize].to_vec();
+        assert_eq!(
+            m.take_content_requests().into_iter().map(|r| r.kind).collect::<Vec<_>>(),
+            [
+                RequestKind::Find { scope: 2, query: name.clone(), length: 64 },
+                RequestKind::SetProfile { name: name.clone(), listed: true },
+                RequestKind::SetNickname { feed: key, name },
+                RequestKind::Names { offset: 0, length: 64 },
+            ]
+        );
+        let mut hashes = vec![m.state_hash()];
+        let r = m.run_frame(&FrameInput { completions: &answers, ..Default::default() });
+        assert_eq!(r.completions_ignored, 0);
+        hashes.push(m.state_hash());
+        let ram = m.ram();
+        assert_eq!((ram[1], ram[0x41], ram[0x81], ram[0xC1]), (1, 1, 1, 1), "statuses");
+        assert_eq!(&ram[0x40 + 48..0x40 + 52], &[4, 0, 0, 0], "size is the seq");
+        assert_eq!(&ram[0x200..0x200 + 36], &record[..]);
+        assert_eq!(&ram[0xC0 + 40..0xC0 + 52], &[36, 0, 0, 0, 0, 0x02, 0x10, 0, 1, 0, 0, 0], "length, addr, size");
+        (used, hashes)
+    };
+    let (used2, a) = run(2);
+    assert_eq!(a, run(2).1, "the same inputs replay exactly");
+    let (used6, b) = run(6);
+    assert_eq!(used6 - used2, 3, "three copies of 6 bytes cost 2 units each, of 2 bytes 1");
+    assert_ne!(a[0], b[0], "the name lengths are state");
 }

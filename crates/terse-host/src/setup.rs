@@ -11,7 +11,7 @@ use terse_net::local::{self, Found};
 use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::{BlobStore, ContentService, Draft, FeedCommand, FeedEvent, FeedStore, Node, Subscriptions, to_hex};
 
-/// The relay the host uses, and why.
+/// The relays the host uses, and why.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Relay {
     /// `--relay`, the config file, an already running local relay, or none.
@@ -21,10 +21,10 @@ pub enum Relay {
 }
 
 impl Relay {
-    pub fn url(&self) -> Option<&str> {
+    pub fn urls(&self) -> Vec<String> {
         match self {
-            Relay::Found(f) => f.url(),
-            Relay::Started { url, .. } => Some(url),
+            Relay::Found(f) => f.urls(),
+            Relay::Started { url, .. } => vec![url.clone()],
         }
     }
 
@@ -36,13 +36,14 @@ impl Relay {
     }
 }
 
-/// The relay for a windowed run: `--relay` (`none`: no network), else the
-/// config directory's `relay` file, else a relay accepting connections on
+/// The relays for a windowed run: `--relay` (repeatable; `none`: no
+/// network), else the config directory's relay list, else a relay
+/// accepting connections on
 /// 127.0.0.1:`port`, else one started in this process on that port, with
 /// its store in `data/relay` (no relay if there is no `data` directory or
 /// the port cannot be bound).
-pub fn choose_relay(given: Option<&str>, config: &Path, port: u16, data: Option<&Path>) -> Result<Relay, String> {
-    let found = local::find_relay(given, Some(config), port)?;
+pub fn choose_relay(given: &[String], config: &Path, port: u16, data: Option<&Path>) -> Result<Relay, String> {
+    let found = local::find_relays(given, Some(config), port)?;
     if found != Found::Nothing {
         return Ok(Relay::Found(found));
     }
@@ -92,9 +93,8 @@ fn now() -> u32 {
 /// if that feed has no entries (after catching up with the relay, if there
 /// is one), publishes the three sample articles. Returns how many it
 /// published.
-pub fn prepare_demo(store_dir: &Path, config: &Path, relay: Option<&str>) -> Result<usize, String> {
-    let store = BlobStore::open(store_dir, None).map_err(|e| format!("{}: {e}", store_dir.display()))?;
-    let mut node = Node::new(store, relay.map(|url| terse_net::relay::RelayClient::websocket(url, DEFAULT_TIMEOUT)));
+pub fn prepare_demo(store_dir: &Path, config: &Path, relays: &[String]) -> Result<usize, String> {
+    let mut node = Node::open(Some(store_dir.to_path_buf()), relays, DEFAULT_TIMEOUT)?;
     node.set_identity_path(config.join("identity.key"))?;
     let key = node.ensure_identity()?;
     let mut subs = Subscriptions::load(config.join("subscriptions"))?;
@@ -105,7 +105,7 @@ pub fn prepare_demo(store_dir: &Path, config: &Path, relay: Option<&str>) -> Res
     if service.following()
         && let Err(e) = service.wait_caught_up(DEMO_DEADLINE)
     {
-        return Err(format!("demo: relay {}: {e}", relay.unwrap_or("?")));
+        return Err(format!("demo: relay {}: {e}", relays.join(" ")));
     }
     let held = FeedStore::beside_blobs(store_dir).seqs(&key).map_err(|e| e.to_string())?.len();
     if held > 0 {
@@ -147,25 +147,25 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let port = free_port();
         // Nothing running, no file: started here.
-        let started = choose_relay(None, config.path(), port, Some(data.path())).unwrap();
+        let started = choose_relay(&[], config.path(), port, Some(data.path())).unwrap();
         assert_eq!(started, Relay::Started { url: local::local_url(port), store: data.path().join("relay") });
         // Now something listens on the port: it is used.
-        let again = choose_relay(None, config.path(), port, Some(data.path())).unwrap();
+        let again = choose_relay(&[], config.path(), port, Some(data.path())).unwrap();
         assert_eq!(again, Relay::Found(Found::Local(local::local_url(port))));
         // The started relay answers the protocol.
         let mut client = terse_net::relay::RelayClient::websocket(&local::local_url(port), DEFAULT_TIMEOUT);
         client.connect().unwrap();
         // A config file wins over the running relay.
-        local::write_relay_file(config.path(), "ws://elsewhere.example:7878").unwrap();
-        let file = choose_relay(None, config.path(), port, Some(data.path())).unwrap();
-        assert_eq!(file.url(), Some("ws://elsewhere.example:7878"));
+        local::write_relays(config.path(), &["ws://elsewhere.example:7878".into(), "ws://b.example:1".into()]).unwrap();
+        let file = choose_relay(&[], config.path(), port, Some(data.path())).unwrap();
+        assert_eq!(file.urls(), ["ws://elsewhere.example:7878", "ws://b.example:1"]);
         assert!(matches!(file, Relay::Found(Found::ConfigFile(..))));
         // --relay wins over everything; none disables the network.
-        assert_eq!(choose_relay(Some("none"), config.path(), port, None).unwrap().url(), None);
-        assert_eq!(choose_relay(Some("ws://x:1"), config.path(), port, None).unwrap().url(), Some("ws://x:1"));
+        assert!(choose_relay(&["none".into()], config.path(), port, None).unwrap().urls().is_empty());
+        assert_eq!(choose_relay(&["ws://x:1".into()], config.path(), port, None).unwrap().urls(), ["ws://x:1"]);
         // No data directory and nothing running: no relay.
         let empty = tempfile::tempdir().unwrap();
-        let none = choose_relay(None, empty.path(), free_port(), None).unwrap();
+        let none = choose_relay(&[], empty.path(), free_port(), None).unwrap();
         assert_eq!(none, Relay::Found(Found::Nothing));
     }
 
@@ -178,8 +178,9 @@ mod tests {
         let url = local::local_url(listener.local_addr().unwrap().port());
         let relay = Arc::new(terse_relay::Relay::new(BlobStore::open(relay_dir.path(), None).unwrap(), 1024));
         std::thread::spawn(move || terse_relay::serve(listener, relay));
-        assert_eq!(prepare_demo(store.path(), config.path(), Some(&url)).unwrap(), 3);
-        assert_eq!(prepare_demo(store.path(), config.path(), Some(&url)).unwrap(), 0);
+        let url = [url];
+        assert_eq!(prepare_demo(store.path(), config.path(), &url).unwrap(), 3);
+        assert_eq!(prepare_demo(store.path(), config.path(), &url).unwrap(), 0);
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let feeds = FeedStore::beside_blobs(store.path());
         assert_eq!(feeds.seqs(&key).unwrap(), [1, 2, 3]);
@@ -187,13 +188,13 @@ mod tests {
         assert_eq!(subs.feeds().collect::<Vec<_>>(), [&key]);
         // Same config, empty store: caught up from the relay, nothing new.
         let fresh = tempfile::tempdir().unwrap();
-        assert_eq!(prepare_demo(fresh.path(), config.path(), Some(&url)).unwrap(), 0);
+        assert_eq!(prepare_demo(fresh.path(), config.path(), &url).unwrap(), 0);
         assert_eq!(FeedStore::beside_blobs(fresh.path()).seqs(&key).unwrap(), [1, 2, 3]);
         assert_eq!(FeedStore::beside_blobs(relay_dir.path()).seqs(&key).unwrap(), [1, 2, 3]);
         // Without a relay too.
         let (store, config) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        assert_eq!(prepare_demo(store.path(), config.path(), None).unwrap(), 3);
-        assert_eq!(prepare_demo(store.path(), config.path(), None).unwrap(), 0);
+        assert_eq!(prepare_demo(store.path(), config.path(), &[]).unwrap(), 3);
+        assert_eq!(prepare_demo(store.path(), config.path(), &[]).unwrap(), 0);
         let key = terse_net::Identity::load(&config.path().join("identity.key")).unwrap().feed_key();
         let entries = FeedStore::beside_blobs(store.path()).entries(&key).unwrap();
         let titles: Vec<&str> = entries.iter().map(|e| e.entry.title.as_str()).collect();
