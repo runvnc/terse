@@ -195,23 +195,23 @@ impl Content {
                     }
                 })
             }
-            OP_PUT => (1..=MAX_BLOB as u32)
-                .contains(&size)
-                .then(|| readable(rom, ram, addr, size as usize))
-                .flatten()
-                .map(|data| {
-                    let data = data.to_vec();
-                    (Pending::Put { id: *blake3::hash(&data).as_bytes(), size }, RequestKind::Put { data })
-                }),
+            // The bytes are copied (and hashed) only once the request is
+            // accepted, after step 3.
+            OP_PUT => ((1..=MAX_BLOB as u32).contains(&size) && readable(rom, ram, addr, size as usize).is_some())
+                .then(|| (Pending::Put { id: [0; 32], size }, RequestKind::Put { data: Vec::new() })),
             _ => None,
         };
-        let Some((pending, kind)) = request else {
+        let Some((mut pending, mut kind)) = request else {
             ram[block + STATUS] = status::BAD_REQUEST;
             return (0, 0);
         };
 
         // Step 3.
         let Some(index) = self.slots.iter().position(Option::is_none) else { return (0, 0) };
+        if let (Pending::Put { id, .. }, RequestKind::Put { data }) = (&mut pending, &mut kind) {
+            *data = readable(rom, ram, addr, size as usize).unwrap().to_vec();
+            *id = *blake3::hash(data).as_bytes();
+        }
 
         // Step 4.
         ram[block + STATUS] = status::PENDING;

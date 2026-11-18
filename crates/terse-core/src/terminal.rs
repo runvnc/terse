@@ -417,10 +417,20 @@ impl Terminal {
     }
 
     fn fill_rows(&mut self, rows: std::ops::Range<usize>) {
-        for row in rows {
-            for col in 0..COLS {
-                self.set_cell(col, row, SPACE);
-            }
+        let [lo, hi] = SPACE.to_le_bytes();
+        let cell = [lo, hi, self.fg, self.bg];
+        let row_bytes = COLS * CELL_BYTES;
+        let (start, end) = (rows.start * row_bytes, rows.end * row_bytes);
+        if start == end {
+            return;
+        }
+        // One cell, then doubling copies.
+        self.cells[start..start + CELL_BYTES].copy_from_slice(&cell);
+        let mut done = CELL_BYTES;
+        while start + done < end {
+            let n = done.min(end - start - done);
+            self.cells.copy_within(start..start + n, start + done);
+            done += n;
         }
     }
 }
