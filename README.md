@@ -3,8 +3,8 @@
 A small virtual computer: a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
 of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
-2D vector display, and a content device that fetches and publishes blobs and
-reads feeds. `SPEC.md` is the authoritative design, `STATE.md` defines the
+2D vector display, a page of typeset proportional text, and a content device
+that fetches and publishes blobs and reads feeds. `SPEC.md` is the authoritative design, `STATE.md` defines the
 machine state hash, and `NETWORK.md` describes how hosts move blobs and feeds
 through a relay; this repository is the first prototype of all three.
 
@@ -35,7 +35,7 @@ images were built with clang and LLD 23.1.4.
 
 `terse` commands:
 
-- `run <image|id> [--frames N] [--dump [--dump-vectors]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--hash] [--hash-every N] [--bench]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -43,7 +43,11 @@ images were built with clang and LLD 23.1.4.
   cell is skipped). `--dump-vectors` adds the display list device 3 holds, after
   a `-- vectors: N list bytes --` line, one shape per line as the host draws it
   (see [Vector display](#vector-display)); when the style or fill mode is not
-  the default a `-- vector style: … --` line comes first.
+  the default a `-- vector style: … --` line comes first. `--dump-page` adds the
+  page (device 7) as the reference layout lays it out (see [Page](#page)).
+  The page is laid out with the reference layout between frames, so its height
+  event arrives in the frame after a change, and a scripted press over anchored
+  text is followed by its anchor event.
   Content requests (device 4) are carried out between frames and always complete at
   the start of the next frame, so runs are reproducible. For an image with device 4
   the feeds (SPEC 9.5) are those subscribed in `--config` (see [Feeds](#feeds)):
@@ -77,7 +81,7 @@ the bytes are verified against the ID. `--store` defaults to
 are supported. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
+`terse-host <image|id> [--no-trails] [--force-phosphor] [--font <family|file>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...] [--store <dir>] [--config <dir>]`
 opens a window and runs the image at 60 frames/s of virtual time. The screen
 (SPEC 7) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
@@ -96,9 +100,11 @@ it stays open, shows the fault on the bottom row (white on red) and in the title
 and the process then ends by SIGTERM like `terse run`. `--no-trails` shows the
 phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
-`--font` draws the grid with another font (see [Fonts](#fonts)).
+`--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
+`--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
 `--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>]` runs
-headless exactly like `terse run` and writes a PNG, of the grid's native size or
+headless like `terse run` (but the page is laid out with this host's fonts, between
+frames, so the picture shows the finished layout) and writes a PNG, of the grid's native size or
 `W` × `H` pixels with the screen letterboxed in it; in the phosphor style the
 afterglow is built up over the last 600 frames, as in the window.
 `--selftest <image|id> [--frames N] [--events <file>] [--csv <file>]` runs N frames
@@ -186,7 +192,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-core/   the machine: cpu.rs (the RV32IMC interpreter), machine.rs (memory,
                          frame loop, budget, calls and charges, state serialization), image
                          parsing, and the devices: system.rs, terminal.rs, vector.rs (device
-                         3 and the one display-list decoder, with the fill cap), content.rs.
+                         3 and the one display-list decoder, with the fill cap), content.rs,
+                         page.rs (device 7: the document decoder, the reference layout, when
+                         to report the height).
                          wide.rs holds the Unicode 16.0 East Asian Width W/F table. No GUI,
                          threads, clock, I/O or OS randomness; inputs (events, time, random
                          bytes, controllers, content completions) are passed in.
@@ -199,7 +207,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          conform.rs)
     crates/terse-host/   `terse-host`: winit + wgpu window; renderer.rs is the
                          window-independent renderer (terminal, vectors.rs's shapes, the
-                         phosphor tube: SPEC 10.5, 10.6)
+                         phosphor tube: SPEC 10.5, 10.6); page.rs lays the page out with
+                         cosmic-text on a worker thread and draws it
     programs/lib/        what a program needs: crt0.S, terse.ld (the memory map), terse.h
                          and terse.c (the calls, a display-list builder, content requests)
     programs/hello/      demo program in assembly: hello.S, build.sh, the built hello.terse
@@ -236,7 +245,13 @@ packed with `terse pack`. For C, `programs/lib` provides:
   (put a string, a code point as UTF-8, a run of ASCII, fill cells, the
   wide-character test), the vector display (a display-list builder, `vec_submit`,
   `vec_style`, `vec_persistence`, `vec_fill`), content requests (the request
-  block, get, the feed operations), and `memcpy`, `memset`, `memmove`, `memcmp`.
+  block, get, the feed operations), the page (`page_submit`, `page_region`,
+  `page_scroll`, `page_background`, `page_clear`, and a document builder:
+  `doc_begin(buf, cap)`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`,
+  `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_end`, which never writes past
+  the capacity and leaves a clean prefix when it fills, setting `doc_overflow`),
+  `terse_call4` for calls with four arguments, and `memcpy`, `memset`,
+  `memmove`, `memcmp`.
   `term_write` repeats the call until every byte is written, since a write stops
   when the frame's budget runs out (SPEC 8.2).
 
@@ -296,17 +311,38 @@ sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 ## The reader
 
 `programs/reader` is a feed reader written in C: the timeline of the subscribed
-feeds, newest first, and articles word-wrapped to the grid. Keys: Up/Down,
-PageUp/PageDown, Home/End and the wheel move; Enter or a click on the selected entry
-opens it; Esc, Backspace or Left go back; Esc in the list quits. A row shows the age
+feeds, newest first, on the terminal, and articles typeset on the
+[page](#page). Keys: Up/Down, PageUp/PageDown, Home/End and the wheel move; Enter or
+a click on the selected entry opens it; Esc, Backspace or Left go back; Esc in the
+list quits. A row shows the age
 of the entry (or its UTC date and time when the host gives no clock), the first 8
 hex digits of the feed key, `✓` if the article is in the local store, `↳` for a
 reply, and the title; `•` marks entries that arrived while it runs, until opened.
 New entries appear without a key press.
 
-It holds one timeline request's worth of entries (16 KiB of records: 70 to 147
-entries) and requests another range as you scroll, and up to 48 KiB of an article
-(read in 16 KiB gets; it says where it stops). Rebuild it with
+**The article view.** The title bar (row 0) and the status bar (row 29) stay on the
+terminal; the page fills the rows between, as a centred column 512 units wide (about
+68 characters of 15-unit body text in the reference layout, a comfortable measure),
+with a transparent background. It shows the title (26 units, bold), a grey line
+(feed key prefix, entry number, date, size, and `↳ reply` for a reply), a rule, then
+the article. The body is split into blocks at blank lines; a block in which some
+line starts with a space or tab is preformatted (monospace, no wrapping, line breaks
+and leading spaces kept), any other block is a paragraph whose line breaks become
+spaces. Bare `http://` and `https://` URLs (up to whitespace, `<`, `>` or `"`, with
+trailing punctuation and unbalanced closing brackets left out) get an anchor and a
+link colour; pressing one shows the URL in the status bar, since there is no
+browser. Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
+line (428), the wheel by 60 a step, Home/End to the ends; the reader clamps its
+scroll value with the height from the page's height event and shows the percentage
+read in the status bar (none until the first height arrives; nothing waits for it).
+
+The document is built over several frames (at most about 80,000 units of work a
+frame) and submitted after the first frame's share, then whole when it is complete,
+so a long article appears at once and its percentage follows. It holds one
+timeline request's worth of entries (16 KiB of records: 70 to 147 entries) and
+requests another range as you scroll, and up to 48 KiB of an article (read in 16
+KiB gets); a longer article, or one whose formatting would pass the 64 KiB
+document, ends with a note saying how much is shown. Rebuild it with
 `programs/reader/build.sh`.
 
 ### Walkthrough
@@ -346,12 +382,25 @@ Two authors and a reader on one machine, each with their own store and config:
     $T feed publish /tmp/terse-demo/a.txt --title "Live" $A
 
 Measured with the golden-test fixture (`cargo test --release -p terse-cli --test
-reader timing -- --nocapture`): an already-local 6 KB article shows its first page 2
-frames after Enter (the Enter frame and the next) and is fully wrapped after 4; the
-busiest frame of that session uses 62,269 units (50% of 125,000), a typical frame
-277. The reader writes each row as 80 cells with one `term_cells_write` and wraps at
-most 2,048 bytes of article per frame, so no frame runs out of budget. ROM 10,292
-bytes, 9 RAM pages.
+reader timing -- --nocapture`), headless with the reference layout: an
+already-local 6 KB article is submitted in the frame after Enter and its height
+arrives in the next; a 48 KiB article is submitted partly in the frame after Enter
+and whole ten frames later. The busiest frame (the first building frame of the
+48 KiB article) uses 86,511 units (69% of 125,000), a typical frame 268; no frame
+runs out of budget. ROM 12,692 bytes, 17 RAM pages (the 64 KiB document and the
+48 KiB article).
+
+In the window (`TERSE_PAGE_TRACE=1 terse-host --selftest …` with a script that
+presses Enter on the 2.6 KB fixture article in frame 12, release build): submitted
+in frame 13, laid out on the worker in 33 ms (the first layout of the run, with
+cold shaping caches; 7 ms for the next article), and shown with its height event
+in frame 16, four frames after Enter; a later article showed two frames after
+Enter. `cargo test --release -p terse-host layout_time -- --ignored --nocapture`
+times the layout of reader-like documents with warm caches: 3.6 ms for 6 KB, 26 ms
+for 48 KiB, 34 ms for 64 KiB. Drawing the page while scrolling every other frame
+added about 0.3 ms per presented frame (render-submit p50 1.26 ms against 0.98 ms
+with the page still); the first frame that brings a new script into view (CJK, at
+first use of its font) took up to 23 ms once, rasterising its glyphs.
 
 ## Vector display
 
@@ -459,6 +508,68 @@ Try it in Sparks (P switches style):
     cargo run --release -p terse-host -- programs/sparks/sparks.terse --events programs/sparks/sessions/phosphor.txt --frames 900 --screenshot /tmp/phosphor.png
     cargo run --release -p terse-host -- programs/reader/reader.terse --force-phosphor
 
+## Page
+
+Device 7 (SPEC 11) shows typeset prose: proportional fonts, shaped (ligatures,
+Arabic joining), bidirectional, broken into lines at the width of a rectangle the
+program chooses. The program builds a **document** (a short binary list like a
+display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor; at most 65,536
+bytes) in ROM or RAM and submits it (1 unit per 4 bytes); it sets the rectangle,
+the scroll value (screen units from the top of the document) and the background.
+The host lays the document out with its own fonts and draws the part in view,
+between the cell backgrounds and the vector shapes (SPEC 10.5). The program learns
+one fact about the layout, the document's height, from an input event (`08h`) that
+arrives some frames after a submit, a clear or a width change; a press over text
+with an anchor gives an anchor event (`09h`). Both are recorded inputs, so a run
+replays exactly although layouts differ between hosts. An image gets the device
+with `terse pack … --device 7:0`.
+
+From C (`programs/lib/terse.h`), a builder appends commands to a buffer you own,
+much like the display-list builder (see the header for the exact names).
+
+**Reference layout.** `terse run` has no fonts; it lays documents out with the
+reference layout of SPEC 11.6 (every character half its size wide, a wide one its
+size, lines 1.25 × size high, greedy wrapping at spaces), which is deterministic
+and what the golden tests and the conformance hashes use. It is not what users see.
+`terse run … --dump --dump-page` prints the lines in view:
+
+    -- page: height 1076, scroll 0 (stored 0), region 40 16 560 448 --
+        0  33     0   sans26b |The Quiet Craft of Typesetting
+       39  14     0   sans11 |a1b2c3d4 · 2026-11-17 18:10 · 6.1 KB
+       61   8     0  -- rule --
+       79  19     0   sans15 |Good typography is invisible. A reader who notices the type has been
+
+(y, line height and x in screen units, the font of the line's first span, then the
+text; anchored text is shown as `[text]{id}`).
+
+**In `terse-host`.** [cosmic-text](https://crates.io/crates/cosmic-text) lays the
+document out (HarfRust shaping, the Unicode bidirectional algorithm and line
+breaking, fallback to other installed fonts for scripts the face lacks) on a worker
+thread, in screen units and without hinting, so a window of any size uses the same
+layout; the machine keeps running at 60 frames/s and shows the previous layout (or
+only the background) until the new one is ready, then the height event goes in at
+the next frame. Glyphs are rasterised with [swash](https://crates.io/crates/swash)
+at the window's own pixel size (not at 640 × 480 and scaled), cached in a 2048 ×
+2048 atlas, and drawn as quads clipped to the rectangle; only the lines in view are
+drawn, each line's baseline on a whole pixel. Scrolling moves the lines only (no new
+layout) and eases towards the program's scroll value over a few frames, so on a
+large window it moves in steps finer than a screen unit. The three faces are the
+system's `sans-serif`, `serif` and `monospace` families as `fc-match` resolves them
+(Noto Sans, Noto Serif and Noto Sans Mono on the development machine), or the
+families or font files given with `--page-sans`, `--page-serif` and `--page-mono`;
+the line height is the face's own (ascent + descent + gap), at least 1.3 × the size.
+`terse-host` prints the faces it uses. In the phosphor style the page's background
+is not drawn and its text is light on the tube, with the same bloom as terminal
+text. `--screenshot` lays the page out with the same fonts between frames, so the
+picture shows the finished page.
+
+    fc-list : family | sort -u
+    cargo run --release -p terse-host -- programs/reader/reader.terse --page-serif "DejaVu Serif"
+    cargo run --release -p terse-host -- programs/reader/reader.terse --page-sans /usr/share/fonts/TTF/SomeFont.ttf
+
+Setting `TERSE_PAGE_TRACE=1` makes `terse-host` print, per frame, when a layout is
+pending and when its height event is queued (with the layout's time).
+
 ## Fonts
 
 `terse-host` draws the terminal grid with the system's monospace font (the
@@ -536,7 +647,7 @@ that at most 5,249 (4.2%), a typical frame 2,078 (1.7%), about 11 µs of host ti
 `programs/conform/conform.terse` (C and assembly: `conform.c`, `cpu.S`, with its own
 `crt0.S` and `conform.ld`, so changes to `programs/lib` do not touch it) is for
 whoever writes a new host: run it with its scripted input `conform.events` and
-compare. It needs devices 2, 3 and 4 and 16 RAM pages. Two uses:
+compare. It needs devices 2, 3, 4 and 7 and 16 RAM pages. Two uses:
 
 **Conformance (headless, deterministic).** Run it for 200 frames with an empty
 store and no subscriptions, printing the state hash ([STATE.md](STATE.md)) every
@@ -592,6 +703,17 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   request, blocks outside RAM, eight pending and a ninth rejected, and the
   subscriptions and timeline operations (status only, so a host with feeds still
   passes);
+- the page (frames 110–142, after the stress phase): submits from ROM and RAM, a
+  65,536-byte document ending at the last byte of RAM, every rejection (length 0
+  and 65,537, null, straddling the end of RAM or ROM), region clamping, a negative
+  and a huge scroll value, background, clear, unknown page calls; height events
+  (one the frame after a submit, again for the same bytes, a narrower rectangle
+  gives a height at least as large, none while the width is 0, 0 after a clear),
+  and anchor events for scripted presses over large anchored text, each right
+  after its pointer event with its buttons. Its own checks hold for any host's
+  layout (they pass in `terse-host` with Noto Sans and DejaVu Sans as well); the
+  exact heights and frames of the reference layout are in RAM, so the hashes
+  cover them;
 - frames 49–108, the stress phase: every frame uses its whole budget, rewrites all
   2,400 cells (600 CJK, Extension A and Hangul characters never shown before, Latin
   Extended-A and Cyrillic rows, colours changing) and submits a new 16,384-byte
@@ -621,7 +743,11 @@ over 200 frames: p99 0.52 ms, max 0.86 ms, 94 times real time); render-submit
 about 7 ms in the stress frames (almost all of it rasterising some 600 new CJK
 glyphs a frame), 0.6–1.1 s once when the CJK fallback fonts are first loaded; GPU
 render about 1.3 ms (max 3 ms) even in the worst-legal-fill frames, which present
-at 60 Hz. Nothing passes or fails on these numbers.
+at 60 Hz. With the page device added (and its two sections after the stress
+phase), 200 frames in the window: emulation p50 0.13 ms, p99 0.88 ms; render-submit
+p50 1.05 ms, p99 11.9 ms, the same one-time 1.06 s for the CJK fonts (before the
+page device: p50 1.02 ms, p99 9.2 ms); 199 of 200 frames presented. Nothing passes
+or fails on these numbers.
 
 ## Measurements
 
@@ -632,10 +758,10 @@ recorded sessions.
 | Program | ROM | RAM | Busiest frame | Typical frame | Host time per frame |
 |---|---|---|---|---|---|
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
-| fetch | 1,356 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 10,292 bytes | 9 pages | 62,269 (50%, wrapping an article) | 277 (0.2%) | 36 µs (with the content service) |
+| fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
+| reader | 12,692 bytes | 17 pages | 86,511 (69%, building a 48 KiB article's document) | 268 (0.2%) | 71 µs (with the content service) |
 | sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
-| conform | 34,626 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
+| conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 
 Host cost per budget unit, for a frame spent entirely in one kind of call
 (`cargo test --release -p terse-core --test charges -- --ignored --nocapture

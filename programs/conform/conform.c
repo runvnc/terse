@@ -1747,13 +1747,13 @@ static void t_stress(void)
     "of zero."
 #define PAGE_TEXT_LEN (sizeof PAGE_TEXT - 1)
 static const struct {
-    uint8_t head[54];
+    uint8_t head[39];
     char text[PAGE_TEXT_LEN] __attribute__((nonstring)); /* no NUL */
     uint8_t end;
 } page_doc = {
     {
         0x03, 48, 0x02, 0, 1, 0x04, 255, 220, 120, 0x07, ANCHOR_ID & 0xFF, ANCHOR_ID >> 8,
-        0x01, 19, 0, 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M', ' ', 'M', 'M', 'M', 'M',
+        0x01, 4, 0, 'M', 'M', 'M', 'M', /* one word: it never wraps, so (52, 150) is unanchored text */
         0x07, 0, 0, 0x02, 0, 0, 0x03, 14, 0x04, 229, 229, 229, 0x05, 0, 0, 8, 0,
         0x01, PAGE_TEXT_LEN & 0xFF, PAGE_TEXT_LEN >> 8,
     },

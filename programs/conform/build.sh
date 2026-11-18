@@ -17,7 +17,7 @@ trap 'rm -rf "$tmp"' EXIT
 if [ -n "${TERSE:-}" ]; then
     terse() { "$TERSE" "$@"; }
 else
-    terse() { (cd "$here" && "${CARGO:-cargo}" run -q -p terse-cli --bin terse -- "$@"); }
+    terse() { "${CARGO:-cargo}" run -q --manifest-path "$here/../../Cargo.toml" -p terse-cli --bin terse -- "$@"; }
 fi
 
 cd "$tmp"

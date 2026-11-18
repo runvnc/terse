@@ -32,7 +32,7 @@ use crate::vectors::PHOSPHOR_FORMAT;
 
 /// The smallest line height the host uses, as a multiple of the size; a
 /// font whose own (ascent + descent + gap) is tighter is given this.
-const MIN_LINE_HEIGHT: f32 = 1.2;
+const MIN_LINE_HEIGHT: f32 = 1.3;
 /// The thickness of a rule in screen units (SPEC 11.3: about one).
 const RULE_THICKNESS: f32 = 1.0;
 /// Atlas size in texels (RGBA: coverage masks in alpha, colour glyphs as
