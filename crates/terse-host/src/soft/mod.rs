@@ -71,8 +71,9 @@ struct PanelImage {
 struct SceneImage {
     layers: SceneLayers,
     image: Pixels,
-    /// The pyramid of the screen's image its Surfaces show (if it has any).
-    own: Option<Pyramid>,
+    /// The pyramid of the part of the screen's image its Surfaces show
+    /// (if it has any), and that part.
+    own: Option<(Pyramid, IRect)>,
     /// Whatever it was made from changed.
     stale: bool,
 }
@@ -119,11 +120,24 @@ impl SceneImage {
             return false;
         }
         self.stale = false;
-        let own = self.layers.has_surfaces();
-        if own && (damaged || self.own.is_none() || self.image.area != base.area) {
-            self.own = Some(Pyramid::build(base));
-        } else if !own {
+        // The pyramid of the part of the image the sources cover (a pixel
+        // more on each side, for the filtering at their edges).
+        let mut region = IRect::EMPTY;
+        for &r in &self.layers.rects {
+            let (x0, y0, x1, y1) = source_pixels(rect, r);
+            let b = IRect::new(x0 - 1, y0 - 1, x1 + 1, y1 + 1);
+            region = if region.is_empty() { b } else { IRect::new(region.x0.min(b.x0), region.y0.min(b.y0), region.x1.max(b.x1), region.y1.max(b.y1)) };
+        }
+        let region = region.intersect(&base.area);
+        if region.is_empty() {
             self.own = None;
+        } else if damaged || self.own.as_ref().is_none_or(|o| o.1 != region) {
+            let mut part = Pixels::new(region);
+            for y in region.y0..region.y1 {
+                let at = (y - region.y0) as usize * part.stride();
+                part.data[at..at + region.width()].copy_from_slice(base.row(y, region.x0, region.x1));
+            }
+            self.own = Some((Pyramid::build(&part), region));
         }
         compose(self, base, pyramids, rect, eye, mode, pool);
         true
@@ -579,17 +593,18 @@ fn compose(
     let e = eye_point(eye);
     // A Surface's source, as a part of the screen's image.
     let s = rect.2 / terse_core::SCREEN_WIDTH as f32;
-    let (aw, ah) = (area.width().max(1) as f32, area.height().max(1) as f32);
+    let part = own.as_ref().map_or(area, |o| o.1);
+    let (aw, ah) = (part.width().max(1) as f32, part.height().max(1) as f32);
     let window = |r: [u16; 4]| {
         let [x, y, w, h] = r.map(|v| v as f32);
-        [(rect.0 + x * s - area.x0 as f32) / aw, (rect.1 + y * s - area.y0 as f32) / ah, w * s / aw, h * s / ah]
+        [(rect.0 + x * s - part.x0 as f32) / aw, (rect.1 + y * s - part.y0 as f32) / ah, w * s / aw, h * s / ah]
     };
     let placed: Vec<(Placed, Option<&Pyramid>)> = layers
         .panels
         .iter()
         .map(|p| {
             if p.is_surface() {
-                (Placed::new(p, e, rect).with_window(window(p.source)), own.as_ref())
+                (Placed::new(p, e, rect).with_window(window(p.source)), own.as_ref().map(|o| &o.0))
             } else {
                 (Placed::new(p, e, rect), pyramids.get(&p.handle).copied())
             }
