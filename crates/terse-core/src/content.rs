@@ -590,7 +590,7 @@ impl Content {
 
     /// The eight request slots (STATE.md, content section). Requests not
     /// yet taken by the host are not included: they are also in the slots.
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         for slot in &self.slots {
             // op, block, id, offset, length, addr, size: 53 bytes.
             let (op, block, id, offset, length, addr, size) = match slot {
@@ -620,7 +620,7 @@ impl Content {
     /// The content section as `write_state` wrote it (STATE.md 4). Every
     /// request restored pending is to fail in the machine's next frame
     /// ([`Content::take_orphans`]); the host never had it.
-    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader, ram_len: usize) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, r: &mut crate::snapshot::Reader, ram_len: usize) -> Result<(), crate::snapshot::RestoreError> {
         use crate::snapshot::bad;
         for slot in &mut self.slots {
             let op = r.u8()?;
@@ -662,7 +662,7 @@ impl Content {
 
     /// After a restore: a failed completion for each request that was
     /// pending in the snapshot, once (SPEC 9.2).
-    pub(crate) fn take_orphans(&mut self) -> Vec<Completion> {
+    pub fn take_orphans(&mut self) -> Vec<Completion> {
         if !std::mem::take(&mut self.orphaned) {
             return Vec::new();
         }

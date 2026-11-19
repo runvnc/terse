@@ -53,37 +53,37 @@ impl fmt::Display for RestoreError {
 
 impl std::error::Error for RestoreError {}
 
-pub(crate) fn bad(why: &'static str) -> RestoreError {
+pub fn bad(why: &'static str) -> RestoreError {
     RestoreError::Malformed(why)
 }
 
 /// Reads a serialization field by field.
-pub(crate) struct Reader<'a> {
+pub struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+    pub fn new(bytes: &'a [u8]) -> Self {
         Reader { bytes, at: 0 }
     }
 
-    pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], RestoreError> {
+    pub fn take(&mut self, n: usize) -> Result<&'a [u8], RestoreError> {
         let end = self.at.checked_add(n).filter(|&e| e <= self.bytes.len()).ok_or(bad("cut short"))?;
         let out = &self.bytes[self.at..end];
         self.at = end;
         Ok(out)
     }
 
-    pub(crate) fn array<const N: usize>(&mut self) -> Result<[u8; N], RestoreError> {
+    pub fn array<const N: usize>(&mut self) -> Result<[u8; N], RestoreError> {
         Ok(self.take(N)?.try_into().unwrap())
     }
 
-    pub(crate) fn u8(&mut self) -> Result<u8, RestoreError> {
+    pub fn u8(&mut self) -> Result<u8, RestoreError> {
         Ok(self.take(1)?[0])
     }
 
-    pub(crate) fn flag(&mut self) -> Result<bool, RestoreError> {
+    pub fn flag(&mut self) -> Result<bool, RestoreError> {
         match self.u8()? {
             0 => Ok(false),
             1 => Ok(true),
@@ -91,15 +91,15 @@ impl<'a> Reader<'a> {
         }
     }
 
-    pub(crate) fn u16(&mut self) -> Result<u16, RestoreError> {
+    pub fn u16(&mut self) -> Result<u16, RestoreError> {
         Ok(u16::from_le_bytes(self.array()?))
     }
 
-    pub(crate) fn u32(&mut self) -> Result<u32, RestoreError> {
+    pub fn u32(&mut self) -> Result<u32, RestoreError> {
         Ok(u32::from_le_bytes(self.array()?))
     }
 
-    pub(crate) fn remaining(&self) -> usize {
+    pub fn remaining(&self) -> usize {
         self.bytes.len() - self.at
     }
 }

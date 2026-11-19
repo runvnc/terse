@@ -118,7 +118,7 @@ impl Frame {
     }
 }
 
-fn encode_completion(c: &Completion, out: &mut Vec<u8>) {
+pub fn encode_completion(c: &Completion, out: &mut Vec<u8>) {
     out.push(c.handle);
     let bytes = |out: &mut Vec<u8>, k: u8, n: u32, data: &[u8]| {
         out.push(k);

@@ -164,7 +164,7 @@ impl Vector {
 
     /// Style, persistence, fill mode and list (STATE.md, vector section);
     /// not the generation counter.
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         out.push(self.style);
         out.push(self.persistence);
         out.push(!self.fill as u8);
@@ -173,7 +173,7 @@ impl Vector {
     }
 
     /// The vector section as `write_state` wrote it (STATE.md 4).
-    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         use crate::snapshot::bad;
         let [style, persistence, outlines] = r.array()?;
         if style > STYLE_PHOSPHOR || outlines > 1 {

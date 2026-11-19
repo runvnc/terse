@@ -315,7 +315,14 @@ impl ContentService {
     /// (SPEC 9.6) are those of its identity, else of its image.
     pub fn submit_machine(&mut self, tag: u32, machine: &mut Machine) {
         let owner = Owner::of(machine);
-        for r in machine.take_content_requests() {
+        let requests = machine.take_content_requests();
+        self.submit_owned(tag, owner, requests);
+    }
+
+    /// Submits `requests` with `tag`; their named records (SPEC 9.6) are
+    /// `owner`'s (for a content device kept outside the machine).
+    pub fn submit_owned(&mut self, tag: u32, owner: Owner, requests: Vec<Request>) {
+        for r in requests {
             if self.refuse_outside_profile(tag, &r) {
                 continue;
             }

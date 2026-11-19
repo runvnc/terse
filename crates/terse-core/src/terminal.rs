@@ -176,7 +176,7 @@ impl Terminal {
 
     /// Cells, cursor, colours, palette and the put-character decoder
     /// (STATE.md, terminal section).
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.cells);
         out.extend_from_slice(&[self.col, self.row, self.fg, self.bg]);
         out.extend_from_slice(&[self.cursor_visible as u8, self.pending_wrap as u8]);
@@ -187,7 +187,7 @@ impl Terminal {
 
     /// The terminal section as `write_state` wrote it (STATE.md 4). The
     /// incomplete sequence is decoded again from its bytes.
-    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         use crate::snapshot::bad;
         self.cells.copy_from_slice(r.take(CELL_MEMORY)?);
         let [col, row, fg, bg] = r.array()?;

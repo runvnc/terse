@@ -27,23 +27,23 @@ const FIGURE_SIDE: u32 = 8192;
 /// A glyph as rendered: placement and pixels (coverage, or RGBA for a
 /// colour glyph).
 pub struct GlyphImage {
-    w: u32,
-    h: u32,
-    left: i32,
-    top: i32,
-    colour: bool,
-    data: Vec<u8>,
+    pub w: u32,
+    pub h: u32,
+    pub left: i32,
+    pub top: i32,
+    pub colour: bool,
+    pub data: Vec<u8>,
 }
 
 /// A figure as rasterised: premultiplied RGBA.
 pub struct FigureImage {
-    w: u32,
-    h: u32,
-    data: Vec<u8>,
+    pub w: u32,
+    pub h: u32,
+    pub data: Vec<u8>,
 }
 
 #[derive(Clone)]
-enum Paint {
+pub enum Paint {
     Solid([u8; 4]),
     Mask(Arc<GlyphImage>, [u8; 3]),
     Colour(Arc<GlyphImage>),
@@ -51,9 +51,9 @@ enum Paint {
 }
 
 #[derive(Clone)]
-struct Quad {
-    r: IRect,
-    paint: Paint,
+pub struct Quad {
+    pub r: IRect,
+    pub paint: Paint,
 }
 
 /// What the page shows, to tell whether it changed since it was drawn.
@@ -347,7 +347,7 @@ impl SoftPage {
 /// The page's quads as prepared, and the rectangle they are clipped to.
 #[derive(Default)]
 pub struct PageQuads {
-    quads: Vec<Quad>,
+    pub quads: Vec<Quad>,
     pub scissor: IRect,
 }
 

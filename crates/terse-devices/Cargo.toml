@@ -1,0 +1,33 @@
+[package]
+name = "terse-devices"
+description = "Device drivers for the device bus (DEVICES.md): the terminal, vector display, content and page devices as separate programs."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "terse-dev-terminal"
+path = "src/bin/terminal.rs"
+
+[[bin]]
+name = "terse-dev-vector"
+path = "src/bin/vector.rs"
+
+[[bin]]
+name = "terse-dev-page"
+path = "src/bin/page.rs"
+
+[[bin]]
+name = "terse-dev-content"
+path = "src/bin/content.rs"
+
+[dependencies]
+terse-core.workspace = true
+terse-net.workspace = true
+terse-bus.workspace = true
+terse-host.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+terse-relay.workspace = true
+png = "0.18"

@@ -2602,6 +2602,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "terse-bus"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "libc",
+ "png",
+ "softbuffer",
+ "tempfile",
+ "terse-core",
+ "terse-net",
+ "terse-relay",
+ "winit",
+]
+
+[[package]]
 name = "terse-cli"
 version = "0.1.0"
 dependencies = [
@@ -2618,6 +2634,19 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "tempfile",
+]
+
+[[package]]
+name = "terse-devices"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "tempfile",
+ "terse-bus",
+ "terse-core",
+ "terse-host",
+ "terse-net",
+ "terse-relay",
 ]
 
 [[package]]

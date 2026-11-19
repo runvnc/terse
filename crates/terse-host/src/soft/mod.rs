@@ -25,13 +25,13 @@
 //! DRM dumb buffers, so presenting is a copy.
 
 pub mod base;
-mod page;
+pub mod page;
 pub mod panel;
 mod phosphor;
 
 pub use phosphor::BloomRes;
 mod screen;
-mod shapes;
+pub mod shapes;
 
 use std::collections::HashMap;
 use std::sync::Arc;

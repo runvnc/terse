@@ -226,7 +226,7 @@ impl Page {
 
     /// The page section as `write_state` wrote it (STATE.md 4). A restored
     /// document counts as new: a host lays it out and reports its height.
-    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         let (x, y, w, h) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
         self.set_region(x as u32, y as u32, w as u32, h as u32);
         self.scroll = r.u32()?;
@@ -242,7 +242,7 @@ impl Page {
 
     /// The rectangle, scroll value, background and document (STATE.md,
     /// page section); not the generation counter.
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         let r = self.region;
         for v in [r.x, r.y, r.w, r.h] {
             out.extend_from_slice(&v.to_le_bytes());

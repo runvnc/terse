@@ -283,7 +283,7 @@ impl System {
 
     /// The frame counter, then the system section as `write_state` wrote
     /// it (STATE.md 4).
-    pub(crate) fn restore(&mut self, frame: u32, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, frame: u32, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         self.frame = frame;
         self.time = r.u32()?;
         let n = r.u8()? as usize;
@@ -303,7 +303,7 @@ impl System {
     /// The latches and the event queue (STATE.md, system section). This
     /// frame's random bytes are an input consumed within the frame and are
     /// not included.
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.time.to_le_bytes());
         out.push(self.queue.len() as u8);
         for e in &self.queue {
