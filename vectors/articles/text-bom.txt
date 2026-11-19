@@ -1,1 +1,2 @@
-﻿# A byte order mark first: ordinary text
+﻿# A byte order mark first is not shown: a heading
+One later, ﻿here, is text.

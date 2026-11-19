@@ -1,6 +1,6 @@
 # Content: feeds, names, search and publishing
 
-Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f).
+Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:f7d343e5b9308cb807998d88db5d0678b1403cfc7cb9ca7d55462ca9514f5e01).
 
 | `op` | Operation | C helper | Consent |
 |---|---|---|---|
@@ -119,7 +119,7 @@ Searches the relays. `id` is not used. `offset` is the scope; the query is the `
 | 2 | `FIND_ENTRIES` | articles and documents by title | kinds 1 and 4 |
 | 3 | `FIND_PROGRAMS` | programs by name, current versions only | kind 3 |
 
-Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f).
+Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:f7d343e5b9308cb807998d88db5d0678b1403cfc7cb9ca7d55462ca9514f5e01).
 
 | Case | Status |
 |---|---|

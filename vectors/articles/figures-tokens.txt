@@ -1,6 +1,6 @@
 ```path 100 100
 M0 0L5 5Zm5 5l1 1
-M0 0 L5 5fill #f00 M1 1 L2 2
+M0 0 L5 5,fill #f00 M1 1 L2 2
 fill
   #fff,stroke #ABC 1.5,M3 3 L4 4
 stroke #fff 0 stroke fg M5 5 L6 6

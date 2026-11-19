@@ -1,0 +1,47 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ No relay could be reached: your articles only
+-- page: height 344, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Search
+   28  15     0   sans12 |“zebra”  ·  A–Z and a–z match each other, other characters only themselves, as on the relays
+   51  20     0   sans16b |In your articles
+   71  15     0   sans12 |4 found in 6 articles  ·  1 skipped (not downloaded)
+   94  20     0   sans16 |[Not downloaded, zebra]{2}[   66be7e…0c473a  ·  2026-11-17 18:50]{2}
+  114  15     0   sans12 |[in the title (not downloaded: its text was not searched)]{2}
+  137  20     0   sans16 |[Both: ]{3}[ZEBRA]{3}[   66be7e…0c473a  ·  2026-11-17 18:30]{3}
+  157  15     0   sans12 |[And a ]{3}[zebra]{3}[ here too, on the second line of the text.]{3}
+  180  20     0   sans16 |[A ]{4}[zebra]{4}[ in the title]{4}[   66be7e…0c473a  ·  2026-11-17 18:20]{4}
+  200  15     0   sans12 |[in the title]{4}
+  223  20     0   sans16 |[Body only]{5}[   66be7e…0c473a  ·  2026-11-17 18:10]{5}
+  243  15     0   sans12 |[…the text mentions a ]{5}[Zebra]{5}[ crossing near the station.]{5}
+  266  20     0   sans16b |Feeds
+  286  15     0   sans12 |not searched: no relay could be reached
+  309  20     0   sans16b |Articles on your relays
+  329  15     0   sans12 |not searched: no relay could be reached

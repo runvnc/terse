@@ -1,0 +1,4 @@
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/Pad... ends a sentence.
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/a.b. keeps its inner dot.
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/... is only dots: text.
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/Pad%2E. keeps an escaped dot.

@@ -290,3 +290,66 @@ fn sync_prefetches_links() {
         assert_eq!(reader.has_blob(&linked), prefetch);
     }
 }
+
+/// NETWORK 4.2, 6: an entry of a kind this version does not define (9) is
+/// valid: the relay stores it and passes it on, and a client keeps it,
+/// lists it as `[kind 9: …]`, does not download its blob or open it, and
+/// leaves it out of the timeline (which holds kinds 1 and 4 only). Kinds 0
+/// and 255 are reserved: the relay refuses them.
+#[test]
+fn unknown_kind_entries() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let (author, reader) = (User::new(), User::new());
+    let config = author.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    let file = author.store.path().join("one.txt");
+    std::fs::write(&file, b"An article.\n").unwrap();
+    author.feed(&["publish", file.to_str().unwrap(), "--title", "An article"], Some(&url));
+    let identity = Identity::load(&author.config.path().join("identity.key")).unwrap();
+    let data = b"Something a later revision defines.\n";
+    let with_kind = |seq: u32, kind: u8| {
+        let mut e = Entry::article(identity.feed_key(), seq, 1_800_000_000, data, None, "Later");
+        e.kind = kind;
+        e
+    };
+    for kind in [0, 255] {
+        assert!(with_kind(2, kind).sign(&identity).is_err(), "kind {kind} is reserved");
+        // Signed as it is, so that only the kind is wrong.
+        let mut bytes = with_kind(2, 1).sign(&identity).unwrap().bytes;
+        bytes[40] = kind;
+        let n = bytes.len() - 64;
+        let sig = identity.sign(&[terse_net::entry::DOMAIN, &bytes[..n]].concat());
+        bytes[n..].copy_from_slice(&sig);
+        assert_eq!(raw_publish(&url, &bytes), protocol::status::REFUSED, "kind {kind}");
+    }
+    let nine = with_kind(2, 9).sign(&identity).unwrap();
+    assert_eq!(raw_publish(&url, &nine.bytes), protocol::status::DONE);
+    // Its blob is on the relay too, but a client does not fetch it.
+    let blob_file = author.store.path().join("later.bin");
+    std::fs::write(&blob_file, data).unwrap();
+    terse_ok(&["put", blob_file.to_str().unwrap(), "--relay", &url, "--store", author.store()]);
+
+    reader.feed(&["subscribe", &key], None);
+    let synced = reader.feed(&["sync"], Some(&url));
+    assert_eq!(synced.lines().count(), 2, "{synced}");
+    let line = synced.lines().find(|l| l.contains("#2 ")).unwrap();
+    assert!(line.ends_with("[kind 9: Later]") && line.contains(" remote "), "{line}");
+    assert!(!reader.has_blob(data), "not downloaded");
+    assert!(reader.store.path().join("feeds").join(&key).join("0000000002").exists(), "kept");
+    assert!(reader.feed(&["list"], None).contains("[kind 9: Later]"));
+    let out = terse(&reader.feed_args(&["read", &key, "2"], Some(&url)));
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("kind 9"));
+
+    // The timeline holds the article only, for a client and for the machine.
+    let store = BlobStore::open(reader.store.path(), None).unwrap();
+    let mut node = terse_net::Node::new(store, None);
+    node.set_subscriptions(terse_net::Subscriptions::load(reader.config.path().join("subscriptions")).unwrap());
+    assert_eq!(node.timeline(), [(identity.feed_key(), 1)]);
+    let image = reader_image();
+    let screen = terse_ok(&[
+        "run", image.to_str().unwrap(), "--frames", "10", "--dump", "--dump-page", "--store", reader.store(), "--config",
+        reader.config.path().to_str().unwrap(),
+    ]);
+    assert!(screen.contains("|1 article  ·  1 feed\n"), "{screen}");
+}

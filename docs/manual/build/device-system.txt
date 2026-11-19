@@ -178,7 +178,7 @@ document's program with the document's blob ID as the argument. In C:
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce4001f76a6ff08103d837193cbe6084)), they are what a host records per frame to
+[blobs](terse:5e9abb56603e639ad9c4188f675bf9d2480d025d6e7587d8b49f556d1e9381ef)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.

@@ -1,0 +1,15 @@
+```path 50 50
+M0 0 L5 5fill #f00
+```
+
+```path 50 50
+M0 0 L5 5Zstroke fg
+```
+
+```path 50 50
+stroke #fff 2fill #f00 M0 0 L1 1
+```
+
+```path 50 50
+M0 0L5 5L6 6Z fill #f00	M1 1 2 2
+```

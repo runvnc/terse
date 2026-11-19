@@ -141,11 +141,22 @@ fn any_hex(b: u8) -> Option<u8> {
     lower_hex(b.to_ascii_lowercase())
 }
 
-/// Shown text (ARTICLE.md 1): malformed UTF-8 as U+FFFD, CR and the other
-/// control characters but tab not shown. Tabs are kept (a reader shows
-/// each as at least one space).
+/// Shown text (ARTICLE.md 1): malformed UTF-8 as U+FFFD, the control
+/// characters but tab and CR not shown. Tabs are kept (a reader shows each
+/// as at least one space). A CR here is a lone one (the CR before an LF is
+/// gone with the line break, [`lines`]): a blank, shown as a space.
 fn shown(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).chars().filter(|&c| c == '\t' || !c.is_control()).collect()
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|&c| c == '\t' || c == '\r' || !c.is_control())
+        .map(|c| if c == '\r' { ' ' } else { c })
+        .collect()
+}
+
+/// Shown text of a table cell (`cell`: `\|` stands for `|`, ARTICLE.md
+/// 2.5) or of any other block.
+fn shown_in(bytes: &[u8], cell: bool) -> String {
+    if cell { shown(&unescape(bytes)) } else { shown(bytes) }
 }
 
 fn trim_start_blanks(b: &[u8]) -> &[u8] {
@@ -216,9 +227,8 @@ fn bare_link(line: &[u8], at: usize) -> Option<(usize, Target)> {
             _ => break,
         }
     }
-    // "less any `.` at its end": every final dot (ARTICLE.md does not say
-    // whether one or all; all is taken, as a run of dots ends a sentence
-    // as well as one).
+    // "less every `.` at its end": all final dots (a run of dots ends a
+    // sentence as well as one).
     while k > 0 && r[k - 1] == b'.' {
         k -= 1;
     }
@@ -277,11 +287,18 @@ fn code_span(line: &[u8], at: usize) -> Option<usize> {
 /// The inline content of one line (ARTICLE.md 3): links, and code spans if
 /// `code`.
 fn inlines(line: &[u8], code: bool) -> Vec<Inline> {
+    inlines_in(line, code, false)
+}
+
+/// The inline content of one line, or (`cell`) of a table cell as written:
+/// links and code spans are found in the bytes as written, so their limits
+/// count `\|` as two bytes (ARTICLE.md 4.2, 5), and `\|` is shown as `|`.
+fn inlines_in(line: &[u8], code: bool, cell: bool) -> Vec<Inline> {
     let mut out = Vec::new();
     let (mut at, mut from) = (0, 0);
     let flush = |out: &mut Vec<Inline>, from: usize, to: usize| {
         if to > from {
-            push_text(out, &shown(&line[from..to]));
+            push_text(out, &shown_in(&line[from..to], cell));
         }
     };
     while at < line.len() {
@@ -289,7 +306,7 @@ fn inlines(line: &[u8], code: bool) -> Vec<Inline> {
         if b == b'[' {
             if let Some((len, target, text)) = text_link(line, at) {
                 flush(&mut out, from, at);
-                out.push(Inline::Link { target, text: Some(shown(&text)) });
+                out.push(Inline::Link { target, text: Some(shown_in(&text, cell)) });
                 at += len;
                 from = at;
                 continue;
@@ -297,7 +314,7 @@ fn inlines(line: &[u8], code: bool) -> Vec<Inline> {
         } else if b == b'`' && code {
             if let Some(len) = code_span(line, at) {
                 flush(&mut out, from, at);
-                out.push(Inline::Code(shown(&line[at + 1..at + len - 1])));
+                out.push(Inline::Code(shown_in(&line[at + 1..at + len - 1], cell)));
                 at += len;
                 from = at;
                 continue;
@@ -406,7 +423,8 @@ pub fn parse(blob: &[u8]) -> Parsed {
     if blob.starts_with(b"TDOC") {
         return Parsed::Document;
     }
-    let ls = lines(blob);
+    // A byte order mark at the start is ignored (ARTICLE.md 1).
+    let ls = lines(blob.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(blob));
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < ls.len() {
@@ -547,7 +565,7 @@ fn table(lines: &[&[u8]]) -> Table {
         .enumerate()
         .filter(|&(i, _)| !(header && i == 1))
         .map(|(_, l)| {
-            let mut row: Vec<Vec<Inline>> = cells(l).into_iter().take(columns).map(|c| inlines(&unescape(c), true)).collect();
+            let mut row: Vec<Vec<Inline>> = cells(l).into_iter().take(columns).map(|c| inlines_in(c, true, true)).collect();
             row.resize(columns, Vec::new());
             row
         })
@@ -568,12 +586,11 @@ fn figure_size(info: &[u8]) -> Option<Option<(u32, u32)>> {
     if !rest.first().is_none_or(|&b| is_blank(b)) {
         return None;
     }
-    // W, blanks, H, then only blanks; decimal integers 1 to 1024. ARTICLE.md
-    // is silent on leading zeros and signs: digits only, leading zeros
-    // allowed.
+    // W, blanks, H, then only blanks; each 1 to 4 decimal digits (no sign,
+    // leading zeros allowed) for a value from 1 to 1024.
     let words: Vec<&[u8]> = rest.split(|&b| is_blank(b)).filter(|w| !w.is_empty()).collect();
     let num = |w: &[u8]| -> Option<u32> {
-        if w.is_empty() || w.len() > 10 || !w.iter().all(u8::is_ascii_digit) {
+        if w.is_empty() || w.len() > 4 || !w.iter().all(u8::is_ascii_digit) {
             return None;
         }
         let v: u64 = std::str::from_utf8(w).ok()?.parse().ok()?;
@@ -600,6 +617,15 @@ fn is_sep(b: u8) -> bool {
 /// nearest (halves away from zero); `None` if there is none or it is
 /// malformed. Values far out of range saturate (they are refused later).
 fn number(s: &[u8], at: &mut usize) -> Option<i64> {
+    number_exact(s, at).map(|(v, _)| v)
+}
+
+/// A number as [`number`] does, and the sign of what rounding took off:
+/// 1 if the number as written is greater than the rounded value, -1 if it
+/// is less, 0 if it is a whole number of sixteenths. Range checks apply to
+/// the number as written (ARTICLE.md 6.1), so a rounded value at a limit
+/// is out of range if the number as written is beyond it.
+fn number_exact(s: &[u8], at: &mut usize) -> Option<(i64, i64)> {
     let start = *at;
     let mut k = start;
     let neg = match s.get(k) {
@@ -646,11 +672,22 @@ fn number(s: &[u8], at: &mut usize) -> Option<i64> {
     }
     let (q, r) = (f * 16 / scale, f * 16 % scale);
     let mut v = i.saturating_mul(16).saturating_add(q);
+    // The magnitude as written less the rounded one: r / scale, or that
+    // less 1 if rounded up.
+    let mut excess = (r > 0) as i64;
     if 2 * r >= scale {
         v = v.saturating_add(1);
+        excess = -1;
     }
     let v = v.min(i64::MAX as u128 / 2) as i64;
-    Some(if neg { -v } else { v })
+    Some(if neg { (-v, -excess) } else { (v, excess) })
+}
+
+/// Whether a coordinate, rounded to `v` sixteenths with `excess` the sign
+/// of what rounding took off ([`number_exact`]), lies within ±2047 units
+/// as written.
+fn in_range(v: i64, excess: i64) -> bool {
+    v.abs() < LIMIT || (v == LIMIT && excess <= 0) || (v == -LIMIT && excess >= 0)
 }
 
 /// A colour at `s[*at]`: `#rgb`, `#rrggbb`, `#rrggbbaa`, `none` (opacity
@@ -714,8 +751,12 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
             break;
         }
         let b = s[at];
-        // Words.
-        let word = if s[at..].starts_with(b"stroke") {
+        // Words: at the start of the path string or after a separator (a
+        // command letter may follow a number directly; a word may not).
+        let after_sep = at == 0 || is_sep(s[at - 1]);
+        let word = if !after_sep {
+            None
+        } else if s[at..].starts_with(b"stroke") {
             Some(true)
         } else if s[at..].starts_with(b"fill") {
             Some(false)
@@ -743,8 +784,9 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
                     k += 1;
                 }
                 let mut width = 16;
-                if let Some(w) = number(s, &mut k) {
-                    if !(0..=LIMIT).contains(&w) {
+                if let Some((w, ex)) = number_exact(s, &mut k) {
+                    // 0 to 2047 as written.
+                    if !(0..=LIMIT).contains(&w) || (w == LIMIT && ex > 0) || (w == 0 && ex < 0) {
                         return None;
                     }
                     width = w as u32;
@@ -794,16 +836,24 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
             _ => 0,
         };
         let mut v = [0i64; 6];
-        for slot in v.iter_mut().take(n) {
+        let mut ex = [0i64; 6];
+        for k in 0..n {
             while at < s.len() && is_sep(s[at]) {
                 at += 1;
             }
-            *slot = number(s, &mut at)?;
+            (v[k], ex[k]) = number_exact(s, &mut at)?;
         }
         let rel = op.is_ascii_lowercase();
         let (ox, oy) = if rel { (cx, cy) } else { (0, 0) };
         let pt = |x: i64, y: i64| (ox + x, oy + y);
-        let ok = |p: (i64, i64)| p.0.abs() <= LIMIT && p.1.abs() <= LIMIT;
+        // A point within ±2047 units: computed from the numbers as written
+        // (the current point, which is exact, plus a relative command's
+        // numbers), before rounding. `k` is the index of the point's x in
+        // `v`, or None for a point that is not written (a reflected one).
+        let ok = |p: (i64, i64), k: Option<usize>| {
+            let (ex, ey) = k.map_or((0, 0), |k| (ex[k], ex[k + 1]));
+            in_range(p.0, ex) && in_range(p.1, ey)
+        };
         let up = op.to_ascii_uppercase();
         if up != b'M' && up != b'Z' && start.is_none() {
             segs.push(Seg::Move(cx as i32, cy as i32));
@@ -817,7 +867,7 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
         match up {
             b'M' => {
                 let p = pt(v[0], v[1]);
-                if !ok(p) {
+                if !ok(p, Some(0)) {
                     return None;
                 }
                 (cx, cy) = p;
@@ -825,24 +875,24 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
                 start = Some(p);
             }
             b'L' | b'H' | b'V' => {
-                let p = match up {
-                    b'L' => pt(v[0], v[1]),
-                    b'H' => (ox + v[0], cy),
-                    _ => (cx, oy + v[0]),
+                let (p, e) = match up {
+                    b'L' => (pt(v[0], v[1]), (ex[0], ex[1])),
+                    b'H' => ((ox + v[0], cy), (ex[0], 0)),
+                    _ => ((cx, oy + v[0]), (0, ex[0])),
                 };
-                if !ok(p) {
+                if !(in_range(p.0, e.0) && in_range(p.1, e.1)) {
                     return None;
                 }
                 (cx, cy) = p;
                 segs.push(Seg::Line(cx as i32, cy as i32));
             }
             b'C' | b'S' => {
-                let (c1, c2, p) = if up == b'C' {
-                    (pt(v[0], v[1]), pt(v[2], v[3]), pt(v[4], v[5]))
+                let (c1, c2, p, k) = if up == b'C' {
+                    (pt(v[0], v[1]), pt(v[2], v[3]), pt(v[4], v[5]), [Some(0), Some(2), Some(4)])
                 } else {
-                    (reflect(true), pt(v[0], v[1]), pt(v[2], v[3]))
+                    (reflect(true), pt(v[0], v[1]), pt(v[2], v[3]), [None, Some(0), Some(2)])
                 };
-                if !ok(c1) || !ok(c2) || !ok(p) {
+                if !ok(c1, k[0]) || !ok(c2, k[1]) || !ok(p, k[2]) {
                     return None;
                 }
                 segs.push(Seg::Cubic(c1.0 as i32, c1.1 as i32, c2.0 as i32, c2.1 as i32, p.0 as i32, p.1 as i32));
@@ -850,8 +900,12 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
                 ctrl = Some((true, c2.0, c2.1));
             }
             b'Q' | b'T' => {
-                let (c1, p) = if up == b'Q' { (pt(v[0], v[1]), pt(v[2], v[3])) } else { (reflect(false), pt(v[0], v[1])) };
-                if !ok(c1) || !ok(p) {
+                let (c1, p, k) = if up == b'Q' {
+                    (pt(v[0], v[1]), pt(v[2], v[3]), [Some(0), Some(2)])
+                } else {
+                    (reflect(false), pt(v[0], v[1]), [None, Some(0)])
+                };
+                if !ok(c1, k[0]) || !ok(p, k[1]) {
                     return None;
                 }
                 segs.push(Seg::Quad(c1.0 as i32, c1.1 as i32, p.0 as i32, p.1 as i32));
@@ -1042,5 +1096,37 @@ mod tests {
         assert_eq!(path_string(b"fill #fff").unwrap(), []);
         assert!(path_string(b"M0 0 L2047 -2047").is_some());
         assert!(path_string(b"M0 0 L2047.04 0").is_none());
+        // Ranges apply to the numbers as written, before rounding.
+        assert!(path_string(b"M0 0 L2047.01 0").is_none(), "rounds to 2047 but is beyond it");
+        assert!(path_string(b"M0 0 L-2047.01 0").is_none());
+        assert!(path_string(b"M0 0 L2046.99 0").is_some(), "rounds to 2047, within it");
+        assert!(path_string(b"M2047 0 l0.001 0").is_none(), "relative: the point as written");
+        assert!(path_string(b"M2047 0 l-0.001 0").is_some());
+        assert!(path_string(b"M0 0 H2047.0000000001").is_none());
+        assert!(path_string(b"stroke fg 2047.001 M0 0 L1 1").is_none());
+        assert!(path_string(b"stroke fg -0.001 M0 0 L1 1").is_none());
+        assert!(path_string(b"stroke fg -0 M0 0 L1 1").is_some());
+        // A word follows a separator or starts the string; a command letter
+        // may follow a number directly.
+        assert!(path_string(b"M0 0 L5 5fill #fff").is_none());
+        assert!(path_string(b"M0 0 L5 5Zfill #fff").is_none());
+        assert!(path_string(b"M0 0 L5 5Z fill #fff").is_some());
+        assert!(path_string(b"M0 0L5 5L6 6").is_some());
+    }
+
+    #[test]
+    fn decided_details() {
+        // A byte order mark first is not shown; the first line's marker counts.
+        assert_eq!(d("\u{feff}# A\n"), "heading\n  text \"A\"\n");
+        // A lone CR is a blank, shown as a space; a CR before an LF is not shown.
+        assert_eq!(d("a\rb\r\nc\n"), "paragraph\n  text \"a b c\"\n");
+        // Figure sizes: at most 4 digits.
+        assert_eq!(figure_size(b"path 0100 1024"), Some(Some((100, 1024))));
+        assert_eq!(figure_size(b"path 00100 10"), Some(None));
+        // A cell's limits count `\|` as two bytes.
+        let span = format!("| `{}\\|` |\n", "x".repeat(199));
+        assert!(!d(&span).contains("code"), "201 bytes as written");
+        let span = format!("| `{}\\|` |\n", "x".repeat(198));
+        assert!(d(&span).contains(&format!("code \"{}|\"", "x".repeat(198))));
     }
 }

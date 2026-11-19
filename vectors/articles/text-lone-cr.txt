@@ -1,0 +1,12 @@
+A lone CRis a blank, shown as a space.
+A CR before an LF is not shown.
+
+    preline
+| ab | `cd` |
+
+# Heading
+
+```path 10 10
+M0 0L1 1
+```
+last

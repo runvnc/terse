@@ -1,2 +1,4 @@
+heading
+  text "A byte order mark first is not shown: a heading"
 paragraph
-  text "﻿# A byte order mark first: ordinary text"
+  text "One later, ﻿here, is text."

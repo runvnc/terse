@@ -4,7 +4,7 @@ An article is a blob of UTF-8 text, published in a feed, that reads well as plai
 
 ## Lines and blocks
 
-Lines end at LF; a CR before the LF is ignored. Blanks are spaces, tabs and CRs, and a line of only blanks is a blank line. The text is a sequence of blocks separated by blank lines. Markers count only at the very start of a line, and a block also ends before a line it cannot hold, which then starts the next block.
+Lines end at LF; a CR before the LF is ignored, and a lone CR elsewhere is a blank shown as a space. Blanks are spaces, tabs and CRs, and a line of only blanks is a blank line. A byte order mark at the very start of an article is ignored. The text is a sequence of blocks separated by blank lines. Markers count only at the very start of a line, and a block also ends before a line it cannot hold, which then starts the next block.
 
 | Block | A line that starts with |
 |---|---|
@@ -87,7 +87,7 @@ To show a fence's own source, as above, indent it: an indented line of backquote
 
 Call `wait_frame` once a frame.
 
-A code span is a backquote, 1 to 200 bytes holding no backquote and no line break, and a backquote. It counts in paragraphs, list items, headings and table cells, and is shown in a monospaced face without the backquotes. A link inside a code span is not a link. A backquote that starts no code span is ordinary text, as is every backquote in a preformatted block or a fence. There is no other inline markup: `*` and `_` are ordinary text.
+A code span is a backquote, 1 to 200 bytes holding no backquote and no line break, and a backquote (the bytes as written: in a table cell `\|` counts as two). It counts in paragraphs, list items, headings and table cells, and is shown in a monospaced face without the backquotes. A link inside a code span is not a link. A backquote that starts no code span is ordinary text, as is every backquote in a preformatted block or a fence. There is no other inline markup: `*` and `_` are ordinary text.
 
 ## Links
 
@@ -106,13 +106,13 @@ Articles do not link to the web. A web address such as https://example.org is or
 
 Written for real, a bare link to an article (the manual's page on figures), a feed, the built-in sketch program, and a link with text to another part of this manual:
 
-terse:3b68f588c26da43927c1fd8cec7b33d3f6d9a2a525ec1865eb308b838b253313
+terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04
 
 terse:feed/0000000000000000000000000000000000000000000000000000000000000000
 
 terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
 
-Read [the page device](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c) next.
+Read [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) next.
 
 The source of the last one is:
 
@@ -120,11 +120,11 @@ The source of the last one is:
 
 The reader shortens a bare `terse:` link to its first and last six digits. A built-in program has the all-zero key and is named by its image's title.
 
-A program's name is the run of bytes `A`..`Z`, `a`..`z`, `0`..`9`, `-`, `.`, `_`, `~` and `%XX` (two hex digits, either case) after the slash, less any final dot. Each `%XX` stands for byte XX; write every other byte (a space, a non-ASCII letter, a final dot) that way. The decoded name must be a valid display name: 1 to 48 bytes, no control characters, no whitespace first or last. A program named Sketch pad is:
+A program's name is the run of bytes `A`..`Z`, `a`..`z`, `0`..`9`, `-`, `.`, `_`, `~` and `%XX` (two hex digits, either case) after the slash, less every final dot (`Pad...` names `Pad`). Each `%XX` stands for byte XX; write every other byte (a space, a non-ASCII letter, a final dot) that way. The decoded name must be a valid display name: 1 to 48 bytes, no control characters, no whitespace first or last. A program named Sketch pad is:
 
     terse:program/<64 hex digits>/Sketch%20pad
 
-A link with text is `[`, the text, `]`, `(`, the target, `)`, all on one line. The text is 1 to 200 bytes holding no `[`, `]`, backquote or link; the target is exactly one link, with no blank. Brackets that do not make a whole link with text are ordinary text, and links inside them count as bare links. Where links and code spans would overlap, the one that starts first counts.
+A link with text is `[`, the text, `]`, `(`, the target, `)`, all on one line. The text is 1 to 200 bytes as written (`\|` in a table cell counts as two) holding no `[`, `]`, backquote or link; the target is exactly one link, with no blank. Brackets that do not make a whole link with text are ordinary text, and links inside them count as bare links. Where links and code spans would overlap, the one that starts first counts.
 
 ## Tables
 
@@ -148,7 +148,7 @@ If the second line holds only `|`, `-`, `:` and blanks and at least one `-`, it 
 
 ## Figures
 
-A fence whose info string is `path`, followed by a width and a height in screen units (1 to 1024), is a figure drawn from SVG path data.
+A fence whose info string is `path`, followed by a width and a height in units (each 1 to 4 digits with no sign, from 1 to 1024), is a figure drawn from SVG path data. A column of the recommended width, about 68 characters of body text, is 512 units wide.
 
     ```path 200 60
     fill #2b3a55 stroke none M0 0 H200 V60 H0 Z
@@ -167,10 +167,11 @@ The panel, a green triangle with a light outline, and a yellow curve. In brief:
 - Commands `M L H V C S Q T Z`, lowercase relative, numbers as in SVG; the first is `M` or `m`; no arcs.
 - `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide. A `stroke` without a width is 1 unit wide again, whatever came before.
 - Colours `#rgb`, `#rrggbb`, `#rrggbbaa`, `none`, `fg` (the text colour).
-- Coordinates in screen units from the top left, y down, every point within 2047 either way.
+- Coordinates in units from the top left, y down, every point within 2047 either way as written, before rounding to sixteenths: `L2047.01 0` is out of range.
+- A command letter may follow a number directly (`L5 5L6 6`), but `fill` and `stroke` must start the path or follow a blank or comma: `L5 5fill #f00` is malformed.
 - A figure has no text: explain it in the prose or a table after it.
 
-Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. The reader shrinks a figure wider than its column (512 units) to fit, uniformly. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:3b68f588c26da43927c1fd8cec7b33d3f6d9a2a525ec1865eb308b838b253313).
+Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04).
 
 ## Size and publishing
 
@@ -184,6 +185,6 @@ It puts the blob, publishes the next entry of your feed and prints `seq N blob <
 
 ## How the reader shows it
 
-In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c).
+In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0).
 
 Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.

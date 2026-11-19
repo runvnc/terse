@@ -101,7 +101,12 @@ Feeds (F): the feeds you follow, each with its name and short key (`you` marks y
 
 Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.
 
-Search (/): type a feed's name or words of an article's title and press Enter. The reader asks the relays for listed feeds by name and for articles by title, and lists both under a heading each that says how many were found, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
+Search (/): type words and press Enter. The reader searches two places at once and lists the results under a heading each:
+
+- In your articles: the articles on this machine, newest first, by title and by text. The reader reads each one itself, a chunk at a time, so it can search far more than fits in its memory; the results appear as they are found, each with its title, feed, date and a line of the text around the first match (the match in colour), under a line that says how far it has got: "searched 340 of 1,204 articles · 12 skipped (not downloaded)". Articles this machine has not downloaded are searched by title only; nothing is fetched for a search. It keeps at most 64 results ("more than 64 matches; refine the search"). Typing, opening a result or leaving the view stops it. Enter on a result opens the article at its first match.
+- On your relays: listed feeds by name, and their articles by title, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second).
+
+Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so "köln" finds "Köln", but "KÖLN" does not). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
 
 Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full and whether you follow it. S subscribes, U unsubscribes, Esc goes back.
 

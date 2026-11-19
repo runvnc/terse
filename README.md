@@ -779,17 +779,41 @@ the terminal shows only the status row (row 29: key hints, the position such as
   the help page pastes as is); Enter subscribes (the host asks you), Esc cancels,
   Backspace deletes; a malformed key is reported on the status row. U unsubscribes
   from the selected feed. Esc, Backspace or Left go back.
-- **Search** (/ from the timeline or feeds): type a feed's name or words of an
-  article's title and press Enter. The reader asks the relays for listed feeds by
-  name and for their articles by title at once (op 0Ah, twice) and lists both: the
-  feeds (name, your nickname for it if you gave one, also to a feed you do not
-  follow; short key, `you`, `subscribed`) and the articles (title; feed, date,
-  size), under a heading each that says how many were found, or that none were,
-  or why it could not search (no relay could be reached; the relays refused, which
-  a relay does when one connection searches more than 4 times a second). Up/Down,
-  the wheel or a click select; Enter opens a feed's page or an article; Esc goes
-  back. In the reference fixture the results are on the page 2 frames after Enter
-  (the frame of the key counted as 1) with a relay on this machine.
+- **Search** (/ from the timeline or feeds): type words and press Enter. The
+  reader searches two places at once and lists both, under a heading each:
+  - **In your articles**: the articles on this host, which the reader searches
+    itself, newest first, by title and by text, in bounded memory: it walks the
+    timeline (op 04h, 8 KiB of records at a time), tests each title, then reads
+    the first 48 KiB of each article in the host's store with ranged gets of up
+    to 16 KiB (several at once, leaving two of the eight request slots free),
+    scans each chunk as it arrives and drops it, carrying the last bytes of a
+    chunk to the next so that a match across the boundary is found. Articles
+    not downloaded are searched by title only (nothing is fetched for a
+    search) and counted as skipped. Results appear as they are found: the
+    title, then smaller the feed and date, and a line of the raw text around
+    the first match (line breaks as spaces, the match in colour, cut between
+    characters), under a progress line, `searched 340 of 1,204 articles ·
+    12 skipped (not downloaded)`; at most 64 (`more than 64 matches; refine
+    the search`). Typing, opening a result or leaving the view stops it at
+    once. Enter on a result whose text matched opens the article scrolled to
+    the match (an anchor on it, found with the page's `locate`), in colour.
+    It uses only operations of the reading profile (timeline and get), so it
+    works on `terse run --profile reading` too.
+  - **On your relays**: listed feeds by name and their articles by title
+    (op 0Ah, twice): the feeds (name, your nickname for it if you gave one,
+    also to a feed you do not follow; short key, `you`, `subscribed`) and the
+    articles (title; feed, date, size), or why the relays could not be
+    searched (no relay could be reached; the relays refused, which a relay
+    does when one connection searches more than 4 times a second, and which a
+    reading-profile host always does).
+
+  Both match as NETWORK.md 4.7 says: the query's bytes in a row, A–Z and
+  a–z alike, every other byte only itself (`köln` finds `Köln`, `KÖLN` does
+  not). Up/Down, the wheel or a click select (results of this host arriving
+  above the selection do not move it); Enter opens a feed's page or an
+  article; Esc goes back. In the reference fixture the relays' results are
+  on the page 2 frames after Enter (the frame of the key counted as 1) with a
+  relay on this machine; for this host's articles see the measurements below.
 - **Feed page** (Enter on a feed, or a `terse:feed/<key>` link): the feed's name
   (and whether it is your nickname or the feed's own), its key in full and whether
   you follow it; S subscribes, U unsubscribes, Esc goes back.
@@ -900,14 +924,35 @@ document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
 height arrives in the next; the whole height of a 48 KiB article arrives 16 frames
-after Enter. The busiest frame uses 76,582 units (61% of 125,000, building an
-article's document; 79,359 (63%) for a 48 KiB article of nothing but tables, 1,566
-cells with code spans and links); outside the article view at most 34,426 (28%);
-a typical frame 166; no frame runs out of budget.
-ROM 52,108 bytes, 29 RAM pages (the 64 KiB document, the 48 KiB article, the
-timeline records, the names, the search results and a table's 1,024 cells). Following a `terse:` link to
+after Enter. The busiest frame uses 76,183 units (61% of 125,000, building an
+article's document; 77,383 (62%) for a 48 KiB article of nothing but tables);
+a typical frame 183; no frame runs out of budget.
+ROM 60,000 bytes, 42 RAM pages (the 64 KiB document, the 48 KiB article, the
+timeline records, the names, the search results, a table's 1,024 cells, and about
+100 KiB for searching this host's articles: a 64 KiB ring of chunks, an 8 KiB
+timeline page, 16 entries in hand and 64 results). Following a `terse:` link to
 a local article: the article is on the page 2 frames after Enter, busiest frame
-41,984 units; a search: busiest frame 20,909 units.
+41,635 units; a relay search: busiest frame 24,490 units.
+
+Searching this host's articles (`cargo test --release -p terse-cli --test reader
+local_search -- --include-ignored --nocapture`; generated libraries of prose, one
+word in every 97th article, headless, frames of 1/60 s):
+
+| Library | Query | First result | Done | Text per frame | Busiest frame |
+|---|---|---|---|---|---|
+| 1,000 × 3 KB | in 10 articles | 17 frames (0.28 s) | 174 frames (2.9 s) | 17.3 KB | 62,737 (50%) |
+| 1,000 × 3 KB | in none | — | 173 frames (2.9 s) | 17.4 KB | 49,073 (39%) |
+| 5,000 × 3 KB | in 51 articles | 4 frames (0.07 s) | 851 frames (14.2 s) | 17.6 KB | 63,554 (51%) |
+| 5,000 × 3 KB | in none | — | 850 frames (14.2 s) | 17.7 KB | 50,100 (40%) |
+| 100 × 3 KB, 6 of them 48 KiB | in 1 article | 17 frames (0.28 s) | 29 frames (0.5 s) | 19.9 KB (41.8 KB at most) | 61,423 (49%) |
+
+Small articles go at about six a frame: the search keeps six requests pending
+(the content device allows eight), so it is bound by requests, not by scanning.
+The scan (Horspool over case-folded bytes, 7 instructions a window) makes 0.13 to
+0.22 windows a byte for these queries, about 1 to 2 instructions a byte; with the
+gets, the delivery charge and the list, 2.0 to 2.9 units a byte in all. A key
+during a search is handled in its own frame (Down submits the new list in the frame
+of the key; typed text is on row 28 in that frame), and no frame runs out of budget.
 
 In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
 entries, 13 Down then 13 Up presses 8 frames apart, the list window scrolling): every
@@ -1559,7 +1604,7 @@ recorded sessions.
 |---|---|---|---|---|---|
 | hello | 881 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 52,108 bytes | 29 pages | 79,359 (63.5%, building a 48 KiB article of tables) | 166 (0.1%) | — |
+| reader | 60,000 bytes | 42 pages | 77,383 (61.9%, building a 48 KiB article of tables) | 183 (0.1%) | — |
 | holo | 5,460 bytes | 2 pages | 24,898 (19.9%) in the city (11 solid blocks: 55 faces, 3,195 list bytes); 20,753 (16.6%) in the starfield | 10,698 (8.6%) | the city's projection 0.14 ms |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 39,224 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |

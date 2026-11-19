@@ -1,2 +1,2 @@
 paragraph
-  text "Malformed � byte, a cut � sequence, a control character, DEL, C1 . A lone CR in a line: carriage."
+  text "Malformed � byte, a cut � sequence, a control character, DEL, C1 . A lone CR in a line: car riage."

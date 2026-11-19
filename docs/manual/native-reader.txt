@@ -46,14 +46,14 @@ ARTICLE.md is written as requirements on what the person sees, not as a layout a
 - Join a paragraph's lines and wrap them to your column; keep preformatted lines and fences as written, unwrapped.
 - Find code spans and links on each line, from its start; the one that starts first wins.
 - Lay tables out as grids, or show their lines as a paragraph.
-- Draw figures from their path strings, or show them as their text.
+- Draw figures from their path strings, or show them as their text. A figure's units are 512ths of a column of the recommended width (about 68 characters of body text): scale figures by your column's width over that, down for a narrower column, and up only if you enlarge your text the same way.
 - Anything you do not recognise, or that is malformed, is ordinary text.
 
 Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key (a feed), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
 
 ## Programs and documents
 
-Feeds also carry programs (kind 3) and documents (kind 4) for the machine. A reader without it keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with `TERS`) or a document (`TDOC`): say that you cannot open it rather than showing its bytes. A program link gets the same answer.
+Feeds also carry programs (kind 3) and documents (kind 4) for the machine, and may carry kinds a later revision defines (5 to 254), which are valid entries. A reader without the machine keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with `TERS`) or a document (`TDOC`): say that you cannot open it rather than showing its bytes. A program link gets the same answer.
 
 ## Checking your reader
 

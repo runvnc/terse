@@ -27,17 +27,23 @@
 
 
 
- 1 feed and 2 articles found
--- page: height 258, scroll 0 (stored 0), region 32 0 576 464 --
+ 1 feed and 2 articles found on your relays
+-- page: height 387, scroll 0 (stored 0), region 32 0 576 464 --
     8  20     0   sans16b |Search
-   28  15     0   sans12 |“b”: listed feeds and their articles, from your relays
-   51  20     0   sans16b |Feeds
-   71  15     0   sans12 |1 found
-   94  20     0   sans16 |[Bob the baker]{2}
-  114  15     0   sans12 |[0b513a…e39f2d  ·  your nickname: Bobby]{2}
-  137  20     0   sans16b |Articles
-  157  15     0   sans12 |2 found
-  180  20     0   sans16 |[Emoji 😀 and tabs in a title]{4}
-  200  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes]{4}
-  223  20     0   sans16 |[A big article (over 48 KiB)]{5}
-  243  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KiB]{5}
+   28  15     0   sans12 |“b”  ·  A–Z and a–z match each other, other characters only themselves, as on the relays
+   51  20     0   sans16b |In your articles
+   71  15     0   sans12 |searched 5 of 6 articles  ·  1 skipped (not downloaded)
+   94  20     0   sans16 |[A ]{2}[b]{2}[ig article (over 48 KiB)]{2}[   Alice (66be7e…0c473a)  ·  2026-11-17 19:30]{2}
+  114  15     0   sans12 |[Line 001 of the ]{2}[b]{2}[ig article, which needs more than one request. Line 002 of the big article, wh…]{2}
+  137  20     0   sans16 |[A long article]{3}[   Alice (66be7e…0c473a)  ·  2026-11-17 18:50]{3}
+  157  15     0   sans12 |[…Paragraph 1. The quick ]{3}[b]{3}[rown fox jumps over the lazy dog while the reader wraps each line at a…]{3}
+  180  20     0   sans16b |Feeds
+  200  15     0   sans12 |1 found
+  223  20     0   sans16 |[Bob the baker]{5}
+  243  15     0   sans12 |[0b513a…e39f2d  ·  your nickname: Bobby]{5}
+  266  20     0   sans16b |Articles on your relays
+  286  15     0   sans12 |2 found
+  309  20     0   sans16 |[Emoji 😀 and tabs in a title]{7}
+  329  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes]{7}
+  352  20     0   sans16 |[A big article (over 48 KiB)]{8}
+  372  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KiB]{8}

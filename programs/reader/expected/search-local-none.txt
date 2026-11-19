@@ -1,0 +1,41 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ No relay could be reached: your articles only
+-- page: height 215, scroll 0 (stored 0), region 32 0 576 464 --
+    8  20     0   sans16b |Search
+   28  15     0   sans12 |“grüße”  ·  A–Z and a–z match each other, other characters only themselves, as on the relays
+   51  20     0   sans16b |In your articles
+   71  15     0   sans12 |1 found in 6 articles  ·  1 skipped (not downloaded)
+   94  20     0   sans16 |[Greetings]{2}[   66be7e…0c473a  ·  2026-11-17 18:40]{2}
+  114  15     0   sans12 |[Grüße]{2}[ aus Köln, und aus Bonn.]{2}
+  137  20     0   sans16b |Feeds
+  157  15     0   sans12 |not searched: no relay could be reached
+  180  20     0   sans16b |Articles on your relays
+  200  15     0   sans12 |not searched: no relay could be reached

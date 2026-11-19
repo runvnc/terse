@@ -83,7 +83,9 @@
  *     the bullet, not the text.)
  *   - A preformatted block or a fence: monospace 13 units, not wrapped,
  *     its lines (and blank lines, in a fence) as written.
- *   - A figure: a Figure command, centred, of W x H units, or if W is over
+ *   - A figure (W and H 1-4 digits each, 1-1024; a word after a separator
+ *     only; points and widths in range as written, before rounding): a
+ *     Figure command, centred, of W x H units, or if W is over
  *     512 (the column) 512 x round(H x 512 / W) (at least 1) with every
  *     coordinate and width scaled by 512 / W after rounding to sixteenths,
  *     halves away from zero (a width that comes to 0 is 1; the initial
@@ -108,7 +110,10 @@
  *     backquote) in a paragraph, item, heading or cell: mono, a unit
  *     smaller, in the code colour.
  *   - Every other block has 10 units of space above it. The LF after a
- *     block's last line is dropped; CRs are left for the device to ignore.
+ *     block's last line is dropped; a CR before an LF is left for the device
+ *     to ignore, and a lone CR becomes a space (in place, as B_FIND looks
+ *     for each line's LF), so it is a blank shown as one. A byte order
+ *     mark at the start of the article is skipped.
  *   - Links (only terse: forms: a web address is ordinary text, also as
  *     the target of "[text](target)", which is then shown as written):
  *     terse:<blob ID> (an article),
@@ -199,20 +204,60 @@
  * The host asks the user about each subscribe, unsubscribe, publish,
  * profile and nickname; the status row says what came of it.
  *
- * Search (/ from the timeline or feeds): Enter sends two finds at once
- * (op 0Ah: feeds by name, articles by title) and shows a list like the
- * others: a heading slot for each section (with its count, or why it is
- * empty), the feeds (name; short key, "you", "subscribed") and the
- * articles (title; feed, date, size). Headings are not selectable; Enter
- * or a click opens a feed's page or an article (Esc comes back), or passes
- * a document to the shell.
+ * Search (/ from the timeline or feeds): Enter searches the articles on
+ * this host itself (below) and sends two finds at once (op 0Ah: feeds by
+ * name, articles by title), and shows a list like the others: a heading
+ * slot for each section (with its count or progress, or why it is empty):
+ * "In your articles" (title, then smaller the feed and date; an excerpt
+ * around the first match in the text, the match in the match colour, or
+ * where it matched), "Feeds" (name; short key, "you", "subscribed") and
+ * "Articles on your relays" (title; feed, date, size). Headings are not
+ * selectable; Enter or a click opens a feed's page or an article (Esc
+ * comes back), or passes a document to the shell. Results of this host
+ * come in while the list is shown: rows below them move down, and the
+ * selection and the top with them, so what is selected stays.
+ *
+ * In your articles: the search reads the timeline newest first (its own
+ * requests, LS_PAGE bytes at a time) and tests each entry's title, then,
+ * for an article in the host's store (flag bit 0), reads its first 48 KiB
+ * with ranged gets of up to 16 KiB, several at once (while the reader has
+ * fewer than LS_PENDING requests pending), into a 64 KiB ring (ls_arena),
+ * scans each chunk as it comes, in order, and drops it; the last LS_PAD
+ * bytes of a chunk go before the next, so that a match across the two is
+ * found. Articles not in the store are searched by title only (never
+ * fetched) and counted as skipped; documents by title only. Matching is
+ * the relays' (NETWORK 4.7): a run of the query's bytes, A-Z and a-z the
+ * same, other bytes exact. An entry's search ends at its text's first
+ * match, which gives the excerpt: at most LS_BEFORE bytes before it and
+ * LS_EX in all, from the raw text, not cut inside a character, line
+ * breaks and other control characters as spaces, runs of spaces as one.
+ * At most LS_MAX results; one more stops the search ("more than 64
+ * matches"). Changing the search text, opening a result and leaving the
+ * view stop it at once (its requests still pending are taken in as they
+ * come; a new search starts once they are). The scan (Horspool over
+ * folded bytes; for a one-byte query, find2 over both cases) is metered
+ * like building an article: LS_UNITS of estimated work a frame
+ * (LS_UNITS_BUSY when the list was built in it), less the content
+ * delivered to it; a stretch is scanned only if its worst case fits, and
+ * what it cost is counted from its windows and comparisons. The progress
+ * line under the heading is redrawn at most every LS_EVERY frames unless a
+ * result appears on the screen. Opening a result whose text matched opens
+ * the article with an anchor (MATCH_ID) on the match, in the match colour
+ * (on the first text after it if the match is not shown as text, such as
+ * in a link's target or a figure's path); once the document holding it is
+ * submitted the reader locates it and scrolls it a quarter of the way down
+ * the view (if it is not in view at the top, and the user has not moved
+ * yet); if the match is not in the document (beyond what is shown) the
+ * status row says the article opens at the top.
  *
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
  * timeline buffer, a 16 KiB buffer for counting, a 16 KiB buffer for
  * looking up a linked article's entry, 16 KiB of subscription records,
  * 16 KiB of names records, two 4 KiB search buffers, up to 48 KiB of the
- * article (ART_CAP), the 64 KiB article document and an 8 KiB document
- * for the other views. The timeline buffer
+ * article (ART_CAP), the 64 KiB article document, an 8 KiB document for
+ * the other views, and for searching this host's articles about 100 KiB:
+ * the 64 KiB ring of chunks, an 8 KiB timeline page, 16 entries being
+ * searched (232-byte records) and 64 results (record and excerpt). The timeline buffer
  * holds one request's worth of records: 70 entries with 120-byte titles to
  * 147 with empty ones. A figure's path commands are built in place, in the
  * article document where its Figure command will hold them. */
@@ -433,6 +478,93 @@ static uint8_t sf_n, sa_n;
 static uint8_t s_query[48], s_qlen;
 static uint8_t s_back; /* the view search goes back to */
 
+/* Searching the articles on this host (see "In your articles" at the top).
+ * The query, folded (A-Z as a-z), and its Horspool tables: ls_skip[c] is
+ * how far the window moves when its last byte is c (0: c may be the last
+ * byte of a match: the window is compared), ls_shift how far it moves
+ * after a comparison; ls_fold maps a byte to its folded form. */
+#define LS_MAX 64       /* results kept */
+#define LS_EX 120       /* the bytes of the text an excerpt is taken from, at most */
+#define LS_BEFORE 24    /* of them before the match, at most */
+#define LS_PAD 64       /* room before a chunk for the end of the one before */
+#define LS_ARENA 65536u /* the chunks being read and scanned */
+#define LS_SPANS 16     /* chunks asked for and not yet scanned */
+#define LS_JOBS 16      /* timeline entries taken and not yet searched */
+#define LS_PENDING 6    /* the reader's requests pending, at most, after a search request */
+#define LS_PAGE 8192    /* the timeline is read this much at a time */
+#define LS_REC 232      /* a timeline record: L, flags and at most 229 bytes */
+#define LS_NONE 0xFFFFFFFFu
+#define MATCH_ID 1000   /* the anchor at the match in an article opened from the results */
+static uint8_t ls_nd[48], ls_m, ls_shift, ls_skip[256], ls_fold[256];
+/* A result: its timeline record, where the first match in the text is
+ * (LS_NONE: none), an excerpt around it (the match at ex_at, ex_len bytes;
+ * ex_pre, ex_post: text left out before and after it), and where the
+ * query is in the title (t_len 0: not there). */
+typedef struct {
+    uint8_t rec[LS_REC];
+    uint32_t at;
+    uint8_t ex[LS_EX];
+    uint8_t ex_n, ex_at, ex_len, ex_pre, ex_post, t_at, t_len;
+} ls_result;
+static ls_result ls_res[LS_MAX];
+static uint8_t ls_n;
+/* An entry being searched: its record, the bytes of its text to search
+ * (0: only the title), those asked for and those scanned, its result (1 +
+ * its index, 0 none) and its stage. */
+enum { J_TITLE, J_BODY, J_DONE };
+typedef struct {
+    uint8_t rec[LS_REC];
+    uint32_t want, issued, scanned;
+    uint8_t res, stage;
+} ls_job;
+static ls_job ls_jobs[LS_JOBS];
+static uint8_t ls_j0, ls_jn, ls_ji; /* the oldest, how many, the next to ask for (from ls_j0) */
+/* A chunk asked for: its request, where it is in ls_arena (LS_PAD bytes of
+ * room, then the chunk), its offset in the article, the bytes asked, the
+ * job (its slot in ls_jobs) and whether it is in. Chunks are scanned in
+ * the order they were asked for, which is the jobs' order, so the arena
+ * is a ring: a chunk's room is free once it is scanned. */
+typedef struct {
+    content_req req;
+    uint32_t pos, off, len;
+    uint8_t handle, job, in;
+} ls_span;
+static ls_span ls_sp[LS_SPANS];
+static uint8_t ls_s0, ls_sn, ls_inflight;
+static uint8_t ls_arena[LS_ARENA] __attribute__((aligned(4)));
+static uint32_t ls_head;
+/* The end of the chunk scanned last (for a match across the boundary and
+ * an excerpt's start), and the head chunk's scan: started, the end of the
+ * next window (in ls_arena). */
+static uint8_t ls_carry[LS_PAD], ls_carry_n, ls_started;
+static uint32_t ls_p;
+/* The timeline, read LS_PAGE bytes at a time: the records of the page and
+ * the next to take, the index of the next page, the timeline's size (and
+ * at the start). */
+static content_req ls_tl_req;
+static uint8_t ls_tl_handle, ls_tl_buf[LS_PAGE];
+static uint16_t ls_tl_at[LS_PAGE / 111 + 1], ls_tl_n, ls_tl_i;
+static uint32_t ls_tl_pos, ls_tl_total, ls_total, ls_tl_known;
+/* The state: idle, running, all searched, stopped (by typing, opening a
+ * result or leaving the view), or stopped at LS_MAX results. ls_wait: a
+ * new search waits until the requests of the last one are in. */
+enum { LS_IDLE, LS_RUN, LS_DONE, LS_STOPPED, LS_FULL };
+static uint8_t ls_state, ls_wait;
+static uint32_t ls_searched, ls_skipped;
+/* Measured: bytes scanned, bytes delivered to the search this frame, the
+ * Horspool windows and comparisons of a scan; whether the list document
+ * shows the latest progress, and the frame it was built in. */
+static uint32_t ls_bytes, ls_delivered, ls_its, ls_cands;
+static uint8_t ls_stale;
+static uint32_t ls_doc_frame;
+/* An article opened from a result: where its match is (LS_NONE: none) and
+ * how long, and how far its anchor is: MT_WANT (not in the document
+ * yet), MT_PLACED (in it, not yet located), MT_LOCATING, MT_DONE. */
+enum { MT_NONE, MT_WANT, MT_PLACED, MT_LOCATING, MT_DONE };
+static uint32_t mt_at;
+static uint8_t mt_len, mt_state;
+static const uint8_t rgb_match[3] = {100, 220, 220};
+
 /* The feed page: its key and the view it goes back to. */
 static uint8_t fp_key[32], fp_back;
 
@@ -575,6 +707,7 @@ static uint8_t f_cmd, f_argc, f_n, f_word, f_moved, f_need, f_last;
  * that takes numbers but is given none is malformed). */
 static uint8_t f_none;
 static int32_t f_arg[6], f_cx, f_cy, f_sx, f_sy, f_qx, f_qy;
+static int8_t f_ex[6]; /* the sign of what rounding took off each of f_arg */
 static uint8_t f_rgba[4];
 
 /* The scrolled views (article, help). */
@@ -1033,11 +1166,41 @@ static uint32_t cell_text(const uint8_t *p, uint32_t n)
 }
 
 /* Article bytes from b_text to `to` into the document as text. */
-static void flush(uint32_t to)
+static void flush_text(uint32_t to)
 {
     if (to > b_text && !doc_overflow)
         b_shown = b_text + cell_text(art + b_text, to - b_text);
     b_text = to;
+}
+
+/* The same; in an article opened from a search result, the match (or, if
+ * its bytes are not shown as text, the first text after it) carries the
+ * anchor MATCH_ID and the match colour. */
+static void flush(uint32_t to)
+{
+    uint32_t a, e;
+    uint8_t shown;
+    if (mt_state != MT_WANT || to <= b_text || mt_at >= to || doc_overflow) {
+        flush_text(to);
+        return;
+    }
+    a = mt_at > b_text ? mt_at : b_text;
+    e = mt_at + mt_len;
+    shown = e > a;
+    if (!shown)
+        e = to; /* the match is not shown as text: the text after it */
+    else if (e > to)
+        e = to;
+    flush_text(a);
+    doc_anchor(MATCH_ID);
+    if (shown)
+        doc_rgb(rgb_match);
+    flush_text(e);
+    doc_anchor(0);
+    if (shown)
+        doc_rgb(b_colour);
+    flush_text(to);
+    mt_state = MT_PLACED;
 }
 
 static void doc_s(const char *s);
@@ -1313,20 +1476,23 @@ static inline __attribute__((always_inline)) uint8_t *find3(uint8_t *p, const ui
 }
 
 /* The first LF in [p, e), or e. */
-static uint8_t *find_lf(uint8_t *p, const uint8_t *e)
+/* The first byte in [p, e) below 0Eh (an LF or a CR, or a tab or another
+ * control character), or e: a word at a time where it can (a word holds a
+ * byte below 0Eh if (w - 0Eh * ONES) & ~w & HIGHS is not 0). */
+static inline __attribute__((always_inline)) uint8_t *find_ctl(uint8_t *p, const uint8_t *e)
 {
     while (p < e && ((uint32_t)p & 3)) {
-        if (*p == '\n')
+        if (*p < 0x0E)
             return p;
         p++;
     }
     while (e - p >= 4) {
-        uint32_t x = *(const uint32_t *)p ^ ('\n' * ONES);
-        if ((x - ONES) & ~x & HIGHS)
+        uint32_t x = *(const uint32_t *)p;
+        if ((x - 0x0E * ONES) & ~x & HIGHS)
             break;
         p += 4;
     }
-    while (p < e && *p != '\n')
+    while (p < e && *p >= 0x0E)
         p++;
     return p;
 }
@@ -1361,18 +1527,18 @@ static uint8_t blanks_only(uint32_t from, uint32_t to)
     return 1;
 }
 
-/* A figure's size on its opening line: a decimal number 1-1024 at art[*i]
- * (before `end`), ended by a blank or the end, and the blanks after it;
- * 0 if there is none. */
+/* A figure's size on its opening line: 1 to 4 decimal digits at art[*i]
+ * (before `end`) for a number 1-1024, ended by a blank or the end, and the
+ * blanks after it; 0 if there is none. */
 static uint16_t fence_number(uint32_t *i, uint32_t end)
 {
     uint32_t k = *i, v = 0;
     for (; k < end && is_digit(art[k]); k++) {
-        v = v * 10 + art[k] - '0';
-        if (v > 1024)
+        if (k - *i == 4)
             return 0;
+        v = v * 10 + art[k] - '0';
     }
-    if (k == *i || (k < end && !is_blank(art[k])))
+    if (k == *i || v > 1024 || (k < end && !is_blank(art[k])))
         return 0;
     while (k < end && is_blank(art[k]))
         k++;
@@ -1456,16 +1622,19 @@ static void table_row_end(void)
 }
 
 /* B_FIND in a table's line: cuts it into pieces up to its LF (or `limit`,
- * or as far as this frame's share goes), leaving b_scan where it got. */
-static void table_scan(uint32_t limit)
+ * or as far as this frame's share goes), leaving b_scan where it got. A CR
+ * not before an LF becomes a space (ARTICLE.md 1); one that ends the bytes
+ * so far (`final` 0) waits for the next byte. */
+static void table_scan(uint32_t limit, uint8_t final)
 {
     uint32_t i = b_scan, e = limit;
     uint8_t c;
     if (e - i > b_work / W_TSCAN)
         e = i + b_work / W_TSCAN;
+again:
     for (; i < e; i++) {
         c = art[i];
-        if (c == '\n')
+        if (c == '\n' || c == '\r')
             break;
         if (c != '|' && c != '-' && c != ':' && !is_blank(c))
             t_al = 0;
@@ -1481,6 +1650,15 @@ static void table_scan(uint32_t limit)
             t_bar = 0;
         }
         t_esc = c == '\\';
+    }
+    /* A CR, handled out of the loop (a store into art in it would keep the
+     * compiler from holding the t_ variables in registers): a blank. */
+    if (i < e && art[i] == '\r' && (i + 1 < limit || final)) {
+        if (i + 1 == limit || art[i + 1] != '\n')
+            art[i] = ' '; /* a lone CR: a space, cut like one */
+        else
+            t_esc = 0, i++; /* before the LF: a blank never shown */
+        goto again;
     }
     spend((i - b_scan) * W_TSCAN);
     if (i == e && e < limit)
@@ -1586,7 +1764,7 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
             continue;
         }
         if (b_kind == K_TABLE) {
-            table_scan(limit);
+            table_scan(limit, final);
             if (b_scan < limit && art[b_scan] != '\n')
                 return 0; /* this frame's share is used */
             if (b_scan == limit && !final)
@@ -1602,7 +1780,21 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
         e = art + limit;
         if ((uint32_t)(e - p) > b_work / W_FIND)
             e = p + b_work / W_FIND;
-        p = find_lf(p, e);
+        /* A CR not before an LF is a blank shown as a space (ARTICLE.md 1):
+         * it becomes one here (the device ignores the CR before an LF). A CR
+         * that ends the bytes so far waits for the next byte. */
+        for (;;) {
+            p = find_ctl(p, e);
+            if (p == e || *p == '\n')
+                break;
+            if (*p == '\r') {
+                if (p + 1 == art + limit && !final)
+                    break;
+                if (p + 1 == art + limit || p[1] != '\n')
+                    *p = ' ';
+            }
+            p++;
+        }
         spend((p - (art + b_scan)) * W_FIND);
         b_scan = p - art;
         if (b_scan < limit && *p != '\n')
@@ -1725,7 +1917,14 @@ static uint8_t code_span(uint32_t c, uint32_t end)
     doc_font(DOC_MONO, style_flags[s]);
     doc_size(style_size[s] - CODE_DOWN);
     doc_rgb(rgb_code);
-    cell_text(art + c + 1, q - c - 1);
+    if (mt_state == MT_WANT && mt_at <= q) { /* the match is in the span: it is anchored */
+        doc_anchor(MATCH_ID);
+        cell_text(art + c + 1, q - c - 1);
+        doc_anchor(0);
+        mt_state = MT_PLACED;
+    } else {
+        cell_text(art + c + 1, q - c - 1);
+    }
     doc_font(style_face[s], style_flags[s]);
     doc_size(style_size[s]);
     doc_rgb(b_colour);
@@ -1876,12 +2075,16 @@ static uint8_t is_sep(uint8_t c)
 }
 
 /* A number at *pp (before e): its value in sixteenths of a unit, rounded,
- * halves away from zero. Returns 0 if there is none or it is longer than
- * 32 bytes. Digits after the sixth decimal do not change the rounding. */
-static uint8_t read_num(const uint8_t **pp, const uint8_t *e, int32_t *v)
+ * halves away from zero, and in *ex the sign of what the rounding took off
+ * (1: the number as written is greater, -1: less, 0: neither), since
+ * ranges apply to numbers as written (ARTICLE.md 6.1). Returns 0 if there
+ * is none or it is longer than 32 bytes. Digits after the sixth decimal do
+ * not change the rounding, only (if not all 0) a sign that would be 0. */
+static uint8_t read_num(const uint8_t **pp, const uint8_t *e, int32_t *v, int8_t *ex)
 {
     const uint8_t *p = *pp;
-    uint32_t ip = 0, fr = 0, den = 1, n = 0;
+    uint32_t ip = 0, fr = 0, den = 1, n = 0, up, more = 0;
+    int32_t rem;
     uint8_t neg = *p == '-';
     if (e - p > 33)
         e = p + 33;
@@ -1890,19 +2093,36 @@ static uint8_t read_num(const uint8_t **pp, const uint8_t *e, int32_t *v)
     for (; p < e && is_digit(*p); p++, n++)
         if (ip < 100000)
             ip = ip * 10 + *p - '0';
-    if (p < e && *p == '.')
-        for (p++; p < e && is_digit(*p); p++, n++)
+    if (p < e && *p == '.') {
+        for (p++; p < e && is_digit(*p); p++, n++) {
             if (den < 1000000) {
                 fr = fr * 10 + *p - '0';
                 den *= 10;
+            } else {
+                more |= *p != '0';
             }
+        }
+    }
     if (!n || p - *pp > 32)
         return 0;
     spend((p - *pp) * W_PBYTE);
-    ip = ip * 16 + (fr * 32 + den) / (2 * den);
+    up = (fr * 32 + den) / (2 * den);
+    rem = (int32_t)(fr * 16) - (int32_t)(up * den);
+    *ex = rem > 0 || (!rem && more) ? 1 : rem < 0 ? -1 : 0;
+    if (neg)
+        *ex = -*ex;
+    ip = ip * 16 + up;
     *v = neg ? -(int32_t)ip : (int32_t)ip;
     *pp = p;
     return 1;
+}
+
+/* Whether a coordinate or width rounded to v, *ex the sign of what the
+ * rounding took off, is beyond `max` sixteenths (or below -max) as
+ * written. */
+static uint8_t beyond(int32_t v, int8_t ex, int32_t max)
+{
+    return v > max || v < -max || (v == max && ex > 0) || (v == -max && ex < 0);
 }
 
 /* A colour at *pp: #rgb, #rrggbb, #rrggbbaa, none or fg, followed by a
@@ -1956,11 +2176,13 @@ static uint8_t segment(void)
 {
     uint8_t up = f_cmd & 0xDF, i = 0, k, n;
     int32_t ox = f_cmd != up ? f_cx : 0, oy = f_cmd != up ? f_cy : 0, pt[6];
+    int8_t ex[6] = {0};
     int16_t s[6];
     spend(W_PSEG);
     if (up == 'H' || up == 'V') {
         pt[0] = up == 'H' ? f_arg[0] + ox : f_cx;
         pt[1] = up == 'V' ? f_arg[0] + oy : f_cy;
+        ex[up == 'V'] = f_ex[0];
         n = 2;
     } else {
         if (up == 'S' || up == 'T') {
@@ -1972,11 +2194,15 @@ static uint8_t segment(void)
             i = 2;
         }
         n = i + f_argc;
-        for (k = 0; i < n; i++, k++)
+        for (k = 0; i < n; i++, k++) {
             pt[i] = f_arg[k] + (i & 1 ? oy : ox);
+            ex[i] = f_ex[k];
+        }
     }
+    /* Every point within +-2047 units as written: the current point (exact)
+     * plus the numbers as written; reflected points as computed. */
     for (i = 0; i < n; i++) {
-        if (pt[i] > F_MAX || pt[i] < -F_MAX)
+        if (beyond(pt[i], ex[i], F_MAX))
             return 0;
         s[i] = scaled(pt[i]);
     }
@@ -2040,6 +2266,7 @@ static uint8_t figure_step(void)
 {
     const uint8_t *p = art + f_pos, *e = art + b_end, *q, *s;
     int32_t v;
+    int8_t x;
     uint8_t c, k;
     for (;;) {
         if (path_overflow)
@@ -2077,16 +2304,17 @@ static uint8_t figure_step(void)
             continue;
         }
         if (is_digit(c) || c == '.' || c == '-' || c == '+') {
-            if (!read_num(&p, e, &v))
+            if (!read_num(&p, e, &v, &x))
                 return 2;
             if (f_word == FW_WIDTH) {
-                if (v < 0 || v > F_MAX)
+                if (v < 0 || beyond(v, x, F_MAX) || (!v && x < 0)) /* 0 to 2047 as written */
                     return 2;
                 stroke(v);
                 continue;
             }
             if (!f_cmd || (f_cmd & 0xDF) == 'Z')
                 return 2;
+            f_ex[f_n] = x;
             f_arg[f_n++] = v;
             f_none = 0;
             if (f_n == f_argc) {
@@ -2102,10 +2330,13 @@ static uint8_t figure_step(void)
             stroke(16);
         if (f_n || f_none)
             return 2;
-        if (e - p > 4 && !memcmp(p, "fill", 4) && is_sep(p[4])) {
+        /* A word starts the path string or follows a separator (p[-1] of
+         * the path string's first byte is the opening line's LF); a command
+         * letter may follow a number directly. */
+        if (is_sep(p[-1]) && e - p > 4 && !memcmp(p, "fill", 4) && is_sep(p[4])) {
             p += 4;
             f_word = FW_FILL;
-        } else if (e - p > 6 && !memcmp(p, "stroke", 6) && is_sep(p[6])) {
+        } else if (is_sep(p[-1]) && e - p > 6 && !memcmp(p, "stroke", 6) && is_sep(p[6])) {
             p += 6;
             f_word = FW_STROKE;
         } else {
@@ -2212,11 +2443,14 @@ static void doc_head(void);
  * its entry has that title. */
 static void heading_title(void)
 {
-    uint32_t i = 2, e;
+    /* A byte order mark first is not shown (ARTICLE.md 1): the article
+     * starts after it. */
+    uint32_t b = art_have >= 3 && art[0] == 0xEF && art[1] == 0xBB && art[2] == 0xBF ? 3 : 0, i = b + 2, e;
     hd_len = 0;
-    if (art_have < 3 || art[0] != '#' || art[1] != ' ')
+    b_line = b;
+    if (art_have < b + 3 || art[b] != '#' || art[b + 1] != ' ')
         return;
-    for (e = 2; e < art_have && e < 2 + 160 && art[e] != '\n'; e++)
+    for (e = b + 2; e < art_have && e < b + 2 + 160 && art[e] != '\n'; e++)
         ;
     if (e == art_have ? art_have < art_want : art[e] != '\n')
         return;
@@ -2226,7 +2460,7 @@ static void heading_title(void)
     while (e > i && is_blank(art[e - 1]))
         e--;
     if (e == i || e - i > 120 || (art_entry && (art_tlen != e - i || memcmp(art_title, art + i, e - i)))) {
-        b_line = 0;
+        b_line = b;
         return;
     }
     hd_at = i;
@@ -2239,7 +2473,7 @@ static void heading_title(void)
 static void build(void)
 {
     uint32_t limit = art_have;
-    uint8_t final = art_have >= art_want;
+    uint8_t final = art_have >= art_want, a = 1;
     if (art_state != READY || b_phase == B_DONE || lk_handle)
         return;
     if (b_phase == B_START) {
@@ -2296,6 +2530,20 @@ static void build(void)
     else if (doc_state == 0) {
         submit_doc();
         doc_state = 1;
+    } else {
+        a = 0; /* nothing submitted */
+    }
+    if (a && mt_state == MT_PLACED && !loc_id && !cur_link && !tab_scrolled) {
+        /* The match's anchor is in the document submitted: where is it? */
+        mt_state = MT_LOCATING;
+        loc_id = MATCH_ID;
+        loc_again = 0;
+        page_locate(MATCH_ID);
+    } else if (b_phase == B_DONE && mt_state == MT_WANT) {
+        mt_state = MT_NONE;
+        tb_n = 0;
+        tb_s("The match is not in the text shown, so the article opens at the top");
+        say(C_INFO);
     }
     a_ptr = doc_ptr;
     a_limit = doc_limit;
@@ -2946,45 +3194,69 @@ static void feeds_doc(void)
 
 /* --- Search ------------------------------------------------------------ */
 
-static uint16_t s_rows(void)
+/* The rows of the search list: the heading of the articles on this host
+ * and its results, the feeds' heading and the feeds, the heading of the
+ * relays' articles and those articles. */
+static uint16_t s_hf(void)
 {
-    return 2 + sf_n + sa_n;
+    return ls_n + 1;
 }
 
-/* Whether row r is a section's heading (the feeds', the articles'). */
+static uint16_t s_ha(void)
+{
+    return ls_n + sf_n + 2;
+}
+
+static uint16_t s_rows(void)
+{
+    return 3 + ls_n + sf_n + sa_n;
+}
+
+/* Whether row r is a section's heading. */
 static uint8_t s_heading(uint16_t r)
 {
-    return r == 0 || r == sf_n + 1;
+    return r == 0 || r == s_hf() || r == s_ha();
+}
+
+/* The section of row r: 0 this host's articles, 1 the feeds, 2 the
+ * relays' articles. */
+static uint8_t s_section(uint16_t r)
+{
+    return r < s_hf() ? 0 : r < s_ha() ? 1 : 2;
 }
 
 /* The result record of row r (not a heading). */
 static const uint8_t *s_record(uint16_t r)
 {
-    return r <= sf_n ? sf_buf + sf_at[r - 1] : sa_buf + sa_at[r - sf_n - 2];
+    switch (s_section(r)) {
+    case 0: return ls_res[r - 1].rec;
+    case 1: return sf_buf + sf_at[r - s_hf() - 1];
+    default: return sa_buf + sa_at[r - s_ha() - 1];
+    }
 }
 
 /* The first result row, or 0 if there is none. */
 static uint16_t s_first(void)
 {
-    return sf_n ? 1 : sa_n ? sf_n + 2 : 0;
+    return ls_n ? 1 : sf_n ? s_hf() + 1 : sa_n ? s_ha() + 1 : 0;
 }
 
 /* After a move in direction dir (-1 or 1), the selection is moved off a
  * heading. */
 static void s_fix(int8_t dir)
 {
-    uint16_t total = s_rows(), sel = srp.sel;
+    int32_t total = s_rows(), sel = srp.sel, k;
     if (!s_heading(sel))
         return;
-    if (dir > 0 ? sel + 1 < total : sel == 0)
-        sel++;
-    else if (sel > 1)
-        sel--;
-    else
-        sel = s_first();
-    if (s_heading(sel))
-        sel = s_first();
-    lp_set(&srp, total, sel, sel == 1 ? 0 : srp.top);
+    /* The nearest result that way, else the other way, else none. */
+    for (k = sel; k >= 0 && k < total && s_heading(k); k += dir)
+        ;
+    if (k < 0 || k >= total)
+        for (k = sel; k >= 0 && k < total && s_heading(k); k -= dir)
+            ;
+    if (k < 0 || k >= total)
+        k = 0;
+    lp_set(&srp, total, k, k == 1 ? 0 : srp.top);
 }
 
 /* A search's results: where each record starts. */
@@ -2998,7 +3270,642 @@ static uint8_t find_parse(const uint8_t *buf, const content_req *r, uint16_t *at
     return n;
 }
 
-/* The line under a section's heading. */
+/* --- Search: the articles on this host ------------------------------------
+ *
+ * The timeline is read LS_PAGE bytes at a time, newest first, and each
+ * entry becomes a job: its title is searched (a match there is a result at
+ * once), then, if it is an article in the host's store, its text: the
+ * first 48 KiB (ART_CAP, what the reader shows), got in chunks of up to
+ * 16 KiB with ranged gets into the arena, each scanned as it comes in and
+ * then dropped. A match across two chunks is found because the last
+ * LS_PAD bytes of a chunk (the query is at most 48) are put before the
+ * next. Several chunks are asked for at once, as long as the reader then
+ * has at most LS_PENDING requests pending (two of the eight stay free),
+ * and they are scanned in the order asked, so results come newest first.
+ * A job ends at its text's first match, which gives the excerpt. Articles
+ * not in the store are searched by title only (never fetched), and so are
+ * documents; they are counted.
+ *
+ * Matching is the relays' (NETWORK 4.7): the query's bytes in a row, A-Z
+ * and a-z the same, every other byte only itself. The scan is Horspool's
+ * over folded bytes (a one-byte query: find2 over both cases), metered
+ * like building an article: each frame has LS_UNITS of estimated work
+ * (fewer when the list was built again in it, less the content delivered
+ * to it), and a stretch of text is scanned only if its worst case fits;
+ * what was spent is then counted from the windows and comparisons made. */
+
+static uint8_t pending(void);
+static uint8_t done_for(uint8_t h, const content_req *r);
+static uint8_t not_text(const uint8_t *p, uint32_t n);
+static uint32_t frame_n; /* frames run */
+
+#define LS_UNITS 88000      /* a frame's work */
+#define LS_UNITS_BUSY 56000 /* in a frame that also built the list */
+#define LS_EVERY 12         /* frames between redraws for progress only */
+#define W_IT 8              /* a Horspool window (7 instructions) */
+#define W_CAND 20           /* a comparison of a window with the query */
+#define W_CMP 11            /* and each byte compared */
+#define W_ONE 5             /* a byte of a one-byte query's scan */
+#define W_LSCALL 80         /* a scan of a stretch */
+#define W_LJOB 700          /* taking an entry and starting on it */
+#define W_LSPAN 900         /* asking for a chunk, taking it and its carry */
+#define W_LRES 2500         /* a result and its excerpt */
+#define W_LMIN 4000         /* less work than this left: the rest waits */
+
+static uint32_t ls_work;
+static uint8_t ls_c; /* the carry before the head chunk */
+
+static void ls_spend(uint32_t u)
+{
+    ls_work = ls_work > u ? ls_work - u : 0;
+}
+
+static void ls_set_skip(uint8_t c, uint8_t v)
+{
+    ls_skip[c] = v;
+    if ((uint8_t)(c - 'a') < 26)
+        ls_skip[c - 0x20] = v;
+}
+
+/* The query's tables (ls_nd: the query folded). */
+static void ls_tables(void)
+{
+    uint32_t i, m = s_qlen;
+    for (i = 0; i < 256; i++) {
+        ls_fold[i] = (uint8_t)(i - 'A') < 26 ? i | 0x20 : i;
+        ls_skip[i] = m;
+    }
+    ls_m = m;
+    for (i = 0; i < m; i++)
+        ls_nd[i] = ls_fold[s_query[i]];
+    for (i = 0; i + 1 < m; i++)
+        ls_set_skip(ls_nd[i], m - 1 - i);
+    ls_shift = ls_skip[ls_nd[m - 1]];
+    ls_set_skip(ls_nd[m - 1], 0);
+}
+
+/* The first match of the query that ends in [*pp, lim) (*pp: the end of
+ * the first window to look at, which starts ls_m - 1 bytes before it):
+ * its first byte, or 0; *pp is where the scan goes on. The work is spent. */
+static const uint8_t *ls_find(const uint8_t **pp, const uint8_t *lim)
+{
+    const uint8_t *p = *pp, *w = 0, *sk = ls_skip, *fd = ls_fold, *nd = ls_nd;
+    uint32_t its = 0, cands = 0, m1 = ls_m - 1, k, s;
+    if (!m1) {
+        uint8_t a = nd[0], b = (uint8_t)(a - 'a') < 26 ? a - 0x20 : a;
+        if (p < lim) {
+            w = find2((uint8_t *)p, lim, a, b);
+            ls_spend((w - p + 1) * W_ONE + W_LSCALL);
+            if (w < lim) {
+                *pp = w + 1;
+                return w;
+            }
+        }
+        *pp = lim;
+        return 0;
+    }
+    /* The hot loop: 7 instructions a window (load, table, add, count, two
+     * branches). */
+    while (p < lim) {
+        do {
+            s = sk[*p];
+            p += s;
+            its++;
+        } while (s && p < lim);
+        if (s)
+            break;
+        cands++;
+        w = p - m1;
+        for (k = 0; k < m1 && fd[w[k]] == nd[k]; k++)
+            ;
+        if (k == m1)
+            break;
+        w = 0;
+        p += ls_shift;
+    }
+    ls_its += its;
+    ls_cands += cands;
+    ls_spend(its * W_IT + cands * (W_CAND + m1 * W_CMP) + W_LSCALL);
+    *pp = p;
+    return w;
+}
+
+/* Stops the search (st: LS_DONE, LS_STOPPED or LS_FULL). Its requests
+ * still pending are taken in as they come; a new search waits for them. */
+static void ls_halt(uint8_t st)
+{
+    if (ls_state != LS_RUN)
+        return;
+    ls_state = st;
+    if (view == SEARCH)
+        page_dirty = 1;
+}
+
+/* A new result for job j (its title, so far); 0 if there are LS_MAX
+ * already (the search stops). Rows after this host's results move down
+ * one, the selection and the top with them. */
+static uint8_t ls_add(ls_job *j)
+{
+    ls_result *x;
+    uint16_t hf = s_hf();
+    if (ls_n == LS_MAX) {
+        ls_halt(LS_FULL);
+        return 0;
+    }
+    x = &ls_res[ls_n];
+    memcpy(x->rec, j->rec, j->rec[0] + 1);
+    x->at = LS_NONE;
+    x->ex_n = x->t_len = 0;
+    ls_n++;
+    j->res = ls_n;
+    if (srp.sel >= hf)
+        srp.sel++;
+    if (srp.top && srp.top >= hf)
+        srp.top++;
+    if (s_heading(srp.sel))
+        srp.sel = s_first();
+    lp_keep(&srp, s_rows());
+    if (view == SEARCH && hf >= srp.top && hf <= srp.top + vis())
+        page_dirty = 1; /* on the screen: at once */
+    else
+        ls_stale = 1;
+    ls_spend(W_LRES);
+    return 1;
+}
+
+/* The excerpt of result x: the text around the match at q, from the text
+ * lo .. hi, which is the article's from offset lo_off; at_end: hi is the
+ * end of the article. At most LS_BEFORE bytes before the match, LS_EX in
+ * all, not cut inside a character; control characters (line breaks, tabs)
+ * as spaces, runs of spaces as one. */
+static void ls_excerpt(ls_result *x, const uint8_t *q, const uint8_t *lo, const uint8_t *hi, uint32_t lo_off, uint8_t at_end)
+{
+    const uint8_t *s = q - lo > LS_BEFORE ? q - LS_BEFORE : lo, *e, *k, *qe = q + ls_m;
+    uint8_t n = 0, sp = 1, c;
+    e = hi - s > LS_EX ? s + LS_EX : hi;
+    while (s < q && (*s & 0xC0) == 0x80)
+        s++;
+    /* Cut before the match: from the start of a word, if one starts there. */
+    if (s > lo) {
+        for (k = s; k < q && *k > ' '; k++)
+            ;
+        if (k < q)
+            s = k + 1;
+    }
+    /* The last character whole: else it is left out. */
+    for (k = e; k > qe && e - k < 3 && (k[-1] & 0xC0) == 0x80; k--)
+        ;
+    if (k > qe && k[-1] >= 0xC0 && e - (k - 1) < (k[-1] >= 0xF0 ? 4 : k[-1] >= 0xE0 ? 3 : 2))
+        e = k - 1;
+    x->ex_pre = lo_off + (s - lo) > 0;
+    x->ex_post = e < hi || !at_end;
+    x->ex_at = x->ex_len = 0;
+    for (; s < e; s++) {
+        if (s == q)
+            x->ex_at = n;
+        if (s == qe)
+            x->ex_len = n - x->ex_at;
+        c = *s;
+        if (c < 0x20 || c == 0x7F)
+            c = ' ';
+        if (c == ' ' && sp)
+            continue;
+        sp = c == ' ';
+        x->ex[n++] = c;
+    }
+    if (qe >= e)
+        x->ex_len = n - x->ex_at;
+    while (n > x->ex_at + x->ex_len && x->ex[n - 1] == ' ')
+        n--;
+    x->ex_n = n;
+}
+
+/* The title of the job at the head. */
+static void ls_title(ls_job *j)
+{
+    const uint8_t *t = j->rec + R_TITLE, *p = t + ls_m - 1, *w;
+    uint8_t n = j->rec[R_N];
+    if (n < ls_m || !(w = ls_find(&p, t + n)) || !ls_add(j))
+        return;
+    ls_res[j->res - 1].t_at = w - t;
+    ls_res[j->res - 1].t_len = ls_m;
+}
+
+/* Room for `need` bytes in the arena, or LS_NONE: after the newest chunk,
+ * else at the start, before the oldest. */
+static uint32_t ls_alloc(uint32_t need)
+{
+    uint32_t tail;
+    if (!ls_sn)
+        return 0;
+    tail = ls_sp[ls_s0].pos;
+    if (ls_head > tail)
+        return LS_ARENA - ls_head >= need ? ls_head : need <= tail ? 0 : LS_NONE;
+    return tail - ls_head >= need ? ls_head : LS_NONE;
+}
+
+/* Takes timeline records into jobs, and asks for the next page when the
+ * one in hand is taken. */
+static void ls_fill(void)
+{
+    ls_job *j;
+    const uint8_t *r;
+    uint32_t want;
+    while (ls_jn < LS_JOBS && ls_tl_i < ls_tl_n) {
+        r = ls_tl_buf + ls_tl_at[ls_tl_i++];
+        j = &ls_jobs[(ls_j0 + ls_jn) % LS_JOBS];
+        memcpy(j->rec, r, r[0] + 1);
+        want = 0;
+        if (r[R_KIND] == ENTRY_ARTICLE && (r[R_FLAGS] & TIMELINE_LOCAL)) {
+            want = get24(r + R_SIZE);
+            if (want > ART_CAP)
+                want = ART_CAP;
+        }
+        j->want = want;
+        j->issued = j->scanned = 0;
+        j->res = 0;
+        j->stage = J_TITLE;
+        ls_jn++;
+        ls_spend(W_LJOB);
+    }
+    if (ls_tl_i == ls_tl_n && !ls_tl_handle && (!ls_tl_known || ls_tl_pos < ls_tl_total) && pending() < LS_PENDING)
+        ls_tl_handle = content_feed(&ls_tl_req, CONTENT_TIMELINE, ls_tl_pos, LS_PAGE, ls_tl_buf);
+}
+
+/* A page of the timeline is in. Entries that arrived since the search
+ * began are at its start (SPEC 9.5): the page then begins with entries
+ * already taken, which are passed over (and the new ones not searched). */
+static void ls_tl_done(uint8_t st)
+{
+    uint32_t at = 0, n = 0, d = 0, total;
+    ls_tl_handle = 0;
+    if (ls_state != LS_RUN || ls_wait)
+        return;
+    if (st != STATUS_DONE) {
+        ls_tl_known = 1;
+        ls_tl_total = ls_tl_pos; /* no more */
+        return;
+    }
+    ls_delivered += ls_tl_req.length;
+    total = ls_tl_req.size;
+    if (ls_tl_known && total > ls_tl_total)
+        d = total - ls_tl_total;
+    while (at < ls_tl_req.length && n < sizeof ls_tl_at / sizeof ls_tl_at[0]) {
+        ls_tl_at[n++] = at;
+        at += 1 + ls_tl_buf[at];
+    }
+    if (!ls_tl_known)
+        ls_total = total;
+    ls_tl_known = 1;
+    ls_tl_total = total;
+    ls_tl_n = n;
+    ls_tl_i = d < n ? d : n;
+    ls_tl_pos = n ? ls_tl_pos + n : total;
+    ls_stale = 1;
+}
+
+/* Asks for the chunks of the jobs in order, while the reader has fewer
+ * than LS_PENDING requests pending and the arena has room. */
+static void ls_issue(void)
+{
+    ls_job *j;
+    ls_span *sp;
+    uint32_t n, need, pos;
+    uint8_t slot, h;
+    while (ls_ji < ls_jn) {
+        slot = (ls_j0 + ls_ji) % LS_JOBS;
+        j = &ls_jobs[slot];
+        if (j->stage == J_DONE || j->issued >= j->want) {
+            ls_ji++;
+            continue;
+        }
+        if (ls_sn == LS_SPANS || pending() >= LS_PENDING)
+            return;
+        n = j->want - j->issued;
+        if (n > CHUNK)
+            n = CHUNK;
+        need = (LS_PAD + n + 3) & ~3u;
+        pos = ls_alloc(need);
+        if (pos == LS_NONE)
+            return;
+        sp = &ls_sp[(ls_s0 + ls_sn) % LS_SPANS];
+        h = content_get(&sp->req, j->rec + R_BLOB, j->issued, n, ls_arena + pos + LS_PAD);
+        if (!h)
+            return;
+        sp->handle = h;
+        sp->pos = pos;
+        sp->off = j->issued;
+        sp->len = n;
+        sp->job = slot;
+        sp->in = 0;
+        ls_head = pos + need;
+        ls_sn++;
+        ls_inflight++;
+        j->issued += n;
+        ls_spend(W_LSPAN);
+    }
+}
+
+/* A content-done event for the search (1 if it was one). */
+static uint8_t ls_event(void)
+{
+    uint8_t k;
+    ls_span *sp;
+    if (done_for(ls_tl_handle, &ls_tl_req)) {
+        ls_tl_done(ev.b);
+        return 1;
+    }
+    for (k = 0; k < LS_SPANS; k++) {
+        sp = &ls_sp[k];
+        if (!sp->in && done_for(sp->handle, &sp->req)) {
+            sp->in = 1;
+            sp->handle = 0;
+            ls_inflight--;
+            if (sp->req.status == STATUS_DONE)
+                ls_delivered += sp->req.length;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Scans the head chunk (in) of job j as far as this frame's work goes;
+ * 1 when it is done with (j is J_DONE if it is the last one, or a match
+ * was found), 0 if the work is used. */
+static uint8_t ls_scan(ls_job *j, ls_span *sp)
+{
+    uint8_t *data = ls_arena + sp->pos + LS_PAD;
+    uint32_t got = sp->req.length, per = W_IT + W_CAND + (ls_m - 1) * W_CMP + W_ONE, c, n;
+    const uint8_t *p, *w, *lim, *end;
+    ls_result *x;
+    if (!ls_started) {
+        ls_started = 1;
+        ls_spend(W_LSPAN);
+        if (sp->req.status != STATUS_DONE) {
+            if (!sp->off)
+                ls_skipped++; /* not got after all */
+            j->stage = J_DONE;
+            return 1;
+        }
+        /* A program image or a document is not an article. */
+        if (!sp->off && not_text(data, got)) {
+            j->stage = J_DONE;
+            return 1;
+        }
+        c = sp->off ? ls_carry_n : 0;
+        memcpy(data - c, ls_carry + LS_PAD - c, c);
+        ls_c = c;
+        ls_p = data - (c < ls_m - 1u ? c : ls_m - 1u) + ls_m - 1 - ls_arena;
+    }
+    c = ls_c;
+    end = data + got;
+    p = ls_arena + ls_p;
+    while (p < end) {
+        if (ls_work < W_LMIN)
+            return 0;
+        n = (ls_work - W_LMIN / 2) / per;
+        lim = (uint32_t)(end - p) > n ? p + n : end;
+        w = ls_find(&p, lim);
+        ls_p = p - ls_arena;
+        if (w) {
+            ls_bytes += w - data + ls_m;
+            j->stage = J_DONE;
+            if (!j->res && !ls_add(j))
+                return 1;
+            x = &ls_res[j->res - 1];
+            x->at = sp->off + (w - data);
+            ls_excerpt(x, w, data - c, end, sp->off - c, sp->off + got >= get24(j->rec + R_SIZE));
+            return 1;
+        }
+    }
+    ls_bytes += got;
+    j->scanned += got;
+    /* The end of this chunk goes before the next. */
+    n = got + c < LS_PAD ? got + c : LS_PAD;
+    memcpy(ls_carry + LS_PAD - n, end - n, n);
+    ls_carry_n = n;
+    if (got < sp->len || j->scanned >= j->want)
+        j->stage = J_DONE;
+    return 1;
+}
+
+static void ls_pop_span(void)
+{
+    ls_s0 = (ls_s0 + 1) % LS_SPANS;
+    ls_sn--;
+    ls_started = 0;
+}
+
+/* Starts a search of the articles on this host for s_query. */
+static void ls_start(void)
+{
+    ls_tables();
+    ls_n = 0;
+    ls_searched = ls_skipped = ls_total = ls_bytes = ls_its = ls_cands = 0;
+    ls_state = LS_RUN;
+    ls_wait = 1; /* everything else is set once no request of a search before is pending */
+}
+
+/* This frame's share of the search; `busy`: the list was built in this
+ * frame. */
+static void ls_step(uint8_t busy)
+{
+    ls_job *j;
+    uint32_t d = ls_delivered / 4 + 1, units = busy ? LS_UNITS_BUSY : LS_UNITS;
+    ls_delivered = 0;
+    if (ls_state != LS_RUN)
+        return;
+    if (ls_wait) {
+        if (ls_inflight || ls_tl_handle)
+            return;
+        ls_wait = 0;
+        ls_j0 = ls_jn = ls_ji = ls_s0 = ls_sn = 0;
+        ls_head = 0;
+        ls_tl_n = ls_tl_i = 0;
+        ls_tl_pos = ls_tl_total = ls_tl_known = 0;
+    }
+    ls_work = units > d ? units - d : 0;
+    for (;;) {
+        ls_fill();
+        ls_issue();
+        if (ls_state != LS_RUN || ls_work < W_LMIN)
+            break;
+        if (!ls_jn) {
+            if (ls_tl_known && ls_tl_i == ls_tl_n && ls_tl_pos >= ls_tl_total && !ls_tl_handle)
+                ls_halt(LS_DONE);
+            break;
+        }
+        j = &ls_jobs[ls_j0];
+        if (j->stage == J_TITLE) {
+            if (j->rec[R_KIND] == ENTRY_ARTICLE && !(j->rec[R_FLAGS] & TIMELINE_LOCAL))
+                ls_skipped++;
+            j->stage = j->want ? J_BODY : J_DONE;
+            ls_title(j);
+            continue;
+        }
+        if (j->stage == J_BODY) {
+            /* Its chunks are the first asked for: the head one, once it is
+             * in. */
+            if (!ls_sn || !ls_sp[ls_s0].in || !ls_scan(j, &ls_sp[ls_s0]))
+                break;
+            ls_pop_span();
+            continue;
+        }
+        /* Done: its chunks still to come are dropped as they come in. */
+        if (ls_sn && ls_sp[ls_s0].job == ls_j0) {
+            if (!ls_sp[ls_s0].in)
+                break;
+            ls_pop_span();
+            continue;
+        }
+        ls_j0 = (ls_j0 + 1) % LS_JOBS;
+        ls_jn--;
+        if (ls_ji)
+            ls_ji--;
+        ls_searched++;
+        ls_stale = 1;
+    }
+}
+
+/* --- Search: the list ------------------------------------------------------ */
+
+/* A number with commas between thousands: "1,204". */
+static void tb_uc(uint32_t v)
+{
+    if (v >= 1000) {
+        tb_uc(v / 1000);
+        tb_s(",");
+        tb_s(u32_str(v % 1000 + 1000) + 1);
+    } else {
+        tb_u(v);
+    }
+}
+
+/* "340 of 1,204 articles" */
+static void tb_of(void)
+{
+    uint32_t done = ls_searched > ls_total ? ls_total : ls_searched;
+    tb_uc(done);
+    tb_s(" of ");
+    tb_uc(ls_total);
+    tb_s(ls_total == 1 ? " article" : " articles");
+}
+
+/* The line under the heading of this host's articles. */
+static void ls_section_meta(void)
+{
+    tb_n = 0;
+    if (ls_state == LS_RUN && !ls_tl_known) {
+        tb_s("searching\xE2\x80\xA6");
+        return;
+    }
+    switch (ls_state) {
+    case LS_RUN:
+        tb_s("searched ");
+        tb_of();
+        break;
+    case LS_DONE:
+        if (!ls_total) {
+            tb_s("no articles on this host");
+            return;
+        }
+        if (ls_n) {
+            tb_u(ls_n);
+            tb_s(" found in ");
+        } else {
+            tb_s("none found in ");
+        }
+        tb_uc(ls_total);
+        tb_s(ls_total == 1 ? " article" : " articles");
+        break;
+    case LS_FULL:
+        tb_s("more than 64 matches; refine the search  \xC2\xB7  searched ");
+        tb_of();
+        break;
+    default:
+        tb_s("stopped after ");
+        tb_of();
+    }
+    if (ls_skipped) {
+        tb_s("  \xC2\xB7  ");
+        tb_uc(ls_skipped);
+        tb_s(" skipped (not downloaded)");
+    }
+}
+
+/* Title text without control characters or line and paragraph
+ * separators (U+2028, U+2029), which become spaces. */
+static void title_text(const uint8_t *t, uint8_t n)
+{
+    uint8_t buf[120], k = 0, i, c;
+    for (i = 0; i < n; i++) {
+        c = t[i];
+        if (c < 0x20 || c == 0x7F) {
+            c = ' ';
+        } else if (c == 0xE2 && i + 2 < n && t[i + 1] == 0x80 && (t[i + 2] == 0xA8 || t[i + 2] == 0xA9)) {
+            c = ' ';
+            i += 2;
+        }
+        buf[k++] = c;
+    }
+    doc_text(buf, k);
+}
+
+/* A result from this host: the title (the match in it in the match
+ * colour, unless selected) with the feed and date after it, smaller; then
+ * the excerpt, the match in the match colour, or where it matched. */
+static void ls_slot(uint16_t i, uint8_t s)
+{
+    const ls_result *x = &ls_res[i - 1];
+    const uint8_t *r = x->rec, *t = r + R_TITLE, *meta = s ? rgb_sel_meta : rgb_meta, *text = s ? rgb_sel_meta : rgb_body;
+    slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
+    if (r[R_KIND] == ENTRY_DOCUMENT)
+        doc_s("\xE2\x97\x86 ");
+    if (!r[R_N]) {
+        doc_s("Untitled");
+    } else if (x->t_len && !s) {
+        title_text(t, x->t_at);
+        doc_rgb(rgb_match);
+        title_text(t + x->t_at, x->t_len);
+        doc_rgb(rgb_entry);
+        title_text(t + x->t_at + x->t_len, r[R_N] - x->t_at - x->t_len);
+    } else {
+        title_text(t, r[R_N]);
+    }
+    doc_font(DOC_SANS, 0);
+    doc_size(SLOT_META);
+    doc_rgb(meta);
+    tb_n = 0;
+    tb_s("   ");
+    tb_kind(r);
+    tb_feed(r + R_FEED);
+    tb_s("  \xC2\xB7  ");
+    tb_date(get32(r + R_TIME));
+    doc_text(tb, tb_n);
+    slot_meta(text);
+    if (x->at != LS_NONE) {
+        if (x->ex_pre)
+            doc_s("\xE2\x80\xA6");
+        doc_text(x->ex, x->ex_at);
+        doc_rgb(rgb_match);
+        doc_text(x->ex + x->ex_at, x->ex_len);
+        doc_rgb(text);
+        doc_text(x->ex + x->ex_at + x->ex_len, x->ex_n - x->ex_at - x->ex_len);
+        if (x->ex_post)
+            doc_s("\xE2\x80\xA6");
+    } else {
+        doc_rgb(meta);
+        if (r[R_KIND] == ENTRY_DOCUMENT)
+            doc_s("in the title (of a document, whose data is not searched)");
+        else if (!(r[R_FLAGS] & TIMELINE_LOCAL))
+            doc_s("in the title (not downloaded: its text was not searched)");
+        else
+            doc_s("in the title");
+    }
+    slot_end(i + 1);
+}
+
+/* The line under a relay section's heading. */
 static void s_section_meta(uint8_t st, uint8_t n)
 {
     tb_n = 0;
@@ -3021,14 +3928,17 @@ static void search_doc(void)
     uint16_t i, end, total = s_rows(), slots = 1;
     const uint8_t *r;
     uint8_t s;
+    ls_stale = 0;
+    ls_doc_frame = frame_n;
     ldoc_begin();
     tb_n = 0;
     if (!s_ran) {
-        tb_s("Type a feed's name or words of an article's title, then Enter");
+        tb_s("Type words to look for in your articles, a feed's name or words of a title, then Enter");
     } else {
         tb_s("\xE2\x80\x9C");
         tb_bytes(s_query, s_qlen);
-        tb_s("\xE2\x80\x9D: listed feeds and their articles, from your relays");
+        tb_s("\xE2\x80\x9D  \xC2\xB7  A\xE2\x80\x93Z and a\xE2\x80\x93z match each other, other characters only "
+             "themselves, as on the relays");
     }
     header_slot("Search");
     if (!s_ran) {
@@ -3041,22 +3951,32 @@ static void search_doc(void)
     for (i = srp.top; i < end; i++, slots++) {
         if (s_heading(i)) {
             slot_begin(rgb_head, DOC_BOLD, 0);
-            doc_s(i ? "Articles" : "Feeds");
-            slot_meta(rgb_meta);
-            s_section_meta(i ? sa_st : sf_st, i ? sa_n : sf_n);
+            if (!i) {
+                doc_s("In your articles");
+                slot_meta(rgb_meta);
+                ls_section_meta();
+            } else {
+                doc_s(i == s_hf() ? "Feeds" : "Articles on your relays");
+                slot_meta(rgb_meta);
+                s_section_meta(i == s_hf() ? sf_st : sa_st, i == s_hf() ? sf_n : sa_n);
+            }
             doc_text(tb, tb_n);
             continue;
         }
-        r = s_record(i);
         s = i == srp.sel;
+        if (!s_section(i)) {
+            ls_slot(i, s);
+            continue;
+        }
+        r = s_record(i);
         slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
-        if (i <= sf_n)
+        if (s_section(i) == 1)
             doc_title(r + R_TITLE, r[R_N]);
         else
             entry_title(r);
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
-        if (i <= sf_n) {
+        if (s_section(i) == 1) {
             uint8_t nn, nick;
             const uint8_t *nm = name_of(r + R_FEED, &nn, &nick);
             tb_key(r + R_FEED);
@@ -3210,8 +4130,12 @@ static const char *const help_keys[] = {
     "/, T, ? or F1", "as in the timeline",
     "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
     0, "Search",
-    "Enter", "search your relays for listed feeds by name and their articles by title",
-    "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (a feed's page, where S subscribes; a document as in the timeline)",
+    "Enter", "search the articles on this host, titles and text (the newest first; those not downloaded by title "
+             "only), and your relays: listed feeds by name and their articles by title. A\xE2\x80\x93Z and "
+             "a\xE2\x80\x93z match each other, other characters only themselves",
+    "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (an article of yours at its first match; a "
+                                       "feed's page, where S subscribes; a document as in the timeline)",
+    "typing, Enter on a result, Esc", "stop the search of your articles",
     "Esc", "back",
     0, "Help",
     "T", "publish a test article, and subscribe to your own feed so that it shows in the timeline",
@@ -3479,6 +4403,7 @@ static void article_start(int32_t restore, uint8_t state)
     link_shown = cur_link = 0;
     loc_id = loc_search = tab_scrolled = place.half = tab_more = 0;
     pf_n = pf_next = 0;
+    mt_state = MT_NONE;
     dirty[STATUS_ROW] = 1;
     article_page();
 }
@@ -3751,6 +4676,19 @@ static void located(void)
     uint16_t n, id;
     int32_t s = scroll, top, bottom;
     loc_id = 0;
+    if (place.id == MATCH_ID) {
+        /* The match of the search: a quarter of the way down the view,
+         * unless it is in view at the top or the user has moved since. */
+        mt_state = MT_DONE;
+        if (!place.height || cur_link || tab_scrolled)
+            return;
+        if ((int32_t)place.y + place.height + MARGIN > RECT_H) {
+            to_end = 0;
+            art_restore = -1;
+            scroll_to((int32_t)place.y - RECT_H / 4);
+        }
+        return;
+    }
     if (loc_search) {
         if (!place.height || (int32_t)place.y >= sr_at)
             sr_hi = place.id;
@@ -3902,7 +4840,8 @@ static void prefetch_add(const uint8_t *id)
 static uint8_t pending(void)
 {
     return !!tl_handle + !!sub_handle + !!cnt_handle + !!id_handle + !!op_handle + !!art_handle + !!nm_handle
-           + !!lk_handle + !!sf_handle + !!sa_handle + !!pf_handle[0] + !!pf_handle[1] + !!pr_handle + !!dn_handle;
+           + !!lk_handle + !!sf_handle + !!sa_handle + !!pf_handle[0] + !!pf_handle[1] + !!pr_handle + !!dn_handle
+           + ls_inflight + !!ls_tl_handle;
 }
 
 /* Asks for the format name of the first document on the list shown whose
@@ -3921,7 +4860,7 @@ static void dn_step(void)
     } else if (view == SEARCH && s_ran) {
         end = srp.top + vis() + 1;
         for (i = srp.top; i < end && i < s_rows(); i++)
-            if (i > sf_n + 1 && dn_want(s_record(i)))
+            if (!s_heading(i) && s_section(i) != 1 && dn_want(s_record(i)))
                 return;
     }
     dn_scan = 0;
@@ -4234,6 +5173,8 @@ static void entry_text(uint32_t cp)
         msg_n = 0;
         dirty[STATUS_ROW] = 1;
     }
+    if (entry == E_SEARCH)
+        ls_halt(LS_STOPPED); /* the text changed */
 }
 
 /* Backspace: one character (a whole UTF-8 sequence in text). */
@@ -4241,6 +5182,8 @@ static void entry_back(void)
 {
     if (!entry_n)
         return;
+    if (entry == E_SEARCH)
+        ls_halt(LS_STOPPED);
     if (entry != E_KEY && entry_n <= ENTRY_CAP)
         while (entry_n > 1 && (entry_buf[entry_n - 1] & 0xC0) == 0x80)
             entry_n--;
@@ -4415,19 +5358,20 @@ static void search_run(void)
     memcpy(s_query, entry_buf, s_qlen);
     sf_n = sa_n = 0;
     s_ran = 1;
+    ls_start();
     sf_handle = content_find(&sf_req, FIND_FEEDS, s_query, s_qlen, sf_buf, FIND_LEN);
     sa_handle = content_find(&sa_req, FIND_ENTRIES, s_query, s_qlen, sa_buf, FIND_LEN);
     sf_st = sf_handle ? 0 : STATUS_FAILED;
     sa_st = sa_handle ? 0 : STATUS_FAILED;
     if (!sf_handle && !sa_handle) {
         entry_open(E_OFF, 0);
-        tb_s("Could not send the search: too many requests pending");
+        tb_s("Could not send the search to the relays: too many requests pending");
         say(C_ERROR);
         return;
     }
     srp.sel = srp.top = 0;
     entry_open(E_OFF, 0);
-    tb_s("Searching your relays for \xE2\x80\x9C");
+    tb_s("Searching your articles and relays for \xE2\x80\x9C");
     tb_bytes(s_query, s_qlen);
     tb_s("\xE2\x80\x9D\xE2\x80\xA6");
     say(C_INFO);
@@ -4449,27 +5393,30 @@ static void find_done(uint8_t feeds, uint8_t status)
     page_dirty = 1;
     if (sf_handle || sa_handle)
         return;
-    srp.sel = s_first();
-    srp.top = 0;
+    /* The first result, unless one of this host's is selected already. */
+    if (s_heading(srp.sel)) {
+        srp.sel = s_first();
+        srp.top = 0;
+    }
     lp_keep(&srp, s_rows());
     tb_n = 0;
     if (sf_n || sa_n) {
         tb_u(sf_n);
         tb_s(sf_n == 1 ? " feed and " : " feeds and ");
         tb_u(sa_n);
-        tb_s(sa_n == 1 ? " article found" : " articles found");
+        tb_s(sa_n == 1 ? " article found on your relays" : " articles found on your relays");
         say(C_OK);
     } else if (sf_st == STATUS_DONE || sa_st == STATUS_DONE) {
-        tb_s("Nothing found for \xE2\x80\x9C");
+        tb_s("Nothing on your relays for \xE2\x80\x9C");
         tb_bytes(s_query, s_qlen);
         tb_s("\xE2\x80\x9D (only listed feeds can be found)");
         say(C_INFO);
     } else if (sf_st == STATUS_REFUSED || sa_st == STATUS_REFUSED) {
-        tb_s("Search refused: this host may not offer it, or its relays are busy");
-        say(C_ERROR);
+        tb_s("Relay search refused (busy relays, or not on this host): your articles only");
+        say(C_INFO);
     } else {
-        tb_s("Search needs a relay, and none could be reached");
-        say(C_ERROR);
+        tb_s("No relay could be reached: your articles only");
+        say(C_INFO);
     }
 }
 
@@ -4600,7 +5547,7 @@ static void draw_status(void)
     } else if (entry == E_NAME) {
         puts_(" Type the name others see beside your key   Enter: next   Esc: cancel");
     } else if (entry == E_SEARCH) {
-        puts_(" Type a feed's name or words of a title   Enter: search   Esc: cancel");
+        puts_(" Words in your articles, or a feed's name   Enter: search   Esc: cancel");
     } else if (view == TIMELINE) {
         puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  / search  F feeds  ? help  T test  Esc quit");
         if (tl_total) {
@@ -4641,6 +5588,8 @@ static void show(uint8_t v)
 {
     if (view == v)
         return;
+    if (view == SEARCH)
+        ls_halt(LS_STOPPED); /* leaving the view stops the search */
     if (entry)
         entry_open(E_OFF, 0);
     asking = 0;
@@ -4690,13 +5639,23 @@ static void scroll_key(uint8_t code)
 static void search_open_row(uint16_t r)
 {
     const uint8_t *rec;
+    uint8_t sec;
     if (r >= s_rows() || s_heading(r))
         return;
     rec = s_record(r);
-    if (r <= sf_n)
+    sec = s_section(r);
+    ls_halt(LS_STOPPED); /* opening a result stops the search */
+    if (sec == 1) {
         feed_page(rec + R_FEED, SEARCH);
-    else
-        open_record(rec, SEARCH);
+        return;
+    }
+    open_record(rec, SEARCH);
+    /* A result from this host's text opens at its first match. */
+    if (!sec && view == ARTICLE && ls_res[r - 1].at != LS_NONE) {
+        mt_at = ls_res[r - 1].at;
+        mt_len = ls_m;
+        mt_state = MT_WANT;
+    }
 }
 
 /* S and U on the feed page. */
@@ -4947,6 +5906,8 @@ static uint8_t handle_events(void)
                 pf_handle[0] = 0;
             else if (done_for(pf_handle[1], &pf_req[1]))
                 pf_handle[1] = 0;
+            else if (ls_event())
+                ;
             else if (done_for(id_handle, &id_req)) {
                 id_handle = 0;
                 if (ev.b == STATUS_DONE) {
@@ -4968,8 +5929,12 @@ static uint8_t handle_events(void)
 
 static void render(void)
 {
+    uint8_t built = page_dirty && view != ARTICLE;
     if (view == TIMELINE)
         ensure_window();
+    /* The search's progress, now and then while it runs. */
+    if (view == SEARCH && ls_stale && frame_n - ls_doc_frame >= LS_EVERY)
+        built = page_dirty = 1;
     if (page_dirty && view != ARTICLE) {
         page_dirty = 0;
         if (view == TIMELINE)
@@ -4985,6 +5950,7 @@ static void render(void)
     }
     prefetch_step();
     dn_step();
+    ls_step(built);
     if (view == ARTICLE)
         build();
     if (view == ARTICLE || view == HELP)
@@ -5016,7 +5982,7 @@ int main(void)
         art_return = TIMELINE;
         open_blob(pr_id, 0, -1, FETCHING);
     }
-    for (;;) {
+    for (;; frame_n++) {
         now = terse_time();
         if (handle_events())
             break;

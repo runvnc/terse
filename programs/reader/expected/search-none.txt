@@ -27,11 +27,13 @@
 
 
 
- Nothing found for “zzz” (only listed feeds can be found)
--- page: height 129, scroll 0 (stored 0), region 32 0 576 464 --
+ Nothing on your relays for “zzz” (only listed feeds can be found)
+-- page: height 172, scroll 0 (stored 0), region 32 0 576 464 --
     8  20     0   sans16b |Search
-   28  15     0   sans12 |“zzz”: listed feeds and their articles, from your relays
-   51  20     0   sans16b |Feeds
-   71  15     0   sans12 |none found
-   94  20     0   sans16b |Articles
+   28  15     0   sans12 |“zzz”  ·  A–Z and a–z match each other, other characters only themselves, as on the relays
+   51  20     0   sans16b |In your articles
+   71  15     0   sans12 |searched 0 of 6 articles
+   94  20     0   sans16b |Feeds
   114  15     0   sans12 |none found
+  137  20     0   sans16b |Articles on your relays
+  157  15     0   sans12 |none found

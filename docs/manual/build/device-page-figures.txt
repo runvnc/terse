@@ -99,7 +99,7 @@ doc_figure(120, 80, DOC_CENTRE, path, path_length(path));
 
 ## Figures in articles
 
-The article format writes a figure as text: a fence whose opening line is three backquotes, `path`, the width W and the height H (1..1024 units each), holding a path string up to a closing line of three backquotes. The path string is SVG path data:
+The article format writes a figure as text: a fence whose opening line is three backquotes, `path`, the width W and the height H (1..1024 units each, 1 to 4 digits with no sign; a column of the recommended width, about 68 characters of body text, is 512 units), holding a path string up to a closing line of three backquotes. The path string is SVG path data:
 
 | Command | Numbers | Meaning |
 |---|---|---|
@@ -114,12 +114,12 @@ The article format writes a figure as text: a fence whose opening line is three 
 
 - Lowercase commands are relative to the current point. More numbers after a command's last one repeat it. The first command is `M` or `m`. There are no arcs.
 - `fill <colour>` and `stroke <colour> [<width>]` may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke `fg` 1 unit wide. A word ends the path so far. Colours: `#rgb`, `#rrggbb`, `#rrggbbaa` (aa the opacity), `none`, `fg` (the text colour). A width is 0..2047 units; 0 draws no outline.
-- Numbers have an optional sign and decimal point, at most 32 characters, no exponent; separators are blanks, line breaks and commas, or nothing where unambiguous (`M10-5`). Every number is rounded to the nearest sixteenth (halves away from zero) and every point reached, control points included, must lie within plus or minus 2047 units.
+- Numbers have an optional sign and decimal point, at most 32 characters, no exponent; separators are blanks, line breaks and commas, or nothing where unambiguous (`M10-5`, `L5 5L6 6`); a word starts the path string or follows a separator (`L5 5fill` is malformed). Every number is rounded to the nearest sixteenth (halves away from zero), and every point reached, control points included, must lie within plus or minus 2047 units as written, before rounding (a relative point: the current point plus the numbers as written); a width likewise lies within 0..2047 as written.
 - Anything else makes the figure malformed, and it is shown as the text of its fence.
 
 The reader turns each figure into a Figure command this way:
 
-- Centred, W x H units; if W is over 512 (its column), 512 x round(H x 512 / W), at least 1, with every coordinate and width scaled by 512 / W after rounding to sixteenths (halves away from zero); a width that comes to 0 becomes 1, and the initial 1-unit stroke is scaled too.
+- Centred, W x H units, one screen unit each (its column, 512 screen units, has the recommended width, so figures are at their natural size); if W is over 512, scaled down to 512 x round(H x 512 / W), at least 1, with every coordinate and width scaled by 512 / W after rounding to sixteenths (halves away from zero); a width that comes to 0 becomes 1, and the initial 1-unit stroke is scaled too.
 - Coordinates become absolute sixteenths: `M` is Move, `L`, `H` and `V` Line, `Q` and `T` Quadratic, `C` and `S` Cubic, `Z` Close, with the reflected control points of `S` and `T` worked out. A Move is put before the first segment after a `Z` or a word unless that is an `M`.
 - `fill` becomes Fill and `stroke` Stroke; colours become r, g, b, a, with `fg` the reader's body text colour (218, 218, 218) opaque and `none` alpha 0. A `stroke` without a width gets 1 unit. The document's text colour at the figure is the body colour, so the initial stroke is `fg`.
 - A figure that is malformed, has no closing fence line, or whose commands do not fit in the document (or in 65,535 bytes) is shown as the fence's text.

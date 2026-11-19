@@ -232,7 +232,17 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
             "blocks-markers",
             fill("- \n-\n* \n*x\n##\n#  \n  ```\n    ```\n\t\nText\n| a |\n- item\n# heading\n- item\n```\nfence\n```\n"),
         ),
-        ("text-bom", "\u{feff}# A byte order mark first: ordinary text\n".as_bytes().to_vec()),
+        (
+            "text-bom",
+            "\u{feff}# A byte order mark first is not shown: a heading\nOne later, \u{feff}here, is text.\n".as_bytes().to_vec(),
+        ),
+        (
+            "text-lone-cr",
+            fill(
+                "A lone CR\ris a blank, shown as a space.\r\nA CR before an LF is not shown.\r\n\r\n    pre\rline\r\n\
+                 | a\rb | `c\rd` |\n\n# Head\ring\n\n```path 10 10\nM0 0\rL1 1\n```\nlast\r",
+            ),
+        ),
         (
             "links-near-misses",
             fill(
@@ -252,7 +262,7 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "figures-tokens",
             fill(
-                "```path 100 100\nM0 0L5 5Zm5 5l1 1\nM0 0 L5 5fill #f00 M1 1 L2 2\nfill\n  #fff,stroke #ABC 1.5,M3 3 L4 4\n\
+                "```path 100 100\nM0 0L5 5Zm5 5l1 1\nM0 0 L5 5,fill #f00 M1 1 L2 2\nfill\n  #fff,stroke #ABC 1.5,M3 3 L4 4\n\
                  stroke #fff 0 stroke fg M5 5 L6 6\nstroke #fff 2047 M7 7 L8 8\n```\n",
             ),
         ),
@@ -261,6 +271,45 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
             fill(
                 "```path 100 100\nM0 0 Q3000 0 10 10\n```\n\n```path 100 100\nM0 0 C0 0 -2000 0 1000 0 S1000 0 1000 0\n```\n\n\
                  ```path 100 100\nstroke #fff 2047.03125 M0 0 L1 1\n```\n\n```path 100 100\nM2000 0 l48 0\n```\n",
+            ),
+        ),
+        (
+            "links-program-dots",
+            fill(
+                "terse:program/{K}/Pad... ends a sentence.\nterse:program/{K}/a.b. keeps its inner dot.\n\
+                 terse:program/{K}/... is only dots: text.\nterse:program/{K}/Pad%2E. keeps an escaped dot.\n",
+            ),
+        ),
+        (
+            "tables-limits-as-written",
+            fill(&format!(
+                "| `{x199}\\|` | `{x198}\\|` |\n| [{x199}\\|](terse:{{A}}) | [{x198}\\|](terse:{{A}}) |\n",
+                x199 = "x".repeat(199),
+                x198 = "y".repeat(198)
+            )),
+        ),
+        (
+            "figures-size-digits",
+            fill(
+                "```path 0100 0050\nM0 0 L1 1\n```\n\n```path 00100 50\nM0 0 L1 1\n```\n\n\
+                 ```path 100 00050\nM0 0 L1 1\n```\n\n```path 0000 10\nM0 0 L1 1\n```\n",
+            ),
+        ),
+        (
+            "figures-word-after-number",
+            fill(
+                "```path 50 50\nM0 0 L5 5fill #f00\n```\n\n```path 50 50\nM0 0 L5 5Zstroke fg\n```\n\n\
+                 ```path 50 50\nstroke #fff 2fill #f00 M0 0 L1 1\n```\n\n\
+                 ```path 50 50\nM0 0L5 5L6 6Z fill #f00\tM1 1 2 2\n```\n",
+            ),
+        ),
+        (
+            "figures-range-as-written",
+            fill(
+                "```path 100 100\nM0 0 L2047.01 0\n```\n\n```path 100 100\nM0 0 L2046.99 -2046.99\n```\n\n\
+                 ```path 100 100\nM2047 0 l0.001 0\n```\n\n```path 100 100\nM2047 0 l-0.001 0 h0\n```\n\n\
+                 ```path 100 100\nM0 0 V-2047.0000001\n```\n\n```path 100 100\nstroke fg 2047.001 M0 0 L1 1\n```\n\n\
+                 ```path 100 100\nstroke fg -0.001 M0 0 L1 1\n```\n\n```path 100 100\nstroke fg -0 M0 0 L1 1\n```\n",
             ),
         ),
     ];
@@ -318,6 +367,22 @@ fn sign_raw(unsigned: &[u8], who: &Identity) -> Vec<u8> {
 fn hello_entry() -> SignedEntry {
     let id = test_identity();
     signed(Entry::article(id.feed_key(), 1, TIME, HELLO, None, "Hello"), &id)
+}
+
+/// An entry of a kind NETWORK.md does not define (9): valid.
+const LATER: &[u8] = b"Something a later revision defines.\n";
+
+fn unknown_kind_entry() -> SignedEntry {
+    let id = test_identity();
+    signed(Entry { kind: 9, ..Entry::article(id.feed_key(), 9, TIME + 300, LATER, None, " any title ") }, &id)
+}
+
+/// The entry `kind-255` of entries.txt: `article` with kind 255, signed.
+fn reserved_kind_entry() -> Vec<u8> {
+    let b = &hello_entry().bytes;
+    let mut u = b[..b.len() - 64].to_vec();
+    u[40] = 255;
+    sign_raw(&u, &test_identity())
 }
 
 fn profile_entry() -> SignedEntry {
@@ -435,6 +500,9 @@ fn entries_file() -> String {
     let big: Vec<u8> = (0..blob::MAX_BLOB).map(|i| (i % 251) as u8).collect();
     valid_entry(&mut out, "article-largest-blob", &signed(Entry::article(key, 8, TIME, &big, None, "Big"), &id), &big);
     valid_entry(&mut out, "article-seq-gap", &signed(Entry::article(key, 4_000_000_000, 0, HELLO, None, "Late"), &id), HELLO);
+    // A kind this revision does not define: valid, kept and passed on,
+    // never opened (NETWORK.md 4.2, 6). Its title need not be a name.
+    valid_entry(&mut out, "unknown-kind-9", &unknown_kind_entry(), LATER);
 
     // Invalid entries: one rule broken each, signed as they are (so that
     // only that rule fails) unless the signature is the point.
@@ -475,8 +543,8 @@ fn entries_file() -> String {
     });
     let small = [&small[..], &b[b.len() - 64..]].concat();
     invalid_entry(&mut out, "small-order-key", &small, "the feed key is a point of small order (the neutral point)", None);
-    invalid_entry(&mut out, "kind-0", &with(40, &[0]), "kind 0 is not a known kind", Some(Invalid::Kind));
-    invalid_entry(&mut out, "kind-5", &with(40, &[5]), "kind 5 is not a known kind", Some(Invalid::Kind));
+    invalid_entry(&mut out, "kind-0", &with(40, &[0]), "kind 0 is reserved", Some(Invalid::Kind));
+    invalid_entry(&mut out, "kind-255", &reserved_kind_entry(), "kind 255 is reserved", Some(Invalid::Kind));
     invalid_entry(&mut out, "seq-0", &with(32, &0u32.to_le_bytes()), "seq is 0", Some(Invalid::Seq));
     invalid_entry(&mut out, "size-0", &with(41, &[0, 0, 0]), "the size is 0", Some(Invalid::Size));
     let over = (blob::MAX_BLOB as u32 + 1).to_le_bytes();
@@ -633,6 +701,10 @@ pub fn session() -> Vec<(&'static str, String, Vec<u8>)> {
         ("r>", "Lookup reply, req 13: not found".into(), encode_lookup_reply(13, status::NOT_FOUND, b"")),
         ("c>", "Unsubscribe, req 14: the test feed".into(), encode_unsubscribe(14, &key)),
         ("r>", "Unsubscribe reply, req 14: done".into(), encode_status_reply(UNSUBSCRIBE_REPLY, 14, status::DONE)),
+        ("c>", "Publish, req 15: the entry `unknown-kind-9` of entries.txt (seq 9, a kind not defined)".into(), encode_publish(15, &unknown_kind_entry().bytes)),
+        ("r>", "Publish reply, req 15: done (a kind not defined is stored like any other)".into(), encode_status_reply(PUBLISH_REPLY, 15, status::DONE)),
+        ("c>", "Publish, req 16: the entry `kind-255` of entries.txt".into(), encode_publish(16, &reserved_kind_entry())),
+        ("r>", "Publish reply, req 16: refused (kind 255 is reserved: the entry is invalid)".into(), encode_status_reply(PUBLISH_REPLY, 16, status::REFUSED)),
         ("p>", "Peer (on a connection from another relay; no reply)".into(), encode_peer()),
     ]
 }
@@ -740,7 +812,9 @@ signs the same fields with the same key must produce exactly these bytes.
 Records `entry <name>` with `valid no` give `bytes` and the `reason` the
 entry is invalid; each breaks one rule of NETWORK.md 4.2 (most are signed
 as they are, so that only that rule fails). A client or relay must
-discard every one of them.
+discard every one of them. The valid entry `unknown-kind-9` is of a kind
+NETWORK.md does not define: a relay must store and pass it on like any
+other, and a client keep or skip it without error and not open it.
 
 profiles.txt (NETWORK.md section 4.6)
 -------------------------------------
@@ -813,8 +887,10 @@ Inline content is one line per piece:
 
   text \"...\"          ordinary text, as shown: lines joined (each line
                        break a space, the blanks at the start of each line
-                       dropped), CRs and control characters other than tab
-                       removed, malformed UTF-8 as U+FFFD (the maximal
+                       dropped), a CR before an LF and control characters
+                       other than tab and CR removed, a lone CR (not before
+                       an LF) as a space, a byte order mark that starts the
+                       article removed, malformed UTF-8 as U+FFFD (the maximal
                        subpart rule). Runs of blanks are as written; a
                        reader may show each run as one space, and blanks
                        at the start or end of a block are not seen, so

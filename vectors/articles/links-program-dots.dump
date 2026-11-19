@@ -1,0 +1,7 @@
+paragraph
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad"
+  text "... ends a sentence. "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "a.b"
+  text ". keeps its inner dot. terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/... is only dots: text. "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad."
+  text ". keeps an escaped dot."

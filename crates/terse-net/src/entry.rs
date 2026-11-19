@@ -18,6 +18,16 @@ pub const KIND_PROGRAM: u8 = 3;
 /// A document (NETWORK 4.2, SPEC 9.7): the title is the document's name
 /// and the blob starts with a document header.
 pub const KIND_DOCUMENT: u8 = 4;
+/// Reserved kinds (NETWORK 4.2): an entry of either is invalid. Every
+/// other kind is valid; 5 to 254 are not defined by this revision, and
+/// clients keep or skip such entries without opening them.
+pub const KIND_RESERVED_0: u8 = 0;
+pub const KIND_RESERVED_255: u8 = 255;
+
+/// Whether this revision defines `kind` (1 to 4).
+pub fn known_kind(kind: u8) -> bool {
+    matches!(kind, KIND_ARTICLE | KIND_PROFILE | KIND_PROGRAM | KIND_DOCUMENT)
+}
 /// The largest Terse image (SPEC 2): a header, 16 device pairs and 128 KiB
 /// of ROM. Programs are downloaded automatically up to this size.
 pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 131_072;
@@ -79,7 +89,7 @@ impl std::fmt::Display for Invalid {
             Self::TitleLength => "title longer than 120 bytes",
             Self::TitleUtf8 => "title is not UTF-8",
             Self::Seq => "seq is 0",
-            Self::Kind => "unknown kind",
+            Self::Kind => "reserved kind (0 or 255)",
             Self::Size => "size is not 1 to 1,048,576 (4,096 for a profile)",
             Self::Name => "a profile's title is not a valid display name",
             Self::Key => "feed key is not a usable Ed25519 public key",
@@ -130,10 +140,12 @@ impl Entry {
         if self.seq == 0 {
             return Err(Invalid::Seq);
         }
+        // A kind this revision does not define is valid (NETWORK 4.2): only
+        // the reserved kinds 0 and 255 are not.
         let max = match self.kind {
-            KIND_ARTICLE | KIND_PROGRAM | KIND_DOCUMENT => MAX_BLOB,
+            KIND_RESERVED_0 | KIND_RESERVED_255 => return Err(Invalid::Kind),
             KIND_PROFILE => crate::profile::MAX_DOCUMENT,
-            _ => return Err(Invalid::Kind),
+            _ => MAX_BLOB,
         };
         if !(1..=max as u32).contains(&self.size) {
             return Err(Invalid::Size);
@@ -290,9 +302,14 @@ mod tests {
         assert_eq!(decode(&good[..HEAD + SIG - 1]), Err(Invalid::Length));
         assert_eq!(decode(&edited(HEAD - 1, 6)), Err(Invalid::Length), "n says 6, title is 5");
         assert_eq!(decode(&edited(32, 0)), Err(Invalid::Seq));
-        assert_eq!(decode(&edited(40, 5)), Err(Invalid::Kind));
         assert!(decode(&edited(40, KIND_DOCUMENT)).is_ok(), "a document");
+        // Kinds this revision does not define are valid; 0 and 255 are
+        // reserved.
+        for kind in [5, 9, 128, 254] {
+            assert_eq!(decode(&edited(40, kind)).map(|s| s.entry.kind), Ok(kind), "kind {kind}");
+        }
         assert_eq!(decode(&edited(40, 0)), Err(Invalid::Kind));
+        assert_eq!(decode(&edited(40, 255)), Err(Invalid::Kind));
         let mut zero_size = good.clone();
         zero_size[41..44].fill(0);
         assert_eq!(decode(&resign(&id, zero_size)), Err(Invalid::Size));
@@ -385,6 +402,27 @@ mod tests {
         assert!(e.sign(&id).is_ok());
     }
 
+    /// NETWORK 4.2: an undefined kind has no rules of its own: any title
+    /// (not only a display name), any size a blob may have.
+    #[test]
+    fn unknown_kinds() {
+        let id = test_identity();
+        let entry = |title: &str, size: u32| {
+            let mut e = sample(&id);
+            e.kind = 9;
+            e.size = size;
+            e.title = title.into();
+            let mut b = e.unsigned_bytes();
+            b.extend_from_slice(&[0; SIG]);
+            decode(&resign(&id, b))
+        };
+        assert!(entry("", 10).is_ok());
+        assert!(entry(" not a name ", MAX_BLOB as u32).is_ok());
+        assert_eq!(entry("x", MAX_BLOB as u32 + 1), Err(Invalid::Size));
+        assert_eq!(entry("x", 0), Err(Invalid::Size));
+        assert!(!known_kind(9) && !known_kind(0) && (1..=4).all(known_kind));
+    }
+
     #[test]
     fn signing_checks_fields() {
         let id = test_identity();
@@ -395,7 +433,9 @@ mod tests {
         };
         assert_eq!(with(|e| e.seq = 0), Err(Invalid::Seq));
         assert_eq!(with(|e| e.size = 0), Err(Invalid::Size));
-        assert_eq!(with(|e| e.kind = 5), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = 0), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = 255), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = 9), Ok(()));
         assert_eq!(with(|e| e.kind = KIND_DOCUMENT), Ok(()));
         assert_eq!(with(|e| e.title = "x".repeat(121)), Err(Invalid::TitleLength));
         assert_eq!(sample(&id).sign(&Identity::from_seed([1; 32])), Err(Invalid::WrongIdentity));

@@ -49,7 +49,9 @@ signs the same fields with the same key must produce exactly these bytes.
 Records `entry <name>` with `valid no` give `bytes` and the `reason` the
 entry is invalid; each breaks one rule of NETWORK.md 4.2 (most are signed
 as they are, so that only that rule fails). A client or relay must
-discard every one of them.
+discard every one of them. The valid entry `unknown-kind-9` is of a kind
+NETWORK.md does not define: a relay must store and pass it on like any
+other, and a client keep or skip it without error and not open it.
 
 profiles.txt (NETWORK.md section 4.6)
 -------------------------------------
@@ -122,8 +124,10 @@ Inline content is one line per piece:
 
   text "..."          ordinary text, as shown: lines joined (each line
                        break a space, the blanks at the start of each line
-                       dropped), CRs and control characters other than tab
-                       removed, malformed UTF-8 as U+FFFD (the maximal
+                       dropped), a CR before an LF and control characters
+                       other than tab and CR removed, a lone CR (not before
+                       an LF) as a space, a byte order mark that starts the
+                       article removed, malformed UTF-8 as U+FFFD (the maximal
                        subpart rule). Runs of blanks are as written; a
                        reader may show each run as one space, and blanks
                        at the start or end of a block are not seen, so

@@ -142,3 +142,18 @@ fn the_reading_profile_refuses_other_devices() {
         terse_ok(&["run", image.to_str().unwrap(), "--profile", "reading", "--frames", "5", "--store", &p("s"), "--data", &p("d"), "--relay", "none"]);
     }
 }
+
+/// `terse run --profile reading`: the search of the articles on this host
+/// uses only the profile's operations (timeline and get), so it finds them,
+/// while the relays' sections say the search was refused.
+#[test]
+fn search_of_this_hosts_articles_on_the_reading_profile() {
+    let f = Fixture::new();
+    let out = f.run("10 text /\n12 text BODY 2\n14 press enter\n", true);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let screen = String::from_utf8(out.stdout).unwrap();
+    assert!(screen.contains("sans16b |In your articles\n"), "{screen}");
+    assert!(screen.contains("sans12 |1 found in 3 articles\n"), "{screen}");
+    assert!(screen.contains("[Body 2]{2}[, with a [link](terse:"), "the excerpt, the match in it: {screen}");
+    assert!(screen.contains("sans12 |the relays refused the search\n"), "{screen}");
+}

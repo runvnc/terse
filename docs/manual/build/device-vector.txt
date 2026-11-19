@@ -80,7 +80,7 @@ Worked numbers: a rectangle covering the whole screen counts 10240 x 7680 / 256 
 In the clean style the host combines the displays in a fixed order, from the bottom:
 
 - 1. the terminal's cell backgrounds;
-- 2. [the page](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c): its background, then its text;
+- 2. [the page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0): its background, then its text;
 - 3. the vector displays: device 3's shapes, then device 9's;
 - 4. the terminal's characters and cursor.
 

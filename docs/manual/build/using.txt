@@ -10,7 +10,7 @@ cargo run --release -p terse-host -- --demo
 
 builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (`~/.config/terse/identity.key`), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, `cargo run --release -p terse-host` with no image named opens the shell.
 
-Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed keys. How relays work is in [The network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f).
+Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed keys. How relays work is in [The network](terse:f7d343e5b9308cb807998d88db5d0678b1403cfc7cb9ca7d55462ca9514f5e01).
 
 The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective).
 
@@ -43,7 +43,7 @@ A click on a program starts it; a click on a machine selects it and gives it the
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:dbb060abaa4ae7c1a187d311d856995c4ce4e6d1a5901d3e71087c6df527fbc2).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:30d57d54d32c6b81a1a94cb0745be5f3503feb6ac82c06767493f67a0c251d78).
 
 ## Open requests
 
@@ -101,13 +101,18 @@ Feeds (F): the feeds you follow, each with its name and short key (`you` marks y
 
 Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.
 
-Search (/): type a feed's name or words of an article's title and press Enter. The reader asks the relays for listed feeds by name and for articles by title, and lists both under a heading each that says how many were found, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
+Search (/): type words and press Enter. The reader searches two places at once and lists the results under a heading each:
+
+- In your articles: the articles on this machine, newest first, by title and by text. The reader reads each one itself, a chunk at a time, so it can search far more than fits in its memory; the results appear as they are found, each with its title, feed, date and a line of the text around the first match (the match in colour), under a line that says how far it has got: "searched 340 of 1,204 articles · 12 skipped (not downloaded)". Articles this machine has not downloaded are searched by title only; nothing is fetched for a search. It keeps at most 64 results ("more than 64 matches; refine the search"). Typing, opening a result or leaving the view stops it. Enter on a result opens the article at its first match.
+- On your relays: listed feeds by name, and their articles by title, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second).
+
+Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so "köln" finds "Köln", but "KÖLN" does not). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
 
 Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full and whether you follow it. S subscribes, U unsubscribes, Esc goes back.
 
 ## Reading an article
 
-The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:558b031fbdd5adde552b6e2d7ce7e3df2e8db856288a97dc85e85ba4f17ef561) describes. The status row shows how far you have scrolled, from 0% to 100%.
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:670eb93ad925d9fe583e0534f942ed778f0a7a591f0df0133f02d65bc497c357) describes. The status row shows how far you have scrolled, from 0% to 100%.
 
 | Key | In an article |
 |---|---|
@@ -125,4 +130,4 @@ The reader also gets the first 8 article links of an article as you open it, so 
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:558b031fbdd5adde552b6e2d7ce7e3df2e8db856288a97dc85e85ba4f17ef561). How the shell's devices work: [The machines device](terse:162acc23fd333834b6b0de421cba73d5c2645b254c5f491e97ce4b82db7820d7). Feeds and consent from a program's side: [Feeds](terse:cd48f9c9b5e5d67101934450ae0392c29795f6030c80262f6d733dbbd766d590).
+How articles are written: [Writing an article](terse:670eb93ad925d9fe583e0534f942ed778f0a7a591f0df0133f02d65bc497c357). How the shell's devices work: [The machines device](terse:162acc23fd333834b6b0de421cba73d5c2645b254c5f491e97ce4b82db7820d7). Feeds and consent from a program's side: [Feeds](terse:f2d39f2a6cacf0900c8f6b0508b8d3dbbbfbab652d7fb1aca0568e8b1110495a).

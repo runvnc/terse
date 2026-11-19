@@ -56,7 +56,7 @@ A feed is a numbered series of small signed entries from one author, each pointi
 | 0 | 32 | feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing |
 | 36 | 4 | time: Unix seconds, as claimed by the author |
-| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document |
+| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document; 0 and 255 reserved; 5 to 254 not yet defined |
 | 41 | 3 | size of the blob in bytes |
 | 44 | 32 | blob ID |
 | 76 | 32 | reply-to: the blob ID this entry responds to, or all zero |
@@ -66,7 +66,7 @@ A feed is a numbered series of small signed entries from one author, each pointi
 
 The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
-An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); `seq` is at least 1; the kind is known; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
+An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); `seq` is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
 
 | Kind | Entry | Title | Blob |
 |---|---|---|---|
@@ -75,7 +75,9 @@ An entry is valid if: `n` is at most 120 and the entry's length matches it; the 
 | 3 | program | the program's name, a display name | a Terse image |
 | 4 | document | any title | a document (starts with `TDOC`) |
 
-Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name). An entry of a kind not listed here is invalid.
+Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name).
+
+An entry of a kind not listed here (5 to 254) is not invalid for that: it is valid if it meets the rules above, and the kind-specific ones (a display name as title, a profile's 4,096-byte limit) apply only to the kinds that have them. Relays store and pass it on like any other entry, so that kinds a later revision adds reach clients that know them. A client keeps or skips it without error, does not download its blob automatically, does not put it in the timeline, and does not offer to open it (`terse feed list` shows it as `[kind 9: title]`).
 
 ## Relay feed messages
 
@@ -89,7 +91,7 @@ Program and document entries are valid whatever their blob holds; that is found 
 
 - The client keeps a list of subscribed feeds and every valid entry received for them. On connecting to a relay it subscribes to each feed with `after` = the highest `seq` it holds.
 - Subscribing (when the user asks) adds the feed and subscribes at once when connected; for a feed it holds nothing of, `after` is 0, so the relay sends all it holds. Unsubscribing removes the feed and unsubscribes on the connection. Only valid keys are subscribed to.
-- Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the client gets the blob unasked, profiles and documents included. A blob whose length differs from the entry's size is not associated with it. Larger blobs are fetched on request.
+- Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the client gets the blob unasked, profiles and documents included (not programs, below, or kinds not listed above). A blob whose length differs from the entry's size is not associated with it. Larger blobs are fetched on request.
 - Program download (a client that runs programs): once a feed is caught up, and whenever one of its program entries arrives, the client gets the image of the current version of each of the feed's programs it lacks, up to 131,136 bytes (the largest image); never older versions. The user may turn this off.
 - Prefetch: when automatic download stores an article (kind 1), the client gets the first 8 distinct `terse:` article links in it (link targets included, and the scan may find one in a code span) whose blobs it neither holds nor is fetching, within the automatic limit. Program links and blobs named by program entries are never prefetched; documents and prefetched blobs are not scanned. The user may turn this off.
 - Arrival order: the client records the order in which it first stored each entry, across restarts; it is the order of its timeline (kinds 1 and 4), newest first. Unsubscribing hides a feed's entries from the timeline; subscribing again puts them back where they were.
@@ -144,7 +146,7 @@ A reading client shows people the articles of the feeds they follow: a native re
 
 It must hold blobs by ID and verify each one, talk to at least one relay, verify entries, subscribe and unsubscribe by key, keep the timeline in arrival order, show articles by ARTICLE.md and show every name with its key. It may publish, set a profile and nicknames, search, use several relays, download automatically and prefetch.
 
-Entries of kinds it does not handle (programs and documents, for a client without the machine) are kept or skipped without error and shown, if at all, as something it cannot open; so are links to programs, and links to blobs that turn out to be images or documents. "Writing a reader without the machine" walks through building one.
+Entries of kinds it does not handle (programs and documents, for a client without the machine; kinds not yet defined, for every client) are kept or skipped without error and shown, if at all, as something it cannot open; so are links to programs, and links to blobs that turn out to be images or documents. "Writing a reader without the machine" walks through building one.
 
 ## For machine hosts
 

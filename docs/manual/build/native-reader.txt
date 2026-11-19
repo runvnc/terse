@@ -46,17 +46,17 @@ ARTICLE.md is written as requirements on what the person sees, not as a layout a
 - Join a paragraph's lines and wrap them to your column; keep preformatted lines and fences as written, unwrapped.
 - Find code spans and links on each line, from its start; the one that starts first wins.
 - Lay tables out as grids, or show their lines as a paragraph.
-- Draw figures from their path strings, or show them as their text.
+- Draw figures from their path strings, or show them as their text. A figure's units are 512ths of a column of the recommended width (about 68 characters of body text): scale figures by your column's width over that, down for a narrower column, and up only if you enlarge your text the same way.
 - Anything you do not recognise, or that is malformed, is ordinary text.
 
 Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key (a feed), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
 
 ## Programs and documents
 
-Feeds also carry programs (kind 3) and documents (kind 4) for the machine. A reader without it keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with `TERS`) or a document (`TDOC`): say that you cannot open it rather than showing its bytes. A program link gets the same answer.
+Feeds also carry programs (kind 3) and documents (kind 4) for the machine, and may carry kinds a later revision defines (5 to 254), which are valid entries. A reader without the machine keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with `TERS`) or a document (`TDOC`): say that you cannot open it rather than showing its bytes. A program link gets the same answer.
 
 ## Checking your reader
 
 Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with `terse manual publish`, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.
 
-The details of the network are in [the network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f); how the built-in reader lays articles out on the machine is in [the page device](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c), which you do not need to follow.
+The details of the network are in [the network](terse:f7d343e5b9308cb807998d88db5d0678b1403cfc7cb9ca7d55462ca9514f5e01); how the built-in reader lays articles out on the machine is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), which you do not need to follow.

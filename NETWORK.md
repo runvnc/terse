@@ -113,7 +113,7 @@ client holds the secret key and never sends it anywhere.
 | 0 | 32 | Feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing by 1 |
 | 36 | 4 | Time: Unix seconds, as claimed by the author |
-| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document |
+| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document; `0` and `255` are reserved; `5` to `254` are not defined by this revision |
 | 41 | 3 | Size of the blob in bytes |
 | 44 | 32 | Blob ID |
 | 76 | 32 | Reply-to: the blob ID this entry responds to, or all zeros |
@@ -127,9 +127,20 @@ bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 An entry is valid if `n` is at most 120, its length matches `n`, the
 signature verifies under the feed key (strict verification: small-order keys
 and non-canonical signatures are rejected), `seq` is at least 1, the kind is
-known, the size is 1 to 1,048,576 (1 to 4,096 for a profile), the title is
-valid UTF-8, and, for a profile or a program, the title is a valid display
-name (section 4.6). Clients and relays discard invalid entries.
+not `0` or `255`, the size is 1 to 1,048,576 (1 to 4,096 for a profile),
+the title is valid UTF-8, and, for a profile or a program, the title is a
+valid display name (section 4.6). Clients and relays discard invalid
+entries.
+
+**Kinds not defined.** An entry whose kind is not one this revision
+defines (`5` to `254`) is not invalid for that reason: it is valid if
+it meets every rule above, and the kind-specific rules (a profile's or a
+program's title is a display name, a profile's size is at most 4,096)
+apply only to the kinds that have them. Relays store it and pass it on
+like any other entry (sections 4.3, 5.2). Clients keep it or skip it
+without error, do not download its blob automatically, and do not show
+it as something they can open (section 6). Later revisions define new
+kinds this way, so that relays and clients of this one carry them.
 
 An **article** entry (kind 1) publishes an article (`ARTICLE.md`); its
 title is the article's title.
@@ -199,7 +210,8 @@ received first is kept.
 - **Automatic download:** when the client receives an entry for a
   subscribed feed whose size is at most 16,384 bytes (the user may change
   this limit), it gets the blob without being asked. This applies to
-  profile and document entries too. If the blob's length differs from the
+  profile and document entries too, not to programs (below) or to kinds
+  this revision does not define (section 4.2). If the blob's length differs from the
   entry's size, the blob is not associated with the entry. Larger blobs
   are fetched only on request.
 - **Programs** (for a client that runs them) are downloaded differently:
@@ -231,7 +243,8 @@ received first is kept.
 - **Arrival order:** the client records the order in which it first
   stored each entry, and keeps that record across restarts. This is the
   order of its **timeline**, newest first, which holds only article and
-  document entries (kinds 1 and 4), not profiles or programs.
+  document entries (kinds 1 and 4), not profiles, programs or kinds this
+  revision does not define.
   Unsubscribing removes a feed's entries from the timeline but not from
   the record; subscribing again puts them back where they were.
 - **Publishing** an article or a document (when the user asks; a machine
@@ -454,15 +467,19 @@ A reading client **may**:
 
 **Kinds it does not handle.** Entries of kinds a client does not handle
 (program entries, kind 3, and documents, kind 4, for a client without
-the machine; any kind a later revision adds) are tolerated: a client
-keeps them or skips them without error, never treats them as a failure
-of the feed or the connection, and shows them, if at all, as something
-it cannot open (for example in the timeline, with their title and
-kind). An entry whose kind this revision does not define is invalid
-(section 4.2), and is discarded like any invalid entry; that is not an
-error either. A link to a program or to a blob that turns out to be an
-image or a document (section 1.1, `ARTICLE.md` section 4.4) is handled
-the same way: the client says that it cannot open it.
+the machine; kinds this revision does not define, `5` to `254`, for
+every client) are tolerated: a client keeps them or skips them without
+error, never treats them as a failure of the feed or the connection,
+and shows them, if at all, as something it cannot open (for example in
+a list of the feed's entries, with their title and kind). An entry of a
+kind this revision does not define is valid if it meets the rules of
+section 4.2 (only kinds `0` and `255` are invalid as such), so a client
+that verifies entries keeps the first one received for its feed and
+`seq` like any other; it is not in the timeline (section 4.4) and its
+blob is not downloaded automatically. A link to a program or to a blob
+that turns out to be an image or a document (section 1.1, `ARTICLE.md`
+section 4.4) is handled the same way: the client says that it cannot
+open it.
 
 ## 7. For machine hosts
 

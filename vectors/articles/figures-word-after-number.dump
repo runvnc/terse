@@ -1,0 +1,18 @@
+pre
+  line
+    text "M0 0 L5 5fill #f00"
+pre
+  line
+    text "M0 0 L5 5Zstroke fg"
+pre
+  line
+    text "stroke #fff 2fill #f00 M0 0 L1 1"
+figure 50 50
+  path fill none stroke fg 16
+    M 0 0
+    L 80 80
+    L 96 96
+    Z
+  path fill #ff0000ff stroke fg 16
+    M 16 16
+    L 32 32

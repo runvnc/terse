@@ -16,7 +16,7 @@ use terse_core::{Event, FrameInput, FrameResult, Image, Machine, PageInput, RAM_
 use terse_net::{BlobStore, Consent, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id, to_hex};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-const RAM_PAGES: u8 = 29;
+const RAM_PAGES: u8 = 42;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 /// The article's (and help's) rectangle (reader.c RECT_*).
@@ -1573,6 +1573,28 @@ fn crlf_article() {
     assert!(view.contains("sans21b |Title\n") && view.contains("|• item\n") && view.contains("sans15 |After.\n"), "{view}");
 }
 
+/// ARTICLE.md 1: a byte order mark first is not shown and the first line's
+/// marker counts (here a heading that is the title, so it is not shown
+/// twice); a lone CR is a blank shown as a space, in a paragraph, a
+/// preformatted line and a table cell, where it waits for the next byte
+/// before it is decided.
+#[test]
+fn byte_order_mark_and_lone_cr() {
+    let text = "\u{feff}# Notes\r\nA lone\rCR.\r\n\r\n    pre\rline\r\n\r\n| a\rb |\r\n";
+    let run = open_only("Notes", text, 10);
+    let view = run.view();
+    assert!(view.contains("sans26b |Notes\n") && !view.contains("sans21b |Notes"), "{view}");
+    assert!(!view.contains('\u{feff}'), "{view}");
+    assert!(view.contains("|A lone CR.\n") && view.contains("|    pre line\n"), "{view}");
+    let doc = run.machine.page().unwrap().document().unwrap();
+    let cells: Vec<String> = terse_core::page::parse(doc)
+        .iter()
+        .filter_map(|p| p.table.as_ref())
+        .flat_map(|t| t.cells.iter().map(|c| c.iter().map(|r| r.text.as_str()).collect::<String>()))
+        .collect();
+    assert_eq!(cells, ["a b"]);
+}
+
 // --- Names, search, links ------------------------------------------------
 
 /// The short form of a blob ID (the title of an article known only by it).
@@ -1768,11 +1790,17 @@ fn search_finds_feeds_and_articles() {
     assert!(text.contains("Feeds\n1 found\n"), "{text}");
     // The name found, then the nickname bob has though not subscribed
     // (names records list it, flagged); bob's article under the nickname.
-    assert!(text.contains(&format!("[Bob the baker]{{2}}\n[{}  ·  your nickname: Bobby]{{2}}", short(&bob().feed_key()))), "{text}");
-    assert!(text.contains("Articles\n"), "{text}");
+    let bob_row = 3 + text.lines().filter(|l| l.contains("   Alice (") || l.contains("   Bobby (") || l.contains("   carol")).count();
+    assert!(
+        text.contains(&format!("[Bob the baker]{{{bob_row}}}\n[{}  ·  your nickname: Bobby]{{{bob_row}}}", short(&bob().feed_key()))),
+        "{text}"
+    );
+    assert!(text.contains("Articles on your relays\n"), "{text}");
     assert!(text.contains("[A big article (over 48 KiB)]"), "{text}");
     assert!(text.contains(&format!("[Bobby ({})  ·  2026-11-17 19:40  ·  6 bytes]", short(&bob().feed_key()))), "{text}");
-    assert_eq!(run.status(), " 1 feed and 2 articles found");
+    assert_eq!(run.status(), " 1 feed and 2 articles found on your relays");
+    // The relays answered before this host's first match was found: the
+    // feed is selected, and stays so as this host's results come in above.
     assert_eq!(run.selected(), "Bob the baker");
     // Results in frames: Enter's frame counted as 1.
     let first = run.submits.iter().copied().filter(|&s| s > enter).nth(0).unwrap();
@@ -1813,9 +1841,9 @@ fn search_without_results_relay_or_permission() {
     run.text("zzz");
     run.press("enter");
     run.frames(2);
-    assert_eq!(run.status(), " Nothing found for “zzz” (only listed feeds can be found)");
+    assert_eq!(run.status(), " Nothing on your relays for “zzz” (only listed feeds can be found)");
     let text = run.page_text();
-    assert!(text.contains("Feeds\nnone found\n") && text.contains("Articles\nnone found\n"), "{text}");
+    assert!(text.contains("Feeds\nnone found\n") && text.contains("Articles on your relays\nnone found\n"), "{text}");
     golden("search-none", &run.view());
     // A third search within a second: the relay allows 4 finds a second.
     run.text("/");
@@ -1826,7 +1854,7 @@ fn search_without_results_relay_or_permission() {
     run.text("zzz");
     run.press("enter");
     run.frames(2);
-    assert_eq!(run.status(), " Search refused: this host may not offer it, or its relays are busy");
+    assert_eq!(run.status(), " Relay search refused (busy relays, or not on this host): your articles only");
     // No relay.
     let f = named();
     let mut run = Run::new(&f, "10 press f\n12 text /\n");
@@ -1834,7 +1862,7 @@ fn search_without_results_relay_or_permission() {
     run.text("Alice");
     run.press("enter");
     run.frames(2);
-    assert_eq!(run.status(), " Search needs a relay, and none could be reached");
+    assert_eq!(run.status(), " No relay could be reached: your articles only");
     golden("search-no-relay", &run.view());
     run.press("esc");
     assert!(run.page_text().starts_with("Feeds\n"), "back where it came from: {}", run.page_text());
@@ -2031,7 +2059,7 @@ fn reading_profile() {
     run.text("Alice");
     run.press("enter");
     run.frames(2);
-    assert_eq!(run.status(), " Search refused: this host may not offer it, or its relays are busy");
+    assert_eq!(run.status(), " Relay search refused (busy relays, or not on this host): your articles only");
     run.press("esc");
     // Nickname and public name: refused.
     run.press("f");
@@ -2734,3 +2762,381 @@ fn manual_articles_are_valid() {
     }
 }
 
+
+// --- Searching the articles on this host ------------------------------------
+
+/// Prose of about `len` bytes (paragraphs of hand-wrapped lines, words from a
+/// fixed list), different for each `seed`; never holds the words the search
+/// tests look for ("zebra", "boundary", "köln", "needle").
+fn prose(seed: u64, len: usize) -> String {
+    const WORDS: &[&str] = &[
+        "the", "of", "and", "a", "to", "in", "is", "that", "it", "was", "for", "on", "are", "as", "with", "his", "they",
+        "at", "be", "this", "from", "have", "or", "by", "one", "had", "not", "but", "what", "all", "were", "when", "we",
+        "there", "can", "an", "your", "which", "their", "said", "if", "do", "will", "each", "about", "how", "up", "out",
+        "them", "then", "she", "many", "some", "so", "these", "would", "other", "into", "has", "more", "her", "two",
+        "like", "him", "see", "time", "could", "no", "make", "than", "first", "been", "its", "who", "now", "people",
+        "my", "made", "over", "did", "down", "only", "way", "find", "use", "may", "water", "long", "little", "very",
+        "after", "words", "called", "just", "where", "most", "know", "garden", "river", "bread", "letter", "winter",
+        "machine", "window", "harbour", "station", "morning", "village", "kitchen", "library", "mountain", "ferment",
+    ];
+    let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let mut next = || {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (x >> 33) as usize
+    };
+    let (mut out, mut line, mut sentence) = (String::new(), 0, 0);
+    while out.len() < len {
+        let mut w = WORDS[next() % WORDS.len()].to_string();
+        if sentence == 0 {
+            w[..1].make_ascii_uppercase();
+        }
+        sentence += 1;
+        out.push_str(&w);
+        line += w.len() + 1;
+        if sentence > 6 && next() % 5 == 0 {
+            out.push('.');
+            sentence = 0;
+        }
+        if line > 70 {
+            out.push('\n');
+            line = 0;
+            if next() % 6 == 0 {
+                out.push('\n');
+            }
+        } else {
+            out.push(' ');
+        }
+    }
+    out.push('\n');
+    out
+}
+
+/// A library of `n` articles by alice, "Article 0000" first (so last in the
+/// timeline), each `len` bytes of prose; `edit` may change article i's text.
+fn library(n: usize, len: usize, edit: impl Fn(usize, String) -> String) -> Fixture {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    for i in 0..n {
+        let text = edit(i, prose(i as u64, len));
+        f.publish(&alice(), &format!("Article {i:04}"), text.as_bytes(), None);
+    }
+    f
+}
+
+/// The search view's account of this host's articles: the line under the
+/// heading, and the results shown (title line, excerpt line).
+fn local(run: &Run) -> (String, Vec<(String, String)>) {
+    let text = run.page_text();
+    let lines: Vec<&str> = text.lines().collect();
+    // The list may be scrolled past the heading: then the results start
+    // after the header slot.
+    let (meta, h) = match lines.iter().position(|l| *l == "In your articles") {
+        Some(h) => (lines[h + 1].to_string(), h),
+        None => (String::new(), 0),
+    };
+    let strip = |s: &str| {
+        let mut out = String::new();
+        let mut skip = false;
+        for c in s.chars() {
+            match c {
+                '[' => {}
+                ']' => skip = true,
+                '{' if skip => {}
+                '}' if skip => skip = false,
+                _ if skip && c.is_ascii_digit() => {}
+                _ => {
+                    skip = false;
+                    out.push(c)
+                }
+            }
+        }
+        out
+    };
+    let mut results = Vec::new();
+    let mut i = h + 2;
+    while i + 1 < lines.len() && lines[i] != "Feeds" {
+        results.push((strip(lines[i]), strip(lines[i + 1])));
+        i += 2;
+    }
+    (meta, results)
+}
+
+/// Types `query` in the search view (opened with /) and presses Enter, in
+/// one frame each; returns the frame Enter arrived in.
+fn search_for(run: &mut Run, query: &str) -> u32 {
+    run.text("/");
+    run.text(query);
+    let enter = run.machine.frame();
+    run.script_now("{f} press enter\n", 1);
+    enter
+}
+
+/// Runs frames until the search of this host's articles has ended (or
+/// `max` frames): the frame it ended in.
+fn until_searched(run: &mut Run, max: u32) -> u32 {
+    for _ in 0..max {
+        let (meta, _) = local(run);
+        if meta.contains(" found in ") || meta.starts_with("more than") || meta.starts_with("stopped") || meta.starts_with("no articles") {
+            return run.machine.frame();
+        }
+        run.frames(1);
+    }
+    panic!("the search did not end: {}", run.page_text());
+}
+
+#[test]
+fn local_search_title_body_case_and_bytes() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    f.publish(&alice(), "Body only", "Nothing in the title.\n\nBut the text mentions a Zebra crossing\nnear the station.\n".as_bytes(), None);
+    f.publish(&alice(), "A zebra in the title", b"The text says nothing of it.\n", None);
+    f.publish(&alice(), "Both: ZEBRA", b"And a zebra here too, on the second line\nof the text.\n", None);
+    f.publish(&alice(), "Greetings", "Grüße aus Köln, und aus Bonn.\n".as_bytes(), None);
+    f.publish(&alice(), "Not downloaded, zebra", b"zebra text that is not in the store", None);
+    std::fs::remove_file(f.store.path().join(to_hex(&blob_id(b"zebra text that is not in the store")))).unwrap();
+    f.publish(&alice(), "Unrelated", b"Just words.\n", None);
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    search_for(&mut run, "zebra");
+    until_searched(&mut run, 60);
+    let (meta, results) = local(&run);
+    assert_eq!(meta, "4 found in 6 articles  ·  1 skipped (not downloaded)");
+    let titles: Vec<&str> = results.iter().map(|r| r.0.split("   ").next().unwrap()).collect();
+    assert_eq!(titles, ["Not downloaded, zebra", "Both: ZEBRA", "A zebra in the title", "Body only"], "newest first");
+    assert_eq!(results[0].1, "in the title (not downloaded: its text was not searched)");
+    assert_eq!(results[1].1, "And a zebra here too, on the second line of the text.", "folded: the first match in the text");
+    assert_eq!(results[2].1, "in the title");
+    assert_eq!(results[3].1, "…the text mentions a Zebra crossing near the station.", "from a word's start; line breaks as spaces");
+    assert_eq!(results[3].0, format!("Body only   {}  ·  2026-11-17 18:10", short(&alice().feed_key())));
+    golden("search-local", &run.view());
+    // The match is in the match colour, the text around it is not.
+    let layout = run.layout();
+    let zebra = layout.lines.iter().flat_map(|l| l.spans.iter()).find(|s| s.text == "Zebra").unwrap();
+    assert_eq!(zebra.style.rgb, [100, 220, 220]);
+    // Non-ASCII bytes match only themselves: "KÖLN" is not "Köln", "kÖLN"
+    // neither; "köln" is (K and k fold).
+    for (q, n) in [("köln", 1), ("KÖLN", 0), ("kÖln", 0), ("GRÜSSE", 0), ("grüße", 1)] {
+        search_for(&mut run, q);
+        until_searched(&mut run, 60);
+        let (meta, results) = local(&run);
+        assert_eq!(results.len(), n, "{q}: {meta}");
+        if n == 0 {
+            assert_eq!(meta, "none found in 6 articles  ·  1 skipped (not downloaded)", "{q}");
+        }
+    }
+    golden("search-local-none", &run.view());
+}
+
+/// A match across two chunks: the query straddles byte 16,384 of a 40 KB
+/// article, at every split of its bytes between the chunks.
+#[test]
+fn local_search_across_a_chunk_boundary() {
+    let needle = "Boundary";
+    for split in 1..needle.len() {
+        let mut f = Fixture::new();
+        f.feeds = vec![alice().feed_key()];
+        let mut text = prose(7, 16_384 - split - 1);
+        text.truncate(16_384 - split - 1);
+        text.push(' ');
+        text.push_str(needle);
+        text.push_str(" and then more ");
+        text.push_str(&prose(8, 24_000));
+        assert_eq!(&text[16_384 - split..16_384 + needle.len() - split], needle);
+        f.publish(&alice(), "Long", text.as_bytes(), None);
+        let mut run = Run::new(&f, "");
+        run.frames(10);
+        search_for(&mut run, "boundary");
+        until_searched(&mut run, 60);
+        let (meta, results) = local(&run);
+        assert_eq!(meta, "1 found in 1 article", "split {split}");
+        assert!(results[0].1.contains(" Boundary and then more "), "split {split}: {:?}", results[0]);
+        // Two chunks were asked for, at most 16,384 bytes each, no more.
+        let gets: Vec<u16> = run.gets.iter().map(|g| g.2).collect();
+        assert!(gets.iter().all(|&n| n as u32 <= 16_384), "{gets:?}");
+    }
+}
+
+#[test]
+fn local_search_cap_and_cancel() {
+    // 70 matches: the first 64 are kept, newest first, and the search
+    // stops there.
+    let f = library(70, 600, |i, t| format!("Number {i} has the needle.\n{t}"));
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    search_for(&mut run, "Needle");
+    until_searched(&mut run, 200);
+    let (meta, results) = local(&run);
+    assert!(meta.starts_with("more than 64 matches; refine the search  ·  searched "), "{meta}");
+    assert_eq!(results[0].0.split("   ").next().unwrap(), "Article 0069");
+    assert!(results[0].1.starts_with("Number 69 has the needle. "), "{:?}", results[0]);
+    // End: the 64th result is article 6.
+    run.press("end");
+    let (_, results) = local(&run);
+    assert_eq!(results.last().unwrap().0.split("   ").next().unwrap(), "Article 0006");
+
+    // Typing stops a search at once: no request is sent after the key.
+    let f = library(400, 3000, |_, t| t);
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    search_for(&mut run, "zebra");
+    run.frames(5);
+    run.text("/");
+    let before = run.gets.len();
+    let typed = run.machine.frame();
+    run.script_now("{f} text x\n", 1);
+    assert!(row(&run.screen(), 28).contains("Search: x"), "echoed in the frame of the key: {}", run.screen());
+    run.frames(3);
+    assert!(run.gets.iter().skip(before).all(|g| g.0 < typed), "no get after the key");
+    run.press("esc");
+    let (meta, _) = local(&run);
+    assert!(meta.starts_with("stopped after "), "{meta}");
+    // A new search waits for the requests of the old one, then runs whole.
+    search_for(&mut run, "zebra");
+    until_searched(&mut run, 400);
+    assert_eq!(local(&run).0, "none found in 400 articles");
+}
+
+/// A result opens its article at the match: the match is anchored and in
+/// the match colour, and the view is scrolled to it.
+#[test]
+fn local_search_opens_at_the_match() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let text = format!("{}\nHere is the zebra we are looking for, deep in the text.\n\n{}", prose(3, 9000), prose(4, 3000));
+    f.publish(&alice(), "Deep", text.as_bytes(), None);
+    f.publish(&alice(), "Title zebra", b"Nothing in the text.\n", None);
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    search_for(&mut run, "zebra");
+    until_searched(&mut run, 60);
+    // The title match is first; Down and Enter: the deep one.
+    run.press("down");
+    run.press("enter");
+    run.frames(6);
+    let layout = run.layout();
+    let (line, span) = layout
+        .lines
+        .iter()
+        .find_map(|l| l.spans.iter().find(|s| s.style.anchor == 1000).map(|s| (l, s)))
+        .unwrap_or_else(|| panic!("the match is anchored: {}", run.page_text()));
+    assert_eq!(span.text, "zebra");
+    assert_eq!(span.style.rgb, [100, 220, 220]);
+    let scroll = run.scroll() as u32;
+    assert!(scroll > 0 && line.y >= scroll && line.y + line.height <= scroll + RECT.3 as u32, "in view: {} at {scroll}", line.y);
+    golden("search-open", &run.view());
+    // Esc: back to the results, which stay; the search had ended.
+    run.press("esc");
+    assert_eq!(local(&run).0, "2 found in 2 articles");
+    // The title match opens at the top.
+    run.press("up");
+    run.press("enter");
+    run.frames(4);
+    assert_eq!(run.scroll(), 0);
+}
+
+/// The reading profile has no find: the relays' sections say it was
+/// refused, and this host's articles are searched all the same.
+#[test]
+fn local_search_on_the_reading_profile() {
+    let f = library(30, 2000, |i, t| if i == 11 { format!("{t}A zebra.\n") } else { t });
+    let mut run = Run::reading(&f, "", Consent::Allow);
+    run.frames(10);
+    search_for(&mut run, "zebra");
+    until_searched(&mut run, 100);
+    let (meta, results) = local(&run);
+    assert_eq!(meta, "1 found in 30 articles");
+    assert_eq!(results[0].0.split("   ").next().unwrap(), "Article 0011");
+    assert!(run.page_text().contains("Feeds\nthe relays refused the search\n"), "{}", run.page_text());
+    let (worst, waited) = run.busiest();
+    assert!(waited, "every frame ended in wait_frame ({worst} units)");
+}
+
+/// Searches library `label` (n articles of `len` bytes, `big` of them 48 KiB)
+/// for a word in every 97th article and for one in none, checks that no
+/// frame ran out of budget and prints: frames (and seconds at 60 Hz) from
+/// Enter to the first result and to the end, the bytes of text got per
+/// frame, and the busiest frame.
+fn measure_search(label: &str, n: usize, len: usize, big: usize) {
+    let f = library(n, len, |i, t| {
+        let t = if big > 0 && i % (n / big) == n / big / 2 { prose(i as u64 + 9999, 49_152) } else { t };
+        if i % 97 == 50 { format!("{t}\nThe zebra.\n") } else { t }
+    });
+    let matches = (0..n).filter(|i| i % 97 == 50).count();
+    for query in ["zebra", "xylophone"] {
+        let mut run = Run::new(&f, "");
+        run.frames(10);
+        let enter = search_for(&mut run, query);
+        let gets_before = run.gets.len();
+        let mut first = None;
+        let mut f_end = None;
+        while f_end.is_none() {
+            assert!(run.machine.frame() < enter + 5000, "{label}: the search ends");
+            let (meta, results) = local(&run);
+            if first.is_none() && !results.is_empty() {
+                first = Some(run.machine.frame() - 1);
+            }
+            if meta.contains(" found in ") {
+                f_end = Some(run.machine.frame() - 1);
+                let want = if query == "zebra" { matches } else { 0 };
+                let found = if want == 0 { "none".to_string() } else { want.to_string() };
+                assert!(meta.starts_with(&format!("{found} found in ")), "{label} {query}: {meta}");
+            }
+            run.frames(1);
+        }
+        let end = f_end.unwrap();
+        let searching = &run.results[enter as usize..=end as usize];
+        let busiest = searching.iter().map(|r| r.used).max().unwrap();
+        assert!(searching.iter().all(|r| r.waited), "{label}: every frame ended in wait_frame");
+        let bytes: u64 = run.gets[gets_before..].iter().filter(|g| g.2 > 64).map(|g| g.2 as u64).sum();
+        let mut per_frame = std::collections::BTreeMap::new();
+        for g in &run.gets[gets_before..] {
+            *per_frame.entry(g.0).or_insert(0u64) += g.2 as u64;
+        }
+        let frames = end - enter + 1;
+        let secs = |fr: u32| fr as f64 / 60.0;
+        eprintln!(
+            "reader: search {label} for {query:?}: first result after {} frames{}, done after {frames} frames ({:.1} s at 60 Hz); \
+             {:.0} bytes of text got a frame on average, {} at most; busiest frame {busiest} units ({:.1}%); {} requests pending at most",
+            first.map(|f| (f - enter + 1).to_string()).unwrap_or("-".into()),
+            first.map(|f| format!(" ({:.2} s)", secs(f - enter + 1))).unwrap_or_default(),
+            secs(frames),
+            bytes as f64 / frames as f64,
+            per_frame.values().max().unwrap(),
+            common::pct(busiest),
+            run.most_pending,
+        );
+    }
+}
+
+/// What the search of this host's articles costs: it never runs a frame out
+/// of budget, and stays responsive (a key moves the selection in its own
+/// frame). Run with --nocapture to see the numbers; local_search_5000 (run
+/// with --ignored, best with --release) measures 5,000 articles.
+#[test]
+fn local_search_budget() {
+    measure_search("1,000 x 3 KB", 1000, 3000, 0);
+    measure_search("6 x 48 KiB in 100 x 3 KB", 100, 3000, 6);
+    // Responsive while it runs: Down moves the selection, and its list is
+    // submitted, in the frame of the key; typed text shows in its frame.
+    let f = library(1000, 3000, |i, t| if i % 50 == 0 { format!("{t}A zebra.\n") } else { t });
+    let mut run = Run::new(&f, "");
+    run.frames(10);
+    search_for(&mut run, "zebra");
+    run.frames(40);
+    for _ in 0..5 {
+        let k = run.machine.frame();
+        run.script_now("{f} press down\n", 1);
+        assert!(run.submits.contains(&k), "the list in the frame of the key");
+        run.frames(3);
+    }
+    assert!(local(&run).0.starts_with("searched "), "still searching: {}", local(&run).0);
+    let (worst, waited) = run.busiest();
+    assert!(waited, "{worst}");
+    eprintln!("reader: Down during a search: the list submitted in the frame of the key; busiest frame {worst} units");
+}
+
+#[test]
+#[ignore]
+fn local_search_5000() {
+    measure_search("5,000 x 3 KB", 5000, 3000, 0);
+}

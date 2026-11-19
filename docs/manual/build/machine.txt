@@ -194,7 +194,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-[The system device](terse:5f82638835499ca5be8a6e2457b745e04bde08351a522ab5b1d8ae270fc1460a), slot 1, always present:
+[The system device](terse:2ba4a8cdf457bb6bb69e30d32deb94ac6bb1cd04bccbc0a94df9194cd92c93ad), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -208,7 +208,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 
-[The terminal](terse:c03cf85e24b043e93e91108f384bad242d088f5418c1cd377702551eb4296c36), slot 2:
+[The terminal](terse:abedf601d8047dea65707fdfb6d2154cf87d59ba1277c8ce8030fe0c3ddca34b), slot 2:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -223,7 +223,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows |
 
-[The 2D vector display](terse:36442b7f04baf7ccba1dc764dec2397d6c695cfeed816b28a8ab20eba534f6f9), slot 3:
+[The 2D vector display](terse:d6e75451ee90a3dc0084bd776377ae9cfcdf3835f452e4eddba7ebd9beecf77d), slot 3:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -233,13 +233,13 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
 
-The content device, slot 4 (see [blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce4001f76a6ff08103d837193cbe6084), [feeds](terse:cd48f9c9b5e5d67101934450ae0392c29795f6030c80262f6d733dbbd766d590) and [named records](terse:eaf2802e0c046a9d7034f118c0fc12932bcaa5a9a938fd0d6e07db42cb8afc5e)):
+The content device, slot 4 (see [blobs](terse:5e9abb56603e639ad9c4188f675bf9d2480d025d6e7587d8b49f556d1e9381ef), [feeds](terse:f2d39f2a6cacf0900c8f6b0508b8d3dbbbfbab652d7fb1aca0568e8b1110495a) and [named records](terse:eaf2802e0c046a9d7034f118c0fc12932bcaa5a9a938fd0d6e07db42cb8afc5e)):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
 | `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected |
 
-[The page](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c), slot 7:
+[The page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), slot 7:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|

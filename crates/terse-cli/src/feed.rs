@@ -392,8 +392,9 @@ fn utc(time: u32) -> String {
 }
 
 /// One line per entry: time (UTC), feed key prefix (and the feed's name,
-/// if known), seq, size, article state, title (a profile entry's title is
-/// marked as the name it declares).
+/// if known), seq, size, article state, title (an article's as it is, the
+/// others' marked with their kind: `[profile: …]`, `[program: …]`,
+/// `[document: …]`, `[kind 9: …]` for a kind this version does not define).
 fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> String {
     let title = printable(&entry.title, false);
     format!(
@@ -408,7 +409,10 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
             terse_net::entry::KIND_PROFILE => format!("[profile: {title}]"),
             terse_net::entry::KIND_PROGRAM => format!("[program: {title}]"),
             terse_net::entry::KIND_DOCUMENT => format!("[document: {title}]"),
-            _ => title,
+            terse_net::entry::KIND_ARTICLE => title,
+            // A kind this revision does not define (NETWORK 6): listed, not
+            // opened.
+            kind => format!("[kind {kind}: {title}]"),
         }
     )
 }
@@ -503,6 +507,9 @@ fn read_article(args: &[String]) -> Result<ExitCode, String> {
         .filter(|e| e.entry.feed == key && e.entry.seq == seq)
         .ok_or(format!("no entry #{seq} of feed {} held locally (run `terse feed sync`)", to_hex(&key)))?
         .entry;
+    if !terse_net::entry::known_kind(entry.kind) {
+        return Err(format!("entry #{seq} is of kind {}, which this version cannot open", entry.kind));
+    }
     // Fetched on demand if it was not downloaded automatically.
     let article = node.fetch_bytes(entry.blob)?;
     if article.len() != entry.size as usize {

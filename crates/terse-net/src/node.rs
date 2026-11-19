@@ -1218,6 +1218,9 @@ impl Node {
         }
         let article = match self.held_article(&entry) {
             Some(held) => held,
+            // A kind this revision does not define is kept but its blob is
+            // not downloaded: nothing here could open it (NETWORK 4.4).
+            None if !entry::known_kind(entry.kind) => Article::NotFetched,
             None if entry.size <= self.auto_limit => {
                 if self.connected_links().is_empty() {
                     Article::Failed

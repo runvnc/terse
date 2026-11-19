@@ -35,13 +35,19 @@ text.
 - An article is UTF-8. A reader shows each malformed sequence as the
   replacement character U+FFFD (one or more per sequence) and never
   refuses an article because of one.
+- A byte order mark (the bytes `EF BB BF`) at the very start of an
+  article is ignored: it is not shown, and the article's first line
+  starts after it (so its markers count). Anywhere else U+FEFF is
+  ordinary text.
 - **Lines** end at LF (`0Ah`); a CR before the LF is ignored by these
   rules. **Blanks** are spaces, tabs and CRs. A line of only blanks is a
   **blank line**. The markers of section 2 count only at the very start
   of a line.
 - A tab in shown text is a blank: a reader shows it as at least one
-  space. A CR is never shown. Other control characters (U+0000–U+001F
-  other than tab and LF, and U+007F–U+009F) are not shown.
+  space. So is a **lone CR**, one that is not before an LF (inside a
+  line, or at the end of an article): a reader shows it as a space. A CR
+  before an LF is never shown. Other control characters (U+0000–U+001F
+  other than tab, CR and LF, and U+007F–U+009F) are not shown.
 - Text that matches no rule of this document is **ordinary text**, shown
   as written. This is the fallback for everything: a construct that is
   malformed, or that a reader does not support where this document allows
@@ -213,7 +219,8 @@ or digit (`0`–`9`); hexadecimal digits in link forms are lowercase.
   link).
 - In a program link the name is the run of bytes `A`–`Z`, `a`–`z`,
   `0`–`9`, `-`, `.`, `_`, `~` and `%` followed by two hexadecimal digits
-  (either case) that follows the `/`, less any `.` at its end; each `%XX`
+  (either case) that follows the `/`, less every `.` at its end (all of
+  them, if there are several: `Pad...` names `Pad`); each `%XX`
   stands for the byte XX, every other byte for itself, and the bytes so
   decoded must be a display name (`NETWORK.md` section 4.6), else the
   text is not a link. So a name's other bytes (a space, non-ASCII
@@ -227,7 +234,8 @@ or digit (`0`–`9`); hexadecimal digits in link forms are lowercase.
 
 A **link with text** is `[`, the text, `]`, `(`, the target, `)`, all on
 one line: the text is 1 to 200 bytes holding no `[`, `]`, backquote or
-link, and the target is a bare link by section 4.1 that is the whole of
+link (counted as written: in a table cell `\|` is two bytes, though it is
+shown as `|`), and the target is a bare link by section 4.1 that is the whole of
 what is between the parentheses (so it holds no blank and no `)`). A
 reader shows the text as the link and does not show the target (it may
 show the target when the link is selected or pointed at). Brackets that
@@ -272,7 +280,8 @@ itself; it may fetch an article link's blob ahead of time (prefetch,
 ## 5. Code spans
 
 A **code span** is a backquote, 1 to 200 bytes none of which is a
-backquote or a line break, and a backquote, in a paragraph, a list item,
+backquote or a line break (counted as written: in a table cell `\|` is
+two bytes, though it is shown as `|`), and a backquote, in a paragraph, a list item,
 a heading or a table cell. A reader shows the bytes between the
 backquotes as they are, in a monospaced face, and does not show the
 backquotes; a link in a code span does not count. A backquote that
@@ -285,7 +294,8 @@ or a fence). In a table cell `\|` in a code span stands for `|`
 A fence whose info string is the word `path` (after optional blanks, and
 followed by a blank or the end of the line) is a **figure**. Its opening
 line goes on with the width W, blanks and the height H, then only
-blanks: decimal integers from 1 to 1024, the size of the drawing in
+blanks: each 1 to 4 decimal digits with no sign (leading zeros allowed:
+`0100` is 100) for a value from 1 to 1024, the size of the drawing in
 units (section 6.2). Its lines hold a **path string**. The figure is
 drawn if the fence has a closing line and the opening line and the path
 string are well formed by the rules below; otherwise it is shown as a
@@ -321,14 +331,24 @@ The path string is SVG path data with two additions.
   optional decimal point (`5`, `-0.5`, `.5`, `5.`), at most 32 characters
   with the sign; no exponents. Numbers and commands are separated by any
   number of spaces, tabs, line breaks (LF and CR) and commas, or by
-  nothing where that is unambiguous (`M10-5`, `L.5.5` is 0.5 and 0.5,
-  `L5 5L6 6`). A word and its colour are each followed by a separator or
-  the end.
+  nothing where that is unambiguous: a number may directly follow a
+  command letter or a number (`M10-5`, `L.5.5` is 0.5 and 0.5), and a
+  command letter may directly follow a number (`L5 5L6 6`, `L5 5Z`). A
+  word is at the start of the path string or after a separator, never
+  directly after a number or a command letter (`L5 5fill #f00` is
+  malformed; `L5 5 fill #f00` is not). A word and its colour are each
+  followed by a separator or the end, so a colour is always after a
+  separator too.
 - Every number is rounded to the nearest sixteenth of a unit (halves
   away from zero) before it is used, so relative coordinates add up
-  exactly. Every point a command reaches, control points included (also
-  the reflected ones of `S` and `T`), lies within ±2047 units (2047
-  included).
+  exactly. Every point a command reaches, control points included, lies
+  within ±2047 units (2047 included), checked before rounding: for an
+  absolute command each coordinate as written, for a relative one the
+  current point plus the number as written (so `L2047.01 0` is out of
+  range although it rounds to 2047, and `L2046.99 0` is within it). A
+  reflected control point of `S` or `T` is checked as computed from the
+  rounded points it reflects. A stroke width is checked the same way, as
+  written (`2047.001` and `-0.001` are out of range, `-0` is 0).
 - Anything else (another letter, a number where none is expected, a
   command without all its numbers, a colour or width that is malformed
   or out of range, a word with no colour) makes the path string
@@ -337,18 +357,31 @@ The path string is SVG path data with two additions.
 ### 6.2 Coordinates and size
 
 Coordinates are in **units** from the figure's top left corner, x to
-the right and y down. A unit is a length the reader chooses, the same
-across and down and the same for every figure of an article. A reader
-should choose it so that its column is about 512 units wide when it
-shows about 68 characters of body text a line, which is what the
-reference reader shows and so what authors see. The figure is a box W
-units wide and H high, a block of its own; the reader places it in the
-column as it likes (the reference reader centres it).
+the right and y down. Units are relative to the reading column: a column
+of the **recommended width**, about 68 characters of body text a line
+(what the reference reader shows, and so what authors see), holds 512
+units. The figure is a box W units wide and H high, a block of its own;
+the reader places it in the column as it likes (the reference reader
+centres it). A unit is the same length across and down, and the same
+for every figure of an article.
 
-A figure wider than the column may be scaled down to fit, uniformly
-(widths included, height in proportion); a reader may instead show it at
-full size, cut off at the column's edge or scrolling sideways. It must
-not be stretched in one direction only.
+- At a figure's **natural size**, a unit is a 512th of a column of the
+  recommended width in the reader's body text. A reader whose column
+  has the recommended width shows figures at their natural size: a unit
+  is its column's width over 512.
+- A reader whose column is narrower scales every figure by its column's
+  width over the recommended width (a unit is its column's width over
+  512), uniformly: coordinates, stroke widths, W and H alike, so that a
+  figure takes the same share of the column as in the reference reader.
+- A reader never shows a figure larger than its natural size: a column
+  wider than recommended does not make figures larger. Only a reader
+  that scales its text up (zoomed in, or with a larger body text) scales
+  figures up, by the same factor (which makes their natural size larger
+  in the same proportion).
+- A figure wider than the column may be scaled down further to fit,
+  uniformly (widths included, height in proportion); a reader may
+  instead show it at full size, cut off at the column's edge or
+  scrolling sideways. It must not be stretched in one direction only.
 
 ### 6.3 Drawing
 
@@ -455,7 +488,9 @@ A reader implementer can skip it.
   cite. Its choices: a 512-unit column, body text 15 units (sans),
   headings 21 and subheadings 17 (bold), preformatted text, fences and
   code spans in monospace, list items indented 10 units behind a bullet,
-  figures centred and scaled to the column, tables laid out by the page
+  figures centred at one screen unit per unit (natural size: the column
+  has the recommended width, section 6.2) and scaled down to the column
+  if wider, tables laid out by the page
   device (`SPEC.md` section 11.4: columns narrowed to no less than 48
   units, then cut off at the column's edge), at most 48 KiB of an
   article and 1,024 cells of a table, and the page device's figure caps

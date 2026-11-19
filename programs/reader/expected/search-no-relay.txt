@@ -27,11 +27,13 @@
 
 
 
- Search needs a relay, and none could be reached
--- page: height 129, scroll 0 (stored 0), region 32 0 576 464 --
+ No relay could be reached: your articles only
+-- page: height 172, scroll 0 (stored 0), region 32 0 576 464 --
     8  20     0   sans16b |Search
-   28  15     0   sans12 |“Alice”: listed feeds and their articles, from your relays
-   51  20     0   sans16b |Feeds
-   71  15     0   sans12 |not searched: no relay could be reached
-   94  20     0   sans16b |Articles
+   28  15     0   sans12 |“Alice”  ·  A–Z and a–z match each other, other characters only themselves, as on the relays
+   51  20     0   sans16b |In your articles
+   71  15     0   sans12 |searched 0 of 11 articles
+   94  20     0   sans16b |Feeds
   114  15     0   sans12 |not searched: no relay could be reached
+  137  20     0   sans16b |Articles on your relays
+  157  15     0   sans12 |not searched: no relay could be reached
