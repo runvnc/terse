@@ -1,96 +1,289 @@
-//! The composed picture in a window (softbuffer), and the window's input
-//! as the machine's events (SPEC 5). Implemented for completeness; the
-//! prototype's tests and measurements use `--screenshot` and `--bench`.
+//! The composed picture in a window (softbuffer), and the window's input as
+//! the machines' events (SPEC 5): keys (F12 is the home key), text, paste
+//! (Ctrl+V, Shift+Insert), the pointer in the shell's screen units (the
+//! system maps it to tiles and panels, SPEC 12.4), the wheel; the eye
+//! follows the pointer (parallax). `--selftest` runs a number of frames
+//! with the scripted input only and prints the emulation, bus,
+//! composition and present-interval timings.
 
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use terse_bus::bus::Bus;
-use terse_bus::compose::{Compositor, screen_rect};
-use terse_core::{Controller, Event, FrameInput, Machine, Script};
+use terse_bus::compose::Compositor;
+use terse_bus::host::BusSystem;
+use terse_bus::signals;
+use terse_bus::stats::spread;
+use terse_core::system::{QUEUE_CAPACITY, buttons};
+use terse_core::{Controller, Event, Script};
+use terse_host::display::screen_pos;
+use terse_host::keymap::{HOME_KEY, MAX_PASTE, hid_usage, modifier_bits, paste_chars};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 const FRAME: Duration = Duration::from_micros(16_667);
 
-struct App {
-    core: Machine<Bus>,
-    script: Script,
-    native: (u32, u32),
-    comp: Compositor,
-    window: Option<Arc<Window>>,
-    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
-    events: Vec<Event>,
-    pointer: (u16, u16),
-    buttons: u8,
-    next: Instant,
-    error: Option<String>,
+pub struct Options {
+    pub size: Option<(u32, u32)>,
+    pub eye: (f32, f32),
+    pub parallax: bool,
+    /// `--selftest`: run this many frames with the script only.
+    pub selftest: Option<u64>,
+    pub threads: usize,
+    pub flat: bool,
+    pub startup: Duration,
 }
 
-/// USB HID usage IDs of the keys the prototype maps (SPEC 5).
-fn hid(key: KeyCode) -> Option<u8> {
-    use KeyCode::*;
-    let letters = [KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ];
-    if let Some(i) = letters.iter().position(|&k| k == key) {
-        return Some(0x04 + i as u8);
-    }
-    let digits = [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0];
-    if let Some(i) = digits.iter().position(|&k| k == key) {
-        return Some(0x1E + i as u8);
-    }
-    Some(match key {
-        Enter => 0x28,
-        Escape => 0x29,
-        Backspace => 0x2A,
-        Tab => 0x2B,
-        Space => 0x2C,
-        PageUp => 0x4B,
-        PageDown => 0x4E,
-        Home => 0x4A,
-        End => 0x4D,
-        ArrowRight => 0x4F,
-        ArrowLeft => 0x50,
-        ArrowDown => 0x51,
-        ArrowUp => 0x52,
-        _ => return None,
-    })
+/// One frame's timings (ms).
+#[derive(Default, Clone, Copy)]
+struct FrameLog {
+    emulate: f64,
+    bus: f64,
+    compose: f64,
+    present: f64,
+}
+
+struct App {
+    bs: BusSystem,
+    script: Script,
+    comp: Compositor,
+    opts: Options,
+    window: Option<Arc<Window>>,
+    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
+    viewport: (u32, u32),
+    pending: Vec<Event>,
+    pointer: Option<(u16, u16)>,
+    pointer_sent: Option<(u16, u16)>,
+    pointer_px: Option<(f64, f64)>,
+    buttons: u8,
+    wheel: (f64, f64),
+    modifiers: ModifiersState,
+    paste: VecDeque<char>,
+    clipboard: Option<arboard::Clipboard>,
+    eye: (f32, f32),
+    next: Instant,
+    error: Option<String>,
+    frames: u64,
+    log: Vec<FrameLog>,
+    presents: Vec<Instant>,
+    first_frame: Option<Duration>,
 }
 
 impl App {
+    /// The bus's round trips so far (ms), summed over the drivers.
+    fn bus_ms(&self) -> f64 {
+        let bus = self.bs.bus.borrow();
+        bus.procs
+            .iter()
+            .map(|d| {
+                let h = [&d.stats.calls, &d.stats.begin];
+                h.iter().map(|x| x.sum_ns as f64).sum::<f64>() / 1e6
+            })
+            .sum()
+    }
+
     fn frame(&mut self) -> Result<(), String> {
-        let frame = self.core.frame();
-        let mut events = self.script.events(frame).to_vec();
-        events.append(&mut self.events);
-        let controllers = [Controller::default(); terse_core::CONTROLLERS];
-        self.core.try_run_frame(&FrameInput { events: &events, controllers, ..Default::default() })?;
-        self.core.devices_mut().flush()?;
-        let rect = screen_rect(self.native, self.comp.size);
-        let updates = self.core.devices_mut().present(self.comp.size, rect)?;
-        self.comp.update(&updates)?;
-        let Some(surface) = &mut self.surface else { return Ok(()) };
-        let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
-        let n = buffer.len().min(self.comp.frame.len());
-        buffer[..n].copy_from_slice(&self.comp.frame[..n]);
-        buffer.present().map_err(|e| e.to_string())
+        let shell_frame = self.bs.system.shell().frame();
+        let mut events = std::mem::take(&mut self.pending);
+        let mut controllers = [Controller::default(); terse_core::CONTROLLERS];
+        if self.opts.selftest.is_some() {
+            events = self.script.events(shell_frame).to_vec();
+            controllers = self.script.controllers(shell_frame);
+        } else {
+            events.extend_from_slice(self.script.events(shell_frame));
+            // Pasted text, as much as the focused machine's queue has room for.
+            let room = QUEUE_CAPACITY.saturating_sub(events.len() + 8);
+            let n = room.min(self.paste.len());
+            events.extend(self.paste.drain(..n).map(Event::text));
+        }
+        // SPEC 9.5: while a question is asked the keyboard is the host's.
+        let events = self.bs.input(events)?;
+        let bus_before = self.bus_ms();
+        let start = Instant::now();
+        self.bs.system.set_eye(self.eye);
+        self.bs.frame(&events, controllers)?;
+        let emulate = start.elapsed().as_secs_f64() * 1000.0;
+        let bus = self.bus_ms() - bus_before;
+        // Parallax: the eye moves towards where the pointer says, a quarter
+        // of the way each frame, and rests exactly there.
+        if self.opts.parallax && self.opts.selftest.is_none() {
+            let max = terse_core::vector3::MAX_EYE_OFFSET;
+            let target = match self.pointer_px {
+                Some((x, y)) => {
+                    let (ux, uy) = screen_pos(self.comp.shell_rect(self.viewport), x, y);
+                    let (w, h) = (terse_core::SCREEN_WIDTH as f32 / 2.0, terse_core::SCREEN_HEIGHT as f32 / 2.0);
+                    (((ux as f32 + 0.5 - w) / w * max).clamp(-max, max), ((uy as f32 + 0.5 - h) / h * max).clamp(-max, max))
+                }
+                None => self.opts.eye,
+            };
+            let step = |e: f32, t: f32| if (t - e).abs() < 0.05 { t } else { e + (t - e) * 0.25 };
+            self.eye = (step(self.eye.0, target.0), step(self.eye.1, target.1));
+        }
+        self.comp.set_eye(self.eye);
+        let start = Instant::now();
+        let prompt = self.bs.prompt()?;
+        let viewport = self.viewport;
+        self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
+        let compose = start.elapsed().as_secs_f64() * 1000.0;
+        let start = Instant::now();
+        if let Some(surface) = &mut self.surface {
+            let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
+            let frame = self.comp.frame();
+            let n = buffer.len().min(frame.data.len());
+            buffer[..n].copy_from_slice(&frame.data[..n]);
+            buffer.present().map_err(|e| e.to_string())?;
+        }
+        let present = start.elapsed().as_secs_f64() * 1000.0;
+        self.presents.push(Instant::now());
+        if self.first_frame.is_none() {
+            self.first_frame = Some(self.opts.startup + self.presents[0].elapsed().max(Duration::ZERO));
+        }
+        self.log.push(FrameLog { emulate, bus, compose, present });
+        self.frames += 1;
+        Ok(())
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
-        let (w, h) = (size.width.max(1), size.height.max(1));
-        let layers = self.core.devices_mut().layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
-        self.comp = Compositor::new((w, h), layers);
+        self.viewport = (size.width.max(1), size.height.max(1));
         if let Some(s) = &mut self.surface {
-            let _ = s.resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap());
+            let _ = s.resize(NonZeroU32::new(self.viewport.0).unwrap(), NonZeroU32::new(self.viewport.1).unwrap());
         }
     }
 
-    fn pointer_event(&mut self) {
-        self.events.push(Event::pointer(self.pointer.0, self.pointer.1, self.buttons));
+    fn key(&mut self, event: KeyEvent) {
+        if self.opts.selftest.is_some() {
+            return;
+        }
+        let pressed = event.state == ElementState::Pressed;
+        let usage = match event.physical_key {
+            PhysicalKey::Code(code) => hid_usage(code),
+            _ => None,
+        };
+        // SPEC 12.4: the home key is the host's, never a key event.
+        if self.bs.system.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
+            if pressed && !event.repeat {
+                self.pending.push(Event::home());
+            }
+            return;
+        }
+        // Paste: Ctrl+V or Shift+Insert gives the clipboard's text as text events.
+        let m = self.modifiers;
+        let ctrl_v = m.control_key() && !m.alt_key() && !m.super_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyV);
+        let shift_insert = m.shift_key() && event.physical_key == PhysicalKey::Code(KeyCode::Insert);
+        if pressed && (ctrl_v || shift_insert) {
+            self.bs.swallow(usage);
+            self.paste_clipboard();
+            return;
+        }
+        if let Some(usage) = usage {
+            let mods = modifier_bits(self.modifiers);
+            self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
+        }
+        if pressed && let Some(text) = &event.text {
+            self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
+        }
+    }
+
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(c) => self.clipboard = Some(c),
+                Err(e) => return eprintln!("terse-bus: clipboard: {e}"),
+            }
+        }
+        match self.clipboard.as_mut().unwrap().get_text() {
+            Ok(text) => {
+                let room = MAX_PASTE.saturating_sub(self.paste.len());
+                self.paste.extend(paste_chars(&text).take(room));
+            }
+            Err(e) => eprintln!("terse-bus: clipboard: {e}"),
+        }
+    }
+
+    /// Pointer movement and wheel steps gathered since the last frame, as
+    /// at most one event each.
+    fn coalesced_input(&mut self) {
+        if self.opts.selftest.is_some() {
+            return;
+        }
+        if let Some((x, y)) = self.pointer
+            && self.pointer != self.pointer_sent
+        {
+            self.pending.push(Event::pointer(x, y, self.buttons));
+            self.pointer_sent = self.pointer;
+        }
+        let steps = |acc: &mut f64| {
+            let whole = acc.trunc().clamp(-127.0, 127.0);
+            *acc -= whole;
+            whole as i8
+        };
+        let (v, h) = (steps(&mut self.wheel.0), steps(&mut self.wheel.1));
+        if v != 0 || h != 0 {
+            self.pending.push(Event::wheel(v, h));
+        }
+    }
+
+    fn pointer_moved(&mut self, pos: PhysicalPosition<f64>) {
+        self.pointer_px = Some((pos.x, pos.y));
+        self.pointer = Some(screen_pos(self.comp.shell_rect(self.viewport), pos.x, pos.y));
+    }
+
+    fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
+        if self.opts.selftest.is_some() {
+            return;
+        }
+        let bit = match button {
+            MouseButton::Left => buttons::PRIMARY,
+            MouseButton::Right => buttons::SECONDARY,
+            MouseButton::Middle => buttons::MIDDLE,
+            _ => return,
+        };
+        match state {
+            ElementState::Pressed => self.buttons |= bit,
+            ElementState::Released => self.buttons &= !bit,
+        }
+        if let Some((x, y)) = self.pointer {
+            self.pending.push(Event::pointer(x, y, self.buttons));
+            self.pointer_sent = self.pointer;
+        }
+    }
+
+    fn wheel(&mut self, delta: MouseScrollDelta) {
+        let (x, y) = match delta {
+            MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
+            MouseScrollDelta::PixelDelta(p) => {
+                let row = (self.comp.shell_rect(self.viewport).3 as f64 / terse_core::ROWS as f64).max(1.0);
+                (p.x / row, p.y / row)
+            }
+        };
+        self.wheel.0 -= y;
+        self.wheel.1 -= x;
+    }
+
+    /// The selftest's report.
+    fn report(&self) {
+        let col = |f: fn(&FrameLog) -> f64| -> (f64, f64, f64) { spread(&mut self.log.iter().map(f).collect::<Vec<_>>()) };
+        let (e50, e99, emax) = col(|l| l.emulate);
+        let (b50, b99, bmax) = col(|l| l.bus);
+        let (c50, c99, cmax) = col(|l| l.compose);
+        let (p50, p99, pmax) = col(|l| l.present);
+        let mut intervals: Vec<f64> = self.presents.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1000.0).collect();
+        let (i50, i99, imax) = spread(&mut intervals);
+        println!("selftest: {} frames, {}x{}", self.log.len(), self.viewport.0, self.viewport.1);
+        println!("selftest: emulation incl. bus p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms");
+        println!("selftest: bus round trips p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms");
+        println!("selftest: composition p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms");
+        println!("selftest: present (copy) p50 {p50:.3} ms, p99 {p99:.3} ms, max {pmax:.3} ms");
+        println!("selftest: present interval p50 {i50:.3} ms, p99 {i99:.3} ms, max {imax:.3} ms");
+        if let Some(f) = self.first_frame {
+            println!("selftest: start-up to first frame {:.1} ms", f.as_secs_f64() * 1000.0);
+        }
     }
 }
 
@@ -99,7 +292,7 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("terse-bus").with_inner_size(PhysicalSize::new(self.comp.size.0, self.comp.size.1));
+        let attrs = Window::default_attributes().with_title("terse-bus").with_inner_size(PhysicalSize::new(self.viewport.0, self.viewport.1));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -128,61 +321,35 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
-            WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(code) = event.physical_key
-                    && let Some(k) = hid(code)
-                {
-                    let down = event.state == ElementState::Pressed;
-                    self.events.push(if down { Event::key_down(k, 0) } else { Event::key_up(k, 0) });
-                }
-                if event.state == ElementState::Pressed
-                    && let Some(text) = &event.text
-                {
-                    self.events.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let (x, y, w, h) = screen_rect(self.native, self.comp.size);
-                let ux = (((position.x as f32 - x) / w * 640.0).floor()).clamp(0.0, 639.0) as u16;
-                let uy = (((position.y as f32 - y) / h * 480.0).floor()).clamp(0.0, 479.0) as u16;
-                if (ux, uy) != self.pointer {
-                    self.pointer = (ux, uy);
-                    self.pointer_event();
-                }
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let bit = match button {
-                    MouseButton::Left => 1,
-                    MouseButton::Right => 2,
-                    MouseButton::Middle => 4,
-                    _ => 0,
-                };
-                if state == ElementState::Pressed { self.buttons |= bit } else { self.buttons &= !bit }
-                self.pointer_event();
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let steps = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y,
-                    MouseScrollDelta::PixelDelta(p) => -(p.y as f32) / 40.0,
-                };
-                let v = steps.round().clamp(-127.0, 127.0) as i8;
-                if v != 0 {
-                    self.events.push(Event::wheel(v, 0));
-                }
-            }
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
+            WindowEvent::KeyboardInput { event, .. } => self.key(event),
+            WindowEvent::CursorMoved { position, .. } => self.pointer_moved(position),
+            WindowEvent::CursorLeft { .. } => self.pointer_px = None,
+            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
+            WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            return;
+        }
+        if signals::stop_requested() {
+            event_loop.exit();
+            return;
+        }
         let now = Instant::now();
         if now >= self.next {
-            if let Err(e) = self.frame() {
+            self.coalesced_input();
+            if self.bs.system.stopped().is_none()
+                && let Err(e) = self.frame()
+            {
                 self.error = Some(e);
                 event_loop.exit();
                 return;
             }
-            if self.core.stopped().is_some() {
+            if self.opts.selftest.is_some_and(|n| self.frames >= n) || (self.opts.selftest.is_some() && self.bs.system.stopped().is_some()) {
                 event_loop.exit();
                 return;
             }
@@ -193,26 +360,63 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Runs the machine in a window until it stops or the window is closed.
-pub fn run(core: Machine<Bus>, script: Script, native: (u32, u32), comp: Compositor) -> Result<ExitCode, String> {
+/// Runs the system in a window until it stops (a single machine), the
+/// window is closed, a signal comes, or the selftest's frames are done.
+pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    let mut comp = Compositor::new(bs.system.shell().devices(), native, opts.threads);
+    if opts.flat {
+        comp.panel_mode = terse_host::soft::panel::PanelMode::Flat;
+    }
+    let viewport = opts.size.unwrap_or(native);
+    let eye = opts.eye;
     let mut app = App {
-        core,
+        bs,
         script,
-        native,
         comp,
+        opts,
         window: None,
         surface: None,
-        events: Vec::new(),
-        pointer: (0, 0),
+        viewport,
+        pending: Vec::new(),
+        pointer: None,
+        pointer_sent: None,
+        pointer_px: None,
         buttons: 0,
+        wheel: (0.0, 0.0),
+        modifiers: ModifiersState::empty(),
+        paste: VecDeque::new(),
+        clipboard: None,
+        eye,
         next: Instant::now(),
         error: None,
+        frames: 0,
+        log: Vec::new(),
+        presents: Vec::new(),
+        first_frame: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
-    app.core.devices_mut().shutdown();
-    match app.error {
-        Some(e) => Err(e),
-        None => Ok(ExitCode::SUCCESS),
+    if app.opts.selftest.is_some() {
+        app.report();
+        // The hashes, to compare with a headless run of the same script.
+        if let Ok((shell, children)) = app.bs.hashes() {
+            println!("{}", hex(&shell));
+            for (h, x) in children {
+                println!("{h} {}", x.map_or("-".to_string(), |x| hex(&x)));
+            }
+        }
     }
+    let code = match app.bs.system.stopped() {
+        Some(terse_core::Stopped::Exit(c)) => ExitCode::from(c),
+        Some(terse_core::Stopped::Fault(_)) => ExitCode::from(255),
+        None => ExitCode::SUCCESS,
+    };
+    match app.error.take() {
+        Some(e) => Err(e),
+        None => Ok(code),
+    }
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }

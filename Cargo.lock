@@ -2605,6 +2605,7 @@ dependencies = [
 name = "terse-bus"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "blake3",
  "getrandom 0.4.3",
  "libc",
@@ -2612,6 +2613,7 @@ dependencies = [
  "softbuffer",
  "tempfile",
  "terse-core",
+ "terse-host",
  "terse-net",
  "terse-relay",
  "winit",
@@ -2622,6 +2624,7 @@ name = "terse-cli"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "terse-bus",
  "terse-core",
  "terse-net",
  "terse-relay",

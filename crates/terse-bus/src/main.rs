@@ -1,67 +1,93 @@
-//! `terse-bus`: runs one Terse machine with its devices as separate driver
-//! processes (DEVICES.md).
+//! `terse-bus`: runs a Terse machine, or a shell and the machines it
+//! starts, with their devices as separate driver processes (DEVICES.md).
 
 #[cfg(feature = "window")]
 mod window;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use terse_bus::bus::{Bus, BusConfig, SharedMemory, split_command};
-use terse_bus::compose::{Compositor, screen_rect, write_png};
+use terse_bus::bus::BusConfig;
+use terse_bus::compose::{Compositor, write_png};
+use terse_bus::host::{self, BusSystem, Start, needed_slots};
 use terse_bus::inproc::{ContentOptions, InProcessHost};
-use terse_bus::proto::MEMORY_RAM_OFFSET;
 use terse_bus::record::{self, FrameRecord};
+use terse_bus::signals;
 use terse_bus::stats::spread;
-use terse_bus::transport::{self, Mapping};
-use terse_core::devices::{Devices, Memory};
-use terse_core::{FrameInput, Image, Machine, Script, Stopped};
+use terse_bus::transport::{self, Spin};
+use terse_core::devices::Memory;
+use terse_core::{Event, FrameInput, Image, Machine, Script, Snapshot, Stopped, Terminal};
+use terse_net::{BlobStore, builtin};
 
 const USAGE: &str = "usage:
-  terse-bus <image> [--frames N] [--events <file>] [--hash] [--hash-every N] [--dump]
-            [--driver <slot>=<command line>]... [--absent <slot>]... [--transport shm|socket] [--no-batch] [--in-process]
-            [--screenshot <out.png>] [--size <W>x<H>] [--present-every-frame] [--window]
-            [--bench] [--realtime] [--frame-times <file>] [--pin] [--spin-us N] [--record <file>] [--replay <file>]
-            [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny]
+  terse-bus [<image> | --shell [<image>]] [--builtin <image>]... [--frames N] [--events <file>]
+            [--hash] [--hash-all] [--hash-every N] [--dump] [--save-state <file>] [--load-state <file>]
+            [--driver <slot>[,<slot>...]=<command line>]... [--transport shm|socket] [--no-batch] [--in-process]
+            [--screenshot <out.png>] [--size <W>x<H>] [--eye <dx>,<dy>] [--panels perspective|flat]
+            [--present-every-frame] [--window] [--selftest] [--parallax off|pointer] [--threads N]
+            [--bench] [--realtime] [--frame-times <file>] [--pin] [--spin-us N] [--spin fixed|adaptive]
+            [--driver-timeout S] [--start-timeout S] [--record <file>] [--replay <file>]
+            [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
             [--profile reading] [--no-feed-relays] [--no-program-download]
 
-Runs the image's devices as driver processes: by default terse-dev-terminal (slot 2),
-terse-dev-vector (3), terse-dev-content (4, given --store, --config, --data, --relay, --consent,
---profile) and terse-dev-page (7), from this program's directory; --driver replaces one (the
-command line is split at spaces). --absent runs an image although no driver gives that
-device (against SPEC 2: its calls return FFFF_FFFFh; for measurements only). --transport socket offers drivers only the socket (default:
-shared memory is offered and the Rust drivers take it). --no-batch sends every call at once.
---in-process runs the same core with the devices compiled in, for comparison.
-Inputs are those of `terse run`: the --events script, time 0, no random bytes, content completed
-at the next frame. --hash, --hash-every and --dump as in `terse run`. --screenshot composes the
-drivers' layers after the last frame (--size, default the terminal's native size);
---present-every-frame presents every frame (as a window would) and --bench then times it too.
---realtime runs at 60 frames a second, as a window would. --frame-times writes each frame's emulation time (ms), one a line. --bench prints the frame times (emulation including the bus) and per-device call latencies.
---pin puts the core on CPU 1 and the drivers on CPUs 2, 3, 4, ... --record writes the bus's
-recording; --replay runs one again, checking every frame's hash.";
+Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
+(slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
+--consent, --profile) and terse-dev-page (7), from this program's directory; --driver replaces the
+driver of the slots it names (the command line is split at spaces). --shell runs the image (default:
+the shell built into terse) as the shell (SPEC 12): one driver process per device serves every
+machine. --transport socket offers drivers only the socket (default: shared memory is offered and
+the Rust drivers take it). --no-batch sends every call at once. --in-process runs a single machine
+with the devices compiled in, for comparison.
+Inputs are those of `terse run`: the --events script, time 0, no random bytes, content completed at
+the next frame. --hash, --hash-all, --hash-every, --dump, --save-state and --load-state as in `terse
+run` (snapshot files are the same). --screenshot composes the picture after the last frame (--size,
+default the terminal's native size; --eye, the eye for 3D lists); --present-every-frame composes
+every frame (as a window does) and --bench then times it too. --window shows the picture in a window
+(F12 is the home key, Ctrl+V or Shift+Insert pastes; with --parallax pointer the eye follows the
+pointer); --selftest runs --frames frames (default 300) in the window with the scripted input only and
+prints the emulation, bus, composition and present-interval timings. --realtime runs at 60 frames a
+second. --frame-times writes each frame's emulation time (ms). --bench prints the frame times
+(emulation including the bus) and per-driver latencies. --pin puts the core on CPU 1 and the drivers
+on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; drivers spin adaptively
+(TERSE_BUS_SPIN=fixed and TERSE_BUS_SPIN_US for theirs). --driver-timeout (default 30 s): a driver
+that does not answer in time is given up as hung; --start-timeout (default 10 s): for it to start.
+A driver that fails ends the run (exit status 3). --record writes the bus's recording of a single
+machine; --replay runs one again, checking every frame's hash.";
 
 struct Opts {
     image: Option<String>,
+    shell: bool,
+    builtins: Vec<String>,
     frames: Option<u64>,
     events: Option<String>,
     hash: bool,
+    hash_all: bool,
     hash_every: Option<u32>,
     dump: bool,
-    drivers: Vec<(u8, String)>,
-    absent: Vec<u8>,
+    save_state: Option<PathBuf>,
+    load_state: Option<PathBuf>,
+    drivers: Vec<(Vec<u8>, String)>,
     socket_only: bool,
     batching: bool,
     in_process: bool,
     screenshot: Option<PathBuf>,
     size: Option<(u32, u32)>,
+    eye: (f32, f32),
+    panels_flat: bool,
     present_every: bool,
     window: bool,
+    selftest: bool,
+    parallax: bool,
+    threads: usize,
     bench: bool,
     realtime: bool,
     frame_times: Option<PathBuf>,
     pin: bool,
     spin_us: u64,
+    spin_adaptive: bool,
+    driver_timeout: f64,
+    start_timeout: f64,
     record: Option<PathBuf>,
     replay: Option<PathBuf>,
     content: ContentOptions,
@@ -70,25 +96,37 @@ struct Opts {
 fn parse(args: Vec<String>) -> Result<Opts, String> {
     let mut o = Opts {
         image: None,
+        shell: false,
+        builtins: Vec::new(),
         frames: None,
         events: None,
         hash: false,
+        hash_all: false,
         hash_every: None,
         dump: false,
+        save_state: None,
+        load_state: None,
         drivers: Vec::new(),
-        absent: Vec::new(),
         socket_only: false,
         batching: true,
         in_process: false,
         screenshot: None,
         size: None,
+        eye: (0.0, 0.0),
+        panels_flat: false,
         present_every: false,
         window: false,
+        selftest: false,
+        parallax: true,
+        threads: 0,
         bench: false,
         realtime: false,
         frame_times: None,
         pin: false,
         spin_us: 100,
+        spin_adaptive: false,
+        driver_timeout: 30.0,
+        start_timeout: 10.0,
         record: None,
         replay: None,
         content: ContentOptions::default(),
@@ -100,17 +138,22 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             continue;
         }
         match a.as_str() {
+            "--shell" => o.shell = true,
+            "--builtin" => o.builtins.push(value()?),
             "--frames" => o.frames = Some(value()?.parse().map_err(|_| "bad --frames")?),
             "--events" => o.events = Some(value()?),
             "--hash" => o.hash = true,
+            "--hash-all" => o.hash_all = true,
             "--hash-every" => o.hash_every = Some(value()?.parse().ok().filter(|&n| n > 0).ok_or("bad --hash-every")?),
             "--dump" => o.dump = true,
+            "--save-state" => o.save_state = Some(value()?.into()),
+            "--load-state" => o.load_state = Some(value()?.into()),
             "--driver" => {
                 let v = value()?;
-                let (slot, cmd) = v.split_once('=').ok_or("--driver <slot>=<command line>")?;
-                o.drivers.push((slot.parse().map_err(|_| format!("bad slot {slot}"))?, cmd.to_string()));
+                let (slots, cmd) = v.split_once('=').ok_or("--driver <slot>[,<slot>...]=<command line>")?;
+                let slots = slots.split(',').map(|s| s.parse().map_err(|_| format!("bad slot {s}"))).collect::<Result<Vec<u8>, String>>()?;
+                o.drivers.push((slots, cmd.to_string()));
             }
-            "--absent" => o.absent.push(value()?.parse().map_err(|_| "bad --absent")?),
             "--transport" => {
                 o.socket_only = match value()?.as_str() {
                     "socket" => true,
@@ -126,8 +169,33 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
                 let (w, h) = v.split_once('x').ok_or("--size <W>x<H>")?;
                 o.size = Some((w.parse().map_err(|_| "bad --size")?, h.parse().map_err(|_| "bad --size")?));
             }
+            "--eye" => {
+                let v = value()?;
+                let m = terse_core::vector3::MAX_EYE_OFFSET;
+                let parsed = v.split_once(',').and_then(|(x, y)| Some((x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?)));
+                o.eye = parsed.filter(|&(x, y)| x.abs() <= m && y.abs() <= m).ok_or(format!("bad --eye {v}"))?;
+            }
+            "--panels" => {
+                o.panels_flat = match value()?.as_str() {
+                    "flat" => true,
+                    "perspective" | "auto" => false,
+                    v => return Err(format!("bad --panels {v}")),
+                }
+            }
             "--present-every-frame" => o.present_every = true,
             "--window" => o.window = true,
+            "--selftest" => {
+                o.selftest = true;
+                o.window = true;
+            }
+            "--parallax" => {
+                o.parallax = match value()?.as_str() {
+                    "pointer" => true,
+                    "off" => false,
+                    v => return Err(format!("bad --parallax {v}")),
+                }
+            }
+            "--threads" => o.threads = value()?.parse().map_err(|_| "bad --threads")?,
             "--bench" => o.bench = true,
             "--realtime" => o.realtime = true,
             "--frame-times" => {
@@ -136,6 +204,15 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             }
             "--pin" => o.pin = true,
             "--spin-us" => o.spin_us = value()?.parse().map_err(|_| "bad --spin-us")?,
+            "--spin" => {
+                o.spin_adaptive = match value()?.as_str() {
+                    "adaptive" => true,
+                    "fixed" => false,
+                    v => return Err(format!("bad --spin {v} (fixed or adaptive)")),
+                }
+            }
+            "--driver-timeout" => o.driver_timeout = value()?.parse().map_err(|_| "bad --driver-timeout")?,
+            "--start-timeout" => o.start_timeout = value()?.parse().map_err(|_| "bad --start-timeout")?,
             "--record" => o.record = Some(value()?.into()),
             "--replay" => o.replay = Some(value()?.into()),
             "--help" | "-h" => return Err(USAGE.into()),
@@ -148,53 +225,63 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
 }
 
 fn main() -> ExitCode {
+    signals::install();
     match run(std::env::args().skip(1).collect()) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("terse-bus: {e}");
-            ExitCode::from(2)
+            ExitCode::from(if e.starts_with("driver ") { 3 } else { 2 })
         }
     }
 }
 
-/// The default driver for a slot: a program next to this one.
-fn default_driver(slot: u8, opts: &Opts) -> Option<Vec<String>> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let exe = |name: &str| dir.join(name).display().to_string();
-    match slot {
-        2 => Some(vec![exe("terse-dev-terminal")]),
-        3 => Some(vec![exe("terse-dev-vector")]),
-        4 => {
-            let mut v = vec![exe("terse-dev-content")];
-            v.extend(opts.content.args());
-            Some(v)
-        }
-        7 => Some(vec![exe("terse-dev-page")]),
-        _ => None,
-    }
+fn read(path: &Path) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Removes the session directory when dropped.
-struct SessionDir(PathBuf);
-
-impl Drop for SessionDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+/// What was started, and how.
+pub struct Run {
+    pub opts_frames: Option<u64>,
+    pub script: Script,
+    pub native: (u32, u32),
+    pub startup: Duration,
 }
 
 fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let opts = parse(args)?;
     let started = Instant::now();
-    let path = opts.image.clone().ok_or(USAGE)?;
-    let image = Image::parse(&std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?).map_err(|e| format!("{path}: {e}"))?;
     let script = match &opts.events {
         Some(p) => Script::parse(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?,
         None => Script::default(),
     };
+    let snapshot = match &opts.load_state {
+        Some(p) => Some(Snapshot::decode(&read(p)?).map_err(|e| format!("{}: {e}", p.display()))?),
+        None => None,
+    };
+    // The image: a file; the built-in shell; or a snapshot's, from the store.
+    let store_dir = opts.content.store.clone().or_else(terse_net::default_store_dir);
+    let image_bytes = match (&opts.image, &snapshot) {
+        (Some(p), _) => read(Path::new(p))?,
+        (None, _) if opts.shell => builtin::SHELL.to_vec(),
+        (None, Some(s)) => {
+            let store = BlobStore::open(store_dir.as_ref().ok_or("no store directory (use --store)")?, None).map_err(|e| e.to_string())?;
+            store.read(&s.image_id()).map_err(|e| e.to_string())?.ok_or("the snapshot's image is not in the store")?
+        }
+        (None, None) => return Err(USAGE.into()),
+    };
+    let path = opts.image.clone().unwrap_or_else(|| "shell".into());
+    let image = Image::parse(&image_bytes).map_err(|e| format!("{path}: {e}"))?;
+    if let Some(s) = &snapshot
+        && s.image_id() != image.id
+    {
+        return Err("the snapshot is of another image".into());
+    }
+    if opts.pin {
+        transport::pin_to(1);
+    }
     let replay = match &opts.replay {
         Some(p) => {
-            let (id, frames) = record::parse(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?)?;
+            let (id, frames) = record::parse(&read(p)?)?;
             if id != image.id {
                 return Err(format!("{}: a recording of another image", p.display()));
             }
@@ -202,145 +289,131 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
         None => None,
     };
-    if opts.pin {
-        transport::pin_to(1);
-    }
     if opts.in_process {
         let service = if image.has_device(4) { Some(opts.content.start()?) } else { None };
-        let devices = InProcessHost::new(&image, service);
         let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
-        let mut core = Machine::with_devices(&image, memory, devices);
+        let mut core = Machine::with_devices(&image, memory, InProcessHost::new(&image, service));
         let startup = started.elapsed();
-        return frames(&opts, &image, &mut core, &script, replay.as_deref(), None, startup);
+        return in_process(&opts, &mut core, &script, startup);
     }
 
-    // The drivers, in slot order.
-    let mut wanted = Vec::new();
-    for d in &image.devices {
-        // --absent: a test aid that breaks SPEC 2 on purpose: the device's
-        // calls return FFFF_FFFFh and its state section is left out.
-        if d.slot == 1 || opts.absent.contains(&d.slot) {
-            continue;
-        }
-        let command = match opts.drivers.iter().rev().find(|(s, _)| *s == d.slot) {
-            Some((_, c)) => split_command(c),
-            None => default_driver(d.slot, &opts).ok_or(format!("the image lists device {}, for which there is no driver (SPEC 2)", d.slot))?,
-        };
-        wanted.push((d.slot, d.version, command));
-    }
-    wanted.sort_by_key(|w| w.0);
-    let session = SessionDir(transport::session_dir()?);
-    let ram_len = image.ram_pages as usize * 8192;
-    let memory_path = session.0.join("memory");
-    let mut map = Mapping::create(&memory_path, MEMORY_RAM_OFFSET + ram_len)?;
-    map.bytes_mut()[..image.rom.len()].copy_from_slice(&image.rom);
-    let presents = opts.screenshot.is_some() || opts.present_every || opts.window;
-    let config = BusConfig {
-        session: session.0.clone(),
-        shm: !opts.socket_only,
-        presents,
-        replay: replay.is_some(),
-        batching: opts.batching,
-        spin: Duration::from_micros(opts.spin_us),
-        driver_cpus: if opts.pin { (2..2 + wanted.len()).collect() } else { Vec::new() },
+    // SPEC 12.2: the built-in programs, in the store for the shell.
+    let builtins = if opts.shell {
+        let store = BlobStore::open(store_dir.as_ref().ok_or("no store directory (use --store)")?, None).map_err(|e| e.to_string())?;
+        let extra = opts.builtins.iter().map(|p| read(Path::new(p))).collect::<Result<Vec<_>, _>>()?;
+        Some(builtin::install(&store, &extra)?)
+    } else {
+        None
     };
-    let bus = Bus::start(&config, &wanted, image.id, &image.rom, ram_len as u32, Some(&memory_path))?;
-    let memory = Memory::Backed(Box::new(SharedMemory { map, rom_len: image.rom.len(), ram_len }));
-    let mut core = Machine::with_devices(&image, memory, bus);
+    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    let identity = (opts.shell && opts.image.is_none()).then(|| host::shell_identity(&image));
+    let dir = std::env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("no directory")?.to_path_buf();
+    let overrides: Vec<(Vec<u8>, Vec<String>)> = opts.drivers.iter().map(|(s, c)| (s.clone(), terse_bus::bus::split_command(c))).collect();
+    let drivers = host::drivers(&dir, &needed_slots(&image, opts.shell), &opts.content.args(), &overrides)?;
+    let presents = opts.screenshot.is_some() || opts.present_every || opts.window;
+    let mut config = BusConfig::new(PathBuf::new());
+    config.shm = !opts.socket_only;
+    config.presents = presents;
+    config.replay = replay.is_some();
+    config.batching = opts.batching;
+    config.spin = Spin { max: Duration::from_micros(opts.spin_us), adaptive: opts.spin_adaptive };
+    config.driver_cpus = if opts.pin { (2..2 + drivers.len()).collect() } else { Vec::new() };
+    config.reply_timeout = Duration::from_secs_f64(opts.driver_timeout);
+    config.start_timeout = Duration::from_secs_f64(opts.start_timeout);
+    let start = Start { config, drivers, image: &image, shell: builtins, identity, snapshot: snapshot.as_ref() };
+    let mut bs = start.start()?;
     let startup = started.elapsed();
     if opts.bench {
-        for d in &core.devices().drivers {
-            eprintln!("bus: slot {} {} ({}), transport {}", d.slot, d.info.name, d.command, if d.transport == 1 { "shm" } else { "socket" });
+        for d in &bs.bus.borrow().procs {
+            eprintln!("bus: slots {:?} {} ({}), transport {}", d.slots, d.info.name, d.command, if d.transport == 1 { "shm" } else { "socket" });
         }
     }
-    let native = core.devices_mut().native().unwrap_or((640, 480));
-    let picture = opts.size.unwrap_or(native);
-    let layers: Vec<(u8, u8)> = core.devices_mut().layers().into_iter().map(|(_, slot, _, l)| (slot, l.id)).collect();
-    let compositor = presents.then(|| Compositor::new(picture, layers));
+    let native = bs.bus.borrow().native().unwrap_or((640, 480));
     #[cfg(feature = "window")]
     if opts.window {
-        let code = window::run(core, script, native, compositor.unwrap())?;
-        return Ok(code);
+        let w = window::Options {
+            size: opts.size,
+            eye: opts.eye,
+            parallax: opts.parallax,
+            selftest: opts.selftest.then(|| opts.frames.unwrap_or(300)),
+            threads: opts.threads,
+            flat: opts.panels_flat,
+            startup,
+        };
+        return window::run(bs, script, native, w);
     }
     #[cfg(not(feature = "window"))]
     if opts.window {
         return Err("this terse-bus was built without the window (feature \"window\")".into());
     }
-    let code = frames(&opts, &image, &mut core, &script, replay.as_deref(), compositor.map(|c| (c, native)), startup);
-    core.devices_mut().shutdown();
-    drop(session);
-    code
+    headless(&opts, &mut bs, &script, replay.as_deref(), native, startup)
 }
 
-/// Runs the frames and prints what was asked for.
-fn frames<D: Devices + MaybeBus>(
-    opts: &Opts,
-    image: &Image,
-    core: &mut Machine<D>,
-    script: &Script,
-    replay: Option<&[FrameRecord]>,
-    mut comp: Option<(Compositor, (u32, u32))>,
-    startup: Duration,
-) -> Result<ExitCode, String> {
+/// Runs the frames headless and prints what was asked for.
+fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[FrameRecord]>, native: (u32, u32), startup: Duration) -> Result<ExitCode, String> {
+    let presents = opts.screenshot.is_some() || opts.present_every;
+    let mut comp = presents.then(|| Compositor::new(bs.system.shell().devices(), native, opts.threads));
+    if let Some(c) = &mut comp {
+        c.set_eye(opts.eye);
+        if opts.panels_flat {
+            c.panel_mode = terse_host::soft::panel::PanelMode::Flat;
+        }
+    }
+    bs.system.set_eye(opts.eye);
+    let picture = opts.size.unwrap_or(native);
     let mut times = Vec::new();
     let mut present_times = Vec::new();
-    let mut recording = opts.record.as_ref().map(|_| record::header(&image.id));
+    let mut recording = opts.record.as_ref().map(|_| record::header(bs.system.shell().image_id()));
+    if (opts.record.is_some() || replay.is_some()) && bs.system.is_system() {
+        return Err("--record and --replay are for a single machine".into());
+    }
     let total = match replay {
         Some(r) => opts.frames.map_or(r.len() as u64, |n| n.min(r.len() as u64)),
         None => opts.frames.unwrap_or(60 * 60 * 10),
     };
-    let mut used = Vec::new();
     let mut tick = Instant::now();
     for i in 0..total {
+        if signals::stop_requested() {
+            eprintln!("terse-bus: stopped by a signal");
+            break;
+        }
         if opts.realtime {
             tick += Duration::from_micros(16_667);
             if let Some(d) = tick.checked_duration_since(Instant::now()) {
                 std::thread::sleep(d);
             }
         }
-        let frame = core.frame();
-        let (events, controllers, rec) = match replay {
+        let frame = bs.system.shell().frame();
+        let (events, controllers) = match replay {
             Some(r) => {
                 let f = &r[i as usize];
                 if f.frame != frame {
                     return Err(format!("the recording has frame {} where the machine is at {frame}", f.frame));
                 }
-                (f.events.clone(), f.controllers(), Some(&f.drivers[..]))
+                bs.system.shell_mut().devices_mut().replay = Some(f.drivers.clone());
+                (f.events.clone(), f.controllers())
             }
-            None => (script.events(frame).to_vec(), script.controllers(frame), None),
-        };
-        let random: &[u8] = match replay {
-            Some(r) => &r[i as usize].random,
-            None => &[],
+            None => (script.events(frame).to_vec(), script.controllers(frame)),
         };
         let start = Instant::now();
-        core.devices_mut().set_replay(rec);
-        let stats = core.try_run_frame(&FrameInput { events: &events, random, controllers, ..Default::default() })?;
-        let records = core.devices_mut().take_records();
+        bs.frame(&events, controllers)?;
         let took = start.elapsed();
         if opts.bench {
             times.push(took.as_secs_f64() * 1000.0);
-            used.push(stats.used);
         }
         if opts.present_every
-            && let Some((c, native)) = &mut comp
+            && let Some(c) = &mut comp
         {
             let t = Instant::now();
-            core.devices_mut().present_if_bus(c, *native)?;
+            let prompt = bs.prompt()?;
+            c.draw(&mut bs.system, picture, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
             present_times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         if recording.is_some() || replay.is_some() {
-            let hash = core.try_state_hash()?;
+            let records = bs.system.shell_mut().devices_mut().take_records();
+            let hash = bs.system.shell_mut().try_state_hash()?;
             if let Some(out) = &mut recording {
-                let f = FrameRecord {
-                    frame,
-                    time: 0,
-                    controllers: controllers.map(|c| c.bytes()),
-                    events: events.clone(),
-                    random: random[..stats.random_used.min(random.len())].to_vec(),
-                    drivers: records,
-                    hash,
-                };
+                let f = FrameRecord { frame, time: 0, controllers: controllers.map(|c| c.bytes()), events: events.clone(), random: Vec::new(), drivers: records, hash };
                 f.encode(out);
             }
             if let Some(r) = replay
@@ -350,18 +423,19 @@ fn frames<D: Devices + MaybeBus>(
             }
         }
         if let Some(n) = opts.hash_every
-            && core.frame() % n == 0
+            && bs.system.shell().frame() % n == 0
         {
-            println!("{} {}", core.frame(), hex(&core.try_state_hash()?));
+            let f = bs.system.shell().frame();
+            println!("{f} {}", hex(&bs.system.shell_mut().try_state_hash()?));
         }
-        if core.stopped().is_some() {
+        if bs.system.stopped().is_some() {
             break;
         }
     }
     if let (Some(path), Some(bytes)) = (&opts.record, &recording) {
         std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    if let Some(Stopped::Fault(f)) = core.stopped() {
+    if let Some(Stopped::Fault(f)) = bs.system.stopped() {
         eprintln!("terse-bus: fault: {f}");
     }
     if let Some(path) = &opts.frame_times {
@@ -373,94 +447,127 @@ fn frames<D: Devices + MaybeBus>(
         let mean = times.iter().sum::<f64>() / times.len().max(1) as f64;
         let over = times.iter().filter(|&&t| t > 1000.0 / 60.0).count();
         eprintln!(
-            "bench: {} frames, emulation per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms, mean {mean:.3} ms, over 16.7 ms: {over}; calls {}; start-up {:.1} ms",
+            "bench: {} frames, emulation per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms, mean {mean:.3} ms, over 16.7 ms: {over}; start-up {:.1} ms",
             times.len(),
-            core.calls(),
             startup.as_secs_f64() * 1000.0
         );
         if !present_times.is_empty() {
             let (p50, p99, max) = spread(&mut present_times);
             eprintln!("bench: present and compose per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms");
         }
-        core.devices_mut().report();
+        report(bs);
     }
     if let Some(path) = &opts.screenshot
-        && let Some((c, native)) = &mut comp
+        && let Some(c) = &mut comp
     {
-        core.devices_mut().present_if_bus(c, *native)?;
-        write_png(path, &c.rgba(), c.size)?;
+        let prompt = bs.prompt()?;
+        let frame = c.draw(&mut bs.system, picture, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
+        write_png(path, &frame.to_rgba(), picture)?;
     }
-    if opts.hash {
-        println!("{}", hex(&core.try_state_hash()?));
+    if let Some(path) = &opts.save_state {
+        let s = Snapshot::try_of(bs.system.shell_mut())?;
+        std::fs::write(path, s.encode()).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    if opts.dump && image.has_device(2) {
-        let mut state = Vec::new();
-        core.devices_mut().write_state(2, &mut state)?;
-        let mut t = terse_core::Terminal::default();
-        t.restore(&mut terse_core::snapshot::Reader::new(&state)).map_err(|e| format!("terminal state: {e}"))?;
-        print!("{}", t.text());
+    if opts.hash || opts.hash_all {
+        println!("{}", hex(&bs.system.shell_mut().try_state_hash()?));
     }
-    Ok(match core.stopped() {
+    if opts.hash_all {
+        let (_, children) = bs.hashes()?;
+        for (h, hash) in children {
+            match hash {
+                Some(x) => println!("{h} {}", hex(&x)),
+                None => println!("{h} -"),
+            }
+        }
+    }
+    if opts.dump {
+        dump(bs)?;
+    }
+    Ok(match bs.system.stopped() {
         Some(Stopped::Exit(c)) => ExitCode::from(c),
         Some(Stopped::Fault(_)) => ExitCode::from(255),
         None => ExitCode::SUCCESS,
     })
 }
 
-/// What only the bus does: presentation and its report.
-trait MaybeBus {
-    fn present_if_bus(&mut self, comp: &mut Compositor, native: (u32, u32)) -> Result<(), String>;
-    fn report(&self);
-    /// The recorded inputs to give the drivers in the next frame.
-    fn set_replay(&mut self, records: Option<&[(u8, Vec<u8>)]>);
-    /// The drivers' input records of the frame just run.
-    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)>;
+/// A machine's terminal text, from its driver's state section.
+fn screen(m: &mut Machine<terse_bus::bus::BusDevices>) -> Result<String, String> {
+    if !m.lists(2) {
+        return Ok(String::new());
+    }
+    let section = m.devices_mut().state(2)?;
+    let mut t = Terminal::default();
+    t.restore(&mut terse_core::snapshot::Reader::new(&section)).map_err(|e| format!("terminal state: {e}"))?;
+    Ok(t.text())
 }
 
-impl MaybeBus for InProcessHost {
-    fn present_if_bus(&mut self, _: &mut Compositor, _: (u32, u32)) -> Result<(), String> {
-        Err("--in-process does not present".into())
-    }
-
-    fn report(&self) {}
-
-    fn set_replay(&mut self, _: Option<&[(u8, Vec<u8>)]>) {}
-
-    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)> {
-        Vec::new()
-    }
-}
-
-impl MaybeBus for Bus {
-    fn present_if_bus(&mut self, comp: &mut Compositor, native: (u32, u32)) -> Result<(), String> {
-        self.flush()?;
-        let rect = screen_rect(native, comp.size);
-        let updates = self.present(comp.size, rect)?;
-        comp.update(&updates)
-    }
-
-    fn set_replay(&mut self, records: Option<&[(u8, Vec<u8>)]>) {
-        self.replay = records.map(<[_]>::to_vec);
-    }
-
-    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)> {
-        std::mem::take(&mut self.records)
-    }
-
-    fn report(&self) {
-        for d in &self.drivers {
-            eprintln!(
-                "bus: slot {} {}: calls {}; batched {} in {} batches; refused by the core's checks {}; BEGIN {}",
-                d.slot,
-                d.info.name,
-                d.stats.calls.summary_us(),
-                d.stats.batched,
-                d.stats.batches,
-                d.stats.checked_out,
-                d.stats.begin.summary_us()
-            );
+/// `--dump` as `terse run --shell --dump` prints it.
+fn dump(bs: &mut BusSystem) -> Result<(), String> {
+    print!("{}", screen(bs.system.shell_mut())?);
+    let Some(dev) = bs.system.shell().machines() else { return Ok(()) };
+    let slots: Vec<(u8, terse_core::machines::Slot)> = bs.system.children().map(|(h, _)| (h, dev.slot(h).clone())).collect();
+    for (h, slot) in slots {
+        let r = slot.rect;
+        if r.w == 0 || r.h == 0 {
+            continue;
+        }
+        let child = bs.system.child_mut(h).unwrap();
+        let state = terse_core::machines::state::name(slot.state);
+        println!("-- machine {h} {state} {} {} {} {} {} --", r.x, r.y, r.w, r.h, child.title);
+        if let Some(m) = &mut child.machine {
+            print!("{}", screen(m)?);
         }
     }
+    Ok(())
+}
+
+fn report(bs: &BusSystem) {
+    for d in &bs.bus.borrow().procs {
+        eprintln!(
+            "bus: slots {:?} {}: calls {}; batched {} in {} batches; refused by the core's checks {}; BEGIN {}; PRESENT {}; GET {}",
+            d.slots,
+            d.info.name,
+            d.stats.calls.summary_us(),
+            d.stats.batched,
+            d.stats.batches,
+            d.stats.checked_out,
+            d.stats.begin.summary_us(),
+            d.stats.present.summary_us(),
+            d.stats.gets
+        );
+    }
+}
+
+/// `--in-process`: a single machine with the devices compiled in.
+fn in_process(opts: &Opts, core: &mut Machine<InProcessHost>, script: &Script, startup: Duration) -> Result<ExitCode, String> {
+    let mut times = Vec::new();
+    for _ in 0..opts.frames.unwrap_or(60 * 60 * 10) {
+        let frame = core.frame();
+        let events: Vec<Event> = script.events(frame).to_vec();
+        let start = Instant::now();
+        core.try_run_frame(&FrameInput { events: &events, controllers: script.controllers(frame), ..Default::default() })?;
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+        if let Some(n) = opts.hash_every
+            && core.frame() % n == 0
+        {
+            println!("{} {}", core.frame(), hex(&core.try_state_hash()?));
+        }
+        if core.stopped().is_some() {
+            break;
+        }
+    }
+    if opts.bench {
+        let (p50, p99, max) = spread(&mut times);
+        eprintln!("bench: {} frames, emulation per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms; start-up {:.1} ms", times.len(), startup.as_secs_f64() * 1000.0);
+    }
+    if opts.hash {
+        println!("{}", hex(&core.try_state_hash()?));
+    }
+    Ok(match core.stopped() {
+        Some(Stopped::Exit(c)) => ExitCode::from(c),
+        Some(Stopped::Fault(_)) => ExitCode::from(255),
+        None => ExitCode::SUCCESS,
+    })
 }
 
 fn hex(b: &[u8]) -> String {

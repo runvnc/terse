@@ -16,9 +16,12 @@
 
 pub mod bus;
 pub mod compose;
+pub mod host;
 pub mod driver;
 pub mod inproc;
 pub mod proto;
 pub mod record;
+pub mod services;
+pub mod signals;
 pub mod stats;
 pub mod transport;

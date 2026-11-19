@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """A fake core host for testing device drivers of the Terse device bus
-(DEVICES.md), stdlib only.
+(DEVICES.md, protocol version 1), stdlib only.
 
 It plays the core's side: listens on a Unix socket in a temporary
-directory, starts a driver, sends HELLO, checks calls against the
-driver's call table as DEVICES.md 5 says (and batches the batchable ones,
-section 6), and asks for STATE, RESTORE, BEGIN, PRESENT and so on.
+directory, starts a driver, sends HELLO (asking for the slots tested),
+OPENs machine instance 0, checks calls against the driver's call table as
+DEVICES.md 5 says (and batches the batchable ones, section 6), and asks for
+STATE, RESTORE, BEGIN, PRESENT, GET and so on; at the end it CLOSEs the
+instance and sends SHUTDOWN.
 
     fake_core.py terminal <driver command> [--shm] [--oracle <term-oracle>] [--fuzz N]
     fake_core.py vector <driver command>
+
+`terminal` tests a driver of slot 2 (terse-dev-terminal, or the C driver:
+with --shm, shared memory is offered and TERSE_C_SHM=1 set), including a
+second instance and the ERROR for an instance never opened. `vector` asks
+the driver for slots 3 and 9 (terse-dev-vector, vector.py).
 
 The terminal tests compare STATE bytes with expectations written here and,
 with --oracle, run random call sequences through both the driver and a
@@ -35,14 +42,26 @@ import mmap
 ROM_BASE, RAM_BASE, RAM_FILE_OFF = 0x10000, 0x100000, 131072
 ERR_BUFFER, ERR_UNKNOWN = 0xFFFFFFFE, 0xFFFFFFFF
 AREA = 4 << 20
+VERSION = 1
 
 
 def u32(b, at):
     return struct.unpack_from("<I", b, at)[0]
 
 
-def frame(body):
-    return struct.pack("<I", len(body)) + body
+def frame(to, body):
+    """A message (DEVICES.md 1): length, address (instance, slot), body."""
+    instance, slot = to
+    return struct.pack("<IIB3x", 8 + len(body), instance, slot) + body
+
+
+def string(b):
+    return struct.pack("<H", len(b)) + b
+
+
+def read_str(b, at):
+    n = struct.unpack_from("<H", b, at)[0]
+    return b[at + 2:at + 2 + n], at + 2 + n
 
 
 class Entry:
@@ -56,18 +75,25 @@ class Entry:
          self.units) = struct.unpack(self.FMT, raw)
 
 
-class Core:
-    def __init__(self, cmd, slot, rom=b"", ram_len=65536, shm=False, batch=True):
-        self.dir = tempfile.mkdtemp(prefix="fake-core-")
-        atexit.register(shutil.rmtree, self.dir, True)
-        self.slot, self.rom, self.ram_len, self.shm, self.batching = slot, rom, ram_len, shm, batch
-        self.mem_path = os.path.join(self.dir, "memory")
-        with open(self.mem_path, "wb") as f:
+class Memory:
+    """An instance's memory file (DEVICES.md 4.1): ROM at 0, RAM at 131,072."""
+
+    def __init__(self, path, rom, ram_len):
+        self.path, self.rom, self.ram_len = path, rom, ram_len
+        with open(path, "wb") as f:
             f.truncate(RAM_FILE_OFF + ram_len)
             f.write(rom)
-        fd = os.open(self.mem_path, os.O_RDWR)
-        self.mem = mmap.mmap(fd, RAM_FILE_OFF + ram_len)
+        fd = os.open(path, os.O_RDWR)
+        self.map = mmap.mmap(fd, RAM_FILE_OFF + ram_len)
         os.close(fd)
+
+
+class Core:
+    def __init__(self, cmd, slots, rom=b"", ram_len=65536, shm=False, batch=True):
+        self.dir = tempfile.mkdtemp(prefix="fake-core-")
+        atexit.register(shutil.rmtree, self.dir, True)
+        self.slots, self.shm, self.batching = list(slots), shm, batch
+        self.slot = self.slots[0]  # the slot calls go to unless one is given
         self.bus_path = os.path.join(self.dir, "bus")
         if shm:
             with open(self.bus_path, "wb") as f:
@@ -86,7 +112,7 @@ class Core:
         lsock.bind(path)
         lsock.listen(1)
         lsock.settimeout(10)
-        env = dict(os.environ, TERSE_BUS_SOCKET=path, TERSE_BUS_SLOT=str(slot))
+        env = dict(os.environ, TERSE_BUS_SOCKET=path)
         if shm:
             env["TERSE_C_SHM"] = "1"
         self.proc = subprocess.Popen(cmd, env=env)
@@ -97,7 +123,10 @@ class Core:
         self.on_shm = False
         self.pending = []  # no-reply messages waiting for the next packet (shm)
         self.batch = []
+        self.memories = {}
+        self.to = 0  # the instance messages are about
         self.hello()
+        self.open(0, rom, ram_len)
 
     # -- transport
     def recv_exact(self, n):
@@ -109,12 +138,12 @@ class Core:
             out += chunk
         return out
 
-    def send(self, body, reply=True):
+    def send(self, to, body, reply=True):
         """Sends one message; returns the reply's body if one is expected."""
         if not self.on_shm:
-            self.sock.sendall(frame(body))
-            return self.recv_socket() if reply else None
-        self.pending.append(frame(body))
+            self.sock.sendall(frame(to, body))
+            return self.check_reply(to, self.recv_socket()) if reply else None
+        self.pending.append(frame(to, body))
         if not reply and body[0] != 0x60:
             return None  # held for the next packet: one packet in flight
         packet = b"".join(self.pending)
@@ -135,81 +164,116 @@ class Core:
         n = w[132].value
         msg = bytes(self.bus[4096 + AREA:4096 + AREA + n])
         assert u32(msg, 0) == n - 4, "reply packet is not one message"
-        return self.check_error(msg[4:])
+        return self.check_reply(to, msg[4:])
 
     def recv_socket(self):
         n = u32(self.recv_exact(4), 0)
-        return self.check_error(self.recv_exact(n))
+        return self.recv_exact(n)
 
     @staticmethod
-    def check_error(body):
+    def check_reply(to, m):
+        """The body of a reply, which must have its request's address."""
+        assert len(m) >= 9, "a message without an address or a type"
+        body = m[8:]
         if body[0] == 0x7F:
             raise RuntimeError("driver ERROR: " + body[1:].decode("utf-8", "replace"))
+        assert (u32(m, 0), m[4]) == tuple(to), "reply for %r, request for %r" % ((u32(m, 0), m[4]), to)
         return body
 
-    def request(self, body, reply=True):
-        """Any request but a batchable call: the batch goes first."""
+    def request(self, body, reply=True, slot=0):
+        """Any request but a batchable call, about the current instance (and
+        a slot): the batch goes first."""
         if self.batch:
-            msg = struct.pack("<BxxxI", 0x11, len(self.batch)) + b"".join(frame(c) for c in self.batch)
+            msg = struct.pack("<BxxxI", 0x11, len(self.batch)) + b"".join(
+                struct.pack("<I", len(c)) + c for c in self.batch)
             self.batch = []
-            self.send(msg, reply=False)
-        return self.send(body, reply)
+            self.send((0, 0), msg, reply=False)
+        return self.send((self.to, slot), body, reply)
 
     # -- handshake
     def hello(self):
-        def s(text):
-            b = text.encode()
-            return struct.pack("<H", len(b)) + b
         flags = 1 if self.shm else 0
-        body = struct.pack("<BBBBI", 1, 0, self.slot, 0, flags) + bytes(32)
-        body += struct.pack("<II", len(self.rom), self.ram_len)
-        body += s(self.mem_path if self.shm else "") + s(self.bus_path if self.shm else "") + s(self.dir)
-        body += self.rom
-        self.sock.sendall(frame(body))
-        r = self.recv_socket()
-        assert r[0] == 0x81 and r[1] == 0 and r[2] == self.slot and r[3] == 0, r[:4]
-        transport = r[4]
-        assert transport == (1 if self.shm else 0), "transport %d" % transport
-        n = struct.unpack_from("<H", r, 5)[0]
-        self.name = r[7:7 + n].decode()
-        at = 7 + n
+        body = struct.pack("<BBHIB", 1, VERSION, 0, flags, len(self.slots)) + bytes(self.slots)
+        body += string(self.dir.encode()) + string(self.bus_path.encode() if self.shm else b"")
+        self.sock.sendall(frame((0, 0), body))
+        r = self.check_reply((0, 0), self.recv_socket())
+        assert r[0] == 0x81 and r[1] == VERSION and r[3] == 0, r[:4]
+        transport = r[2]
+        assert transport in ((0, 1) if self.shm else (0,)), "transport %d" % transport
+        name, at = read_str(r, 4)
+        self.name = name.decode()
         self.native = struct.unpack_from("<HH", r, at)
-        k = r[at + 4]
-        self.layers = [tuple(r[at + 5 + 2 * i:at + 7 + 2 * i]) for i in range(k)]
-        at += 5 + 2 * k
-        m = r[at]
-        at += 1
-        assert len(r) == at + 64 * m, "call table length"
-        self.table = {}
-        for i in range(m):
-            e = Entry(r[at + 64 * i:at + 64 * (i + 1)])
-            self.table[e.fn] = e
+        at += 4
+        self.layers, self.tables, self.versions = {}, {}, {}
+        count, at = r[at], at + 1
+        for _ in range(count):  # each: slot, version, k layers (ID, z), m entries
+            slot, version, k = r[at], r[at + 1], r[at + 2]
+            self.versions[slot] = version
+            self.layers[slot] = [tuple(r[at + 3 + 2 * i:at + 5 + 2 * i]) for i in range(k)]
+            at += 3 + 2 * k
+            m, at = r[at], at + 1
+            self.tables[slot] = {}
+            for i in range(m):
+                e = Entry(r[at + 64 * i:at + 64 * (i + 1)])
+                self.tables[slot][e.fn] = e
+            at += 64 * m
+        assert sorted(self.tables) == sorted(self.slots), "answered for slots %r" % sorted(self.tables)
+        self.properties = []  # published, subscribed, services
+        for _ in range(3):
+            count, at, names = r[at], at + 1, []
+            for _ in range(count):
+                n, at = read_str(r, at)
+                names.append(n.decode())
+            self.properties.append(names)
+        assert at == len(r), "HELLO reply length"
         self.on_shm = transport == 1
 
-    # -- memory
+    # -- instances (DEVICES.md 1.2)
+    def open(self, instance, rom=b"", ram_len=65536, listed=None):
+        """Opens an instance (its own memory file) and makes it current."""
+        mem = Memory(os.path.join(self.dir, "memory-%d" % instance), rom, ram_len)
+        self.memories[instance] = mem
+        self.to = instance
+        listed = [(s, 0) for s in self.slots] if listed is None else listed
+        body = struct.pack("<B3x32sII", 0x03, bytes(32), len(rom), ram_len)
+        body += string(mem.path.encode() if self.on_shm else b"")
+        body += bytes([len(listed)]) + b"".join(bytes(p) for p in listed) + b"\x00" + rom
+        r = self.request(body)
+        assert r[0] == 0x83, r
+        why, at = read_str(r, 4)
+        assert at == len(r)
+        return r[1], why.decode()
+
+    def close(self, instance):
+        self.to = instance
+        self.request(bytes([0x04, 0, 0, 0]), reply=False)
+
+    # -- memory of the current instance
     def mem_off(self, addr, length, rom_ok):
+        mem = self.memories[self.to]
         if length == 0:
             return 0
-        if RAM_BASE <= addr and addr + length <= RAM_BASE + self.ram_len:
+        if RAM_BASE <= addr and addr + length <= RAM_BASE + mem.ram_len:
             return RAM_FILE_OFF + addr - RAM_BASE
-        if rom_ok and ROM_BASE <= addr and addr + length <= ROM_BASE + len(self.rom):
+        if rom_ok and ROM_BASE <= addr and addr + length <= ROM_BASE + len(mem.rom):
             return addr - ROM_BASE
         return None
 
     def poke(self, addr, data):
         off = self.mem_off(addr, len(data), False)
-        self.mem[off:off + len(data)] = data
+        self.memories[self.to].map[off:off + len(data)] = data
 
     def peek(self, addr, n):
         off = self.mem_off(addr, n, True)
-        return bytes(self.mem[off:off + n])
+        return bytes(self.memories[self.to].map[off:off + n])
 
     # -- calls (DEVICES.md 5, 6)
-    def call(self, fn, args, budget=125000):
+    def call(self, fn, args, budget=125000, slot=None):
         """Returns (a0, a1 or None, the driver's charge: on top of the call's
         base, 4 or, for an answered call, 64, which the core adds)."""
+        slot = self.slot if slot is None else slot
         args = list(args) + [0] * (6 - len(args))
-        e = self.table.get(fn)
+        e = self.tables[slot].get(fn)
         if e is None:
             return ERR_UNKNOWN, None, 0
         buf = b""
@@ -224,7 +288,7 @@ class Core:
             if e.checked != 0xFF and args[e.checked] > e.checked_max:
                 return e.place_result, None, 0
             if e.access & 1:
-                buf = bytes(self.mem[off:off + length])
+                buf = bytes(self.memories[self.to].map[off:off + length])
         if self.batching and e.flags & 2:
             if e.rule == 1:
                 a0, a1 = e.value, e.value2
@@ -240,11 +304,12 @@ class Core:
             charge += len(buf) * e.per_byte
             if e.charge_arg != 0xFF and e.low <= args[e.charge_arg] <= e.high:
                 charge += e.units
-            self.batch.append(self.call_msg(fn, args, budget, buf))
+            # In the batch: the address and the body, the buffer inline.
+            self.batch.append(struct.pack("<IB3x", self.to, slot) + self.call_msg(fn, args, budget, buf))
             return a0, (a1 if e.flags & 1 else None), charge
         if self.on_shm:
             buf = b""
-        r = self.request(self.call_msg(fn, args, budget, buf))
+        r = self.request(self.call_msg(fn, args, budget, buf), slot=slot)
         assert r[0] == 0x90
         flags, a0, a1, charge, w = r[1], u32(r, 4), u32(r, 8), u32(r, 12), u32(r, 16)
         at = 20
@@ -263,36 +328,61 @@ class Core:
         return struct.pack("<BBH6IqI", 0x10, fn, 0, *args, budget, len(buf)) + buf
 
     # -- the rest
-    def state(self):
-        r = self.request(bytes([0x40]))
+    def state(self, slot=None):
+        r = self.request(bytes([0x40]), slot=self.slot if slot is None else slot)
         assert r[0] == 0xC0 and len(r) == 8 + u32(r, 4)
         return r[8:]
 
-    def restore(self, s):
-        r = self.request(struct.pack("<BxxxI", 0x41, len(s)) + s)
-        assert r[0] == 0xC1 and len(r) == 4
-        return r[1]
+    def restore(self, s, slot=None):
+        """RESTORE with the rest of a serialization from the slot's section
+        on: 1 and the section's length, or 0."""
+        r = self.request(struct.pack("<BxxxI", 0x41, len(s)) + s, slot=self.slot if slot is None else slot)
+        assert r[0] == 0xC1 and len(r) == 8
+        assert r[1] or u32(r, 4) == 0
+        return r[1] if not r[1] else (r[1], u32(r, 4))
 
     def reset(self):
         assert self.request(bytes([0x02])) == bytes([0x82])
 
     def begin(self, frame_no=0):
-        r = self.request(struct.pack("<BBHIII", 0x30, 0, 0, frame_no, 0, 0))
+        r = self.request(struct.pack("<BBHIIII", 0x30, 0, 0, frame_no, 0, 0, 0))
         assert r[0] == 0xB0
         return r
 
     def end(self, frame_no=1):
         self.request(struct.pack("<BBHI", 0x31, 0, 0, frame_no), reply=False)
 
-    def present(self, props=()):
-        body = struct.pack("<BxxxHH4fI", 0x50, 640, 480, 0, 0, 640, 480, len(props))
-        for slot, key, value in props:
-            body += struct.pack("<BBHI", slot, key, 0, value)
-        r = self.request(body)
+    def present(self):
+        r = self.request(struct.pack("<BxxxHH4fHxx", 0x50, 640, 480, 0, 0, 640, 480, 0))
         assert r[0] == 0xD0
         return r
 
+    def get(self, *names):
+        """GET: {name: value} for those the driver publishes."""
+        body = bytes([0x42, 0, len(names)]) + b"".join(string(n.encode()) for n in names)
+        r = self.request(body)
+        assert r[0] == 0xC2
+        out, at = {}, 2
+        for _ in range(r[1]):
+            n, at = read_str(r, at)
+            ln = u32(r, at)
+            out[n.decode()] = r[at + 4:at + 4 + ln]
+            at += 4 + ln
+        assert at == len(r)
+        return out
+
+    def set(self, name, value):
+        self.request(bytes([0x43, 0]) + string(name.encode()) + struct.pack("<I", len(value)) + value, reply=False)
+
+    def service(self, name, req=b""):
+        r = self.request(bytes([0x44, 0]) + string(name.encode()) + struct.pack("<I", len(req)) + req)
+        assert r[0] == 0xC4
+        return r
+
     def shutdown(self):
+        for instance in sorted(self.memories):
+            self.close(instance)
+        self.memories = {}
         self.request(bytes([0x60]), reply=False)
         self.proc.wait(timeout=5)
         self.sock.close()
@@ -325,6 +415,7 @@ def write(core, data, budget=125000, at=RAM):
 
 
 def terminal_tests(core):
+    assert core.tables[2].keys() == set(range(10)) and core.versions[2] == 0
     s = core.state()
     assert len(s) == 10378 and s == term_reset_state(), "reset state"
     assert core.call(9, [])[:2] == (80, 30)
@@ -377,7 +468,9 @@ def terminal_tests(core):
     assert core.call(8, [255, RAM + 0x300, 2]) == (2, None, 2)
     s = core.state()
     assert s[9606 + 765:9606 + 768] == bytes([1, 2, 3]) and s[9606:9609] == bytes([4, 5, 6])
-    # STATE, RESTORE (good and bad), RESET.
+    # STATE, RESTORE (good and bad), RESET. RESTORE carries the rest of a
+    # serialization: the section is read from its start, and its length
+    # comes back.
     good = core.state()
     bad = bytearray(good)
     bad[9600] = 80
@@ -390,15 +483,41 @@ def terminal_tests(core):
     assert core.state() == term_reset_state()
     seq = bytearray(good)
     seq[10374:10378] = b"\x02\xE4\xBD\x00"
-    assert core.restore(bytes(seq)) == 1 and core.state() == seq
+    assert core.restore(bytes(seq) + b"\x01next section") == (1, 10378) and core.state() == seq
     write(core, b"\xA0")  # completes U+4F60
     assert core.state()[10374] == 0
-    # BEGIN, END, PRESENT.
+    # BEGIN, END, PRESENT, GET, SET, SERVICE.
     r = core.begin()
     assert r == bytes([0xB0, 0, 0, 0]) + bytes(16), r
     core.end()
-    assert core.present() == bytes([0xD0, 0, 0, 0]) + bytes(4)
+    assert core.present() == bytes([0xD0, 0, 0, 0])
+    assert core.get("vector.outlines") == {}
+    core.set("core.status", b"")
+    assert core.service("image.fetch")[1] == 0
     print("terminal: fixed scenarios ok")
+
+
+def instances_test(cmd, shm):
+    """Two machines: each its own terminal (and memory file); a message about
+    an instance that was never opened, or was closed, is an ERROR."""
+    core = Core(cmd, [2], rom=b"ROM text", shm=shm)
+    write(core, b"zero")
+    assert core.open(1, rom=b"other") == (1, "")
+    assert core.state() == term_reset_state()
+    write(core, b"one", at=RAM + 0x40)
+    assert chars(core.state(), 0, 3) == [ord(c) for c in "one"]
+    core.to = 0
+    assert chars(core.state(), 0, 4) == [ord(c) for c in "zero"]
+    core.close(1)
+    core.to = 1
+    try:
+        core.state()
+        raise AssertionError("STATE of a closed instance answered")
+    except RuntimeError:
+        pass
+    core.sock.close()  # the core gives the driver up; it exits at the end of the stream
+    core.proc.wait(timeout=5)
+    print("terminal: instances ok")
 
 
 def gen_text(rng):
@@ -420,7 +539,7 @@ def gen_text(rng):
 def fuzz(cmd, oracle, n, seed, shm):
     rng = random.Random(seed)
     rom = gen_text(rng) * 50 + b"x" * 100
-    core = Core(cmd, 2, rom=rom, shm=shm)
+    core = Core(cmd, [2], rom=rom, shm=shm)
     ops = []
     for i in range(n):
         k = rng.random()
@@ -480,7 +599,9 @@ def fuzz(cmd, oracle, n, seed, shm):
 # --------------------------------------------------------------- vector
 
 def vector_tests(core):
-    assert core.layers == [] and all(e.flags & 2 for e in core.table.values())
+    assert core.layers == {3: [], 9: []} and all(e.flags & 2 for t in core.tables.values() for e in t.values())
+    assert sorted(core.tables[3]) == [0, 1, 2, 3, 4] and sorted(core.tables[9]) == [0, 1, 2, 3]
+    assert core.properties[0] == ["vector.outlines", "vector3.list"], core.properties
     assert core.state() == bytes([0, 160, 0]) + bytes(4)
     lst = bytes([1, 255, 0, 0, 255, 4, 16, 0, 32, 0, 5, 0, 1, 0, 2])
     core.poke(RAM, lst)
@@ -491,24 +612,41 @@ def vector_tests(core):
     assert core.call(2, [2]) == (1, None, 0) and core.call(3, [256]) == (1, None, 0)
     assert core.call(4, [1]) == (0, None, 0) and core.call(3, [7]) == (0, None, 0)
     assert core.state() == bytes([0, 7, 1]) + struct.pack("<I", len(lst)) + lst
-    r = core.present()
-    assert r == bytes([0xD0, 0, 0, 0]) + struct.pack("<IBxxxI", 1, 1, 1), r
+    assert core.present() == bytes([0xD0, 0, 0, 0])
+    assert core.get("vector.outlines", "core.eye") == {"vector.outlines": b"\x01"}
     core.call(4, [0])
     core.call(2, [1])
-    assert core.present()[-4:] == struct.pack("<I", 1)
+    assert core.get("vector.outlines") == {"vector.outlines": b"\x01"}
     core.call(2, [0])
-    assert core.present()[-4:] == struct.pack("<I", 0)
+    assert core.get("vector.outlines") == {"vector.outlines": b"\x00"}
     core.call(1, [])
     good = core.state()
     assert good == bytes([0, 7, 0]) + bytes(4)
     assert core.restore(bytes([2, 0, 0, 0, 0, 0, 0])) == 0 and core.state() == good
     assert core.restore(bytes([1, 9, 1, 2, 0, 0, 0, 0])) == 0  # m says 2, one byte
-    assert core.restore(bytes([1, 9, 1, 1, 0, 0, 0, 7])) == 1
+    assert core.restore(bytes([1, 9, 1, 1, 0, 0, 0, 7]) + bytes(4)) == (1, 8)  # then slot 9's section
     assert core.state() == bytes([1, 9, 1, 1, 0, 0, 0, 7])
+    # Device 9: its own list; style and persistence are device 3's.
+    assert core.state(9) == bytes(4) and core.get("vector3.list") == {"vector3.list": b""}
+    l3 = bytes([4, 1, 2, 3])
+    core.poke(RAM + 0x100, l3)
+    assert core.call(0, [RAM + 0x100, 4], slot=9) == (0, None, 1)
+    assert core.call(3, [33], slot=9) == (0, None, 0) and core.call(2, [0], slot=9) == (0, None, 0)
+    assert core.call(4, [0], slot=9) == (ERR_UNKNOWN, None, 0)  # no fill on device 9
+    assert core.state() == bytes([0, 33, 1, 1, 0, 0, 0, 7])
+    assert core.state(9) == struct.pack("<I", 4) + l3
+    assert core.get("vector3.list") == {"vector3.list": l3}
+    assert core.restore(struct.pack("<I", 2) + b"ab", slot=9) == (1, 6) and core.state(9) == struct.pack("<I", 2) + b"ab"
+    assert core.restore(struct.pack("<I", 3) + b"ab", slot=9) == 0
+    core.call(1, [], slot=9)
+    assert core.state(9) == bytes(4)
     assert core.begin() == bytes([0xB0, 0, 0, 0]) + bytes(16)
     core.end()
     core.reset()
     assert core.state() == bytes([0, 160, 0]) + bytes(4)
+    # An instance that lists only device 3: no 3D list.
+    assert core.open(1, listed=[(3, 0)]) == (1, "")
+    assert core.get("vector3.list") == {"vector3.list": b""}
     print("vector: fixed scenarios ok")
 
 
@@ -522,22 +660,24 @@ def main():
     nfuzz = int(args[args.index("--fuzz") + 1]) if "--fuzz" in args else 20
     if kind == "terminal":
         for batching in (True, False):
-            core = Core(cmd, 2, rom=b"ROM text", shm=shm, batch=batching)
+            core = Core(cmd, [2], rom=b"ROM text", shm=shm, batch=batching)
             terminal_tests(core)
             core.shutdown()
+        instances_test(cmd, shm)
         if oracle:
             for seed in range(nfuzz):
                 fuzz(cmd, oracle, 300, seed, shm)
             print("terminal: %d random sequences match the Rust reference" % nfuzz)
         # The driver exits when the socket closes, without SHUTDOWN.
-        core = Core(cmd, 2, shm=shm)
+        core = Core(cmd, [2], shm=shm)
         core.sock.close()
         core.proc.wait(timeout=5)
         print("terminal: exits on EOF")
     elif kind == "vector":
-        core = Core(cmd, 3)
-        vector_tests(core)
-        core.shutdown()
+        for batching in (True, False):
+            core = Core(cmd, [3, 9], shm=shm, batch=batching)
+            vector_tests(core)
+            core.shutdown()
     else:
         sys.exit(__doc__)
 
