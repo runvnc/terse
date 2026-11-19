@@ -4,6 +4,14 @@
 //! own layers, glyphs rasterised for its size and its own phosphor tube;
 //! then the host's consent prompt over everything. A single machine is the
 //! shell's screen alone, drawn exactly as before.
+//!
+//! A machine whose 3D list has Surfaces in effect (SPEC 13.5) is drawn as
+//! its glass (its renderer, without its 3D list), the Surfaces' sources
+//! blacked out on it, its Surfaces (its 2D layers drawn again by a second
+//! renderer into a texture of the size they need, when they changed, and
+//! mapped in perspective as panels are) and its 3D lines over them; the
+//! same wherever its screen is shown: on its own, flat in a tile, or into
+//! its panel's texture.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,12 +20,12 @@ use terse_core::{Machine, System};
 use terse_net::Prompt;
 
 use crate::display::{
-    Display, Eye, SceneLayers, ShownPrompt, VectorScene, eye_point, panel_cell_width, panel_width_px, picture_rect, scene_layers,
-    system_rect,
+    Display, Eye, SceneLayers, ShownPrompt, VectorScene, cell_width_for, eye_point, panel_cell_width, panel_width_px, picture_rect,
+    scene_layers, surface_layers, surface_size, system_rect,
 };
 use crate::page::HostLayout;
-use crate::panels::{PANEL_FORMAT, PanelPipeline, PanelTexture};
-use crate::renderer::Renderer;
+use crate::panels::{PANEL_FORMAT, PanelPipeline, PanelQuads, PanelTexture, Quad};
+use crate::renderer::{Renderer, Shaders};
 use crate::vectors::VectorLayer;
 use crate::{consent, displayed_terminal};
 
@@ -31,15 +39,87 @@ struct Shown {
     /// many frames more to draw it anyway (the page's scroll animation
     /// settles over a few frames).
     shown: (u64, u8),
+    /// Its own Surfaces, if its list has any in effect.
+    surfaced: Option<Surfaced>,
+}
+
+/// A machine's own Surfaces as drawn (SPEC 13.5): its 2D layers drawn by a
+/// renderer of their own into a texture of the size the Surfaces need
+/// (again when they changed), and what goes over its glass: the sources
+/// blacked out, the Surfaces, its 3D lines.
+struct Surfaced {
+    renderer: Renderer,
+    texture: PanelTexture,
+    /// The texture must be drawn again.
+    dirty: bool,
+    /// As `Shown::shown`.
+    shown: (u64, u8),
+    layers: SceneLayers,
+    /// The format of the target it is drawn over.
+    format: wgpu::TextureFormat,
+    pipeline: Arc<PanelPipeline>,
+    quads: PanelQuads,
+    lines: VectorLayer,
+}
+
+impl Surfaced {
+    /// Draws the 2D layers into the texture if they changed.
+    fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
+        if self.dirty {
+            self.renderer.render(device, queue, encoder, &self.texture.level0, self.texture.size);
+            self.pipeline.mipmaps(encoder, &self.texture);
+            self.dirty = false;
+        }
+    }
+
+    /// Draws over the glass, a screen drawn into `rect` of a `viewport`
+    /// target: the sources black, the Surfaces far to near, the lines.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        rect: (f32, f32, f32, f32),
+        viewport: (u32, u32),
+        eye: Eye,
+    ) {
+        let mut quads: Vec<Quad> = self.layers.rects.iter().map(|&r| Quad::black(r)).collect();
+        quads.extend(self.layers.panels.iter().map(Quad::panel));
+        self.pipeline.upload(queue, &mut self.quads, &quads, eye_point(eye), rect, viewport);
+        let Some(scissor) = scissor(rect, viewport) else { return };
+        let textures = vec![&self.texture; quads.len()];
+        let mut pass = load_pass(encoder, target, "surfaces and lines");
+        self.pipeline.draw(&mut pass, &self.quads, &textures, scissor);
+        self.lines.draw(queue, &mut pass, viewport, rect);
+    }
+}
+
+/// A render pass over what `target` holds.
+fn load_pass<'e>(encoder: &'e mut wgpu::CommandEncoder, target: &wgpu::TextureView, label: &str) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 /// Frames a panel is drawn again after its machine's screen changed.
 const SETTLE: u8 = 30;
 
 /// A digest of what a machine's screen shows: its terminal, lists, page
-/// and the page's layout; the same digest, the same picture (but for the
-/// phosphor style's afterglow and the page's scroll animation).
-fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>) -> u64 {
+/// and the page's layout, and the eye if it has a 3D list; the same
+/// digest, the same picture (but for the phosphor style's afterglow and
+/// the page's scroll animation).
+fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>, eye: Eye) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let t = displayed_terminal(machine);
@@ -48,22 +128,112 @@ fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>) -> u64 {
     (t.cursor(), t.cursor_visible()).hash(&mut h);
     machine.vector().map(|v| (v.generation(), v.phosphor())).hash(&mut h);
     machine.vector3().map(|v| v.generation()).hash(&mut h);
+    machine.vector3().filter(|v| !v.list().is_empty()).map(|_| (eye.0.to_bits(), eye.1.to_bits())).hash(&mut h);
     machine.page().map(|p| (p.generation(), p.scroll(), p.region().x, p.region().y, p.region().w, p.region().h, p.background())).hash(&mut h);
     layout.as_ref().map(|l| Arc::as_ptr(l) as usize).hash(&mut h);
     h.finish()
 }
 
+/// The panel pipeline for a target format, made the first time.
+fn pipeline_for(pipelines: &mut Vec<(wgpu::TextureFormat, Arc<PanelPipeline>)>, shaders: &Shaders, format: wgpu::TextureFormat) -> Arc<PanelPipeline> {
+    if let Some((_, p)) = pipelines.iter().find(|(f, _)| *f == format) {
+        return p.clone();
+    }
+    let p = Arc::new(PanelPipeline::new(shaders, format));
+    pipelines.push((format, p.clone()));
+    p
+}
+
+/// What making a machine's Surfaces needs from the screens.
+struct Make<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    shaders: &'a Shaders,
+    pipelines: &'a mut Vec<(wgpu::TextureFormat, Arc<PanelPipeline>)>,
+    /// A renderer for cells this many pixels wide, configured as the
+    /// screens' are.
+    renderer: &'a dyn Fn(u32) -> Renderer,
+    eye: Eye,
+}
+
+/// Brings a machine's Surfaces up to date: `layers` its own scene (none:
+/// it has no Surface in effect), `glass` the pixels its screen is drawn
+/// into on a target of `format`; `ran`: it ran a frame (its phosphor light
+/// advances).
+fn update_surfaced(
+    slot: &mut Option<Surfaced>,
+    layers: Option<SceneLayers>,
+    machine: &Machine,
+    layout: Option<Arc<HostLayout>>,
+    glass: (f32, f32, f32, f32),
+    format: wgpu::TextureFormat,
+    ran: bool,
+    make: &mut Make,
+) {
+    let Some(layers) = layers else {
+        *slot = None;
+        return;
+    };
+    if slot.as_ref().is_some_and(|s| s.format != format) {
+        *slot = None;
+    }
+    let current = slot.as_ref().map(|s| s.texture.size);
+    let size = surface_size(&layers.panels, make.eye, glass, current);
+    let fresh = slot.is_none();
+    let s = slot.get_or_insert_with(|| {
+        let pipeline = pipeline_for(make.pipelines, make.shaders, format);
+        let mut renderer = (make.renderer)(cell_width_for((0.0, 0.0, size.0 as f32, size.1 as f32)));
+        renderer.set_clears(true);
+        Surfaced {
+            renderer,
+            texture: pipeline.texture(make.device, size),
+            dirty: true,
+            shown: (0, SETTLE),
+            layers: layers.clone(),
+            format,
+            quads: pipeline.quads(make.device),
+            lines: VectorLayer::for_target(make.shaders, format),
+            pipeline,
+        }
+    });
+    let resized = s.texture.size != size;
+    if resized {
+        s.texture = s.pipeline.texture(make.device, size);
+    }
+    let r = &mut s.renderer;
+    r.set_rect(make.device, Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
+    r.update(make.queue, &displayed_terminal(machine));
+    let d = digest(machine, &layout, (0.0, 0.0));
+    show(r, make.queue, machine, layout, make.eye, false);
+    if d != s.shown.0 {
+        s.shown = (d, SETTLE);
+    }
+    let changed = s.shown.1 > 0 || r.phosphor();
+    if fresh || resized || (ran && changed) {
+        s.shown.1 = s.shown.1.saturating_sub(1);
+        if r.phosphor() && (fresh || ran) {
+            r.accumulate(make.device, make.queue, size);
+        }
+        s.dirty = true;
+    }
+    s.lines.upload(make.queue, &layers.lines);
+    s.layers = layers;
+}
+
 pub struct Screens {
     /// The shell's screen (or the single machine's).
     pub shell: Renderer,
+    /// The shell's own Surfaces (SPEC 13.5), if it has any in effect.
+    shell_surfaced: Option<Surfaced>,
     /// The children shown, by serial.
     children: HashMap<u32, Shown>,
     /// The shell's 3D scene when Screens are in effect (SPEC 12.3), and
-    /// what draws it: the panels' pipeline and the shell's 3D lines over
-    /// them.
+    /// what draws it: the panels' quads and the shell's 3D lines over them.
     scene: Option<SceneLayers>,
-    panel_pipeline: Option<PanelPipeline>,
+    scene_quads: Option<PanelQuads>,
     lines: Option<VectorLayer>,
+    /// The panel pipelines, by the format of their target.
+    pipelines: Vec<(wgpu::TextureFormat, Arc<PanelPipeline>)>,
     format: wgpu::TextureFormat,
     no_trails: bool,
     force_phosphor: bool,
@@ -76,10 +246,12 @@ impl Screens {
     pub fn new(shell: Renderer, format: wgpu::TextureFormat) -> Self {
         Screens {
             shell,
+            shell_surfaced: None,
             children: HashMap::new(),
             scene: None,
-            panel_pipeline: None,
+            scene_quads: None,
             lines: None,
+            pipelines: Vec::new(),
             format,
             no_trails: false,
             force_phosphor: false,
@@ -150,9 +322,16 @@ impl Screens {
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels, not in its own screen (SPEC 12.3).
+        // panels, not in its own screen (SPEC 12.3); with Surfaces, over
+        // them (SPEC 13.5). The shell's Surfaces are then among the
+        // scene's panels, or drawn over its glass on their own.
         let layers = scene_layers(system, eye);
-        show(&mut self.shell, queue, shell, layout(0), eye, layers.is_none());
+        let shell_surfaces = match &layers {
+            Some(l) => l.has_surfaces().then(|| l.clone()),
+            None => surface_layers(shell, eye),
+        };
+        show(&mut self.shell, queue, shell, layout(0), eye, layers.is_none() && shell_surfaces.is_none());
+        self.shell.set_excluded(shell_surfaces.as_ref().map_or(&[][..], |l| &l.rects));
         // Every screen's phosphor light of this frame, in one submission
         // (none if no screen is in the phosphor style).
         let mut encoder = None;
@@ -172,13 +351,19 @@ impl Screens {
         let shell_rect = self.shell.screen_rect(viewport);
         let mut keep = Vec::new();
         let (no_trails, force, animate) = (self.no_trails, self.force_phosphor, self.animate_page);
-        let fresh_renderer = |shell_r: &Renderer, format, width: u32| {
-            let mut r = Renderer::new(shell_r.shaders(), format, shell_r.glyphs_for(width));
+        let shaders = self.shell.shaders().clone();
+        let glyphs = |width: u32| self.shell.glyphs_for(width);
+        let fresh_renderer = |format, width: u32| {
+            let mut r = Renderer::new(&shaders, format, glyphs(width));
             r.set_no_trails(no_trails);
             r.set_force_phosphor(force);
             r.set_page_animation(animate);
             r
         };
+        let surface_renderer = |width: u32| fresh_renderer(PANEL_FORMAT, width);
+        let mut make =
+            Make { device, queue, shaders: &shaders, pipelines: &mut self.pipelines, renderer: &surface_renderer, eye };
+        update_surfaced(&mut self.shell_surfaced, shell_surfaces, shell, layout(0), shell_rect, self.format, ran.contains(&0), &mut make);
         for (h, p) in system.pictures() {
             let Some(child) = system.child(h) else { continue };
             let Some(machine) = &child.machine else { continue };
@@ -188,28 +373,31 @@ impl Screens {
                 self.children.remove(&child.serial);
             }
             let fresh = !self.children.contains_key(&child.serial);
-            let (format, shell_r) = (self.format, &self.shell);
+            let format = self.format;
             let c = self.children.entry(child.serial).or_insert_with(|| {
                 let width = ((rect.2 / terse_core::COLS as f32).floor() as u32).max(2);
-                let mut r = fresh_renderer(shell_r, format, width);
+                let mut r = fresh_renderer(format, width);
                 r.set_clears(false);
-                Shown { handle: h, renderer: r, panel: None, shown: (0, 0) }
+                Shown { handle: h, renderer: r, panel: None, shown: (0, 0), surfaced: None }
             });
+            let own = surface_layers(machine, eye);
             let r = &mut c.renderer;
             r.set_rect(device, Some(rect));
             r.update(queue, &displayed_terminal(machine));
-            show(r, queue, machine, layout(child.serial), eye, true);
+            show(r, queue, machine, layout(child.serial), eye, own.is_none());
+            r.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
             if fresh || ran.contains(&child.serial) {
                 light(r, viewport);
             }
+            let ran_now = fresh || ran.contains(&child.serial);
+            update_surfaced(&mut c.surfaced, own, machine, layout(child.serial), rect, format, ran_now, &mut make);
             keep.push(child.serial);
         }
         // The panels: each machine drawn into a texture of the size its
         // panel needs, again when it ran a frame.
         if let Some(layers) = &layers {
             let cap = (shell_rect.2 / terse_core::COLS as f32).floor() as u32;
-            let pipeline = self.panel_pipeline.get_or_insert_with(|| PanelPipeline::new(self.shell.shaders(), self.format));
-            for p in &layers.panels {
+            for p in layers.panels.iter().filter(|p| !p.is_surface()) {
                 let Some(child) = system.child(p.handle) else { continue };
                 let Some(machine) = &child.machine else { continue };
                 if self.children.get(&child.serial).is_some_and(|c| c.panel.is_none()) {
@@ -219,34 +407,39 @@ impl Screens {
                 let cw = panel_cell_width(panel_width_px(p, eye, shell_rect), cap, current);
                 let size = (cw * terse_core::COLS as u32, cw * terse_core::COLS as u32 * 3 / 4);
                 let fresh = current.is_none();
-                let shell_r = &self.shell;
+                let pipeline = pipeline_for(make.pipelines, &shaders, self.format);
                 let c = self.children.entry(child.serial).or_insert_with(|| {
-                    let mut r = fresh_renderer(shell_r, PANEL_FORMAT, cw);
+                    let mut r = fresh_renderer(PANEL_FORMAT, cw);
                     r.set_clears(true);
-                    Shown { handle: p.handle, renderer: r, panel: Some((pipeline.texture(device, size), true)), shown: (0, SETTLE) }
+                    Shown { handle: p.handle, renderer: r, panel: Some((pipeline.texture(device, size), true)), shown: (0, SETTLE), surfaced: None }
                 });
                 let resized = current.is_some_and(|w| w != cw);
                 if resized {
                     c.panel = Some((pipeline.texture(device, size), true));
                 }
+                let own = surface_layers(machine, eye);
                 let r = &mut c.renderer;
                 r.set_rect(device, Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
                 r.update(queue, &displayed_terminal(machine));
                 let shown_layout = layout(child.serial);
-                let d = digest(machine, &shown_layout);
-                show(r, queue, machine, shown_layout, eye, true);
+                let d = digest(machine, &shown_layout, eye);
+                show(r, queue, machine, shown_layout.clone(), eye, own.is_none());
+                r.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
                 // Drawn again only when what it shows changed (or glows).
                 if d != c.shown.0 {
                     c.shown = (d, SETTLE);
                 }
-                let changed = c.shown.1 > 0 || r.phosphor();
-                if fresh || resized || (ran.contains(&child.serial) && changed) {
+                let changed = c.shown.1 > 0 || r.phosphor() || c.surfaced.as_ref().is_some_and(|s| s.renderer.phosphor());
+                let redraw = fresh || resized || (ran.contains(&child.serial) && changed);
+                if redraw {
                     c.shown.1 = c.shown.1.saturating_sub(1);
                     light(r, size);
                     if let Some((_, dirty)) = &mut c.panel {
                         *dirty = true;
                     }
                 }
+                let ran_now = fresh || ran.contains(&child.serial);
+                update_surfaced(&mut c.surfaced, own, machine, shown_layout, (0.0, 0.0, size.0 as f32, size.1 as f32), PANEL_FORMAT, ran_now, &mut make);
                 keep.push(child.serial);
             }
         }
@@ -262,6 +455,11 @@ impl Screens {
     /// advancing the afterglow (a screenshot's last picture).
     pub fn refresh_beams(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, viewport: (u32, u32)) {
         self.shell.refresh_beam(device, queue, viewport);
+        let surfaced = self.children.values_mut().filter_map(|c| c.surfaced.as_mut()).chain(self.shell_surfaced.as_mut());
+        for s in surfaced {
+            s.renderer.refresh_beam(device, queue, s.texture.size);
+            s.dirty = true;
+        }
         for c in self.children.values_mut() {
             match &mut c.panel {
                 Some((t, dirty)) => {
@@ -282,51 +480,70 @@ impl Screens {
         target: &wgpu::TextureView,
         viewport: (u32, u32),
     ) {
+        let eye = self.eye;
         self.shell.render(device, queue, encoder, target, viewport);
-        if let (Some(layers), Some(pipeline)) = (&self.scene, &self.panel_pipeline) {
-            // Each panel's machine into its texture, where it changed.
+        let rect = self.shell.screen_rect(viewport);
+        if let Some(s) = &mut self.shell_surfaced {
+            s.prepare(device, queue, encoder);
+        }
+        if let Some(layers) = &self.scene {
+            // Each panel's machine into its texture, where it changed, with
+            // its own Surfaces.
             for c in self.children.values_mut() {
                 if let Some((t, dirty)) = &mut c.panel
                     && *dirty
                 {
                     c.renderer.render(device, queue, encoder, &t.level0, t.size);
-                    pipeline.mipmaps(encoder, t);
+                    if let Some(s) = &mut c.surfaced {
+                        s.prepare(device, queue, encoder);
+                        s.draw(queue, encoder, &t.level0, (0.0, 0.0, t.size.0 as f32, t.size.1 as f32), t.size, eye);
+                    }
+                    if let Some(p) = self.pipelines.iter().find(|(f, _)| *f == self.format) {
+                        p.1.mipmaps(encoder, t);
+                    }
                     *dirty = false;
                 }
             }
-            let rect = self.shell.screen_rect(viewport);
-            let textures: Vec<&PanelTexture> = layers
-                .panels
-                .iter()
-                .filter_map(|p| self.children.values().find(|c| c.handle == p.handle).and_then(|c| c.panel.as_ref()).map(|(t, _)| t))
-                .collect();
-            // Every panel has a texture (made in `update`).
-            let panels: Vec<_> = layers.panels.iter().filter(|p| self.children.values().any(|c| c.handle == p.handle && c.panel.is_some())).copied().collect();
-            pipeline.upload(queue, &panels, eye_point(self.eye), rect, viewport);
-            let lines = self.lines.get_or_insert_with(|| VectorLayer::for_target(self.shell.shaders(), self.format));
+            let shaders = self.shell.shaders().clone();
+            let pipeline = pipeline_for(&mut self.pipelines, &shaders, self.format);
+            // The shell's sources black, then the panels with their
+            // textures: a Screen its machine's, a Surface the shell's 2D
+            // layers.
+            let texture = |p: &terse_core::vector3::Panel| -> Option<&PanelTexture> {
+                if p.is_surface() {
+                    self.shell_surfaced.as_ref().map(|s| &s.texture)
+                } else {
+                    self.children.values().find(|c| c.handle == p.handle).and_then(|c| c.panel.as_ref()).map(|(t, _)| t)
+                }
+            };
+            let drawn: Vec<(Quad, &PanelTexture)> = layers.panels.iter().filter_map(|p| Some((Quad::panel(p), texture(p)?))).collect();
+            let mut quads: Vec<(Quad, &PanelTexture)> = match drawn.first() {
+                Some(&(_, any)) => layers.rects.iter().map(|&r| (Quad::black(r), any)).collect(),
+                None => Vec::new(),
+            };
+            quads.extend(drawn);
+            let (shapes, textures): (Vec<Quad>, Vec<&PanelTexture>) = quads.into_iter().unzip();
+            let scene_quads = self.scene_quads.get_or_insert_with(|| pipeline.quads(device));
+            pipeline.upload(queue, scene_quads, &shapes, eye_point(eye), rect, viewport);
+            let lines = self.lines.get_or_insert_with(|| VectorLayer::for_target(&shaders, self.format));
             lines.upload(queue, &layers.lines);
             if let Some(scissor) = scissor(rect, viewport) {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("panels and lines"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pipeline.draw(&mut pass, &textures, scissor);
+                let mut pass = load_pass(encoder, target, "panels and lines");
+                pipeline.draw(&mut pass, scene_quads, &textures, scissor);
                 lines.draw(queue, &mut pass, viewport, rect);
             }
+        } else if let Some(s) = &mut self.shell_surfaced {
+            s.draw(queue, encoder, target, rect, viewport, eye);
         }
         let mut order: Vec<_> = self.children.values_mut().filter(|c| c.panel.is_none()).collect();
         order.sort_by_key(|c| c.handle);
         for c in order {
             c.renderer.render(device, queue, encoder, target, viewport);
+            if let Some(s) = &mut c.surfaced {
+                s.prepare(device, queue, encoder);
+                let rect = c.renderer.screen_rect(viewport);
+                s.draw(queue, encoder, target, rect, viewport, eye);
+            }
         }
         self.shell.render_overlay(encoder, target, viewport);
     }
@@ -344,7 +561,7 @@ fn scissor(rect: (f32, f32, f32, f32), viewport: (u32, u32)) -> Option<(u32, u32
 
 /// Uploads a machine's vector list and page to its renderer; its 3D list
 /// only with `lines` (the shell's goes over the panels when Screens are in
-/// effect).
+/// effect, any machine's over its Surfaces).
 fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool) {
     r.update_vectors(queue, &VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));

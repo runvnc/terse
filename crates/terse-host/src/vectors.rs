@@ -314,6 +314,12 @@ fn fs_fade() -> @location(0) vec4<f32> {
     return vec4<f32>(EPSILON);
 }
 
+// No light (the parts of the screen a machine's Surfaces show, SPEC 13.5).
+@fragment
+fn fs_zero() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
 // This frame's whole beam (glyphs and shapes, summed, so overdraw counts)
 // deposited into the afterglow (max blend).
 @group(0) @binding(1) var beam: texture_2d<f32>;
@@ -381,6 +387,8 @@ pub struct VectorLayer {
     phosphor_bind_group: wgpu::BindGroup,
     phosphor_params: wgpu::Buffer,
     fade_pipeline: wgpu::RenderPipeline,
+    /// Writes no light (a rectangle a Surface shows).
+    zero_pipeline: wgpu::RenderPipeline,
     beam_deposit_pipeline: wgpu::RenderPipeline,
     beam_layout: wgpu::BindGroupLayout,
     instances: wgpu::Buffer,
@@ -574,6 +582,7 @@ impl VectorLayer {
             })
         };
         let fade_pipeline = full_screen("phosphor fade", &[], "fs_fade", &[target(PHOSPHOR_FORMAT, fade)]);
+        let zero_pipeline = full_screen("phosphor mask", &[], "fs_zero", &[target(PHOSPHOR_FORMAT, wgpu::BlendState::REPLACE)]);
         let beam_deposit_pipeline = full_screen("beam deposit", &[Some(&beam_layout)], "fs_beam_deposit", &both);
         VectorLayer {
             pipeline,
@@ -584,6 +593,7 @@ impl VectorLayer {
             phosphor_bind_group,
             phosphor_params,
             fade_pipeline,
+            zero_pipeline,
             beam_deposit_pipeline,
             beam_layout,
             instances,
@@ -754,6 +764,24 @@ impl VectorLayer {
         }
         self.prev_shapes.clone_from(&self.shapes);
         self.prev_opcodes.clone_from(&self.opcodes);
+    }
+
+    /// Takes all light out of `rects` (x, y, w, h pixels of the phosphor
+    /// textures): the beam and both parts of the afterglow, so nothing of
+    /// what is there is drawn or blooms (SPEC 13.5: the sources of a
+    /// machine's Surfaces are not on its glass).
+    pub fn mask(&self, encoder: &mut wgpu::CommandEncoder, targets: &PhosphorTargets, rects: &[(u32, u32, u32, u32)]) {
+        if rects.is_empty() {
+            return;
+        }
+        for view in [targets.beam, targets.fast, targets.slow] {
+            let mut pass = pass(encoder, "phosphor mask", &[(view, false)]);
+            pass.set_pipeline(&self.zero_pipeline);
+            for &(x, y, w, h) in rects {
+                pass.set_scissor_rect(x, y, w, h);
+                pass.draw(0..3, 0..1);
+            }
+        }
     }
 }
 

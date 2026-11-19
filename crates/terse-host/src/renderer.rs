@@ -413,6 +413,9 @@ pub struct Renderer {
     rect: Option<(f32, f32, f32, f32)>,
     /// The glyph pass clears the target first (the screen drawn first).
     clears: bool,
+    /// The sources of the machine's Surfaces (screen units), which give no
+    /// phosphor light on its glass (SPEC 13.5).
+    excluded: Vec<[u16; 4]>,
     /// 1 × 1 stand-ins for the textures a pass does not read.
     unused: wgpu::Texture,
     unused_phosphor: wgpu::Texture,
@@ -613,6 +616,7 @@ impl Renderer {
             overlay: 0,
             rect: None,
             clears: true,
+            excluded: Vec::new(),
             unused,
             unused_phosphor,
         }
@@ -622,6 +626,15 @@ impl Renderer {
     /// what the target holds).
     pub fn set_clears(&mut self, clears: bool) {
         self.clears = clears;
+    }
+
+    /// The sources of the machine's Surfaces (SPEC 13.5): in the phosphor
+    /// style they give no light (the clean style's glass is blacked out
+    /// there by whoever draws the Surfaces).
+    pub fn set_excluded(&mut self, rects: &[[u16; 4]]) {
+        if self.excluded != rects {
+            self.excluded = rects.to_vec();
+        }
     }
 
     /// The glyph source for cells `width` pixels wide (for another screen).
@@ -854,6 +867,19 @@ impl Renderer {
         if advance {
             self.phosphor_stale = false;
         }
+        // No light where the machine's Surfaces show its screen.
+        let size = t.size;
+        let rects: Vec<(u32, u32, u32, u32)> = self
+            .excluded
+            .iter()
+            .filter_map(|&r| {
+                let (x0, y0, x1, y1) = crate::display::source_pixels((0.0, 0.0, w, h), r);
+                let (x0, y0) = (x0.clamp(0, size.0 as i32) as u32, y0.clamp(0, size.1 as i32) as u32);
+                let (x1, y1) = (x1.clamp(0, size.0 as i32) as u32, y1.clamp(0, size.1 as i32) as u32);
+                (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
+            })
+            .collect();
+        self.vectors.mask(encoder, &targets, &rects);
         // The bloom of all that light, x then y.
         for (target, group) in [(&t.blurred, &t.bloom_groups[0]), (&t.bloom, &t.bloom_groups[1])] {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

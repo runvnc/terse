@@ -186,6 +186,15 @@ fn holo_city() {
     check("holo-city", Some(HOLO), "2 press 5\n", 90, Consent::Deny);
 }
 
+/// The cockpit (SPEC 13.3 Surface): three consoles, each a Surface showing
+/// a region of holo's terminal in perspective, those regions off the glass,
+/// lines in front of and behind them; a row of the list chosen by a click
+/// on its tilted console.
+#[test]
+fn holo_cockpit() {
+    check("holo-cockpit", Some(HOLO), "2 press 6\n60 pointer 447 382 1\n61 pointer 447 382 0\n", 90, Consent::Deny);
+}
+
 /// The shell with four machines tiled (one in the phosphor style), each
 /// scaled into its picture with glyphs for its size.
 #[test]
@@ -288,6 +297,166 @@ fn panels_and_flat_pictures() {
     let mut displays = displays();
     a_faced_panel_is_the_flat_picture(&mut displays);
     a_panel_on_the_glass_is_the_flat_picture(&mut displays);
+    surfaces_of_a_machine(&mut displays);
+    surfaces_in_a_tile(&mut displays);
+    cockpit_gpu_against_software(&mut displays);
+}
+
+/// holo's cockpit as the GPU and the software renderer draw it, clean and
+/// phosphor, at 880 × 660: how far they differ (printed; they draw the
+/// consoles from textures of different origin, so only a loose bound).
+fn cockpit_gpu_against_software(displays: &mut [Box<dyn crate::display::Display>]) {
+    if displays.len() < 2 {
+        return;
+    }
+    let image = Image::parse(HOLO).unwrap();
+    let viewport = (880, 660);
+    for (style, script) in [("clean", "2 press 6\n"), ("phosphor", "2 press 6\n3 press p\n")] {
+        let mut system = terse_core::System::new(&image, false, Vec::new());
+        let mut headless = terse_net::HeadlessSystem::new(None, Script::parse(script).unwrap());
+        for _ in 0..90 {
+            headless.frame(&mut system);
+        }
+        let pictures: Vec<Vec<u8>> = displays
+            .iter_mut()
+            .map(|d| {
+                d.configure(false, false, false);
+                d.update(&system, viewport, &[0], &|_| None, None);
+                d.snapshot(viewport).unwrap()
+            })
+            .collect();
+        let (share, mean) = difference(&pictures[0], &pictures[1]);
+        eprintln!("cockpit, {style}: GPU against software at 880 x 660: {:.3}% of pixels differ by more than 8, mean difference {mean:.3}", share * 100.0);
+        assert!(share < 0.05 && mean < 3.0, "{style}: {:.3}%, mean {mean:.3}", share * 100.0);
+    }
+}
+
+/// A Surface command (SPEC 13.3): the source and the width in units, after
+/// a Translate to (x, y, z) units.
+fn surface_list(at: (i16, i16, i16), r: [u16; 4], width: u16) -> Vec<u8> {
+    let mut v = vec![0x09];
+    for c in [at.0, at.1, at.2] {
+        v.extend((c * 16).to_le_bytes());
+    }
+    v.push(0x0E);
+    r.iter().for_each(|x| v.extend(x.to_le_bytes()));
+    v.extend((width * 16).to_le_bytes());
+    v
+}
+
+/// How far two pictures differ: the share of pixels off by more than 8 in
+/// a channel, and the mean difference.
+fn difference(a: &[u8], b: &[u8]) -> (f64, f64) {
+    let off = a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(p, q)| (0..3).any(|i| p[i].abs_diff(q[i]) > 8)).count();
+    let mean = a.iter().zip(b).map(|(p, q)| p.abs_diff(*q) as f64).sum::<f64>() / a.len() as f64;
+    (off as f64 / (a.len() / 4) as f64, mean)
+}
+
+/// The pixels of `rect` (x0, y0, x1, y1) of a `width`-wide picture, and
+/// those outside it.
+fn split(pixels: &[u8], width: usize, rect: (usize, usize, usize, usize)) -> (Vec<u8>, Vec<u8>) {
+    let (mut inside, mut outside) = (Vec::new(), Vec::new());
+    for (i, p) in pixels.chunks_exact(4).enumerate() {
+        let (x, y) = (i % width, i / width);
+        let to = if x >= rect.0 && x < rect.2 && y >= rect.1 && y < rect.3 { &mut inside } else { &mut outside };
+        to.extend_from_slice(p);
+    }
+    (inside, outside)
+}
+
+/// A single machine's own Surfaces (SPEC 13.5), by both renderers: one
+/// facing the viewer on the glass, as large as the screen and showing all
+/// of it, is the picture without it; one far off the screen still takes
+/// its source off the glass (black) and leaves the rest as it was; and an
+/// idle machine with Surfaces is drawn no more (the software renderer).
+fn surfaces_of_a_machine(displays: &mut [Box<dyn crate::display::Display>]) {
+    let image = Image::parse(HOLO).unwrap();
+    let mut system = terse_core::System::new(&image, false, Vec::new());
+    let mut headless = terse_net::HeadlessSystem::new(None, Script::parse("2 press 1\n3 press a\n").unwrap());
+    for _ in 0..20 {
+        headless.frame(&mut system);
+    }
+    for d in displays.iter_mut() {
+        // At the font's own size, so the glass is drawn with the glyphs a
+        // screen of that size has.
+        let viewport = d.grid_size();
+        let name = d.name();
+        let mut at = |list: Option<&[u8]>| {
+            let v3 = system.shell_mut().vector3_mut().unwrap();
+            match list {
+                Some(l) => assert_eq!(v3.submit(l), 0),
+                None => v3.clear(),
+            }
+            d.configure(false, false, false);
+            d.update(&system, viewport, &[], &|_| None, None);
+            d.snapshot(viewport).unwrap()
+        };
+        let plain = at(None);
+        let whole = at(Some(&surface_list((320, 240, 0), [0, 0, 640, 480], 640)));
+        let (share, mean) = difference(&plain, &whole);
+        eprintln!("{}: the whole screen on a Surface against the plain picture: {:.3}% differ by more than 8, mean {mean:.3}", name, share * 100.0);
+        assert!(share <= MAX_OFF * 4.0 && mean <= MAX_MEAN * 2.0, "{}: {:.3}% differ, mean {mean:.3}", name, share * 100.0);
+        // The top left quarter on a Surface far to the left, off the screen.
+        let off = at(Some(&surface_list((-1500, 240, 0), [0, 0, 320, 240], 100)));
+        let (w, h) = (viewport.0 as usize, viewport.1 as usize);
+        let (inside, outside) = split(&off, w, (0, 0, w / 2, h / 2));
+        assert!(inside.chunks_exact(4).all(|p| p[..3] == [0, 0, 0]), "{}: the source is off the glass", name);
+        let (was_inside, was_outside) = split(&plain, w, (0, 0, w / 2, h / 2));
+        assert!(was_inside.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]), "something was there");
+        assert!(outside == was_outside, "{}: the rest of the glass is as it was", name);
+    }
+    // Idle: nothing drawn again.
+    let Some(looks) = looks() else { return };
+    let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+    let mut soft = crate::soft::SoftScreens::new(Box::new(glyphs), 1);
+    use crate::display::Display;
+    system.shell_mut().vector3_mut().unwrap().submit(&surface_list((320, 300, 100), [0, 0, 320, 240], 300));
+    for _ in 0..2 {
+        soft.update(&system, SIZE, &[0], &|_| None, None);
+        soft.render(SIZE);
+    }
+    soft.update(&system, SIZE, &[0], &|_| None, None);
+    soft.render(SIZE);
+    assert!(soft.damage().is_empty(), "idle: {:?}", soft.damage());
+    soft.set_eye((40.0, 0.0));
+    soft.update(&system, SIZE, &[0], &|_| None, None);
+    soft.render(SIZE);
+    assert!(!soft.damage().is_empty(), "the eye moved");
+}
+
+/// A machine with Surfaces in a tile of the shell (holo's cockpit beside
+/// the reader), by both renderers: its picture is its complete picture,
+/// Surfaces included; a Surface showing its whole screen on its glass is
+/// the tile without it, and its sources are off its glass.
+fn surfaces_in_a_tile(displays: &mut [Box<dyn crate::display::Display>]) {
+    let mut system = system_after("2 press enter\n30 home\n31 press up\n32 press enter\n60 press 6\n", 90);
+    let (h, holo) = system.children().find(|(_, c)| c.title == "holo").map(|(h, c)| (h, c.serial)).expect("holo started");
+    let picture = system.pictures().into_iter().find(|p| p.0 == h).expect("holo in a tile").1;
+    let list = |s: &terse_core::System| s.machine_by_serial(holo).unwrap().1.vector3().unwrap().list().to_vec();
+    assert_eq!(terse_core::vector3::surfaces(&list(&system), (0.0, 0.0)).1.surfaces, 3, "the cockpit");
+    for d in displays.iter_mut() {
+        let cockpit = shown(d.as_mut(), &system);
+        let tile = region(&cockpit, picture);
+        // Something of each console is drawn in the tile: not all black.
+        assert!(tile.chunks_exact(4).filter(|p| p[..3] != [0, 0, 0]).count() > tile.len() / 40, "{}", d.name());
+        let saved = list(&system);
+        let name = d.name();
+        let mut set = |l: Option<&[u8]>| {
+            let m = system.child_mut(h).unwrap().machine.as_mut().unwrap();
+            let v3 = m.vector3_mut().unwrap();
+            match l {
+                Some(l) => assert_eq!(v3.submit(l), 0),
+                None => v3.clear(),
+            }
+            region(&shown(d.as_mut(), &system), picture)
+        };
+        let plain = set(None);
+        let whole = set(Some(&surface_list((320, 240, 0), [0, 0, 640, 480], 640)));
+        let (share, mean) = difference(&plain, &whole);
+        eprintln!("{}: in a tile, the whole screen on a Surface against the plain tile: {:.3}% differ by more than 8, mean {mean:.3}", name, share * 100.0);
+        assert!(share <= MAX_OFF * 4.0 && mean <= MAX_MEAN * 2.0, "{}: {:.3}% differ, mean {mean:.3}", name, share * 100.0);
+        set(Some(&saved));
+    }
 }
 
 fn a_faced_panel_is_the_flat_picture(displays: &mut [Box<dyn crate::display::Display>]) {

@@ -156,26 +156,89 @@ impl VectorScene<'_> {
     }
 }
 
-/// The shell's 3D scene as the host draws it (SPEC 12.3) when Screens are
-/// in effect: the panels, far to near (not the machine a finished view
-/// shows flat), and the shell's 3D segments, cut by its faces and the
-/// panels, which are drawn over the panels. `None`: no Screen is in
-/// effect, and the shell's screen is drawn as a single machine's, its 3D
-/// list in its vector layer.
+/// A machine's 3D scene as the host draws it over its glass (SPEC 12.3,
+/// 13.5): the shell's when Screens are in effect, or any machine's when
+/// Surfaces are. The panels, far to near (Screens, not the machine a
+/// finished view shows flat, and the machine's own Surfaces, handle 0),
+/// the 3D segments, cut by the faces and the panels, which are drawn over
+/// the panels, and the source rectangles of the Surfaces (screen units),
+/// which are left off the glass. `None`: neither is in effect, and the
+/// screen is drawn as a single machine's, its 3D list in its vector layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneLayers {
     pub panels: Vec<Panel>,
     pub lines: Vec<Primitive>,
+    pub rects: Vec<[u16; 4]>,
 }
 
-/// The scene of `system` seen from `eye`.
+impl SceneLayers {
+    /// Whether any panel is one of the machine's own Surfaces.
+    pub fn has_surfaces(&self) -> bool {
+        !self.rects.is_empty()
+    }
+}
+
+/// The scene of `system`'s shell seen from `eye` when Screens are in
+/// effect (its own Surfaces among the panels).
 pub fn scene_layers(system: &System, eye: Eye) -> Option<SceneLayers> {
     let scene = system.scene(eye)?;
     let list = system.shell().vector3()?.list();
     let (mut lines, mut panels) = (Vec::new(), Vec::new());
-    terse_core::vector3::project_scene(list, eye, &scene.view, &mut lines, &mut Vec::new(), &mut panels);
-    panels.retain(|p| p.handle != scene.faced);
-    Some(SceneLayers { panels, lines })
+    let p = terse_core::vector3::project_scene(list, eye, &scene.view, &mut lines, &mut Vec::new(), &mut panels);
+    panels.retain(|p| scene.faced == 0 || p.handle != scene.faced);
+    Some(SceneLayers { panels, lines, rects: p.surface_rects().to_vec() })
+}
+
+/// A machine's own scene seen from `eye` when its 3D list has Surfaces in
+/// effect (SPEC 13.5): its Surfaces, its 3D segments and the rectangles
+/// left off its glass.
+pub fn surface_layers(machine: &terse_core::Machine, eye: Eye) -> Option<SceneLayers> {
+    let list = machine.vector3()?.list();
+    if !terse_core::vector3::has_surface(list) {
+        return None;
+    }
+    let (mut lines, mut panels) = (Vec::new(), Vec::new());
+    let scene = terse_core::vector3::SceneView::LISTED;
+    let p = terse_core::vector3::project_scene(list, eye, &scene, &mut lines, &mut Vec::new(), &mut panels);
+    (p.surfaces > 0).then(|| SceneLayers { panels, lines, rects: p.surface_rects().to_vec() })
+}
+
+/// Where the pixels of a screen drawn into `rect` show the source
+/// rectangle `r` (screen units): x0, y0, x1, y1 (pixels whose centres lie
+/// in it are x0..x1, y0..y1).
+pub fn source_pixels(rect: (f32, f32, f32, f32), r: [u16; 4]) -> (i32, i32, i32, i32) {
+    let s = rect.2 as f64 / SCREEN_WIDTH as f64;
+    let at = |o: f32, u: u16| (o as f64 + u as f64 * s - 0.5).ceil() as i32;
+    (at(rect.0, r[0]), at(rect.1, r[1]), at(rect.0, r[0] + r[2]), at(rect.1, r[1] + r[3]))
+}
+
+/// The size (pixels) a machine's whole screen is drawn at for its own
+/// Surfaces, its glass drawn into `rect`: the glass's own size, so that a
+/// Surface showing its source as large as the glass does shows the same
+/// pixels, unless a Surface magnifies its source: then as large as the one
+/// that magnifies most needs (in whole cells), at most twice the glass;
+/// `current` is kept while it is large enough and not half as large again
+/// as needed.
+pub fn surface_size(panels: &[Panel], eye: Eye, rect: (f32, f32, f32, f32), current: Option<(u32, u32)>) -> (u32, u32) {
+    let need = panels
+        .iter()
+        .filter(|p| p.is_surface())
+        .map(|p| panel_width_px(p, eye, rect) * SCREEN_WIDTH as f64 / p.source[2].max(1) as f64)
+        .fold(0.0, f64::max);
+    let glass = ((rect.2.round() as u32).max(1), (rect.3.round() as u32).max(1));
+    if need <= glass.0 as f64 {
+        return glass;
+    }
+    if let Some(c) = current
+        && c.0 as f64 >= need
+        && (c.0 as f64) < need * 1.5
+        && c.0 > glass.0
+    {
+        return c;
+    }
+    let cols = terse_core::COLS as u32;
+    let w = ((need / cols as f64).ceil() as u32 * cols).min(2 * glass.0).max(glass.0);
+    (w, w * 3 / 4)
 }
 
 /// The eye at (ex, ey) in screen units, as `project` places it.
@@ -194,8 +257,9 @@ pub fn to_pixels(p: [f64; 3], eye: (f64, f64), rect: (f32, f32, f32, f32)) -> (f
 }
 
 /// How wide (pixels) a panel looks on a screen drawn into `rect`: the
-/// longer of its top and bottom edges, or 4/3 of the longer of its sides,
-/// on the glass (points behind the near plane taken at it).
+/// longer of its top and bottom edges, or the longer of its sides times
+/// its source's shape (4/3 for a Screen), on the glass (points behind the
+/// near plane taken at it).
 pub fn panel_width_px(p: &Panel, eye: Eye, rect: (f32, f32, f32, f32)) -> f64 {
     let eye = eye_point(eye);
     let g = p.corners.map(|c| {
@@ -204,7 +268,8 @@ pub fn panel_width_px(p: &Panel, eye: Eye, rect: (f32, f32, f32, f32)) -> f64 {
         (x, y)
     });
     let len = |a: (f64, f64), b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
-    len(g[0], g[1]).max(len(g[3], g[2])).max(len(g[0], g[3]).max(len(g[1], g[2])) * 4.0 / 3.0)
+    let shape = p.source[2] as f64 / p.source[3].max(1) as f64;
+    len(g[0], g[1]).max(len(g[3], g[2])).max(len(g[0], g[3]).max(len(g[1], g[2])) * shape)
 }
 
 /// The glyph cell width (pixels) a panel's machine is drawn with (its

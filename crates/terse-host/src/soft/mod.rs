@@ -14,6 +14,13 @@
 //! costs almost nothing per frame and a presenter can copy only what
 //! changed.
 //!
+//! A machine with a 3D scene over its glass (the shell's Screens, any
+//! machine's own Surfaces, SPEC 12.3, 13.5) is put together in an image of
+//! its own when anything of it changed: its screen's image with the
+//! Surfaces' sources blacked out, the panels far to near (a Surface from a
+//! pyramid of that same image, before the sources were blacked out), its
+//! 3D lines over them.
+//!
 //! Pixels are XRGB8888 (`0x00RRGGBB` words), the format of softbuffer and of
 //! DRM dumb buffers, so presenting is a copy.
 
@@ -37,7 +44,7 @@ use self::screen::SoftScreen;
 use self::shapes::{Geom, Mode, Shape, visit};
 use crate::display::{
     Display, Eye, GlyphSource, SceneLayers, ShownPrompt, VectorScene, cell_width_for, eye_point, panel_cell_width, panel_width_px,
-    picture_rect, scene_layers, system_rect,
+    picture_rect, scene_layers, source_pixels, surface_layers, system_rect,
 };
 use crate::page::HostLayout;
 use crate::{consent, displayed_terminal};
@@ -59,21 +66,91 @@ struct PanelImage {
     pyramid: Option<Pyramid>,
 }
 
-/// The shell's 3D scene put together (SPEC 12.3): the shell's image, the
-/// panels over it, the shell's 3D lines over them.
+/// A machine's 3D scene put together over its glass (SPEC 12.3, 13.5): its
+/// screen's image, the panels over it, its 3D lines over them.
 struct SceneImage {
     layers: SceneLayers,
     image: Pixels,
+    /// The pyramid of the screen's image its Surfaces show (if it has any).
+    own: Option<Pyramid>,
     /// Whatever it was made from changed.
     stale: bool,
 }
 
+impl SceneImage {
+    fn new(layers: SceneLayers) -> Self {
+        SceneImage { layers, image: Pixels::default(), own: None, stale: true }
+    }
+
+    /// Takes the scene as it is now (none: the slot is emptied); true if it
+    /// was there and went.
+    fn update(slot: &mut Option<SceneImage>, layers: Option<SceneLayers>) -> bool {
+        match (layers, slot.as_mut()) {
+            (None, s) => s.is_some() && slot.take().is_some(),
+            (Some(layers), Some(scene)) => {
+                if scene.layers != layers {
+                    scene.layers = layers;
+                    scene.stale = true;
+                }
+                false
+            }
+            (Some(layers), None) => {
+                *slot = Some(SceneImage::new(layers));
+                false
+            }
+        }
+    }
+
+    /// Puts it together again if `base` changed (`damaged`) or anything
+    /// else did: the pyramid its Surfaces show, then the image. Returns
+    /// whether it did.
+    #[allow(clippy::too_many_arguments)]
+    fn refresh(
+        &mut self,
+        base: &Pixels,
+        damaged: bool,
+        pyramids: &HashMap<u8, &Pyramid>,
+        rect: (f32, f32, f32, f32),
+        eye: Eye,
+        mode: PanelMode,
+        pool: &Pool,
+    ) -> bool {
+        if !(self.stale || damaged || self.image.area != base.area) {
+            return false;
+        }
+        self.stale = false;
+        let own = self.layers.has_surfaces();
+        if own && (damaged || self.own.is_none() || self.image.area != base.area) {
+            self.own = Some(Pyramid::build(base));
+        } else if !own {
+            self.own = None;
+        }
+        compose(self, base, pyramids, rect, eye, mode, pool);
+        true
+    }
+}
+
+/// A machine the shell started, as shown: its handle and screen, its
+/// pyramid if it is shown as a panel, its own scene if it has Surfaces.
+struct Child {
+    handle: u8,
+    screen: SoftScreen,
+    panel: Option<PanelImage>,
+    scene: Option<SceneImage>,
+}
+
+impl Child {
+    /// The image that shows it: its scene's, or its screen's.
+    fn image(&self) -> &Pixels {
+        self.scene.as_ref().map_or(&self.screen.image, |s| &s.image)
+    }
+}
+
 pub struct SoftScreens {
     pub shell: SoftScreen,
-    /// The children shown, by serial: handle, screen, and for a panel its
-    /// image's pyramid.
-    children: HashMap<u32, (u8, SoftScreen, Option<PanelImage>)>,
-    /// The shell's 3D scene, when Screens are in effect.
+    /// The children shown, by serial.
+    children: HashMap<u32, Child>,
+    /// The shell's 3D scene, when Screens or its own Surfaces are in effect.
     scene: Option<SceneImage>,
     /// How panels are drawn (`--panels`).
     panel_mode: PanelMode,
@@ -122,7 +199,7 @@ impl SoftScreens {
     pub fn set_panel_mode(&mut self, mode: PanelMode) {
         if mode != self.panel_mode {
             self.panel_mode = mode;
-            if let Some(s) = &mut self.scene {
+            for s in self.scene.iter_mut().chain(self.children.values_mut().filter_map(|c| c.scene.as_mut())) {
                 s.stale = true;
             }
         }
@@ -158,51 +235,66 @@ impl SoftScreens {
             self.damage.add_all();
             self.composed = (Vec::new(), IRect::EMPTY);
         }
-        let pool = &self.pool;
+        let (pool, eye, mode) = (&self.pool, self.eye, self.panel_mode);
+        let none = HashMap::new();
         self.shell.render(viewport, pool);
         let mut shell_damage = Damage::new(viewport);
         self.shell.take_damage(&mut shell_damage);
-        // Panels: each machine in its own image; a new pyramid when it
-        // changed.
+        // Panels: each machine in its own image (with its own scene); a
+        // new pyramid when it changed.
         let mut panels_changed = false;
-        for (_, s, panel) in self.children.values_mut() {
-            let Some(panel) = panel else { continue };
+        for c in self.children.values_mut() {
+            let Some(panel) = &mut c.panel else { continue };
+            let s = &mut c.screen;
             let size = s.area();
             let own = (size.width() as u32, size.height() as u32);
             s.render(own, pool);
             let mut d = Damage::new(own);
             s.take_damage(&mut d);
-            if !d.is_empty() || panel.pyramid.is_none() {
-                panel.pyramid = Some(Pyramid::build(&s.image));
+            let mut changed = !d.is_empty();
+            if let Some(scene) = &mut c.scene {
+                changed = scene.refresh(&s.image, changed, &none, s.screen_rect(own), eye, mode, pool);
+            }
+            if changed || panel.pyramid.is_none() {
+                let image = c.scene.as_ref().map_or(&s.image, |sc| &sc.image);
+                panel.pyramid = Some(Pyramid::build(image));
                 panels_changed = true;
             }
         }
-        // The scene: the shell's image, the panels and the lines, again
+        // The shell's scene: its image, the panels and the lines, again
         // where anything of them changed.
         match &mut self.scene {
             None => self.damage.merge(&shell_damage),
             Some(scene) => {
-                if scene.stale || panels_changed || !shell_damage.is_empty() || scene.image.area != self.shell.image.area {
-                    scene.stale = false;
-                    let rect = self.shell.screen_rect(viewport);
-                    let pyramids: HashMap<u8, &Pyramid> = self
-                        .children
-                        .values()
-                        .filter_map(|(h, _, p)| Some((*h, p.as_ref()?.pyramid.as_ref()?)))
-                        .collect();
-                    compose(scene, &self.shell.image, &pyramids, rect, self.eye, self.panel_mode, pool);
+                let rect = self.shell.screen_rect(viewport);
+                let pyramids: HashMap<u8, &Pyramid> =
+                    self.children.values().filter_map(|c| Some((c.handle, c.panel.as_ref()?.pyramid.as_ref()?))).collect();
+                if panels_changed {
+                    scene.stale = true;
+                }
+                if scene.refresh(&self.shell.image, !shell_damage.is_empty(), &pyramids, rect, eye, mode, pool) {
                     self.damage.add(scene.image.area);
                 }
             }
         }
-        let mut order: Vec<&mut (u8, SoftScreen, Option<PanelImage>)> = self.children.values_mut().filter(|c| c.2.is_none()).collect();
-        order.sort_by_key(|(h, ..)| *h);
-        for (_, s, _) in order.iter_mut() {
+        let mut order: Vec<&mut Child> = self.children.values_mut().filter(|c| c.panel.is_none()).collect();
+        order.sort_by_key(|c| c.handle);
+        for c in order.iter_mut() {
+            let s = &mut c.screen;
             s.render(viewport, pool);
-            s.take_damage(&mut self.damage);
+            match &mut c.scene {
+                None => s.take_damage(&mut self.damage),
+                Some(scene) => {
+                    let mut d = Damage::new(viewport);
+                    s.take_damage(&mut d);
+                    if scene.refresh(&s.image, !d.is_empty(), &none, s.screen_rect(viewport), eye, mode, pool) {
+                        self.damage.add(scene.image.area);
+                    }
+                }
+            }
         }
         // Pictures that came, went or moved, and the overlay.
-        let areas: Vec<IRect> = order.iter().map(|(_, s, _)| s.area()).collect();
+        let areas: Vec<IRect> = order.iter().map(|c| c.screen.area()).collect();
         let overlay = self.shell.overlay_rect(viewport);
         if (&areas, overlay) != (&self.composed.0, self.composed.1) {
             for r in areas.iter().chain(&self.composed.0) {
@@ -218,7 +310,7 @@ impl SoftScreens {
         }
         // Put the frame together, a tile row per thread.
         let bottom = self.scene.as_ref().map_or(&self.shell.image, |s| &s.image);
-        let screens: Vec<&Pixels> = std::iter::once(bottom).chain(order.iter().map(|(_, s, _)| &s.image)).collect();
+        let screens: Vec<&Pixels> = std::iter::once(bottom).chain(order.iter().map(|c| c.image())).collect();
         let shell = &self.shell.image;
         let rows = self.damage.rows();
         let stride = self.frame.stride();
@@ -295,9 +387,11 @@ impl Display for SoftScreens {
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels, not in its own screen (SPEC 12.3).
-        let layers = scene_layers(system, eye);
+        // panels, not in its own screen (SPEC 12.3); with its own
+        // Surfaces, over them (SPEC 13.5).
+        let layers = scene_layers(system, eye).or_else(|| surface_layers(shell, eye));
         show(&mut self.shell, shell, layout(0), eye, layers.is_none());
+        self.shell.set_excluded(layers.as_ref().map_or(&[][..], |l| &l.rects));
         self.shell.place(viewport);
         if ran.contains(&0) {
             self.shell.accumulate(viewport, true, &self.pool);
@@ -319,58 +413,71 @@ impl Display for SoftScreens {
             let rect = picture_rect(shell_rect, p);
             let fresh = !self.children.contains_key(&child.serial);
             let shell_s = &self.shell;
-            let (_, s, panel) = self.children.entry(child.serial).or_insert_with(|| (h, fresh_screen(shell_s, cell_width_for(rect)), None));
-            *panel = None;
+            let c = self.children.entry(child.serial).or_insert_with(|| Child {
+                handle: h,
+                screen: fresh_screen(shell_s, cell_width_for(rect)),
+                panel: None,
+                scene: None,
+            });
+            c.panel = None;
+            let own = surface_layers(machine, eye);
+            let s = &mut c.screen;
             s.set_rect(Some(rect));
             s.update(&displayed_terminal(machine));
-            show(s, machine, layout(child.serial), eye, true);
+            show(s, machine, layout(child.serial), eye, own.is_none());
+            s.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
             s.place(viewport);
             if fresh || ran.contains(&child.serial) {
                 s.accumulate(viewport, true, &self.pool);
+            }
+            if SceneImage::update(&mut c.scene, own) {
+                self.damage.add(c.screen.area());
             }
             keep.push(child.serial);
         }
         // The panels: each machine drawn at a size its panel needs.
         if let Some(layers) = &layers {
             let cap = (shell_rect.2 / terse_core::COLS as f32).floor() as u32;
-            for p in &layers.panels {
+            for p in layers.panels.iter().filter(|p| !p.is_surface()) {
                 let Some(child) = system.child(p.handle) else { continue };
                 let Some(machine) = &child.machine else { continue };
                 let fresh = !self.children.contains_key(&child.serial);
-                let current = self.children.get(&child.serial).filter(|c| c.2.is_some()).map(|c| c.1.screen_rect((0, 0)).2 as u32 / terse_core::COLS as u32);
+                let current = self.children.get(&child.serial).filter(|c| c.panel.is_some()).map(|c| c.screen.screen_rect((0, 0)).2 as u32 / terse_core::COLS as u32);
                 let cw = panel_cell_width(panel_width_px(p, eye, shell_rect), cap, current);
                 let size = (cw * terse_core::COLS as u32, cw * terse_core::COLS as u32 * 3 / 4);
                 let shell_s = &self.shell;
-                let (_, s, panel) = self.children.entry(child.serial).or_insert_with(|| (p.handle, fresh_screen(shell_s, cw), None));
-                let resized = panel.is_none() || current != Some(cw);
-                if panel.is_none() {
-                    *panel = Some(PanelImage { pyramid: None });
+                let c = self.children.entry(child.serial).or_insert_with(|| Child {
+                    handle: p.handle,
+                    screen: fresh_screen(shell_s, cw),
+                    panel: None,
+                    scene: None,
+                });
+                let resized = c.panel.is_none() || current != Some(cw);
+                if c.panel.is_none() {
+                    c.panel = Some(PanelImage { pyramid: None });
                 }
+                let own = surface_layers(machine, eye);
+                let s = &mut c.screen;
                 s.set_rect(Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
                 s.update(&displayed_terminal(machine));
-                show(s, machine, layout(child.serial), eye, true);
+                show(s, machine, layout(child.serial), eye, own.is_none());
+                s.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
                 s.place(size);
                 if fresh || resized || ran.contains(&child.serial) {
                     s.accumulate(size, true, &self.pool);
+                }
+                if SceneImage::update(&mut c.scene, own)
+                    && let Some(panel) = &mut c.panel
+                {
+                    panel.pyramid = None;
                 }
                 keep.push(child.serial);
             }
         }
         self.children.retain(|serial, _| keep.contains(serial));
         // The scene is drawn again when what it shows changed.
-        match (layers, &mut self.scene) {
-            (None, _) => {
-                if self.scene.take().is_some() {
-                    self.damage.add(self.shell.area());
-                }
-            }
-            (Some(layers), Some(scene)) => {
-                if scene.layers != layers {
-                    scene.layers = layers;
-                    scene.stale = true;
-                }
-            }
-            (Some(layers), None) => self.scene = Some(SceneImage { layers, image: Pixels::default(), stale: true }),
+        if SceneImage::update(&mut self.scene, layers) {
+            self.damage.add(self.shell.area());
         }
     }
 
@@ -387,12 +494,12 @@ impl Display for SoftScreens {
     fn refresh_beams(&mut self, viewport: (u32, u32)) {
         self.shell.accumulate(viewport, false, &self.pool);
         let pool = &self.pool;
-        let mut order: Vec<&mut (u8, SoftScreen, Option<PanelImage>)> = self.children.values_mut().collect();
-        order.sort_by_key(|(h, ..)| *h);
-        for (_, s, panel) in order {
-            let own = s.area();
-            let size = if panel.is_some() { (own.width() as u32, own.height() as u32) } else { viewport };
-            s.accumulate(size, false, pool);
+        let mut order: Vec<&mut Child> = self.children.values_mut().collect();
+        order.sort_by_key(|c| c.handle);
+        for c in order {
+            let own = c.screen.area();
+            let size = if c.panel.is_some() { (own.width() as u32, own.height() as u32) } else { viewport };
+            c.screen.accumulate(size, false, pool);
         }
     }
 
@@ -405,7 +512,7 @@ impl Display for SoftScreens {
     }
 
     fn anchor(&self, serial: u32, x: u16, y: u16) -> u16 {
-        let s = if serial == 0 { Some(&self.shell) } else { self.children.get(&serial).map(|(_, s, _)| s) };
+        let s = if serial == 0 { Some(&self.shell) } else { self.children.get(&serial).map(|c| &c.screen) };
         s.map_or(0, |s| s.page_anchor_at_units(x as f32 + 0.5, y as f32 + 0.5))
     }
 
@@ -439,31 +546,59 @@ impl Display for SoftScreens {
     }
 }
 
-/// Puts the shell's scene together into `scene.image`: the shell's image,
-/// the panels far to near (in perspective, or flat), the shell's 3D lines
-/// over them, a tile row per thread.
+/// Puts a machine's scene together into `scene.image`: the screen's image
+/// `base` (drawn into `rect`) with its Surfaces' sources black, the panels
+/// far to near (in perspective, or flat; a Surface from `scene.own`, the
+/// others from `pyramids` by handle), the 3D lines over them, a tile row
+/// per thread.
 fn compose(
     scene: &mut SceneImage,
-    shell: &Pixels,
+    base: &Pixels,
     pyramids: &HashMap<u8, &Pyramid>,
     rect: (f32, f32, f32, f32),
     eye: Eye,
     mode: PanelMode,
     pool: &Pool,
 ) {
-    if scene.image.area != shell.area {
-        scene.image = Pixels::new(shell.area);
+    let SceneImage { layers, image, own, .. } = scene;
+    if image.area != base.area {
+        *image = Pixels::new(base.area);
     }
-    scene.image.data.copy_from_slice(&shell.data);
-    let e = eye_point(eye);
-    let placed: Vec<(Placed, Option<&Pyramid>)> =
-        scene.layers.panels.iter().map(|p| (Placed::new(p, e, rect), pyramids.get(&p.handle).copied())).collect();
-    let geom = Geom::for_rect(rect);
-    let shapes: Vec<Shape> = scene.layers.lines.iter().map(|p| Shape::new(p, 0)).collect();
-    let area = scene.image.area;
-    let clip_all = IRect::covering(rect).intersect(&area);
+    image.data.copy_from_slice(&base.data);
+    let area = image.area;
     let stride = area.width();
-    let bands = tile_rows(&mut scene.image.data, stride, area);
+    // The sources are not drawn on the glass.
+    for &r in &layers.rects {
+        let (x0, y0, x1, y1) = source_pixels(rect, r);
+        let b = IRect::new(x0, y0, x1, y1).intersect(&area);
+        for y in b.y0..b.y1 {
+            let row = (y - area.y0) as usize * stride;
+            image.data[row + (b.x0 - area.x0) as usize..row + (b.x1 - area.x0) as usize].fill(0);
+        }
+    }
+    let e = eye_point(eye);
+    // A Surface's source, as a part of the screen's image.
+    let s = rect.2 / terse_core::SCREEN_WIDTH as f32;
+    let (aw, ah) = (area.width().max(1) as f32, area.height().max(1) as f32);
+    let window = |r: [u16; 4]| {
+        let [x, y, w, h] = r.map(|v| v as f32);
+        [(rect.0 + x * s - area.x0 as f32) / aw, (rect.1 + y * s - area.y0 as f32) / ah, w * s / aw, h * s / ah]
+    };
+    let placed: Vec<(Placed, Option<&Pyramid>)> = layers
+        .panels
+        .iter()
+        .map(|p| {
+            if p.is_surface() {
+                (Placed::new(p, e, rect).with_window(window(p.source)), own.as_ref())
+            } else {
+                (Placed::new(p, e, rect), pyramids.get(&p.handle).copied())
+            }
+        })
+        .collect();
+    let geom = Geom::for_rect(rect);
+    let shapes: Vec<Shape> = layers.lines.iter().map(|p| Shape::new(p, 0)).collect();
+    let clip_all = IRect::covering(rect).intersect(&area);
+    let bands = tile_rows(&mut image.data, stride, area);
     pool.each(bands, |(y0, band)| {
         let rows = (band.len() / stride.max(1)) as i32;
         let clip = clip_all.intersect(&IRect::new(area.x0, y0, area.x1, y0 + rows));
@@ -486,7 +621,7 @@ fn compose(
 }
 
 /// A machine's vector list and page to its screen; its 3D list only with
-/// `lines` (the shell's goes over the panels when Screens are in effect).
+/// `lines` (drawn over the panels when Screens or Surfaces are in effect).
 fn show(s: &mut SoftScreen, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool) {
     s.update_vectors(&VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));

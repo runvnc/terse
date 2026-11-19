@@ -194,6 +194,11 @@ impl System {
         self.children.get(h.wrapping_sub(1) as usize)?.as_ref()
     }
 
+    /// The machine with handle `h` (1-8), to change (tests and tools).
+    pub fn child_mut(&mut self, h: u8) -> Option<&mut Child> {
+        self.children.get_mut(h.wrapping_sub(1) as usize)?.as_mut()
+    }
+
     /// The children, with their handles, in increasing handle order.
     pub fn children(&self) -> impl Iterator<Item = (u8, &Child)> {
         self.children.iter().enumerate().filter_map(|(i, c)| Some((i as u8 + 1, c.as_ref()?)))

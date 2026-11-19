@@ -214,6 +214,9 @@ pub struct SoftScreen {
     /// The overlay drawn last over the phosphor picture.
     tube_overlay: u32,
     bloom: BloomRes,
+    /// The sources of the machine's Surfaces (screen units), which give no
+    /// phosphor light (SPEC 13.5).
+    excluded: Vec<[u16; 4]>,
 }
 
 impl SoftScreen {
@@ -253,6 +256,16 @@ impl SoftScreen {
             tube: None,
             tube_overlay: 0,
             bloom: BloomRes::Auto,
+            excluded: Vec::new(),
+        }
+    }
+
+    /// The sources of the machine's Surfaces (SPEC 13.5): in the phosphor
+    /// style they give no light (the clean style's glass is blacked out
+    /// there when the Surfaces are put together over it).
+    pub fn set_excluded(&mut self, rects: &[[u16; 4]]) {
+        if self.excluded != rects {
+            self.excluded = rects.to_vec();
         }
     }
 
@@ -530,7 +543,18 @@ impl SoftScreen {
             smears = deposits.iter().map(|d| Smear { shape: Shape::new(&d.shape, v.dwell[d.index]), fast: d.fast, slow: d.slow }).collect();
         }
         let mut tube = self.tube.take().expect("made above");
+        let excluded: Vec<(usize, usize, usize, usize)> = self
+            .excluded
+            .iter()
+            .filter_map(|&r| {
+                let (x0, y0, x1, y1) = crate::display::source_pixels((0.0, 0.0, rect.2, rect.3), r);
+                let c = |v: i32, n: usize| v.clamp(0, n as i32) as usize;
+                let (x0, y0, x1, y1) = (c(x0, size.0), c(y0, size.1), c(x1, size.0), c(y1, size.1));
+                (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+            })
+            .collect();
         let light = Light {
+            excluded: &excluded,
             grid: self.grid(true),
             page: &self.page.quads,
             shapes: &self.vectors.prepared,

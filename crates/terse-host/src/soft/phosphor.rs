@@ -175,6 +175,9 @@ pub struct Light<'a> {
     pub clear: bool,
     /// Advance the afterglow (else only the beam is redrawn).
     pub advance: bool,
+    /// Rectangles (x0, y0, x1, y1 pixels of the tube) that give no light:
+    /// the sources of the machine's Surfaces (SPEC 13.5).
+    pub excluded: &'a [(usize, usize, usize, usize)],
 }
 
 /// One screen's tube: the light textures of the GPU renderer as floats,
@@ -470,6 +473,15 @@ impl Tube {
                             let (s0, s1) = (j * stride + c0 * 3, j * stride + c1 * 3);
                             light.clear();
                             light.extend(b.beam[s0..s1].iter().zip(&b.fast[s0..s1]).zip(&b.slow[s0..s1]).map(|((bm, f), s)| bm + f + s));
+                            // What the machine's Surfaces show does not
+                            // bloom onto its glass.
+                            let y = b.y0 + j;
+                            for &(x0, y0, x1, y1) in l.excluded {
+                                let (a, z) = (x0.max(c0), x1.min(c1));
+                                if y >= y0 && y < y1 && a < z {
+                                    light[(a - c0) * 3..(z - c0) * 3].fill(0.0);
+                                }
+                            }
                             for (acc, c) in rowsum.chunks_exact_mut(3).zip(light.chunks_exact(3)) {
                                 let white = (c[0].max(c[1]).max(c[2]) - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
                                 acc[0] += c[0] + white;

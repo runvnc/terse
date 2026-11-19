@@ -25,7 +25,7 @@ const SHADER: &str = r#"
 struct V {
     @location(0) pos: vec4<f32>,
     @location(1) uv: vec2<f32>,
-    @location(2) flags: vec2<f32>,  // x: 1 seen from behind; y: 1 the target is not sRGB
+    @location(2) flags: vec2<f32>,  // x: 1 seen from behind, 2 black; y: 1 the target is not sRGB
 }
 
 struct Out {
@@ -62,7 +62,9 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
 fn fs(o: Out) -> @location(0) vec4<f32> {
     // Sampled in uniform control flow (the derivatives choose the level).
     var c = textureSample(tex, samp, o.uv).rgb;
-    if o.flags.x > 0.5 {
+    if o.flags.x > 1.5 {
+        c = vec3<f32>(0.0);
+    } else if o.flags.x > 0.5 {
         c = to_linear(BACK);
     }
     if o.flags.y > 0.5 {
@@ -100,8 +102,52 @@ pub struct PanelPipeline {
     sampler: wgpu::Sampler,
     /// Linear, one level: what each mip level is made from.
     half_sampler: wgpu::Sampler,
-    vertices: wgpu::Buffer,
     target_srgb: bool,
+}
+
+/// Most quads one set draws: the shell's panels and Surfaces, and the
+/// rectangles left off its glass.
+pub const MAX_QUADS: usize = terse_core::machines::MAX_MACHINES + 2 * terse_core::vector3::MAX_SURFACES;
+
+/// The quads of one scene (a vertex buffer of its own, so that several
+/// scenes can be drawn in one submission).
+pub struct PanelQuads {
+    vertices: wgpu::Buffer,
+    count: usize,
+}
+
+/// What a quad shows: its texture through the window (u0, v0, u1, v1) of
+/// it, the dark plate of a panel seen from behind, or black (a rectangle
+/// left off the glass).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum QuadFill {
+    Texture([f32; 4]),
+    Back,
+    Black,
+}
+
+/// One quad: its corners (screen units; top left, top right, bottom
+/// right, bottom left) and what it shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Quad {
+    pub corners: [[f64; 3]; 4],
+    pub fill: QuadFill,
+}
+
+impl Quad {
+    /// A panel: a Screen shows its machine's whole texture, a Surface its
+    /// source's part of a texture of the whole screen.
+    pub fn panel(p: &Panel) -> Quad {
+        let [x, y, w, h] = p.source.map(|v| v as f32);
+        let fill = if p.front { QuadFill::Texture([x / 640.0, y / 480.0, (x + w) / 640.0, (y + h) / 480.0]) } else { QuadFill::Back };
+        Quad { corners: p.corners, fill }
+    }
+
+    /// The source rectangle `r` (screen units) on the glass, black.
+    pub fn black(r: [u16; 4]) -> Quad {
+        let [x, y, w, h] = r.map(|v| v as f64);
+        Quad { corners: [[x, y, 0.0], [x + w, y, 0.0], [x + w, y + h, 0.0], [x, y + h, 0.0]], fill: QuadFill::Black }
+    }
 }
 
 /// One panel's texture: its size, the view the quad samples, and for each
@@ -209,13 +255,18 @@ impl PanelPipeline {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        PanelPipeline { quad, half, layout, sampler, half_sampler, target_srgb: target.is_srgb() }
+    }
+
+    /// A vertex buffer for one scene's quads.
+    pub fn quads(&self, device: &wgpu::Device) -> PanelQuads {
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("panel corners"),
-            size: (terse_core::machines::MAX_MACHINES * CORNERS * VERTEX_BYTES) as u64,
+            size: (MAX_QUADS * CORNERS * VERTEX_BYTES) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        PanelPipeline { quad, half, layout, sampler, half_sampler, vertices, target_srgb: target.is_srgb() }
+        PanelQuads { vertices, count: 0 }
     }
 
     fn group(&self, device: &wgpu::Device, view: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
@@ -274,40 +325,47 @@ impl PanelPipeline {
         }
     }
 
-    /// Uploads the quads of `panels` (far to near), seen from the eye at
+    /// Uploads `quads` (in drawing order) into `to`, seen from the eye at
     /// `eye` (screen units) on a screen drawn into `rect` of a `viewport`
     /// target.
-    pub fn upload(&self, queue: &wgpu::Queue, panels: &[Panel], eye: (f64, f64), rect: (f32, f32, f32, f32), viewport: (u32, u32)) {
+    pub fn upload(&self, queue: &wgpu::Queue, to: &mut PanelQuads, quads: &[Quad], eye: (f64, f64), rect: (f32, f32, f32, f32), viewport: (u32, u32)) {
         let (vw, vh) = (viewport.0 as f64, viewport.1 as f64);
         let s = rect.2 as f64 / SCREEN_WIDTH as f64;
         let (ox, oy) = (rect.0 as f64, rect.1 as f64);
         let near_w = (EYE_DISTANCE + NEAR_Z) / EYE_DISTANCE;
-        let mut bytes = Vec::with_capacity(panels.len() * CORNERS * VERTEX_BYTES);
-        for p in panels.iter().take(terse_core::machines::MAX_MACHINES) {
+        let mut bytes = Vec::with_capacity(quads.len() * CORNERS * VERTEX_BYTES);
+        for q in quads.iter().take(MAX_QUADS) {
+            let ([u0, v0, u1, v1], kind) = match q.fill {
+                QuadFill::Texture(w) => (w, 0.0),
+                QuadFill::Back => ([0.0, 0.0, 1.0, 1.0], 1.0),
+                QuadFill::Black => ([0.0, 0.0, 1.0, 1.0], 2.0),
+            };
             // Strip order: top left, top right, bottom left, bottom right.
-            for (k, uv) in [(0, (0.0, 0.0)), (1, (1.0, 0.0)), (3, (0.0, 1.0)), (2, (1.0, 1.0))] {
-                let [x, y, z] = p.corners[k];
+            for (k, uv) in [(0, (u0, v0)), (1, (u1, v0)), (3, (u0, v1)), (2, (u1, v1))] {
+                let [x, y, z] = q.corners[k];
                 let w = (EYE_DISTANCE + z) / EYE_DISTANCE;
                 let cx = (2.0 * (ox + s * eye.0) / vw - 1.0) * w + 2.0 * s * (x - eye.0) / vw;
                 let cy = (1.0 - 2.0 * (oy + s * eye.1) / vh) * w - 2.0 * s * (y - eye.1) / vh;
-                let v = [cx, cy, w - near_w, w, uv.0, uv.1, if p.front { 0.0 } else { 1.0 }, if self.target_srgb { 0.0 } else { 1.0 }];
+                let v = [cx, cy, w - near_w, w, uv.0 as f64, uv.1 as f64, kind, if self.target_srgb { 0.0 } else { 1.0 }];
                 for f in v {
                     bytes.extend_from_slice(&(f as f32).to_le_bytes());
                 }
             }
         }
+        to.count = quads.len().min(MAX_QUADS);
         if !bytes.is_empty() {
-            queue.write_buffer(&self.vertices, 0, &bytes);
+            queue.write_buffer(&to.vertices, 0, &bytes);
         }
     }
 
-    /// Draws the uploaded quads, the `i`th with `textures[i]`, clipped to
-    /// `scissor` (x, y, w, h pixels).
-    pub fn draw(&self, pass: &mut wgpu::RenderPass, textures: &[&PanelTexture], scissor: (u32, u32, u32, u32)) {
+    /// Draws the quads uploaded into `quads`, the `i`th with `textures[i]`
+    /// (any texture for one that shows none), clipped to `scissor` (x, y,
+    /// w, h pixels).
+    pub fn draw(&self, pass: &mut wgpu::RenderPass, quads: &PanelQuads, textures: &[&PanelTexture], scissor: (u32, u32, u32, u32)) {
         pass.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
         pass.set_pipeline(&self.quad);
-        pass.set_vertex_buffer(0, self.vertices.slice(..));
-        for (i, t) in textures.iter().enumerate().take(terse_core::machines::MAX_MACHINES) {
+        pass.set_vertex_buffer(0, quads.vertices.slice(..));
+        for (i, t) in textures.iter().enumerate().take(quads.count) {
             pass.set_bind_group(0, &t.group, &[]);
             let first = (i * CORNERS) as u32;
             pass.draw(first..first + CORNERS as u32, 0..1);
