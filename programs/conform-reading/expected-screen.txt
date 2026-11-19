@@ -1,0 +1,31 @@
+Terse conformance • All sections pass.  Esc: exit (code = sections failed).
+PASS cpu: RV32I
+PASS cpu: M extension
+PASS cpu: compressed
+PASS RAM: run code, rewrite it, run again
+PASS terminal: print, cursor, controls
+PASS terminal: pending wrap
+PASS terminal: wide characters
+PASS terminal: malformed UTF-8
+PASS terminal: commands
+PASS terminal: cells, palette, buffers
+PASS system calls
+PASS unknown calls, absent devices
+PASS events: key, text, pointer, wheel, feeds
+PASS event queue overflow (70 -> 64) = 64
+PASS controllers
+PASS budget: ROM loop, calls per frame = 17856 17856 17857
+PASS budget: RAM loop, calls per frame = 7811 7811 7811
+PASS budget: scroll loop, deficit carried = 758 758 757
+PASS budget: bytes one frame's writes take = 124922
+PASS content: get, not found
+PASS content: delivery charge, ROM loop = 17856 17853
+PASS content: bad requests, blocks outside RAM
+PASS content: eight pending, ninth rejected
+PASS content: subscriptions, timeline
+PASS stress frames run = 60
+PASS page: calls, rejections, buffers
+PASS page: height, anchor and located events = 2
+
+
+-- page: height 0, scroll 0 (stored -40), region 0 0 0 0 --

@@ -173,7 +173,7 @@ impl Screens {
         let mut keep = Vec::new();
         let (no_trails, force, animate) = (self.no_trails, self.force_phosphor, self.animate_page);
         let fresh_renderer = |shell_r: &Renderer, format, width: u32| {
-            let mut r = Renderer::new(device, format, shell_r.glyphs_for(width));
+            let mut r = Renderer::new(shell_r.shaders(), format, shell_r.glyphs_for(width));
             r.set_no_trails(no_trails);
             r.set_force_phosphor(force);
             r.set_page_animation(animate);
@@ -208,7 +208,7 @@ impl Screens {
         // panel needs, again when it ran a frame.
         if let Some(layers) = &layers {
             let cap = (shell_rect.2 / terse_core::COLS as f32).floor() as u32;
-            let pipeline = self.panel_pipeline.get_or_insert_with(|| PanelPipeline::new(device, self.format));
+            let pipeline = self.panel_pipeline.get_or_insert_with(|| PanelPipeline::new(self.shell.shaders(), self.format));
             for p in &layers.panels {
                 let Some(child) = system.child(p.handle) else { continue };
                 let Some(machine) = &child.machine else { continue };
@@ -303,7 +303,7 @@ impl Screens {
             // Every panel has a texture (made in `update`).
             let panels: Vec<_> = layers.panels.iter().filter(|p| self.children.values().any(|c| c.handle == p.handle && c.panel.is_some())).copied().collect();
             pipeline.upload(queue, &panels, eye_point(self.eye), rect, viewport);
-            let lines = self.lines.get_or_insert_with(|| VectorLayer::for_target(device, self.format));
+            let lines = self.lines.get_or_insert_with(|| VectorLayer::for_target(self.shell.shaders(), self.format));
             lines.upload(queue, &layers.lines);
             if let Some(scissor) = scissor(rect, viewport) {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

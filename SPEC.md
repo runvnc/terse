@@ -5,6 +5,16 @@ after v1 a published machine profile and published device versions never
 change. Section 16 lists the numbers that are placeholders until hosts have
 been measured.
 
+**Terse in three layers.** (a) The Terse network, `NETWORK.md`: blobs,
+relays, feeds, entries, profiles and names, search. (b) Terse articles,
+`ARTICLE.md`: the article format and what a reader must do with it. (a)
+and (b) are **the core**: a native reader that implements them, with no
+virtual machine, is a complete, conforming Terse client. (c) The Terse
+machine, this document and `STATE.md`: an optional layer that reuses the
+core (programs are blobs published in feeds, and the reader program
+shows articles on the page device). Nothing in the core depends on this
+document.
+
 Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
 of at most 128 KiB, at most 1 MiB of RAM, a fixed budget of work per frame,
 and a set of host-side devices reached through system calls. One program runs
@@ -111,7 +121,8 @@ does the following, in order:
 1. Appends this frame's input events to the event queue (section 5),
    latches the clock, the random bytes and the controllers (sections 4 and
    6), and applies the content completions it has for this frame
-   (section 9.2).
+   (section 9.2). The content-done events of the completions are queued
+   after the frame's input events.
 2. Adds 125,000 to the budget, subtracts the charge for content delivered
    in step 1 (section 14), and runs the CPU while the budget is greater
    than zero.
@@ -131,7 +142,10 @@ Rules:
   continues with the next instruction, and the program is not told.
 - A program that has finished its work for the frame calls `wait_frame`
   (section 4): the rest of the budget is discarded and the call returns at
-  the start of the next frame.
+  the start of the next frame. That frame always runs: after `wait_frame`
+  the carry is at most the 8 units of the `ecall` and its call charge,
+  and the content delivered at the start of a frame costs at most 32,768
+  units (8 requests of 16,384 bytes, section 14).
 - `exit` and a fault stop the machine at once (section 1.5). The rest of
   that frame's budget is dropped; the frame still counts. Nothing runs in
   later frames.
@@ -190,7 +204,14 @@ by the ROM contents.
 
 - The file length must equal `32 + 2 × n_dev + rom_len` exactly.
 - The **image ID** is the BLAKE3-256 hash of the whole file.
-- A device slot may be listed at most once.
+- A device slot may be listed at most once (slot 1 included); a host
+  refuses an image that lists one twice.
+- The **title** is the 16 bytes without their trailing `00h` bytes
+  (possibly empty). It should be UTF-8, but a host does not check it: it
+  shows what it cannot decode as it can (for example as U+FFFD). A
+  built-in program whose title is not a valid display name (section 9.5)
+  has no identity `start_program` can name (section 12.2); it can still
+  be started by its image ID.
 - A host must refuse an image whose profile or required device versions it
   does not implement. This holds for an image a shell starts too: the start
   fails (section 12.2, reason 3) and the machine never runs. A device not
@@ -199,17 +220,57 @@ by the ROM contents.
 
 | Slot | Device | Version | Status in v0 |
 |---|---|---|---|
-| 1 | System | 0 | specified (sections 4–6) |
-| 2 | Terminal | 0 | specified (section 8) |
+| 1 | System | 0 | specified (sections 4–6); **reading profile** |
+| 2 | Terminal | 0 | specified (section 8); **reading profile** |
 | 3 | 2D vector display | 0 | specified (section 10) |
-| 4 | Content | 0 | specified (section 9) |
+| 4 | Content | 0 | specified (section 9); **reading profile** |
 | 5 | Messages | — | reserved |
 | 6 | Sound | — | reserved |
-| 7 | Page | 0 | specified (section 11) |
+| 7 | Page | 0 | specified (section 11); **reading profile** |
 | 8 | Machines | 0 | specified (section 12); only the shell of a system has it |
 | 9 | 3D vector display | 0 | specified (section 13) |
 
 Other slots are free; 0 and 10–255 are not devices in v0.
+
+### 2.1 Machine hosts and the reading profile
+
+A **machine host** implements this document: the machine of section 1,
+device 1 (always present) and whichever other devices it chooses. It
+states which devices (slot and version) it provides and, for the content
+device, which operations it carries out; an image that lists a device the
+host lacks is refused (above), so a program never runs on a host that
+cannot give it the devices its header asks for.
+
+A machine host that only wants to run the reader (the built-in feed
+reader, `programs/reader`, or any program written for the same profile)
+provides the machine's **reading profile**:
+
+- the machine, profile 1 (section 1), and devices 1 System (sections
+  4–6), 2 Terminal (section 8), 4 Content (section 9) and 7 Page
+  (section 11), each complete except as said next for device 4;
+- within Content it must carry out get (`01h`, section 9.2),
+  subscriptions (`03h`), timeline (`04h`), names (`09h`), identity
+  (`08h`), subscribe (`05h`) and unsubscribe (`06h`) (section 9.5), and
+  may complete any other operation (put, publish, find, set profile,
+  set nickname, programs, and the named records of section 9.6) with
+  status `05h` (Refused), without asking and without carrying it out (the
+  submit itself is as section 9.2 says: an invalid request is still
+  rejected with `04h`, a valid one accepted); a program cannot tell that
+  from a user or host that refuses;
+- within Page, everything;
+- devices 3, 8 and 9 are optional: a reading-profile host need not
+  provide them, and refuses an image that lists them (the reader lists
+  none of them). Device 8 exists only for the shell of a system
+  (section 12) in any case.
+
+Sections 9.5 and 9.6 say, for each optional group of operations, that a
+host may answer it with `05h`. A program meant for the reading profile
+must treat `05h` from those operations as a normal outcome and keep
+working. The core of Terse (the network and articles, `NETWORK.md` and
+`ARTICLE.md`) does not need a machine at all; the reading profile is
+only for hosts that run the reader as a program. `terse run --profile
+reading` runs one machine with exactly this profile, and
+`programs/conform-reading` is the conformance image for it (section 15).
 
 ---
 
@@ -227,12 +288,22 @@ buffers it is said to write. `pc` continues after the `ecall`.
   `FFFF_FFFFh` and does nothing else.
 - A **buffer** is a pointer and a length in bytes. A buffer the device
   reads must lie wholly in ROM or wholly in RAM; one it writes must lie
-  wholly in RAM. An empty buffer (length 0) may also start just past the
-  end of ROM or RAM. Otherwise the call returns
-  `FFFF_FFFEh` and does nothing else; this is not a fault. Two calls have
-  their own rule for this: a display list not in RAM is rejected
-  (section 10.2), and a content request block not in RAM is rejected with
-  handle 0 (section 9.2).
+  wholly in RAM. A buffer of length 0 is valid at any address, for every
+  call and for every data range of a content request block (section
+  9.1). Otherwise the call returns `FFFF_FFFEh` and does nothing else;
+  this is not a fault.
+- Four calls answer a buffer that is not where it must be in their own
+  way instead: the `submit` of each vector display (sections 10.2, 13.2)
+  rejects a list not wholly in RAM with 1, as it rejects a bad length;
+  content `submit` rejects a request block not wholly in RAM with handle
+  0 (section 9.2), and a data range in the block that is not where
+  section 9.1 requires makes the request invalid (status `04h`); page
+  `submit` returns 1 for a bad length before it looks at the buffer
+  (section 11.2).
+- A call that takes a buffer and other arguments checks the buffer
+  first: a bad buffer returns `FFFF_FFFEh` whatever the other arguments
+  are (for example `info` of a handle out of range, section 12.2). Page
+  `submit` is the one exception, above.
 - Buffers need no alignment.
 - Every call is charged, also when it fails (section 14).
 
@@ -299,9 +370,10 @@ Sections 4 to 13 define each call.
 
 ## 4. Device 1 — System
 
-- **`wait_frame`** ends the frame (section 1.4) and returns the frame
-  counter as it reads in the frame the call returns in (one more than
-  before the call).
+- **`wait_frame`** ends the frame (section 1.4) and returns one more
+  than the frame counter at the call. The value is fixed at the call;
+  since the next frame always runs (section 1.4), it is the frame counter
+  of the frame the call returns in.
 - **`next_event`** removes the event at the head of the queue (section 5)
   and writes its four bytes, type, `a`, `b`, `c`, to the buffer; it returns
   1. If the queue is empty it writes nothing and returns 0.
@@ -309,7 +381,11 @@ Sections 4 to 13 define each call.
   is the first frame after reset. It increases at the end of every frame
   and wraps from `FFFF_FFFFh` to 0.
 - **`unix_time`** returns the Unix time in seconds (low 32 bits) that the
-  host latched at the start of the frame.
+  host latched at the start of the frame. (At reset the latched time is
+  0 and every controller reads as not connected. No call can observe
+  that, because every call runs in a frame, after step 1 has latched new
+  values. It shows only in the state of a machine just reset, `STATE.md`
+  1.5.)
 - **`random`** fills the buffer with the next bytes of the random bytes the
   host supplied for this frame, in order. A length above 256 is a bad
   buffer. The host must supply enough bytes for any frame: 463,872 cover the
@@ -348,7 +424,17 @@ Sections 4 to 13 define each call.
 
 Events, the latched time, the random bytes and controller state are the
 machine's only inputs from this device. A host that records them per frame
-(with the content completions of section 9.4) can replay a run exactly.
+(with the content completions of section 9.4) can replay a run exactly:
+the events as the host appended them (page events, section 11.5, and
+feeds updated included; content-done events follow from the completions
+and need no recording), and of the random bytes only those the program
+took, since it reads zeros beyond them either way. What else a replay
+needs is where the run started: reset, or a restored snapshot (section
+12.7), which holds the machine's argument. For a machine that runs on its
+own, `open` always returns 0 (or `FFFF_FFFEh` for a bad buffer), so it is
+no input; for one a shell started it is (section 12.6). `terse run
+--record` writes such a recording and `--replay` replays it (`STATE.md`
+5).
 
 ## 5. Events
 
@@ -360,12 +446,12 @@ full is dropped.
 | `01h` | Key down | key code | modifiers | 0 |
 | `02h` | Key up | key code | modifiers | 0 |
 | `03h` | Text | code point bits 0–7 | bits 8–15 | bits 16–20 |
-| `04h` | Pointer | x bits 0–7 | y bits 0–7 | bits 0–1: x bits 8–9; bit 2: y bit 8; bits 3–5: buttons |
+| `04h` | Pointer | x bits 0–7 | y bits 0–7 | bits 0–1: x bits 8–9; bit 2: y bit 8; bits 3–5: buttons; bits 6–7: 0 |
 | `05h` | Content done | request handle | status | 0 |
 | `06h` | Wheel | vertical steps, signed | horizontal steps, signed | 0 |
 | `07h` | Feeds updated | 0 | 0 | 0 |
 | `08h` | Page laid out | height bits 0–7 | bits 8–15 | bits 16–23 |
-| `09h` | Page anchor | anchor id bits 0–7 | bits 8–15 | buttons |
+| `09h` | Page anchor | anchor id bits 0–7 | bits 8–15 | bits 3–5: buttons, as in a pointer event; other bits 0 |
 | `0Ah` | Machine changed | handle | new state | 0 |
 | `0Bh` | Home | 0 | 0 | 0 |
 | `0Ch` | Machine pressed | handle | buttons | 0 |
@@ -377,11 +463,28 @@ full is dropped.
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
 - **Modifiers:** bit 0 Shift, bit 1 Control, bit 2 Alt, bit 3 Meta.
+- **Key repeat.** While a key is held, a host may send further key-down
+  events for it (its auto-repeat), each followed by the text it types,
+  with no key-up between them; one key-up ends the key. So a key-down for
+  a key already down is a repeat. A program that wants a key's state
+  tracks the downs and ups; one that wants its typing reads text events.
 - **Text** carries one Unicode scalar value produced by the host's text
-  input, after keyboard layout and input-method composition. Text the user
-  pastes arrives the same way, one event per character (U+000A for a line
-  break; other control characters are dropped), no faster than the queue
-  has room for.
+  input, after keyboard layout and input-method composition. A host
+  sends no text event for a control character (U+0000–U+001F,
+  U+007F–U+009F): Enter, Tab, Backspace, Escape and Control-letter
+  combinations arrive only as key events. Text the user pastes arrives the
+  same way, one event per character, with no key events: a CR LF pair or
+  a lone CR becomes U+000A, U+000A is kept, and every other control
+  character is dropped; it comes no faster than the queue has room for,
+  and goes to whichever machine has the focus as each part is sent. How
+  the user pastes is up to the host (the reference host: Control+V, or
+  Shift+Insert).
+- **Keys a host keeps.** Besides the home key of a system (section 12.4)
+  and the keyboard while a consent prompt is shown (section 9.5), a host
+  may keep a few keys for its own functions, such as a paste key; such a
+  key's press and its release reach no program (the modifier keys held
+  with it are still delivered). A host should keep as few as it can and
+  say which.
 - **Pointer** positions are in screen units (section 7): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current
@@ -457,7 +560,9 @@ cell at (column, row), and `cells_read` and `cells_write` use these bytes in
 this order.
 
 A character is **wide** if its Unicode 16.0 East Asian Width property is W or
-F; every other character is narrow. A wide character occupies two cells in a
+F, including the code points that are unassigned in 16.0 and that
+`EastAsianWidth.txt` gives W by default (for example U+FA6E, in the CJK
+Compatibility Ideographs block); every other character is narrow. A wide character occupies two cells in a
 row: the left cell holds its code and the right cell holds the continuation
 code `FFFFh`. Combining marks are not treated specially in v0; each takes a
 cell.
@@ -468,7 +573,11 @@ cell.
   in order, and returns how many bytes it consumed. Each byte is charged as
   it is consumed (section 14), and the call stops after the byte whose charge
   brings the budget to zero or below, so it may consume fewer bytes than
-  asked; it always consumes at least one byte of a non-empty buffer. The
+  asked; it always consumes at least one byte of a non-empty buffer. A
+  byte's charge is 1 plus 150 for each clear or scroll it causes, and the
+  budget it is measured against is what is left after the `ecall`
+  instruction and the call's 4 have been charged. An empty buffer
+  consumes nothing and returns 0. The
   program calls `write` again with the rest (the machine pauses first if the
   budget is used up). A UTF-8 sequence may be split across calls.
 - **`command`** carries out a command (section 8.4); a value above 255 or
@@ -487,7 +596,8 @@ cell.
   holds `FFFFh`; how it draws any other arrangement is not specified.
 - **`palette_set`** sets `count` palette entries from entry `first` on,
   wrapping from 255 to 0, from `3 × count` bytes of red, green, blue
-  (0–255 each). `first` must be below 256 and `count` at most 256.
+  (0–255 each). `first` must be below 256 and `count` at most 256;
+  otherwise the call returns `FFFF_FFFEh` and does nothing.
 - **`size`** returns 80 and 30.
 
 ### 8.3 Put character
@@ -510,7 +620,9 @@ Printing a character:
 1. If the **pending wrap** flag is set, or the character is wide and the
    cursor is at column 79, the cursor first moves to column 0 of the next
    row, scrolling up if on the last row. In the second case the cell at
-   column 79 is first set to a space with the current colours.
+   column 79 is first set to a space with the current colours; if it was
+   the right half of a wide pair, the left half at column 78 becomes a
+   space and keeps its colours, as in step 3.
 2. The character is written at the cursor with the current colours. A wide
    character also writes `FFFFh` with the current colours to the next cell.
 3. If a cell written in step 2 was half of a wide pair, the other half of
@@ -541,7 +653,8 @@ and surrogates are malformed.
 | `05h` | Show the cursor |
 | `06h` | Hide the cursor |
 
-"Cleared" means space (`0020h`) with the current colours.
+"Cleared" means space (`0020h`) with the current colours. Commands
+`02h`–`06h` leave the cursor and pending wrap as they are.
 
 ### 8.5 Reset state and palette
 
@@ -564,7 +677,12 @@ Fetches and publishes **blobs**. A blob is 1 to 1,048,576 bytes and is named
 by its BLAKE3-256 hash. The host does all hashing, verification, caching and
 transport; the program only ever receives bytes that match the hash it asked
 for. How the host obtains blobs is described in `NETWORK.md` and cannot be
-observed by the program except through timing of completions.
+observed by the program except through timing of completions. The host is
+a client of the network in `NETWORK.md`'s terms, speaking it for its
+programs; section 7 there lists what the network means for a machine host
+(programs never see the protocol or a secret key, and the operations below
+that change the user's feeds are asked for by programs with the user's
+consent).
 
 ### 9.1 Request block
 
@@ -594,13 +712,19 @@ any alignment.
    display name, section 9.5, a record name that is not valid, section 9.6),
    the device writes status `04h` to the block and rejects the submit.
 3. If eight requests are already pending, the submit is rejected and the
-   block is not changed.
+   block is not changed. (The result is 0 as in step 1, and the block is
+   unchanged in both; a program tells them apart by knowing how many of
+   its requests are pending.)
 4. Otherwise the device writes status `00h`, assigns the lowest free handle
    (1–8), which the call returns, and the request becomes pending. For put
    and save, the device copies the `size` bytes at `addr` at this moment;
    for publish,
    the title; for find, the query; for set profile and set nickname, the
    name.
+
+The device does not look at the other pending requests: a block that is
+already pending may be submitted again, and then two requests write the
+same block when they complete, the higher handle last within a frame.
 
 At the start of a later frame (never the frame of the submit), in step 1 of
 section 1.4, the host may complete any pending requests. Completing a
@@ -623,8 +747,9 @@ request:
 The device writes to the block at the address given at submit, whatever the
 program has since done with that memory. Completions in one frame are
 applied in increasing handle order. A get whose `offset` is at or beyond the
-end of the blob completes with status `01h` and `length` 0; so does a load
-at or beyond the end of its record.
+end of the blob completes with status `01h`, `length` 0 and `size` the
+blob's size; so does a load at or beyond the end of its record, with the
+record's size.
 
 **After a restore.** A machine restored from a snapshot (section 12.7)
 has the requests that were pending when the snapshot was taken, and no
@@ -643,7 +768,7 @@ of the block is written.
 | `02h` | Not found |
 | `03h` | Failed (network error or timeout; the host decides when to give up) |
 | `04h` | Bad request |
-| `05h` | Refused: the user said no, the host does not permit it, or the relays refused a find (section 9.5) |
+| `05h` | Refused: the user said no, the host does not permit it, the host does not provide the operation (a host with only the machine's reading profile, section 2.1: put, publish, find, set profile, set nickname, programs, save, load, delete and records), or the relays refused a find (section 9.5) |
 | `06h` | No room: a save would exceed the owner's limits (section 9.6) |
 
 ### 9.4 Determinism
@@ -652,7 +777,8 @@ Completions (which handle, in which frame, with what status, size and bytes)
 are inputs to the machine, alongside those of section 4. A request waiting
 for the user's consent (section 9.5) is simply pending; the user's answer
 reaches the machine only as its completion. The failed completions of a
-restore (section 9.2) are inputs like any other.
+restore (section 9.2) follow from the snapshot, not from the host: a
+replay that starts from the same snapshot gets them again.
 
 ### 9.5 Feeds, names and search
 
@@ -716,7 +842,8 @@ read the timeline again.
 feed key, then of name (byte order), one record per program in the
 timeline's record format; flag bit 0 is set when the image is in the host's
 store. The name is the entry's title. A program is started by its identity
-with device 8's `start_program` (section 12.2).
+with device 8's `start_program` (section 12.2). A host that offers only the machine's reading profile (section 2.1) may complete every programs
+request with status `05h`.
 
 **Subscribe** (`05h`) adds the feed whose key is `id` to the host's
 subscriptions, and **unsubscribe** (`06h`) removes it (`NETWORK.md` section
@@ -739,7 +866,7 @@ not, the request completes with status `04h`, without asking (the host
 checks this at completion, since the blob is not the program's to read at
 submit). The host signs the entry with its own key, creating
 its identity first if it has none. On success `size` is the new entry's
-`seq`.
+`seq`. A host that offers only the machine's reading profile (section 2.1) may complete every put and publish with status `05h`.
 
 **Identity** (`08h`): on completion `id` is the host's own feed key, or the
 status is `02h` if the host has no identity yet. `offset`, `length`, `addr`
@@ -785,7 +912,7 @@ caps the merged results as `NETWORK.md` section 4.7 says. If no relay
 answered with results and at least one refused the find (a relay may refuse
 one from a client that searches too often), the request completes with
 status `05h`; otherwise, if no relay could be asked or none answered, with
-`03h`.
+`03h`. A host that offers only the machine's reading profile (section 2.1) may complete every find with status `05h`.
 
 **Set profile** (`0Bh`) publishes a new profile for the host's own feed.
 `id` is not used. The display name is the `length` bytes at `addr` (1 to
@@ -804,7 +931,8 @@ non-empty one must be a valid display name), or removes it if `length` is
 0. `offset` and `size` are not used. A nickname is local to the host and is
 never sent anywhere. The host completes with status `05h` without asking if
 `id` is not a valid feed key, and with `01h` without asking if the nickname
-already is as asked.
+already is as asked. A host that offers only the machine's reading profile (section 2.1) may complete every set profile and set nickname with status
+`05h`, without asking.
 
 **Consent.** Subscribe, unsubscribe, publish, set profile and set nickname
 change what the user follows, speak in the user's name or change what the
@@ -829,7 +957,8 @@ and find need no consent.
 
 Four operations keep small data on this host for the program: its **named
 records**. They use the same request block, call, handles and completion
-rules as get and put.
+rules as get and put. A host that offers only the machine's reading profile (section 2.1) may complete every save, load, delete and records request
+with status `05h`; a program then has no named records on that host.
 
 | `op` | Operation |
 |---|---|
@@ -847,7 +976,10 @@ invalid (section 9.2). For records, `id` is not used.
 12.1): a machine started with `start_program`, or a shell the host started
 as its built-in shell, reads and writes those of that identity, whichever
 version of the program it runs. A machine with no identity (started with
-`start`, or from a file) has the records of its exact image ID. A program
+`start`, or from a file) has the records of its exact image ID. So the
+same built-in image has two owners: its identity when it is started with
+`start_program` (or as the built-in shell), its image ID when it is
+started with `start`. A program
 cannot reach another owner's records. Records are kept on this host only:
 the host never sends them to a relay or to any other program.
 
@@ -886,7 +1018,7 @@ says. The format (owner key, name) is the identity of the program that
 defines it (section 12.1): a shell opens a document by starting that
 program with the document as its argument (section 12.2). A blob that
 starts with `TERS` is an image (section 2); a blob with neither is an
-article (`NETWORK.md` 4.5). A document is published as an entry of kind
+article (`ARTICLE.md`). A document is published as an entry of kind
 4 (publish, section 9.5; `NETWORK.md` 4.2).
 
 ---
@@ -960,7 +1092,11 @@ point (0, 0).
   filled: a disc is drawn as a circle outline of the same radius, a
   rectangle as the four lines between its corners and a triangle as the
   three lines between its points, each with the width in effect at that
-  command. The page's figures are outlined too (section 11.4).
+  command. With (x0, y0) the current point and (x1, y1) the rectangle's
+  given corner, its lines are drawn in the order (x0, y0)–(x1, y0),
+  (x1, y0)–(x1, y1), (x1, y1)–(x0, y1), (x0, y1)–(x0, y0); a triangle's
+  from the current point to the first given point, to the second, and
+  back. The page's figures are outlined too (section 11.4).
 
 ### 10.4 Fill cap
 
@@ -969,7 +1105,9 @@ they cover in one list is limited. Each disc, rectangle and triangle, in list
 order, counts the area of its bounding box: for a disc the square from
 (x − r, y − r) to (x + r, y + r), for a rectangle the rectangle itself, for a
 triangle the smallest axis-aligned box holding its three points, with
-coordinates as resolved in section 10.3. The box is clipped to the screen
+coordinates as resolved in section 10.3. A disc's square is computed from
+its resolved centre without wrapping (x − r and x + r may lie beyond the
+16-bit range). The box is clipped to the screen
 (0 to 10240 by 0 to 7680), and its area in square screen units is its width
 times its height in sixteenths, divided by 256 and rounded up.
 
@@ -1142,7 +1280,8 @@ anchor carry on across paragraphs.
   bidirectional algorithm): left for left-to-right text, right for
   right-to-left text. Indent is measured from that start edge.
 - **Figure.** Width and height are clamped to 1–1024; align is 0 start
-  (left), 1 centre, 2 end (right), anything else 0. A figure ends the
+  (left), 1 centre, 2 end (right), anything else 0, whatever the
+  direction of the text around it. A figure ends the
   current paragraph and is a block of its own, as high as its height, with
   the space of the latest Paragraph command (or of the implicit first
   paragraph) above it; if the current paragraph has no text yet, the figure
@@ -1220,19 +1359,25 @@ colours are r, g, b, a (1 byte each, `a` the opacity).
   segment, or with neither a fill nor a stroke, draws nothing.
 - **Caps.** Paths are drawn in order and counted against three caps per
   figure; the first path that would take a total above its cap is not drawn,
-  and neither is any path after it. (1) At most 256 paths. (2) Area: a path
-  counts the box of all its points (start, control and end points), clipped
-  to the figure's box, once if it is filled, and that box grown by half the
-  stroke width on every side, clipped, once more if it is stroked; each box's
-  area in square screen units is its width times its height in sixteenths,
-  divided by 256 and rounded up. The total is at most 8 × width × height of
-  the figure and at most 4 × 640 × 480 = 1,228,800. (3) Length: a path's
-  length L is, over its Line, Quadratic and Cubic segments, the sum of
-  |dx| + |dy| of each step from the segment's start through its control
-  points to its end, in sixteenths. A path counts 2 × L + 4 × w × s if it is
-  filled, with w = 16, and again with w its stroke width if it is stroked,
-  where s is its number of segments; the counts are divided by 16 and
-  rounded up, and the total is at most 65,536.
+  and neither is any path after it. A path that draws nothing (no segment,
+  or neither a fill nor a stroke) is skipped and counts against no cap.
+  (1) At most 256 paths. (2) Area: a path counts the box of all its points
+  (each Move's point, each segment's start, control and end points),
+  clipped to the figure's box, once if it is filled, and that box grown
+  on every side by half the stroke width in sixteenths, rounded up, and
+  clipped, once more if it is stroked; each box's area in square screen
+  units is its width times its height in sixteenths, divided by 256 and
+  rounded up. The total is at most 8 × width × height of the figure and at
+  most 4 × 640 × 480 = 1,228,800. (3) Length: a path's length L is, over
+  its Line, Quadratic and Cubic commands, the sum of |dx| + |dy| of each
+  step from the segment's start through its control points to its end, in
+  sixteenths; s is the number of those commands. A Close counts in
+  neither, though it draws a segment. A path's count is 2 × L + 4 × 16 × s
+  if it is filled, plus 2 × L + 4 × w × s with w its stroke width if it is
+  stroked; that sum is divided by 16 and rounded up once, and the total is
+  at most 65,536. The caps are counted from the path commands alone, the
+  same in every style and fill mode: a figure drawn as outlines (section
+  11.4) still counts its fills.
 
 ### 11.4 Layout and presentation
 
@@ -1264,12 +1409,14 @@ section 11.6, says how it measures):
    rectangle: it is cut off at the rectangle's right edge, like a
    figure.)
 4. **Rows.** Each cell's text is laid out as a paragraph (wrapped, no
-   indent, aligned as its column says) at its column's width less 12, its
+   indent, aligned as its column says, start and end following the
+   cell's text direction as a paragraph's do) at its column's width less 12, its
    first line 3 units below the top of its row. A row is as high as the
    tallest text of its cells plus 6 (a cell with no text counts 0). The
    table is as high as its rows.
 5. **Placing.** The columns are placed side by side from the rectangle's
-   left edge, the first column leftmost; the rows one below another.
+   left edge, the first column leftmost, whatever the direction of the
+   text in the cells; the rows one below another.
 6. **Rules.** Rules take no room: each is a line about one unit thick
    across the table's width, in the table's rule colour, centred on the
    bottom edge of a row. A table with a header (flag bit 0) has a rule
@@ -1313,8 +1460,8 @@ the view (showing a figure some frames late).
   and width once they stay unchanged. At most one is sent per frame.
 - **Page anchor** (`09h`): sent when a pointer button is pressed while the
   pointer is over text whose anchor is not 0, as the page was last shown:
-  `a`, `b` = the anchor id, low then high byte; `c` = the buttons, with the
-  same bits as in a pointer event; also when it is pressed over a figure
+  `a`, `b` = the anchor id, low then high byte; `c` = the buttons in bits
+  3–5, the same bits as in a pointer event, and its other bits 0; also when it is pressed over a figure
   whose anchor is not 0. It follows the pointer event of that press, which
   is sent as usual. "Over text" means within the extent of the text's
   glyphs along the line and within the line's height; "over a figure",
@@ -1467,7 +1614,8 @@ starts as its own built-in shell has the identity of a built-in. Section
   any number of frames to get the image.
 - **`start_program`** reads a program record at `a0`: the publisher's feed
   key (32 bytes; all zero for a built-in program), the name's length n (1
-  byte) and the name (n bytes, a valid display name, section 9.5). The 33 +
+  byte) and the name (n bytes, a valid display name, section 9.5, so n is
+  1 to 48). The 33 +
   n bytes must lie wholly in ROM or wholly in RAM and the name must be
   valid, else the call returns `FFFF_FFFEh` and does nothing else. If every
   handle is in use it returns 0. Otherwise the lowest handle not in use
@@ -1538,8 +1686,11 @@ starts as its own built-in shell has the identity of a built-in. Section
   (section 4, `argument`), replacing one given before, and the call
   returns 1; otherwise it returns 0 and changes nothing. The argument is
   given to the machine when it becomes running or paused (section 12.5).
-  A machine being restored keeps the argument in its snapshot; one given
-  to it is ignored.
+  A handle being restored (`restore`) takes no argument: the call returns
+  0 and changes nothing, and the machine keeps the argument in its
+  snapshot. The device tells such a handle from its record: loading, with
+  image ID zero and no identity; a `start` of the all-zero image ID, which
+  can never be found, looks the same and is treated the same.
 - **`snapshot`** with a handle that is running or paused and a slot 0–15:
   the host keeps the machine's snapshot (section 12.7) in that slot,
   replacing what was there, taken at the end of this system frame (step
@@ -1547,7 +1698,10 @@ starts as its own built-in shell has the identity of a built-in. Section
   1; returns 0 and does nothing for any other handle or slot. The result
   arrives as a snapshot done event (section 12.4): status 1 stored, 3
   failed (the machine was stopped in the same frame, or the host could not
-  store it).
+  store it); the values are content's done and failed (section 9.3). A
+  snapshot the shell deletes with `snapshot_delete` later in the same
+  frame is stored and then deleted: its event says 1, and the slot is
+  empty.
 - **`restore`** with a slot 0–15: if every handle is in use it returns 0.
   Otherwise the lowest handle not in use becomes loading, with the run
   flag set, the rectangle (0, 0, 0, 0), image ID zero and no identity,
@@ -1574,7 +1728,7 @@ starts as its own built-in shell has the identity of a built-in. Section
   | 1 | 32 | The image ID |
   | 33 | 81 | The identity, as `identity` writes it; all zero for none |
   | 114 | 4 | The machine's frame counter when it was taken |
-  | 118 | 4 | When it was taken: the Unix time latched for the machine's last frame |
+  | 118 | 4 | When it was taken: the Unix time latched for the machine's last frame, as its state holds it (`STATE.md` 1.5: 0 if it never ran; for a restored machine that has not run since, the time of the snapshot it was restored from) |
 
 - **`snapshot_delete`** with a slot 0–15: the slot is empty from now on
   (for `snapshot_info` at once); the host removes its snapshot at the end
@@ -1705,8 +1859,14 @@ from):
 | Pointer, over a flat picture | the machine whose picture it is (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
 | Pointer, over the front of a panel and no flat picture | while the view moves (section 12.2), nobody; otherwise the machine whose panel it is, mapped into its screen units, if it is running; otherwise nobody |
 | Pointer, over nothing else | the shell, unchanged |
-| Controllers (section 6) | the machine with the focus; every other machine reads every controller as not connected |
+| Controllers (section 6) | the machine with the focus (the shell if the focus is 0); every other machine reads every controller as not connected, so nobody reads them while the machine with the focus does not run |
 | Content done, feeds updated, page events | each machine its own (sections 9, 11.5) |
+| Any other event in the host's input | the shell, unchanged |
+
+The focus that routes the input of a frame, the controllers included, is
+the one at this step: the home key changes it here (below), for the
+events after it; a `focus` call takes effect at the next frame's routing
+(section 12.5).
 
 A position (x, y) over a picture (px, py, pw, ph) is mapped to
 x′ = ⌊(2(x − px) + 1) × 640 / (2pw)⌋ and y′ = ⌊(2(y − py) + 1) × 480 / (2ph)⌋.
@@ -1720,12 +1880,15 @@ y′ = ⌊480v⌋. A pointer event that presses a button (sets a button bit that
 was clear in the previous pointer event, wherever that went) over a flat
 picture, or over a panel while the view does not move, also gives the
 shell a machine pressed event, in the place among the shell's events that
-the pointer event had in the input.
+the pointer event had in the input, whatever the machine's state (also
+when the pointer event itself goes to nobody).
 
 **The home key.** A host reserves one key (or other input) as its home key;
 which one is up to the host. It is never delivered to any machine as a key
 event. When it is pressed, the focus becomes 0 and a home event is queued
-for the shell.
+for the shell. A host running a single machine, not a system, has no
+shell to tell: the home key does nothing there (the reference host then
+treats that key as an ordinary key).
 
 **Events for the shell** (section 5):
 
@@ -1781,7 +1944,8 @@ For each system frame the host does the following, in order:
 5. **The machines** that are running now, in increasing handle order, each
    run one frame (section 1.4) with a full budget and their own carry. So a
    `run`, `stop` or `place` made by the shell takes effect in the same
-   frame; a `focus` takes effect for the next frame's routing.
+   frame; a `focus` takes effect at the next frame's routing, for every
+   kind of input, the controllers included (section 12.4).
 6. **Snapshots and deletes** the shell asked for in its frame are carried
    out in the order it asked for them: each snapshot is taken of the
    machine as it is now (failed if it no longer exists), each delete
@@ -1911,7 +2075,7 @@ saved transforms, current point (0, 0, 0).
 | `08h` | Pop | — | Restores the transform saved last |
 | `09h` | Translate | x, y, z | Moves the transform's origin to (x, y, z) |
 | `0Ah` | Rotate | axis (1 byte: 0 x, 1 y, 2 z), angle (2 bytes, unsigned, in 1/65,536 of a turn) | Turns the transform about its axis |
-| `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly |
+| `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly; s = 0 puts every point given after it at the transform's origin |
 | `0Ch` | Face | n (1 byte: 3 or 4), then n corners x, y, z | Hides what is behind it (below); draws nothing |
 | `0Dh` | Screen | handle (1 byte, 1–8), width w (2 bytes, unsigned) | Shows machine `handle`'s screen as a panel (below and section 12.3) |
 
@@ -1937,6 +2101,8 @@ saved transforms, current point (0, 0, 0).
   translation (so it lies in the plane of M's x and y axes and is scaled
   with it). It is drawn as the 64 chords between the points at φ = k/64 of
   a turn, k = 0 to 63, which join without ends of their own: one curve.
+  A circle of radius 0 is 64 chords of length 0: it counts 64 segments
+  and no length (section 13.4) and draws nothing.
 - Lines and points use the current width and have round ends, as the 2D
   display's lines do (a Point is the dot a line of length 0 draws). Circle,
   Point and the transform commands leave the current point unchanged.
@@ -1975,7 +2141,9 @@ saved transforms, current point (0, 0, 0).
   where a piece was cut is a butt end without vertex dwell, as where a
   circle's chords join; the line's own ends keep their own. A piece with a
   cut end that is shorter than 1/2 screen unit on the glass is not drawn,
-  unless the whole line is that short. A point is drawn or hidden whole.
+  unless the whole line is that short. The whole line's length is that of
+  its part in front of the near plane, on the glass, seen from the eye in
+  use, before it is clipped to the screen. A point is drawn or hidden whole.
 - **Faces that cross** need no rule of their own: each point of a line is
   hidden or not by each face. Faces do not hide one another and draw
   nothing, so no line is drawn where two faces cross unless the list draws
@@ -2004,7 +2172,9 @@ saved transforms, current point (0, 0, 0).
 
 A line is cut where it crosses the plane z = −800: only its part with z >
 −800 is drawn; a point (or a dot) at z ≤ −800 is not drawn. What is left is
-projected (section 13.1) and clipped to the screen.
+projected (section 13.1) and clipped to the screen grown by 32 units on
+every side; what lies beyond that margin is not drawn, and the host clips
+what it draws to the screen.
 
 The amount one list draws is limited. In list order, each Line, Point and
 Circle counts a **length** and a number of **segments**:
@@ -2033,8 +2203,16 @@ nothing, so the same commands are drawn from every eye.
 | 256 | 512 |
 
 After the hidden parts are cut out (section 13.3), at most 16,384 pieces
-are drawn, in list order; pieces beyond that are not drawn. Which pieces
-those are depends on the eye.
+are drawn, in list order; pieces beyond that are not drawn. Only pieces
+within the screen grown by 32 units count. Which pieces those are depends
+on the eye.
+
+The caps are evaluated by the host, after the floating-point projection
+of section 13.1, so hosts may differ at the boundary by rounding: a list
+whose totals come within rounding of a cap may be cut one command
+earlier on one host than on another. This affects only what is drawn,
+never the machine's state, which holds the list as submitted (section
+13.6).
 
 ### 13.5 Presentation
 
@@ -2082,8 +2260,8 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
-| Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), a page `submit` whose bytes were copied (its length in range and its buffer valid), device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes: the bytes of all the frame's completions added up, then divided by 4 and rounded up once; subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
 fields a completion writes to a request block are free, and so is laying out
@@ -2112,24 +2290,75 @@ or FAIL line per section) and its last phase is a deliberate worst case for a
 host (full-budget frames, every cell rewritten, maximum-size display lists at
 the fill cap), for measuring how a host holds its frame rate.
 
+A host that offers only the reading profile (section 2.1) cannot run
+`programs/conform`, which lists devices 3 and 9. `programs/conform-reading`
+is built from the same source with the sections for other devices and for
+the optional content operations left out, and has its own input script
+and expected hashes; `terse run --profile reading` runs it (and any image)
+on exactly the reading profile.
+
 ## 16. Provisional values
 
-These numbers are placeholders until weak hosts have been measured:
+These numbers are placeholders until weak hosts have been measured. Every
+numeric limit of the machine and its devices is listed here, with the
+section that defines it.
+
+The budget and the charges:
 
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
 - the charges of section 14 (4 per call, 1 per `write` byte, 1 per 4 bytes
-  copied, 150 per clear or scroll);
-- the fill cap, 4 × 640 × 480 square units (section 10.4);
-- the 3D display's caps, 65,536 units of length and 16,384 segments, its
-  64 chords to a circle, and its eye: 960 units from the glass, at most 160
-  from the reference eye on each axis, and the near plane at z = −800
-  (section 13);
-- the figure caps: 256 paths, the area (8 × the figure's, at most
-  4 × 640 × 480) and the length (65,536) of section 11.3;
+  copied, 150 per clear or scroll).
+
+What one frame or one list may make a host draw:
+
+- the 2D display's fill cap, 4 × 640 × 480 square units (section 10.4);
+- the 3D display's caps (section 13.4): 65,536 units of length, 16,384
+  segments, 256 faces, 131,072 faces × segments and 16,384 pieces drawn
+  after hiding; its 64 chords to a circle, its transform stack of 8, its
+  widest line, 255 sixteenths (section 13.3); a face hides only what lies
+  more than 2 sixteenths beyond its plane, and a cut piece shorter than
+  1/2 unit is dropped (section 13.3); the margin of 32 units around the
+  screen within which pieces are drawn (section 13.4); and its eye: 960
+  units from the glass, at most 160 from the reference eye on each axis,
+  and the near plane at z = −800 (section 13.1);
+- the figure caps (section 11.3): 256 paths, the area (8 × the figure's,
+  at most 4 × 640 × 480) and the length (65,536); figure sides of 1 to
+  1,024 units;
+- the page's tables (sections 11.3, 11.4): at most 8 columns, 1,024
+  cells in a table and 4,096 in a document; padding of 6 and 3 units; the
+  least column cap, 48 units; font sizes 6 to 96.
+
+The sizes of what a program hands a device:
+
+- display lists of 1 to 16,384 bytes, for both vector displays (sections
+  10.2, 13.2); page documents of 1 to 65,536 bytes (section 11.2);
+- 8 locates per frame, and at least the 8 latest waiting kept by a host
+  (sections 11.2, 11.5);
+- 256 random bytes per call (section 4);
+- the event queue, 64 events (section 5).
+
+The content device (section 9):
+
+- blobs of 1 to 1,048,576 bytes; 8 requests pending; 16,384 bytes
+  delivered by one get, load, records or find request;
+- display names, nicknames and queries of 48 bytes, titles of 120, and 16
+  results to a find (section 9.5);
+- named records (section 9.6): names of 32 bytes, records of 65,536 bytes,
+  and per owner 256 records and 1,048,576 bytes in all.
+
+Systems (section 12):
+
 - the number of machines a shell can start, 8, and of its snapshot slots,
-  16 (section 12); the longest view motion, 600 frames, and the view's
-  progress steps, 4,096 (section 12.2 `face`).
+  16 (sections 12.1, 12.7); program names of 48 bytes (section 12.2); the
+  longest view motion, 600 frames, and the view's progress steps, 4,096
+  (section 12.2 `face`).
+
+The sizes that define machine profile 1 (ROM of 128 KiB, RAM of 1 to 128
+pages of 8 KiB, 16 devices in an image, the 640 × 480 screen, the
+terminal's 80 × 30 cells, 4 controllers) and the layouts of records, blocks
+and events are not placeholders: they are the profile and its device
+versions.
 
 ## 17. Not yet specified
 
@@ -2155,8 +2384,9 @@ These numbers are placeholders until weak hosts have been measured:
 - On the page: bitmap images, arcs and gradients in figures, links the host
   follows itself, selecting and copying
   text, and fonts beyond the three faces.
-- A limit on the area covered by lines and circle outlines. The fill cap
-  does not apply to them, so a legal list of about 3,000 maximum-width lines
+- A limit on the area covered by lines and circle outlines, including the
+  outlines that filled shapes become in the phosphor style and fill mode 1
+  (section 10.3). The fill cap does not apply to them, so a legal list of about 3,000 maximum-width lines
   across the whole screen still costs a host far more fill than four
   screens.
 - In a system (section 12): communication between machines (an open

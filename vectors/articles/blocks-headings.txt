@@ -1,0 +1,9 @@
+# A heading
+Text right under it.
+## A subheading
+### Three marks: ordinary text
+#No space: ordinary text
+  # Blanks before the marker: ordinary text
+#	A tab after the marker: ordinary text
+# 
+##    Blanks after the marker are dropped

@@ -4,13 +4,13 @@
 use std::collections::VecDeque;
 
 pub const QUEUE_CAPACITY: usize = 64;
-/// Screen size in screen units (SPEC 5.4).
+/// Screen size in screen units (SPEC 7).
 pub const SCREEN_WIDTH: u16 = 640;
 pub const SCREEN_HEIGHT: u16 = 480;
 /// Number of game controllers (SPEC 6).
 pub const CONTROLLERS: usize = 4;
 
-/// One input event (SPEC 5.1): a type byte and three parameter bytes.
+/// One input event (SPEC 5): a type byte and three parameter bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Event {
     pub kind: u8,
@@ -64,7 +64,7 @@ impl Event {
         Event { kind: Self::TEXT, a: v as u8, b: (v >> 8) as u8, c: (v >> 16) as u8 }
     }
 
-    /// A pointer position in screen units (SPEC 5.4), clamped to 0-639 and
+    /// A pointer position in screen units (SPEC 5, 7), clamped to 0-639 and
     /// 0-479, and the button bits (`buttons::*`).
     pub fn pointer(x: u16, y: u16, buttons: u8) -> Self {
         let (x, y) = (x.min(SCREEN_WIDTH - 1), y.min(SCREEN_HEIGHT - 1));
@@ -84,7 +84,7 @@ impl Event {
         Event { kind: Self::WHEEL, a: vertical as u8, b: horizontal as u8, c: 0 }
     }
 
-    /// The host stored new feed entries since the previous frame (SPEC 7.7).
+    /// The host stored new feed entries since the previous frame (SPEC 5, 9.5).
     pub fn feeds_updated() -> Self {
         Event { kind: Self::FEEDS_UPDATED, a: 0, b: 0, c: 0 }
     }
@@ -95,9 +95,16 @@ impl Event {
         Event { kind: Self::PAGE_LAID_OUT, a: h as u8, b: (h >> 8) as u8, c: (h >> 16) as u8 }
     }
 
-    /// A pointer button was pressed over text with anchor `id` (SPEC 11.5).
+    /// A pointer button was pressed over text or a figure with anchor `id`
+    /// (SPEC 11.5): the buttons (`buttons::*`) in bits 3-5 of `c`, as in a
+    /// pointer event; the other bits zero.
     pub fn page_anchor(id: u16, buttons: u8) -> Self {
-        Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: buttons & 0x07 }
+        Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: (buttons & 0x07) << 3 }
+    }
+
+    /// The buttons of a page anchor event (the inverse of `page_anchor`).
+    pub fn anchor_buttons(&self) -> u8 {
+        self.c >> 3 & 0x07
     }
 
     /// The answer to a `locate` of anchor `id` (SPEC 11.5), as the pair of
@@ -138,7 +145,7 @@ impl Event {
         Event { kind: Self::SNAPSHOT_DONE, a: slot, b: status, c: 0 }
     }
 
-    /// A content request finished (SPEC 7.3).
+    /// A content request finished (SPEC 9.2).
     pub fn content_done(handle: u8, status: u8) -> Self {
         Event { kind: Self::CONTENT_DONE, a: handle, b: status, c: 0 }
     }
@@ -227,7 +234,7 @@ impl System {
     }
 
     /// Latches the clock, this frame's random bytes and the controllers
-    /// (SPEC 1.3 step 1).
+    /// (SPEC 1.4 step 1).
     pub fn latch(&mut self, unix_time: u32, random: &[u8], controllers: &[Controller; CONTROLLERS]) {
         self.controllers = controllers.map(|c| c.bytes());
         self.time = unix_time;
@@ -376,6 +383,22 @@ mod tests {
             assert_eq!((e.kind, e.a, e.b, e.c), (Event::POINTER, a, bb, c), "({x}, {y}, {b})");
             assert_eq!(e.pointer_parts(), (x.min(639), y.min(479), b & 7));
         }
+    }
+
+    /// SPEC 5, 11.5: a page anchor event carries the buttons in bits 3-5 of
+    /// `c`, the same bits as a pointer event; bits 0-2 and 6-7 are zero
+    /// (and a pointer event's bits 6-7 are zero too).
+    #[test]
+    fn anchor_buttons_are_pointer_bits() {
+        for b in 0..=0xFFu8 {
+            let e = Event::page_anchor(0xBEEF, b);
+            assert_eq!((e.kind, e.a, e.b), (Event::PAGE_ANCHOR, 0xEF, 0xBE));
+            assert_eq!(e.c, Event::pointer(0, 0, b).c, "buttons {b:#x}");
+            assert_eq!(e.c & !0x38, 0);
+            assert_eq!(e.anchor_buttons(), b & 7);
+            assert_eq!(Event::pointer(639, 479, b).c & 0xC0, 0);
+        }
+        assert_eq!(Event::page_anchor(1, buttons::SECONDARY).c, 0x10);
     }
 
     #[test]

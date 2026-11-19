@@ -16,7 +16,8 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
-            [--save-state <file>] [--load-state <file>]
+            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading]
+  terse run <image> --replay <file> [--frames N] [--dump ...] [--hash] [--hash-every N] [--bench] [--save-state <file>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
@@ -39,6 +40,7 @@ const USAGE: &str = "usage:
   terse records list [<owner>] | show <owner> <name> | delete <owner> <name>   [--data <dir>]
   terse manual build|check [--dir <docs/manual>]
   terse manual publish   (the manual built into terse, as articles of your feed)
+  terse vectors [--dir <vectors>]   (the core test vectors: blobs, entries, profiles, relay messages, articles)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
@@ -75,12 +77,20 @@ shows them for inspection: an <owner> is builtin:<title>, program:<feed key>:<na
 image:<image id>; without one, `records list` lists every owner.
 --events: scripted input, one event per line (see README).
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
-`<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
+`<counter> <hash>` after every frame that leaves the frame counter at a multiple of N (from
+reset: after the first N frames, 2N frames, ...; a frame that stops the machine counts);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
 --save-state writes the machine's snapshot (STATE.md 4) to <file> after the last frame; --load-state
 starts the machine from the snapshot in <file> instead of from reset (its image: <image|id> if given, else
 the one the snapshot names, by ID); its hash is then the hash at the moment of the snapshot. Not with
---shell. A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC 12.7).
+--shell. --record writes every input of every frame and the hash after it to <file> (STATE.md 5);
+--replay runs such a recording again from <image> (a file) alone: no network, store, data
+directory or events, every frame's hash checked (it stops at the first that differs), and it
+refuses a recording of another image. --profile reading provides only the machine's reading
+profile: devices 1, 2, 4 and 7 (an image that lists another is refused), and the content
+operations get, subscriptions, timeline, names, identity, subscribe and unsubscribe; every other
+content request completes with status 05h (refused) without asking.
+A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC 12.7).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
 --shell runs a system (SPEC 12): the image (default: the built-in shell, programs/shell) is the shell,
@@ -89,7 +99,9 @@ them, are put into the store and offered to it. Scripted events are the host's i
 home key, pointer positions are in the whole screen's units, and the system routes them. --dump
 prints the shell's screen, then for each machine whose rectangle is not empty a line
 `-- machine <handle> <state> <x> <y> <w> <h> <title> --` and its screen; --hash prints the shell's
-hash, --hash-all also `<handle> <hash>` for each machine started (`-` while it has no image).
+hash, and --hash-all after it `<handle> <hash>` for each machine the shell has after the last
+frame, in handle order (one it stopped is not listed; `-`: no machine, as its image or snapshot is
+still being fetched or its start failed).
 --dump-vectors prints the 2D list (device 3) as shapes and the 3D list (device 9) as commands, then
 `-- 3d: <n> segments, length <l> units --`: what it draws seen from the reference eye (SPEC 13.4).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
@@ -101,8 +113,33 @@ tell a fault from any exit code (a shell's $status shows 143).";
 /// Options for commands that use the blob store and relay.
 const NET_OPTIONS: [&str; 4] = ["--relay", "--store", "--config", "--no-feed-relays"];
 
+/// The command line as UTF-8. An argument that is not is refused with the
+/// option it belongs to (an image title, SPEC 2, is UTF-8).
+fn utf8_args() -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in std::env::args_os().skip(1) {
+        match a.into_string() {
+            Ok(s) => out.push(s),
+            Err(a) => {
+                let shown = a.to_string_lossy();
+                return Err(match out.last().map(String::as_str) {
+                    Some(opt) if opt.starts_with('-') => format!("{opt} {shown}: not valid UTF-8"),
+                    _ => format!("{shown}: not valid UTF-8"),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = match utf8_args() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("terse: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let result = match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
         Some("info") => info(&args[1..]),
@@ -117,6 +154,7 @@ fn main() -> ExitCode {
         Some("find") => feed::find(&args[1..]),
         Some("records") => records(&args[1..]),
         Some("manual") => feed::manual(&args[1..]),
+        Some("vectors") => vectors(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {
@@ -291,7 +329,7 @@ impl Net<'_> {
     }
 }
 
-/// Loads an image from a file, or by image ID (NETWORK 2).
+/// Loads an image from a file, or by image ID (NETWORK 2, 7).
 fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
     let bytes = match parse_hex(arg) {
         Some(id) if !Path::new(arg).exists() => net.fetch(id)?,
@@ -307,8 +345,14 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
     Script::parse(&text).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The devices the machine's reading profile provides (SPEC 2.1): the system (1), the terminal (2), content (4) and the page (7).
+const READING_DEVICES: [u8; 4] = [1, 2, 4, 7];
+
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-all", "--bench", "--shell"])?;
+    if args.has("--replay") {
+        return replay(&args);
+    }
     args.check_known(&[
         "--frames",
         "--dump",
@@ -330,6 +374,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--no-program-download",
         "--save-state",
         "--load-state",
+        "--record",
+        "--profile",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
@@ -338,14 +384,26 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if !shell && (args.has("--builtin") || args.has("--hash-all")) {
         return Err("--builtin and --hash-all need --shell".into());
     }
-    if shell && (args.has("--save-state") || args.has("--load-state")) {
-        return Err("--save-state and --load-state are for a single machine, not --shell".into());
+    if shell && (args.has("--save-state") || args.has("--load-state") || args.has("--record")) {
+        return Err("--save-state, --load-state and --record are for a single machine, not --shell".into());
+    }
+    let reading = match args.get("--profile") {
+        None => false,
+        Some("reading") => true,
+        Some(p) => return Err(format!("unknown profile {p} (the only one is reading)")),
+    };
+    if reading && shell {
+        return Err("the reading profile has no device 8: it runs a single machine, not --shell".into());
     }
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None, find: false };
     // STATE.md 4: a machine started from a snapshot.
-    let snapshot = match args.get("--load-state") {
-        Some(path) => Some(terse_core::Snapshot::decode(&read(path)?).map_err(|e| format!("{path}: {e}"))?),
+    let snapshot_file = args.get("--load-state").map(read).transpose()?;
+    let snapshot = match &snapshot_file {
+        Some(file) => {
+            let path = args.get("--load-state").unwrap_or_default();
+            Some(terse_core::Snapshot::decode(file).map_err(|e| format!("{path}: {e}"))?)
+        }
         None => None,
     };
     let image = match (args.positional.as_slice(), &snapshot) {
@@ -353,14 +411,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         ([], Some(s)) => load_image(&to_hex(&s.image_id()), &mut net)?,
         _ => load_image(args.one_positional()?, &mut net)?,
     };
-    let frames: Option<u64> = match args.get("--frames") {
-        Some(n) => Some(n.parse().map_err(|_| format!("bad frame count {n}"))?),
-        None => None,
-    };
-    let hash_every: Option<u32> = match args.get("--hash-every") {
-        Some(n) => Some(n.parse().ok().filter(|&n| n > 0).ok_or(format!("bad --hash-every {n}"))?),
-        None => None,
-    };
+    // SPEC 2: a host refuses an image that lists a device it lacks.
+    if reading && let Some(d) = image.devices.iter().find(|d| !READING_DEVICES.contains(&d.slot)) {
+        return Err(format!(
+            "the image lists device {}, which the reading profile does not provide (it has devices 1, 2, 4 and 7)",
+            d.slot
+        ));
+    }
+    let frames = frame_count(&args)?;
+    let hash_every = hash_every(&args)?;
 
     let consent = match args.get("--consent") {
         None => Consent::Deny,
@@ -389,6 +448,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         node.set_program_download(!args.has("--no-program-download"));
         let mut content = ContentService::start_with_consent(node, consent);
+        content.set_reading_profile(reading);
         // Start from a caught-up store, so that a run sees what the relay
         // holds when it starts; later entries arrive while it runs.
         if content.following()
@@ -417,6 +477,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     }
     // Headless runs are reproducible (see `HeadlessSystem`).
     let mut headless = HeadlessSystem::new(content, script);
+    // STATE.md 5: every input of every frame, and the hash after it.
+    let mut recording = match args.get("--record") {
+        Some(path) => {
+            headless.record();
+            let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
+            let mut out = std::io::BufWriter::new(file);
+            out.write_all(&terse_core::record::encode_header(&image.id, snapshot_file.as_deref()))
+                .map_err(|e| format!("{path}: {e}"))?;
+            Some((path, out))
+        }
+        None => None,
+    };
     let mut stopped = None;
     let mut times = Vec::new();
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
@@ -426,25 +498,108 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         if args.has("--bench") {
             times.push(start.elapsed());
         }
-        let machine = system.shell();
-        if let Some(n) = hash_every
-            && machine.frame() % n == 0
-        {
-            println!("{} {}", machine.frame(), to_hex(&machine.state_hash()));
+        if let Some((path, out)) = &mut recording {
+            let hash = system.shell().state_hash();
+            for (_, frame) in headless.take_recorded() {
+                out.write_all(&frame.encode(&hash)).map_err(|e| format!("{path}: {e}"))?;
+            }
         }
+        print_hash_every(system.shell(), hash_every);
         if stopped.is_some() {
             break;
         }
     }
-    if let Some(fault) = system.shell().fault() {
-        eprintln!("terse: fault: {fault}");
+    if let Some((path, mut out)) = recording {
+        out.flush().map_err(|e| format!("{path}: {e}"))?;
     }
     if stopped.is_none() && frames.is_none() {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
+    finish(&args, &system, stopped, &mut times)
+}
 
+/// `--frames`.
+fn frame_count(args: &Args) -> Result<Option<u64>, String> {
+    args.get("--frames").map(|n| n.parse().map_err(|_| format!("bad frame count {n}"))).transpose()
+}
+
+/// `--hash-every`.
+fn hash_every(args: &Args) -> Result<Option<u32>, String> {
+    args.get("--hash-every").map(|n| n.parse().ok().filter(|&n| n > 0).ok_or(format!("bad --hash-every {n}"))).transpose()
+}
+
+/// `--hash-every N`: `<counter> <hash>` after a frame that leaves the frame
+/// counter at a multiple of N.
+fn print_hash_every(machine: &Machine, every: Option<u32>) {
+    if let Some(n) = every
+        && machine.frame() % n == 0
+    {
+        println!("{} {}", machine.frame(), to_hex(&machine.state_hash()));
+    }
+}
+
+/// `terse run <image> --replay <file>`: the recorded run again, from the
+/// recording alone (STATE.md 5): no network, store, data directory or
+/// script. Every frame's state hash is checked against the recording.
+fn replay(args: &Args) -> Result<ExitCode, String> {
+    args.check_known(&["--replay", "--frames", "--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-every", "--bench", "--save-state"])
+        .map_err(|e| format!("{e}\n(--replay takes only --frames, --dump, --hash, --hash-every, --bench and --save-state)"))?;
+    if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
+        return Err("--dump-vectors and --dump-page need --dump".into());
+    }
+    let path = args.require("--replay")?;
+    let bytes = read(path)?;
+    let mut recording = terse_core::record::Recording::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    // The image, from its file: a recording needs no store.
+    let image_path = args.one_positional()?;
+    let image = Image::parse(&read(image_path)?).map_err(|e| format!("{image_path}: {e}"))?;
+    if image.id != recording.image_id {
+        return Err(format!("{path}: a recording of image {}, not {image_path} ({})", to_hex(&recording.image_id), image.id_hex()));
+    }
+    let machine = match recording.snapshot {
+        Some(file) => terse_core::Snapshot::decode(file)
+            .and_then(|s| s.restore(&image))
+            .map_err(|e| format!("{path}: its snapshot: {e}"))?,
+        None => Machine::new(&image),
+    };
+    let mut system = System::with_machine(machine);
+    let frames = frame_count(args)?;
+    let hash_every = hash_every(args)?;
+    let mut stopped = None;
+    let mut times = Vec::new();
+    let mut run = 0;
+    while frames.is_none_or(|n| run < n) {
+        let Some(next) = recording.next_frame() else { break };
+        let (frame, hash) = next.map_err(|e| format!("{path}: {e}"))?;
+        let start = std::time::Instant::now();
+        let machine = system.shell_mut();
+        if frame.frame != machine.frame() || machine.stopped().is_some() {
+            return Err(format!("{path}: a record of frame {} where the machine is at frame {}", frame.frame, machine.frame()));
+        }
+        let controllers = frame.controllers();
+        machine.run_frame(&frame.input(&controllers));
+        // Requests go nowhere: their completions are in the recording.
+        machine.take_content_requests();
+        if args.has("--bench") {
+            times.push(start.elapsed());
+        }
+        run += 1;
+        stopped = machine.stopped();
+        if machine.state_hash() != hash {
+            return Err(format!("{path}: the replay differs from the recording after frame {}", frame.frame));
+        }
+        print_hash_every(system.shell(), hash_every);
+    }
+    finish(args, &system, stopped, &mut times)
+}
+
+/// What `run` prints after the last frame, and its exit status.
+fn finish(args: &Args, system: &System, stopped: Option<Stopped>, times: &mut [std::time::Duration]) -> Result<ExitCode, String> {
+    if let Some(fault) = system.shell().fault() {
+        eprintln!("terse: fault: {fault}");
+    }
     if args.has("--bench") {
-        bench_report(&mut times);
+        bench_report(times);
     }
     if let Some(path) = args.get("--save-state") {
         write(path, &terse_core::Snapshot::of(system.shell()).encode())?;
@@ -452,6 +607,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if args.has("--hash") || args.has("--hash-all") {
         println!("{}", to_hex(&system.shell().state_hash()));
     }
+    // Every machine the shell has (started and not stopped), in handle
+    // order; `-` while it has no machine: its image is being fetched, or
+    // its start failed.
     if args.has("--hash-all") {
         for (h, child) in system.children() {
             match &child.machine {
@@ -461,7 +619,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     if args.has("--dump") {
-        dump(system.shell(), &args);
+        dump(system.shell(), args);
         if let Some(dev) = system.shell().machines() {
             for (h, child) in system.children() {
                 let slot = dev.slot(h);
@@ -472,7 +630,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 let state = terse_core::machines::state::name(slot.state);
                 println!("-- machine {h} {state} {} {} {} {} {} --", r.x, r.y, r.w, r.h, child.title);
                 if let Some(m) = &child.machine {
-                    dump(m, &args);
+                    dump(m, args);
                 }
             }
         }
@@ -484,7 +642,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
-/// An image's bytes from a file, or by ID from the node (NETWORK 2).
+/// An image's bytes from a file, or by ID from the node (NETWORK 2, 7).
 fn image_bytes(arg: &str, node: &mut Node) -> Result<Vec<u8>, String> {
     let bytes = match parse_hex(arg) {
         Some(id) if !Path::new(arg).exists() => node.fetch_bytes(id)?,
@@ -618,6 +776,19 @@ fn get(args: &[String]) -> Result<ExitCode, String> {
         Some(out) => write(out, &bytes)?,
         None => std::io::stdout().write_all(&bytes).map_err(|e| e.to_string())?,
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `terse vectors [--dir <dir>]`: writes the core test vectors (vectors/README).
+fn vectors(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    args.check_known(&["--dir"])?;
+    if !args.positional.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    let dir = PathBuf::from(args.get("--dir").unwrap_or("vectors"));
+    terse_net::vectors::write(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    println!("wrote {} files to {}", terse_net::vectors::generate().len(), dir.display());
     Ok(ExitCode::SUCCESS)
 }
 

@@ -537,7 +537,7 @@ static void step(void)
 static void draw(void)
 {
     int passes = phosphor ? 2 : 1;
-    vec_begin(list);
+    vec_begin(list, sizeof list);
     /* Arena border. */
     vec_colour(70, 110, 190, 255);
     vec_width(32);

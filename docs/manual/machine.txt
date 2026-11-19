@@ -6,6 +6,15 @@ the image file a program is shipped in, and how programs call devices,
 with the complete table of calls. Each device's calls are described in
 full in that device's article.
 
+The machine is the optional third layer of Terse: the network and the
+article format are the core, and a reader can implement them without
+it. A machine host that only wants to run the reader may provide the
+machine's reading profile: the machine and devices 1, 2, 4 and 7, with
+every content operation the reader needs (get, subscriptions, timeline,
+names, identity, subscribe, unsubscribe); it may answer the others with
+status 05h, and lacks devices 3, 8 and 9, so it refuses an image that
+lists them. `terse run --profile reading` runs a machine that way.
+
 ## CPU
 
 The CPU executes exactly RV32I with the M (multiply and divide) and C
@@ -64,7 +73,7 @@ For each frame the host does, in order:
 
 | Step | What happens |
 |---|---|
-| 1 | appends the frame's input events to the event queue, latches the clock, the random bytes and the controllers, and applies the content completions it has for this frame |
+| 1 | appends the frame's input events to the event queue, latches the clock, the random bytes and the controllers, and applies the content completions it has for this frame (their content-done events come after the input events) |
 | 2 | adds 125,000 to the budget, subtracts the charge for the content delivered in step 1, and runs the CPU while the budget is greater than zero |
 | 3 | ends the frame: the frame counter increases by one, and the host presents the terminal, the vector displays and the page as they are now |
 
@@ -76,7 +85,7 @@ For each frame the host does, in order:
 | Negative carry | a negative remainder carries into the next frame; if it exceeds a whole frame's budget, that frame runs nothing and the rest carries on |
 | No positive carry | unused budget never carries forward |
 | Running out | the machine pauses and continues with the next instruction in the next frame; the program is not told |
-| `wait_frame` | the rest of the budget is discarded and the call returns at the start of the next frame |
+| `wait_frame` | the rest of the budget is discarded and the call returns at the start of the next frame, which always runs (content delivered in a frame costs at most 32,768 units) |
 | Stopping | `exit` or a fault stops the machine at once; the rest of the budget is dropped, the frame still counts, nothing runs later |
 
 A host that falls behind real time lets virtual time lag; it never runs
@@ -128,8 +137,12 @@ the device requirements, then the ROM. All numbers are little-endian.
 - The file length must be exactly 32 + 2 × `n_dev` + `rom_len`.
 - The image ID is the BLAKE3-256 hash of the whole file. It names the
   program everywhere: an image is a blob, and its ID is its blob ID.
-- A slot may be listed at most once. Device 1 is always present and need
-  not be listed.
+- A slot may be listed at most once; a host refuses an image that lists
+  one twice. Device 1 is always present and need not be listed.
+- The title is the 16 bytes without their trailing `00h` bytes. Hosts do
+  not check it (`terse pack` refuses one that is not UTF-8); a built-in
+  whose title is not a valid display name cannot be started by name,
+  only by its image ID.
 - A host refuses an image whose profile or listed device versions it does
   not implement (also when a shell starts it). A device not listed behaves
   as absent: its calls return `FFFF_FFFFh`.
@@ -138,13 +151,13 @@ the device requirements, then the ROM. All numbers are little-endian.
 
 | Slot | Device | Version | Status |
 |---|---|---|---|
-| 1 | System | 0 | specified |
-| 2 | Terminal | 0 | specified |
+| 1 | System | 0 | specified; reading profile |
+| 2 | Terminal | 0 | specified; reading profile |
 | 3 | 2D vector display | 0 | specified |
-| 4 | Content | 0 | specified |
+| 4 | Content | 0 | specified; reading profile |
 | 5 | Messages | none | reserved |
 | 6 | Sound | none | reserved |
-| 7 | Page | 0 | specified |
+| 7 | Page | 0 | specified; reading profile |
 | 8 | Machines | 0 | specified; only the shell of a system has it |
 | 9 | 3D vector display | 0 | specified |
 
@@ -161,12 +174,17 @@ write; `pc` continues after the `ecall`.
 - An unknown call, or a call to a device the image does not list, returns
   `FFFF_FFFFh` (`TERSE_ERR_UNKNOWN`) and does nothing else.
 - A buffer is a pointer and a length. A buffer a device reads must lie
-  wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. An
-  empty buffer may also start just past the end of ROM or RAM. Otherwise
+  wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. A
+  buffer of length 0 is valid at any address, for every call. Otherwise
   the call returns `FFFF_FFFEh` (`TERSE_ERR_BUFFER`) and does nothing
   else. This is not a fault.
 - Exceptions: a vector display list not wholly in RAM is rejected (result
-  1), and a content request block not in RAM is rejected with handle 0.
+  1, as for a bad length); a content request block not in RAM is rejected
+  with handle 0, and a data range of the block that is not where it must
+  be makes the request invalid (status `04h`); page `submit` returns 1
+  for a bad length before it looks at the buffer.
+- A call checks its buffer before its other arguments: a bad buffer gives
+  `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
   see [charges](terse:{charges}).
 
@@ -251,6 +269,8 @@ The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{c
 | `80Ch` | `restore` | `a0` = slot | a handle 1 to 8, or 0 if none is free or the slot is out of range |
 | `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
 | `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+| `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
+| `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 
 [The 3D vector display](terse:{device-vector3}), slot 9:
 

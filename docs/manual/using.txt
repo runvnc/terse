@@ -12,15 +12,18 @@ builds everything, sets up four sample articles and opens the shell. The first t
 
 Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed keys. How relays work is in [The network](terse:{network}).
 
+The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective).
+
 ## The shell
 
 The screen has a bar on row 0 and the machines' tiles below it.
 
-- The bar starts with the home segment `⌂`, then one segment per machine: its handle, a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and its share of the frame budget in its last frame. The machine with the keyboard is blue, the one selected in the launcher amber; the clock (UTC) is at the right. A click on a segment gives that machine the keyboard; a click on `⌂` opens the launcher.
-- Each tile shows a machine's whole screen, scaled, with a blue frame round the one with the keyboard. Layouts: master and stack (the first machine on the left half, the others stacked on the right; the default), grid, and zoom (one machine over the whole area, the others hidden but still running).
-- A click on a machine's picture gives it the keyboard; the click also reaches the machine. A machine that exits or faults keeps its tile and last picture (a fault is shown on its bottom row) until you stop it; the keyboard then goes back to the shell.
+- The bar starts with the home segment `⌂`, then one segment per machine: its handle, a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and its share of the frame budget in its last frame. The machine with the keyboard is blue, the one selected in the launcher amber; the clock (UTC) is at the right. A click on a segment gives that machine the keyboard (in the gallery it turns the ring to it instead); a click on `⌂` opens the launcher.
+- Each tile shows a machine's whole screen, scaled, with a blue frame round the one with the keyboard. Layouts: master and stack (the first machine on the left half, the others stacked on the right; the default), grid, the gallery (below), and zoom (one machine over the whole area, the others hidden but still running).
+- The gallery: every machine's screen is a panel standing on a ring in 3D, in a wireframe monitor case on a stand over a faint ground grid. The selected machine is at the front, on the glass; the others are turned half way towards you. Selecting a machine in the launcher (Left, Right, Tab, Shift+Tab, 1 to 8) turns the ring over 20 frames to bring it to the front; in the gallery a click on a machine's bar segment turns the ring to it (back in the launcher if a machine had the keyboard). Giving a machine the keyboard (Enter, Esc, a click on its panel, starting a program, which joins the ring) flies the whole scene over 20 frames until its panel lies flat over the area below the bar, then shows it there as in zoom; F12 flies it back to the ring. With the launcher open the ring stands to its right. The panels move with the eye (parallax) like any 3D drawing; while the scene flies, clicks reach no machine.
+- A click on a machine's picture or panel gives it the keyboard; the click also reaches the machine. A machine that exits or faults keeps its tile and last picture (a fault is shown on its bottom row) until you stop it; the keyboard then goes back to the shell.
 
-F12 is the home key: wherever the keyboard is, it brings you back to the launcher, and no program ever sees it. The launcher is shown while the shell has the keyboard (at start, and after F12), with the tiles moved to its right. It lists the built-in programs by title (reader, sparks, fetch, hello, sketch, holo), then "From your feeds": the current version of each program of the feeds you follow, with its publisher's name and short key, marked `↓` while its image is not yet downloaded. Then come the machines with their state (a faulted one with the fault kind and `pc`, a failed one with the reason: not found, not a valid image, needs a device this host does not have, no room).
+F12 is the home key: wherever the keyboard is, it brings you back to the launcher, and no program ever sees it. The launcher is shown while the shell has the keyboard (at start, and after F12), with the tiles moved to its right. It lists "Manual" (Enter opens the reader on this manual's index), the built-in programs by title (reader, sparks, fetch, hello, sketch, holo), then "From your feeds": the current version of each program of the feeds you follow, with its publisher's name and short key, marked `↓` while its image is not yet downloaded. Then come the machines with their state (a faulted one with the fault kind and `pc`, a failed one with the reason: not found, not a valid image, needs a device this host does not have, no room).
 
 | Key | In the launcher |
 |---|---|
@@ -32,15 +35,15 @@ F12 is the home key: wherever the keyboard is, it brings you back to the launche
 | X | stop the selected machine |
 | P | pause or resume it |
 | Z | zoom it; Z again goes back |
-| L | the next layout |
+| L | the next layout: master and stack, grid, gallery, zoom |
 | S | save the session |
-| D | on the restore entry: discard the saved session |
+| D | with the cursor on the restore entry (and only there): discard the saved session |
 
 A click on a program starts it; a click on a machine selects it and gives it the keyboard. Programs are started by their identity, built-ins too, so their named records follow them from version to version. The layout chosen with L and Z is kept for the next run.
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:{state}).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:{state}).
 
 ## Open requests
 
@@ -116,7 +119,7 @@ The article fills the screen above the status row as a centred column 512 units 
 | Enter, click | follow the current link |
 | Esc, Backspace, Left | back |
 
-The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (`terse:` and a blob ID) or a feed's page (`terse:feed/`); a link to a program, a program image or a document is passed to the shell, as described above; a web link only shows its address, since there is no browser. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.
+The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (`terse:` and a blob ID) or a feed's page (`terse:feed/`); a link to a program, a program image or a document is passed to the shell, as described above. Articles have no links to web pages: an address such as `http://example.org` is ordinary text. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.
 
 The reader also gets the first 8 article links of an article as you open it, so they open at once when you follow them.
 

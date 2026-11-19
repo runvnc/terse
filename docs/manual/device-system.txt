@@ -43,8 +43,9 @@ and returns `FFFF_FFFFh`.
 
 `wait_frame` ends the machine's work for this frame: the rest of the
 budget is discarded, and the call returns at the start of the next frame
-with the frame counter as it reads in that frame, one more than before the
-call. Unused budget never carries over, but a negative one does: the call
+with one more than the frame counter at the call. The next frame always
+runs (the most content a frame can deliver costs 32,768 units), so that
+is the counter of the frame it returns in. Unused budget never carries over, but a negative one does: the call
 costs 5 units from ROM, so a `wait_frame` started with 2 units left leaves
 a debt of 3 for the next frame.
 
@@ -98,8 +99,9 @@ at the start of the frame, and returns byte 0 (1 if connected, else 0).
 Controllers are numbered 0 to 3; a number above 3 reads as a controller
 that is not connected (eight zero bytes, result 0). The layout of the
 eight bytes is in [Events and input](terse:{events}). In a system only the
-machine with the keyboard focus sees the controllers; every other machine
-reads all four as not connected. In C: `terse_pad_read(n, &pad)` with a
+machine with the focus (the shell when the focus is 0) sees the
+controllers; every other machine reads all four as not connected. A new
+focus takes effect at the next frame. In C: `terse_pad_read(n, &pad)` with a
 `terse_pad`.
 
 ## exit

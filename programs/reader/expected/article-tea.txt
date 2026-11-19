@@ -30,7 +30,7 @@
                          Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 450, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Tea in three languages: お茶, الشاي
-   53  15     0   sans12 |0b513a…e39f2d  ·  #2  ·  2026-11-17 18:20 UTC  ·  1.2 KB
+   53  15     0   sans12 |0b513a…e39f2d  ·  #2  ·  2026-11-17 18:20 UTC  ·  1.2 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |Tea is drunk almost everywhere, but every culture has made it its
   115  19     0   sans15 |own. This page describes the same simple ritual in three languages,

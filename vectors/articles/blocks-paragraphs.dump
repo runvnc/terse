@@ -1,0 +1,6 @@
+paragraph
+  text "A paragraph's lines join with a space; blanks at the start of a line are dropped."
+paragraph
+  text "Blank lines separate paragraphs."
+paragraph
+  text "A line of only blanks (above: two spaces) is a blank line too."

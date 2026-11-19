@@ -1,0 +1,14 @@
+paragraph
+  code "a"
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text " after a code span. A line break before "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text " the link. [a]b]("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") and "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "a"
+  text "("
+  link article fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "). [a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefx) is text. terse:program/0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF/Pad has capitals: text. "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad."
+  text " has an escaped dot. terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00Pad has no slash: text."

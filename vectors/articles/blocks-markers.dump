@@ -1,0 +1,26 @@
+item
+  text " -"
+item
+  text " *x ##"
+heading
+paragraph
+  text "```"
+pre
+  line
+    text "    ```"
+paragraph
+  text "Text"
+table 1 noheader
+  align start
+  row
+    cell
+      text "a"
+item
+  text "item"
+heading
+  text "heading"
+item
+  text "item"
+pre
+  line
+    text "fence"

@@ -92,6 +92,7 @@ crash
 
 -- launcher --
 PROGRAMS
+[Manual]{301}
 [reader]{100}
 [sparks]{101}
 [fetch]{102}

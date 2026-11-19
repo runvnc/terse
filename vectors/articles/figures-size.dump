@@ -1,0 +1,8 @@
+figure 1024 1
+  path fill none stroke fg 16
+    M 0 0
+    L 16 16
+figure 7 9
+  path fill none stroke fg 16
+    M 0 0
+    L 16 16

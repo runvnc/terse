@@ -1,0 +1,54 @@
+pre
+  line
+    text "M10 10 A 5 5 0 0 1 20 20"
+pre
+  line
+    text "M1e2 0"
+pre
+  line
+    text "fill #abcd M0 0 L1 1"
+pre
+  line
+    text "10 10 M0 0"
+pre
+  line
+    text "M0 0 L2048 0"
+pre
+  line
+    text "M0 0 L2047.04 0"
+pre
+  line
+    text "M0 0 stroke"
+pre
+  line
+    text "M0 0 L1 1 2"
+pre
+  line
+    text "L0 0 L1 1"
+pre
+  line
+    text "fill #fffM0 0 L1 1"
+pre
+  line
+    text "M0 0 Z 5"
+pre
+  line
+    text "strokes #fff M0 0 L1 1"
+pre
+  line
+    text "stroke #fff 2048 M0 0 L1 1"
+pre
+  line
+    text "stroke #fff -1 M0 0 L1 1"
+pre
+  line
+    text "M 1.000000000000000000000000000000001 0 L1 1"
+pre
+  line
+    text "fill red M0 0 L1 1"
+pre
+  line
+    text "M0 0 L1 1 fill"
+pre
+  line
+    text "M0 0 L10 10"

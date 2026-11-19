@@ -1,0 +1,56 @@
+# Terse test vectors: blob IDs (NETWORK.md section 1). Format: vectors/README.
+# A blob is 1 to 1,048,576 bytes; its ID is the BLAKE3-256 hash of its bytes.
+
+blob empty
+  size 0
+  hex -
+  valid no
+  blake3 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+
+blob one-byte
+  size 1
+  hex 00
+  valid yes
+  blake3 2d3adedff11b61f14c886e35afa036736dcd87a74d27b5c1510225d0f592e213
+
+blob abc
+  size 3
+  hex 616263
+  valid yes
+  blake3 6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
+
+blob hello
+  size 13
+  hex 48656c6c6f2c20546572736521
+  valid yes
+  blake3 f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe8
+
+blob profile-document
+  size 12
+  hex 6c69737465643a207965730a
+  valid yes
+  blake3 c87e03f4b03f250e11c1b24a410d44e17d5de105bab331c50483f8ce0369e33e
+
+blob chunk
+  size 1024
+  pattern mod251
+  valid yes
+  blake3 42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7
+
+blob chunk-and-one
+  size 1025
+  pattern mod251
+  valid yes
+  blake3 d00278ae47eb27b34faecf67b4fe263f82d5412916c1ffd97c8cb7fb814b8444
+
+blob largest
+  size 1048576
+  pattern mod251
+  valid yes
+  blake3 74cb441fd087764ca9c3694da742ebe30cbeb3060a17009ca81825c7a8d10343
+
+blob too-large
+  size 1048577
+  pattern mod251
+  valid no
+  blake3 2f053cd7472cf0cd2f9adaf45c1180255b91b9a865404a63671a0ee5f792ed33

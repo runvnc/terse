@@ -1,0 +1,12 @@
+figure 100 100
+  path fill #aabbccff stroke #11223344 40
+    M 0 0
+    L 160 0
+    L 160 160
+    Z
+  path fill #aabbccff stroke fg 16
+    M 320 320
+    L 480 480
+  path fill #abcdefff stroke #00ff0080 16
+    M 960 960
+    L 1120 1120

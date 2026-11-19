@@ -1,0 +1,2 @@
+Malformed ÿ byte, a cut â‚ sequence, a control character, DEL, C1 Â….
+A lone CR in a line: carriage.

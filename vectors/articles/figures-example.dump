@@ -1,0 +1,15 @@
+figure 200 60
+  path fill #2b3a55ff stroke none
+    M 0 0
+    L 3200 0
+    L 3200 960
+    L 0 960
+    Z
+  path fill #98c379ff stroke fg 32
+    M 320 800
+    L 960 160
+    L 1600 800
+    Z
+  path fill none stroke #e5c07bff 48
+    M 1920 800
+    Q 2400 0 2880 800

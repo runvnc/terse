@@ -6,6 +6,7 @@ overview
 writing-programs
 using
 writing-articles
+native-reader
 state
 machine
 device-system
@@ -15,6 +16,7 @@ device-vector3
 device-page
 device-page-figures
 device-machines
+device-machines-screens
 content-blobs
 content-feeds
 content-records

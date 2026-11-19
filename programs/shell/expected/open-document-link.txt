@@ -58,7 +58,7 @@
 
 
 
- Opened in a new tile
+ Asked the shell to open it
 -- machine 2 running 323 23 314 235 sketch --
 
 

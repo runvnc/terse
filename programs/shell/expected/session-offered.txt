@@ -31,6 +31,7 @@
 -- launcher --
 PROGRAMS
 Restore last session (3 programs)
+Manual
 reader
 sparks
 fetch

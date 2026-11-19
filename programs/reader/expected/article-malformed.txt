@@ -27,10 +27,8 @@
 
 
 
-                         Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 435, scroll 0 (stored 0), region 64 0 512 464 --
-   14  33     0   sans26b |Malformed figures
-   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  475 bytes
+ 100%                    Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
+-- page: height 545, scroll 81 (stored 81), region 64 0 512 464 --
    78   8     0  -- rule --
    96  19     0   sans15 |An arc:
   125  17     0   mono13 |M10 10 A 5 5 0 0 1 20 20
@@ -42,6 +40,10 @@
   281  17     0   mono13 |M0 0 L2048 0
   308  17     0   mono13 |M0 0 stroke
   335  17     0   mono13 |M0 0 L1 1 2
-  362  19     0   sans15 |A bad size, and a figure that is not closed:
-  391  17     0   mono13 |M0 0
-  418  17     0   mono13 |M0 0 L10 10
+  362  19     0   sans15 |Command letters with no numbers:
+  391  17     0   mono13 |M0 0 L Z
+  418  17     0   mono13 |M0 0 L
+  445  17     0   mono13 |M
+  472  19     0   sans15 |A bad size, and a figure that is not closed:
+  501  17     0   mono13 |M0 0
+  528  17     0   mono13 |M0 0 L10 10

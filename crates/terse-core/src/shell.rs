@@ -322,7 +322,10 @@ impl System {
         let mut routed: [Vec<Event>; MAX_MACHINES] = Default::default();
         self.route(events, &mut shell_events, &mut routed);
 
-        // The shell.
+        // The shell. The focus as routing left it (a home key included)
+        // decides who reads the controllers this frame, the shell's and the
+        // children's alike: a `focus` the shell makes now takes effect at
+        // the next frame's routing (SPEC 12.5 step 5).
         let focus = self.focus();
         let shell_controllers = if focus == 0 { controllers } else { NO_CONTROLLERS };
         out.shell = Some(driver.frame(Who { handle: 0, serial: 0 }, &mut self.shell, shell_events, shell_controllers));
@@ -405,7 +408,6 @@ impl System {
         }
 
         // The children.
-        let focus = self.focus();
         for i in 0..MAX_MACHINES {
             let h = i as u8 + 1;
             if self.state(h) != state::RUNNING {

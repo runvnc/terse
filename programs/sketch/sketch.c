@@ -505,7 +505,7 @@ int main(void)
     term_goto(28, STATUS_ROW);
     term_color(244, 0);
     term_puts("1-6 colour U undo C clear S save P publish F glow");
-    vec_begin(vlist);
+    vec_begin(vlist, sizeof vlist);
     vec_width(WIDTH);
     vend = 2;
     vdirty = 1;

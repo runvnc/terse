@@ -1,12 +1,16 @@
 # The network
 
-Terse hosts exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. There are no messages between users and no direct links between hosts yet. Programs never see this protocol: they use the content device, and the host speaks it for them.
+Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md and STATE.md) is an optional third layer that reuses them.
+
+Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.
 
 ## Blobs
 
 A blob is 1 to 1,048,576 bytes. Its ID is the BLAKE3-256 hash of its bytes: 32 bytes, written as 64 lowercase hex digits. A program image is a blob, so an image ID is a blob ID.
 
-A host keeps a local blob store (a cache) and answers a get from it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then delivers the requested range. A blob that fails the check counts as not found on that relay. Since a get reply carries the whole blob, a host learns a blob's size only from an entry that points at it or by downloading it. A put stores the blob locally and sends it to every connected relay. A host may start a program by image ID: it gets the blob, checks it is a valid image and runs it. Clients never trust relays: every blob is verified on receipt.
+A client keeps a local blob store (a cache) and uses it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then uses it. A blob that fails the check counts as not found on that relay. Since a get reply carries the whole blob, a client learns a blob's size only from an entry that points at it or by downloading it. A put stores the blob locally and sends it to every connected relay. Clients never trust relays: every blob is verified on receipt.
+
+A blob reached without an entry (by a link) tells what it is by its first four bytes: `TERS` is a program image, `TDOC` a document (data for a program), anything else an article.
 
 ## Relay protocol
 
@@ -37,11 +41,13 @@ All messages are binary WebSocket messages; multi-byte integers are little-endia
 | 2 | not found (get, lookup) |
 | 3 | refused (a put: too large, empty, store full or malformed; find, lookup: a bad request or asked too often) |
 
+A find the relay carries out is answered with status 1 and its results, none if nothing matches.
+
 The relay computes a put's ID itself. It must refuse blobs over 1,048,576 bytes and may limit its store. It closes the connection on a text message or an unparsable message of a known type, and ignores unknown types and replies or pushed entries from a non-peer.
 
 ## Feeds
 
-A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits). Only the host holds the secret key.
+A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is a curve point that is not of small order. Only the author's client holds the secret key.
 
 ## The entry
 
@@ -60,16 +66,16 @@ A feed is a numbered series of small signed entries from one author, each pointi
 
 The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
-An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); `seq` is at least 1; the kind is known; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Hosts and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
+An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); `seq` is at least 1; the kind is known; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
 
 | Kind | Entry | Title | Blob |
 |---|---|---|---|
-| 1 | article | any title | UTF-8 text (see "Writing articles") |
+| 1 | article | any title | UTF-8 text (see "Writing an article") |
 | 2 | profile | the feed's display name | the profile document |
 | 3 | program | the program's name, a display name | a Terse image |
 | 4 | document | any title | a document (starts with `TDOC`) |
 
-Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the host or relay holds. A program's identity is (feed key, name).
+Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name). An entry of a kind not listed here is invalid.
 
 ## Relay feed messages
 
@@ -79,15 +85,15 @@ Program and document entries are valid whatever their blob holds; that is found 
 - Unsubscribing from a feed that was not subscribed succeeds.
 - A relay may keep only the most recent entries of a feed (at least 256), but always keeps the feed's latest profile entry, however old.
 
-## Host behaviour with feeds
+## Clients and feeds
 
-- The host keeps a list of subscribed feeds and every valid entry received for them. On connecting to a relay it subscribes to each feed with `after` = the highest `seq` it holds.
-- Subscribing (by the user, or by a program with the user's consent) adds the feed and subscribes at once when connected; for a feed it holds nothing of, `after` is 0, so the relay sends all it holds. Unsubscribing removes the feed and unsubscribes on the connection.
-- Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the host gets the blob unasked, profiles and documents included. A blob whose length differs from the entry's size is not associated with it. Larger blobs are fetched on request.
-- Program download: once a subscribed feed is caught up, and after that whenever one of its program entries arrives, the host gets the image of the current version of each of the feed's programs it does not hold, if it is at most 131,136 bytes (the largest image), whatever the article limit; never older versions. The user may turn this off.
-- Prefetch: when automatic download stores an article (kind 1), the host takes the first 8 distinct `terse:` article links in it (link targets included) whose blobs it neither holds nor is fetching, and gets them; it skips one an entry says is over the automatic limit and discards a fetched one over it. Program links and blobs named by program entries are never prefetched; documents and prefetched blobs are not scanned. The user may turn this off.
-- Arrival order: the host records the order in which it first stored each entry, across restarts; it is the order of the timeline programs read (kinds 1 and 4). Unsubscribing hides a feed's entries from the timeline; subscribing again puts them back where they were.
-- Publishing an article or document: the host puts the blob, then signs and publishes an entry with the next `seq` (one more than the highest it holds or has used for its own feed). The entry is stored like a received one; if the host subscribes to its own feed, it is in the timeline at once.
+- The client keeps a list of subscribed feeds and every valid entry received for them. On connecting to a relay it subscribes to each feed with `after` = the highest `seq` it holds.
+- Subscribing (when the user asks) adds the feed and subscribes at once when connected; for a feed it holds nothing of, `after` is 0, so the relay sends all it holds. Unsubscribing removes the feed and unsubscribes on the connection. Only valid keys are subscribed to.
+- Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the client gets the blob unasked, profiles and documents included. A blob whose length differs from the entry's size is not associated with it. Larger blobs are fetched on request.
+- Program download (a client that runs programs): once a feed is caught up, and whenever one of its program entries arrives, the client gets the image of the current version of each of the feed's programs it lacks, up to 131,136 bytes (the largest image); never older versions. The user may turn this off.
+- Prefetch: when automatic download stores an article (kind 1), the client gets the first 8 distinct `terse:` article links in it (link targets included, and the scan may find one in a code span) whose blobs it neither holds nor is fetching, within the automatic limit. Program links and blobs named by program entries are never prefetched; documents and prefetched blobs are not scanned. The user may turn this off.
+- Arrival order: the client records the order in which it first stored each entry, across restarts; it is the order of its timeline (kinds 1 and 4), newest first. Unsubscribing hides a feed's entries from the timeline; subscribing again puts them back where they were.
+- Publishing an article or document: the client puts the blob, then signs and publishes an entry with the next `seq` (one more than the highest it holds or has used for its own feed). The entry is stored like a received one; if the client subscribes to its own feed, it is in the timeline at once.
 
 ## Profiles, display names and nicknames
 
@@ -102,7 +108,7 @@ The profile document is UTF-8 text of at most 4,096 bytes, lines ending with `0A
 | `listed` | `yes`: search may find the name; anything else, or no line, means not listed |
 | `relay` | a `ws://` or `wss://` URL of a relay where the author publishes; 0 to 4 lines; readers take the first four that are URLs |
 
-A host writing its user's profile adds a `relay` line for each of its non-loopback relays. Names are self-declared and not unique, so a feed's name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the host's configuration, never sent anywhere, and shown in preference to the declared name.
+A client writing its user's profile adds a `relay` line for each of its non-loopback relays. Names are self-declared and not unique, so a feed's name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the client's configuration, never sent anywhere, and shown in preference to the declared name.
 
 ## Search
 
@@ -116,31 +122,30 @@ A find's scope is 1 (feeds by display name), 2 (article and document titles) or 
 
 A relay returns at most 16 results from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.
 
-Clients ask all their relays and merge: they verify every entry and drop invalid ones, ones of the wrong kind and ones that do not match, and keep one entry per feed and `seq`. Scope 1 keeps only the highest `seq` of each feed, ordered as above. Scopes 2 and 3 go by rank: the first result of each relay (in the order of the host's relays), then the second of each, and so on; for scope 3 a program is then dropped if another result has the same feed and name with a higher `seq`. The first 16 are kept. A search that no relay answered and at least one refused is refused.
+Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result in relay order, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. A search that no relay answered and at least one refused is refused.
 
 ## Lookup
 
-A lookup's kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed's program (1), or 2 if none, profile or not. A client asking too often may be refused (finds and lookups may share a limit). A host asks all connected relays when a shell starts a program it holds no entry for, keeps the valid matching entry with the highest `seq` (stored, not subscribed), then gets the image.
+A lookup's kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed's program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest `seq` (stored, not subscribed), then gets the image; a machine host does so when a shell starts a program it holds no entry for.
 
 ## Several relays
 
-A host's relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has `relay` lines, up to two of those not already among its own: the feed relays, which may be turned off. A host keeps at most 16 relay connections. It ignores a `relay` line whose host is `localhost`, under `.localhost`, or an address that is loopback, unspecified, private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or link-local (169.254.0.0/16, fe80::/10); it does not connect if a name resolves to any such address, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.
+A client's relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has `relay` lines, up to two of those not already among its own: the feed relays, which may be turned off. A client keeps at most 16 relay connections. It ignores a `relay` line that names `localhost` (or a name under it) or a loopback, unspecified, private or link-local address (NETWORK.md 5.1 lists the ranges), does not connect if a name resolves to one, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.
 
-| Request | Goes to |
-|---|---|
-| put, publish | every connected relay; success when at least one accepts; an article's entry is published once a relay has accepted its blob |
-| subscribe | every connected relay that serves the feed (the host's own and the feed's relays), each with `after` = the highest `seq` held; an entry is stored once |
-| get | the feed relays of a feed with an entry pointing at the blob first, then the rest, two at a time; not found only when every connected relay said so or failed |
-| find, lookup | every connected relay |
+Put and publish go to every connected relay and succeed when one accepts (an article's entry once a relay has its blob); subscribe goes to every connected relay that serves the feed (the client's own and the feed's relays); find and lookup go to all. A get asks the feed's relays first, then the rest two at a time, and is not found only when every connected relay said so or failed.
 
 ## Relays that mirror each other
 
-A relay may be given other relays as peers. It connects to each, sends Peer, and keeps the connection, reconnecting after 1 s, doubling to 30 s. On a peer link both sides may send requests and replies.
+A relay may be given other relays as peers: it connects to each and sends Peer (`07h`). Every entry a relay newly stores, and every newly stored blob up to 16,384 bytes, it passes to its other peers; it subscribes on its peers to the feeds its clients follow, and asks them for a blob a client wants that it lacks (waiting at most 3 s). Because a relay passes on only what it newly stores, an entry crosses each peer link at most once in each direction. NETWORK.md 5.2 has the details.
 
-- Every entry a relay newly stores, from a client or a peer, goes with Publish to every peer except the one it came from; so does every newly stored blob up to 16,384 bytes, with Put. Larger blobs are not pushed. Peers are not sent `90h`.
-- When a client subscribes to a feed, the relay subscribes to it on each peer, once per peer link, with `after` = its own highest `seq`; a new peer link is subscribed to every feed clients follow.
-- A client's get the relay cannot serve is asked of every peer at once; the first matching blob wins and is stored (if there is room) and served. If every peer says not found or fails, or none answers within 3 s, the reply is not found. A peer's get is answered from the store only, and so are find and lookup.
+## What a reading client must and may do
 
-Because a relay passes on only what it newly stores, an entry crosses each peer link at most once in each direction.
+A reading client shows people the articles of the feeds they follow: a native reader, or a machine host running the reader program.
 
-For programs, completions arrive as events ([events](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf)) and cost budget ([charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a)).
+It must hold blobs by ID and verify each one, talk to at least one relay, verify entries, subscribe and unsubscribe by key, keep the timeline in arrival order, show articles by ARTICLE.md and show every name with its key. It may publish, set a profile and nicknames, search, use several relays, download automatically and prefetch.
+
+Entries of kinds it does not handle (programs and documents, for a client without the machine) are kept or skipped without error and shown, if at all, as something it cannot open; so are links to programs, and links to blobs that turn out to be images or documents. "Writing a reader without the machine" walks through building one.
+
+## For machine hosts
+
+Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:ecb820736fa26b9d30a97d6159bdc8ac5e15c93b14514ada68967530ecd204fd)) and cost budget ([charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116)).

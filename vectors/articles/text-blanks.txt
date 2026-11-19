@@ -1,0 +1,1 @@
+Runs   of  blanks		inside a line, and blanks at its end.   

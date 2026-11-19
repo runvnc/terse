@@ -57,6 +57,15 @@ pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
 
 /// The answer a key press gives the consent prompt: Y yes; N or Esc no;
 /// any other key (Enter included) nothing.
+/// Notes that the release of the key `usage` is the host's, as its press
+/// was: once, however often the press auto-repeats, so that one release
+/// clears it and the key's next release reaches the program.
+fn swallow(swallowed: &mut Vec<u8>, usage: Option<u8>) {
+    if let Some(u) = usage.filter(|u| !swallowed.contains(u)) {
+        swallowed.push(u);
+    }
+}
+
 fn prompt_answer(event: &KeyEvent) -> Option<bool> {
     match &event.logical_key {
         Key::Named(NamedKey::Escape) => Some(false),
@@ -263,7 +272,7 @@ impl Gfx {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
-        let renderer = crate::renderer::Renderer::new(&device, format, Box::new(glyphs));
+        let renderer = crate::renderer::Renderer::new(&crate::renderer::Shaders::new(&device), format, Box::new(glyphs));
         let screens = crate::screens::Screens::new(renderer, format);
         let display = crate::screens::GpuDisplay::new(device, queue, screens, format, info.name);
         Ok(Presenter::Gpu { surface, config, display })
@@ -566,7 +575,7 @@ struct App {
     pending: Vec<Event>,
     modifiers: ModifiersState,
     buttons: u8,
-    /// The pointer in screen units, and the position last sent (SPEC 5.1:
+    /// The pointer in screen units, and the position last sent (SPEC 5:
     /// movement is sent at most once per frame).
     pointer: Option<(u16, u16)>,
     pointer_sent: Option<(u16, u16)>,
@@ -741,7 +750,7 @@ impl App {
         };
         // SPEC 9.5: while the host asks for consent, the keyboard is the host's.
         if pressed && self.content.as_ref().is_some_and(|c| c.prompt().is_some()) {
-            self.swallowed.extend(usage);
+            swallow(&mut self.swallowed, usage);
             if !event.repeat
                 && let Some(allow) = prompt_answer(&event)
             {
@@ -770,7 +779,7 @@ impl App {
             && event.physical_key == PhysicalKey::Code(KeyCode::KeyV);
         let shift_insert = self.modifiers.shift_key() && event.physical_key == PhysicalKey::Code(KeyCode::Insert);
         if pressed && (ctrl_v || shift_insert) {
-            self.swallowed.extend(usage);
+            swallow(&mut self.swallowed, usage);
             self.paste_clipboard();
             return;
         }
@@ -839,7 +848,7 @@ impl App {
     }
 
     /// winit's deltas are positive when content should move right and down,
-    /// that is, when scrolling left and up; SPEC 5.1 steps are the opposite.
+    /// that is, when scrolling left and up; SPEC 5 steps are the opposite.
     fn wheel(&mut self, delta: MouseScrollDelta) {
         let (x, y) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
@@ -947,7 +956,7 @@ impl ApplicationHandler for App {
         let now = Instant::now();
         if now >= self.next_frame {
             self.step(event_loop);
-            // SPEC 1.3: at most one frame per tick; if the host fell behind,
+            // SPEC 1.4: at most one frame per tick; if the host fell behind,
             // virtual time lags instead of catching up.
             self.next_frame += FRAME;
             if self.next_frame <= now {
@@ -964,5 +973,18 @@ mod tests {
     fn pasted_text_keeps_newlines_only() {
         let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
         assert_eq!(got, "ab\nc\nd\ne[0mé日");
+    }
+
+    /// A key the host takes (paste, the consent prompt) held down: its
+    /// auto-repeated presses are noted once, so its one release is taken
+    /// and nothing is left to swallow a later release.
+    #[test]
+    fn a_repeated_press_the_host_takes_is_released_once() {
+        let mut swallowed = Vec::new();
+        for _ in 0..5 {
+            super::swallow(&mut swallowed, Some(0x19));
+        }
+        super::swallow(&mut swallowed, None);
+        assert_eq!(swallowed, [0x19]);
     }
 }

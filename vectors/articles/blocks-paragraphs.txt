@@ -1,0 +1,8 @@
+A paragraph's lines
+   join with a space;
+blanks at the start of a line are dropped.
+
+Blank lines separate
+paragraphs.
+  
+A line of only blanks (above: two spaces) is a blank line too.

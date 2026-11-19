@@ -30,7 +30,7 @@
                          Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 372, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Tables
-   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  386 bytes
+   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  461 bytes
    78   8     0  -- rule --
    96  19     0   sans15 |A paragraph with code and two spans. A split `code span` is none. Two
   115  19     0   sans15 |together `` are none. But x is one.
@@ -44,7 +44,7 @@
   192   0     0  -- faint rule to 204 --
   195  18     6   sans14 |a | b
   195  17    71.5 mono13 |x | y
-  195  18   163   sans14 |extra
+  195  18   163   sans14 |[e | f]{2}
   216   0     0  -- faint rule to 204 --
   219  18     6   sans14 |short
   250  19     0   sans15 || not a table: a paragraph

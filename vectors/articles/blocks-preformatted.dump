@@ -1,0 +1,17 @@
+paragraph
+  text "Text."
+pre
+  line
+    text "    four spaces"
+  line
+    text "\ta tab"
+  line
+    text "      six spaces keep the two extra"
+paragraph
+  text "three spaces: ordinary"
+pre
+  line
+    text "    another block"
+pre
+  line
+    text "    and another after a blank line"

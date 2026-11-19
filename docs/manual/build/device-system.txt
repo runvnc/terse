@@ -43,8 +43,9 @@ and returns `FFFF_FFFFh`.
 
 `wait_frame` ends the machine's work for this frame: the rest of the
 budget is discarded, and the call returns at the start of the next frame
-with the frame counter as it reads in that frame, one more than before the
-call. Unused budget never carries over, but a negative one does: the call
+with one more than the frame counter at the call. The next frame always
+runs (the most content a frame can deliver costs 32,768 units), so that
+is the counter of the frame it returns in. Unused budget never carries over, but a negative one does: the call
 costs 5 units from ROM, so a `wait_frame` started with 2 units left leaves
 a debt of 3 for the next frame.
 
@@ -58,7 +59,7 @@ work in between ran out of budget and was paused.
 four bytes, type, `a`, `b`, `c`, to the buffer, and returns 1. If the queue
 is empty it writes nothing and returns 0. The buffer is checked first: a
 buffer not wholly in RAM gives `FFFF_FFFEh` and removes no event. Event
-types and their bytes are in [Events and input](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf). In C,
+types and their bytes are in [Events and input](terse:ecb820736fa26b9d30a97d6159bdc8ac5e15c93b14514ada68967530ecd204fd). In C,
 `terse_event_pop(&e)` returns the event's type, or `EV_NONE` (0) when the
 queue is empty.
 
@@ -97,9 +98,10 @@ bytes; `terse_random_byte()` returns one byte.
 at the start of the frame, and returns byte 0 (1 if connected, else 0).
 Controllers are numbered 0 to 3; a number above 3 reads as a controller
 that is not connected (eight zero bytes, result 0). The layout of the
-eight bytes is in [Events and input](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf). In a system only the
-machine with the keyboard focus sees the controllers; every other machine
-reads all four as not connected. In C: `terse_pad_read(n, &pad)` with a
+eight bytes is in [Events and input](terse:ecb820736fa26b9d30a97d6159bdc8ac5e15c93b14514ada68967530ecd204fd). In a system only the
+machine with the focus (the shell when the focus is 0) sees the
+controllers; every other machine reads all four as not connected. A new
+focus takes effect at the next frame. In C: `terse_pad_read(n, &pad)` with a
 `terse_pad`.
 
 ## exit
@@ -141,7 +143,7 @@ the request is its own policy, and the machine is not told. The built-in
 shell, for example, takes requests only from the machine with the
 keyboard, asks the user before starting a program that is not built in,
 and opens a blob according to its first bytes. See [the machines
-device](terse:487b1e39b68c26829976d34ec7355d5f52eeb9ead216f21c462808ef9dbf8852).
+device](terse:162acc23fd333834b6b0de421cba73d5c2645b254c5f491e97ce4b82db7820d7).
 
 In C, `terse_open(request)` with the kinds `OPEN_BLOB` and `OPEN_PROGRAM`:
 
@@ -176,7 +178,7 @@ document's program with the document's blob ID as the argument. In C:
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:0743375e667a90fd6d52220a6fddce636ea91b1204d1630053061753a31b3735)), they are what a host records per frame to
+[blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce4001f76a6ff08103d837193cbe6084)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.
@@ -213,4 +215,4 @@ int main(void)
 ```
 
 The charges of all devices are listed together in
-[charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).
+[charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116).

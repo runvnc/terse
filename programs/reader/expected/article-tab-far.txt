@@ -27,7 +27,7 @@
 
 
 
- Link 2: https://example.com/2
+ Link 2: terse:feed/000000…000002  (a feed)   Enter: open
 -- page: height 2995, scroll 1099 (stored 1099), region 64 0 512 464 --
  1085  19     0   sans15 |Paragraph 21. The quick brown fox jumps over the lazy dog, again and
  1104  19     0   sans15 |again, until the line wraps once or twice.

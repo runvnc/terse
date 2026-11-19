@@ -1,0 +1,156 @@
+# Terse test vectors: display names and profile documents (NETWORK.md section 4.6).
+# Format: vectors/README.
+
+name 416c696365
+  valid yes
+
+name 416c69636520536d697468
+  valid yes
+  note "a space inside is allowed"
+
+name c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9
+  valid yes
+  note "48 bytes"
+
+name 787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878
+  valid yes
+  note "48 bytes"
+
+name -
+  valid no
+  note "empty"
+
+name 78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878
+  valid no
+  note "49 bytes"
+
+name 20416c696365
+  valid no
+  note "whitespace first"
+
+name 416c69636509
+  valid no
+  note "whitespace last (tab)"
+
+name c2a0416c696365
+  valid no
+  note "whitespace first (U+00A0)"
+
+name 416c696365e38080
+  valid no
+  note "whitespace last (U+3000)"
+
+name 416c696365e280a8
+  valid no
+  note "whitespace last (U+2028)"
+
+name e2808b416c696365
+  valid yes
+  note "U+200B is not White_Space"
+
+name 416c01696365
+  valid no
+  note "a control character"
+
+name 416cc285696365
+  valid no
+  note "a control character (U+0085)"
+
+name 416cff696365
+  valid no
+  note "not UTF-8"
+
+document listed
+  hex 6c69737465643a207965730a
+  valid yes
+  listed yes
+  description ""
+
+document full
+  hex 6c69737465643a207965730a72656c61793a2077733a2f2f72656c61792e6578616d706c653a373837380a72656c61793a207773733a2f2f72656c61792e6578616d706c652f74657273650a0a492077726974652061626f75742062726561642e0a6c69737465643a206e6f0a
+  note "after the empty line everything is description"
+  valid yes
+  listed yes
+  relay ws://relay.example:7878
+  relay wss://relay.example/terse
+  description "I write about bread.\nlisted: no\n"
+
+document unlisted
+  hex 6c69737465643a206e6f0a
+  valid yes
+  listed no
+  description ""
+
+document listed-capital
+  hex 6c69737465643a205965730a
+  note "only `yes` lists"
+  valid yes
+  listed no
+  description ""
+
+document no-listed-line
+  hex 72656c61793a2077733a2f2f72656c61792e6578616d706c650a
+  valid yes
+  listed no
+  relay ws://relay.example
+  description ""
+
+document no-final-line-break
+  hex 6c69737465643a20796573
+  valid yes
+  listed yes
+  description ""
+
+document crlf
+  hex 6c69737465643a207965730d0a
+  note "lines end at LF: the value is `yes` and a CR, which does not list"
+  valid yes
+  listed no
+  description ""
+
+document unknown-field
+  hex 636f6c6f75723a20626c75650a6c69737465643a207965730a
+  note "unknown fields are ignored"
+  valid yes
+  listed yes
+  description ""
+
+document relays
+  hex 72656c61793a2077733a2f2f612e6578616d706c650a72656c61793a20687474703a2f2f622e6578616d706c650a72656c61793a207773733a2f2f632e6578616d706c650a72656c61793a2077733a2f2f642e6578616d706c650a72656c61793a2077733a2f2f652e6578616d706c650a72656c61793a2077733a2f2f662e6578616d706c650a
+  note "the first four that are ws:// or wss:// URLs"
+  valid yes
+  listed no
+  relay ws://a.example
+  relay wss://c.example
+  relay ws://d.example
+  relay ws://e.example
+  description ""
+
+document description-only
+  hex 0a4a7573742061206465736372697074696f6e2e0a
+  note "no header lines"
+  valid yes
+  listed no
+  description "Just a description.\n"
+
+document no-space
+  hex 6c69737465643a7965730a
+  note "a header line without `: `"
+  valid no
+
+document not-utf8
+  hex 6c69737465643a207965730a0aff0a
+  note "not UTF-8"
+  valid no
+
+document too-long
+  hex-then-x 6c69737465643a207965730a0a 4084
+  note "4,097 bytes"
+  valid no
+
+document longest
+  hex-then-x 6c69737465643a207965730a0a 4083
+  note "4,096 bytes"
+  valid yes
+  listed yes
+  description-bytes 4083

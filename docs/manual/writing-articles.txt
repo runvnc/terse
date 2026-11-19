@@ -1,6 +1,6 @@
 # Writing an article
 
-An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
+An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Terse: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
 
 ## Lines and blocks
 
@@ -95,13 +95,14 @@ These are links wherever text is shown, also in preformatted blocks, fences and 
 
 | Form | Target |
 |---|---|
-| `http://...`, `https://...` | A web page |
 | `terse:` and 64 hex digits | An article, by blob ID |
 | `terse:feed/` and 64 hex digits | A feed, by key |
 | `terse:program/` key `/` name | A program, by publisher and name |
 | `[text](target)` | Any of these, shown as the text |
 
-The hex digits are lowercase. A link must not follow a letter or digit, and the 64 digits must not be followed by one. A web link runs to the first byte that is not printable ASCII or is `<`, `>` or `"`; a trailing `.` `,` `;` `:` `!` `?` or `'` is not part of it, nor a trailing `)` or `]` when the link holds more of it than of `(` or `[`. So in (see https://example.com/a.) the link stops before the dot and the bracket.
+The hex digits are lowercase. A link must not follow an ASCII letter or digit, and the 64 digits must not be followed by one.
+
+Articles do not link to the web. A web address such as https://example.org is ordinary text, shown as written and not followed, and so is a link with text whose target is not one of the `terse:` forms: all of [Example](https://example.org) stays as you see it, brackets and parentheses included. Write a web address as plain text if a reader needs it.
 
 Written for real, a bare link to an article (the manual's page on figures), a feed, the built-in sketch program, and a link with text to another part of this manual:
 
@@ -164,12 +165,12 @@ fill none stroke #e5c07b 3 M120 50 Q150 0 180 50
 The panel, a green triangle with a light outline, and a yellow curve. In brief:
 
 - Commands `M L H V C S Q T Z`, lowercase relative, numbers as in SVG; the first is `M` or `m`; no arcs.
-- `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide.
+- `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide. A `stroke` without a width is 1 unit wide again, whatever came before.
 - Colours `#rgb`, `#rrggbb`, `#rrggbbaa`, `none`, `fg` (the text colour).
 - Coordinates in screen units from the top left, y down, every point within 2047 either way.
 - A figure has no text: explain it in the prose or a table after it.
 
-Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. A reader shrinks a figure wider than its column (512 units) to fit. The full rules are in [figures on the page](terse:{device-page-figures}).
+Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. The reader shrinks a figure wider than its column (512 units) to fit, uniformly. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:{device-page-figures}).
 
 ## Size and publishing
 
@@ -184,3 +185,5 @@ It puts the blob, publishes the next entry of your feed and prints `seq N blob <
 ## How the reader shows it
 
 In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:{device-page}).
+
+Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.

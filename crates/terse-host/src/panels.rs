@@ -116,9 +116,10 @@ pub struct PanelTexture {
 }
 
 impl PanelPipeline {
-    pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+    pub fn new(shaders: &crate::renderer::Shaders, target: wgpu::TextureFormat) -> Self {
+        let device = shaders.device();
         let back = format!("const BACK: vec3<f32> = vec3<f32>({:.6}, {:.6}, {:.6});\n", PANEL_BACK[0] as f32 / 255.0, PANEL_BACK[1] as f32 / 255.0, PANEL_BACK[2] as f32 / 255.0);
-        let shader = crate::renderer::shader_module(device, "panels", || format!("{back}{SHADER}"));
+        let shader = shaders.module("panels", || format!("{back}{SHADER}"));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("panel"),
             entries: &[

@@ -249,6 +249,7 @@ fn system_after(events: &str, frames: u32) -> terse_core::System {
 /// machine has an adapter.
 fn displays() -> Vec<Box<dyn crate::display::Display>> {
     let Some(looks) = looks() else { return Vec::new() };
+    #[cfg_attr(not(feature = "gpu"), allow(unused_mut))]
     let mut out = vec![crate::headless_display(&looks).unwrap()];
     #[cfg(feature = "gpu")]
     {

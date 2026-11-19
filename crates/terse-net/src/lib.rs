@@ -1,6 +1,9 @@
 //! Host-side networking for the content device (SPEC 9, NETWORK.md).
 //!
-//! - [`article`]: `terse:` links in articles (NETWORK 4.5).
+//! - [`article`]: `terse:` links in articles (ARTICLE.md), for prefetch.
+//! - [`article_parse`]: a reference parser for ARTICLE.md and the article
+//!   dump of the test vectors (`vectors/`).
+//! - [`vectors`]: the core test vectors that `terse vectors` writes.
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
 //! - [`builtin`]: the shell and the built-in programs (SPEC 12).
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
@@ -21,6 +24,7 @@
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
 pub mod article;
+pub mod article_parse;
 pub mod blob;
 pub mod builtin;
 pub mod entry;
@@ -37,6 +41,7 @@ pub mod service;
 pub mod snapshots;
 pub mod store;
 pub mod timeline;
+pub mod vectors;
 
 pub use blob::{BlobId, blob_id, parse_hex, to_hex};
 pub use entry::{Entry, SignedEntry};

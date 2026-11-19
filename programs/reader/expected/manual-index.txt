@@ -28,9 +28,9 @@
 
 
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 1343, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1428, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |The Terse manual
-   53  15     0   sans12 |terse:4bd584…812c83  ·  not in your timeline  ·  3.9 KB
+   53  15     0   sans12 |terse:cfbf62…9e2e76  ·  not in your timeline  ·  4.3 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |This manual describes the whole Terse system: the machine, its
   115  19     0   sans15 |devices, the network that carries articles and programs, and the

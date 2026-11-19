@@ -9,7 +9,9 @@
 # ld.lld, llvm-objcopy). The flags and the order of the objects are those
 # of crates/terse-cli/tests/common/mod.rs, which checks that reader.terse is
 # up to date (and crates/terse-cli/tests/reader.rs that it holds the
-# manual's current index ID).
+# manual's current index ID). programs/shell/build.sh writes the shell's
+# own copy (programs/shell/manual_id.h) the same way: run both after
+# `terse manual build`.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 lib="$here/../lib"

@@ -36,7 +36,7 @@ So publishing a new version of a program under the same name keeps its records, 
 | Delete `10h` | none besides `id` | `01h`, whether or not the record existed |
 | Records `11h` | `offset` (first index), `length` 1 to 16,384, `addr` in RAM | records of 36 bytes, in increasing order of name (byte order); `length` = bytes delivered, `size` = number of records |
 
-A save of 0 bytes is allowed and makes an empty record. A save always replaces the whole record; there is no append. A load whose `offset` is at or beyond the end of the record completes with `01h` and `length` 0.
+A save of 0 bytes is allowed and makes an empty record. A save always replaces the whole record; there is no append. A load whose `offset` is at or beyond the end of the record completes with `01h`, `length` 0 and `size` the record's size.
 
 Each record of the records list:
 
@@ -69,11 +69,11 @@ A save that would exceed either per-owner limit, counting the record it replaces
 | `04h` | at submit: a bad name, a size or length out of range, a buffer not where required |
 | `06h` | save: over the owner's limits |
 
-No consent is asked for any of the four, so status `05h` does not occur.
+No consent is asked for any of the four. A host that offers only the machine's reading profile may complete all four with `05h` without carrying them out; a program should treat that as "not on this host".
 
 ## Charges
 
-Each `submit` costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to `addr` cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a); completions are announced by a content-done event, see [events](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf).
+Each `submit` costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to `addr` cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See [charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116); completions are announced by a content-done event, see [events](terse:ecb820736fa26b9d30a97d6159bdc8ac5e15c93b14514ada68967530ecd204fd).
 
 ## Replay
 

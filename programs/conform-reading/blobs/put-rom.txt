@@ -1,0 +1,1 @@
+Terse conformance image: a blob put from ROM.

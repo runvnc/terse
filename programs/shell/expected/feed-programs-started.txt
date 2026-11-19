@@ -63,6 +63,7 @@
 -- machine 3 failed 423 253 214 160  --
 -- launcher --
 PROGRAMS
+[Manual]{301}
 [reader]{100}
 [sparks]{101}
 [fetch]{102}

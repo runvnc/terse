@@ -63,7 +63,7 @@ Fields an op does not read at submit are zero.
 
 Page (device 7), 1 or 21 + d bytes: present, the rectangle x, y, width, height (u16 each, as clamped), the scroll value (u32, as stored), the background (u32, `FF00_0000h` at reset), d (u32: document length 1-65,536, or 0 for none) and the document.
 
-Machines (device 8): absent (0 bytes) if the image does not list device 8. Otherwise a present flag, 1 only for the shell of a system; if it is 0 the section ends. Then focus (1), 8 handle records of 138 bytes, b (1) and b built-in image IDs (32 each), r (1) and r unread open requests (each the handle, then the 82 bytes `request` writes), in handle order. Total 1,108 + 32b + 83r.
+Machines (device 8): absent (0 bytes) if the image does not list device 8. Otherwise a present flag, 1 only for the shell of a system; if it is 0 the section ends. Then focus (1), 8 handle records of 138 bytes, b (1) and b built-in image IDs (32 each), r (1) and r unread open requests (each the handle, then the 82 bytes `request` writes), in handle order, then the view (18 bytes, all zero for none: handle, direction, the rectangle as four u16, start progress u16, start frame u32, duration u16). Total 1,126 + 32b + 83r.
 
 | Offset | Size | Handle record |
 |---|---|---|
@@ -75,7 +75,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.
 
-Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing.
+Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the 3D section, none when 0 remain, and refuses any other remainder.
 
 The sections that may be absent were added so that the hashes of older images did not change. The total is 45 + 128 + 23 + 4 + L + 37 + 4n plus the device sections.
 
@@ -131,7 +131,7 @@ The snapshot file:
 | ... | N - 200 - L | The rest of S |
 | ... | 32 | The state hash of S |
 
-A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. Bytes after the hash, or a hash that does not match, are refused.
+A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,158,243 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
 `terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:{device-machines}).
 

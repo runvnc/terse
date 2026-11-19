@@ -1,0 +1,9 @@
+Text.
+    four spaces
+	a tab
+      six spaces keep the two extra
+   three spaces: ordinary
+
+    another block
+
+    and another after a blank line

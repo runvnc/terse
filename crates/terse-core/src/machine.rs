@@ -1,5 +1,5 @@
 //! The machine: the RV32IMC core, ROM and RAM, the frame loop and the
-//! devices reached through `ecall` (SPEC 1, 3, 11).
+//! devices reached through `ecall` (SPEC 1, 3, 14).
 
 use std::fmt;
 
@@ -124,7 +124,7 @@ impl fmt::Display for Stopped {
     }
 }
 
-/// Inputs for one frame (SPEC 4.2).
+/// Inputs for one frame (SPEC 1.4 step 1, 4, 6, 9.4).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInput<'a> {
     pub events: &'a [Event],

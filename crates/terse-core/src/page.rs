@@ -1695,6 +1695,48 @@ mod tests {
         assert_eq!(f.area_cap(), FIGURE_AREA_CAP);
     }
 
+    /// SPEC 11.3 caps, exactly: an odd stroke width grows the box by half
+    /// the width rounded up; a Close adds no length and is not counted in
+    /// s; the fill and stroke counts are added and divided by 16 once;
+    /// paths that draw nothing are not counted against the 256.
+    #[test]
+    fn figure_caps_counted_exactly() {
+        use path_op::*;
+        let one = |path: Vec<u8>| Figure { width: 100, height: 100, rgb: [0; 3], anchor: 0, path }.paths().remove(0);
+        // Stroke 3 sixteenths: grown by 2 on every side. Box 160..320 x
+        // 160..160 → (160 + 4) x 4 = 656 sixteenths², 3 square units.
+        let mut path = vec![STROKE, 1, 1, 1, 255, 3, 0];
+        path.extend(pt(MOVE, &[160, 160]));
+        path.extend(pt(LINE, &[320, 160]));
+        assert_eq!(one(path).area(100, 100), 3);
+        // A Close back over a 10-unit line: L = 160, s = 1 (the Close
+        // counts neither); stroked 1 unit: 2 × 160 + 4 × 16 = 384, / 16 = 24.
+        let mut path = pt(MOVE, &[0, 0]);
+        path.extend(pt(LINE, &[160, 0]));
+        path.push(CLOSE);
+        assert_eq!(one(path).length(), 24);
+        // Filled and stroked with width 17, L = 1, s = 1: fill 2 + 64 = 66,
+        // stroke 2 + 68 = 70; (66 + 70) / 16 = 8.5 → 9 (each rounded
+        // alone would give 5 + 5 = 10).
+        let mut path = vec![FILL, 1, 1, 1, 255, STROKE, 1, 1, 1, 255, 17, 0];
+        path.extend(pt(LINE, &[1, 0]));
+        assert_eq!(one(path).length(), 9);
+        // 300 paths that draw nothing (only a Move, or neither fill nor
+        // stroke) among 256 that draw: all 256 drawn.
+        let mut path = Vec::new();
+        for _ in 0..300 {
+            path.extend(pt(MOVE, &[1, 1]));
+            path.extend_from_slice(&[FILL, 0, 0, 0, 0, STROKE, 0, 0, 0, 0, 16, 0]);
+            path.extend(pt(LINE, &[2, 2]));
+            path.extend_from_slice(&[STROKE, 1, 1, 1, 255, 16, 0]);
+        }
+        for _ in 0..256 {
+            path.extend(pt(LINE, &[16, 16]));
+            path.extend_from_slice(&[STROKE, 1, 1, 1, 255, 16, 0]);
+        }
+        assert_eq!(Figure { width: 100, height: 100, rgb: [0; 3], anchor: 0, path }.paths().len(), 256);
+    }
+
     #[test]
     fn figure_reference_layout() {
         let mut doc = vec![op::SIZE, 10];

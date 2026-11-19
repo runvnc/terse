@@ -35,7 +35,7 @@ int main(void)
     line("ev-null  ", terse_call(CALL_NEXT_EVENT, 0, 0, 0));
     line("ev-rom   ", terse_call(CALL_NEXT_EVENT, TERSE_ROM_BASE, 0, 0));
     line("wr-bad   ", terse_call(CALL_TERM_WRITE, 0x200000, 5, 0));
-    vec_begin(list);
+    vec_begin(list, sizeof list);
     vec_move(1, 2);
     vec_disc(3);
     line("vec      ", vec_submit_list(list));

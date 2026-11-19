@@ -152,6 +152,10 @@ impl Records {
     /// Saves (replaces) a record, durably, unless the owner's limits would
     /// be exceeded.
     pub fn save(&self, owner: &Owner, name: &[u8], data: &[u8]) -> io::Result<Saved> {
+        // A machine never gets here with more than MAX_RECORD bytes: the
+        // content device rejects such a save at submit with status 04h
+        // (SPEC 9.2, 9.6). This check guards the store's other callers,
+        // and answers them as an over-limit save is answered (06h).
         if data.len() > MAX_RECORD {
             return Ok(Saved::NoRoom);
         }

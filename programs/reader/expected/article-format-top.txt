@@ -28,22 +28,23 @@
 
 
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 651, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 697, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Every construct
-   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  827 bytes
+   53  15     0   sans12 |66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  985 bytes
    78   8     0  -- rule --
   104  27     0   sans21b |A heading
   141  19     0   sans15 |A paragraph right under the heading: its lines join with a space,
   160  19     0   sans15 |and blanks at the start of a line are dropped.
   193  22     0   sans17b |A subheading
   225  19    10   sans15 |• A list item, whose text goes on on the next line, with a link
-  244  19    10   sans15 |[https://example.com/item]{1}.
-  267  19    10   sans15 |• A second item
-  290  19    10   sans15 |• A third item and a lazy continuation of it.
-  319  17     0   mono13 |    Indented by four spaces:
-  336  17     0   mono13 | or by a tab, both preformatted.
-  363  19     0   sans15 |A paragraph after the preformatted lines.
-  392  17     0   mono13 |A fenced block keeps
-  409  17     0   mono13 |   its lines
-  426  17     0
-  443  17     0   mono13 |and its blank lines.
+  244  19    10   sans15 |[terse:feed/012345…abcdef]{1} (a web address, https://example.com/item,
+  263  19    10   sans15 |is text).
+  286  19    10   sans15 |• A second item
+  309  19    10   sans15 |• A third item and a lazy continuation of it.
+  338  17     0   mono13 |    Indented by four spaces:
+  355  17     0   mono13 | or by a tab, both preformatted.
+  382  19     0   sans15 |A paragraph after the preformatted lines.
+  411  17     0   mono13 |A fenced block keeps
+  428  17     0   mono13 |   its lines
+  445  17     0
+  462  17     0   mono13 |and its blank lines.

@@ -402,7 +402,7 @@ pub fn dump(list: &[u8]) -> String {
     decode(list).map(|p| format!("{p}\n")).collect()
 }
 
-/// The list as outlines (SPEC 10.6, and fill off): nothing is filled. A
+/// The list as outlines (SPEC 10.3: the phosphor style, and fill off): nothing is filled. A
 /// disc becomes a circle, a rectangle four lines and a triangle three lines,
 /// each with the width in effect at that command; lines and circles pass
 /// through. Every host draws phosphor shapes from this, so they agree on

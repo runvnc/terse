@@ -1,0 +1,7 @@
+paragraph
+  text "Before."
+pre
+  line
+    text "runs to the end"
+  line
+    text "# not a heading"

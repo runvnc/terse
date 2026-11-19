@@ -1,0 +1,6 @@
+pre
+  line
+    text "M0 0 L"
+pre
+  line
+    text "M0 0 L10 10 Z M"

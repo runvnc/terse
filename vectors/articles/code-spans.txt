@@ -1,0 +1,7 @@
+A `code span` and `two` of them.
+Two backquotes `` are no span.
+Here ``x` the second backquote starts one.
+A `split
+span` is none: code spans do not cross lines.
+`terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef` is code, not a link.
+A lone ` backquote.

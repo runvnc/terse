@@ -1,5 +1,11 @@
 # Terse machine state hash — v0 (draft)
 
+Terse has three layers: (a) the network (`NETWORK.md`) and (b) articles
+(`ARTICLE.md`), which together are the core, so that a native reader with
+no virtual machine that implements them is a complete, conforming Terse
+client; and (c) the machine (`SPEC.md` and this document), an optional
+layer that reuses them. This document belongs to layer (c).
+
 Status: part of SPEC section 15 (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
@@ -68,6 +74,10 @@ Offsets below are relative to `S = 200 + L`.
 | S + 4 | 1 | n: events in the queue, 0–64 |
 | S + 5 | 4 × n | The queued events from the head: type, a, b, c |
 | S + 5 + 4n | 32 | Controllers 0–3, eight bytes each, exactly as `controller` returned them in the frame just run (all zero for a controller that is not connected) |
+
+At reset the time latch is 0, the queue is empty and the controllers are
+all zero; no program can see these values (every call runs after a
+frame's latch), but they are in the state of a machine just reset.
 
 Let `T = S + 37 + 4n`.
 
@@ -227,6 +237,14 @@ not included.
 machine run on its own, and every shell) has nothing here, so its hash is
 as it was before arguments existed.
 
+The section has no flag (a flag would change the hash of every machine
+without an argument). Its presence is inferred: a reader that has read
+sections 1.1 to 1.11 finds the argument there exactly when 32 bytes
+remain, none when 0 remain, and refuses any other remainder. The writer
+is the machine's own serialization: it writes the section exactly when
+the machine was given an argument (by its shell's `argument` before its
+first frame, SPEC 12.2, or by the snapshot it was restored from).
+
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
@@ -292,10 +310,16 @@ From this repository's implementation (the reference):
 zeros), all controllers disconnected, no completions — what `terse run` uses.
 
 `terse run <image> --hash` prints the hash after the last frame, and
-`--hash-every N` prints `<frame counter> <hash>` after every frame whose
-counter is a multiple of N. For a system (`terse run --shell`) these are
-the shell's hashes; `--hash-all` also prints `<handle> <hash>` for each
-machine the shell started (`-` for one that has no image yet).
+`--hash-every N` prints `<frame counter> <hash>` after every frame that
+leaves the frame counter at a multiple of N: from reset, after the first
+N frames, 2N frames, …; a run started from a snapshot goes by the counter,
+not by the frames it has run. For a system (`terse run --shell`) these are
+the shell's hashes; `--hash-all`, after the last frame only, prints the
+shell's hash and then `<handle> <hash>` for each machine the shell has at
+that moment, in handle order: one it has stopped is not listed, and `-`
+stands for one that has no machine, because its image or snapshot is
+still being fetched (a machine started in frame N is loaded at the start
+of frame N + 1) or its start failed.
 
 ## 4. Restoring, and snapshot files
 
@@ -336,7 +360,12 @@ A host keeps a snapshot (SPEC 12.7) in a file:
 | … | 32 | The state hash of S |
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
-accepts any page stored. A file that does not end right after the hash, or
+accepts any page stored. Before it reads S, a reader refuses a file whose
+N is below 200 or above 1,158,243 (the longest serialization: 1 MiB of
+RAM, a full queue, every device at its largest and an argument), whose L
+is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
+whose page map has a bit set for a page past the last (bit k for k ≥
+L / 8,192): a writer leaves those bits clear. A file that does not end right after the hash, or
 whose hash is not S's, is refused like a malformed S.
 
 `terse run <image> --save-state <file>` writes such a file after the last
@@ -344,3 +373,74 @@ frame, and `--load-state <file>` starts from one: with `--hash` the hash
 after `--frames 0` is the hash printed when the file was saved, and the
 hashes of a continued run equal those of the uninterrupted run with the
 same inputs.
+
+## 5. Recordings
+
+A **recording** holds every input of every frame of one machine's run
+(SPEC 4, 9.4, 11.5), so that the run can be replayed exactly without the
+host that made it: no network, no blob store, no data directory. It also
+holds the state hash after each frame, so a replay can tell the first frame
+at which it differs. `terse run <image> --record <file>` writes one for a
+single machine (not `--shell`), and `terse run <image> --replay <file>`
+replays it from the image file and the recording alone, checking every
+frame's hash; it refuses a recording of another image.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic: `54h 52h 45h 43h` (`TREC`) |
+| 4 | 1 | Version: `0` |
+| 5 | 32 | The image ID |
+| 37 | 4 | M (u32): the length of the start snapshot; 0 if the run starts from reset |
+| 41 | M | The snapshot file (section 4) the machine is restored from, whose image ID is the one at offset 5 |
+| 41 + M | … | Frame records, one per frame run, in order, to the end of the file |
+
+A frame record:
+
+| Size | Field |
+|---|---|
+| 4 | The frame counter as the frame starts (u32): reset or the snapshot's counter for the first record, one more for each next |
+| 4 | The Unix time latched for the frame (u32) |
+| 32 | Controllers 0–3, eight bytes each, as `controller` writes them (SPEC 6): all zero for one not connected; else byte 0 is `01h`, bytes 3–6 are never `80h` and byte 7 is `00h` |
+| 4 | e (u32): the number of events the host appended to the queue in step 1 of SPEC 1.4 |
+| 4e | The events, four bytes each (type, `a`, `b`, `c`), in the order appended, including those the machine then drops (a full queue, a second feeds-updated event, the second half of a located anchor) |
+| 4 | r (u32): the number of random bytes the program took (at most 463,872) |
+| r | Those bytes, in order. A replay supplies exactly these; the program read zeros beyond the host's bytes either way (SPEC 4) |
+| 4 | c (u32): the number of completions the host gave |
+| … | c completions, in the order given (the machine applies them in increasing handle order, SPEC 9.2) |
+| 32 | The state hash after the frame |
+
+A completion: one byte, the handle; one byte, its kind; then the kind's
+fields:
+
+| Kind | Outcome | Fields |
+|---|---|---|
+| `01h` | Get or load succeeded | size (u32), n (u32), the n bytes delivered |
+| `02h` | Put succeeded | the blob ID (32) |
+| `03h` | Records (subscriptions, timeline, names, programs, records) or find succeeded | the number of records that exist (u32), n (u32), the n bytes delivered |
+| `04h` | Done (subscribe, unsubscribe, set nickname, save, delete) | — |
+| `05h` | Publish or set profile succeeded | seq (u32) |
+| `06h` | Identity succeeded | the feed key (32) |
+| `07h` | Not found | — |
+| `08h` | Failed | — |
+| `09h` | Refused | — |
+| `0Ah` | No room | — |
+| `0Bh` | Bad request | — |
+
+These are what the host hands the machine; the machine derives everything
+it writes to the request block from them and the pending request (SPEC
+9.2), and queues the content-done events itself, so neither is recorded. A
+completion that matches no pending request is recorded like any other and
+ignored again on replay. The requests pending in a start snapshot fail in
+the first frame (SPEC 9.2) without a record of it: they follow from the
+snapshot.
+
+Nothing else is an input of a single machine: `open` always returns 0
+(or `FFFF_FFFEh`) for a machine no shell started (SPEC 4), its argument is
+in the snapshot (section 1.12; none from reset), and the page's layout
+reaches it only as events. A recording is read to its end; a file that ends
+inside a header or record, has a kind or controller bytes out of range, or a
+frame counter other than the machine's, is refused, and a replay stops with
+an error at the first frame whose hash differs. A frame record is only
+written for a frame that ran: once the machine stops, `terse run` stops
+too, so the last record is that of the frame in which it exited or
+faulted.

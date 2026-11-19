@@ -40,4 +40,4 @@
   180  20     0   sans16 |[Emoji 😀 and tabs in a title]{4}
   200  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes]{4}
   223  20     0   sans16 |[A big article (over 48 KiB)]{5}
-  243  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KB]{5}
+  243  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KiB]{5}

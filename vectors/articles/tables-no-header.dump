@@ -1,0 +1,16 @@
+table 2 noheader
+  align start start
+  row
+    cell
+      text "---"
+    cell
+      text "---"
+  row
+    cell
+      text "no"
+    cell
+      text "header"
+  row
+    cell
+      text "third"
+    cell

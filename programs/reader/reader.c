@@ -2,7 +2,7 @@
  *
  * Shows the timeline of the feeds the host subscribes to (SPEC 9), newest
  * first, the subscribed feeds, a feed's page, search results, a help page
- * and articles (NETWORK 4.5: text with headings, lists, preformatted
+ * and articles (ARTICLE.md: text with headings, lists, preformatted
  * blocks, figures and links), all on the page device (SPEC 11) in the sans
  * face. The terminal shows only the status row (29: key hints, the reading
  * position, the outcome of a request) and, while something is being typed
@@ -18,9 +18,10 @@
  * The shell: the reader never starts a program or shows one. A program
  * image or a document (a blob that begins with "TERS" or "TDOC") is passed
  * to the shell with `open` (OPEN_BLOB, the blob ID), a program link with
- * OPEN_PROGRAM (key and name), and the status row says "Opened in a new
- * tile", or "This needs the shell" if `open` returned 0 (no shell, or a
- * request of this machine still waits). That happens on Enter or a click
+ * OPEN_PROGRAM (key and name), and the status row says "Asked the shell
+ * to open it" (the shell may still ask the user, or fail), or "This needs
+ * the shell" if `open` returned 0 (no shell, or a request of this machine
+ * still waits). That happens on Enter or a click
  * on a document's entry (the timeline and search show the timeline's
  * document entries, kind 4, too), on following a link to such a blob or a
  * program link, and if an article opened from the timeline or the
@@ -71,7 +72,7 @@
  * 64-576: 512 units, about 68 characters of 15-unit body text, centred.
  * The document is the title (26 units, bold), a grey line (feed key, entry
  * number, date, size), a rule, then the article, by the article format of
- * NETWORK 4.5 (blocks, links, figures), shown this way:
+ * ARTICLE.md (blocks, links, figures), shown this way:
  *   - A paragraph: sans 15 units, wrapped; its lines joined with spaces
  *     (the blanks at the start of each line dropped).
  *   - A heading: sans bold 21 units, 18 units of space above it; a
@@ -108,7 +109,9 @@
  *     smaller, in the code colour.
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
- *   - Links: http(s) URLs, terse:<blob ID> (an article),
+ *   - Links (only terse: forms: a web address is ordinary text, also as
+ *     the target of "[text](target)", which is then shown as written):
+ *     terse:<blob ID> (an article),
  *     terse:feed/<key> (a feed) and terse:program/<key>/<name> (a
  *     program: the name percent-encoded, the bytes other than A-Z a-z 0-9
  *     - . _ ~ as %XX, either case; the name is the run of those characters
@@ -132,8 +135,10 @@
  *     user scrolled, Tab goes to the first link at or below the top of the
  *     view and Shift+Tab to the last above its bottom instead, found by a
  *     binary search over the links' places (one locate a frame; Tabs
- *     pressed meanwhile are counted and applied after it). A web link only
- *     shows its URL (there is no browser). An article link first gets the
+ *     pressed meanwhile are counted and applied after it). A Tab search
+ *     whose locate is lost (the document was replaced, or the machine was
+ *     restored from a snapshot, which drops pending locates) asks again
+ *     when the page is next laid out. An article link first gets the
  *     blob's first 4 bytes: a program image or a document goes to the
  *     shell and the article stays; else the link opens that article (if
  *     the 4 bytes could not be got, its page says so at once): the one
@@ -312,7 +317,7 @@
 #define W_PSEG 360
 #define W_FIGURE 300
 #define W_CODE 700   /* a code span: its Font, Size, Colour and back */
-#define W_TSCAN 18   /* a byte of a table's line, cut into cells */
+#define W_TSCAN 28   /* a byte of a table's line, cut into cells */
 #define W_TROW 500   /* the end of a table's row */
 #define W_CELL 450   /* a cell: its Cell command */
 #define W_TABLE 400  /* a table's Table and End table commands */
@@ -333,8 +338,8 @@
 
 enum { TIMELINE, FEEDS, HELP, ARTICLE, SEARCH, FEED };
 enum { FETCHING, READY, NOT_FOUND, FAILED, TOO_LARGE };
-/* Kinds of link (NETWORK 4.5). */
-enum { LK_WEB, LK_ARTICLE, LK_FEED, LK_PROGRAM };
+/* Kinds of link (ARTICLE.md). */
+enum { LK_ARTICLE, LK_FEED, LK_PROGRAM };
 /* A program link: "terse:program/", the key, "/" and the name. */
 #define PROG_KEY 14
 #define PROG_NAME 79
@@ -566,6 +571,9 @@ enum { FW_NONE, FW_FILL, FW_STROKE, FW_WIDTH };
 static uint16_t f_w, f_h, f_scale, f_pos;
 static uint8_t *f_base;
 static uint8_t f_cmd, f_argc, f_n, f_word, f_moved, f_need, f_last;
+/* f_none: the command letter read last has had no numbers yet (a letter
+ * that takes numbers but is given none is malformed). */
+static uint8_t f_none;
 static int32_t f_arg[6], f_cx, f_cy, f_sx, f_sy, f_qx, f_qy;
 static uint8_t f_rgba[4];
 
@@ -583,6 +591,10 @@ static uint16_t cur_link;   /* the current link (Tab), 0 none */
  * scrolled since the current link was chosen. */
 static uint16_t loc_id, sr_lo, sr_hi;
 static uint8_t loc_search, tab_scrolled;
+/* The page was laid out while loc_id was awaited: unless its answer comes
+ * in the same frame, it was lost (the document was replaced, or the
+ * machine restored from a snapshot) and is asked for again. */
+static uint8_t loc_again;
 static int8_t sr_dir, tab_more; /* tab_more: Tab presses during a search */
 static int32_t sr_at;
 static page_place place;
@@ -658,7 +670,7 @@ static uint8_t width(uint32_t cp)
 
 /* Text being put together: a line of the page, a message, the test
  * article. */
-static char tb[720];
+static char tb[800];
 static uint16_t tb_n;
 
 static void tb_s(const char *s)
@@ -782,11 +794,11 @@ static void tb_feed(const uint8_t *key)
     }
 }
 
-/* A size: "812 bytes", "6.1 KB", "1.0 MB" (KB = 1024 bytes). */
+/* A size: "812 bytes", "6.1 KiB", "1.0 MiB". */
 static void tb_size(uint32_t n)
 {
     uint32_t tenths;
-    const char *unit = " KB";
+    const char *unit = " KiB";
     if (n < 1024) {
         tb_u(n);
         tb_s(n == 1 ? " byte" : " bytes");
@@ -795,7 +807,7 @@ static void tb_size(uint32_t n)
     tenths = (n * 10 + 512) / 1024;
     if (tenths >= 10240) {
         tenths = (n / 1024 * 10 + 512) / 1024;
-        unit = " MB";
+        unit = " MiB";
     }
     tb_u(tenths / 10);
     tb_s(".");
@@ -999,11 +1011,32 @@ static void doc_rgb(const uint8_t *c)
     doc_colour(c[0], c[1], c[2]);
 }
 
+static inline __attribute__((always_inline)) uint8_t *find2(uint8_t *p, const uint8_t *e, uint8_t a, uint8_t b);
+
+/* The n bytes at p into the document as text (doc_text); in a table, each
+ * "\|" as "|". Returns the bytes of p used (all but a cut at the end if
+ * the document filled). */
+static uint32_t cell_text(const uint8_t *p, uint32_t n)
+{
+    uint32_t done = 0, k, m;
+    if (b_kind != K_TABLE)
+        return doc_text(p, n);
+    while (done < n) {
+        for (k = done; (k = find2((uint8_t *)p + k, p + n, '\\', '\\') - p) < n && !(k + 1 < n && p[k + 1] == '|'); k++)
+            ;
+        m = doc_text(p + done, k - done);
+        if (m < k - done)
+            return done + m;
+        done = k < n ? k + 1 : k; /* the backslash is dropped */
+    }
+    return done;
+}
+
 /* Article bytes from b_text to `to` into the document as text. */
 static void flush(uint32_t to)
 {
     if (to > b_text && !doc_overflow)
-        b_shown = b_text + doc_text(art + b_text, to - b_text);
+        b_shown = b_text + cell_text(art + b_text, to - b_text);
     b_text = to;
 }
 
@@ -1012,39 +1045,6 @@ static void doc_s(const char *s);
 static uint8_t is_alnum(uint8_t c)
 {
     return (uint8_t)(c - '0') < 10 || (uint8_t)((c | 0x20) - 'a') < 26;
-}
-
-/* The length of the link at art[i] (an 'h'), 0 if none; the block ends at
- * `end`. See the rule at the top. */
-static uint32_t link_length(uint32_t i, uint32_t end)
-{
-    const uint8_t *p = art + i;
-    uint32_t n = end - i, k, head;
-    int32_t paren = 0, bracket = 0;
-    if (n < 8 || p[1] != 't' || p[2] != 't' || p[3] != 'p' || (i > b_start && is_alnum(p[-1])))
-        return 0;
-    k = p[4] == 's' ? 5 : 4;
-    if (p[k] != ':' || p[k + 1] != '/' || p[k + 2] != '/')
-        return 0;
-    head = k += 3;
-    for (; k < n; k++) {
-        uint8_t c = p[k];
-        if (c <= 0x20 || c >= 0x7F || c == '<' || c == '>' || c == '"')
-            break;
-        paren += (c == '(') - (c == ')');
-        bracket += (c == '[') - (c == ']');
-    }
-    while (k > head) {
-        uint8_t c = p[k - 1];
-        if (c == ')' && paren < 0)
-            paren++;
-        else if (c == ']' && bracket < 0)
-            bracket++;
-        else if (c != '.' && c != ',' && c != ';' && c != ':' && c != '!' && c != '?' && c != '\'')
-            break;
-        k--;
-    }
-    return k > head ? k : 0;
 }
 
 static uint8_t hex_value(uint8_t c);
@@ -1213,7 +1213,7 @@ static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show
             tb_name(name, prog_name(art + i + PROG_NAME, len - PROG_NAME, name));
             show = (const uint8_t *)tb;
             n = tb_n;
-        } else if (kind != LK_WEB) {
+        } else {
             /* "terse:" or "terse:feed/", six digits, "…", six digits. */
             n = len - 58;
             memcpy(sb, art + i, n);
@@ -1231,7 +1231,7 @@ static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show
         link_doc[links - 1] = doc_ptr - doc;
         doc_rgb(links == cur_link ? rgb_cur_link : rgb_link);
     }
-    if (doc_text(show, n) == n && !doc_overflow)
+    if (cell_text(show, n) == n && !doc_overflow)
         b_shown = next;
     if (anchored) {
         doc_anchor(0);
@@ -1254,12 +1254,7 @@ static uint32_t text_link(uint32_t at, uint32_t end, uint32_t *ts, uint8_t *kind
     spend((k - at) * W_EMIT);
     if (k >= end || art[k] != ')')
         return 0;
-    if (art[at] == 'h') {
-        *kind = LK_WEB;
-        len = link_length(at, k);
-    } else {
-        len = terse_length(at, k, kind);
-    }
+    len = terse_length(at, k, kind);
     if (len != k - at)
         return 0;
     while (t > b_text && t > b_ls && at - 2 - t < 200 && art[t - 1] != '[' && art[t - 1] != ']' && art[t - 1] != '\n'
@@ -1296,8 +1291,7 @@ static inline __attribute__((always_inline)) uint8_t *find2(uint8_t *p, const ui
     return p;
 }
 
-/* The first byte in [p, e) that is `a`, `b` or `c` (find3), or also `d`
- * (find4), or e: as find2. */
+/* The first byte in [p, e) that is `a`, `b` or `c`, or e: as find2. */
 #define HIT(w, m) ((((w) ^ (m)) - ONES) & ~((w) ^ (m)))
 static inline __attribute__((always_inline)) uint8_t *find3(uint8_t *p, const uint8_t *e, uint8_t a, uint8_t b, uint8_t c)
 {
@@ -1314,25 +1308,6 @@ static inline __attribute__((always_inline)) uint8_t *find3(uint8_t *p, const ui
         p += 4;
     }
     while (p < e && *p != a && *p != b && *p != c)
-        p++;
-    return p;
-}
-
-static uint8_t *find4(uint8_t *p, const uint8_t *e, uint8_t a, uint8_t b, uint8_t c, uint8_t d)
-{
-    uint32_t ma = a * ONES, mb = b * ONES, mc = c * ONES, md = d * ONES;
-    while (p < e && ((uint32_t)p & 3)) {
-        if (*p == a || *p == b || *p == c || *p == d)
-            return p;
-        p++;
-    }
-    while (e - p >= 4) {
-        uint32_t w = *(const uint32_t *)p;
-        if ((HIT(w, ma) | HIT(w, mb) | HIT(w, mc) | HIT(w, md)) & HIGHS)
-            break;
-        p += 4;
-    }
-    while (p < e && *p != a && *p != b && *p != c && *p != d)
         p++;
     return p;
 }
@@ -1641,7 +1616,7 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
         if (fence) {
             if (q == b_open) {
                 fence_info(q + 3, b_scan);
-                b_start = next;
+                b_start = b_end = next; /* no lines yet: an empty figure's path string */
             } else if (b_lkind == L_FENCE && blanks_only(q + 3, b_scan)) {
                 b_closed = 1;
                 return 1;
@@ -1739,7 +1714,7 @@ static void start_block(void)
  * as "|") into the document, with b_text after it. */
 static uint8_t code_span(uint32_t c, uint32_t end)
 {
-    uint32_t q = c + 1, a, from;
+    uint32_t q = c + 1;
     uint8_t s = b_style;
     while (q < end && q - c <= 200 && art[q] != '`' && art[q] != '\n')
         q++;
@@ -1750,12 +1725,7 @@ static uint8_t code_span(uint32_t c, uint32_t end)
     doc_font(DOC_MONO, style_flags[s]);
     doc_size(style_size[s] - CODE_DOWN);
     doc_rgb(rgb_code);
-    for (a = from = c + 1; b_kind == K_TABLE && a < q; a++)
-        if (art[a] == '\\' && a + 1 < q && art[a + 1] == '|') {
-            doc_text(art + from, a - from);
-            from = ++a;
-        }
-    doc_text(art + from, q - from);
+    cell_text(art + c + 1, q - c - 1);
     doc_font(style_face[s], style_flags[s]);
     doc_size(style_size[s]);
     doc_rgb(b_colour);
@@ -1800,7 +1770,7 @@ static uint8_t emit_block(void)
 {
     uint32_t end = b_end, i, k;
     uint8_t *p = art + b_emit, *e = art + end, *stop, *q;
-    uint8_t pre = b_kind >= K_PRE, table = b_kind == K_TABLE;
+    uint8_t pre = b_kind >= K_PRE;
     for (;;) {
         stop = (uint32_t)(e - p) > b_work / W_EMIT ? p + b_work / W_EMIT : e;
         if (b_skip) {
@@ -1814,7 +1784,7 @@ static uint8_t emit_block(void)
                 break;
             b_skip = 0;
         }
-        q = pre ? find2(p, stop, '\n', ':') : table ? find4(p, stop, '\n', ':', '`', '\\') : find3(p, stop, '\n', ':', '`');
+        q = pre ? find2(p, stop, '\n', ':') : find3(p, stop, '\n', ':', '`');
         spend((q - p) * W_EMIT);
         p = q;
         if (p >= stop)
@@ -1827,17 +1797,6 @@ static uint8_t emit_block(void)
                 p = art + b_text;
             continue;
         }
-        if (*p == '\\') {
-            /* In a table: "\|" is a "|". */
-            if (p + 1 < e && p[1] == '|') {
-                flush(p - art);
-                b_text = p + 1 - art;
-                p += 2;
-            } else {
-                p++;
-            }
-            continue;
-        }
         if (*p == '\n') {
             b_ls = p + 1 - art;
             if (!pre) {
@@ -1848,25 +1807,11 @@ static uint8_t emit_block(void)
                 }
             }
         } else {
-            /* A link has "http:" or "https:" before its "//", or is
-             * "terse:" and an ID, "feed/" and a key or "program/", a key
-             * and a name. */
-            uint32_t c = p - art, at = c - 4, len, ts;
-            uint8_t kind = LK_WEB;
-            if (c >= b_text + 5 && art[c - 1] == 's')
-                at = c - 5;
-            if (at >= b_text && c >= b_text + 4 && art[at] == 'h' && c + 1 < end && art[c + 1] == '/') {
-                /* A link with text (its target after "]("), else a bare one. */
-                if (at && art[at - 1] == '(' && (len = text_link(at, end, &ts, &kind)))
-                    goto text;
-                if ((len = link_length(at, end))) {
-                    flush(at);
-                    put_link(at, len, LK_WEB, 0, 0, at + len);
-                    p = art + at + len;
-                    continue;
-                }
-            }
-            at = c - 5;
+            /* A link is "terse:" and an ID, "feed/" and a key or
+             * "program/", a key and a name; with text, its target after
+             * "](", else bare. (Web addresses are not links: ARTICLE.md.) */
+            uint32_t c = p - art, at = c - 5, len, ts;
+            uint8_t kind = LK_ARTICLE;
             if (c >= b_text + 5 && art[at] == 't' && c + 1 < end && (is_lower_hex(art[c + 1]) || art[c + 1] == 'p')) {
                 if (at && art[at - 1] == '(' && (len = text_link(at, end, &ts, &kind)))
                     goto text;
@@ -1894,7 +1839,9 @@ static uint8_t emit_block(void)
     }
     /* This frame's share is used: add the text so far, cut before a `[`
      * on this line (which may start a link with text), else after a space
-     * (so that no link is cut), or else at least between characters. */
+     * (so that no link is cut), or else between characters but before a
+     * "terse" cut short (text without spaces, CJK say, may run into a
+     * bare link) and not inside a table's "\|". */
     for (k = i; k > b_text && k > b_ls && i - k < 280 && art[k - 1] != '[' && art[k - 1] != '`'; k--)
         ;
     if (k > b_text && k > b_ls && (art[k - 1] == '[' || art[k - 1] == '`')) {
@@ -1902,11 +1849,19 @@ static uint8_t emit_block(void)
     } else {
         for (k = i; k > b_text && i - k < 64 && art[k - 1] > ' '; k--)
             ;
-        if (k > b_text && art[k - 1] <= ' ')
+        if (k > b_text && art[k - 1] <= ' ') {
             i = k;
-        else
+        } else {
+            for (k = i - b_text > 5 ? i - 5 : b_text + 1; k < i; k++)
+                if (!memcmp(art + k, "terse", i - k))
+                    break;
+            if (k < i)
+                i = k;
+            if (i - 1 > b_text && art[i] == '|' && art[i - 1] == '\\')
+                i--;
             while (i > b_text && (art[i] & 0xC0) == 0x80)
                 i--;
+        }
     }
     flush(i);
     b_emit = i;
@@ -2030,7 +1985,10 @@ static uint8_t segment(void)
         f_sy = pt[1];
         f_moved = 1;
     } else if (f_need) {
+        /* A new subpath from the current point: a later Z returns here. */
         path_move(scaled(f_cx), scaled(f_cy));
+        f_sx = f_cx;
+        f_sy = f_cy;
     }
     f_need = 0;
     path_points(up == 'M' ? PATH_MOVE : n == 2 ? PATH_LINE : n == 4 ? PATH_QUAD : PATH_CUBIC, n / 2, s);
@@ -2058,7 +2016,7 @@ static void figure_start(void)
     cap = doc_overflow || f_base > doc_limit ? 0 : doc_limit - f_base;
     path_begin(f_base, cap > 0xFFFF ? 0xFFFF : cap);
     f_pos = b_start;
-    f_cmd = f_n = f_word = f_moved = f_need = f_last = 0;
+    f_cmd = f_n = f_word = f_moved = f_need = f_last = f_none = 0;
     f_cx = f_cy = f_sx = f_sy = 0;
     f_scale = f_w > RECT_W ? f_w : 0;
     if (f_scale) { /* the initial stroke's width scales too */
@@ -2099,7 +2057,7 @@ static uint8_t figure_step(void)
             continue;
         }
         if (p == e) {
-            if (f_n || f_word == FW_FILL || f_word == FW_STROKE)
+            if (f_n || f_none || f_word == FW_FILL || f_word == FW_STROKE)
                 return 2;
             if (f_word == FW_WIDTH)
                 stroke(16);
@@ -2130,6 +2088,7 @@ static uint8_t figure_step(void)
             if (!f_cmd || (f_cmd & 0xDF) == 'Z')
                 return 2;
             f_arg[f_n++] = v;
+            f_none = 0;
             if (f_n == f_argc) {
                 f_n = 0;
                 if (!segment())
@@ -2141,7 +2100,7 @@ static uint8_t figure_step(void)
         }
         if (f_word == FW_WIDTH)
             stroke(16);
-        if (f_n)
+        if (f_n || f_none)
             return 2;
         if (e - p > 4 && !memcmp(p, "fill", 4) && is_sep(p[4])) {
             p += 4;
@@ -2157,12 +2116,17 @@ static uint8_t figure_step(void)
             p++;
             f_cmd = c;
             f_argc = cmd_args[k];
+            f_none = f_argc != 0;
             if (k == 8) {
+                /* Z with no subpath open (after a Z or a word) does nothing
+                   and leaves the current point where it is (ARTICLE.md 6.3). */
                 spend(W_PSEG);
-                path_close();
-                f_cx = f_sx;
-                f_cy = f_sy;
-                f_need = 1;
+                if (!f_need) {
+                    path_close();
+                    f_cx = f_sx;
+                    f_cy = f_sy;
+                    f_need = 1;
+                }
                 f_last = 0;
             }
             continue;
@@ -3223,7 +3187,7 @@ static void help_line(const char *keys, const char *what)
 static const char *const help_keys[] = {
     0, "Timeline",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "move the selection",
-    "Enter, click", "open the article; a document (\xE2\x97\x86) is passed to the shell, which opens it in a new tile",
+    "Enter, click", "open the article; a document (\xE2\x97\x86) is passed to the shell to open",
     "/", "search",
     "F", "feeds",
     "? or F1", "this help",
@@ -3234,7 +3198,7 @@ static const char *const help_keys[] = {
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
     "Tab, Shift+Tab", "the next or previous link, in amber, scrolled into view (after you scroll: the first one in view)",
     "Enter, click", "follow the link: terse: links open the article or the feed's page; a link to a program, a program "
-                    "image or a document is passed to the shell, which opens it in a new tile; a web link shows its address",
+                    "image or a document is passed to the shell to open",
     "Esc, Backspace, \xE2\x86\x90", "back to the previous article, then to where you came from",
     0, "Feeds",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel, click", "select a feed",
@@ -3405,7 +3369,7 @@ static void article_page(void)
         tb_n = 0;
         tb_s("Too large: this article is ");
         tb_size(art_size);
-        tb_s(", and this reader shows articles of up to 48 KB.");
+        tb_s(", and this reader shows articles of up to 48 KiB.");
         tb[tb_n] = 0;
         {
             static char m[80];
@@ -3524,7 +3488,7 @@ static void article_start(int32_t restore, uint8_t state)
 static void opened(uint32_t r)
 {
     tb_n = 0;
-    tb_s(r == 1 ? "Opened in a new tile" : "This needs the shell");
+    tb_s(r == 1 ? "Asked the shell to open it" : "This needs the shell");
     say(r == 1 ? C_OK : C_INFO);
     link_shown = 0;
 }
@@ -3730,6 +3694,7 @@ static uint16_t links_in(void)
 static void locate(uint16_t id)
 {
     loc_id = id;
+    loc_again = 0;
     page_locate(id);
 }
 
@@ -3823,7 +3788,7 @@ static void located(void)
 
 /* Follows link `id`: an article link gets the first bytes of the blob
  * (probe_done goes on), a feed link opens the feed's page, a program link
- * asks the shell to open the program; a web link only shows its address. */
+ * asks the shell to open the program. */
 static void follow(uint16_t id)
 {
     const uint8_t *t = art + link_at[id - 1];
@@ -3850,8 +3815,6 @@ static void follow(uint16_t id)
         open_req[33] = prog_name(t + PROG_NAME, link_len[id - 1] - PROG_NAME, open_req + 34);
         opened(terse_open(open_req));
         break;
-    default:
-        set_cur_link(id);
     }
 }
 
@@ -4053,8 +4016,10 @@ static void test_publish(void)
     tb_s("\n    time   ");
     tb_u(now);
     tb_s("\n\n- a list item\n- and a figure:\n\n```path 120 32\nfill #3a6ea5 stroke none M0 4h120v24H0z "
-         "fill none stroke #fc6 2 M8 24 40 10 72 20 112 6\n```\n\nThe last paragraph has a link, "
-         "https://example.com/terse, which shows its address when pressed.\n");
+         "fill none stroke #fc6 2 M8 24 40 10 72 20 112 6\n```\n\nThe last paragraph has a link, to "
+         "[the manual](terse:");
+    tb_hex(manual_index, 32);
+    tb_s("), which opens when pressed.\n");
     op_start(OP_PUT, content_put(&op_req, tb, tb_n));
     tb_n = 0;
     tb_s("Publishing \xE2\x80\x9C");
@@ -4087,7 +4052,8 @@ static void op_done(uint8_t st)
     switch (s) {
     case OP_PUT:
         if (st != STATUS_DONE) {
-            tb_s("Could not store the test article");
+            tb_s(st == STATUS_REFUSED ? "Could not store the test article: this host does not allow it"
+                                      : "Could not store the test article");
             say(C_ERROR);
             break;
         }
@@ -4453,6 +4419,12 @@ static void search_run(void)
     sa_handle = content_find(&sa_req, FIND_ENTRIES, s_query, s_qlen, sa_buf, FIND_LEN);
     sf_st = sf_handle ? 0 : STATUS_FAILED;
     sa_st = sa_handle ? 0 : STATUS_FAILED;
+    if (!sf_handle && !sa_handle) {
+        entry_open(E_OFF, 0);
+        tb_s("Could not send the search: too many requests pending");
+        say(C_ERROR);
+        return;
+    }
     srp.sel = srp.top = 0;
     entry_open(E_OFF, 0);
     tb_s("Searching your relays for \xE2\x80\x9C");
@@ -4493,7 +4465,7 @@ static void find_done(uint8_t feeds, uint8_t status)
         tb_s("\xE2\x80\x9D (only listed feeds can be found)");
         say(C_INFO);
     } else if (sf_st == STATUS_REFUSED || sa_st == STATUS_REFUSED) {
-        tb_s("The relays refused the search (too many at once?): try again in a moment");
+        tb_s("Search refused: this host may not offer it, or its relays are busy");
         say(C_ERROR);
     } else {
         tb_s("Search needs a relay, and none could be reached");
@@ -4581,10 +4553,6 @@ static void link_status(void)
     puts_(" Link ");
     put_u32(id);
     puts_(": ");
-    if (link_kind[id - 1] == LK_WEB) {
-        put_title(t, n > 255 ? 255 : n, COLS - 1 - col);
-        return;
-    }
     if (link_kind[id - 1] == LK_FEED) {
         uint8_t key[32];
         unhex(t + 11, key);
@@ -4871,9 +4839,7 @@ static void anchor(uint16_t id, uint8_t buttons)
         return;
     if (view == ARTICLE) {
         if (id <= links) {
-            if (link_kind[id - 1] == LK_WEB)
-                set_cur_link(id);
-            else if (buttons & BUTTON_PRIMARY)
+            if (buttons & BUTTON_PRIMARY)
                 follow(id);
         }
     } else if (!(buttons & BUTTON_PRIMARY)) {
@@ -4940,6 +4906,8 @@ static uint8_t handle_events(void)
             }
             break;
         case EV_PAGE_LAID_OUT:
+            if (view == ARTICLE && loc_id)
+                loc_again = 1;
             if (view == TIMELINE || view == FEEDS || view == SEARCH)
                 list_height(EV_PAGE_HEIGHT(ev));
             else if (view != FEED)
@@ -4989,6 +4957,11 @@ static uint8_t handle_events(void)
             }
             break;
         }
+    }
+    if (loc_again) {
+        loc_again = 0;
+        if (view == ARTICLE && loc_id)
+            page_locate(loc_id);
     }
     return 0;
 }

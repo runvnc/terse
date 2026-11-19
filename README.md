@@ -6,9 +6,24 @@ and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device
 that fetches and publishes blobs and reads feeds. Several machines can run
 side by side as one system: a shell program starts them and lays their screens
-out as tiles. `SPEC.md` is the authoritative design, `STATE.md` defines the
-machine state hash, and `NETWORK.md` describes how hosts move blobs and feeds
-through a relay; this repository is the first prototype of all three.
+out as tiles.
+
+Terse has three layers, each with its own specification:
+
+- **(a) The Terse network**, `NETWORK.md`: blobs named by their hash, relays,
+  signed feeds and their entries, profiles and names, search.
+- **(b) Terse articles**, `ARTICLE.md`: the article format and what a reader
+  must do with it.
+- **(c) The Terse machine**, `SPEC.md` (with `STATE.md`, the machine state hash):
+  the virtual computer above, and its devices.
+
+(a) and (b) are **the core**: a native reader with no virtual machine that
+implements them is a complete, conforming Terse client. The machine is optional
+and reuses the core: programs are blobs published in feeds, and the reader that
+comes with this repository is a machine program that shows articles on the page
+device. A machine host that only runs that reader needs just the machine's
+**reading profile** (devices 1, 2, 4 and 7; SPEC 2.1). This repository is the first
+prototype of all three layers.
 
 Shell commands below are written for fish; they also work in bash and zsh
 unless they set variables (`set X value` in fish is `X=value` in bash).
@@ -46,14 +61,16 @@ See [The shell](#the-shell).
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
 (and quits from the timeline); M opens the Terse manual; F manages the feeds you follow; ? (or F1)
-shows help and your own feed key; T on the help page publishes a test
-article. See [The reader](#the-reader).
+shows help and your own feed key; T (on the timeline, the feeds view or the help
+page) publishes a test article. See [The reader](#the-reader).
 
 **The consent prompt.** A program may ask the host to subscribe to a feed,
-unsubscribe from one, or publish an article in your name (SPEC 9.5). The
-host then shows its own prompt over the bottom four rows of the window, over
-every machine's picture, naming the program and what it asks (a feed key such as `3fa9c2…c21e07`,
-or the article's title and size). Press Y to allow, N or Esc to refuse;
+unsubscribe from one, publish an article or a document in your name, publish your
+profile (your public name) or set a nickname for a feed (SPEC 9.5). The
+host then shows its own prompt over the bottom four rows of the screen, over
+every machine's picture, naming the program and what it asks (a feed key such as `3fa9c2…c21e07`;
+the article's or document's title and size; the name and whether search may find
+it; or the feed key and the nickname). Press Y to allow, N or Esc to refuse;
 Enter does nothing. While the prompt is up, the keyboard goes to the host,
 not to the program, and the program can neither see nor draw over the
 prompt. Several requests are asked about one at a time.
@@ -72,7 +89,7 @@ A dropped connection is retried after 1 s, doubling up to 30 s. For a feed
 whose profile names relays (NETWORK.md section 4.6), the host also follows
 it on up to two of those, unless `--no-feed-relays`. The `terse` commands
 that use relays (`put`, `get`, `info`, `feed publish`, `feed sync`, `feed
-read`, `profile set`, `find`) look for them the same way, but never start
+read`, `profile set`, `find`, `manual publish`) look for them the same way, but never start
 one.
 
 **Sharing with someone else.** One of you runs a relay that the other can
@@ -130,11 +147,13 @@ images were built with clang and LLD 23.1.4.
   a machine started in frame N runs from frame N + 1. `--dump` prints the shell's
   screen, then for each machine with a rectangle a line `-- machine <handle>
   <state> <x> <y> <w> <h> <title> --` and its screen (and vectors and page with
-  `--dump-vectors`, `--dump-page`); `--hash` prints the shell's state hash and
-  `--hash-all` also `<handle> <hash>` per machine started (`-` while loading or
-  failed). The exit status is the shell's. Without `--shell`, an image runs alone,
+  `--dump-vectors`, `--dump-page`); `--hash` prints the shell's state hash, and
+  `--hash-all` prints it and then, after the last frame only, `<handle> <hash>` for
+  each machine the shell has, in handle order (one it stopped is not listed; `-`
+  for one that has no machine: its image or snapshot is still being fetched, or its
+  start failed). `--hash-every` prints the shell's hashes. The exit status is the shell's. Without `--shell`, an image runs alone,
   as follows.
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading] [--no-feed-relays] [--no-program-download]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -162,8 +181,9 @@ images were built with clang and LLD 23.1.4.
   cannot be asked about headless: `--consent` says how they are answered (default
   `deny`: status Refused). `run` uses a relay only with `--relay`.
   `--hash` prints the machine's state hash ([STATE.md](STATE.md)) after the last
-  frame as 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame
-  whose frame counter is a multiple of N (after frames N, 2N, …). `--bench` prints,
+  frame as 64 hex digits; `--hash-every N` prints `<frame counter> <hash>` after every
+  frame that leaves the frame counter at a multiple of N (from reset: after the first
+  N frames, 2N frames, …; from `--load-state`, by the counter). `--bench` prints,
   on stderr, the emulation time per frame (p50, p99, max; the machine and the
   headless content service) and how many times faster than real time the run was.
   `--save-state <file>` writes the machine's snapshot (STATE.md 4) after the last
@@ -171,6 +191,17 @@ images were built with clang and LLD 23.1.4.
   `<image|id>` if given, else the one the snapshot names, by ID), so `--frames 0
   --hash` prints the hash it was saved with and a continued run has the hashes of an
   uninterrupted one. Both are for a single machine, not `--shell`.
+  `--record <file>` writes every input of every frame, and the state hash after it,
+  to a file (STATE.md 5); `run <image> --replay <file> [--frames N] [--dump …]
+  [--hash] [--hash-every N] [--bench] [--save-state <file>]` runs that recording
+  again from the image file alone, with no network, store, data directory or events
+  (it takes no other option), checking every frame's hash: it stops with an error at
+  the first frame that differs, and refuses a recording of another image.
+  `--profile reading` runs the machine with only its reading profile (SPEC 2.1):
+  devices 1, 2, 4 and 7 (an image that lists another device is refused), and of the
+  content operations only get, subscriptions, timeline, names, identity, subscribe
+  and unsubscribe; every other content request completes with status 05h (Refused)
+  without asking. `programs/conform-reading` is the conformance image for it.
 - **Exit status of `run`.** When the program exits, `terse run` exits with its
   exit code (0–255). When the machine stops with a fault (SPEC 1.5), it prints
   `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself
@@ -190,6 +221,14 @@ images were built with clang and LLD 23.1.4.
   [Feeds](#feeds).
 - `manual build|check [--dir <docs/manual>]` and `manual publish`: the manual, see
   [Manual](#manual).
+- `vectors [--dir <dir>]` writes the core's test vectors (default `vectors/`):
+  blob IDs, signed entries valid and invalid, profile documents, a relay session
+  and an article corpus with the expected parse, for anyone implementing
+  NETWORK.md or ARTICLE.md in any language (`vectors/README` has the formats). The
+  checked-in copy is generated by it; `cargo test -p terse-cli --test vectors` checks
+  that it is up to date, that a relay answers the session's messages as written, and
+  that the reader shows every corpus article as the reference parser
+  (`terse-net`'s `article_parse`) does.
 - `relay add <ws://host:port>` and `relay remove <url>` change the relay list in
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
@@ -313,7 +352,7 @@ to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
   the relay list (`relays`). Default
   `$XDG_CONFIG_HOME/terse`, else `~/.config/terse`. A host creates the identity
   itself when a program first publishes.
-- Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`.
+- Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`, the seq as 10 decimal digits (`0000000003`).
 
 Commands:
 
@@ -343,7 +382,7 @@ Commands:
   beside the name.
 - `find <text>` asks your relays for listed feeds whose name contains the text
   (ASCII letters match either case; names starting with it first) and prints key
-  and name; `find --entries <text>` finds articles of listed feeds by title,
+  and name; `find --entries <text>` finds articles and documents of listed feeds by title,
   `find --programs <text>` programs by name (current versions only).
 - `feed sync [--watch] [--auto-download <bytes>] [--no-prefetch] [--no-program-download]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
@@ -363,7 +402,7 @@ Commands:
   reconnecting (1 s backoff, doubling to 30 s) if the connection drops.
 - `feed list [<key>]` lists entries held locally, newest first, with the feed's name
   after the key prefix when known; a profile entry shows as `[profile: <name>]`, a
-  program entry as `[program: <name>]`.
+  program entry as `[program: <name>]`, a document entry as `[document: <name>]`.
 - `feed read <key> <seq>` prints the article, fetching it from `--relay` if it
   is not in the store. Control characters are replaced on output.
 
@@ -498,7 +537,8 @@ its checked-in `.terse` is not what its sources build to (and is skipped when
 clang lacks the riscv32 target).
 
 Costs to keep in mind (SPEC 14): an instruction from ROM costs 1 unit, one from
-RAM 4; a call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write`
+RAM 4; a call costs 4 on top of its `ecall` (so 5 in all from ROM, 8 from RAM) plus 1 per
+4 bytes it copies; `write`
 costs 1 per byte, and a scroll or clear 150. Writing a whole row with one `write`
 or `term_cells_write` is far cheaper than a call per character.
 
@@ -536,13 +576,15 @@ sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 
 ## Writing an article
 
-An article is UTF-8 text that reads well as it is (NETWORK 4.5 is exact). Blank
+An article is UTF-8 text that reads well as it is (`ARTICLE.md` is exact). Blank
 lines separate blocks; the markers count only at the start of a line:
 
 - a paragraph: lines joined with spaces and wrapped by the reader; bare
-  `http://` and `https://` URLs, `terse:<article ID>` and `terse:feed/<key>`
-  are links, and so is `[text](target)` with one of those as the target,
-  shown as its text (on one line, the text 1–200 bytes without brackets);
+  `terse:<article ID>` and `terse:feed/<key>` are links, and so is
+  `[text](target)` with a `terse:` link as the target, shown as its text (on one
+  line, the text 1–200 bytes without brackets). Articles do not link to the web:
+  `http://` and `https://` addresses are ordinary text, bare or as the target of
+  `[text](target)` (which is then not a link and is shown as written);
 - `# ` a heading, `## ` a subheading (one line each);
 - `- ` or `* ` a list item (one level; the lines after it continue it);
 - four spaces or a tab: preformatted lines, shown as written;
@@ -586,11 +628,12 @@ so an article still reads as plain text.
 
 ## Manual
 
-`docs/manual` is the Terse manual: twenty articles, written in the article format,
+`docs/manual` is the Terse manual: the articles listed in `docs/manual/manifest`, written in the article format,
 that describe the whole system (the machine, every device call, event, record and
 limit, the network, the tools, the shell and the reader). Every host carries it:
-`terse-host` and `terse run` put its articles into the store at start, and M on
-the reader's timeline opens its index, from which Tab and Enter follow its links.
+`terse-host` and `terse run` put its articles into the store at start (for an image with the content device, or a shell), and M on
+the reader's timeline, or the shell launcher's "Manual" entry, opens its index, from
+which Tab and Enter follow its links.
 
 Articles link to each other with placeholders, `[the page](terse:{device-page})`,
 which `terse manual build` replaces with the blob IDs, in dependency order (the
@@ -645,8 +688,8 @@ each one's screen where the shell placed it, and routes input.
   a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and
   the units it used in its last frame as a share of the budget; the machine with the
   keyboard in blue, the one selected in the launcher in amber; the clock (UTC) at the
-  right. A click on a segment gives that machine the keyboard; one on `⌂` opens the
-  launcher.
+  right. A click on a segment gives that machine the keyboard (in the gallery it
+  turns the ring to it instead, back in the launcher); one on `⌂` opens the launcher.
 - **Tiles**: below the bar, each machine's picture (its whole screen, scaled) at the
   top of its tile, a blue frame around the one with the keyboard. Layouts: master and
   stack (the first machine on the left half, the others stacked on the right; the
@@ -663,7 +706,8 @@ each one's screen where the shell placed it, and routes input.
   shows it there as a flat picture, as in zoom; F12 `unface`s it, back to the ring.
   With the launcher open the ring stands right of it.
 - **The launcher** (on the page, while the shell has the keyboard: at start, and after
-  F12, the home key): the built-in programs by title, then "From your feeds": the
+  F12, the home key): "Manual" (Enter opens the reader on the manual's index, see
+  [Manual](#manual)), the built-in programs by title, then "From your feeds": the
   current version of each program of the feeds you follow, with its publisher's name
   and short key and `↓` while its image is not yet downloaded (read again on every
   feeds-updated event), then the machines with their state (a faulted one with the
@@ -684,15 +728,16 @@ each one's screen where the shell placed it, and routes input.
   shell starts and a session was saved, the launcher's first entry is "Restore last
   session (N programs)": Enter restores the machines in their order, where they
   were (sparks mid-game, the reader on its article at the same place, a drawing), with
-  the layout and the keyboard on the machine that was selected; D discards the session.
+  the layout and the keyboard on the machine that was selected; D, with the cursor on
+  that entry (and only there), discards the session.
   A machine that cannot be restored (its image is gone from the store and no relay has
   it, or the snapshot is unreadable) shows why, like a failed start. A snapshot holds
   one exact version of a program; named records are not in it. Nothing is saved
   without S yet.
 - A click on a machine's picture gives it the keyboard (the click also reaches the
   machine). A machine that exits or faults keeps its tile, with its last picture (a
-  fault shown on its bottom row), until X stops it; the keyboard then goes back to the
-  shell.
+  fault shown on its bottom row), until X stops it; the keyboard goes back to the
+  shell as soon as it exits or faults.
 - **Open requests** (SPEC 4 `open`): a machine may ask the shell to open a program
   (by its identity) or a blob (by its ID); the reader does this when you follow a
   link to a program, an image or a document. The shell takes them one at a time, only
@@ -780,11 +825,10 @@ wider than the column scaled down to its 512 units), tables in 14-unit text (the
 header bold, under a rule), code spans in the monospaced face a unit smaller, in
 green. An article that has no entry (one opened by a link, or the manual) and
 whose first line is a heading (`# `) is titled by that heading, which is then
-not shown twice; so is one whose entry has that title. Bare `http://` and `https://`
-URLs get an anchor and a link colour; pressing one shows the URL in the status bar,
-since there is no browser. So do `terse:<id>` links (an article, by its blob ID) and
-`terse:feed/<key>` links (a feed), shown shortened (`terse:360793…dec189`), and
-links with text (`[text](target)`), shown as their text: clicking one, or making it
+not shown twice; so is one whose entry has that title. Links (only `terse:` forms;
+web addresses are ordinary text) get an anchor and a link colour: `terse:<id>` links
+(an article, by its blob ID) and `terse:feed/<key>` links (a feed), shown shortened
+(`terse:360793…dec189`), and links with text (`[text](target)`), shown as their text: clicking one, or making it
 current with Tab or Shift+Tab (it turns amber, the status row shows its target and
 the page scrolls just enough to show its line) and pressing Enter, opens the article
 or the feed's page. After you scroll, Tab starts again from the first link at the
@@ -808,8 +852,10 @@ frame) and submitted after the first frame's share, then whole when it is comple
 so a long article appears at once and its percentage follows. It holds one
 timeline request's worth of entries (16 KiB of records: 70 to 147 entries) and
 requests another range as you scroll, and up to 48 KiB of an article (read in 16
-KiB gets); a longer article, or one whose formatting would pass the 64 KiB
-document, ends with a note saying how much is shown. Rebuild it with
+KiB gets). An article opened from the timeline, from search, from the manual or
+passed by the shell that is longer, or one whose formatting would pass the 64 KiB
+document, ends with a note saying how much is shown; one opened by a link that is
+longer than 48 KiB is not shown at all, and a page says so (above). Rebuild it with
 `programs/reader/build.sh`.
 
 ### Walkthrough
@@ -853,15 +899,15 @@ reader -- --nocapture`), headless with the reference layout: a Down key submits 
 document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
-height arrives in the next; the whole height of a 48 KiB article arrives 15 frames
-after Enter. The busiest frame uses 77,927 units (62% of 125,000, building an
-article's document; 88,683 (71%) for a 48 KiB article of nothing but tables, 1,566
-cells with code spans and links); outside the article view at most 32,284 (26%);
-a typical frame 164; no frame runs out of budget.
-ROM 52,584 bytes, 29 RAM pages (the 64 KiB document, the 48 KiB article, the
+height arrives in the next; the whole height of a 48 KiB article arrives 16 frames
+after Enter. The busiest frame uses 76,582 units (61% of 125,000, building an
+article's document; 79,359 (63%) for a 48 KiB article of nothing but tables, 1,566
+cells with code spans and links); outside the article view at most 34,426 (28%);
+a typical frame 166; no frame runs out of budget.
+ROM 52,108 bytes, 29 RAM pages (the 64 KiB document, the 48 KiB article, the
 timeline records, the names, the search results and a table's 1,024 cells). Following a `terse:` link to
 a local article: the article is on the page 2 frames after Enter, busiest frame
-39,497 units; a search: busiest frame 20,381 units.
+41,984 units; a search: busiest frame 20,909 units.
 
 In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
 entries, 13 Down then 13 Up presses 8 frames apart, the list window scrolling): every
@@ -957,7 +1003,8 @@ at a line's end points: a lone end is 1.5 times as bright, and where different l
 meet (a polygon's corners) they share that, so a corner is also about 1.5 times one
 line (an identical line drawn again counts in full). The afterglow is two
 floating-point textures, a fast component (×0.46 per frame, so about 10% after three
-frames) and a slow tail (× persistence / 256), each fed with 0.2 of the whole beam —
+frames) and a slow tail (× persistence / 256), together fed with 0.2 of the whole beam (0.6 of
+that to the fast component, the rest to the tail) —
 taken as a maximum, not added, so a shape that stays put is never brighter than 1.2
 times its beam, while a line drawn twice leaves a trail twice as bright — and each
 losing a small epsilon per frame so trails really reach black. When a list keeps its
@@ -1046,7 +1093,7 @@ move the whole scene (a rigid motion and scale, eased) until a panel lies flat o
 the glass over a rectangle and then show that machine flat there, pixel for pixel
 as `place` would; the view's progress counts the shell's frames and is in its
 state. `--panels flat` makes the software renderer draw each panel's picture
-upright in the rectangle the panel covers instead (the fallback SPEC 13.5 allows a
+upright in the rectangle the panel covers instead (the fallback SPEC 12.3 allows a
 host that cannot draw in perspective).
 
 **Faces** (Face, opcode `0Ch`: 3 or 4 corners) draw nothing but hide the lines,
@@ -1103,8 +1150,8 @@ its faces).
 `programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–5
 choose one: a turning cube and icosahedron labelled on the glass, six nested rings
 each turning in the one outside it, 384 points receding from the glass, an orrery
-of four planets on tilted orbits (two with moons), and a city: eleven solid blocks
-round a tower on a ground grid, turning, so that blocks pass in front of one another
+of four planets on tilted orbits (two with moons), and a city: ten solid blocks
+round a tower (eleven in all) on a ground grid, turning, so that blocks pass in front of one another
 and hide each other and the ground (55 faces). H makes the cube and icosahedron
 solid (6 and 20 faces) and wire again. The arrows turn the model, A stops and
 starts the turning, R resets the view, P switches between the clean and the
@@ -1125,7 +1172,7 @@ the first four scenes' segments unchanged by faces, the frame budget).
 Device 7 (SPEC 11) shows typeset prose: proportional fonts, shaped (ligatures,
 Arabic joining), bidirectional, broken into lines at the width of a rectangle the
 program chooses. The program builds a **document** (a short binary list like a
-display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor, Figure; at most
+display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor, Figure, Table, Cell, End table; at most
 65,536 bytes) in ROM or RAM and submits it (1 unit per 4 bytes); it sets the rectangle,
 the scroll value (screen units from the top of the document) and the background.
 The host lays the document out with its own fonts and draws the part in view,
@@ -1362,7 +1409,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   request, blocks outside RAM, eight pending and a ninth rejected, and the
   subscriptions and timeline operations (status only, so a host with feeds still
   passes);
-- the page (frames 110–142, after the stress phase): submits from ROM and RAM, a
+- the page (frames 110–145, after the stress phase): submits from ROM and RAM, a
   65,536-byte document ending at the last byte of RAM, every rejection (length 0
   and 65,537, null, straddling the end of RAM or ROM), region clamping, a negative
   and a huge scroll value, background, clear, unknown page calls; height events
@@ -1382,6 +1429,23 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
   3,268 translucent lines of width 255 across the screen, about 109 screens of line
   area (lines are not capped, SPEC 17).
+
+**The reading profile.** `programs/conform-reading/conform-reading.terse` is the
+same source built with `-DREADING` (`programs/conform-reading/build.sh`), for a host
+that offers only the machine's reading profile: devices 2, 4 and 7, 16 RAM pages.
+The vector displays and the optional content operation (put) are left out, calls
+to devices 3 and 9 are checked as calls to absent devices, the stress phase
+rewrites the terminal only, and the gets read two blobs the host must hold before
+it starts (`programs/conform-reading/blobs/`, the bytes conform puts). Run it with
+those blobs in an otherwise empty store and no subscriptions, and compare with its
+`expected-hashes.txt` and `expected-screen.txt`; it gives the same on a full host
+and under `--profile reading`:
+
+    mkdir -p /tmp/conform-reading/config
+    for f in programs/conform-reading/blobs/*; do cargo run -p terse-cli -- put $f --store /tmp/conform-reading/store --relay none; end
+    cargo run -p terse-cli -- run programs/conform-reading/conform-reading.terse --events programs/conform-reading/conform-reading.events --store /tmp/conform-reading/store --config /tmp/conform-reading/config --frames 200 --hash-every 10 --profile reading
+
+`cargo test -p terse-cli --test conform_reading` does this, on both hosts.
 
 **Responsiveness (window).** `terse-host --selftest` runs the image in the normal
 window with vsync and the same script, and prints for each machine frame the
@@ -1461,7 +1525,7 @@ consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind th
 - **Tests.** `cargo test -p terse-host` checks that a screen drawn bit by bit
   equals one drawn from scratch, that the phosphor afterglow fades to black, the
   shapes' row spans against brute force, butt-ended segments against a whole line,
-  and eight scripted scenes against pictures in
+  and ten scripted scenes against pictures in
   `crates/terse-host/tests/reference/` (400 × 300, made with the DejaVu fonts; at
   most 0.5% of pixels may differ by more than 8/255).
 
@@ -1493,13 +1557,13 @@ recorded sessions.
 
 | Program | ROM | RAM | Busiest frame | Typical frame | Host time per frame |
 |---|---|---|---|---|---|
-| hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
+| hello | 881 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 52,584 bytes | 29 pages | 88,683 (71%, building a 48 KiB article of tables) | 164 (0.1%) | — |
+| reader | 52,108 bytes | 29 pages | 79,359 (63.5%, building a 48 KiB article of tables) | 166 (0.1%) | — |
 | holo | 5,460 bytes | 2 pages | 24,898 (19.9%) in the city (11 solid blocks: 55 faces, 3,195 list bytes); 20,753 (16.6%) in the starfield | 10,698 (8.6%) | the city's projection 0.14 ms |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
-| conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
-| shell | 16,344 bytes | 3 pages | 12,353 (9.9%, the launcher rebuilt with 4 machines); saving a session of 3 machines 7,373 (5.9%), restoring it 5,730 (4.6%) | 515 (0.4%) | — |
+| conform | 39,224 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
+| shell | 19,140 bytes | 3 pages | 12,989 (10.4%, the launcher rebuilt with 4 machines); 24,184 (19.3%) in the gallery; saving a session of 3 machines 7,834 (6.3%) | 537 (0.4%) | — |
 
 A system in a 1320 × 990 window (`terse-host --selftest --shell --size 1320x990`,
 1,200 frames, RTX 2060; the machines started by script in the first 300 frames;

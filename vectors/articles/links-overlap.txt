@@ -1,0 +1,3 @@
+`[a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)` is code.
+[a `x](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)` y`: the brackets hold a backquote.
+[a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)`b`

@@ -104,5 +104,7 @@ fn malformed_requests() {
     assert_eq!(ask(&mut ws, protocol::encode_find(3, 2, &[b'a'; 49])), refused(3));
     assert_eq!(ask(&mut ws, protocol::encode_find(4, 1, &[0xFF])), refused(4), "not UTF-8");
     assert_eq!(ask(&mut ws, protocol::encode_find(5, 1, b"ab")[..7].to_vec()), refused(5));
+    // A find carried out is done (status 1) also when nothing matches,
+    // with no results (NETWORK 4.7).
     assert_eq!(ask(&mut ws, protocol::encode_find(6, 1, b"ab")), [protocol::FIND_REPLY, 6, 0, 0, 0, status::DONE, 0]);
 }

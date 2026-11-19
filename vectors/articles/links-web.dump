@@ -1,0 +1,2 @@
+paragraph
+  text "http://example.org is text. https://example.org/a?b=c#d too. [Example](https://example.org) is shown as written. [Mail](mailto:someone@example.org) as well. <https://example.org> and www.example.org are text."

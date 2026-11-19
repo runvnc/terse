@@ -1,4 +1,4 @@
-//! The phosphor presentation (SPEC 8.7): every tunable constant in one
+//! The phosphor presentation (SPEC 10.6): every tunable constant in one
 //! place, the CPU side of the afterglow (motion sub-steps), and the WGSL
 //! prelude that hands the constants to the shaders.
 //!
@@ -128,7 +128,7 @@ pub const TONE_KNEE: f32 = 0.35;
 pub const SPILL_FROM: f32 = 3.0;
 pub const SPILL: f32 = 0.5;
 
-/// The slow component's per-frame factor for a persistence (SPEC 8.7).
+/// The slow component's per-frame factor for a persistence (SPEC 10.6).
 pub fn slow_decay(persistence: u8) -> f32 {
     persistence as f32 / 256.0
 }
@@ -174,7 +174,7 @@ pub fn tone(x: f32) -> f32 {
     }
 }
 
-/// The opcodes of a display list in order (SPEC 8.3), operands skipped:
+/// The opcodes of a display list in order (SPEC 10.3), operands skipped:
 /// two lists with the same sequence draw the same shapes, maybe moved.
 pub fn opcodes(list: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();

@@ -11,6 +11,7 @@ pub mod image;
 pub mod machine;
 pub mod machines;
 pub mod page;
+pub mod record;
 pub mod script;
 pub mod shell;
 pub mod snapshot;

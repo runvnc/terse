@@ -23,6 +23,14 @@
  * Self-contained: its own crt0.S and conform.ld, no programs/lib, so that
  * library changes do not change this image.
  *
+ * Built with -DREADING (programs/conform-reading/build.sh) it is the
+ * conformance image of the machine's reading profile: devices 2, 4 and 7
+ * only. The vector displays (devices 3 and 9) and the optional content
+ * operations (put) are left out; calls to devices 3 and 9 are checked as
+ * calls to absent devices; the gets read the two blobs the host is set up
+ * to hold (programs/conform-reading/blobs, the bytes conform puts), and the
+ * stress phase rewrites the terminal only.
+ *
  * Frames (the scripted input of conform.events is in the frames named):
  *   0-5     CPU, RAM code, terminal, vector displays, system calls
  *   6       the events of frames 2-5;  9: the 70 text events of frame 8
@@ -44,9 +52,9 @@
 
 /* ---------------------------------------------------------------- machine */
 
-/* SPEC 1.4, 11 and 14: the provisional values. The budget section predicts
- * its loop counts from these (model_*), so if the machine's constants are
- * retuned, change them here, rebuild (build.sh) and regenerate the expected
+/* SPEC 1.4, 11 and 14: the provisional values (listed in SPEC 16). The
+ * budget section predicts its loop counts from these (model_*), so if the
+ * machine's constants are retuned, change them here, rebuild (build.sh) and regenerate the expected
  * files (UPDATE_GOLDEN=1 cargo test -p terse-cli --test conform). */
 #define BUDGET 125000           /* units per frame */
 #define ROM_COST 1              /* an instruction fetched from ROM */
@@ -818,6 +826,7 @@ static void t_terminal(void)
     t_cells();
 }
 
+#ifndef READING
 /* ============================================================ 7. vector */
 
 #define XY(x, y) (uint8_t)(x), (uint8_t)((x) >> 8), (uint8_t)(y), (uint8_t)((y) >> 8)
@@ -1011,6 +1020,7 @@ static void t_vector3(void)
     ck(call(V3_SUBMIT, A(l), sizeof cube3d, 0) == 0);
     report("3D vector: submit, reject, shared style");
 }
+#endif
 
 /* ===================================================== 5. system calls */
 
@@ -1041,7 +1051,7 @@ static void t_system(void)
     ck(call(RANDOM, A(sbuf), 0, 0) == 0);
     ck(call(RANDOM, A(sbuf), 0xFFFFFFFF, 0) == ERR_BUFFER);
     ck(call(RANDOM, ROM_BASE, 4, 0) == ERR_BUFFER);
-    ck(call(RANDOM, 0, 0, 0) == ERR_BUFFER);
+    ck(call(RANDOM, 0, 0, 0) == 0); /* empty: valid at any address (SPEC 3.1) */
     ck(call(RANDOM, RAM_END - 8, 16, 0) == ERR_BUFFER);
     ck(call(RANDOM, RAM_END - 4, 4, 0) == 4);
     ck(call(RANDOM, RAM_END, 0, 0) == 0);
@@ -1064,6 +1074,10 @@ static void t_system(void)
     static const uint32_t unknown[] = {
         0x000, 0x0FF, 0x180, 0x1FF, 0x20A, 0x2FF, 0x305, 0x3FF, 0x401, 0x4FF,
         0x500, 0x501, 0x5FF, 0x600, 0x800, 0xA00, 0xFF00, 0x10100, 0x10200, 0xFFFFFFFF,
+#ifdef READING
+        /* The reading profile has no vector displays. */
+        0x300, 0x302, 0x304, 0x900, 0x902, 0x903,
+#endif
     };
     for (uint32_t i = 0; i < sizeof unknown / sizeof unknown[0]; i++) {
         uint32_t a1, r = call2(unknown[i], 0x1234, 0x5678, &a1);
@@ -1420,9 +1434,10 @@ static void t_content(void)
 {
     req *r = &blk[0];
     begin();
-    /* Put 100 bytes from RAM; the ID comes back. */
     for (uint32_t i = 0; i < 100; i++)
         put_src[i] = i * 7 + 3;
+#ifndef READING
+    /* Put 100 bytes from RAM; the ID comes back. */
     blk_clear(r);
     r->op = 2;
     r->addr = A(put_src);
@@ -1443,7 +1458,8 @@ static void t_content(void)
     wait_done(1);
     ck(done_status[1] == 1 && r->status == 1);
     ck(!memcmp(r->id, rom_put_id, 32));
-    /* Get both back, whole. */
+#endif
+    /* Get both back, whole (READING: the host holds them). */
     memset(get_dst, 0xEE, sizeof get_dst);
     get_req(r, put_id, 0, 100, get_dst);
     get_req(&blk[1], rom_put_id, 0, 16384, BB);
@@ -1485,7 +1501,11 @@ static void t_content(void)
     ck(submit(r) == 1);
     wait_done(1);
     ck(done_status[1] == 2 && r->status == 2);
+#ifdef READING
+    report("content: get, not found");
+#else
     report("content: put, get, not found");
+#endif
 
     /* Content delivered at a frame's start is charged in that frame: the
      * get of 100 bytes submitted in frame F (by count_frames's extra call)
@@ -1776,16 +1796,20 @@ static void stress_text(uint32_t sf)
 static void t_stress(void)
 {
     begin();
+#ifndef READING
     build_a(BA);
     build_b(BB);
+#endif
     wait_until(STRESS_START);
     uint32_t f = wait(), sf;
     for (sf = 0; sf < STRESS_A + STRESS_B; sf++) {
         ck(frame() == f + sf); /* the work of a frame fits in it */
         stress_text(sf);
+#ifndef READING
         uint8_t *l = sf < STRESS_A ? BA : BB;
         l[1] = l[3] = (sf & 15) << 4; /* move it: a new list every frame */
         ck(call(V_SUBMIT, A(l), 16384, 0) == 0);
+#endif
         while (frame() == f + sf) /* use the whole budget */
             ;
     }
@@ -1965,10 +1989,11 @@ static void t_page(void)
     uint32_t anchors = 0;
     while (call(NEXT_EVENT, A(e), 0, 0) == 1) {
         if (e[0] == 9) {
-            /* After the pointer event of the press, with its buttons. */
-            ck(prev[0] == 4 && (prev[3] >> 3 & 7) == e[3]);
+            /* After the pointer event of the press, with its buttons in
+             * the same bits (3-5) as the pointer event's. */
+            ck(prev[0] == 4 && (prev[3] & 0x38) == e[3]);
             ck((e[1] | e[2] << 8) == ANCHOR_ID);
-            ck(e[3] == (anchors ? 2 : 1));
+            ck(e[3] == (anchors ? 2 : 1) << 3);
             anchors++;
         }
         memcpy(prev, e, 4);
@@ -2017,8 +2042,10 @@ int main(void)
     t_cpu();
     t_ram_code();
     t_terminal();
+#ifndef READING
     t_vector();
     t_vector3();
+#endif
     t_system();
     show_all();
     t_events();
@@ -2050,7 +2077,9 @@ int main(void)
     }
     colours(7, 0x100);
     tw("  Esc: exit (code = sections failed).");
+#ifndef READING
     call(V_SUBMIT, A(final_list), build_final(final_list), 0);
+#endif
     for (;;) {
         static uint8_t e[4];
         wait();

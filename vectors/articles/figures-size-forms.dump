@@ -1,0 +1,11 @@
+figure 10 10
+  path fill none stroke fg 16
+    M 0 0
+    L 16 16
+pre
+  line
+    text "M0 0 L1 1"
+figure 10 10
+  path fill none stroke fg 16
+    M 0 0
+    L 16 16

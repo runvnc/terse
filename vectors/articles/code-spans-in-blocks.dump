@@ -1,0 +1,15 @@
+heading
+  text "A "
+  code "heading"
+subheading
+  text "A "
+  code "subheading"
+item
+  text "An "
+  code "item"
+pre
+  line
+    text "    `not code` in pre"
+pre
+  line
+    text "`not code` in a fence"

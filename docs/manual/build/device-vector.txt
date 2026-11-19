@@ -59,13 +59,13 @@ Rules:
 
 ## Outlines
 
-In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. The page's figures are outlined too. Outlines are not limited by the fill cap.
+In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. A rectangle's lines go from the current point (x0, y0) to (x1, y0), (x1, y1), (x0, y1) and back; a triangle's from the current point to the first point, the second, and back. The page's figures are outlined too. Outlines are not limited by the fill cap.
 
 ## The fill cap
 
 When filled shapes are filled (the clean style with fill mode 0), the area they cover in one list is limited. Each disc, rectangle and triangle, in list order, counts the area of its bounding box:
 
-- a disc: the square from (x - r, y - r) to (x + r, y + r);
+- a disc: the square from (x - r, y - r) to (x + r, y + r), computed without wrapping to 16 bits;
 - a rectangle: the rectangle itself;
 - a triangle: the smallest axis-aligned box holding its three points;
 
@@ -80,7 +80,7 @@ Worked numbers: a rectangle covering the whole screen counts 10240 x 7680 / 256 
 In the clean style the host combines the displays in a fixed order, from the bottom:
 
 - 1. the terminal's cell backgrounds;
-- 2. [the page](terse:d8ddc8a4ca14bc8e8acf49633f65ccabb6f3d42d370cc0748a9bbf92eaa86b9a): its background, then its text;
+- 2. [the page](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c): its background, then its text;
 - 3. the vector displays: device 3's shapes, then device 9's;
 - 4. the terminal's characters and cursor.
 
@@ -105,7 +105,7 @@ The exact brightness, core width, glow, fast decay, tone curve and where an outl
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116).
 
 ## State
 
@@ -138,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:6d9606da322805861d8aef0969aa6a270eea82a787eeb59de14a86e01716711f), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:334651ebc53b467caa2f5bfe723fd2d165b6bd92027a405cf34eeb5b1be36904), shares this display's style and layers.

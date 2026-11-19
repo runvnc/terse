@@ -1,0 +1,12 @@
+pre
+  line
+    text "line one"
+  line
+  line
+    text "    indented line"
+  line
+    text "``` not a closing line"
+  line
+    text "````"
+paragraph
+  text "After the fence."

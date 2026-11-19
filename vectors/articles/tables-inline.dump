@@ -1,0 +1,13 @@
+table 3 noheader
+  align start start start
+  row
+    cell
+      code "a"
+      text " b "
+      code "c"
+    cell
+      link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    cell
+      link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "x"
+      text " "
+      code "y"

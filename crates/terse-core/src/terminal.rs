@@ -9,7 +9,7 @@ pub const CELL_BYTES: usize = 4;
 pub const CELLS: usize = COLS * ROWS; // 2,400
 pub const CELL_MEMORY: usize = CELLS * CELL_BYTES; // 9,600
 
-/// The right cell of a wide character (SPEC 6.1).
+/// The right cell of a wide character (SPEC 8.1).
 pub const CONTINUATION: u16 = 0xFFFF;
 const REPLACEMENT: u16 = 0xFFFD;
 const SPACE: u16 = 0x0020;
@@ -696,6 +696,42 @@ mod tests {
         put(&mut t, "z好".as_bytes());
         assert_eq!(ch(&t, 79, 5), 'z' as u16);
         assert_eq!((ch(&t, 0, 6), ch(&t, 1, 6)), (0x597D, CONTINUATION));
+    }
+
+    /// SPEC 8.3 step 1: a wide character at column 79 over the right half
+    /// of a wide pair at 78-79: column 79 becomes a space in the current
+    /// colours, and the pair's left half at 78 a space keeping its colours.
+    #[test]
+    fn wide_at_column_79_over_a_pair_blanks_both_halves() {
+        let mut t = Terminal::default();
+        t.set_colours(1, 2);
+        t.set_cursor(78, 0);
+        t.write("你".as_bytes());
+        t.set_cursor(79, 0);
+        t.set_colours(3, 4);
+        t.write("好".as_bytes());
+        assert_eq!(t.cell(78, 0), Cell { ch: 0x20, fg: 1, bg: 2 });
+        assert_eq!(t.cell(79, 0), Cell { ch: 0x20, fg: 3, bg: 4 });
+        assert_eq!((t.cell(0, 1).ch, t.cell(1, 1).ch), (0x597D, CONTINUATION));
+    }
+
+    /// SPEC 8.4: commands 02h-06h leave the cursor and pending wrap as they
+    /// are; 01h moves the cursor to (0, 0) and clears pending wrap.
+    #[test]
+    fn commands_keep_the_cursor_and_pending_wrap() {
+        for c in 2..=6u8 {
+            let mut t = Terminal::default();
+            t.set_cursor(70, 9);
+            t.write(&[b'x'; 10]);
+            assert_eq!((t.cursor(), t.pending_wrap()), ((79, 9), true));
+            t.command(c);
+            assert_eq!((t.cursor(), t.pending_wrap()), ((79, 9), true), "command {c:02X}h");
+        }
+        let mut t = Terminal::default();
+        t.set_cursor(70, 9);
+        t.write(&[b'x'; 10]);
+        t.command(1);
+        assert_eq!((t.cursor(), t.pending_wrap()), ((0, 0), false));
     }
 
     #[test]

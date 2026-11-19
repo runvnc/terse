@@ -1,0 +1,8 @@
+`a`terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef after a code span.
+A line break before
+terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef the link.
+[a]b](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef) and [a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)(terse:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210).
+[a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefx) is text.
+terse:program/0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF/Pad has capitals: text.
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/Pad%2e has an escaped dot.
+terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00Pad has no slash: text.

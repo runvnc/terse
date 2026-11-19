@@ -1,0 +1,62 @@
+# Writing a reader without the machine
+
+The core of Terse is the network and the article format, not the machine. A reader that implements just those two, natively, in any language and with any text toolkit, is a complete Terse client: it follows feeds, shows their articles and follows their links, side by side with machine hosts on the same relays. This article says what such a reader has to do and where the exact rules are. You need two documents, NETWORK.md and ARTICLE.md; SPEC.md and STATE.md (the machine) are not needed at all.
+
+## What it must do
+
+The short list is in NETWORK.md section 6:
+
+- keep blobs by their BLAKE3-256 ID and verify every blob it receives;
+- talk to at least one relay;
+- verify entries and drop invalid ones;
+- subscribe to feeds by key and keep the timeline in arrival order;
+- show articles by ARTICLE.md;
+- show every feed's name with its key.
+
+Everything else is optional: publishing, profiles, nicknames, search, several relays, prefetch.
+
+## Blobs and the relay
+
+A relay speaks binary WebSocket messages with little-endian integers. A reader needs four of them, and must ignore the replies it does not use:
+
+| Message | Layout |
+|---|---|
+| Get | `01h`, `req` (4), blob ID (32) |
+| Get reply | `81h`, `req`, status (1), the blob if status is 1 |
+| Subscribe | `04h`, `req`, feed key (32), `after` (4) |
+| Subscribe reply | `84h`, `req`, status, `highest` (4) if status is 1 |
+| Unsubscribe | `05h`, `req`, feed key (32) |
+| Entry (pushed) | `90h`, the entry |
+
+`req` is any number you choose; the reply echoes it, and replies may come in any order. A get reply carries the whole blob: hash it, compare with the ID you asked for, and drop it (as "not found on that relay") if they differ. Keep what you fetched in a local store, a directory with one file per ID is enough, so that an article opens at once the next time.
+
+## Entries and the timeline
+
+After a subscribe, the relay sends the feed's entries with `seq` above `after`, oldest first, then each new one as it is published. An entry is at most 293 bytes: the feed key, `seq`, a time, a kind, the blob's size and ID, a reply-to ID, a title, and an Ed25519 signature over `terse-entry-0` and the bytes before it. Verify it strictly and check the rest of the rules of NETWORK.md section 4.2; keep the first valid entry of each feed and `seq`.
+
+Your timeline is the article and document entries (kinds 1 and 4) of your subscribed feeds, newest first in the order you first stored them; keep that order across restarts. Subscribe again on each connection with `after` set to the highest `seq` you hold, and fetch each blob of at most 16,384 bytes as its entry arrives, so reading never waits.
+
+Profiles (kind 2) give a feed its display name: the title of the feed's profile entry with the highest `seq`. Names are not unique, so always show the key, or its first and last six hex digits, beside a name.
+
+## Showing an article
+
+ARTICLE.md is written as requirements on what the person sees, not as a layout algorithm, so any toolkit that can wrap text, show a monospaced face and draw curves will do. In outline:
+
+- Split the text into blocks: headings, subheadings, list items, preformatted blocks, fences, tables and paragraphs, by the first bytes of each line.
+- Join a paragraph's lines and wrap them to your column; keep preformatted lines and fences as written, unwrapped.
+- Find code spans and links on each line, from its start; the one that starts first wins.
+- Lay tables out as grids, or show their lines as a paragraph.
+- Draw figures from their path strings, or show them as their text.
+- Anything you do not recognise, or that is malformed, is ordinary text.
+
+Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key (a feed), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
+
+## Programs and documents
+
+Feeds also carry programs (kind 3) and documents (kind 4) for the machine. A reader without it keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with `TERS`) or a document (`TDOC`): say that you cannot open it rather than showing its bytes. A program link gets the same answer.
+
+## Checking your reader
+
+Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with `terse manual publish`, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.
+
+The details of the network are in [the network](terse:{network}); how the built-in reader lays articles out on the machine is in [the page device](terse:{device-page}), which you do not need to follow.

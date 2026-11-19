@@ -58,4 +58,4 @@
 
 
 
- Opened in a new tile
+ Asked the shell to open it

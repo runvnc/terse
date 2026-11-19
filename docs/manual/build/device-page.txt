@@ -42,7 +42,7 @@ A document is 1 to 65,536 bytes of commands, each an opcode byte and its operand
 | `05h` | Paragraph | align, indent, space, flags (1 byte each) | Starts a paragraph |
 | `06h` | Rule | none | A paragraph that is a horizontal line |
 | `07h` | Anchor | id (2 bytes) | Later text and figures belong to `id`; 0 is none |
-| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:b385886c8c285fbd6adf99243fccfd57752009e2d06e06ae4399399922e24866) |
+| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:3b68f588c26da43927c1fd8cec7b33d3f6d9a2a525ec1865eb308b838b253313) |
 | `09h` | Table | columns (1, 1..8), flags (bit 0 header), one align byte per column | Starts a table block |
 | `0Ah` | Cell | none | Starts the table's next cell |
 | `0Bh` | End table | none | Ends the table |
@@ -93,12 +93,12 @@ The host chooses fonts for the three faces and does shaping, the bidirectional a
 | Type | Name | `a` | `b` | `c` |
 |---|---|---|---|---|
 | `08h` | Page laid out | height bits 0..7 | 8..15 | 16..23 |
-| `09h` | Page anchor | id low | id high | buttons |
+| `09h` | Page anchor | id low | id high | bits 3..5 buttons |
 | `0Dh` | Page located | id low | id high | line height |
 | `0Eh` | Page located y | y bits 0..7 | 8..15 | 16..23 |
 
 - `08h` gives the document's height at the rectangle's current width (FFFFFFh if larger), at the start of a frame after one with a submit, after a clear (height 0), and when a change of width changes the height. While the width is 0 it waits. A host may skip intermediate layouts but must eventually report the latest document and width once they stay unchanged. At most one per frame.
-- `09h` follows the pointer event of a button press over text whose anchor is not 0 (within the glyphs' extent along the line and the line's height) or over a figure whose anchor is not 0 (its box as shown), as the page was last shown. `c` holds the buttons in bits 0..2: primary, secondary, middle.
+- `09h` follows the pointer event of a button press over text whose anchor is not 0 (within the glyphs' extent along the line and the line's height) or over a figure whose anchor is not 0 (its box as shown), as the page was last shown. `c` holds the buttons in bits 3..5, the same bits as in a pointer event (primary, secondary, middle), and its other bits are 0.
 - `0Dh` and `0Eh` answer a `locate`, always as a pair, in that order: the height of the first line or figure carrying the anchor (255 if larger) and its y from the top of the document (FFFFFFh if larger). If nothing carries it, the height is 0 and y FFFFFFh. Tops are rounded down, a bottom up. If the queue has room for only one, neither is queued.
 - A locate is answered from the layout of the document current at the call, the same layout as the latest height event: at the start of a later frame, after that document's height event if it is still due. Answers come in call order. A locate whose document is replaced (also later in the same frame) is dropped. While the width is 0 answers wait; a host keeps at least the 8 latest waiting locates.
 

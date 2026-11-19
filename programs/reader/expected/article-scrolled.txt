@@ -46,9 +46,9 @@
   802  19     0   sans15 |and feed it. Pink or orange streaks are another matter, and a sign
   821  19     0   sans15 |to start again. The history of the method, from ancient Egypt to the
   840  19     0   sans15 |San Francisco gold rush, is told at
-  859  19     0   sans15 |[https://en.wikipedia.org/wiki/Sourdough]{1} and the microbes themselves
+  859  19     0   sans15 |https://en.wikipedia.org/wiki/Sourdough and the microbes themselves
   878  19     0   sans15 |are described in detail
-  897  19     0   sans15 |([https://en.wikipedia.org/wiki/Lactobacillus]{2}).
+  897  19     0   sans15 |(https://en.wikipedia.org/wiki/Lactobacillus).
   926  19     0   sans15 |Most of all, be patient. A new starter can take ten days before it
   945  19     0   sans15 |rises reliably, and the bread it makes in its first month is rarely
   964  19     0   sans15 |its best. The flavour deepens as the culture settles, which is one

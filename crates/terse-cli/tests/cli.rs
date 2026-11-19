@@ -133,3 +133,87 @@ fn run_with_scripted_events() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("line 1: unknown command"));
 }
+
+/// `--hash-every N` prints `<counter> <hash>` after every frame that leaves
+/// the frame counter at a multiple of N: from reset, after N, 2N, ...
+/// frames; from a snapshot, by the counter, not by frames run.
+#[test]
+fn hash_every_counts_by_the_frame_counter() {
+    let dir = tempfile::tempdir().unwrap();
+    let snap = dir.path().join("s").to_str().unwrap().to_string();
+    let image = hello_dir().join("hello.terse");
+    let image = image.to_str().unwrap();
+    let out = String::from_utf8(terse_ok(&["run", image, "--frames", "7", "--hash-every", "3", "--save-state", &snap]).stdout).unwrap();
+    let counters: Vec<&str> = out.lines().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(counters, ["3", "6"]);
+    // The 7th frame left the counter at 7: two more frames reach 9.
+    let out = String::from_utf8(terse_ok(&["run", image, "--load-state", &snap, "--frames", "4", "--hash-every", "3"]).stdout).unwrap();
+    let counters: Vec<&str> = out.lines().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(counters, ["9"]);
+    // The hash after 30 frames (STATE.md 3).
+    let out = String::from_utf8(terse_ok(&["run", image, "--frames", "30", "--hash-every", "30"]).stdout).unwrap();
+    assert_eq!(out, "30 066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83\n");
+}
+
+/// `--hash-all`, after the last frame only: the shell's hash, then
+/// `<handle> <hash>` for each machine the shell has, `-` while it has no
+/// machine (its image is fetched between frames: a machine started in
+/// frame 2 is loaded at the start of frame 3).
+#[test]
+fn hash_all_lists_the_shells_machines() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = |n: &str| dir.path().join(n).to_str().unwrap().to_string();
+    std::fs::write(p("ev"), "2 press enter\n").unwrap();
+    let run = |frames: &str| {
+        let out = terse_ok(&[
+            "run", "--shell", "--frames", frames, "--hash-all", "--hash-every", "1", "--events", &p("ev"), "--store", &p("store"),
+            "--config", &p("config"), "--data", &p("data"),
+        ]);
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let lines = |s: &str| s.lines().map(str::to_string).collect::<Vec<_>>();
+    let two = lines(&run("2"));
+    assert_eq!(two.len(), 3, "two frames' hashes, then the shell's: {two:?}");
+    let three = lines(&run("3"));
+    assert_eq!((three.len(), three[4].as_str()), (5, "1 -"), "{three:?}");
+    let four = lines(&run("4"));
+    assert_eq!(four.len(), 6);
+    assert!(four[5].starts_with("1 ") && four[5].len() == 2 + 64, "{four:?}");
+    // The shell's hash is the last frame's.
+    assert_eq!(four[4], four[3].split(' ').nth(1).unwrap());
+}
+
+/// `--save-state`, `--load-state` and `--record` are for a single machine:
+/// with `--shell` they are refused before anything runs or is written.
+#[test]
+fn state_files_are_not_for_a_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = |n: &str| dir.path().join(n).to_str().unwrap().to_string();
+    for opt in ["--save-state", "--load-state", "--record"] {
+        let out = terse(&["run", "--shell", "--frames", "1", opt, &p("f"), "--store", &p("store"), "--data", &p("data")]);
+        assert_eq!(out.status.code(), Some(2), "{opt}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("for a single machine, not --shell"), "{opt}");
+        assert!(!Path::new(&p("f")).exists() && !Path::new(&p("store")).exists(), "{opt}: nothing written");
+    }
+}
+
+/// An image title is UTF-8 (SPEC 2): `terse pack` refuses one that is not.
+#[test]
+fn pack_refuses_a_title_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("x.bin");
+    std::fs::write(&bin, [0x01, 0x00]).unwrap();
+    let out_path = dir.path().join("x.terse");
+    let out = common::terse_command()
+        .args(["pack", "--rom", bin.to_str().unwrap(), "--ram-pages", "1", "-o", out_path.to_str().unwrap(), "--title"])
+        .arg(std::ffi::OsStr::from_bytes(b"caf\xE9"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--title caf\u{FFFD}: not valid UTF-8"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!out_path.exists());
+    // The same title in UTF-8 is packed.
+    terse_ok(&["pack", "--rom", bin.to_str().unwrap(), "--ram-pages", "1", "-o", out_path.to_str().unwrap(), "--title", "café"]);
+    assert!(out_path.exists());
+}

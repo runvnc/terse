@@ -1,0 +1,7 @@
+table 2 noheader
+  align start start
+  row
+    cell
+      link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "a | b"
+    cell
+      text "c"

@@ -303,14 +303,11 @@ mod tests {
         out
     }
 
-    pub fn hostile_figures() -> Vec<(&'static str, Vec<FigurePath>, (u16, u16))> {
-        hostile_documents()
-            .into_iter()
-            .map(|(name, doc)| {
-                let p = terse_core::page::parse(&doc).into_iter().find_map(|p| p.figure).unwrap();
-                (name, p.paths(), (p.width.min(640), p.height))
-            })
-            .collect()
+    /// A hostile document's figure: its paths and the size shown in a
+    /// rectangle 640 units wide.
+    fn hostile_figure(doc: &[u8]) -> (Vec<FigurePath>, (u16, u16)) {
+        let f = terse_core::page::parse(doc).into_iter().find_map(|p| p.figure).unwrap();
+        (f.paths(), (f.width.min(640), f.height))
     }
 
     /// The hostile documents: their worst figure alone at several scales,
@@ -322,9 +319,7 @@ mod tests {
     fn figure_raster_time() {
         let mut typesetter = crate::page::Typesetter::new(&crate::page::PageFonts::default()).ok();
         for (name, doc) in hostile_documents() {
-            let f = terse_core::page::parse(&doc).into_iter().find_map(|p| p.figure).unwrap();
-            let paths = f.paths();
-            let size = (f.width.min(640), f.height);
+            let (paths, size) = hostile_figure(&doc);
             for scale in [1.0f32, 2.0, 3.0] {
                 let px = ((size.0 as f32 * scale).ceil() as u32, (size.1 as f32 * scale).ceil() as u32);
                 let start = std::time::Instant::now();

@@ -1,0 +1,5 @@
+| Key | What | Notes |
+|:--|:-:|--:|
+| `M` | the manual | [the index](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef) |
+| a \| b | `x \| y` | extra | dropped |
+|short

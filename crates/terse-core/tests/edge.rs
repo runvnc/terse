@@ -344,6 +344,112 @@ fn calls_clobber_only_a0_and_a1() {
     assert_eq!(m.exit_code(), Some(1), "{:?}", m.fault());
 }
 
+/// SPEC 3.1: a buffer of length 0 is valid at any address, for every call
+/// (address 0, all ones, just past the end of ROM, far past the end of
+/// RAM); a non-empty one is checked as before, and so are a call's other
+/// arguments. Vector and page submits reject a length of 0 with 1 by their
+/// own rule, wherever it points.
+#[test]
+fn empty_buffers_are_valid_anywhere() {
+    if !common::have_tools() {
+        return;
+    }
+    let past_ram = RAM_BASE + 4 * 8192 + 1000;
+    let mut src = String::from("    li s0, 0x100000\n");
+    let calls: [(u32, [u32; 3]); 14] = [
+        (0x200, [0, 0, 0]),                  // write
+        (0x200, [u32::MAX, 0, 0]),
+        (0x200, [past_ram, 0, 0]),
+        (0x104, [0, 0, 0]),                  // random
+        (0x206, [0, 0, 0]),                  // cells_read
+        (0x207, [5, u32::MAX, 0]),           // cells_write
+        (0x208, [3, past_ram, 0]),           // palette_set
+        (0x206, [2400, 0, 0]),               // first cell out of range: still bad
+        (0x104, [0, 257, 0]),                // longer than 256: still bad
+        (0x200, [0, 1, 0]),                  // one byte at 0: bad
+        (0x300, [0, 0, 0]),                  // vector submit, length 0: rejected
+        (0x300, [RAM_BASE, 0, 0]),
+        (0x700, [u32::MAX, 0, 0]),           // page submit, length 0: rejected
+        (0x200, [0x7FFF_0000, 0, 0]),
+    ];
+    for (i, (n, a)) in calls.iter().enumerate() {
+        src += &format!(
+            "    li a0, {}\n    li a1, {}\n    li a2, {}\n    li a7, {n}\n    ecall\n    sw a0, {}(s0)\n",
+            a[0] as i32,
+            a[1] as i32,
+            a[2] as i32,
+            4 * i
+        );
+    }
+    // write(end of ROM, 0): the label is the first address past the ROM.
+    src += "    la a0, rom_end\n    li a1, 0\n    li a7, 0x200\n    ecall\n    sw a0, 56(s0)\n";
+    src += &format!("    li a0, 0\n{EXIT}rom_end:\n");
+    let mut m = machine(&assemble(&src), &[common::TERMINAL, common::VECTOR, common::PAGE]);
+    for _ in 0..3 {
+        frame(&mut m);
+    }
+    assert_eq!(m.exit_code(), Some(0), "{:?}", m.fault());
+    let got: Vec<u32> = m.ram()[..60].chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+    let bad = terse_core::ERR_BUFFER;
+    assert_eq!(got, [0, 0, 0, 0, 0, 0, 0, bad, bad, bad, 1, 1, 1, 0, 0]);
+}
+
+/// SPEC 1.4 step 1, 4 `wait_frame`: the frame's input events are queued
+/// before the content-done events of its completions; and `wait_frame`
+/// always returns in the next frame with that frame's counter, since the
+/// most content one frame can deliver (8 × 16,384 bytes, 32,768 units)
+/// leaves budget to run.
+#[test]
+fn input_events_before_completions_and_wait_frame_returns_next_frame() {
+    if !common::have_tools() {
+        return;
+    }
+    let src = "    li s0, 0x100000\n    li s2, 0x101000\n    li s3, 8\n    li t2, 16384\n\
+               1:  li t1, 1\n    sb t1, 0(s0)\n    sw t2, 40(s0)\n    sw s2, 44(s0)\n    mv a0, s0\n    li a7, 0x400\n    ecall\n\
+               addi s0, s0, 64\n    add s2, s2, t2\n    addi s3, s3, -1\n    bnez s3, 1b\n\
+               li a7, 0x100\n    ecall\n    mv s1, a0\n    li a7, 0x102\n    ecall\n    sub s1, a0, s1\n\
+               li a0, 0x100800\n    li a7, 0x101\n    ecall\n    li a0, 0x100804\n    li a7, 0x101\n    ecall\n\
+               mv a0, s1\n    li a7, 0x106\n    ecall\n";
+    let mut m = Machine::new(&common::program(&assemble(src), 32, &[common::CONTENT]));
+    let r = frame(&mut m);
+    assert!(r.waited);
+    assert_eq!(m.content().unwrap().pending_handles(), [1, 2, 3, 4, 5, 6, 7, 8]);
+    let completions: Vec<terse_core::Completion> = (1..=8)
+        .map(|handle| terse_core::Completion { handle, outcome: terse_core::Outcome::Got { size: 16384, data: vec![handle; 16384] } })
+        .collect();
+    let events = [terse_core::Event::key_down(0x04, 0)];
+    let r = m.run_frame(&FrameInput { events: &events, completions: &completions, ..Default::default() });
+    assert_eq!(r.completions_ignored, 0);
+    assert_eq!(m.exit_code(), Some(0), "wait_frame returned the counter of the frame it returned in: {:?}", m.fault());
+    assert_eq!(m.ram()[0x800..0x808], [0x01, 0x04, 0, 0, 0x05, 1, 0x01, 0]);
+    assert!(r.used > 8 * 4096);
+}
+
+/// SPEC 8.2, 14: `write` measures the budget after the `ecall`
+/// instruction and the call's 4 are charged: a write that starts a frame
+/// after 4 one-unit instructions consumes 125,000 − 4 − 4 bytes.
+/// `palette_set` with `first` above 255 or `count` above 256 returns
+/// FFFF_FFFEh (SPEC 8.2).
+#[test]
+fn write_budget_and_palette_set_arguments() {
+    if !common::have_tools() {
+        return;
+    }
+    let src = "    lui a0, 0x100\n    lui a1, 0x31\n    li a7, 0x200\n    ecall\n    mv s1, a0\n\
+               li a7, 0x100\n    ecall\n    lui s0, 0x100\n    sw s1, 0(s0)\n\
+               li a0, 256\n    mv a1, s0\n    li a2, 1\n    li a7, 0x208\n    ecall\n    sw a0, 4(s0)\n\
+               li a0, 0\n    mv a1, s0\n    li a2, 257\n    ecall\n    sw a0, 8(s0)\n\
+               li a0, 255\n    mv a1, s0\n    li a2, 256\n    ecall\n    sw a0, 12(s0)\n\
+               li a0, 0\n    li a7, 0x106\n    ecall\n";
+    let mut m = Machine::new(&common::program(&assemble(src), 32, &[common::TERMINAL]));
+    for _ in 0..4 {
+        frame(&mut m);
+    }
+    assert_eq!(m.exit_code(), Some(0), "{:?}", m.fault());
+    let w: Vec<u32> = m.ram()[..16].chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+    assert_eq!(w, [(BUDGET_PER_FRAME - 4 - charge::CALL as i64) as u32, terse_core::ERR_BUFFER, terse_core::ERR_BUFFER, 256]);
+}
+
 #[test]
 fn reset_state() {
     let m = machine(&[0x01, 0x00], &[]);

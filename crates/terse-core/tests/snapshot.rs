@@ -266,3 +266,50 @@ fn a_table_document_round_trips() {
     assert_eq!(a, b);
     assert!(a.lines.iter().any(|l| l.rule_span.is_some()), "a table, with its header rule");
 }
+
+/// STATE.md 4: what a reader of a snapshot file refuses besides a
+/// malformed S: N below 200 or above the longest serialization
+/// (1,158,243 bytes), L that is 0, not a multiple of 8,192, above
+/// 1,048,576 or past N, and a page-map bit past the last page. And SPEC
+/// 12.2 `snapshot_info`: the time is the one latched for the machine's
+/// last frame as its state holds it, so a restored machine snapshotted
+/// before it runs again keeps the time of the first snapshot.
+#[test]
+fn snapshot_file_fields_and_time() {
+    let image = common::program(&[0x01, 0x00], 2, &[]);
+    let mut m = Machine::new(&image);
+    assert_eq!(Snapshot::of(&m).time, 0, "no frame run: the time latch is 0");
+    m.run_frame(&FrameInput { unix_time: 1_700_000_000, ..Default::default() });
+    let s = Snapshot::of(&m);
+    let file = s.encode();
+    let with = |at: usize, v: u32| {
+        let mut f = file.clone();
+        f[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        Snapshot::decode(&f).err()
+    };
+    let malformed = |why| Some(RestoreError::Malformed(why));
+    assert_eq!(with(90, 199), malformed("state length"));
+    assert_eq!(with(90, 1_158_244), malformed("state length"));
+    assert_eq!(with(94 + 196, 0), malformed("RAM size"));
+    assert_eq!(with(94 + 196, 8193), malformed("RAM size"));
+    assert_eq!(with(94 + 196, 129 * 8192), malformed("RAM size"));
+    assert_eq!(with(94 + 196, 64 * 8192), malformed("RAM size"), "past N");
+    let mut map = file.clone();
+    map[294] |= 1 << 2; // page 2 of a 2-page RAM
+    assert_eq!(Snapshot::decode(&map).err(), malformed("page map"));
+    // Restored, paused (no frame run), snapshotted again: the same time.
+    let back = Snapshot::decode(&file).unwrap().restore(&image).unwrap();
+    assert_eq!(Snapshot::of(&back).time, 1_700_000_000);
+    assert_eq!(Snapshot::of(&back).info(), s.info());
+    // STATE.md 1.12: the argument is there exactly when 32 bytes remain
+    // after section 1.11; any other remainder is refused.
+    let state = m.state();
+    for extra in [1, 31, 33, 64] {
+        let mut longer = state.clone();
+        longer.extend(std::iter::repeat_n(7, extra));
+        assert!(Machine::restore(&image, &longer).is_err(), "{extra} bytes more");
+    }
+    let mut with_argument = state.clone();
+    with_argument.extend([7; 32]);
+    assert_eq!(Machine::restore(&image, &with_argument).unwrap().argument(), Some(&[7; 32]));
+}

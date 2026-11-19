@@ -51,7 +51,7 @@ use crate::glyphs::SystemGlyphs;
 /// Font size in logical pixels.
 const FONT_PX: f32 = 18.0;
 
-/// The machine frames whose phosphor light (SPEC 8.7) a `--screenshot`
+/// The machine frames whose phosphor light (SPEC 10.6) a `--screenshot`
 /// draws: a trail fades below 2% within 60 frames at persistence 240, and
 /// below 10% within 600 at 255.
 const PHOSPHOR_FRAMES: u64 = 600;
@@ -290,7 +290,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     let mut node = None;
     let path = image_path.clone().unwrap_or_else(|| "shell".into());
-    // NETWORK 2: an image may be started by its ID.
+    // NETWORK 7: an image may be started by its ID.
     let image_bytes = |arg: &str, node: &mut Option<Node>| -> Result<Vec<u8>, String> {
         let bytes = match parse_hex(arg) {
             Some(id) if !Path::new(arg).exists() => match node {
@@ -453,7 +453,7 @@ pub struct Looks {
     /// pointer; `off`: it stays at `eye`.
     pub parallax: bool,
     /// `--panels`: how the software renderer draws the shell's panels
-    /// (SPEC 13.5); the GPU renderer draws them in perspective.
+    /// (SPEC 12.3); the GPU renderer draws them in perspective.
     pub panels: soft::panel::PanelMode,
 }
 
@@ -559,7 +559,7 @@ fn gpu_display(glyphs: SystemGlyphs, hardware_only: bool) -> Result<Box<dyn Disp
     }
     eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let renderer = renderer::Renderer::new(&device, format, Box::new(glyphs));
+    let renderer = renderer::Renderer::new(&renderer::Shaders::new(&device), format, Box::new(glyphs));
     let screens = screens::Screens::new(renderer, format);
     Ok(Box::new(screens::GpuDisplay::new(device, queue, screens, format, info.name)))
 }

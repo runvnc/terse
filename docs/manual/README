@@ -2,7 +2,7 @@ The Terse manual
 ================
 
 These are the sources of the Terse manual: documentation of the whole
-system written as Terse articles (NETWORK.md 4.5), read in the reader (M
+system written as Terse articles (ARTICLE.md), read in the reader (M
 on its timeline opens the index) and published with `terse manual
 publish`.
 
@@ -30,6 +30,8 @@ publish`.
   date, that every link resolves, and that the manual names every call,
   event, content operation and status of SPEC.md; `--test reader` that
   the reader holds the current index's ID and shows every article whole.
-- Keep each article under about 14 KB (it must open at once), preformatted
+- Keep each article under about 14 KB (built, with its links resolved, it
+  must stay within the 16,384 bytes a host downloads automatically, which
+  `--test reader` checks, so it opens at once), preformatted
   and fenced lines to 64 characters (they are not wrapped in the reader's
   512-unit column), and tables to a few short columns.

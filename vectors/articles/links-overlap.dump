@@ -1,0 +1,7 @@
+paragraph
+  code "[a](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)"
+  text " is code. [a "
+  code "x](terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)"
+  text " y`: the brackets hold a backquote. "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "a"
+  code "b"

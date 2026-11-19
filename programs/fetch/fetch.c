@@ -23,6 +23,8 @@ static const char *const status_names[] = {
     "not found (not in the store or on the relay)",
     "failed (network error or timeout)",
     "bad request",
+    "refused (the user or the host did not allow it)",
+    "no room",
     "unknown",
 };
 
@@ -54,7 +56,7 @@ static void print_status(uint8_t status)
     print_hex(&status, 1);
     term_puts(" ");
     term_fg(status == STATUS_DONE ? 10 : 9);
-    term_puts(status_names[status < 5 ? status : 5]);
+    term_puts(status_names[status < 7 ? status : 7]);
     term_fg(7);
     term_puts("\n");
 }

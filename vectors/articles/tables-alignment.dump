@@ -1,0 +1,49 @@
+table 7 header
+  align centre end start end centre start start
+  row
+    cell
+      text "a"
+    cell
+      text "b"
+    cell
+      text "c"
+    cell
+      text "d"
+    cell
+      text "e"
+    cell
+      text "f"
+    cell
+      text "g"
+  row
+    cell
+      text "1"
+    cell
+      text "2"
+    cell
+      text "3"
+    cell
+      text "4"
+    cell
+      text "5"
+    cell
+      text "6"
+    cell
+      text "7"
+table 2 noheader
+  align start start
+  row
+    cell
+      text "a"
+    cell
+      text "b"
+  row
+    cell
+      text "1"
+    cell
+      text "2"
+  row
+    cell
+      text "---"
+    cell
+      text ":-:"

@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use cosmic_text::fontdb::{self, Database, ID, Query};
 use cosmic_text::{
-    Align as CtAlign, Attrs, Buffer, CacheKey, CacheKeyFlags, Color, Ellipsize, EllipsizeHeightLimit, Family, Font,
+    Align as CtAlign, Attrs, AttrsOwned, Buffer, CacheKey, CacheKeyFlags, Color, Ellipsize, EllipsizeHeightLimit, Family, Font,
     FontSystem, LayoutGlyph, Metrics, Shaping, Style, Weight, Wrap,
 };
 #[cfg(feature = "gpu")]
@@ -259,6 +259,39 @@ fn attrs<'a>(faces: &'a [Face; 3], style: &core_page::Style) -> Attrs<'a> {
         .metrics(Metrics::new(size, (size * face.line_height).ceil()))
 }
 
+/// Gives every byte of every line of `buffer` an attribute span of its own.
+/// `set_rich_text` leaves text whose attributes equal the line's defaults
+/// without a span, and cosmic-text shapes an ASCII word in one go when the
+/// spans it finds in the word are compatible with the word's first: text
+/// without a span is not looked at, so in a word like "run)." whose start
+/// is a code span (mono) and whose ")." has the defaults (sans), the ")."
+/// was shaped in the mono face (its wide advances showed as a gap).
+fn span_every_byte(buffer: &mut Buffer) {
+    for line in buffer.lines.iter_mut() {
+        let list = line.attrs_list();
+        let mut gaps = Vec::new();
+        let mut at = 0;
+        for (r, _) in list.spans_iter() {
+            if r.start > at {
+                gaps.push(at..r.start);
+            }
+            at = at.max(r.end);
+        }
+        if at < line.text().len() {
+            gaps.push(at..line.text().len());
+        }
+        if gaps.is_empty() {
+            continue;
+        }
+        let mut list = list.clone();
+        let defaults = AttrsOwned::new(&list.defaults());
+        for g in gaps {
+            list.add_span(g, &defaults.as_attrs());
+        }
+        line.set_attrs_list(list);
+    }
+}
+
 impl Typesetter {
     /// Lays out one paragraph with its top at `y`; returns its bottom.
     fn paragraph(&mut self, p: &Paragraph, width: f32, y: f32, out: &mut HostLayout) -> f32 {
@@ -282,6 +315,7 @@ impl Typesetter {
         let spans: Vec<(&str, Attrs)> = p.runs.iter().map(|r| (r.text.as_str(), attrs(faces, &r.style))).collect();
         let default = attrs(faces, &last);
         buffer.set_rich_text(spans, &default, Shaping::Advanced, align);
+        span_every_byte(&mut buffer);
         buffer.shape_until_scroll(fonts, false);
         // SPEC 11.3: indent from the start edge, which is the right for a
         // right-to-left paragraph.
@@ -325,6 +359,7 @@ impl Typesetter {
         let spans: Vec<(&str, Attrs)> = runs.iter().map(|r| (r.text.as_str(), attrs(faces, &r.style))).collect();
         let default = attrs(faces, &runs[runs.len() - 1].style);
         buffer.set_rich_text(spans, &default, Shaping::Advanced, align);
+        span_every_byte(&mut buffer);
         buffer.shape_until_scroll(fonts, false);
         let natural = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
         (buffer, natural)
@@ -953,7 +988,8 @@ fn blend(c: wgpu::BlendComponent) -> wgpu::BlendState {
 #[cfg(feature = "gpu")]
 impl PageLayer {
     /// `layer_format` is the format of the layer of backgrounds and shapes.
-    pub fn new(device: &wgpu::Device, layer_format: wgpu::TextureFormat) -> Self {
+    pub fn new(shaders: &crate::renderer::Shaders, layer_format: wgpu::TextureFormat) -> Self {
+        let device = shaders.device();
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("page atlas"),
             size: wgpu::Extent3d { width: ATLAS, height: ATLAS, depth_or_array_layers: 1 },
@@ -1012,7 +1048,7 @@ impl PageLayer {
         };
         let bind_group = group(&params);
         let light_bind_group = group(&light_params);
-        let shader = crate::renderer::shader_module(device, "page", || SHADER.to_string());
+        let shader = shaders.module("page", || SHADER.to_string());
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("page"),
             bind_group_layouts: &[Some(&layout)],
@@ -1608,6 +1644,32 @@ mod tests {
         w.after_frame(Some(&page));
         let events = poll(&mut w, &page);
         assert_eq!(events.iter().map(|e| e.kind).collect::<Vec<_>>(), [Event::PAGE_LAID_OUT]);
+    }
+
+    /// Text after a code span in the same word ("see `terse run`).") is in
+    /// its own face, as wide as it is elsewhere: no gap before the ".".
+    #[test]
+    fn text_after_a_code_span_keeps_its_face() {
+        let Some(mut t) = typesetter() else { return };
+        let mut doc = vec![op::SIZE, 15, op::FONT, 0, 0];
+        doc.extend(text("see ("));
+        doc.extend_from_slice(&[op::FONT, 2, 0, op::SIZE, 14]);
+        doc.extend(text("terse run"));
+        doc.extend_from_slice(&[op::FONT, 0, 0, op::SIZE, 15]);
+        doc.extend(text(")."));
+        let mut plain = vec![op::SIZE, 15, op::FONT, 0, 0];
+        plain.extend(text("see ()."));
+        let (l, p) = (t.layout((1, 400), &doc, 400), t.layout((1, 400), &plain, 400));
+        let (g, q) = (&l.glyphs, &p.glyphs);
+        assert_eq!(g.len(), 16, "{g:?}");
+        let sans = g[0].glyph.font_id;
+        assert_ne!(g[5].glyph.font_id, sans, "the span is in the mono face");
+        for (a, b) in g[14..].iter().zip(&q[5..]) {
+            assert_eq!(a.glyph.font_id, sans, "after the span: the sans face");
+            assert_eq!(a.glyph.w, b.glyph.w, "as wide as without the span");
+        }
+        // Without the span between them: ")" follows "(" in the sans face.
+        assert_eq!(q[5].glyph.font_id, sans);
     }
 
     #[test]

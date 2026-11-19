@@ -56,12 +56,16 @@ struct Rec {
     removed: Vec<u32>,
     /// (system frame, who, events) of every machine frame run.
     log: Vec<(u32, Who, Vec<Event>)>,
+    /// (system frame, handle, whether controller 0 reads as connected) of
+    /// every machine frame run.
+    pads: Vec<(u32, u8, bool)>,
     frame: u32,
 }
 
 impl Driver for Rec {
     fn frame(&mut self, who: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS]) -> FrameResult {
         self.log.push((self.frame, who, events.clone()));
+        self.pads.push((self.frame, who.handle, controllers[0].connected));
         machine.run_frame(&FrameInput { events: &events, controllers, ..Default::default() })
     }
 
@@ -105,12 +109,17 @@ impl Run {
     /// One frame with `events`; images asked for in the previous frame
     /// are delivered first (an unknown ID fails).
     fn frame(&mut self, events: &[Event]) {
+        self.frame_with(events, [Controller::default(); CONTROLLERS]);
+    }
+
+    /// One frame with `events` and the host's controllers `pads`.
+    fn frame_with(&mut self, events: &[Event], pads: [Controller; CONTROLLERS]) {
         for (serial, id) in std::mem::take(&mut self.rec.wanted) {
             let image = self.rec.images.get(&id).cloned().ok_or(StartFailure::not_found("not found"));
             self.system.deliver_image(serial, image);
         }
         self.rec.frame = self.system.shell().frame();
-        self.system.frame(events, [Controller::default(); CONTROLLERS], &mut self.rec);
+        self.system.frame(events, pads, &mut self.rec);
     }
 
     fn frames(&mut self, n: u32) {
@@ -211,7 +220,12 @@ fn fault_and_failure_are_latched() {
     r.press(0x1B);
     assert_eq!(r.system.state(1), state::NONE);
     assert_eq!(r.rec.removed, [1]);
-    r.press(0x52); // up, to the program
+    // Up to the top of the launcher (Manual), then down to the program:
+    // not by its position counted from the machines.
+    for _ in 0..8 {
+        r.press(0x52);
+    }
+    r.press(0x51);
     r.press(ENTER);
     r.frame(&[]); // loaded; runs and faults in its first frame
     assert_eq!(r.system.state(1), state::RUNNING);
@@ -231,10 +245,12 @@ fn eight_machines_at_most() {
     for _ in 0..9 {
         r.press(ENTER);
         r.frame(&[Event::home()]);
-        // The cursor is on the focused machine: up to the program.
-        for _ in 0..8 {
+        // The cursor is on the focused machine: up to the top of the
+        // launcher (Manual), then down to the program.
+        for _ in 0..9 {
             r.press(0x52);
         }
+        r.press(0x51);
     }
     assert!((1..=8).all(|h| r.system.state(h) == state::RUNNING));
     assert_eq!(r.system.children().count(), 8, "the ninth start found no free handle");
@@ -696,4 +712,136 @@ fn open_requests_and_arguments() {
     let ram = alone.ram();
     assert_eq!((word(ram, 256), word(ram, 12)), (0, 0));
     assert_eq!(alone.state().len() + 32, c.state().len());
+}
+
+/// A shell that starts the image whose ID ends its ROM as handle 1, places
+/// it at (0, 0, 320, 240), runs `extra` (assembly) and, in its frame 4,
+/// gives handle 1 the focus.
+fn focusing_shell(child: &[u8; 32], extra: &str) -> Image {
+    let mut rom = assemble(&format!(
+        "
+    li a7, 0x800
+    la a0, child
+    ecall
+    li a7, 0x802
+    li a0, 1
+    li a1, 0
+    li a2, 0
+    li a3, 320
+    li a4, 240
+    ecall
+{extra}
+1:  li a7, 0x100
+    ecall
+    li a7, 0x102
+    ecall
+    li t0, 4
+    bne a0, t0, 1b
+    li a7, 0x804
+    li a0, 1
+    ecall
+    j 1b
+child: .fill 32, 1, 0
+"
+    ));
+    let n = rom.len();
+    rom[n - 32..].copy_from_slice(child);
+    program(&rom, 1, &[MACHINES])
+}
+
+fn idle() -> Image {
+    program(&assemble("1:  li a7, 0x100\n    ecall\n    j 1b\n"), 1, &[])
+}
+
+/// SPEC 12.4, 12.5 step 5: a `focus` takes effect at the next frame's
+/// routing for every input, the controllers included: in the frame of the
+/// call the shell (focus 0) still reads them and the newly focused machine
+/// reads none; from the next frame on, only that machine. With the focus
+/// on a machine that does not run (paused), nobody reads them.
+#[test]
+fn focus_moves_the_controllers_at_the_next_frame() {
+    if !common::have_tools() {
+        return;
+    }
+    let mut pads = [Controller::default(); CONTROLLERS];
+    pads[0].connected = true;
+    for (extra, child_runs) in [("", true), ("    li a7, 0x803\n    li a0, 1\n    li a1, 0\n    ecall\n", false)] {
+        let child = idle();
+        let mut rec = Rec::default();
+        rec.images.insert(child.id, child.clone());
+        let mut r = Run { system: System::new(&focusing_shell(&child.id, extra), true, Vec::new()), rec };
+        for _ in 0..7 {
+            r.frame_with(&[], pads);
+        }
+        assert_eq!(r.system.focus(), 1);
+        let got: Vec<(u32, u8, bool)> = r.rec.pads.iter().filter(|p| p.0 >= 3).copied().collect();
+        let mut want = vec![(3, 0, true)];
+        if child_runs {
+            want.push((3, 1, false));
+        }
+        want.push((4, 0, true)); // the frame of the call
+        if child_runs {
+            want.push((4, 1, false));
+        }
+        for f in 5..7 {
+            want.push((f, 0, false));
+            if child_runs {
+                want.push((f, 1, true));
+            }
+        }
+        assert_eq!(got, want, "child runs: {child_runs}");
+    }
+}
+
+/// SPEC 12.4: a press over a machine's picture gives the shell a machine
+/// pressed event whatever the machine's state; the pointer event itself
+/// goes to the machine only if it runs (here it is paused: to nobody).
+#[test]
+fn machine_pressed_also_for_a_machine_that_does_not_run() {
+    if !common::have_tools() {
+        return;
+    }
+    let child = idle();
+    let mut rec = Rec::default();
+    rec.images.insert(child.id, child.clone());
+    let pause = "    li a7, 0x803\n    li a0, 1\n    li a1, 0\n    ecall\n";
+    let mut r = Run { system: System::new(&focusing_shell(&child.id, pause), true, Vec::new()), rec };
+    r.frames(3);
+    assert_eq!(r.system.state(1), state::PAUSED);
+    r.frame(&[Event::pointer(10, 10, buttons::PRIMARY), Event::pointer(400, 400, 0)]);
+    assert_eq!(r.got(0).unwrap(), &[Event::machine_pressed(1, buttons::PRIMARY), Event::pointer(400, 400, 0)]);
+    assert!(r.got(1).is_none(), "a paused machine runs no frame");
+}
+
+/// SPEC 12.4: outside a system (an image run on its own) the home key
+/// does nothing; every other input goes to the machine unchanged.
+#[test]
+fn home_key_outside_a_system_does_nothing() {
+    let hello = Image::parse(HELLO).unwrap();
+    let mut rec = Rec::default();
+    let mut system = System::new(&hello, false, Vec::new());
+    assert!(!system.is_system());
+    let input = [Event::home(), Event::text('a'), Event::feeds_updated(), Event::home()];
+    system.frame(&input, [Controller::default(); CONTROLLERS], &mut rec);
+    assert_eq!(rec.log.len(), 1);
+    assert_eq!(rec.log[0].2, [Event::text('a'), Event::feeds_updated()]);
+}
+
+/// SPEC 12.4: input other than keys, text, wheel, pointer and the home
+/// key (here a feeds-updated event in the host's input) goes to the shell
+/// unchanged, whatever the focus.
+#[test]
+fn other_input_goes_to_the_shell() {
+    if !common::have_tools() {
+        return;
+    }
+    let child = idle();
+    let mut rec = Rec::default();
+    rec.images.insert(child.id, child.clone());
+    let mut r = Run { system: System::new(&focusing_shell(&child.id, ""), true, Vec::new()), rec };
+    r.frames(6);
+    assert_eq!(r.system.focus(), 1);
+    r.frame(&[Event::feeds_updated(), Event::text('x')]);
+    assert_eq!(r.got(0).unwrap(), &[Event::feeds_updated()]);
+    assert_eq!(r.got(1).unwrap(), &[Event::text('x')]);
 }

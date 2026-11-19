@@ -275,3 +275,55 @@ fn face_cost() {
     }
     time("typical: 20 boxes on a grid", &l.0);
 }
+
+/// SPEC 13.3, 13.4: a circle of radius 0 is 64 chords of length 0 (64
+/// segments, no length); Scale 0 puts every later point at the
+/// transform's origin; a line wholly beyond the screen grown by 32 units
+/// is counted by the caps (one segment) but gives no piece, one within
+/// the margin gives one.
+#[test]
+fn radius_0_scale_0_and_the_margin() {
+    use terse_core::vector3::project;
+    let count = |list: &List| {
+        let mut out = Vec::new();
+        let p = project(&list.0, (0.0, 0.0), &mut out);
+        (out.len(), p.length)
+    };
+    let mut l = List::default();
+    l.mv([320 * 16, 240 * 16, 0]).circle(0);
+    assert_eq!(count(&l), (64, 0.0));
+    let mut l = List::default();
+    l.xyz(0x09, [100 * 16, 200 * 16, 0]);
+    l.0.extend([0x0B, 0, 0]); // Scale 0
+    l.mv([3000, -3000, 100]).line([-2000, 5000, 900]);
+    let mut out = Vec::new();
+    let p = project(&l.0, (0.0, 0.0), &mut out);
+    assert_eq!((out.len(), p.length), (1, 0.0));
+    let terse_core::Primitive::Beam { x0, y0, x1, y1, .. } = out[0] else { panic!() };
+    assert_eq!((x0, y0, x1, y1), (1600, 3200, 1600, 3200), "a dot at the origin of the transform");
+    let mut l = List::default();
+    l.mv([-100 * 16, 240 * 16, 0]).line([-40 * 16, 240 * 16, 0]);
+    assert_eq!(count(&l), (0, 0.0), "beyond the margin");
+    let mut l = List::default();
+    l.mv([-30 * 16, 240 * 16, 0]).line([-10 * 16, 240 * 16, 0]);
+    assert_eq!(count(&l), (1, 0.0), "within the margin, counted length 0");
+}
+
+/// SPEC 13.3: a piece with a cut end shorter than 1/2 unit is not drawn
+/// unless the whole line is that short, the whole line being its part in
+/// front of the near plane, on the glass, before it is clipped to the
+/// screen: here a line 1,000 units long, of which 0.4 units on the screen
+/// are left visible by a face.
+#[test]
+fn short_piece_measured_against_the_whole_line() {
+    use terse_core::vector3::project;
+    let mut l = List::default();
+    l.mv([-16000, 3840, 0]).line([6, 3840, 0]);
+    let mut out = Vec::new();
+    project(&l.0, (0.0, 0.0), &mut out);
+    assert_eq!(out.len(), 1, "without the face");
+    l.face(&[[-3200, 0, -16], [5, 0, -16], [5, 7680, -16], [-3200, 7680, -16]]);
+    out.clear();
+    project(&l.0, (0.0, 0.0), &mut out);
+    assert_eq!(out.len(), 0, "the piece left is 0.4 units, the line 1,000");
+}

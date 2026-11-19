@@ -1,0 +1,11 @@
+heading
+  text "A heading"
+paragraph
+  text "Text right under it."
+subheading
+  text "A subheading"
+paragraph
+  text "### Three marks: ordinary text #No space: ordinary text # Blanks before the marker: ordinary text #\tA tab after the marker: ordinary text"
+heading
+subheading
+  text "Blanks after the marker are dropped"

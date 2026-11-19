@@ -1,0 +1,9 @@
+# A `heading`
+## A `subheading`
+- An `item`
+
+    `not code` in pre
+
+```
+`not code` in a fence
+```

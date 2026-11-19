@@ -39,13 +39,14 @@ line of dashes under the first row makes it a header:
 
 A word between backquotes, like `this`, is shown as code.
 
-Bare links such as https://en.wikipedia.org/wiki/RISC-V are marked in a
-link colour, and so is the text of a link written as [text](address),
-like [the RISC-V article](https://en.wikipedia.org/wiki/RISC-V). There is
-no browser here, so pressing a web link only shows the address in the
-status line, where you can read it and type it elsewhere. A link to
-another article is terse: followed by its ID, the 64 hex digits of its
-hash; one to a feed is terse:feed/ followed by the feed's key.
+A link is written as [text](address), as in the list at the top, and its
+text is shown in a link colour. A link to another article is
+terse: followed by its ID, the 64 hex digits of its hash; one to a feed
+is terse:feed/ followed by the feed's key; one to a program is
+terse:program/, the publisher's key, / and the program's name. Written
+out on their own, without brackets, they are links too. Links lead only
+to articles, feeds and programs on the Terse network: a web address is
+ordinary text.
 
 A block between two lines of three backquotes is kept as written too;
 one that starts with ```path holds a small drawing (see "Pictures in

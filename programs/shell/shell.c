@@ -17,7 +17,9 @@
  * home key flies it back.
  *
  * The host's home key gives the focus back to the shell: command mode. A
- * launcher on the page lists the built-in programs, then the programs of
+ * launcher on the page lists "Manual" (Enter starts the built-in reader
+ * with the manual's index, manual_id.h, as its argument), the built-in
+ * programs (the cursor starts on the first), then the programs of
  * the feeds the user follows (content op 0Dh: each name with its
  * publisher's name and short key, and a mark while its image is not yet
  * downloaded), then the machines; the tiles move right to make room for
@@ -67,6 +69,7 @@
 
 #include <stdint.h>
 #include "terse.h"
+#include "manual_id.h"
 
 #define BUDGET 125000u
 #define MAX_PROGS 16
@@ -160,7 +163,9 @@ static mach_record info[MACH_MAX + 1]; /* by handle; [0] unused */
 static rect tile[MACH_MAX + 1], pic[MACH_MAX + 1];
 static uint8_t focus;        /* 0: the shell (command mode) */
 static uint8_t sel;          /* the selected machine, 0 if none */
-static uint8_t cursor;       /* command mode: built-ins, feed programs, then machines */
+/* Command mode: the session (if offered), Manual, built-ins, feed
+ * programs, then machines; it starts on the first built-in. */
+static uint8_t cursor = 1;
 static uint8_t layout = MASTER, before_zoom = MASTER;
 static uint8_t dirty = 1;    /* the layout, labels, frames and launcher must be redone */
 static uint8_t doc_dirty = 1;
@@ -234,11 +239,13 @@ static uint8_t prog_of(const uint8_t *id)
 
 static uint8_t prog_ix[MACH_MAX + 1]; /* each machine's program, MAX_PROGS if none */
 
-/* The launcher's first entry restores the session, if one is offered. */
+/* The launcher's first entry restores the session, if one is offered;
+ * then Manual (at top()), then the built-ins from first(). */
 static uint8_t top(void) { return sess_n != 0; }
+static uint8_t first(void) { return top() + 1; }
 
 /* The entries the launcher lists before the machines. */
-static uint8_t nprogs(void) { return top() + prog_n + fprog_n; }
+static uint8_t nprogs(void) { return first() + prog_n + fprog_n; }
 
 /* A machine's title: a built-in's, else its image's, else the name it was
  * started under. */
@@ -450,7 +457,7 @@ static void g_build(void)
         return;
     }
     int16_t zmax = 2 * g_radius[n] + 300, g = G_GROUND * 16;
-    v3_begin(v3list);
+    v3_begin(v3list, sizeof v3list);
     v3_colour(50, 70, 100, 255);
     v3_width(16);
     for (int16_t z = -64; z <= zmax; z += 128) {
@@ -701,7 +708,7 @@ static void outline(rect p, uint8_t r, uint8_t g, uint8_t b)
 
 static void draw_frames(void)
 {
-    vec_begin(vlist);
+    vec_begin(vlist, sizeof vlist);
     if (focus && pic[focus].w)
         outline(pic[focus], 70, 150, 255);
     else if (!focus && sel && pic[sel].w)
@@ -801,8 +808,10 @@ static void build_launcher(void)
         doc_num(sess_n, 0);
         doc_str(sess_n == 1 ? " program)" : " programs)");
     }
+    line(top(), 301);
+    doc_str("Manual");
     for (uint8_t i = 0; i < prog_n; i++) {
-        line(top() + i, 100 + i);
+        line(first() + i, 100 + i);
         if (prog_known[i])
             doc_text(prog_title[i], title_len(prog_title[i]));
         else
@@ -819,7 +828,7 @@ static void build_launcher(void)
         for (uint8_t i = 0; i < fprog_n; i++) {
             feed_prog *f = &fprog[i];
             doc_size(15);
-            line(top() + prog_n + i, 200 + i);
+            line(first() + prog_n + i, 200 + i);
             doc_text(f->name, f->len);
             if (!f->local) {
                 doc_colour(150, 160, 180);
@@ -1198,6 +1207,16 @@ static void blob_head(void)
     open_start(zero, (const uint8_t *)"reader", 6, id, 1);
 }
 
+/* The Manual entry: the built-in reader with the manual's index (which
+ * every host has in its store) as its argument. */
+static void open_manual(void)
+{
+    static const uint8_t zero[32];
+    note[0] = 0;
+    doc_dirty = 1;
+    open_start(zero, (const uint8_t *)"reader", 6, manual_index, 1);
+}
+
 /* Takes the next waiting request, if the shell is free for it. */
 static void take_request(void)
 {
@@ -1253,11 +1272,12 @@ static void save_layout(void)
     record_save(&layout_save_req, "layout", layout_buf, 2);
 }
 
-/* The session entry goes (the cursor stays on the same line). */
+/* The session entry goes (the cursor stays on the same line; from the
+ * entry itself, it goes to the first built-in). */
 static void drop_session_entry(void)
 {
-    if (sess_n && cursor)
-        cursor--;
+    if (sess_n)
+        cursor = cursor ? cursor - 1 : 1;
     sess_n = 0;
     doc_dirty = 1;
 }
@@ -1385,10 +1405,12 @@ static void command_key(uint8_t key, uint8_t mods)
     case KEY_ENTER:
         if (cursor < top())
             restore_session();
-        else if (cursor < top() + prog_n)
-            start_program(cursor - top());
+        else if (cursor == top())
+            open_manual();
+        else if (cursor < first() + prog_n)
+            start_program(cursor - first());
         else if (cursor < nprogs())
-            start_feed_program(cursor - top() - prog_n);
+            start_feed_program(cursor - first() - prog_n);
         else
             focus_machine(nth_machine(cursor - nprogs()));
         return;
@@ -1559,6 +1581,8 @@ static void handle(void)
         uint16_t id = EV_ANCHOR_ID(ev);
         if (id == 300 && sess_n)
             restore_session();
+        else if (id == 301)
+            open_manual();
         else if (id >= 100 && id < 100 + prog_n)
             start_program(id - 100);
         else if (id >= 200 && id < 200 + fprog_n)
@@ -1593,6 +1617,7 @@ static void handle(void)
             if (sess_req.status == STATUS_DONE && sess_req.length == SESSION_LEN && b[0] == 1 && b[1] < LAYOUTS
                 && b[2] < LAYOUTS && b[4] && b[4] <= MACH_MAX) {
                 sess_n = b[4];
+                cursor = 0; /* on the session entry */
                 doc_dirty = 1;
             }
         } else if (ev.a == sess_save_handle && sess_save_req.status != STATUS_PENDING) {

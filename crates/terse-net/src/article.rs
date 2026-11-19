@@ -1,9 +1,13 @@
-//! `terse:` links in article text (NETWORK 4.5).
+//! `terse:` links in article text (ARTICLE.md, Links), as prefetch finds
+//! them (NETWORK 4.4).
 //!
 //! A link is `terse:` followed by 64 lowercase hex digits (an article, by
 //! blob ID) or `terse:feed/` followed by 64 lowercase hex digits (a feed
 //! key). It is not preceded by an ASCII letter or digit, and the 64 digits
-//! are not followed by one.
+//! are not followed by one. This is a plain scan of the bytes: it does not
+//! parse the article's blocks, so it also finds the link forms in code
+//! spans, which ARTICLE.md does not count as links (NETWORK 4.4 allows it:
+//! prefetch is only a hint).
 
 use crate::blob::BlobId;
 use crate::identity::FeedKey;
@@ -116,7 +120,7 @@ mod tests {
         assert!(terse_links(format!("terse:feed/{A}").as_bytes()).is_empty());
     }
 
-    /// Links with text (NETWORK 4.5): the target in the parentheses is
+    /// Links with text (ARTICLE.md): the target in the parentheses is
     /// found like a bare link, also by prefetch.
     #[test]
     fn links_with_text() {

@@ -1,0 +1,11 @@
+paragraph
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Sketch pad é"
+  text " by name. A final dot is not part of the name: "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad"
+  text ". Nor are two: "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad"
+  text ".. Unreserved bytes: "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "a-b_c~d.e"
+  text " A space at the end: terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/Pad%20 is text. An incomplete escape: "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad"
+  text "%2 stops before it. No name: terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/ is text. Too long: terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx is text. Not UTF-8: terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/%FF is text. A control: terse:program/c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00/a%0Ab is text."

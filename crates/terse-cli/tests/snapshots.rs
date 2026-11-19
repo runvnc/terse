@@ -498,7 +498,7 @@ fn session_saved_and_restored() {
     let mut t = Sys::new(store.path(), data.path(), "4 press enter\n20 press pagedown\n");
     t.run_until(4);
     let launcher = t.launcher();
-    assert!(launcher.starts_with("PROGRAMS\nRestore last session (3 programs)\nreader\n"), "{launcher}");
+    assert!(launcher.starts_with("PROGRAMS\nRestore last session (3 programs)\nManual\nreader\n"), "{launcher}");
     golden("session-offered", &format!("{}-- launcher --\n{launcher}", t.dump()));
     t.run_until(5);
     assert!((1..=3).all(|h| t.system.state(h) == state::LOADING));
@@ -588,14 +588,14 @@ fn a_session_discarded() {
     let mut t = Sys::new(store.path(), data.path(), "4 press d\n");
     t.run_until(8);
     assert!(t.bar().starts_with(" ⌂   Session discarded"), "{}", t.bar());
-    assert!(t.launcher().starts_with("PROGRAMS\nreader\n"), "{}", t.launcher());
+    assert!(t.launcher().starts_with("PROGRAMS\nManual\nreader\n"), "{}", t.launcher());
     assert_eq!(t.system.children().count(), 0);
     assert!(Snapshots::in_data_dir(data.path()).table(&owner).iter().all(Option::is_none));
     assert_eq!(Records::in_data_dir(data.path()).load(&owner, b"session").unwrap(), None);
     drop(t);
     let mut u = Sys::new(store.path(), data.path(), "");
     u.run_until(4);
-    assert!(u.launcher().starts_with("PROGRAMS\nreader\n"), "not offered again");
+    assert!(u.launcher().starts_with("PROGRAMS\nManual\nreader\n"), "not offered again");
 }
 
 /// `terse run --save-state` and `--load-state`: the hash at the moment of

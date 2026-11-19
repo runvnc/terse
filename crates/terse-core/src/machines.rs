@@ -66,7 +66,7 @@ pub mod failure {
     pub const SNAPSHOT: u8 = 5;
 }
 
-/// A program's identity (SPEC 12.2): the feed that publishes it and its
+/// A program's identity (SPEC 12.1): the feed that publishes it and its
 /// name. Built-in programs have the all-zero key and their image title.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramId {
@@ -121,7 +121,7 @@ pub fn load_image(bytes: &[u8]) -> Result<crate::image::Image, StartFailure> {
     })
 }
 
-/// Machine states (SPEC 12.2).
+/// Machine states (SPEC 12.1).
 pub mod state {
     pub const NONE: u8 = 0;
     pub const LOADING: u8 = 1;
@@ -256,6 +256,13 @@ impl Slot {
         out[12..16].copy_from_slice(&self.fault_pc.to_le_bytes());
         out[16..].copy_from_slice(&self.image);
         out
+    }
+
+    /// Whether the handle is being restored (SPEC 12.2 `argument`): loading,
+    /// with image ID zero and no identity. A `start` of the all-zero image
+    /// ID, which can never be found, looks the same.
+    pub fn restoring(&self) -> bool {
+        self.state == state::LOADING && self.image == [0; 32] && self.identity.is_none()
     }
 
     /// Whether the machine has a picture to show: it has been loaded.
@@ -461,7 +468,10 @@ impl Machines {
             call::ARGUMENT => {
                 let Some(id) = readable(rom, ram, a1, 32) else { return (ERR_BUFFER, 0) };
                 let id: [u8; 32] = id.try_into().unwrap();
-                match slot(a0).filter(|&i| self.slots[i].state == state::LOADING) {
+                // Only a machine that will be reset takes an argument: not
+                // one being restored (SPEC 12.2), which its record shows as
+                // loading with no image ID and no identity.
+                match slot(a0).filter(|&i| self.slots[i].state == state::LOADING && !self.slots[i].restoring()) {
                     None => (0, copy_charge(32)),
                     Some(_) => {
                         self.commands.push(Command::Argument { handle: a0 as u8, id });
@@ -697,6 +707,36 @@ mod tests {
             m.take_commands(),
             [Command::Restore { handle: 1, slot: 3 }, Command::Snapshot { handle: 1, slot: 15 }, Command::DeleteSnapshot { slot: 4 }]
         );
+    }
+
+    /// SPEC 12.2 `argument`: taken by a handle that is loading after `start`
+    /// or `start_program`; refused (0, nothing changes, the ID still read
+    /// and charged) for a handle being restored, one not loading and one
+    /// out of range; the buffer is checked first.
+    #[test]
+    fn argument_only_for_a_machine_that_will_be_reset() {
+        let base = crate::cpu::RAM_BASE;
+        let mut ram = vec![0u8; 8192];
+        ram[..32].copy_from_slice(&[9; 32]);
+        ram[32] = 1;
+        ram[33] = b'p';
+        let mut m = Machines::new(Vec::new());
+        let mut call = |m: &mut Machines, n, a0, a1| m.call(n, [a0, a1, 0, 0, 0, 0], &[], &mut ram, CallContext::default());
+        assert_eq!(call(&mut m, call::START, base, 0), (1, 8));
+        assert_eq!(call(&mut m, call::START_PROGRAM, base, 0), (2, 9));
+        assert_eq!(call(&mut m, call::RESTORE, 0, 0), (3, 0));
+        assert!(!m.slot(1).restoring() && !m.slot(2).restoring() && m.slot(3).restoring());
+        m.take_commands();
+        assert_eq!(call(&mut m, call::ARGUMENT, 1, base), (1, 8));
+        assert_eq!(call(&mut m, call::ARGUMENT, 2, base), (1, 8));
+        assert_eq!(call(&mut m, call::ARGUMENT, 3, base), (0, 8), "being restored");
+        assert_eq!(call(&mut m, call::ARGUMENT, 4, base), (0, 8), "not in use");
+        assert_eq!(call(&mut m, call::ARGUMENT, 9, base), (0, 8));
+        assert_eq!(call(&mut m, call::ARGUMENT, 3, base + 8180), (crate::machine::ERR_BUFFER, 0), "buffer first");
+        let args: Vec<u8> = m.take_commands().iter().filter_map(|c| if let Command::Argument { handle, .. } = c { Some(*handle) } else { None }).collect();
+        assert_eq!(args, [1, 2]);
+        m.slot_mut(1).state = state::RUNNING;
+        assert_eq!(call(&mut m, call::ARGUMENT, 1, base), (0, 8), "no longer loading");
     }
 
     /// `face` and `unface` (SPEC 12.2): the checks, the progress counted

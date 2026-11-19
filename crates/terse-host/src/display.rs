@@ -14,7 +14,7 @@ use crate::page::HostLayout;
 
 /// Supplies glyph coverage bitmaps, one or two terminal cells in size.
 pub trait GlyphSource {
-    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC 5.4:
+    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC 7:
     /// square screen units); the renderer shows the grid at 4:3 regardless,
     /// so glyphs from a cell of another shape are stretched.
     fn cell_size(&self) -> (u32, u32);
@@ -224,7 +224,7 @@ pub fn panel_cell_width(width: f64, cap: u32, current: Option<u32>) -> u32 {
     }
 }
 
-/// The colour of a panel seen from behind (SPEC 13.5): opaque, dark.
+/// The colour of a panel seen from behind (SPEC 12.3): opaque, dark.
 pub const PANEL_BACK: [u8; 3] = [24, 26, 32];
 
 /// The host's consent prompt as the screens show it: the prompt, how many
@@ -287,7 +287,7 @@ pub trait Display {
     /// The page anchor under (x, y) in machine `serial`'s screen units, as
     /// its page was last shown (SPEC 11.5).
     fn anchor(&self, serial: u32, x: u16, y: u16) -> u16;
-    /// A viewport position in the shell's screen units (SPEC 5.4).
+    /// A viewport position in the shell's screen units (SPEC 7).
     fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16);
     /// The height of one terminal row of the shell's screen in pixels.
     fn row_height(&self, viewport: (u32, u32)) -> f64;
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(rect, (50.0, 50.0, 1600.0, 1200.0));
         assert_eq!(screen_pos(rect, 50.0, 50.0), (0, 0));
         assert_eq!(screen_pos(rect, 1649.9, 1249.9), (639, 479));
-        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC 5.4).
+        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC 7).
         assert_eq!(screen_pos(rect, 50.0 + 3.0 * 20.0, 50.0 + 2.0 * 40.0), (24, 32));
         // Outside the grid: clamped.
         assert_eq!(screen_pos(rect, 0.0, 2000.0), (0, 479));
@@ -403,7 +403,7 @@ mod tests {
     }
 
     /// Whatever the window's shape, the grid is 4:3 and centred, so a screen
-    /// unit is as wide as it is high (SPEC 5.4), and the pointer maps back
+    /// unit is as wide as it is high (SPEC 7), and the pointer maps back
     /// through the same rectangle.
     #[test]
     fn grid_stays_four_by_three() {

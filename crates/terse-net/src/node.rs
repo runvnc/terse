@@ -1867,7 +1867,7 @@ mod tests {
         let feed = author.feed_key();
         let program = |seq: u32, data: &[u8], name: &str| Entry::program(feed, seq, 100, data, name).sign(&author).unwrap().bytes;
         script.lock().unwrap().held = vec![program(1, b"v1", "tool"), program(2, b"v2", "tool"), program(3, b"x", "other")];
-        let mut run = |node: &mut Node, token: Token, name: &[u8]| {
+        let run = |node: &mut Node, token: Token, name: &[u8]| {
             node.start_lookup(token, feed, name);
             node.wait_for(token)
         };
@@ -2081,7 +2081,7 @@ mod tests {
         let small: Vec<Vec<u8>> = (1..=7).map(|i| format!("small {i}").into_bytes()).collect();
         let big_known = vec![b'y'; 2000];
         let big_unknown = vec![b'x'; 2000];
-        // One through a link with text (NETWORK 4.5).
+        // One through a link with text (ARTICLE.md).
         let mut text =
             format!("{} {} {} [Nested]({}) {}", link(&held), link(&big_known), link(&big_unknown), link(&nested), link(&small[0]));
         text += &format!(" again {} feed terse:feed/{}", link(&small[0]), to_hex(&blob_id(&small[6])));

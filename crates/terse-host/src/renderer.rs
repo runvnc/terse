@@ -1,5 +1,5 @@
 //! Screen renderer: the terminal and the vector display, combined in the
-//! layer order of SPEC 8.6. Independent of windowing and of where glyph
+//! layer order of SPEC 10.5. Independent of windowing and of where glyph
 //! bitmaps come from, so a browser front end can reuse it.
 //!
 //! Two passes of one full-screen terminal shader (over the cells, glyph
@@ -15,7 +15,7 @@
 //! With no shapes the layer holds exactly the background colours, so the
 //! result is the same as the earlier single pass.
 //!
-//! The phosphor style (SPEC 8.7; the model and its constants are in
+//! The phosphor style (SPEC 10.6; the model and its constants are in
 //! `phosphor.rs`) treats the whole screen as one tube. Cell backgrounds are
 //! not drawn. Once per machine frame (`accumulate`) the glyphs and cursor
 //! are drawn as light in their foreground colour (a third mode of the same
@@ -325,25 +325,44 @@ struct Atlas {
     next: usize,
 }
 
-/// The shader module `label` for `device`, compiled from `source` the first
-/// time: every machine's screen has a renderer of its own (SPEC 12.3), and
-/// they share their shaders.
-pub fn shader_module(device: &wgpu::Device, label: &'static str, source: impl FnOnce() -> String) -> wgpu::ShaderModule {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<(wgpu::Device, &'static str), wgpu::ShaderModule>>> = OnceLock::new();
-    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
-    cache
-        .entry((device.clone(), label))
-        .or_insert_with(|| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(source().into()),
+/// A device and its shader modules, each compiled the first time it is
+/// asked for: every machine's screen has a renderer of its own (SPEC 12.3),
+/// and the renderers of one device share their shaders through clones of
+/// this. The modules are kept with their device, not in a table keyed by
+/// it: wgpu's device ids are per instance, so a second instance's device
+/// can compare equal to the first's.
+#[derive(Clone)]
+pub struct Shaders {
+    device: wgpu::Device,
+    modules: std::sync::Arc<std::sync::Mutex<HashMap<&'static str, wgpu::ShaderModule>>>,
+}
+
+impl Shaders {
+    pub fn new(device: &wgpu::Device) -> Self {
+        Shaders { device: device.clone(), modules: Default::default() }
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// The shader module `label`, compiled from `source` the first time.
+    pub fn module(&self, label: &'static str, source: impl FnOnce() -> String) -> wgpu::ShaderModule {
+        let mut modules = self.modules.lock().unwrap();
+        modules
+            .entry(label)
+            .or_insert_with(|| {
+                self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(label),
+                    source: wgpu::ShaderSource::Wgsl(source().into()),
+                })
             })
-        })
-        .clone()
+            .clone()
+    }
 }
 
 pub struct Renderer {
+    shaders: Shaders,
     glyphs: Box<dyn GlyphSource>,
     atlas: Atlas,
     cell_px: (u32, u32),
@@ -366,7 +385,7 @@ pub struct Renderer {
     /// The layer of backgrounds and shapes, its size, and the glyph-mode
     /// bind group that reads it; made for the viewport on first use.
     layer: Option<(((u32, u32), (u32, u32)), wgpu::TextureView, wgpu::BindGroup)>,
-    /// The phosphor textures (SPEC 8.7), the size of the grid rectangle of
+    /// The phosphor textures (SPEC 10.6), the size of the grid rectangle of
     /// the layer's viewport; made with the layer.
     phosphor: Option<PhosphorTextures>,
     vectors: VectorLayer,
@@ -468,10 +487,11 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
 
 impl Renderer {
     pub fn new(
-        device: &wgpu::Device,
+        shaders: &Shaders,
         target_format: wgpu::TextureFormat,
         glyphs: Box<dyn GlyphSource>,
     ) -> Self {
+        let device = shaders.device();
         let cell_px = glyphs.cell_size();
         let cell_texture = texture(device, "cells", (COLS as u32, ROWS as u32), wgpu::TextureFormat::Rgba8Uint);
         let atlas_texture = texture(
@@ -529,7 +549,7 @@ impl Renderer {
         let background_bind_group = stand_ins(&background_params);
         let light_bind_group = stand_ins(&light_params);
 
-        let shader = shader_module(device, "terminal", || format!("{}{SHADER}", phosphor::wgsl()));
+        let shader = shaders.module("terminal", || format!("{}{SHADER}", phosphor::wgsl()));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("terminal"),
             bind_group_layouts: &[Some(&layout)],
@@ -577,8 +597,9 @@ impl Renderer {
             bloom_params,
             layer: None,
             phosphor: None,
-            vectors: VectorLayer::new(device, LAYER_FORMAT),
-            page: PageLayer::new(device, LAYER_FORMAT),
+            vectors: VectorLayer::new(shaders, LAYER_FORMAT),
+            page: PageLayer::new(shaders, LAYER_FORMAT),
+            shaders: shaders.clone(),
             style: (false, 0),
             no_trails: false,
             force_phosphor: false,
@@ -604,6 +625,11 @@ impl Renderer {
     }
 
     /// The glyph source for cells `width` pixels wide (for another screen).
+    /// The device and its shaders, for the other renderers on it.
+    pub fn shaders(&self) -> &Shaders {
+        &self.shaders
+    }
+
     pub fn glyphs_for(&self, width: u32) -> Box<dyn GlyphSource> {
         self.glyphs.resized(width)
     }
@@ -668,8 +694,8 @@ impl Renderer {
         device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("terminal"), layout, entries: &entries })
     }
 
-    /// Takes the vector display's style (SPEC 8.7) and uploads its list
-    /// (SPEC 8) as `Vector::shapes` gives it (outlines in the phosphor
+    /// Takes the vector display's style (SPEC 10.6) and uploads its list
+    /// (SPEC 10) as `Vector::shapes` gives it (outlines in the phosphor
     /// presentation even if only forced), unless the list's generation shows
     /// it is unchanged, and the 3D list's segments over it (SPEC 13).
     /// `vector` `None`: the image has no vector display.
@@ -708,7 +734,7 @@ impl Renderer {
         self.page.anchor_at(x, y)
     }
 
-    /// Treat the persistence as 0 (the user turned trails off, SPEC 8.7).
+    /// Treat the persistence as 0 (the user turned trails off, SPEC 10.6).
     pub fn set_no_trails(&mut self, no_trails: bool) {
         self.no_trails = no_trails;
     }
@@ -850,13 +876,13 @@ impl Renderer {
     }
 
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
-    /// screen units are square (SPEC 5.4) whatever the glyph source's cell.
+    /// screen units are square (SPEC 7) whatever the glyph source's cell.
     pub fn grid_size(&self) -> (u32, u32) {
         let width = COLS as u32 * self.cell_px.0;
         (width, width * SCREEN_HEIGHT as u32 / SCREEN_WIDTH as u32)
     }
 
-    /// Uploads the terminal state (SPEC 6.7: presentation is up to the host).
+    /// Uploads the terminal state (SPEC 8.6: presentation is up to the host).
     pub fn update(&mut self, queue: &wgpu::Queue, terminal: &Terminal) {
         if self.atlas.next + COLS * ROWS > ATLAS_SLOTS {
             // Atlas full: start over; the screen needs at most COLS * ROWS slots.
@@ -867,7 +893,7 @@ impl Renderer {
             let mut col = 0;
             while col < COLS {
                 let cell = terminal.cell(col, row);
-                // SPEC 6.3: a character followed by FFFFh is drawn across both cells.
+                // SPEC 8.1: a character followed by FFFFh is drawn across both cells.
                 let wide = cell.ch != CONTINUATION
                     && col + 1 < COLS
                     && terminal.cell(col + 1, row).ch == CONTINUATION;
@@ -936,7 +962,7 @@ impl Renderer {
         self.grid_rect(viewport)
     }
 
-    /// A viewport position in screen units (SPEC 5.4), through the same
+    /// A viewport position in screen units (SPEC 7), through the same
     /// transform that places the grid, clamped to the screen.
     pub fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16) {
         screen_pos(self.grid_rect(viewport), x, y)
@@ -1024,7 +1050,7 @@ impl Renderer {
     }
 
     /// Records the draw into `encoder`, covering all of `target`
-    /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC 8.6).
+    /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC 10.5).
     /// With a rectangle set (`set_rect`), only that rectangle is drawn,
     /// over what the target holds.
     pub fn render(
@@ -1146,5 +1172,35 @@ impl Renderer {
         pass.set_bind_group(0, group, &[]);
         pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A device of a wgpu instance of its own, if this machine has an adapter.
+    fn device() -> Option<(wgpu::Instance, wgpu::Device)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let (_, device, _) = pollster::block_on(crate::request_device(Default::default(), &instance)).ok()?;
+        Some((instance, device))
+    }
+
+    /// The renderers of one device share its shader modules; a device of
+    /// another wgpu instance (whose id can equal the first's) gets modules
+    /// of its own, and a renderer on it is built without a validation error.
+    #[test]
+    fn shaders_are_per_device() {
+        let Some((_a, first)) = device() else { return eprintln!("no GPU adapter: not tested") };
+        let Some((_b, second)) = device() else { return };
+        let Ok(glyphs) = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, None) else { return };
+        let shaders = Shaders::new(&first);
+        let one = shaders.module("terminal", || format!("{}{SHADER}", phosphor::wgsl()));
+        let again = shaders.clone().module("terminal", || unreachable!("compiled once per device"));
+        assert!(one == again);
+        let _first = Renderer::new(&shaders, wgpu::TextureFormat::Rgba8UnormSrgb, Box::new(glyphs.clone()));
+        let scope = second.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _second = Renderer::new(&Shaders::new(&second), wgpu::TextureFormat::Rgba8UnormSrgb, Box::new(glyphs));
+        assert!(pollster::block_on(scope.pop()).is_none(), "a renderer on the second device");
     }
 }

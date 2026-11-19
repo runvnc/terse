@@ -1,0 +1,8 @@
+|
+||
+| a ||
+|\|
+| \\| x |
+
+Text
+ | not a table: a blank before the bar

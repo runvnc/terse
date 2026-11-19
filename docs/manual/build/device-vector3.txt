@@ -1,6 +1,6 @@
 # The 3D vector display (device 9)
 
-The 3D vector display draws lines, points and circles placed in a box around the screen, from a display list like the 2D display's. Faces, which draw nothing, hide what is behind them. The program gives geometry, not a picture: the host projects it onto the screen from an eye it chooses, so it may let the viewer look around the models, and the program cannot observe that choice. As with the 2D display, nothing drawn can be read back.
+The 3D vector display draws lines, points and circles placed in a box around the screen, from a display list like the 2D display's. Faces, which draw nothing, hide what is behind them; in the shell's list, Screens place the screens of the machines it started as panels in the box. The program gives geometry, not a picture: the host projects it onto the screen from an eye it chooses, so it may let the viewer look around the models, and the program cannot observe that choice. As with the 2D display, nothing drawn can be read back.
 
 ## Getting the device
 
@@ -49,10 +49,11 @@ A list is a sequence of commands, each one opcode byte followed by its operands.
 | `08h` | Pop | none | Restores the transform saved last |
 | `09h` | Translate | x, y, z (6) | Moves the transform's origin |
 | `0Ah` | Rotate | axis (1), angle (2) | Turns the transform about the axis |
-| `0Bh` | Scale | s (2, unsigned) | Scales the transform uniformly |
+| `0Bh` | Scale | s (2, unsigned) | Scales the transform uniformly (8.8 fixed point); 0 puts every later point at the transform's origin |
 | `0Ch` | Face | n (1), n corners (6 each) | Hides what is behind it |
+| `0Dh` | Screen | handle (1, 1 to 8), width w (2, unsigned) | Shows machine `handle`'s screen as a panel |
 
-Details of the operands: the width is the same on the screen at any depth, 0 counts as 1 and more than 255 as 255. The axis is 0 x, 1 y, 2 z; the angle is unsigned, in 1/65,536 of a turn (`V3_TURN` is 65,536). The scale is 8.8 fixed point: 256 is 1 (`V3_SCALE_ONE`). A face's n is 3 or 4, so a Face is 20 or 26 bytes with its opcode. The C builders are `v3_end`, `v3_colour`, `v3_width`, `v3_move`, `v3_line`, `v3_point`, `v3_circle`, `v3_push`, `v3_pop`, `v3_translate`, `v3_rotate`, `v3_scale`, `v3_face3` and `v3_face4`, appending at the buffer given to `v3_begin`.
+Details of the operands: the width is the same on the screen at any depth, 0 counts as 1 and more than 255 as 255. The axis is 0 x, 1 y, 2 z; the angle is unsigned, in 1/65,536 of a turn (`V3_TURN` is 65,536). The scale is 8.8 fixed point: 256 is 1 (`V3_SCALE_ONE`). A face's n is 3 or 4, so a Face is 20 or 26 bytes with its opcode. A Screen is 4 bytes. The C builders are `v3_end`, `v3_colour`, `v3_width`, `v3_move`, `v3_line`, `v3_point`, `v3_circle`, `v3_push`, `v3_pop`, `v3_translate`, `v3_rotate`, `v3_scale`, `v3_face3`, `v3_face4` and `v3_screen`, appending at the buffer given to `v3_begin`.
 
 ## Transforms
 
@@ -68,13 +69,13 @@ A positive angle about x turns y towards z, about y turns z towards x, and about
 
 The current point is kept as Move or Line placed it, with M applied, so a later transform does not move it. A Line after a Push, a Translate and a Pop starts where the Move put it. Circle, Point and the transform commands leave the current point unchanged.
 
-A circle of radius r (in sixteenths) about the current point c is the closed curve c + L(r cos f, r sin f, 0) / 16, where L is M without its translation: it lies in the plane of M's x and y axes and is scaled with it. It is drawn as the 64 chords between the points at f = k/64 of a turn, k = 0 to 63, joined without ends of their own. To draw a circle about a transform's origin, Move to (0, 0, 0) first.
+A circle of radius r (in sixteenths) about the current point c is the closed curve c + L(r cos f, r sin f, 0) / 16, where L is M without its translation: it lies in the plane of M's x and y axes and is scaled with it. It is drawn as the 64 chords between the points at f = k/64 of a turn, k = 0 to 63, joined without ends of their own. A circle of radius 0 is 64 chords of length 0: it counts 64 segments and draws nothing. To draw a circle about a transform's origin, Move to (0, 0, 0) first.
 
 Lines and points use the current width and have round ends (a Point is the dot a line of length 0 draws). They are drawn in list order, each over the earlier ones, blended by opacity. A near line does not cover a far one: only faces hide.
 
 The stack holds up to 8 transforms. Push saves only the transform, not the colour, the width or the current point.
 
-The list ends at an End, at the end of the submitted bytes, at an unknown opcode (`0Dh` and up), at a command whose operands are cut off, at a Rotate whose axis is above 2, at a Face whose n is not 3 or 4, at a Push with 8 transforms saved, or at a Pop with none. Commands before that point are drawn.
+The list ends at an End, at the end of the submitted bytes, at an unknown opcode (`0Eh` and up), at a command whose operands are cut off, at a Rotate whose axis is above 2, at a Face whose n is not 3 or 4, at a Screen whose handle is 0 or above 8, at a Push with 8 transforms saved, or at a Pop with none. Commands before that point are drawn.
 
 ## Faces
 
@@ -82,11 +83,24 @@ A face is a flat polygon that gives off no light but hides the lines, points and
 
 Seen from the eye in use, a point of a line, point or circle is hidden if the straight segment from the eye to it passes through one of a face's triangles and the point lies more than 2 sixteenths (1/8 unit) beyond the triangle's plane, measured perpendicular to the plane, on the side away from the eye. So a line in a face's plane, along its edge or ending on it is not hidden by that face, and a solid's edges given with the same corners as its faces are drawn. A face hides whatever is behind it wherever the face is in the list, before or after it. A triangle with no area, or seen edge on, hides nothing. Faces do not hide one another and draw nothing, so no line is drawn where two faces cross unless the list draws one.
 
-A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end without vertex dwell; the line's own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short. A point is drawn or hidden whole.
+A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end without vertex dwell; the line's own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short; the whole line is measured on the glass, from the eye in use, after the cut at the near plane and before clipping to the screen. A point is drawn or hidden whole.
+
+## Screens
+
+A Screen is a flat panel w/16 units wide and 3/4 of that high, centred on the transform's origin in its xy plane. With w in sixteenths and M the transform in force, its corners are
+
+    top left      M(-w/32, -3w/128, 0)
+    top right     M( w/32, -3w/128, 0)
+    bottom right  M( w/32,  3w/128, 0)
+    bottom left   M(-w/32,  3w/128, 0)
+
+so it is scaled, turned and moved with the transform. With the identity it lies like the glass: its top edge along x, its left edge down along y, its front towards the viewer. It does not change the current point. With a = top right - top left and b = bottom left - top left, the panel is seen from behind from an eye on the side of its plane that a x b points to (or in its plane); otherwise its front is seen.
+
+A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle's machine has a picture and the handle's rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell's `face` flies one flat onto the glass, is in [screens, panels and input](terse:126e1063f8301683be167ce23a61c3894586cd2ba7b493ee853ab05fd8a8d874).
 
 ## Clipping and caps
 
-A line is cut where it crosses the plane z = -800: only its part with z > -800 is drawn, and a point at z <= -800 is not drawn. Only a face's part with z > -800 hides. What is left is projected and clipped to the screen.
+A line is cut where it crosses the plane z = -800: only its part with z > -800 is drawn, and a point at z <= -800 is not drawn. Only a face's part with z > -800 hides. What is left is projected and clipped to the screen grown by 32 units on every side; the host clips what it draws to the screen.
 
 The amount one list draws is limited. In list order each command counts:
 
@@ -96,6 +110,7 @@ The amount one list draws is limited. In list order each command counts:
 | Point | 0 | 1 | 0 |
 | Circle | its 64 chords' lengths | 64 | 0 |
 | Face | 0 | 0 | 1 |
+| Screen in effect | 0 | 0 | 1 |
 
 A line's counted length is its length on the glass, seen from the reference eye, of its part with z > -800 that lies on the screen (0 to 640 by 0 to 480). A command that would take the list's total length above 65,536, its segments above 16,384, its faces above 256, or its faces times its segments above 131,072 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye. The last cap trades faces against segments:
 
@@ -106,20 +121,23 @@ A line's counted length is its length on the glass, seen from the reference eye,
 | 64 | 2,048 |
 | 256 | 512 |
 
-After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Which pieces those are depends on the eye.
+After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Only pieces within the 32-unit margin count. Which pieces those are depends on the eye.
+
+The host evaluates the caps after a floating-point projection, so hosts may differ by rounding when a list comes right up to a cap: one may draw a command fewer than another. That affects only what is drawn, never the machine's state.
 
 ## Presentation
 
 - Depth cue: light dims with depth. Each end of a line (after the cut at z = -800) has the factor min(1, 960 / (960 + z)), and along the line on the glass the factor goes linearly from one end's to the other's. The opacity is multiplied by it: 0.5 at z = 960, never more than the colour's own in front of the glass. A point has its own factor, each chord of a circle those of its ends.
+- Screens in effect are drawn as panels in the shell's scene, not in the vector layer: the shell's lines, points and circles are drawn over the panels, and in the phosphor style how they are lit there is up to the host.
 - Layers: device 9 is drawn in the vector layer after device 3's shapes: over the page and the 2D shapes, under the terminal's characters, so text on the glass labels the models.
 - Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display's lines (core, halo, bloom, afterglow and smear), with the vertex dwell at line ends and points but not where a circle's chords join or where a face cut a line.
 - The trigonometry and the projection are the host's, and hosts may differ in the last pixel. Smoothing, blending and how the eye moves are up to the host.
 
 ## Charges and state
 
-Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).
+Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116).
 
-The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display's state section, which is present when the image lists device 3 or device 9.
+The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display's state section, which is present when the image lists device 3 or device 9.
 
 ## Example
 

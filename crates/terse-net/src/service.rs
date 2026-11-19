@@ -130,6 +130,28 @@ pub struct ContentService {
     /// snapshots and images.
     saved: Vec<(u8, bool)>,
     restored: Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>,
+    /// The machine's reading profile (SPEC 2.1): requests
+    /// outside it complete with status Refused without asking.
+    reading: bool,
+}
+
+/// Whether a request is one the reading profile carries out (SPEC 2.1):
+/// get, subscriptions, timeline, names, identity,
+/// subscribe and unsubscribe. Every other operation (put, publish, find,
+/// set profile, set nickname, programs, save, load, delete, records) is
+/// optional and completes with status 05h on a host that offers only the
+/// reading profile.
+pub fn in_reading_profile(kind: &RequestKind) -> bool {
+    matches!(
+        kind,
+        RequestKind::Get { .. }
+            | RequestKind::Subscriptions { .. }
+            | RequestKind::Timeline { .. }
+            | RequestKind::Names { .. }
+            | RequestKind::Identity
+            | RequestKind::Subscribe { .. }
+            | RequestKind::Unsubscribe { .. }
+    )
 }
 
 /// What the worker needs to turn a `Done` into a completion.
@@ -177,7 +199,25 @@ impl ContentService {
             following,
             saved: Vec::new(),
             restored: Vec::new(),
+            reading: false,
         }
+    }
+
+    /// Offers only the machine's reading profile (`terse run --profile
+    /// reading`): every request outside it ([`in_reading_profile`]) is
+    /// completed with status Refused, without asking and without the node.
+    pub fn set_reading_profile(&mut self, on: bool) {
+        self.reading = on;
+    }
+
+    /// A request the reading profile refuses: completed with the next
+    /// completions. Returns false if the request goes on to the worker.
+    fn refuse_outside_profile(&mut self, tag: u32, r: &Request) -> bool {
+        let refuse = self.reading && !in_reading_profile(&r.kind);
+        if refuse {
+            self.refused.push((tag, Completion { handle: r.handle, outcome: Outcome::Refused }));
+        }
+        refuse
     }
 
     /// The request the user is asked about now, if any (one at a time, the
@@ -262,6 +302,9 @@ impl ContentService {
     /// Submits requests whose completions (and prompts) carry `tag`.
     pub fn submit_tagged(&mut self, tag: u32, requests: Vec<Request>) {
         for r in requests {
+            if self.refuse_outside_profile(tag, &r) {
+                continue;
+            }
             self.outstanding += 1;
             // The worker only stops when this service is dropped.
             let _ = self.jobs.send(Work::Content(tag, r, None));
@@ -273,6 +316,9 @@ impl ContentService {
     pub fn submit_machine(&mut self, tag: u32, machine: &mut Machine) {
         let owner = Owner::of(machine);
         for r in machine.take_content_requests() {
+            if self.refuse_outside_profile(tag, &r) {
+                continue;
+            }
             self.outstanding += 1;
             let _ = self.jobs.send(Work::Content(tag, r, Some(owner.clone())));
         }
@@ -469,6 +515,9 @@ pub struct HeadlessSystem {
     /// Makes the layouter of each machine's page (default: the reference
     /// layout).
     layouter: Box<dyn Fn(u32) -> Box<dyn Layouter + Send>>,
+    /// The inputs of the frames run since the last `take_recorded`, if
+    /// recording (`terse run --record`, STATE.md 5).
+    recorded: Option<Vec<(Who, terse_core::record::Frame)>>,
 }
 
 impl HeadlessSystem {
@@ -481,7 +530,20 @@ impl HeadlessSystem {
             images: Vec::new(),
             restores: Vec::new(),
             layouter: Box::new(|_| Box::new(terse_core::page::ReferenceLayouter::default())),
+            recorded: None,
         }
+    }
+
+    /// Keeps every input each machine's frame is given, for
+    /// [`Self::take_recorded`].
+    pub fn record(&mut self) {
+        self.recorded.get_or_insert_with(Vec::new);
+    }
+
+    /// The inputs of the machine frames run since the last call, in the
+    /// order they ran (empty unless [`Self::record`]).
+    pub fn take_recorded(&mut self) -> Vec<(Who, terse_core::record::Frame)> {
+        self.recorded.as_mut().map(std::mem::take).unwrap_or_default()
     }
 
     /// Lays each machine's page out with a layouter from `make` (given the
@@ -577,7 +639,11 @@ impl Driver for HeadlessSystem {
         }
         let completions = std::mem::take(&mut m.completions);
         let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
+        let frame = machine.frame();
         let result = machine.run_frame(&input);
+        if let Some(recorded) = &mut self.recorded {
+            recorded.push((who, terse_core::record::Frame::of(frame, &input, &result)));
+        }
         m.page.after_frame(machine.page());
         if let Some(content) = &mut self.content {
             content.submit_machine(who.serial, machine);
@@ -667,13 +733,16 @@ enum Step {
 
 /// SPEC 9.5: requests that change nothing complete at once without asking
 /// (subscribing to a feed already subscribed, unsubscribing from one that
-/// is not); an invalid feed key is refused and a blob not in the store is
+/// is not); an invalid feed key (subscribe, unsubscribe, set nickname) is
+/// refused, before anything else is looked at, and a blob not in the store is
 /// not found, also without asking. The rest are asked about, unless the
 /// policy (or the user's answer, `consented`) decides.
 fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Request, token: Token) -> Step {
     let decided = if consented { Consent::Allow } else { consent };
     let asked = match &request.kind {
-        RequestKind::Subscribe { feed } if !valid_feed_key(feed) => return Step::Complete(Outcome::Refused),
+        RequestKind::Subscribe { feed } | RequestKind::Unsubscribe { feed } if !valid_feed_key(feed) => {
+            return Step::Complete(Outcome::Refused);
+        }
         RequestKind::Subscribe { feed } if node.subscriptions().contains(feed) => return Step::Complete(Outcome::Done),
         RequestKind::Unsubscribe { feed } if !node.subscriptions().contains(feed) => {
             return Step::Complete(Outcome::Done);
@@ -1191,6 +1260,23 @@ mod tests {
         assert_eq!((held.len(), held[0].entry.title.as_str(), held[0].entry.blob), (1, "Tïtle", article));
     }
 
+    /// SPEC 9.5: subscribe and unsubscribe with an invalid feed key complete
+    /// with 05h (refused) without asking, even where the user would allow
+    /// them and where unsubscribing would otherwise change nothing.
+    #[test]
+    fn invalid_feed_keys_are_refused_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = [0; 32];
+        assert!(!valid_feed_key(&bad));
+        for consent in [Consent::Allow, Consent::Deny, Consent::Ask] {
+            let node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+            let (service, done) =
+                feed_requests(node, consent, vec![RequestKind::Unsubscribe { feed: bad }, RequestKind::Subscribe { feed: bad }]);
+            assert_eq!(outcomes(&done), [Outcome::Refused, Outcome::Refused], "{consent:?}");
+            assert!(service.prompt().is_none(), "nothing is asked");
+        }
+    }
+
     /// SPEC 9.5 ops 09h–0Ch: names records; a find with no relay fails;
     /// set profile and set nickname with consent denied, allowed and asked.
     #[test]
@@ -1479,6 +1565,56 @@ mod tests {
                 Completion { handle: 2, outcome: Outcome::Published { seq: 1 } }
             ]
         );
+        assert_eq!(service.outstanding(), 0);
+    }
+
+    /// The reading profile (`terse run --profile reading`): get,
+    /// subscriptions, timeline, names, identity, subscribe and unsubscribe
+    /// are carried out; every other request completes with status Refused
+    /// at once, without asking (even with consent allowed) and without
+    /// touching the node.
+    #[test]
+    fn reading_profile_refuses_optional_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let held = store.put(b"held").unwrap();
+        let mut node = Node::new(store, None);
+        node.set_identity(crate::Identity::from_seed([3; 32]));
+        node.set_records(crate::Records::in_data_dir(&dir.path().join("data")));
+        let a = crate::Identity::from_seed([1; 32]).feed_key();
+        let mut service = ContentService::start_with_consent(node, Consent::Allow);
+        service.set_reading_profile(true);
+        let kinds = vec![
+            RequestKind::Get { id: held, offset: 0, length: 10 },
+            RequestKind::Subscriptions { offset: 0, length: 100 },
+            RequestKind::Timeline { offset: 0, length: 100 },
+            RequestKind::Names { offset: 0, length: 100 },
+            RequestKind::Identity,
+            RequestKind::Subscribe { feed: a },
+            RequestKind::Unsubscribe { feed: a },
+            RequestKind::Put { data: b"new".to_vec() },
+            RequestKind::Publish { blob: held, title: b"t".to_vec(), kind: 1 },
+            RequestKind::Find { scope: 1, query: b"x".to_vec(), length: 100 },
+            RequestKind::SetProfile { name: b"n".to_vec(), listed: true },
+            RequestKind::SetNickname { feed: a, name: b"n".to_vec() },
+            RequestKind::Programs { offset: 0, length: 100 },
+            RequestKind::Save { name: b"r".to_vec(), data: b"d".to_vec() },
+            RequestKind::Load { name: b"r".to_vec(), offset: 0, length: 10 },
+            RequestKind::Delete { name: b"r".to_vec() },
+            RequestKind::Records { offset: 0, length: 100 },
+        ];
+        assert_eq!(kinds.iter().filter(|k| in_reading_profile(k)).count(), 7);
+        service.submit(kinds.into_iter().enumerate().map(|(i, kind)| Request { handle: i as u8 + 1, kind }).collect());
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        let outcomes = outcomes(&done);
+        assert_eq!(outcomes.len(), 17);
+        assert_eq!(outcomes[0], Outcome::Got { size: 4, data: b"held".to_vec() });
+        assert!(matches!(outcomes[1], Outcome::Records { total: 0, .. }));
+        assert!(matches!(outcomes[4], Outcome::Identity { .. }));
+        assert_eq!(outcomes[5..7], [Outcome::Done, Outcome::Done]);
+        assert!(outcomes[7..].iter().all(|o| *o == Outcome::Refused), "{outcomes:?}");
+        assert!(!dir.path().join(crate::to_hex(&crate::blob_id(b"new"))).exists(), "the put never reached the store");
         assert_eq!(service.outstanding(), 0);
     }
 }

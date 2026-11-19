@@ -1,4 +1,4 @@
-//! winit physical keys to USB HID keyboard usage IDs (SPEC 5.1).
+//! winit physical keys to USB HID keyboard usage IDs (SPEC 5).
 
 use winit::keyboard::{KeyCode, ModifiersState};
 

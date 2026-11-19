@@ -30,7 +30,7 @@
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 1002, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Keeping a sourdough starter alive
-   53  15     0   sans12 |Alice (66be7e…0c473a)  ·  #1  ·  2026-11-17 18:10 UTC  ·  2.5 KB
+   53  15     0   sans12 |Alice (66be7e…0c473a)  ·  #1  ·  2026-11-17 18:10 UTC  ·  2.5 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |A sourdough starter is nothing more than flour and water that has
   115  19     0   sans15 |been colonised by wild yeast and lactic acid bacteria. Left on a

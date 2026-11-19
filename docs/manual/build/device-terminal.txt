@@ -19,7 +19,7 @@ Each cell is four bytes:
 | 2 | Foreground palette index |
 | 3 | Background palette index |
 
-The character code is a Unicode code point from `0000h` to `FFFFh`. A character is wide if its Unicode 16.0 East Asian Width property is W or F; every other character is narrow. A wide character takes two cells of a row: the left cell holds its code and the right cell holds the continuation code `FFFFh` (`TERM_CONTINUATION` in terse.h; `term_is_wide` tells whether a code point is wide). Combining marks get no special treatment: each takes a cell.
+The character code is a Unicode code point from `0000h` to `FFFFh`. A character is wide if its Unicode 16.0 East Asian Width property is W or F (including unassigned code points that Unicode gives W by default, such as U+FA6E); every other character is narrow. A wide character takes two cells of a row: the left cell holds its code and the right cell holds the continuation code `FFFFh` (`TERM_CONTINUATION` in terse.h; `term_is_wide` tells whether a code point is wide). Combining marks get no special treatment: each takes a cell.
 
 ## Calls
 
@@ -36,15 +36,15 @@ The character code is a Unicode code point from `0000h` to `FFFFh`. A character 
 | `208h` | `palette_set` | `a0` first, `a1` buffer, `a2` count | count |
 | `209h` | `size` | none | `a0` = 80, `a1` = 30 |
 
-A buffer the device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. Otherwise the call returns `FFFF_FFFEh` (a bad buffer) and does nothing else.
+A buffer the device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM; an empty one may be anywhere. Otherwise the call returns `FFFF_FFFEh` (a bad buffer) and does nothing else.
 
-- `write` puts characters (below) from the bytes of the buffer, in order, and returns how many bytes it consumed. Each byte is charged as it is consumed, and the call stops after the byte whose charge brings the frame's budget to zero or below, so it may consume fewer bytes than asked. It always consumes at least one byte of a non-empty buffer; an empty buffer gives 0. The program calls `write` again with the rest; if the budget is used up the machine pauses first, until the next frame. A UTF-8 sequence may be split across calls: the device keeps the incomplete part. `term_write` in the C library repeats the call until every byte is written.
+- `write` puts characters (below) from the bytes of the buffer, in order, and returns how many bytes it consumed. Each byte is charged as it is consumed, and the call stops after the byte whose charge brings the frame's budget to zero or below, so it may consume fewer bytes than asked; a byte's charge is 1 plus 150 for each clear or scroll it causes, and the budget is counted after the `ecall` and the call's 4. It always consumes at least one byte of a non-empty buffer; an empty buffer gives 0. The program calls `write` again with the rest; if the budget is used up the machine pauses first, until the next frame. A UTF-8 sequence may be split across calls: the device keeps the incomplete part. `term_write` in the C library repeats the call until every byte is written.
 - `command` carries out a command (table below). A value above 255, or one not in the table, does nothing; the result is 0 either way.
 - `set_cursor` moves the cursor to (`a0`, `a1`), each clamped to 79 and 29 (the arguments are unsigned, so any larger value gives the last column or row), and clears pending wrap.
 - `set_colours` sets the current foreground and background palette indexes. A value above 255 leaves that colour as it is, so `term_fg` passes `100h` as the background to change only the foreground.
 - `get_cursor` and `get_colours` return the current values in `a0` and `a1`.
 - `cells_read` copies `count` cells (`4 * count` bytes) of the grid, from cell `first` on, wrapping from cell 2,399 to cell 0, into the buffer (in RAM). `cells_write` copies the buffer (ROM or RAM) into the grid the same way. `first` must be below 2,400 and `count` at most 2,400, else the call returns `FFFF_FFFEh` and does nothing. Neither moves the cursor or changes pending wrap. Written cells are not checked: the host draws a wide character across two cells when the next cell in the row holds `FFFFh`; how it draws any other arrangement is not specified.
-- `palette_set` sets `count` palette entries from entry `first` on, wrapping from 255 to 0, from `3 * count` bytes of red, green, blue (0 to 255 each), in ROM or RAM. `first` must be below 256 and `count` at most 256. The spec gives no result for a violation; the reference implementation returns `FFFF_FFFEh` and does nothing.
+- `palette_set` sets `count` palette entries from entry `first` on, wrapping from 255 to 0, from `3 * count` bytes of red, green, blue (0 to 255 each), in ROM or RAM. `first` must be below 256 and `count` at most 256, else the call returns `FFFF_FFFEh` and does nothing.
 - `size` returns 80 in `a0` and 30 in `a1`.
 
 ## Put character
@@ -63,7 +63,7 @@ The bytes given to `write` are decoded as UTF-8. When a character is complete it
 
 Printing a character takes four steps:
 
-- 1. If the pending wrap flag is set, or the character is wide and the cursor is at column 79, the cursor first moves to column 0 of the next row, scrolling up if on the last row. In the second case the cell at column 79 is first set to a space with the current colours.
+- 1. If the pending wrap flag is set, or the character is wide and the cursor is at column 79, the cursor first moves to column 0 of the next row, scrolling up if on the last row. In the second case the cell at column 79 is first set to a space with the current colours; if it was the right half of a wide pair, the left half at column 78 becomes a space and keeps its colours.
 - 2. The character is written at the cursor with the current colours. A wide character also writes `FFFFh` with the current colours to the next cell.
 - 3. If a cell written in step 2 was half of a wide pair, the other half of that pair becomes a space and keeps its colours.
 - 4. The cursor moves right by the character's width (1 or 2). If that would pass column 79, the cursor stays at column 79 and pending wrap is set.
@@ -98,7 +98,7 @@ Later bytes of a sequence must be `80h`-`BFh`. Any other lead byte (`80h`-`C1h`,
 | `05h` | Show the cursor |
 | `06h` | Hide the cursor |
 
-"Cleared" means a space (`0020h`) with the current colours. For `04h`, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. In terse.h the values are `TERM_CLEAR`, `TERM_SCROLL_UP`, `TERM_SCROLL_DOWN`, `TERM_CLEAR_EOL`, `TERM_CURSOR_ON` and `TERM_CURSOR_OFF`; `term_cmd` sends one.
+"Cleared" means a space (`0020h`) with the current colours. For `04h`, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands `02h` to `06h` leave the cursor and pending wrap as they are; `01h` clears pending wrap. In terse.h the values are `TERM_CLEAR`, `TERM_SCROLL_UP`, `TERM_SCROLL_DOWN`, `TERM_CLEAR_EOL`, `TERM_CURSOR_ON` and `TERM_CURSOR_OFF`; `term_cmd` sends one.
 
 ## Reset state and palette
 
@@ -120,13 +120,13 @@ At reset every cell is a space with foreground 7 and background 0. The cursor is
 | A clear, scroll up or scroll down | 150 |
 | `cells_read`, `cells_write`, `palette_set` | 1 per 4 bytes copied, rounded up |
 
-The 150 applies to commands `01h`, `02h` and `03h`, and to those that `write` causes: `0Ch`, `0Ah` on the last row, and a wrap (pending, or of a wide character at column 79) on the last row. Such a charge belongs to the byte that caused it, so it counts towards the byte that ends a `write`. Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units, on top of the `ecall` instruction. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a) for the whole table.
+The 150 applies to commands `01h`, `02h` and `03h`, and to those that `write` causes: `0Ch`, `0Ah` on the last row, and a wrap (pending, or of a wide character at column 79) on the last row. Such a charge belongs to the byte that caused it, so it counts towards the byte that ends a `write`. Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units, on top of the `ecall` instruction. See [charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116) for the whole table.
 
 ## State
 
 For determinism and snapshots the terminal's state is, in this order: a present flag (1 byte; if `00h` nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with `00h`. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (`C2h`-`F4h`) and the valid continuation bytes received after it.
 
-The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:070f6c0abaa1df0e533db9e88958f0c2b9f11b21602ad1af248d6718a8e82da7) describes the layers.
+The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:36442b7f04baf7ccba1dc764dec2397d6c695cfeed816b28a8ab20eba534f6f9) describes the layers.
 
 ## Example
 

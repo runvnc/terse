@@ -40,12 +40,12 @@ while (terse_event_pop(&e) != EV_NONE)
 | `01h` | Key down | key code | modifiers | 0 |
 | `02h` | Key up | key code | modifiers | 0 |
 | `03h` | Text | code point bits 0-7 | bits 8-15 | bits 16-20 |
-| `04h` | Pointer | x bits 0-7 | y bits 0-7 | x bits 8-9, y bit 8, buttons |
+| `04h` | Pointer | x bits 0-7 | y bits 0-7 | bits 0-1 x bits 8-9, bit 2 y bit 8, bits 3-5 buttons, bits 6-7 zero |
 | `05h` | Content done | request handle | status | 0 |
 | `06h` | Wheel | vertical steps, signed | horizontal steps, signed | 0 |
 | `07h` | Feeds updated | 0 | 0 | 0 |
 | `08h` | Page laid out | height bits 0-7 | bits 8-15 | bits 16-23 |
-| `09h` | Page anchor | anchor id bits 0-7 | bits 8-15 | buttons |
+| `09h` | Page anchor | anchor id bits 0-7 | bits 8-15 | bits 3-5 buttons |
 | `0Ah` | Machine changed | handle | new state | 0 |
 | `0Bh` | Home | 0 | 0 | 0 |
 | `0Ch` | Machine pressed | handle | buttons | 0 |
@@ -89,9 +89,16 @@ The modifiers byte `b` has bit 0 Shift, bit 1 Control, bit 2 Alt and bit
 are zero.
 
 A host may keep some keys for itself. In a system the home key (F12 in
-`terse-host`) is never delivered to any machine. While the host shows a
-consent prompt the keyboard is the host's. `terse-host` also takes Ctrl+V
-and Shift+Insert for pasting.
+`terse-host`) is never delivered to any machine; with a single machine
+there is no home key. While the host shows a consent prompt the keyboard
+is the host's. A host may keep a few more, such as a paste key
+(`terse-host` takes Ctrl+V and Shift+Insert); such a key's press and its
+release reach no program, though the modifier keys held with it do.
+
+While a key is held a host may repeat it: more key-down events for the
+same key, each followed by the text it types, with no key-up between
+them, and one key-up at the end. So a key-down for a key that is already
+down is a repeat.
 
 ## Text
 
@@ -99,16 +106,17 @@ A text event carries one Unicode scalar value (up to 21 bits) produced by
 the host's text input, after the keyboard layout and input-method
 composition: `a` is bits 0-7, `b` bits 8-15 and `c` bits 16-20. In
 `terse-host` a key that types a character gives a key down, then a text
-event; control characters typed (Enter, Tab, Backspace) give no text
-event, only their keys.
+event. No host sends a text event for a control character: Enter, Tab,
+Backspace, Escape and Ctrl+letter give only their keys.
 
 ```c
 uint32_t cp = e.a | (uint32_t)e.b << 8 | (uint32_t)e.c << 16;
 ```
 
-Text the user pastes arrives the same way, one event per character, no
-faster than the queue has room for. A line break is U+000A; other control
-characters are dropped.
+Text the user pastes arrives the same way, one event per character, with
+no key events, no faster than the queue has room for, to whichever
+machine has the focus as it is sent. A CR LF pair or a lone CR becomes
+U+000A; other control characters are dropped.
 
 ## Pointer
 
@@ -169,7 +177,8 @@ adds up smaller movements until they make a whole step.
   units, 24 bits (FFFFFFh if larger); `EV_PAGE_HEIGHT(e)` decodes it.
 - Page anchor (`09h`): a button was pressed over text or a figure with
   anchor id `a` + 256 × `b` (`EV_ANCHOR_ID(e)`); `c` holds the buttons
-  with the pointer's bit order, from bit 0 (`EV_ANCHOR_BUTTONS(e)`). It
+  in bits 3-5, the same bits as a pointer event's (`EV_ANCHOR_BUTTONS(e)`),
+  its other bits 0. It
   follows the pointer event of the same press.
 - Page located (`0Dh`) and page located y (`0Eh`): the answer to the
   page's `locate`, always as this pair. `0Dh` gives the anchor id and the
@@ -201,13 +210,18 @@ frame it is routed before the shell runs:
 | Key down, key up, text, wheel | the machine with the focus if it is running; the shell if the focus is 0; otherwise nobody |
 | Pointer over a machine's picture | that machine (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
 | Pointer over no picture | the shell, unchanged |
-| Controllers | the machine with the focus; every other machine reads all four as not connected |
+| Controllers | the machine with the focus (the shell if it is 0); every other machine reads all four as not connected |
 | Content done, feeds updated, page events | each machine its own |
+| Anything else in the host's input | the shell, unchanged |
+
+The focus that routes a frame's input, controllers included, is the one
+at routing: a home key changes it for the events after it, and a `focus`
+call takes effect at the next frame.
 
 A position (x, y) over a picture at (px, py) of size pw × ph is mapped to
 x′ = ⌊(2(x − px) + 1) × 640 / (2pw)⌋ and y′ = ⌊(2(y − py) + 1) × 480 /
 (2ph)⌋. A pointer event that presses a button over a picture also gives
-the shell a machine pressed event.
+the shell a machine pressed event, whatever the machine's state.
 
 ## Controllers
 

@@ -1,12 +1,12 @@
-//! The vector display layer (SPEC 8): the decoded display list drawn as
+//! The vector display layer (SPEC 10): the decoded display list drawn as
 //! instanced quads. Lines, circle outlines and discs get round ends and
 //! antialiasing from a distance computed in the fragment shader; rectangles
 //! and triangles are plain geometry. Shapes are blended over each other in
 //! list order (source-over, by opacity) and clipped to the screen rectangle.
 //! The screen is the terminal grid's rectangle, which the renderer keeps at
-//! 4:3, so screen units are square (SPEC 5.4) and a circle is round.
+//! 4:3, so screen units are square (SPEC 7) and a circle is round.
 //!
-//! The phosphor style (SPEC 8.7, see `phosphor.rs` for the model and its
+//! The phosphor style (SPEC 10.6, see `phosphor.rs` for the model and its
 //! constants) draws the list's outlines (`terse_core::vector::
 //! decode_outlines`) as light into float textures the size of the screen,
 //! once per machine frame: the beam (added to this frame's glyph light) and
@@ -442,7 +442,8 @@ fn pass<'e>(encoder: &'e mut wgpu::CommandEncoder, label: &str, targets: &[(&wgp
 
 impl VectorLayer {
     /// `format` is the format of the layer the shapes are drawn into.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(shaders: &crate::renderer::Shaders, format: wgpu::TextureFormat) -> Self {
+        let device = shaders.device();
         let uniform = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -498,7 +499,7 @@ impl VectorLayer {
         };
         let bind_group = group(&params);
         let phosphor_bind_group = group(&phosphor_params);
-        let shader = crate::renderer::shader_module(device, "vectors", || format!("{}{SHADER}", phosphor::wgsl()));
+        let shader = shaders.module("vectors", || format!("{}{SHADER}", phosphor::wgsl()));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vectors"),
             bind_group_layouts: &[Some(&layout)],
@@ -602,8 +603,8 @@ impl VectorLayer {
 
     /// Shapes drawn straight into an sRGB target (`format`), over what it
     /// holds: their colours are converted to linear light.
-    pub fn for_target(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        VectorLayer { linear: format.is_srgb(), ..Self::new(device, format) }
+    pub fn for_target(shaders: &crate::renderer::Shaders, format: wgpu::TextureFormat) -> Self {
+        VectorLayer { linear: format.is_srgb(), ..Self::new(shaders, format) }
     }
 
     /// Uploads `shapes` as they are (no vertex dwell), unless they are
@@ -670,7 +671,7 @@ impl VectorLayer {
         }
         let (x, y, w, h) = rect;
         queue.write_buffer(&self.params, 0, &params_bytes(viewport, rect, false, self.linear));
-        // Clip to the screen rectangle (SPEC 8.1).
+        // Clip to the screen rectangle (SPEC 10.1).
         let x0 = x.max(0.0).floor() as u32;
         let y0 = y.max(0.0).floor() as u32;
         let x1 = ((x + w).ceil() as u32).min(viewport.0);

@@ -113,12 +113,19 @@ pub const ADDR: usize = 44;
 pub const SIZE: usize = 48;
 
 /// The RAM offset of `[addr, addr + len)` if it lies wholly in RAM.
+///
+/// A range of length 0 is valid at any address (SPEC 3.1); its offset is
+/// then 0, and only ever used for an empty slice.
 pub fn ram_range(ram_len: usize, addr: u32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return Some(0);
+    }
     let off = addr.wrapping_sub(RAM_BASE) as usize;
     (off <= ram_len && ram_len - off >= len).then_some(off)
 }
 
-/// The bytes `[addr, addr + len)` if they lie wholly in ROM or wholly in RAM.
+/// The bytes `[addr, addr + len)` if they lie wholly in ROM or wholly in
+/// RAM; empty for a length of 0, at any address (SPEC 3.1).
 pub fn readable<'a>(rom: &'a [u8], ram: &'a [u8], addr: u32, len: usize) -> Option<&'a [u8]> {
     if let Some(off) = ram_range(ram.len(), addr, len) {
         return Some(&ram[off..off + len]);
@@ -180,7 +187,8 @@ pub enum RequestKind {
     Identity,
     /// Names records from index `offset`, at most `length` bytes (SPEC 9.5).
     Names { offset: u32, length: u16 },
-    /// Search the relays: `scope` 1 (feeds) or 2 (entries), the query
+    /// Search the relays: `scope` 1 (feeds), 2 (articles and documents) or
+    /// 3 (programs), the query
     /// (1 to 48 bytes of UTF-8, copied at submit), results in at most
     /// `length` bytes (SPEC 9.5).
     Find { scope: u8, query: Vec<u8>, length: u16 },
@@ -206,7 +214,7 @@ pub enum RequestKind {
 }
 
 /// The host's answer to a pending request (SPEC 9.2), an input to the machine
-/// (SPEC 7.6).
+/// (SPEC 9.4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completion {
     pub handle: u8,
@@ -222,9 +230,10 @@ pub enum Outcome {
     Got { size: u32, data: Vec<u8> },
     /// A put succeeded; `id` must be the BLAKE3-256 hash of the submitted bytes.
     Put { id: [u8; 32] },
-    /// A subscriptions, timeline or names request succeeded: the number of
-    /// records that exist and the whole records delivered from the requested
-    /// index, as many as fit in `length` (SPEC 9.5). A find: the number of
+    /// A subscriptions, timeline, names, programs or records request
+    /// succeeded: the number of records that exist and the whole records
+    /// delivered from the requested index, as many as fit in `length` (SPEC
+    /// 9.5, 9.6). A find: the number of
     /// results (at most 16) and as many whole records as fit.
     Records { total: u32, data: Vec<u8> },
     /// A subscribe, unsubscribe, set nickname, save or delete succeeded.
@@ -565,6 +574,11 @@ impl Content {
             ) => status::REFUSED,
             // NETWORK 4.7: the relays refused the search.
             (Pending::Find { .. }, Outcome::Refused) => status::REFUSED,
+            // SPEC 2.1: operations outside the machine's reading profile,
+            // which such a host may refuse without carrying them out.
+            (Pending::Put { .. } | Pending::Named { .. } | Pending::Records { op: OP_PROGRAMS | OP_RECORDS, .. }, Outcome::Refused) => {
+                status::REFUSED
+            }
             (_, Outcome::NotFound) => status::NOT_FOUND,
             (_, Outcome::Failed) => status::FAILED,
             _ => return None,
@@ -773,6 +787,43 @@ mod tests {
         let reqs = rig.content.take_requests();
         assert_eq!(reqs, [Request { handle: 1, kind: RequestKind::Get { id: [7; 32], offset: 0, length: 1 } }]);
         assert!(rig.content.take_requests().is_empty());
+    }
+
+    /// SPEC 9.2: a block that is already pending may be submitted again:
+    /// two requests, each writing the same block when it completes (in
+    /// handle order within a frame). A get at or beyond the end of the blob
+    /// completes with 01h, length 0 and the blob's size. Bytes delivered in
+    /// one frame are added up, then charged (rounded up) once.
+    #[test]
+    fn same_block_twice_get_past_the_end_and_delivered_bytes() {
+        let mut rig = Rig::new();
+        assert_eq!(rig.submit(BLOCK, Some(&get(5, 3))).0, 1);
+        assert_eq!(rig.submit(BLOCK, None).0, 2, "the same block again");
+        assert_eq!(rig.content.pending_handles(), [1, 2]);
+        let (_, _, delivered) = rig.content.complete(
+            &[done(2, Outcome::Got { size: 6, data: vec![9] }), done(1, Outcome::Got { size: 5, data: vec![] })],
+            &mut rig.ram,
+            &mut rig.system,
+        );
+        assert_eq!(delivered, 1);
+        assert_eq!(rig.events(), [(5, 1, 1, 0), (5, 2, 1, 0)]);
+        // Handle 2's write is the last: length 1, size 6.
+        assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), 1u32.to_le_bytes());
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), 6u32.to_le_bytes());
+        // Alone, handle 1's past-the-end completion: length 0, the size.
+        let mut rig = Rig::new();
+        rig.submit(BLOCK, Some(&get(5, 3)));
+        rig.complete(&[done(1, Outcome::Got { size: 5, data: vec![] })]);
+        assert_eq!((status(&rig, BLOCK), rig.read(BLOCK + LENGTH as u32, 4), rig.read(BLOCK + SIZE as u32, 4)), (status::DONE, 0u32.to_le_bytes().to_vec(), 5u32.to_le_bytes().to_vec()));
+        // Three gets of 1 byte each in one frame: 3 bytes delivered, which
+        // the machine charges as 1 unit (not 3).
+        let mut rig = Rig::new();
+        for i in 0..3 {
+            rig.submit(BLOCK + 64 * i, Some(&get(0, 1)));
+        }
+        let got = |h| done(h, Outcome::Got { size: 1, data: vec![1] });
+        let (_, _, delivered) = rig.content.complete(&[got(1), got(2), got(3)], &mut rig.ram, &mut rig.system);
+        assert_eq!(crate::machine::copy_charge(delivered), 1);
     }
 
     #[test]
@@ -1202,6 +1253,44 @@ mod tests {
         assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0));
     }
 
+    /// SPEC 2.1, 9.3: every operation outside the reading profile (put,
+    /// publish, find, set profile, set nickname, programs, save, load,
+    /// delete, records) may complete with 05h; those inside it that need
+    /// no consent (get, subscriptions, timeline, names, identity) may not.
+    #[test]
+    fn refused_outside_the_reading_profile() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"Ann");
+        let blocks = [
+            block(OP_PUT, [0; 32], 0, 0, DATA, 3),
+            feed_op(OP_PUBLISH, [1; 32], 0, DATA),
+            find(1, 3, 100, DATA),
+            set_profile(3, DATA, 0),
+            feed(OP_PROGRAMS, 0, 100),
+            named(OP_SAVE, "k", 0, 0, DATA, 3),
+            named(OP_LOAD, "k", 0, 4, DATA, 0),
+            named(OP_DELETE, "k", 0, 0, 0, 0),
+        ];
+        for (i, b) in blocks.iter().enumerate() {
+            assert_eq!(rig.submit(BLOCK + 64 * i as u32, Some(b)).0, i as u8 + 1, "{b:02X?}");
+        }
+        let refused: Vec<Completion> = (1..=8).map(|h| done(h, Outcome::Refused)).collect();
+        assert_eq!(rig.complete(&refused), (0, 0));
+        assert!(rig.content.pending_handles().is_empty());
+        for i in 0..8u32 {
+            assert_eq!(status(&rig, BLOCK + 64 * i), status::REFUSED);
+        }
+        let mut rig = Rig::new();
+        rig.submit(BLOCK, Some(&named(OP_RECORDS, "", 0, 72, DATA, 0)));
+        rig.submit(BLOCK + 64, Some(&feed_op(OP_SET_NICKNAME, [1; 32], 0, DATA)));
+        assert_eq!(rig.complete(&[done(1, Outcome::Refused), done(2, Outcome::Refused)]), (0, 0));
+        for b in [feed(OP_SUBSCRIPTIONS, 0, 100), feed(OP_TIMELINE, 0, 300), feed(OP_NAMES, 0, 100), feed_op(OP_IDENTITY, [0; 32], 0, 0)] {
+            let mut rig = Rig::new();
+            rig.submit(BLOCK, Some(&b));
+            assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0), "{:02X}h", b[0]);
+        }
+    }
+
     #[test]
     fn bad_publish_requests() {
         let ram_end = RAM_BASE + RAM_LEN as u32;
@@ -1213,7 +1302,7 @@ mod tests {
             feed_op(OP_PUBLISH, [1; 32], 121, DATA + 16),        // longer than 120 bytes
             feed_op(OP_PUBLISH, [1; 32], 2, ram_end - 1),        // past the end of RAM
             feed_op(OP_PUBLISH, [1; 32], 4, ROM_BASE + ROM.len() as u32 - 3), // past the end of ROM
-            feed_op(OP_PUBLISH, [1; 32], 0, 0),                  // nowhere
+            feed_op(OP_PUBLISH, [1; 32], 1, 0),                  // nowhere
             feed_op(OP_PUBLISH, [1; 32], 1, u32::MAX),
         ] {
             assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
@@ -1221,6 +1310,10 @@ mod tests {
         }
         assert!(rig.content.pending_handles().is_empty());
         assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_PUBLISH, [1; 32], 120, DATA + 16))), (1, 120));
+        // SPEC 3.1: an empty title is valid at any address.
+        for addr in [0, ram_end + 1, u32::MAX] {
+            assert_ne!(rig.submit(BLOCK + 64, Some(&feed_op(OP_PUBLISH, [1; 32], 0, addr))).0, 0, "{addr:#x}");
+        }
     }
 
     /// STATE.md 1.8: the pending records of the new operations.
@@ -1543,8 +1636,6 @@ mod tests {
             set_profile(1, u32::MAX, 0),
             set_profile(49, DATA + 64, 0),
             set_nickname([1; 32], 1, 0),
-            set_nickname([1; 32], 0, 0), // an empty name must still be at a valid place
-            set_nickname([1; 32], 0, ram_end + 1),
             set_nickname([1; 32], 49, DATA + 64),
             set_nickname([1; 32], 3, ram_end - 2),
         ];
@@ -1564,6 +1655,10 @@ mod tests {
             set_nickname([1; 32], 48, DATA + 64),
             set_nickname([1; 32], 2, ram_end - 2),
             set_nickname([1; 32], 4, DATA + 1), // "lead"
+            // SPEC 3.1: an empty name (removing a nickname) is valid at
+            // any address.
+            set_nickname([1; 32], 0, 0),
+            set_nickname([1; 32], 0, ram_end + 1),
         ] {
             assert_ne!(rig.submit(BLOCK, Some(&b)).0, 0, "{b:02X?}");
         }
@@ -1667,7 +1762,7 @@ mod tests {
             gap,
             named(OP_SAVE, "k", 0, 0, DATA, MAX_RECORD as u32 + 1),
             named(OP_SAVE, "k", 0, 0, ram_end - 1, 2),
-            named(OP_SAVE, "k", 0, 0, 0, 0),
+            named(OP_SAVE, "k", 0, 0, 0, 1),
             named(OP_LOAD, "k", 0, 0, DATA, 0),
             named(OP_LOAD, "k", 0, MAX_GET_LENGTH as u32 + 1, DATA, 0),
             named(OP_LOAD, "k", 0, 4, ROM_BASE, 0),
@@ -1684,6 +1779,11 @@ mod tests {
         long[ID..ID + 32].fill(b'n');
         let mut rig = Rig { ram: vec![0; MAX_RECORD + 64], ..Rig::new() };
         assert_eq!(rig.submit(RAM_BASE + MAX_RECORD as u32, Some(&long)), (1, MAX_RECORD));
+        // SPEC 3.1: an empty record is valid at any address.
+        for addr in [0, u32::MAX] {
+            assert_eq!(rig.submit(RAM_BASE + MAX_RECORD as u32, Some(&named(OP_SAVE, "e", 0, 0, addr, 0))).1, 0);
+        }
+        assert_eq!(rig.content.pending_handles(), [1, 2, 3]);
     }
 
     #[test]

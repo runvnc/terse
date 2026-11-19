@@ -1,0 +1,28 @@
+table 3 header
+  align start centre end
+  row
+    cell
+      text "Key"
+    cell
+      text "What"
+    cell
+      text "Notes"
+  row
+    cell
+      code "M"
+    cell
+      text "the manual"
+    cell
+      link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "the index"
+  row
+    cell
+      text "a | b"
+    cell
+      code "x | y"
+    cell
+      text "extra"
+  row
+    cell
+      text "short"
+    cell
+    cell

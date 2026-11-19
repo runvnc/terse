@@ -222,13 +222,49 @@ fn launcher_at_start() {
     assert_eq!(s.system.children().count(), 0);
     let launcher = s.launcher();
     assert!(
-        launcher.starts_with("PROGRAMS\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n"),
+        launcher.starts_with("PROGRAMS\n[Manual]{301}\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n"),
         "{launcher}"
     );
     let page = s.system.shell().page().unwrap().region();
     assert_eq!((page.x, page.y, page.w), (160, 80, 320), "centred while there are no machines");
     assert!(page.h < 340, "as high as the launcher's text: {}", page.h);
     golden("launcher", &format!("{}-- launcher --\n{launcher}", s.dump()));
+}
+
+/// The launcher's Manual entry (above the programs; the cursor starts on
+/// the first program, so Up reaches it) starts the reader with the
+/// manual's index as its argument, which the reader shows at once.
+#[test]
+fn manual_entry_opens_the_manual() {
+    let mut s = Sys::new("2 press up\n3 press enter\n", Setup::default());
+    s.run(30);
+    assert_eq!(s.system.focus(), 1);
+    assert_eq!(s.system.child(1).unwrap().title, "reader");
+    let text = page_text(s.machine(1));
+    assert!(text.starts_with("The Terse manual\n"), "{text}");
+    // A click on the entry does the same.
+    let mut c = Sys::new("", Setup::default());
+    c.run(5);
+    let page = c.system.shell().page().unwrap();
+    let layout = reference_layout(page.document().unwrap(), page.region().w);
+    let line = layout.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 301)).unwrap();
+    let r = page.region();
+    let (x, y) = (r.x as u32 + 20, r.y as u32 + line.y + 4);
+    let mut c = Sys::new(&format!("8 click {x} {y}\n"), Setup::default());
+    c.run(30);
+    assert!(page_text(c.machine(1)).starts_with("The Terse manual\n"), "clicked at {x} {y}");
+}
+
+/// The shell holds the ID of the manual's current index (its Manual
+/// entry): a change of the manual without a rebuild fails here.
+#[test]
+fn shell_knows_the_manual_index() {
+    let id = terse_net::blob_id(builtin::MANUAL[0].2);
+    let rom = &Image::parse(SHELL).unwrap().rom;
+    assert!(rom.windows(32).any(|w| w == id), "programs/shell/shell.terse is stale: run programs/shell/build.sh");
+    let header = include_str!("../../../programs/shell/manual_id.h");
+    let bytes: String = id.iter().map(|b| format!("0x{b:02x}")).collect::<Vec<_>>().join(", ");
+    assert!(header.contains(&bytes), "programs/shell/manual_id.h is stale: run programs/shell/build.sh");
 }
 
 #[test]
@@ -610,16 +646,19 @@ fn the_layout_is_remembered() {
 /// Starts `n` built-ins from the launcher (reader, sparks, fetch, hello,
 /// sketch in turn), each focused as it starts, then the home key and L
 /// twice: master, grid, the gallery. Returns the script and the first
-/// frame after it.
+/// frame after it. The cursor starts on the first built-in; after the
+/// home key, Up to the top is the Manual entry, the built-ins below it.
 fn gallery_script(n: usize) -> (String, u32) {
     let mut out = String::new();
     let mut f = 2;
     for k in 0..n {
+        let mut down = 0;
         if k > 0 {
             out += &format!("{f} home\n");
             out += &format!("{} press up\n", f + 1).repeat(14);
+            down = k + 1;
         }
-        out += &format!("{} press down\n", f + 2).repeat(k);
+        out += &format!("{} press down\n", f + 2).repeat(down);
         out += &format!("{} press enter\n", f + 3);
         f += 10;
     }

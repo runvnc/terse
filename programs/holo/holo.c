@@ -467,7 +467,7 @@ static void input(void)
 
 static void draw(void)
 {
-    v3_begin(list);
+    v3_begin(list, sizeof list);
     glass();
     switch (scene) {
     case WIREFRAMES: wireframes(); break;

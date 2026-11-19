@@ -1,6 +1,6 @@
 # Charges and limits
 
-This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured; every other value is fixed for version 0.
+This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC section 16 lists them all); every other value is fixed for version 0.
 
 ## The budget, in one line
 
@@ -18,7 +18,7 @@ A call's charge is subtracted as the call runs, on top of the `ecall` instructio
 | `write`: each byte consumed | 1, provisional | as each byte is consumed; the call stops after the byte that takes the budget to zero or below |
 | A clear, scroll up or scroll down | 150, provisional | each one: commands `01h`, `02h`, `03h`, and those `write` causes (`0Ah` on the last row, `0Ch`, a wrap at the bottom) |
 | Bytes copied between memory and a device | 1 per 4 bytes, rounded up, per call; provisional | by the calls of the next table |
-| Content delivered at completion | 1 per 4 bytes, rounded up, per frame; provisional | subtracted from the frame's budget before the CPU runs |
+| Content delivered at completion | 1 per 4 bytes: the frame's completions added up, rounded up once; provisional | subtracted from the frame's budget before the CPU runs |
 
 Bytes counted as copied:
 
@@ -30,17 +30,17 @@ Bytes counted as copied:
 | `cells_read`, `cells_write` | 4 per cell | when the call is valid |
 | `palette_set` | 3 per entry | when the call is valid |
 | vector `submit` (`300h`, `900h`) | the list's length | only when accepted |
-| page `submit` (`700h`) | the document's length | when copied |
+| page `submit` (`700h`) | the document's length | when copied: length in range and buffer valid |
 | content `submit` (`400h`) | put or save: `size`; publish: the title; find: the query; set profile or set nickname: the name | only when accepted |
-| `open` (`107h`) | 33, or 34 + n for a program | when the request is read |
+| `open` (`107h`) | 33, or 34 + n for a program | when the request is read, also if the call returns 0 |
 | system `argument` (`108h`) | 32 | only when written |
-| `start` | 32 | when the ID is read |
+| `start` | 32 | when the ID is read, also if no handle is free |
 | `start_program` | 33 + n | when the record is read |
 | `info` | 48 | when written |
 | `builtin` | 32 | when written |
 | `identity` | 81 | when written |
 | `request` | 82 | when written |
-| machines `argument` (`80Ah`) | 32 | when the ID is read |
+| machines `argument` (`80Ah`) | 32 | when the ID is read, also if it returns 0 |
 | `snapshot_info` | 122 | when written |
 
 Content delivered at completion is what a get, load, find or records-style request (subscriptions, timeline, names, programs, records) writes to its buffer. Nothing else is charged: a rejected submit copies nothing, the fields a completion writes into a request block are free, and laying out the page is free (the host does it outside the frames).
@@ -60,7 +60,7 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 | `ram_pages` field | 1 to 128 | |
 | Device requirements | 0 to 16, each slot at most once | |
 | Reserved header bytes | 5, all zero | |
-| Title | 16 bytes of UTF-8, padded with `00h` | |
+| Title | 16 bytes of UTF-8, padded with `00h`; not checked by hosts | |
 | Largest image | 131,136 bytes | |
 
 ## Frames
@@ -73,6 +73,8 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 | `terse run` | stops after 36,000 frames | headless runner only |
 
 ## Events, controllers and random bytes
+
+The event queue's 64 and the 256 random bytes a call are provisional.
 
 | Limit | Value |
 |---|---|
@@ -98,7 +100,7 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 
 | Limit | Value | Note |
 |---|---|---|
-| Display list | 1 to 16,384 bytes, in RAM | |
+| Display list | 1 to 16,384 bytes, in RAM | provisional |
 | Coordinates | signed 16 bits, in sixteenths of a unit; screen 10,240 by 7,680 | |
 | Line width | 1 byte, in sixteenths; 0 counts as 1 | |
 | Style, fill mode | 0 or 1 each | |
@@ -109,20 +111,24 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 
 | Limit | Value | Note |
 |---|---|---|
-| Display list | 1 to 16,384 bytes, in RAM | |
-| Transform stack | 8 | |
-| Line width | 1 to 255 sixteenths (0 counts as 1) | |
+| Display list | 1 to 16,384 bytes, in RAM | provisional |
+| Transform stack | 8 | provisional |
+| Line width | 1 to 255 sixteenths (0 counts as 1) | provisional |
 | Length a list draws | 65,536 screen units | provisional |
 | Segments a list draws | 16,384 | provisional |
-| Faces | 256 a list | |
-| Faces times segments | 131,072 | |
-| Pieces drawn after hiding | 16,384 | |
+| Faces | 256 a list, each Screen in effect counting as one | provisional |
+| Faces times segments | 131,072 | provisional |
+| Pieces drawn after hiding | 16,384, counted within 32 units of the screen | provisional |
+| What a face hides | points more than 2 sixteenths beyond its plane | provisional |
+| Shortest cut piece drawn | 1/2 unit | provisional |
 | Chords of a circle | 64 | provisional |
 | Eye distance from the glass | 960 units | provisional |
 | Eye movement | at most 160 units from the reference eye on each axis | provisional |
 | Near plane | z = -800 | provisional |
 
 ## Content (device 4)
+
+All but the request block's 52 bytes are provisional.
 
 | Limit | Value |
 |---|---|
@@ -142,18 +148,18 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 
 | Limit | Value | Note |
 |---|---|---|
-| Document | 1 to 65,536 bytes | |
-| Text size | clamped to 6 to 96 units; 14 at the start | |
-| Figure | width and height clamped to 1 to 1,024 units | |
+| Document | 1 to 65,536 bytes | provisional |
+| Text size | clamped to 6 to 96 units; 14 at the start | provisional |
+| Figure | width and height clamped to 1 to 1,024 units | provisional |
 | Paths a figure draws | 256 | provisional |
 | Figure area | 8 times the figure's area, at most 1,228,800 | provisional |
 | Figure path length | 65,536 | provisional |
 | Anchor ids | 1 to 65,535 (0 is no anchor) | |
-| `locate` | 8 a frame | |
-| Table columns | 1 to 8 | |
-| Cells | 1,024 a table, 4,096 a document | |
-| Cell padding | 6 units left and right, 3 top and bottom | |
-| Narrowest column | 48 units | |
+| `locate` | 8 a frame; a host keeps at least the 8 latest waiting | provisional |
+| Table columns | 1 to 8 | provisional |
+| Cells | 1,024 a table, 4,096 a document | provisional |
+| Cell padding | 6 units left and right, 3 top and bottom | provisional |
+| Narrowest column | 48 units | provisional |
 | Rule | 8 units high | |
 | Reported height or y | at most `FFFFFFh` | |
 
@@ -163,7 +169,10 @@ Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and
 |---|---|---|
 | Machine handles | 8 (1 to 8) | provisional |
 | Snapshot slots | 16 (0 to 15) | provisional |
-| Program name | 1 to 48 bytes | |
+| A view's motion (`face`, `unface`) | 0 to 600 frames | provisional |
+| A view's progress | 0 to 4,096 steps | provisional |
+| Screens in effect | the first of each handle, in the shell's 3D list; each counts as a face | |
+| Program name | 1 to 48 bytes | provisional |
 | Records written | `info` 48, `identity` 81, `request` 82, `snapshot_info` 122 bytes | |
 
 ## Network

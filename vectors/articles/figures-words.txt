@@ -1,0 +1,7 @@
+```path 100 100
+fill #abc stroke #11223344 2.5 M0 0 L10 0 L10 10 Z
+stroke fg M20 20 L30 30
+fill none stroke none M40 40 L50 50
+fill #ff000000 stroke #00ff00 0 M1 1 L2 2
+fill #ABCDEF stroke #00ff0080 M60 60 L70 70 fill fg
+```

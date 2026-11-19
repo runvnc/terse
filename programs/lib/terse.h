@@ -185,18 +185,29 @@ typedef struct {
 #define EV_POINTER_X(e) ((e).a | (uint16_t)((e).c & 0x03) << 8)
 #define EV_POINTER_Y(e) ((e).b | (uint16_t)((e).c & 0x04) << 6)
 #define EV_POINTER_BUTTONS(e) ((e).c >> 3 & 0x07)
-/* Page laid out: the height (0-FFFFFFh); page anchor: the id and buttons. */
+/* Text: the code point (a Unicode scalar value). Wheel: the vertical and
+ * horizontal steps, signed (positive: down, right). */
+#define EV_TEXT_CP(e) ((e).a | (uint32_t)(e).b << 8 | (uint32_t)((e).c & 0x1F) << 16)
+#define EV_WHEEL_Y(e) ((int8_t)(e).a)
+#define EV_WHEEL_X(e) ((int8_t)(e).b)
+/* Page laid out: the height (0-FFFFFFh); page anchor: the id and the
+ * buttons, in c bits 3-5 as in a pointer event. */
 #define EV_PAGE_HEIGHT(e) ((e).a | (uint32_t)(e).b << 8 | (uint32_t)(e).c << 16)
 #define EV_ANCHOR_ID(e) ((e).a | (uint16_t)(e).b << 8)
-#define EV_ANCHOR_BUTTONS(e) ((e).c)
+#define EV_ANCHOR_BUTTONS(e) ((e).c >> 3 & 0x07)
 
 /* Copies the head event into *e and removes it; returns its type, EV_NONE
  * (and leaves *e alone) if the queue is empty. */
 uint8_t terse_event_pop(terse_event *e);
 
-/* Gives up the rest of this frame's budget and returns at the start of the
- * next frame. Returns the frames that passed since the last call (more than
- * 1 if the work in between ran out of budget). */
+/* Gives up the rest of this frame's budget (wait_frame, SPEC 4) and
+ * returns when the machine runs again. Returns wait_frame's result less
+ * the previous call's (the first call: the result itself), at most 255:
+ * usually 1, more if the work in between ran out of budget. The result is
+ * fixed at the call (one more than the frame counter then), so if the next
+ * frame runs nothing (the budget is still below zero there) the machine
+ * returns in a later frame than this counts; terse_frame() gives the
+ * frame it is in. */
 uint8_t terse_wait_frame(void);
 
 static inline uint32_t terse_frame(void) { return terse_call(CALL_FRAME, 0, 0, 0); }
@@ -247,6 +258,8 @@ static inline void terse_pad_read(uint8_t n, terse_pad *pad) { terse_call(CALL_C
 #define PAD_R2 0x08
 #define PAD_SELECT 0x10
 #define PAD_START 0x20
+#define PAD_L3 0x40
+#define PAD_R3 0x80
 
 /* Device 2, terminal (SPEC 8). */
 #define TERM_COLS 80
@@ -267,6 +280,35 @@ void term_write(const void *p, uint32_t len);
 static inline void term_goto(uint8_t col, uint8_t row) { terse_call(CALL_TERM_SET_CURSOR, col, row, 0); }
 static inline void term_color(uint8_t fg, uint8_t bg) { terse_call(CALL_TERM_SET_COLOURS, fg, bg, 0); }
 static inline void term_cmd(uint8_t c) { terse_call(CALL_TERM_COMMAND, c, 0, 0); }
+/* The cursor's column and row (get_cursor). */
+static inline void term_get_cursor(uint8_t *col, uint8_t *row)
+{
+    uint32_t r;
+    *col = terse_call2(CALL_TERM_GET_CURSOR, 0, 0, &r);
+    *row = r;
+}
+/* The current foreground and background indexes (get_colours). */
+static inline void term_get_colours(uint8_t *fg, uint8_t *bg)
+{
+    uint32_t b;
+    *fg = terse_call2(CALL_TERM_GET_COLOURS, 0, 0, &b);
+    *bg = b;
+}
+/* The grid's size (size): always 80 columns and 30 rows. */
+static inline void term_size(uint8_t *cols, uint8_t *rows)
+{
+    uint32_t r;
+    *cols = terse_call2(CALL_TERM_SIZE, 0, 0, &r);
+    *rows = r;
+}
+/* Sets `count` palette entries (at most 256) from entry `first` (0-255)
+ * on, wrapping from 255 to 0, from 3 x count bytes of red, green, blue at
+ * `rgb` (ROM or RAM): the count, or TERSE_ERR_BUFFER if `first` or `count`
+ * is out of range or the bytes are not wholly in ROM or RAM (SPEC 8.2). */
+static inline uint32_t term_palette_set(uint32_t first, const void *rgb, uint32_t count)
+{
+    return terse_call(CALL_TERM_PALETTE_SET, first, (uint32_t)rgb, count);
+}
 void term_putc(uint8_t byte);
 void term_puts(const char *s);
 /* Sets the foreground only. */
@@ -274,7 +316,9 @@ void term_fg(uint8_t fg);
 /* Writes the printable ASCII bytes (20h-7Eh) at `p`, at most `max`,
  * stopping at any other byte; returns how many it wrote. */
 uint32_t term_put_ascii(uint32_t max, const uint8_t *p);
-/* Writes one code point as UTF-8 (0000h-FFFFh). */
+/* Writes one code point as UTF-8 (1 to 4 bytes); a surrogate or a value
+ * above 10FFFFh is written as FFFDh. The terminal shows FFFDh for a code
+ * point above FFFFh too (SPEC 8.3), in one cell. */
 void term_put_cp(uint32_t cp);
 /* Writes `n` cells of `ch` (narrow) with colours fg/bg from (col, row); the
  * cursor does not move. */
@@ -310,9 +354,15 @@ uint8_t term_is_wide(uint32_t cp);
 #define VEC_OP_RECT 0x08
 #define VEC_OP_TRIANGLE 0x09
 
-/* Builder: appends commands at vec_ptr; the caller owns the buffer. */
-extern uint8_t *vec_ptr;
-#define vec_begin(buf) (vec_ptr = (buf))
+/* Builder, like the document builder: appends commands at vec_ptr into a
+ * buffer of `cap` bytes the caller owns, never past vec_limit; a command
+ * that does not fit sets vec_overflow and is not written, nor is any later
+ * one, so the list holds a clean prefix (end it with vec_end before
+ * submitting: lower vec_limit by 1 to keep room for it, then raise it). The
+ * caller may move vec_ptr back within the buffer to rewrite the list. */
+extern uint8_t *vec_ptr, *vec_limit;
+extern uint8_t vec_overflow;
+void vec_begin(uint8_t *buf, uint32_t cap);
 #define vec_length(buf) ((uint32_t)(vec_ptr - (uint8_t *)(buf)))
 void vec_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 void vec_width(uint8_t w);
@@ -368,9 +418,12 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define V3_OP_FACE 0x0C
 #define V3_OP_SCREEN 0x0D
 
-/* Builder: appends commands at v3_ptr; the caller owns the buffer. */
-extern uint8_t *v3_ptr;
-#define v3_begin(buf) (v3_ptr = (buf))
+/* Builder, as the device 3 builder: appends at v3_ptr, never past
+ * v3_limit (the end of the `cap` bytes given to v3_begin); a command that
+ * does not fit sets v3_overflow and is not written, nor is any later one. */
+extern uint8_t *v3_ptr, *v3_limit;
+extern uint8_t v3_overflow;
+void v3_begin(uint8_t *buf, uint32_t cap);
 #define v3_length(buf) ((uint32_t)(v3_ptr - (uint8_t *)(buf)))
 void v3_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 void v3_width(uint16_t w);
@@ -439,21 +492,28 @@ typedef struct {
 
 uint32_t get24(const uint8_t *p);
 
-static inline uint8_t content_submit(content_req *r) { return terse_call(CALL_CONTENT_SUBMIT, (uint32_t)r, 0, 0); }
-uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf);
-uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf);
+/* Submits the request (SPEC 9.2): its handle (1-8), 0 if it was rejected
+ * (r->status is STATUS_BAD_REQUEST if it was invalid; unchanged if eight
+ * requests are pending or the block is not in RAM), or TERSE_ERR_UNKNOWN
+ * if the image does not list the content device. Every content_* and
+ * record_* wrapper below returns this. A handle fits in a uint8_t, but
+ * TERSE_ERR_UNKNOWN does not: keep the result in a uint32_t unless the
+ * image lists device 4. */
+static inline uint32_t content_submit(content_req *r) { return terse_call(CALL_CONTENT_SUBMIT, (uint32_t)r, 0, 0); }
+uint32_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf);
+uint32_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf);
 /* Puts `size` bytes (ROM or RAM, copied at submit); on completion r->id is
  * the blob's ID. */
-uint8_t content_put(content_req *r, const void *data, uint32_t size);
+uint32_t content_put(content_req *r, const void *data, uint32_t size);
 /* Subscribes to (CONTENT_SUBSCRIBE) or unsubscribes from
  * (CONTENT_UNSUBSCRIBE) the feed `key` (32 bytes). The host asks the user;
  * STATUS_REFUSED if the answer is no (SPEC 9.5). */
-uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
+uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
 /* Publishes blob `blob` (already in the host's store: put it first) as the
  * next entry of the host's feed, with a title of `len` bytes of UTF-8 (at
  * most 120, copied at submit). The host asks the user; on completion
  * r->size is the entry's seq. */
-uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len);
+uint32_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len);
 /* The same with the entry's kind: 0 or ENTRY_ARTICLE, or ENTRY_DOCUMENT for
  * a blob that starts with a document header (TDOC_*); STATUS_BAD_REQUEST
  * on completion if it does not. */
@@ -461,14 +521,14 @@ uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, 
 #define ENTRY_PROFILE 2
 #define ENTRY_PROGRAM 3
 #define ENTRY_DOCUMENT 4
-uint8_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind);
+uint32_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind);
 /* A document (SPEC 9.7) starts with "TDOC", version 0, the format owner's
  * feed key (32; zero: a built-in program's format), the format name's
  * length (1) and the name (1-48), then the data. */
 #define TDOC_HEAD 38
 /* The host's own feed key, in r->id on completion; STATUS_NOT_FOUND if the
  * host has no identity yet. */
-uint8_t content_identity(content_req *r);
+uint32_t content_identity(content_req *r);
 
 /* Content: names, search, profile and nicknames (SPEC 9.5). */
 #define CONTENT_NAMES 0x09
@@ -490,22 +550,24 @@ uint8_t content_identity(content_req *r);
 /* Names records from index `first`, as many as fit in `length` bytes at
  * `buf`: L, flags, feed key (32), name (L - 33 bytes, 0 to 48). Names are
  * self-declared; show the short key beside one. */
-uint8_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf);
+uint32_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf);
 /* Searches the host's relays for `qlen` bytes of UTF-8 (1 to 48) at
- * `query`, FIND_FEEDS (profile entries) or FIND_ENTRIES (articles). The
- * query is copied into `buf` first (0 and STATUS_BAD_REQUEST if `buflen`
- * is shorter than the query); the results, timeline records, replace it:
- * r->length is the bytes delivered, r->size the number of results (at most
- * 16). */
-uint8_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen);
+ * `query`, FIND_FEEDS (profile entries), FIND_ENTRIES (articles and
+ * documents) or FIND_PROGRAMS (programs, by name). The query is copied to
+ * the start of `buf` first (unless it is there already), so `buf` (in RAM)
+ * must have room for the query and for `buflen` bytes (1 to 16,384) of
+ * results; `buflen` may be shorter than the query. The results, timeline
+ * records, replace the query: r->length is the bytes delivered, r->size
+ * the number of results (at most 16). */
+uint32_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen);
 /* Publishes a profile for the host's feed with display name `name` (`len`
  * bytes, 1 to 48, no control characters, no leading or trailing space);
  * `listed` lets search find it. The host asks the user; on completion
  * r->size is the entry's seq. */
-uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed);
+uint32_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed);
 /* Sets the local nickname of feed `key` (32 bytes) to `len` bytes at
  * `name`, or removes it if `len` is 0. The host asks the user. */
-uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len);
+uint32_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len);
 
 /* Content: programs and named records (SPEC 9.5, 9.6). */
 #define CONTENT_PROGRAMS 0x0D
@@ -518,21 +580,22 @@ uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *nam
  * index `first`, as many as fit in `length` bytes: timeline records (L,
  * flags with TIMELINE_LOCAL if the image is in the host's store, the entry
  * without its signature: the name is the title). By feed key, then name. */
-uint8_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf);
+uint32_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf);
 /* Named records: data this program keeps on this machine, under its
  * identity (SPEC 9.6). `name` is 1 to 32 bytes up to its 0 (no control
- * characters). A save copies `size` bytes (0 to 65,536, ROM or RAM) at
+ * characters); a longer one is not cut: the call returns 0 and r->status
+ * is STATUS_BAD_REQUEST, as for any invalid name. A save copies `size` bytes (0 to 65,536, ROM or RAM) at
  * submit and replaces the record; STATUS_NO_ROOM if the program would keep
  * more than 256 records or 1,048,576 bytes. A load delivers up to `length`
  * bytes (1 to 16,384) from `offset` to `buf`: r->length is the bytes
  * delivered, r->size the record's size; STATUS_NOT_FOUND if there is no
  * such record. A delete is done whether or not the record existed. */
-uint8_t record_save(content_req *r, const char *name, const void *data, uint32_t size);
-uint8_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf);
-uint8_t record_delete(content_req *r, const char *name);
+uint32_t record_save(content_req *r, const char *name, const void *data, uint32_t size);
+uint32_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf);
+uint32_t record_delete(content_req *r, const char *name);
 /* The records, from index `first`, as many as fit in `length` bytes: 36
  * bytes each, the name (zero padded to 32) and the size (4), by name. */
-uint8_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf);
+uint32_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf);
 
 /* Device 7, page (SPEC 11): typeset text in a rectangle. */
 #define PAGE_DONE 0x00

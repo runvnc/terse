@@ -28,7 +28,7 @@
 
 
  0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
--- page: height 1238, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1220, scroll 0 (stored 0), region 64 0 512 464 --
    16  30     0   sans24b |Help
    62  22     0   sans17b |Your feed key
    92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
@@ -37,8 +37,8 @@
   155  17     0   sans13 |paste it.
   188  22     0   sans17b |Timeline
   214  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
-  236  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell,
-  254  18    12   sans14 |which opens it in a new tile
+  236  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell
+  254  18    12   sans14 |to open
   276  18    12   sans14b |/   search
   298  18    12   sans14b |F   feeds
   320  18    12   sans14b |? or F1   this help

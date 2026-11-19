@@ -1,0 +1,8 @@
+A paragraph
+# then a heading
+and a paragraph
+```
+fence
+```
+last
+| table

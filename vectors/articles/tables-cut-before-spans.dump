@@ -1,0 +1,31 @@
+table 3 noheader
+  align start start start
+  row
+    cell
+      text "`a"
+    cell
+      text "b`"
+    cell
+      text "c"
+  row
+    cell
+      text ":"
+    cell
+    cell
+  row
+    cell
+      text "d"
+    cell
+    cell
+table 1 header
+  align start
+  row
+    cell
+      text "head"
+table 1 noheader
+  align start
+  row
+    cell
+      text "x"
+  row
+    cell

@@ -56,7 +56,7 @@ At the start: no fill; stroke in the document's text colour at the Figure comman
 
 ## Caps
 
-Paths are drawn in order and counted against three caps per figure. The first path that would take a total above its cap is not drawn, and neither is any path after it.
+Paths are drawn in order and counted against three caps per figure. The first path that would take a total above its cap is not drawn, and neither is any path after it. A path that draws nothing (no segment, or neither fill nor stroke) counts against none of them. The caps count the path commands alone: a figure drawn as outlines (below) counts its fills all the same.
 
 | Cap | Limit |
 |---|---|
@@ -64,8 +64,8 @@ Paths are drawn in order and counted against three caps per figure. The first pa
 | Area | 8 x width x height of the figure, and at most 4 x 640 x 480 = 1,228,800 square units |
 | Length | 65,536 |
 
-- Area. A path's points (start, control and end points) give a box, clipped to the figure's box. The path counts that box once if it is filled, and the box grown by half the stroke width on every side, clipped, once more if it is stroked. A box's area is its width times its height in sixteenths, divided by 256 and rounded up.
-- Length. L is the sum, over the path's Line, Quadratic and Cubic segments, of |dx| + |dy| for each step from the segment's start through its control points to its end, in sixteenths. With s the number of segments, a filled path counts 2 x L + 4 x 16 x s, and a stroked one 2 x L + 4 x w x s with w its stroke width in sixteenths; the counts are divided by 16 and rounded up.
+- Area. A path's points (each Move's point and each segment's start, control and end points) give a box, clipped to the figure's box. The path counts that box once if it is filled, and the box grown on every side by half the stroke width in sixteenths, rounded up, and clipped, once more if it is stroked. A box's area is its width times its height in sixteenths, divided by 256 and rounded up.
+- Length. L is the sum, over the path's Line, Quadratic and Cubic commands, of |dx| + |dy| for each step from the segment's start through its control points to its end, in sixteenths; s is the number of those commands. A Close counts in neither. A filled path counts 2 x L + 4 x 16 x s, a stroked one 2 x L + 4 x w x s more with w its stroke width in sixteenths; the path's sum is divided by 16 and rounded up once.
 
 Worked example: a figure 100 x 50 units, so the area cap is 8 x 100 x 50 = 40,000. One path, filled and stroked 2 units (32 sixteenths) wide: Move (160, 160), then Lines to (1440, 160), (1440, 640), (160, 640) and (160, 160), the rectangle from (10, 10) to (90, 40) in units.
 

@@ -278,6 +278,9 @@ struct Run {
     /// The most requests pending at once.
     most_pending: usize,
     pending: usize,
+    /// The machine's reading profile (SPEC): content requests outside it
+    /// complete with status 05h, without reaching the content service.
+    reading: bool,
 }
 
 impl Run {
@@ -301,7 +304,13 @@ impl Run {
             gets: Vec::new(),
             most_pending: 0,
             pending: 0,
+            reading: false,
         }
+    }
+
+    /// The same on a host of the reading profile.
+    fn reading(fixture: &Fixture, script: &str, consent: Consent) -> Self {
+        Run { reading: true, ..Run::with_consent(fixture, script, consent) }
     }
 
     /// One frame as `terse run` runs it (with `extra` events and this
@@ -324,7 +333,7 @@ impl Run {
         let completions = std::mem::take(&mut self.completions);
         let input = FrameInput { events: &events, completions: &completions, unix_time: self.unix_time, ..Default::default() };
         let r = self.machine.run_frame(&input);
-        assert_eq!(r.completions_ignored, 0);
+        assert_eq!(r.completions_ignored, 0, "frame {frame}: {completions:?} reading {}", self.reading);
         assert!(self.machine.fault().is_none(), "{:?}", self.machine.fault());
         self.page.after_frame(self.machine.page());
         let page = self.machine.page().unwrap();
@@ -339,8 +348,10 @@ impl Run {
         }
         self.pending += requests.len();
         self.most_pending = self.most_pending.max(self.pending);
+        let (refused, requests): (Vec<_>, Vec<_>) = requests.into_iter().partition(|r| self.reading && !in_reading_profile(&r.kind));
         self.content.submit(requests);
         self.completions = self.content.wait_finished();
+        self.completions.extend(refused.iter().map(|r| terse_core::Completion { handle: r.handle, outcome: terse_core::Outcome::Refused }));
         self.pending -= self.completions.len();
         self.feeds_updated = self.content.feeds_updated();
         self.results.push(r);
@@ -471,6 +482,17 @@ impl Run {
 
 fn golden(name: &str, got: &str) {
     common::golden(&format!("reader/expected/{name}.txt"), got);
+}
+
+/// The content operations every machine host provides (the reading
+/// profile): get, subscriptions, timeline, subscribe, unsubscribe,
+/// identity and names.
+fn in_reading_profile(kind: &terse_core::RequestKind) -> bool {
+    use terse_core::RequestKind as K;
+    matches!(
+        kind,
+        K::Get { .. } | K::Subscriptions { .. } | K::Timeline { .. } | K::Subscribe { .. } | K::Unsubscribe { .. } | K::Identity | K::Names { .. }
+    )
 }
 
 fn row(screen: &str, n: usize) -> &str {
@@ -769,9 +791,9 @@ fn publish_a_test_article() {
     let text = run.page_text();
     assert!(text.starts_with("Test article 1\n"), "{text}");
     assert!(text.contains("This is a test article, published from the Terse reader"), "{text}");
-    assert!(text.contains("[https://example.com/terse]{1}"), "{text}");
+    assert!(text.contains("[the manual]{1}"), "{text}");
     assert!(text.contains("Some shape\n") && text.contains("• and a figure:\n"), "{text}");
-    assert!(text.trim_end().ends_with("shows its address when pressed."), "not cut: {text}");
+    assert!(text.replace('\n', " ").trim_end().ends_with("which opens when pressed."), "not cut: {text}");
     let figs = figures(&run);
     assert_eq!(figs.len(), 1, "{}", run.view());
     assert_eq!((figs[0].width, figs[0].height), (120, 32));
@@ -852,18 +874,13 @@ fn open_scroll_and_return() {
     assert_eq!(run.scroll(), 0, "clamped at the top");
     assert_eq!(run.pct(), Some(0));
 
-    // Press the first link, where the reference layout puts it.
+    // Web addresses are ordinary text (ARTICLE.md): no anchors, and Tab
+    // finds no link.
     run.press("pagedown");
-    assert_eq!(
-        run.layout().lines.iter().flat_map(|l| &l.spans).find(|s| s.style.anchor == 1).unwrap().text,
-        "https://en.wikipedia.org/wiki/Sourdough"
-    );
-    run.click_anchor(1);
-    let linked = run.view();
-    golden("article-link", &linked);
-    assert_eq!(row(&linked, 29).trim_end(), " Link 1: https://en.wikipedia.org/wiki/Sourdough");
-    // The second link: the parenthesis and full stop are not part of it.
-    assert!(run.page_text().contains("([https://en.wikipedia.org/wiki/Lactobacillus]{2}).\n"), "{}", run.page_text());
+    assert!(run.layout().lines.iter().flat_map(|l| &l.spans).all(|s| s.style.anchor == 0), "{}", run.page_text());
+    assert!(run.page_text().contains("(https://en.wikipedia.org/wiki/Lactobacillus).\n"), "{}", run.page_text());
+    run.press("tab");
+    assert_eq!(run.status(), " No links in this article");
     run.press("down");
     assert!(run.status().contains('%'), "a key puts the position back");
 
@@ -900,7 +917,7 @@ fn article_over_48_kib() {
     golden("article-big", &view);
     let size = big_article().len();
     assert!(size > 49152);
-    assert!(run.page_text().contains(&format!("#9  ·  2026-11-17 19:30 UTC  ·  {:.1} KB", size as f64 / 1024.0)), "{}", run.page_text());
+    assert!(run.page_text().contains(&format!("#9  ·  2026-11-17 19:30 UTC  ·  {:.1} KiB", size as f64 / 1024.0)), "{}", run.page_text());
     // The document ends where the 48 KiB do, in a paragraph.
     let per = big_line(1).len();
     assert!(view.contains(&format!("[… the article continues: this reader shows 49152 of its {size} bytes]")), "{view}");
@@ -921,10 +938,11 @@ fn article_over_48_kib() {
 fn document_full() {
     let mut f = Fixture::new();
     let mut text = String::new();
-    for i in 0..600 {
-        text.push_str(&format!("http://a.example/{i} "));
+    for i in 0..60 {
+        text.push_str(&format!("terse:feed/{i:064x} "));
     }
-    text.push_str(&"http:".repeat(1000));
+    text.push_str(&"terse:".repeat(1000));
+    text.push_str(&"http://a.example/ ".repeat(100));
     text.push_str(&":".repeat(4000));
     text.push_str(&"\n".repeat(2000));
     text.push_str(&"  \t\n".repeat(1000));
@@ -938,8 +956,8 @@ fn document_full() {
     let view = run.view();
     assert!(view.contains("[… the article continues: this reader shows "), "{view}");
     let text = run.page_text();
-    assert!(text.contains("[http://a.example/511]{512}") && !text.contains("{513}"), "512 links marked: {text}");
-    assert!(text.contains("http://a.example/599"), "{text}");
+    assert!(text.contains("[terse:feed/000000…00003b]{60}") && !text.contains("{61}"), "60 links marked: {text}");
+    assert!(text.contains("http://a.example/ http://a.example/"), "not links: {text}");
     assert_eq!(run.pct(), Some(100), "{}", run.status());
     let worst = run.results.iter().map(|r| r.used).max().unwrap();
     let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
@@ -949,6 +967,22 @@ fn document_full() {
         run.submits.last().unwrap() - 12,
         common::pct(worst)
     );
+}
+
+/// 600 links: the first 512 are anchors in the link colour, the rest are
+/// shown the same way but are not links.
+#[test]
+fn links_capped_at_512() {
+    let mut f = Fixture::new();
+    let text: String = (0..600).map(|i| format!("terse:feed/{i:064x} ")).collect();
+    assert!(text.len() < 48 * 1024);
+    f.publish(&alice(), "Very many links", text.as_bytes(), None);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(80);
+    let text = run.page_text();
+    assert!(text.contains("[terse:feed/000000…0001ff]{512}") && !text.contains("{513}"), "512 links marked: {text}");
+    assert!(text.contains(" terse:feed/000000…000257"), "{text}");
+    assert!(run.results.iter().all(|r| r.waited));
 }
 
 #[test]
@@ -1079,7 +1113,7 @@ fn image_is_up_to_date() {
     common::check_up_to_date(IMAGE, &["reader/reader.c"], true, "reader", RAM_PAGES, &[(2, 0), (4, 0), (7, 0)]);
 }
 
-/// An article with every construct of the article format (NETWORK 4.5).
+/// An article with every construct of the article format (ARTICLE.md).
 pub const FORMATTED_TITLE: &str = "Every construct";
 pub const FORMATTED: &str = "\
 # A heading
@@ -1090,7 +1124,8 @@ join with a space,
 ## A subheading
 
 - A list item, whose text goes on
-  on the next line, with a link https://example.com/item.
+  on the next line, with a link terse:feed/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  (a web address, https://example.com/item, is text).
 * A second item
 - A third item
 and a lazy continuation of it.
@@ -1117,7 +1152,7 @@ fill #6aa84f80 stroke #6aa84f 1.5 m-32 -22 c10 0 15 5 15 15 s-5 15 -15 15 q-10 0
 print(\"a fence with an info string\")
 ```
 
-# A heading that is a link: https://example.com/h
+# A heading that is a link: terse:feed/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 The end.
 ";
 
@@ -1175,15 +1210,15 @@ fn article_format() {
     assert!(top.contains("sans15 |A paragraph right under the heading: its lines join with a space,\n"), "{top}");
     assert!(top.contains("sans15 |and blanks at the start of a line are dropped.\n"), "{top}");
     assert!(top.contains("sans17b |A subheading\n"), "{top}");
-    assert!(top.contains("   10   sans15 |• A list item, whose text goes on on the next line, with a link"), "{top}");
+    assert!(top.contains("   10   sans15 |• A list item, whose text goes on on the next line, with a link\n"), "{top}");
     assert!(top.contains("|• A third item and a lazy continuation of it.\n"), "{top}");
     assert!(top.contains("mono13 |    Indented by four spaces:\n"), "{top}");
     let text = run.page_text();
-    assert!(text.contains("[https://example.com/item]{1}.\n"), "{text}");
+    assert!(text.contains("[terse:feed/012345…abcdef]{1} (a web address, https://example.com/item,\nis text).\n"), "{text}");
     assert!(text.contains("A fenced block keeps\n   its lines\n\nand its blank lines.\n"), "{text}");
     assert!(text.contains("print(\"a fence with an info string\")\n"), "{text}");
     assert!(!text.contains("```"), "{text}");
-    assert!(text.contains("A heading that is a link: [https://example.com/h]{2}\nThe end.\n"), "{text}");
+    assert!(text.contains("A heading that is a link:\n[terse:feed/012345…abcdef]{2}\nThe end.\n"), "{text}");
     let figs = figures(&run);
     assert_eq!(figs.len(), 1);
     assert_eq!((figs[0].width, figs[0].height), (160, 80));
@@ -1211,6 +1246,8 @@ fn article_format() {
     for (x, y) in [(40, 30), (72, 50), (104, 12), (152, 20)] {
         pt(&mut want, 4, &[s(x), s(y)]);
     }
+    // "stroke fg" with no width after "stroke #ffcc66 2": 1 unit wide, not
+    // the earlier 2 (ARTICLE.md section 6.1).
     want.extend([2, 218, 218, 218, 255, 16, 0]);
     pt(&mut want, 3, &[s(8), s(8)]);
     pt(&mut want, 4, &[s(8), s(72)]);
@@ -1264,6 +1301,20 @@ M0 0 stroke
 M0 0 L1 1 2
 ```
 
+Command letters with no numbers:
+
+```path 100 50
+M0 0 L Z
+```
+
+```path 100 50
+M0 0 L
+```
+
+```path 100 50
+M
+```
+
 A bad size, and a figure that is not closed:
 
 ```path 0 50
@@ -1279,12 +1330,89 @@ fn malformed_figures() {
     let mut run = open_only("Malformed figures", MALFORMED, 10);
     assert!(figures(&run).is_empty(), "no figure");
     let text = run.page_text();
-    for pre in ["M10 10 A 5 5 0 0 1 20 20", "M1e2 0", "fill #abcd M0 0 L1 1", "10 10 M0 0", "M0 0 L2048 0", "M0 0 stroke", "M0 0 L1 1 2", "M0 0\n", "M0 0 L10 10"] {
+    for pre in ["M10 10 A 5 5 0 0 1 20 20", "M1e2 0", "fill #abcd M0 0 L1 1", "10 10 M0 0", "M0 0 L2048 0", "M0 0 stroke", "M0 0 L1 1 2", "M0 0 L Z", "M0 0 L\n", "M\n", "M0 0\n", "M0 0 L10 10"] {
         assert!(text.contains(pre), "{pre}: {text}");
     }
     run.press("end");
     golden("article-malformed", &run.view());
     assert!(run.view().contains("mono13 |M0 0 L10 10\n"), "the unclosed figure, as preformatted text");
+}
+
+/// Z after a word in the middle of a subpath: the word started a new
+/// subpath at the current point (10, 10), so Z returns there, as the page
+/// device's Close does (ARTICLE.md).
+#[test]
+fn close_after_a_word() {
+    let text = "Z:\n\n```path 100 50\nM0 0 L10 10 stroke #f00 L20 20 Z l5 5\n```\n";
+    let run = open_only("Close", text, 10);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1, "{}", run.page_text());
+    let p = &figs[0].path;
+    let s = |v: i16| (v * 16).to_le_bytes();
+    let mut tail = vec![7, 3];
+    tail.extend(s(10));
+    tail.extend(s(10));
+    tail.push(4);
+    tail.extend(s(15));
+    tail.extend(s(15));
+    assert!(p.ends_with(&tail), "{p:?}");
+}
+
+/// Z right after a word (no subpath open) does nothing and does not move
+/// the current point: the next line starts a subpath at (10, 10), where
+/// the last segment ended (ARTICLE.md 6.3).
+#[test]
+fn close_with_no_subpath_open() {
+    let text = "Z:\n\n```path 50 50\nM0 0 L10 10 fill #f00 Z L20 20\n```\n";
+    let run = open_only("Close", text, 10);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 1, "{}", run.page_text());
+    let p = &figs[0].path;
+    let s = |v: i16| (v * 16).to_le_bytes();
+    let mut tail = vec![3];
+    tail.extend(s(10));
+    tail.extend(s(10));
+    tail.push(4);
+    tail.extend(s(20));
+    tail.extend(s(20));
+    assert!(p.ends_with(&tail), "{p:?}");
+}
+
+/// A figure fence with no lines (an empty path string) is an empty box
+/// W x H, the same as one with only words (ARTICLE.md 2.4, 6.1).
+#[test]
+fn empty_figure() {
+    let text = "Empty:\n\n```path 40 20\n```\n\n```path 40 20\nfill #fff stroke none\n```\n";
+    let run = open_only("Empty", text, 10);
+    let figs = figures(&run);
+    assert_eq!(figs.len(), 2, "{}", run.page_text());
+    for f in &figs {
+        assert_eq!((f.width, f.height), (40, 20));
+    }
+}
+
+/// Text without spaces (CJK) with bare links in it, long enough to be
+/// built over several frames: wherever a frame's share ends, no link is
+/// cut (each is found whole).
+#[test]
+fn links_in_text_without_spaces() {
+    // Shifted by 0 to 29 bytes, so that the frames' shares end at many
+    // places relative to the links.
+    for shift in 0..30 {
+        let mut text = "x".repeat(shift);
+        for i in 0..400 {
+            text.push_str(&"日本語".repeat(1 + i % 3));
+            text.push_str(&format!("terse:feed/{i:064x}"));
+        }
+        text.push('\n');
+        assert!(text.len() < 48 * 1024);
+        let run = open_only("No spaces", &text, 60);
+        assert!(run.submits.len() >= 2, "built over several frames: {:?}", run.submits);
+        let layout = run.layout();
+        let mut ids: Vec<u16> = layout.lines.iter().flat_map(|l| &l.spans).map(|s| s.style.anchor).filter(|&a| a != 0).collect();
+        ids.dedup();
+        assert_eq!(ids, (1..=400).collect::<Vec<u16>>(), "shift {shift}: every link whole");
+    }
 }
 
 /// A figure wider than the column is scaled down to its width.
@@ -1698,7 +1826,7 @@ fn search_without_results_relay_or_permission() {
     run.text("zzz");
     run.press("enter");
     run.frames(2);
-    assert_eq!(run.status(), " The relays refused the search (too many at once?): try again in a moment");
+    assert_eq!(run.status(), " Search refused: this host may not offer it, or its relays are busy");
     // No relay.
     let f = named();
     let mut run = Run::new(&f, "10 press f\n12 text /\n");
@@ -1718,7 +1846,7 @@ fn linked(f: &mut Fixture) -> [u8; 32] {
     let missing = to_hex(&blob_id(b"not anywhere"));
     let text = format!(
         "Links of every kind.\n\nThe sourdough article: terse:{sour}\n\nOne that is nowhere: terse:{missing}\n\n\
-         Bob's feed: terse:feed/{}\n\nAnd the web: https://example.com/x\n\nNot links: terse:{}0 and xterse:{sour}\n",
+         Bob's feed: terse:feed/{}\n\nThe web is not linked: https://example.com/x\n\nNot links: terse:{}0 and xterse:{sour}\n",
         to_hex(&bob().feed_key()),
         &sour
     );
@@ -1737,51 +1865,61 @@ fn tab_moves_through_links() {
     let sour = blob_id(SOURDOUGH.as_bytes());
     assert!(text.contains(&format!("The sourdough article: [terse:{}]{{1}}\n", short(&sour))), "{text}");
     assert!(text.contains(&format!("Bob's feed: [terse:feed/{}]{{3}}\n", short(&bob().feed_key()))), "{text}");
-    assert!(text.contains("[https://example.com/x]{4}"), "{text}");
-    assert!(!text.contains("{5}"), "the near misses are not links: {text}");
+    assert!(text.contains("The web is not linked: https://example.com/x\n"), "{text}");
+    assert!(!text.contains("{4}"), "the near misses and the web address are not links: {text}");
     assert_eq!(anchor_rgb(&run, 1), [110, 170, 255]);
     run.press("tab");
     run.frames(1);
     assert_eq!(anchor_rgb(&run, 1), SELECTED, "the current link");
     assert_eq!(run.status(), format!(" Link 1: terse:{}  (an article)   Enter: open", short(&blob_id(SOURDOUGH.as_bytes()))));
     golden("article-tab", &run.view());
+    let feed = format!(" Link 3: terse:feed/{}  (a feed)   Enter: open", short(&bob().feed_key()));
     run.press("tab");
     run.press("tab");
-    run.press("tab");
-    assert_eq!(run.status(), " Link 4: https://example.com/x");
-    assert_eq!(anchor_rgb(&run, 4), SELECTED);
+    assert_eq!(run.status(), feed);
+    assert_eq!(anchor_rgb(&run, 3), SELECTED);
     assert_eq!(anchor_rgb(&run, 1), [110, 170, 255]);
     run.press("tab");
     assert!(run.status().starts_with(" Link 1: "), "wraps: {}", run.status());
     run.script_now("{f} press tab shift\n", 2);
-    assert_eq!(run.status(), " Link 4: https://example.com/x", "Shift+Tab goes back");
-    run.press("enter");
-    assert_eq!(run.status(), " Link 4: https://example.com/x", "a web link only shows its address");
-    assert!(run.page_text().starts_with("Links\n"));
+    assert_eq!(run.status(), feed, "Shift+Tab goes back");
+    // A press of another button on a link does nothing (the anchor
+    // event's buttons, c bits 3-5); the primary button follows it.
+    let layout = run.layout();
+    let (line, span) =
+        layout.lines.iter().find_map(|l| l.spans.iter().find(|s| s.style.anchor == 1).map(|s| (l, s))).unwrap();
+    let r = run.machine.page().unwrap().region();
+    let (x, y) = (r.x as u32 + span.x0 / 2 + 4, r.y as u32 + line.y + 4);
+    run.script_now(&format!("{{f}} pointer {x} {y} 2\n{{f}} pointer {x} {y} 0\n"), 4);
+    assert!(run.page_text().starts_with("Links\n"), "{}", run.page_text());
+    run.click_anchor(3);
+    assert!(run.page_text().starts_with("Bobby\n"), "a click follows the link: {}", run.page_text());
 }
 
-/// Links with text (NETWORK 4.5): shown as their text in the link colour,
+/// Links with text (ARTICLE.md): shown as their text in the link colour,
 /// the target on the status row, followed and prefetched; near misses are
-/// ordinary text, in which bare links count.
+/// ordinary text, in which bare links count; a web address is no target
+/// (nor a bare link), so "[the web](https://…)" is shown as written.
 #[test]
 fn links_with_text() {
     let mut f = named();
     let sour = to_hex(&blob_id(SOURDOUGH.as_bytes()));
     let bob_key = to_hex(&bob().feed_key());
+    let feed = format!("terse:feed/{bob_key}");
     let (long, ok) = ("x".repeat(201), "y".repeat(200));
     let text = format!(
-        "Links with text.\n\nAn [article](terse:{sour}), a [feed](terse:feed/{bob_key}) and [the web](https://example.com/a?b=1).\n\n\
-         Misses: [two\nlines](https://example.com/2) [](https://example.com/3) [a [b] c](https://example.com/4) \
-         [x] (https://example.com/5) [y](https://example.com/6 ) [z](terse:{sour}0) [w](ftp://example.com/7) \
-         [{long}](https://example.com/8) [see https://example.com/9](https://example.com/10)\n\n\
-         [{ok}](https://example.com/11)\n\n    pre [text](https://example.com/12)\n\n\
+        "Links with text.\n\nAn [article](terse:{sour}), a [feed]({feed}) and [the web](https://example.com/a?b=1).\n\n\
+         Misses: [two\nlines]({feed}) [](https://example.com/3) [a [b] c]({feed}) \
+         [x] ({feed}) [y]({feed} ) [z](terse:{sour}0) [w](ftp://example.com/7) \
+         [{long}]({feed}) [see {feed}]({feed})\n\n\
+         [{ok}]({feed})\n\n    pre [text]({feed})\n\n\
          Brackets in prose [like this] (and this) stay.\n"
     );
     f.publish(&alice(), "Links with text", text.as_bytes(), None);
     let mut run = Run::new(&f, "12 press enter\n");
     run.frames(16);
     let page = run.page_text();
-    assert!(page.contains("An [article]{1}, a [feed]{2} and [the web]{3}.\n"), "{page}");
+    assert!(page.contains("An [article]{1}, a [feed]{2} and [the web](https://example.com/a?b=1).\n"), "{page}");
     let anchors: Vec<(u16, String)> = {
         let layout = run.layout();
         let mut v: Vec<(u16, String)> = Vec::new();
@@ -1794,29 +1932,18 @@ fn links_with_text() {
         v
     };
     let texts: Vec<&str> = anchors.iter().map(|a| a.1.as_str()).collect();
-    let want = [
-        "article",
-        "feed",
-        "the web",
-        "https://example.com/2",
-        "https://example.com/3",
-        "https://example.com/4",
-        "https://example.com/5",
-        "https://example.com/6",
-        "https://example.com/8",
-        "https://example.com/9](https://example.com/10)",
-        &ok,
-        "text",
-    ];
+    let bare = format!("terse:feed/{}", short(&bob().feed_key()));
+    let want = ["article", "feed", &bare, &bare, &bare, &bare, &bare, &bare, &bare, &ok, "text"];
     assert_eq!(texts, want, "{page}");
     assert!(page.contains("[z](terse:") && page.contains("[w](ftp://example.com/7)"), "no link: {page}");
+    assert!(page.contains("[](https://example.com/3)"), "no link: {page}");
     assert!(page.contains("Brackets in prose [like this] (and this) stay."), "{page}");
     assert_eq!(anchor_rgb(&run, 1), [110, 170, 255]);
     // The target shows on the status row; Enter follows it.
     run.press("tab");
     run.press("tab");
     run.press("tab");
-    assert_eq!(run.status(), " Link 3: https://example.com/a?b=1");
+    assert!(run.status().starts_with(" Link 3: terse:feed/"), "{}", run.status());
     run.script_now("{f} press tab shift\n", 2);
     assert_eq!(run.status(), format!(" Link 2: terse:feed/{}  (a feed)   Enter: open", short(&bob().feed_key())));
     run.script_now("{f} press tab shift\n", 2);
@@ -1832,10 +1959,10 @@ fn links_with_text() {
 /// is found whole, whatever the cut).
 #[test]
 fn links_with_text_across_frames() {
-    let text: String = (1..=500)
+    let text: String = (1..=320)
         .map(|i| {
-            let end = if i % 50 == 0 { "\n\n" } else { "\n" };
-            format!("Line {i:03} of a long article: [a link with text for line {i:03}](https://example.com/{i:03}), done.{end}")
+            let end = if i % 40 == 0 { "\n\n" } else { "\n" };
+            format!("Line {i:03} of a long article: [a link with text for line {i:03}](terse:feed/{i:064x}), done.{end}")
         })
         .collect();
     assert!(text.len() > 40 * 1024 && text.len() < 48 * 1024);
@@ -1844,14 +1971,14 @@ fn links_with_text_across_frames() {
     let layout = run.layout();
     let spans: Vec<&terse_core::page::Span> = layout.lines.iter().flat_map(|l| &l.spans).collect();
     let anchored: Vec<u16> = spans.iter().filter(|s| s.style.anchor != 0).map(|s| s.style.anchor).collect();
-    assert_eq!(anchored.iter().max(), Some(&500));
+    assert_eq!(anchored.iter().max(), Some(&320));
     for s in &spans {
         assert!(!s.text.contains("](") && !s.text.contains("[a link"), "a link with text cut: {:?}", s.text);
         if s.style.anchor != 0 {
             assert!(s.text.starts_with("a link with text for line "), "{:?}", s.text);
         }
     }
-    assert_eq!(run.page_text().matches("for line").count(), 500);
+    assert_eq!(run.page_text().matches("for line").count(), 320);
 }
 
 /// A long title in a list ends in an ellipsis (paragraph flag, SPEC 11.3)
@@ -1867,11 +1994,72 @@ fn list_titles_end_in_an_ellipsis() {
     assert!(run.entries().iter().any(|e| e.0 == "Keeping a sourdough starter alive"), "short titles are whole");
 }
 
-/// An article with links far apart: Tab and Shift+Tab scroll each just
-/// into view (located by the page, SPEC 11.2); after the user scrolls, Tab
-/// starts from the first link in view, Shift+Tab from the last.
+/// On a host of the machine's reading profile (only get, subscriptions,
+/// timeline, subscribe, unsubscribe, identity and names; every other
+/// content request completes with 05h) the reader starts and shows the
+/// same views as on a full host, follows links, subscribes and opens the
+/// manual; what needs an operation the host lacks ends in a short message
+/// and leaves the reader free for the next request.
 #[test]
-fn tab_scrolls_links_into_view() {
+fn reading_profile() {
+    let mut f = named();
+    linked(&mut f);
+    terse_net::builtin::install_data(f.author.store()).unwrap();
+    let script = "12 press enter\n";
+    let mut full = Run::with_consent(&f, script, Consent::Allow);
+    let mut run = Run::reading(&f, script, Consent::Allow);
+    full.frames(16);
+    run.frames(16);
+    assert_eq!(run.view(), full.view(), "the same article");
+    // Links: the feed's page.
+    run.press("tab");
+    run.press("tab");
+    run.press("tab");
+    run.press("enter");
+    assert!(run.page_text().starts_with("Bobby\n"), "{}", run.page_text());
+    run.press("esc");
+    run.press("esc");
+    // T: no put on this host.
+    run.press("t");
+    run.frames(2);
+    assert_eq!(run.status(), " Could not store the test article: this host does not allow it");
+    run.press("t");
+    run.frames(2);
+    assert_eq!(run.status(), " Could not store the test article: this host does not allow it", "not busy");
+    // Search: refused.
+    run.text("/");
+    run.text("Alice");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), " Search refused: this host may not offer it, or its relays are busy");
+    run.press("esc");
+    // Nickname and public name: refused.
+    run.press("f");
+    run.press("n");
+    run.text("Nope");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), format!(" Nickname for {}: refused", short(&bob().feed_key())));
+    run.press("p");
+    run.text("Carol");
+    run.press("enter");
+    run.press("y");
+    run.frames(2);
+    assert_eq!(run.status(), " Setting your public name was refused");
+    // Unsubscribe (in the profile) still works; then the manual.
+    run.press("u");
+    run.frames(3);
+    assert_eq!(run.status(), format!(" Unsubscribed from {}", short(&bob().feed_key())));
+    run.press("esc");
+    run.press("m");
+    run.frames(6);
+    assert!(run.view().contains("sans26b |The Terse manual\n"), "{}", run.view());
+    let (worst, waited) = run.busiest();
+    assert!(waited, "every frame ended in wait_frame ({worst} units)");
+}
+
+/// Four links far apart, in paragraphs 3, 30, 55 and 58 of 60.
+fn far_apart() -> Fixture {
     let mut f = Fixture::new();
     f.feeds = vec![alice().feed_key()];
     let mut text = String::from("Links far apart\n\n");
@@ -1879,11 +2067,56 @@ fn tab_scrolls_links_into_view() {
     for i in 1..=60 {
         text.push_str(&format!("Paragraph {i}. The quick brown fox jumps over the lazy dog, again and again, until the line wraps once or twice"));
         if let Some(k) = at.iter().position(|&a| a == i) {
-            text.push_str(&format!(", and here is [link {}](https://example.com/{})", k + 1, k + 1));
+            text.push_str(&format!(", and here is [link {}](terse:feed/{:064x})", k + 1, k + 1));
         }
         text.push_str(".\n\n");
     }
     f.publish(&alice(), "Links far apart", text.as_bytes(), None);
+    f
+}
+
+/// A reader snapshotted in the frame where Tab asked the page where a link
+/// is (the answer due in the next frame) and restored (pending locates are
+/// not part of the state, STATE.md 4): it asks again when the restored page
+/// is laid out, and scrolls to the link as the original did. Both a plain
+/// Tab and a step of the search for the first link in view.
+#[test]
+fn locate_asked_again_after_restore() {
+    let f = far_apart();
+    let image = Image::parse(IMAGE).unwrap();
+    for search in [false, true] {
+        let mut run = Run::new(&f, "12 press enter\n");
+        run.frames(20);
+        run.press("tab");
+        if search {
+            run.press("end");
+        }
+        // The frame of the Tab: the locate is asked; snapshot after it.
+        run.script_now("{f} press tab\n", 1);
+        let snap = terse_core::Snapshot::of(&run.machine);
+        assert!(snap.restore(&image).is_ok());
+        let mut original = Run::new(&f, "");
+        std::mem::swap(&mut original.machine, &mut run.machine);
+        original.page = std::mem::take(&mut run.page);
+        original.completions = std::mem::take(&mut run.completions);
+        original.frames(10);
+        let want = (original.scroll(), original.status());
+        assert!(want.1.starts_with(if search { " Link 3: " } else { " Link 2: " }), "{want:?}");
+        assert!(want.0 > 0, "scrolled to the link");
+        // Restored: a new machine and a new page (no layout yet).
+        run.machine = snap.restore(&image).unwrap();
+        run.page = PageInput::default();
+        run.frames(10);
+        assert_eq!((run.scroll(), run.status()), want, "search: {search}");
+    }
+}
+
+/// An article with links far apart: Tab and Shift+Tab scroll each just
+/// into view (located by the page, SPEC 11.2); after the user scrolls, Tab
+/// starts from the first link in view, Shift+Tab from the last.
+#[test]
+fn tab_scrolls_links_into_view() {
+    let f = far_apart();
     let mut run = Run::new(&f, "12 press enter\n");
     run.frames(20);
     const MARGIN: i32 = 8;
@@ -2069,7 +2302,7 @@ fn link_to_a_large_article() {
     run.frames(3);
     let text = run.page_text();
     assert!(text.starts_with("Big\n"), "{text}");
-    assert!(text.contains("Too large: this article is 50.8 KB, and this reader shows articles\nof up to 48 KB."), "{text}");
+    assert!(text.contains("Too large: this article is 50.8 KiB, and this reader shows articles\nof up to 48 KiB."), "{text}");
 }
 
 impl Fixture {
@@ -2177,7 +2410,7 @@ fn program_links_ask_the_shell() {
     want.extend_from_slice("Sketch pad é".as_bytes());
     want.resize(81, 0);
     assert_eq!(open_request(&run), Some((2, want)));
-    assert_eq!(run.status(), " Opened in a new tile");
+    assert_eq!(run.status(), " Asked the shell to open it");
     assert!(run.page_text().starts_with("Programs\n"), "the article stays: {}", run.page_text());
     assert!(!run.gets.iter().any(|g| g.2 == 1), "program links are not prefetched: {:?}", run.gets);
     // The link with text: the same request; the third: "Pad".
@@ -2249,7 +2482,7 @@ fn links_to_images_and_documents() {
     run.press("enter");
     run.frames(2);
     assert_eq!(open_request(&run), Some((1, [&image[..], &[0; 49][..]].concat())));
-    assert_eq!(run.status(), " Opened in a new tile");
+    assert_eq!(run.status(), " Asked the shell to open it");
     assert!(run.page_text().starts_with("Two links\n"), "{}", run.page_text());
     assert!(run.gets.iter().any(|g| g.1 == image && g.2 == 4), "the first bytes: {:?}", run.gets);
     run.machine.clear_open_request();
@@ -2286,7 +2519,7 @@ fn documents_in_the_timeline() {
     golden("timeline-document", &run.view());
     run.press("enter");
     assert_eq!(open_request(&run), Some((1, [&blob_id(&data)[..], &[0; 49][..]].concat())));
-    assert_eq!(run.status(), " Opened in a new tile");
+    assert_eq!(run.status(), " Asked the shell to open it");
     assert!(run.page_text().starts_with("Timeline\n"));
     run.machine.clear_open_request();
     run.click_anchor(1);
@@ -2310,7 +2543,7 @@ But `x` is one.
 | Key | What | Notes |
 |:--|:-:|--:|
 | `M` | the manual | [the index](terse:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) |
-| a \\| b | `x \\| y` | extra | dropped |
+| a \\| b | `x \\| y` | [e \\| f](terse:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) | dropped |
 |short
  | not a table: a paragraph
 
@@ -2320,7 +2553,7 @@ But `x` is one.
 # A heading with `code`
 ";
 
-/// Tables and code spans (NETWORK 4.5): cells, escapes, alignment rows,
+/// Tables and code spans (ARTICLE.md): cells, escapes, alignment rows,
 /// ragged rows, near misses.
 #[test]
 fn tables_and_code_spans() {
@@ -2347,7 +2580,7 @@ fn tables_and_code_spans() {
     assert_eq!(cells[5], [("the index".to_string(), 0, false, 1)], "a link in a cell");
     assert_eq!(cells[6], [("a | b".to_string(), 0, false, 0)], "an escaped bar");
     assert_eq!(cells[7], [("x | y".to_string(), 2, false, 0)], "an escaped bar in a code span");
-    assert_eq!(cells[8], [("extra".to_string(), 0, false, 0)], "the fourth cell is dropped");
+    assert_eq!(cells[8], [("e | f".to_string(), 0, false, 2)], "a link with text whose text has an escaped bar");
     assert_eq!(cells[9], [("short".to_string(), 0, false, 0)]);
     assert!(cells[10].is_empty() && cells[11].is_empty(), "a short row has empty cells");
     assert!(text.iter().any(|p| p.iter().map(|r| r.0.as_str()).collect::<String>() == "| not a table: a paragraph"));
@@ -2364,7 +2597,7 @@ fn tables_and_code_spans() {
 /// A table-heavy 48 KiB article: built over frames within the budget.
 #[test]
 fn table_frames() {
-    let row = "| `0Ah` | Cell | starts the next cell, in row order; see [the page](https://example.com/page) |\n";
+    let row = "| `0Ah` | Cell | starts the next cell, in row order; see [the page](terse:feed/00000000000000000000000000000000000000000000000000000000000000aa) |\n";
     let mut text = String::new();
     let mut n = 0;
     while text.len() < 48 * 1024 - 400 {
@@ -2389,7 +2622,9 @@ fn table_frames() {
     assert!(worst < 90_000, "the estimate is honest: {used:?}");
     assert!(cells > 1_000);
     // Lines of only bars and cells of only blanks or escapes.
-    for unit in ["|\n", "||||||||||\n", "|   |   |   |\n", "| \\| | \\\\|\n", "| `a` | `b` |\n"] {
+    // And cells of one long word (the costliest bytes to cut into cells).
+    let long = format!("| {} | {} |\n", "x".repeat(80), "y".repeat(60));
+    for unit in ["|\n", "||||||||||\n", "|   |   |   |\n", "| \\| | \\\\|\n", "| `a` | `b` |\n", &long] {
         let run = open_only("Bars", &unit.repeat(40000 / unit.len()), 60);
         let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
         assert!(run.results.iter().all(|r| r.waited), "{unit:?}: {used:?}");
@@ -2399,6 +2634,20 @@ fn table_frames() {
     let run = open_only("Code", &"some `code` and `more` text ".repeat(1500), 60);
     let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
     assert!(*used.iter().max().unwrap() < 90_000, "code spans: {used:?}");
+    // terse: links in prose, bare and with text, of every kind.
+    let key = "0123456789abcdef".repeat(4);
+    for unit in [
+        format!("see terse:feed/{key} and "),
+        format!("see [the page](terse:feed/{key}) and "),
+        format!("[a](terse:{key}) "),
+        format!("terse:program/{key}/Sketch%20pad "),
+    ] {
+        let run = open_only("Links", &unit.repeat(40000 / unit.len()), 80);
+        let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+        assert!(run.results.iter().all(|r| r.waited), "{unit:?}: {used:?}");
+        eprintln!("reader: links in prose {unit:?}: busiest frame {} units", used.iter().max().unwrap());
+        assert!(*used.iter().max().unwrap() < 90_000, "{unit:?}: the estimate is honest: {used:?}");
+    }
 }
 
 /// M on the timeline opens the manual's index, which every host puts in
@@ -2478,7 +2727,10 @@ fn manual_articles_are_valid() {
         assert!(!page.contains("the article continues"), "{name}: shown whole");
         let flat = page.replace('\n', " ");
         assert!(flat.starts_with(&format!("{title} ")), "{name}: titled {title:?}");
-        assert_eq!(flat.matches(title).count(), 1, "{name}: the heading is not repeated");
+        // (The title's words may well recur in the text; the heading
+        // itself, in the heading style, must not.)
+        assert!(!run.view().contains(&format!("sans21b |{title}\n")), "{name}: the heading is not repeated");
         assert!(text.len() <= 16_384, "{name}: under the automatic download limit");
     }
 }
+

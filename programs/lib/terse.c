@@ -72,7 +72,9 @@ uint32_t term_put_ascii(uint32_t max, const uint8_t *p)
 
 void term_put_cp(uint32_t cp)
 {
-    uint8_t b[3];
+    uint8_t b[4];
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp < 0xE000))
+        cp = 0xFFFD;
     if (cp < 0x80) {
         b[0] = cp;
         term_write(b, 1);
@@ -80,11 +82,17 @@ void term_put_cp(uint32_t cp)
         b[0] = 0xC0 | cp >> 6;
         b[1] = 0x80 | (cp & 0x3F);
         term_write(b, 2);
-    } else {
-        b[0] = 0xE0 | (cp >> 12 & 0x0F);
+    } else if (cp < 0x10000) {
+        b[0] = 0xE0 | cp >> 12;
         b[1] = 0x80 | (cp >> 6 & 0x3F);
         b[2] = 0x80 | (cp & 0x3F);
         term_write(b, 3);
+    } else {
+        b[0] = 0xF0 | cp >> 18;
+        b[1] = 0x80 | (cp >> 12 & 0x3F);
+        b[2] = 0x80 | (cp >> 6 & 0x3F);
+        b[3] = 0x80 | (cp & 0x3F);
+        term_write(b, 4);
     }
 }
 
@@ -145,7 +153,7 @@ uint32_t get24(const uint8_t *p)
     return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;
 }
 
-uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf)
+uint32_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t length, void *buf)
 {
     r->op = CONTENT_GET;
     memcpy(r->id, id, 32);
@@ -155,7 +163,7 @@ uint8_t content_get(content_req *r, const uint8_t *id, uint32_t offset, uint32_t
     return content_submit(r);
 }
 
-uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf)
+uint32_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length, void *buf)
 {
     r->op = op;
     r->offset = first;
@@ -164,7 +172,7 @@ uint8_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t length
     return content_submit(r);
 }
 
-uint8_t content_put(content_req *r, const void *data, uint32_t size)
+uint32_t content_put(content_req *r, const void *data, uint32_t size)
 {
     r->op = CONTENT_PUT;
     r->addr = (uint32_t)data;
@@ -172,19 +180,19 @@ uint8_t content_put(content_req *r, const void *data, uint32_t size)
     return content_submit(r);
 }
 
-uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
+uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
 {
     r->op = op;
     memcpy(r->id, key, 32);
     return content_submit(r);
 }
 
-uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len)
+uint32_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len)
 {
     return content_publish_kind(r, blob, title, len, 0);
 }
 
-uint8_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind)
+uint32_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind)
 {
     r->op = CONTENT_PUBLISH;
     memcpy(r->id, blob, 32);
@@ -194,28 +202,22 @@ uint8_t content_publish_kind(content_req *r, const uint8_t *blob, const void *ti
     return content_submit(r);
 }
 
-uint8_t content_identity(content_req *r)
+uint32_t content_identity(content_req *r)
 {
     r->op = CONTENT_IDENTITY;
     return content_submit(r);
 }
 
 /* Content: names, search, profile and nicknames. */
-uint8_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf)
+uint32_t content_names(content_req *r, uint32_t first, uint32_t length, void *buf)
 {
     return content_feed(r, CONTENT_NAMES, first, length, buf);
 }
 
-uint8_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen)
+uint32_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen)
 {
-    const uint8_t *q = query;
-    uint8_t *b = buf;
-    if (qlen > buflen) {
-        r->status = STATUS_BAD_REQUEST;
-        return 0;
-    }
-    for (uint32_t i = 0; i < qlen; i++)
-        b[i] = q[i];
+    if (query != buf)
+        memmove(buf, query, qlen);
     r->op = CONTENT_FIND;
     r->offset = scope;
     r->length = buflen;
@@ -224,7 +226,7 @@ uint8_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t 
     return content_submit(r);
 }
 
-uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed)
+uint32_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed)
 {
     r->op = CONTENT_SET_PROFILE;
     r->offset = listed ? 1 : 0;
@@ -233,7 +235,7 @@ uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint
     return content_submit(r);
 }
 
-uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len)
+uint32_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len)
 {
     r->op = CONTENT_SET_NICKNAME;
     memcpy(r->id, key, 32);
@@ -243,33 +245,43 @@ uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *nam
 }
 
 /* Content: programs and named records (SPEC 9.5, 9.6). */
-uint8_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf)
+uint32_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf)
 {
     return content_feed(r, CONTENT_PROGRAMS, first, length, buf);
 }
 
-/* The record name: up to 32 bytes of `name` (to its 0), zero padded. */
-static void record_name(content_req *r, const char *name)
+/* The record name: `name` up to its 0, zero padded to 32 bytes. A name
+ * longer than 32 bytes is not cut (a cut could also split a character):
+ * 0, and r->status is STATUS_BAD_REQUEST, as the device answers an
+ * invalid name. */
+static uint8_t record_name(content_req *r, const char *name)
 {
     uint8_t i = 0;
     for (; i < 32 && name[i]; i++)
         r->id[i] = name[i];
+    if (i == 32 && name[i]) {
+        r->status = STATUS_BAD_REQUEST;
+        return 0;
+    }
     for (; i < 32; i++)
         r->id[i] = 0;
+    return 1;
 }
 
-uint8_t record_save(content_req *r, const char *name, const void *data, uint32_t size)
+uint32_t record_save(content_req *r, const char *name, const void *data, uint32_t size)
 {
-    record_name(r, name);
+    if (!record_name(r, name))
+        return 0;
     r->op = CONTENT_SAVE;
     r->addr = (uint32_t)data;
     r->size = size;
     return content_submit(r);
 }
 
-uint8_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf)
+uint32_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf)
 {
-    record_name(r, name);
+    if (!record_name(r, name))
+        return 0;
     r->op = CONTENT_LOAD;
     r->offset = offset;
     r->length = length;
@@ -277,14 +289,15 @@ uint8_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t 
     return content_submit(r);
 }
 
-uint8_t record_delete(content_req *r, const char *name)
+uint32_t record_delete(content_req *r, const char *name)
 {
-    record_name(r, name);
+    if (!record_name(r, name))
+        return 0;
     r->op = CONTENT_DELETE;
     return content_submit(r);
 }
 
-uint8_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf)
+uint32_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf)
 {
     return content_feed(r, CONTENT_RECORDS, first, length, buf);
 }
@@ -303,26 +316,50 @@ uint32_t mach_start_named(const uint8_t *key, const void *name, uint32_t len)
 
 /* Device 3 display-list builder. The list is packed: coordinates are
  * little-endian 16-bit values at any alignment. */
-uint8_t *vec_ptr;
+uint8_t *vec_ptr, *vec_limit;
+uint8_t vec_overflow;
+
+void vec_begin(uint8_t *buf, uint32_t cap)
+{
+    vec_ptr = buf;
+    vec_limit = buf + cap;
+    vec_overflow = 0;
+}
+
+/* Room for an n-byte command at vec_ptr, its opcode written; or 0 (and
+ * vec_overflow set). */
+static uint8_t *vec_room(uint32_t n, uint8_t op)
+{
+    if (vec_overflow || (uint32_t)(vec_limit - vec_ptr) < n) {
+        vec_overflow = 1;
+        return 0;
+    }
+    uint8_t *p = vec_ptr;
+    vec_ptr = p + n;
+    p[0] = op;
+    return p + 1;
+}
+
+static void put16(uint8_t *p, uint32_t v)
+{
+    p[0] = v;
+    p[1] = v >> 8;
+}
 
 static void vec_xy(uint8_t op, int16_t x, int16_t y)
 {
-    uint8_t *p = vec_ptr;
-    p[0] = op;
-    p[1] = x;
-    p[2] = (uint16_t)x >> 8;
-    p[3] = y;
-    p[4] = (uint16_t)y >> 8;
-    vec_ptr = p + 5;
+    uint8_t *p = vec_room(5, op);
+    if (p) {
+        put16(p, (uint16_t)x);
+        put16(p + 2, (uint16_t)y);
+    }
 }
 
 static void vec_r(uint8_t op, uint16_t r)
 {
-    uint8_t *p = vec_ptr;
-    p[0] = op;
-    p[1] = r;
-    p[2] = r >> 8;
-    vec_ptr = p + 3;
+    uint8_t *p = vec_room(3, op);
+    if (p)
+        put16(p, r);
 }
 
 void vec_move(int16_t x, int16_t y) { vec_xy(VEC_OP_MOVE, x, y); }
@@ -334,59 +371,82 @@ void vec_disc(uint16_t r) { vec_r(VEC_OP_DISC, r); }
 
 void vec_width(uint8_t w)
 {
-    vec_ptr[0] = VEC_OP_WIDTH;
-    vec_ptr[1] = w;
-    vec_ptr += 2;
+    uint8_t *p = vec_room(2, VEC_OP_WIDTH);
+    if (p)
+        p[0] = w;
 }
 
 void vec_end(void)
 {
-    *vec_ptr++ = VEC_OP_END;
+    vec_room(1, VEC_OP_END);
+}
+
+static void rgba(uint8_t *p, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    p[0] = r;
+    p[1] = g;
+    p[2] = b;
+    p[3] = a;
 }
 
 void vec_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-    uint8_t *p = vec_ptr;
-    p[0] = VEC_OP_COLOUR;
-    p[1] = r;
-    p[2] = g;
-    p[3] = b;
-    p[4] = a;
-    vec_ptr = p + 5;
+    uint8_t *p = vec_room(5, VEC_OP_COLOUR);
+    if (p)
+        rgba(p, r, g, b, a);
 }
 
 void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
 {
-    vec_xy(VEC_OP_TRIANGLE, x1, y1);
-    vec_ptr[0] = x2;
-    vec_ptr[1] = (uint16_t)x2 >> 8;
-    vec_ptr[2] = y2;
-    vec_ptr[3] = (uint16_t)y2 >> 8;
-    vec_ptr += 4;
+    uint8_t *p = vec_room(9, VEC_OP_TRIANGLE);
+    if (p) {
+        put16(p, (uint16_t)x1);
+        put16(p + 2, (uint16_t)y1);
+        put16(p + 4, (uint16_t)x2);
+        put16(p + 6, (uint16_t)y2);
+    }
 }
 
-uint8_t *v3_ptr;
+/* Device 9 display-list builder, packed the same way. */
+uint8_t *v3_ptr, *v3_limit;
+uint8_t v3_overflow;
+
+void v3_begin(uint8_t *buf, uint32_t cap)
+{
+    v3_ptr = buf;
+    v3_limit = buf + cap;
+    v3_overflow = 0;
+}
+
+/* Room for an n-byte command at v3_ptr, its opcode written; or 0 (and
+ * v3_overflow set). */
+static uint8_t *v3_room(uint32_t n, uint8_t op)
+{
+    if (v3_overflow || (uint32_t)(v3_limit - v3_ptr) < n) {
+        v3_overflow = 1;
+        return 0;
+    }
+    uint8_t *p = v3_ptr;
+    v3_ptr = p + n;
+    p[0] = op;
+    return p + 1;
+}
 
 static void v3_xyz(uint8_t op, int16_t x, int16_t y, int16_t z)
 {
-    uint8_t *p = v3_ptr;
-    p[0] = op;
-    p[1] = x;
-    p[2] = (uint16_t)x >> 8;
-    p[3] = y;
-    p[4] = (uint16_t)y >> 8;
-    p[5] = z;
-    p[6] = (uint16_t)z >> 8;
-    v3_ptr = p + 7;
+    uint8_t *p = v3_room(7, op);
+    if (p) {
+        put16(p, (uint16_t)x);
+        put16(p + 2, (uint16_t)y);
+        put16(p + 4, (uint16_t)z);
+    }
 }
 
 static void v3_u16(uint8_t op, uint16_t v)
 {
-    uint8_t *p = v3_ptr;
-    p[0] = op;
-    p[1] = v;
-    p[2] = v >> 8;
-    v3_ptr = p + 3;
+    uint8_t *p = v3_room(3, op);
+    if (p)
+        put16(p, v);
 }
 
 void v3_move(int16_t x, int16_t y, int16_t z) { v3_xyz(V3_OP_MOVE, x, y, z); }
@@ -395,44 +455,39 @@ void v3_translate(int16_t x, int16_t y, int16_t z) { v3_xyz(V3_OP_TRANSLATE, x, 
 void v3_width(uint16_t w) { v3_u16(V3_OP_WIDTH, w); }
 void v3_circle(uint16_t r) { v3_u16(V3_OP_CIRCLE, r); }
 void v3_scale(uint16_t s) { v3_u16(V3_OP_SCALE, s); }
-void v3_point(void) { *v3_ptr++ = V3_OP_POINT; }
-void v3_push(void) { *v3_ptr++ = V3_OP_PUSH; }
-void v3_pop(void) { *v3_ptr++ = V3_OP_POP; }
-void v3_end(void) { *v3_ptr++ = V3_OP_END; }
+void v3_point(void) { v3_room(1, V3_OP_POINT); }
+void v3_push(void) { v3_room(1, V3_OP_PUSH); }
+void v3_pop(void) { v3_room(1, V3_OP_POP); }
+void v3_end(void) { v3_room(1, V3_OP_END); }
 
 void v3_screen(uint8_t handle, uint16_t width)
 {
-    uint8_t *p = v3_ptr;
-    p[0] = V3_OP_SCREEN;
-    p[1] = handle;
-    p[2] = width;
-    p[3] = width >> 8;
-    v3_ptr = p + 4;
+    uint8_t *p = v3_room(4, V3_OP_SCREEN);
+    if (p) {
+        p[0] = handle;
+        put16(p + 1, width);
+    }
 }
 
 void v3_rotate(uint8_t axis, uint16_t angle)
 {
-    uint8_t *p = v3_ptr;
-    p[0] = V3_OP_ROTATE;
-    p[1] = axis;
-    p[2] = angle;
-    p[3] = angle >> 8;
-    v3_ptr = p + 4;
+    uint8_t *p = v3_room(4, V3_OP_ROTATE);
+    if (p) {
+        p[0] = axis;
+        put16(p + 1, angle);
+    }
 }
 
 /* A face of `n` corners. */
 static void v3_face(uint8_t n, const int16_t *const *corners)
 {
-    uint8_t *p = v3_ptr;
-    *p++ = V3_OP_FACE;
+    uint8_t *p = v3_room(2 + 6 * (uint32_t)n, V3_OP_FACE);
+    if (!p)
+        return;
     *p++ = n;
     for (uint8_t i = 0; i < n; i++)
-        for (uint8_t k = 0; k < 3; k++) {
-            int16_t v = corners[i][k];
-            *p++ = v;
-            *p++ = (uint16_t)v >> 8;
-        }
-    v3_ptr = p;
+        for (uint8_t k = 0; k < 3; k++, p += 2)
+            put16(p, (uint16_t)corners[i][k]);
 }
 
 void v3_face3(const int16_t *a, const int16_t *b, const int16_t *c)
@@ -449,13 +504,9 @@ void v3_face4(const int16_t *a, const int16_t *b, const int16_t *c, const int16_
 
 void v3_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-    uint8_t *p = v3_ptr;
-    p[0] = V3_OP_COLOUR;
-    p[1] = r;
-    p[2] = g;
-    p[3] = b;
-    p[4] = a;
-    v3_ptr = p + 5;
+    uint8_t *p = v3_room(5, V3_OP_COLOUR);
+    if (p)
+        rgba(p, r, g, b, a);
 }
 
 /* What the compiler may call. memcpy copies whole words where it can (about
@@ -670,12 +721,6 @@ void doc_end(void)
         p[0] = DOC_OP_END;
 }
 
-static void put16(uint8_t *p, uint32_t v)
-{
-    p[0] = v;
-    p[1] = v >> 8;
-}
-
 void doc_figure(uint16_t width, uint16_t height, uint8_t align, const void *path, uint16_t n)
 {
     uint8_t *p = doc_room(DOC_FIGURE_HEAD + n);
@@ -715,26 +760,18 @@ static uint8_t *path_room(uint32_t n, uint8_t op)
     return p + 1;
 }
 
-static void path_rgba(uint8_t *p, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
-{
-    p[0] = r;
-    p[1] = g;
-    p[2] = b;
-    p[3] = a;
-}
-
 void path_fill(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     uint8_t *p = path_room(5, PATH_FILL);
     if (p)
-        path_rgba(p, r, g, b, a);
+        rgba(p, r, g, b, a);
 }
 
 void path_stroke(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint16_t width)
 {
     uint8_t *p = path_room(7, PATH_STROKE);
     if (p) {
-        path_rgba(p, r, g, b, a);
+        rgba(p, r, g, b, a);
         put16(p + 4, width);
     }
 }

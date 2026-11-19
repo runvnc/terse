@@ -9,6 +9,13 @@ does exactly the same thing on every host. Programs and articles travel
 between hosts as blobs named by their hash, through relays, announced in
 signed feeds.
 
+Terse has three layers. The network (blobs, relays, feeds, entries,
+profiles, names and search) and the article format are the core: a
+native reader that implements those two, with no virtual machine at all,
+is a complete Terse client. The machine described below is an optional
+third layer that reuses them; a host that runs only the reader needs just
+its reading profile (devices 1, 2, 4 and 7).
+
 ## The machine
 
 The CPU is RV32IMC: the 32-bit RISC-V base integer set with multiply and

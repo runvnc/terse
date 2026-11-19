@@ -77,7 +77,7 @@ Fields an op does not use are ignored.
 | `10h` | Delete | [named records](terse:{content-records}) |
 | `11h` | Records | [named records](terse:{content-records}) |
 
-Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h` and `length` 0.
+Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h`, `length` 0 and `size` the blob's size.
 
 Put (`02h`) stores the `size` bytes at `addr` as a blob, on this host and on its relays. The bytes are copied at submit, so the program may reuse the memory at once. On success `id` is the blob's ID.
 
@@ -91,7 +91,9 @@ The device takes these steps in order:
 
 - 1. If the 52 bytes at `a0` do not lie wholly in RAM, the call returns 0 and nothing is written. (This is not the usual `FFFF_FFFEh` bad-buffer result.)
 - 2. If the request is invalid, the device writes status `04h` into the block and returns 0. Invalid means: an unknown `op`; a length, size, scope or publish kind out of range; a data range not where the field table requires; a publish title or find query that is not valid UTF-8; a name that is not a valid display name; a record name that is not valid.
-- 3. If eight requests are already pending, the call returns 0 and the block is not changed.
+- 3. If eight requests are already pending, the call returns 0 and the block is not changed (as in step 1: a program tells the two apart by counting its pending requests).
+
+The device does not look at the other pending requests: a block already pending may be submitted again, and then both requests write that block when they complete (the higher handle last). A data range of length 0 is valid at any address.
 - 4. Otherwise the device writes status `00h`, assigns the lowest free handle (1 to 8) and returns it; the request is pending. At this moment it copies the data of a put or save, the title of a publish, the query of a find and the name of a set profile or set nickname.
 
 So a 0 result with status `04h` means a bad request, and a 0 result with the block untouched means the block was not in RAM or all eight handles were in use. Check the block's own status before the submit if you need to tell them apart, for example by setting it to `FFh` first.
@@ -124,7 +126,7 @@ After a restore. A machine restored from a snapshot has the requests that were p
 | `02h` | `STATUS_NOT_FOUND` | not found |
 | `03h` | `STATUS_FAILED` | failed: network error or timeout (the host decides when to give up), a host that cannot keep records, a restored request |
 | `04h` | `STATUS_BAD_REQUEST` | bad request |
-| `05h` | `STATUS_REFUSED` | refused: the user said no, the host does not permit it, or the relays refused a find |
+| `05h` | `STATUS_REFUSED` | refused: the user said no, the host does not permit it, the host does not provide the operation (reading profile), or the relays refused a find |
 | `06h` | `STATUS_NO_ROOM` | no room: a save would exceed the owner's limits |
 
 ## Determinism
@@ -152,7 +154,7 @@ The header is valid if all of it is present and every field is as above (`TDOC_H
 |---|---|
 | any `submit`, also a rejected one | 4, plus the `ecall` |
 | an accepted put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name) | 1 per 4 bytes, rounded up, at submit |
-| bytes a get, load, record list or find writes to `addr` | 1 per 4 bytes, rounded up, per frame |
+| bytes a get, load, record list or find writes to `addr` | 1 per 4 bytes: all of a frame's completions added up, rounded up once |
 
 The delivery charge is taken from the budget of the frame the completions arrive in, before the program runs; the reference machine adds up the bytes of all that frame's completions and rounds once. A rejected submit copies nothing, and the fields a completion writes to the block are free. See [charges](terse:{charges}).
 

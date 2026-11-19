@@ -59,13 +59,13 @@ Rules:
 
 ## Outlines
 
-In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. The page's figures are outlined too. Outlines are not limited by the fill cap.
+In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. A rectangle's lines go from the current point (x0, y0) to (x1, y0), (x1, y1), (x0, y1) and back; a triangle's from the current point to the first point, the second, and back. The page's figures are outlined too. Outlines are not limited by the fill cap.
 
 ## The fill cap
 
 When filled shapes are filled (the clean style with fill mode 0), the area they cover in one list is limited. Each disc, rectangle and triangle, in list order, counts the area of its bounding box:
 
-- a disc: the square from (x - r, y - r) to (x + r, y + r);
+- a disc: the square from (x - r, y - r) to (x + r, y + r), computed without wrapping to 16 bits;
 - a rectangle: the rectangle itself;
 - a triangle: the smallest axis-aligned box holding its three points;
 

@@ -12,7 +12,7 @@ pub const RAM_PAGES_MAX: u8 = 128;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 
-/// Device slots and versions this implementation provides (SPEC 3).
+/// Device slots and versions this implementation provides (SPEC 2).
 pub const SUPPORTED_DEVICES: [DeviceReq; 7] = [
     DeviceReq { slot: 1, version: 0 },
     DeviceReq { slot: 2, version: 0 },
@@ -224,6 +224,22 @@ mod tests {
         let d = DeviceReq { slot: 2, version: 0 };
         let file = Image::build("", 4, &[d, d], &[0]);
         assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(2)));
+    }
+
+    /// SPEC 2: the title is the 16 bytes without their trailing 00h bytes;
+    /// a host does not check it (zeros inside, malformed UTF-8 and an
+    /// empty title are all accepted). A device slot listed twice is
+    /// refused, also slot 1.
+    #[test]
+    fn titles_are_not_checked() {
+        let mut file = valid();
+        file[16..32].copy_from_slice(b"a\0\xFF\xFEb\0\0\0\0\0\0\0\0\0\0\0");
+        assert_eq!(Image::parse(&file).unwrap().title, b"a\0\xFF\xFEb");
+        file[16..32].fill(0);
+        assert_eq!(Image::parse(&file).unwrap().title, b"");
+        let one = DeviceReq { slot: 1, version: 0 };
+        assert!(Image::parse(&Image::build("", 1, &[one], &[0])).is_ok());
+        assert_eq!(Image::parse(&Image::build("", 1, &[one, one], &[0])), Err(ImageError::DuplicateDevice(1)));
     }
 
     #[test]

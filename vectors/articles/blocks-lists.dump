@@ -1,0 +1,13 @@
+item
+  text "First item"
+item
+  text "Second item, a star goes on here -not an item: continues the second - nor this"
+item
+  text "Third item after a blank line an ordinary line continues the item."
+paragraph
+  text "1. Not a numbered list"
+item
+  text "Item"
+pre
+  line
+    text "    an indented line starts a preformatted block"

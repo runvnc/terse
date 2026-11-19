@@ -1,0 +1,29 @@
+paragraph
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "Notes"
+  text " and "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 as "a feed"
+  text " and "
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad" as "a program"
+  text ". [Notes]( "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") has a blank: text, then a bare link. []("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") has no text. [a "
+  code "b"
+  text " c]("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") holds a backquote. [see "
+  link article fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "]("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") holds a link. ["
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "nested"
+  text "] in brackets. [x]("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ".) has more than the link. [x]("
+  link program c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00 "Pad"
+  text ".) ends in a dot. [xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]("
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text ") is too long. "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef as "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+  text " is not."

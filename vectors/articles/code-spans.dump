@@ -1,0 +1,10 @@
+paragraph
+  text "A "
+  code "code span"
+  text " and "
+  code "two"
+  text " of them. Two backquotes `` are no span. Here `"
+  code "x"
+  text " the second backquote starts one. A `split span` is none: code spans do not cross lines. "
+  code "terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  text " is code, not a link. A lone ` backquote."

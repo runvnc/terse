@@ -1,0 +1,16 @@
+paragraph
+  text "A paragraph"
+heading
+  text "then a heading"
+paragraph
+  text "and a paragraph"
+pre
+  line
+    text "fence"
+paragraph
+  text "last"
+table 1 noheader
+  align start
+  row
+    cell
+      text "table"

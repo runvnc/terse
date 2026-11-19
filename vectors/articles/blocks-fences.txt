@@ -1,0 +1,8 @@
+```info string is ignored
+line one
+
+    indented line
+``` not a closing line
+````
+```   
+After the fence.
