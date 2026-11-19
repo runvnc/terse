@@ -443,7 +443,7 @@ impl Tube {
                 // The horizontal blur of the whitened light (averaged over
                 // f × f pixels for a half-resolution bloom), over the lit
                 // blocks and those within its reach.
-                let mut src = Vec::new();
+                let (mut src, mut rowsum, mut light) = (Vec::new(), Vec::new(), Vec::new());
                 for jj in 0..b.h_m.len() {
                     let ja = jj * f;
                     let pair = if f == 2 && ja + 1 < rows { ja..ja + 2 } else { ja..ja + 1 };
@@ -460,29 +460,38 @@ impl Tube {
                         // each side: column x at index x - lo + n.
                         src.clear();
                         src.resize((hi - lo + 2 * n) * 3, 0.0);
-                        for x in lo..hi {
-                            let mut sum = [0.0f32; 3];
-                            let mut count = 0.0;
-                            for j in pair.clone() {
-                                for sx in x * f..(x * f + f).min(tw) {
-                                    let at = j * stride + sx * 3;
-                                    let c = [
-                                        b.beam[at] + b.fast[at] + b.slow[at],
-                                        b.beam[at + 1] + b.fast[at + 1] + b.slow[at + 1],
-                                        b.beam[at + 2] + b.fast[at + 2] + b.slow[at + 2],
-                                    ];
-                                    let peak = c[0].max(c[1]).max(c[2]);
-                                    let white = (peak - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
-                                    sum[0] += c[0] + white;
-                                    sum[1] += c[1] + white;
-                                    sum[2] += c[2] + white;
-                                    count += 1.0;
-                                }
+                        // The whitened light of each full row over the run's
+                        // columns (a vectorised sum, then the whitening).
+                        let (c0, c1) = (lo * f, (hi * f).min(tw));
+                        rowsum.clear();
+                        rowsum.resize((c1 - c0) * 3, 0.0);
+                        let rows_in = pair.len() as f32;
+                        for j in pair.clone() {
+                            let (s0, s1) = (j * stride + c0 * 3, j * stride + c1 * 3);
+                            light.clear();
+                            light.extend(b.beam[s0..s1].iter().zip(&b.fast[s0..s1]).zip(&b.slow[s0..s1]).map(|((bm, f), s)| bm + f + s));
+                            for (acc, c) in rowsum.chunks_exact_mut(3).zip(light.chunks_exact(3)) {
+                                let white = (c[0].max(c[1]).max(c[2]) - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
+                                acc[0] += c[0] + white;
+                                acc[1] += c[1] + white;
+                                acc[2] += c[2] + white;
                             }
-                            let o = (x - lo + n) * 3;
-                            src[o] = sum[0] / count;
-                            src[o + 1] = sum[1] / count;
-                            src[o + 2] = sum[2] / count;
+                        }
+                        let dst = &mut src[n * 3..(n + hi - lo) * 3];
+                        if f == 1 {
+                            dst.copy_from_slice(&rowsum);
+                        } else {
+                            // The mean of each 2 x 2 (fewer at an odd edge).
+                            for (x, d) in dst.chunks_exact_mut(3).enumerate() {
+                                let a = &rowsum[x * 6..x * 6 + 3];
+                                let (b2, k) = match rowsum.get(x * 6 + 3..x * 6 + 6) {
+                                    Some(b2) => (b2, 0.5 / rows_in),
+                                    None => (&[0.0f32; 3][..], 1.0 / rows_in),
+                                };
+                                d[0] = (a[0] + b2[0]) * k;
+                                d[1] = (a[1] + b2[1]) * k;
+                                d[2] = (a[2] + b2[2]) * k;
+                            }
                         }
                         let out = &mut b.hblur[jj * bstride + lo * 3..jj * bstride + hi * 3];
                         out.fill(0.0);
@@ -617,9 +626,9 @@ impl Tube {
                         g.copy_from_slice(&bloom[lo..hi]);
                     }
                     let c = &mut light[..hi - lo];
-                    for (k, c) in c.iter_mut().enumerate() {
-                        let i = lo + k;
-                        *c = beam[i] + fast[i] + slow[i] + BLOOM * g[k];
+                    let (bm, fa, sl) = (&beam[lo..hi], &fast[lo..hi], &slow[lo..hi]);
+                    for ((((c, b), f), s), g) in c.iter_mut().zip(bm).zip(fa).zip(sl).zip(g.iter()) {
+                        *c = b + f + s + BLOOM * g;
                     }
                     for p in c.chunks_exact_mut(3) {
                         let spill = (p[0].max(p[1]).max(p[2]) - SPILL_FROM).max(0.0) * SPILL;
@@ -630,8 +639,10 @@ impl Tube {
                     for v in c.iter_mut() {
                         *v = tone(*v).min(1.0) * SRGB_STEPS as f32;
                     }
+                    let srgb: &[u8; SRGB_STEPS + 1] = srgb[..].try_into().expect("the table");
                     for (o, p) in out[x0..x1].iter_mut().zip(c.chunks_exact(3)) {
-                        *o = pack(srgb[p[0] as usize], srgb[p[1] as usize], srgb[p[2] as usize]);
+                        let at = |v: f32| srgb[(v as usize).min(SRGB_STEPS)];
+                        *o = pack(at(p[0]), at(p[1]), at(p[2]));
                     }
                 }
             }
