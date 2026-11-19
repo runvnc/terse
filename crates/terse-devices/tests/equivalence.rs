@@ -421,13 +421,12 @@ fn driver_failures() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let hello = programs().join("hello/hello.terse").display().to_string();
-    let shm_before = std::fs::read_dir("/dev/shm").map(|d| d.count()).unwrap_or(0);
     let cases = [("crash-exit", "TERSE_CRASH=exit TERSE_CRASH_AT=40", "--driver-timeout", "5"), ("crash-hang", "TERSE_CRASH=hang TERSE_CRASH_AT=40", "--driver-timeout", "2")];
     for (name, env, opt, v) in cases {
         let exe = crash_driver(tmp.path(), name);
         let cmd = format!("env {env} {exe}");
         let start = Instant::now();
-        let out = Command::new(terse_bus()).args([&hello, "--frames", "100", "--hash", "--driver", &format!("2={cmd}"), opt, v]).output().unwrap();
+        let out = bus_output([&hello, "--frames", "100", "--hash", "--driver", &format!("2={cmd}"), opt, v]);
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(3), "{name}: {err}");
         assert!(err.contains("driver") && err.contains(name), "{name}: {err}");
@@ -437,16 +436,24 @@ fn driver_failures() {
     // Slow to start: two seconds, within the default ten.
     let exe = crash_driver(tmp.path(), "slow-start");
     let cmd = format!("env TERSE_CRASH=slow TERSE_CRASH_THEN={} {exe}", env!("CARGO_BIN_EXE_terse-dev-terminal"));
-    let out = Command::new(terse_bus()).args([&hello, "--frames", "30", "--hash", "--driver", &format!("2={cmd}")]).output().unwrap();
+    let out = bus_output([&hello, "--frames", "30", "--hash", "--driver", &format!("2={cmd}")]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83");
     // ... and too slow for a one-second limit.
-    let out = Command::new(terse_bus()).args([&hello, "--frames", "30", "--driver", &format!("2={cmd}"), "--start-timeout", "1"]).output().unwrap();
+    let out = bus_output([&hello, "--frames", "30", "--driver", &format!("2={cmd}"), "--start-timeout", "1"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("did not connect"), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(processes_with(&exe).is_empty(), "slow start: a driver was left running");
-    let shm_after = std::fs::read_dir("/dev/shm").map(|d| d.count()).unwrap_or(0);
-    assert!(shm_after <= shm_before, "session files left in /dev/shm");
+}
+
+/// terse-bus's output; it must have left no session files behind.
+fn bus_output<const N: usize>(args: [&str; N]) -> std::process::Output {
+    let child = Command::new(terse_bus()).args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let pid = child.id();
+    let out = child.wait_with_output().unwrap();
+    let left = std::fs::read_dir("/dev/shm").map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(&format!("terse-bus-{pid}-"))).count()).unwrap_or(0);
+    assert_eq!(left, 0, "terse-bus {args:?} left its session files");
+    out
 }
 
 /// SIGTERM and SIGINT end a run cleanly: the drivers are shut down and

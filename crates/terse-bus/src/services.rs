@@ -153,9 +153,10 @@ pub fn prompt(p: Option<(&Prompt, usize)>) -> Vec<u8> {
     out.push(p.handle);
     out.extend_from_slice(&(waiting as u32).to_le_bytes());
     match &p.asked {
-        Asked::Subscribe(k) => {
+        Asked::Subscribe { feed, hints } => {
             out.push(1);
-            out.extend_from_slice(k);
+            out.extend_from_slice(feed);
+            put_str(&mut out, hints.as_bytes());
         }
         Asked::Unsubscribe(k) => {
             out.push(2);
@@ -188,7 +189,7 @@ pub fn read_prompt(b: &[u8]) -> Option<(Prompt, usize)> {
     let waiting = r.u32().ok()? as usize;
     let key = |r: &mut Reader| r.take(32).ok().map(|k| k.try_into().unwrap());
     let asked = match r.u8().ok()? {
-        1 => Asked::Subscribe(key(&mut r)?),
+        1 => Asked::Subscribe { feed: key(&mut r)?, hints: r.string().ok()? },
         2 => Asked::Unsubscribe(key(&mut r)?),
         3 => Asked::Publish { title: r.string().ok()?, size: r.u32().ok()?, document: r.u8().ok()? != 0 },
         4 => Asked::SetProfile { name: r.string().ok()?, listed: r.u8().ok()? != 0 },
@@ -219,6 +220,8 @@ mod tests {
         let p = Prompt { tag: 3, handle: 7, asked: Asked::Publish { title: "Hi".into(), size: 812, document: true } };
         let (q, n) = read_prompt(&prompt(Some((&p, 2)))).unwrap();
         assert_eq!((q, n), (p, 2));
+        let p = Prompt { tag: 1, handle: 2, asked: Asked::Subscribe { feed: [9; 32], hints: "relay.example".into() } };
+        assert_eq!(read_prompt(&prompt(Some((&p, 1)))).unwrap(), (p, 1));
         assert!(read_prompt(&prompt(None)).is_none());
         let mut t: [Option<SnapshotInfo>; SLOTS] = Default::default();
         t[3] = Some(SnapshotInfo { image: [5; 32], identity: Some(ProgramId { publisher: [0; 32], name: b"holo".to_vec() }), frames: 9, time: 77 });

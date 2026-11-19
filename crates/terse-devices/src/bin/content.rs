@@ -115,6 +115,7 @@ fn decode(b: &[u8]) -> Option<(Vec<Completion>, bool)> {
             0x04 => Outcome::Done,
             0x05 => Outcome::Published { seq: r.u32().ok()? },
             0x06 => Outcome::Identity { key: r.take(32).ok()?.try_into().ok()? },
+            0x0C => Outcome::IdentityHints { key: r.take(32).ok()?.try_into().ok()?, hints: r.blob().ok()?.to_vec() },
             0x07 => Outcome::NotFound,
             0x08 => Outcome::Failed,
             0x09 => Outcome::Refused,
@@ -253,7 +254,8 @@ impl Device for ContentDriver {
         let (length, addr, size) = (u32_at(b, LENGTH), u32_at(b, ADDR), u32_at(b, SIZE));
         let data = match b[0] {
             0x02 | 0x0E => Some((addr, size as usize)),
-            0x07 | 0x0B | 0x0C => Some((addr, length as usize)),
+            // Publish's title, a name, a subscribe's hints (NETWORK 4.9).
+            0x05 | 0x07 | 0x0B | 0x0C => Some((addr, length as usize)),
             0x0A => Some((addr, size as usize)),
             _ => None,
         };
@@ -414,6 +416,36 @@ impl Device for ContentDriver {
                 Ok(services::table(&Snapshots::in_data_dir(&data).table(&owner)))
             }
             _ => Err(format!("no service {name}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The input record (DEVICES.md 8) carries every outcome terse-core's
+    /// recordings know, an identity with its relay hints (kind 0Ch)
+    /// included, and reads back the same.
+    #[test]
+    fn records_round_trip() {
+        let outcomes = [
+            Outcome::Got { size: 9, data: b"abc".to_vec() },
+            Outcome::Records { total: 2, data: vec![1, 2] },
+            Outcome::Put { id: [3; 32] },
+            Outcome::Done,
+            Outcome::Published { seq: 7 },
+            Outcome::Identity { key: [4; 32] },
+            Outcome::IdentityHints { key: [5; 32], hints: b"relay.example".to_vec() },
+            Outcome::NotFound,
+            Outcome::Failed,
+            Outcome::Refused,
+            Outcome::NoRoom,
+            Outcome::BadRequest,
+        ];
+        let completions: Vec<Completion> = outcomes.into_iter().enumerate().map(|(i, outcome)| Completion { handle: i as u8 + 1, outcome }).collect();
+        for feeds in [false, true] {
+            assert_eq!(decode(&encode(&completions, feeds)), Some((completions.clone(), feeds)));
         }
     }
 }
