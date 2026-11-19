@@ -26,8 +26,8 @@
 
 
 
- Feed key: 0b513ad9b4924015ca0902ed079044d3ac5dbec2306f06948c10da8eb6e39f2d
- Type or paste a feed key   Enter: subscribe   Esc: cancel
+ Address: 0b513ad9b4924015ca0902ed079044d3ac5dbec2306f06948c10da8eb6e39f2d
+ Type or paste it (a key, or key@relay)   Enter: subscribe   Esc: cancel
 -- page: height 86, scroll 0 (stored 0), region 32 0 576 448 --
     8  20     0   sans16b |Feeds
    28  15     0   sans12 |1 subscription  ·  no key of your own yet

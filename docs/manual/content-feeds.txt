@@ -6,10 +6,10 @@ Eleven operations of the content device (device 4) work with feeds: numbered ser
 |---|---|---|---|
 | `03h` | Subscriptions | `content_feed(r, CONTENT_SUBSCRIPTIONS, ...)` | no |
 | `04h` | Timeline | `content_feed(r, CONTENT_TIMELINE, ...)` | no |
-| `05h` | Subscribe | `content_follow(r, CONTENT_SUBSCRIBE, key)` | yes |
+| `05h` | Subscribe | `content_follow(r, CONTENT_SUBSCRIBE, key)`, `content_subscribe(r, key, hints, len)` | yes |
 | `06h` | Unsubscribe | `content_follow(r, CONTENT_UNSUBSCRIBE, key)` | yes |
 | `07h` | Publish | `content_publish`, `content_publish_kind` | yes |
-| `08h` | Identity | `content_identity` | no |
+| `08h` | Identity | `content_identity`, `content_identity_hints` | no |
 | `09h` | Names | `content_names` | no |
 | `0Ah` | Find | `content_find` | no |
 | `0Bh` | Set profile | `content_set_profile` | yes |
@@ -61,7 +61,11 @@ The current version of each program (kind 3 entry) of the subscribed feeds, in i
 
 ## Subscribe (05h) and unsubscribe (06h)
 
-`id` is a feed key; `offset`, `length`, `addr` and `size` are not used. Subscribe adds the feed to the host's subscriptions; unsubscribe removes it. With the user's consent the request completes with `01h` once the list has changed; the feed's entries arrive later, each batch announced by a feeds-updated event. Without asking, it completes with `01h` at once if the list already is as asked (subscribing to a feed already subscribed, unsubscribing from one that is not), and with `05h` if `id` is not a valid feed key (an Ed25519 public key). An unsubscribe from an invalid key meets both rules; the reference host completes it with `01h`, since such a feed cannot be subscribed.
+`id` is a feed key; `offset` and `size` are not used. Subscribe adds the feed to the host's subscriptions; unsubscribe removes it.
+
+A subscribe may carry the hints of the feed's address ([the network](terse:{network}), "Feed addresses"): `length` bytes at `addr`, in ROM or RAM, copied at submit, the text after the `@` exactly, such as `relay.example:9000` or `a.example,[2001:db8::7]`: one or two hints, at most 161 bytes. `length` 0 gives none (`content_follow` sets it so; `content_subscribe` gives hints). Malformed hints are a bad request (`04h` at submit). The host keeps them with the subscription and, if its own relays do not hold the feed, follows it on the relays they name. Unsubscribe does not use `length` and `addr`.
+
+ With the user's consent the request completes with `01h` once the list has changed; the feed's entries arrive later, each batch announced by a feeds-updated event. Without asking, it completes with `01h` at once if the list already is as asked (subscribing to a feed already subscribed, whose hints are then left as they were, unsubscribing from one that is not), and with `05h` if `id` is not a valid feed key (an Ed25519 public key). An unsubscribe from an invalid key meets both rules; the reference host completes it with `01h`, since such a feed cannot be subscribed.
 
 ## Publish (07h)
 
@@ -78,7 +82,9 @@ The document check happens at completion because the blob is not the program's t
 
 ## Identity (08h)
 
-On completion `id` holds the host's own feed key, or the status is `02h` if the host has no identity yet. `offset`, `length`, `addr` and `size` are not used. No consent.
+On completion `id` holds the host's own feed key, or the status is `02h` if the host has no identity yet. No consent. `offset` and `size` are not used.
+
+If `length` is not 0, `addr` is a buffer of `length` bytes in RAM (1 to 16,384; else a bad request) for the hints of the host's own feed address: its public relays, from its profile's `relay` lines, then its relays. On success the host writes the hint list there (at most 161 bytes, or as many whole hints as fit) and sets `length` to the bytes written. 0 means it has none: its address is the bare key, and only people on the same relays find its feed. Show the address as the key, `@` and those bytes. `content_identity` sets `length` to 0; `content_identity_hints(r, buf, len)` gives a buffer.
 
 ## Display names
 
@@ -106,6 +112,7 @@ One record per feed that is subscribed or has a nickname, in increasing order of
 | 0 | `NAME_NICKNAME` | the name is the user's local nickname for the feed |
 | 1 | `NAME_PROFILE` | the feed has a profile in force |
 | 2 | `NAME_UNSUBSCRIBED` | the feed is not subscribed; it is listed for its nickname |
+| 3 | `NAME_HINTED` | the host follows the feed through a relay a hint of its address names, since its own relays do not hold it |
 
 The other bits are zero. The name is the nickname if there is one, else the display name of the feed's profile in force, else empty. Bit 1 is set whenever a profile is in force, whichever name is given (for a feed that is not subscribed, a profile the host still holds).
 
@@ -142,7 +149,7 @@ Sets the user's nickname for the feed `id` to the `length` bytes at `addr` (0 to
 Subscribe, unsubscribe, publish, set profile and set nickname change what the user follows, speak in the user's name or change what the user sees. The host asks the user before it carries one out; the request stays pending until the answer.
 
 - The host draws its own prompt over the bottom of the screen, on top of everything the program shows. The program cannot draw it, read it or answer it.
-- The prompt names the image's title (in a system of machines, that of the machine asking) and what is asked: the feed key, for example as `3fa9c2…c21e07`; for a publish, whether an article or a document, its title and size; for a profile, the display name and whether it will be searchable; for a nickname, the feed key and the nickname.
+- The prompt names the image's title (in a system of machines, that of the machine asking) and what is asked: the feed key, for example as `3fa9c2…c21e07`, and for a subscribe with hints the relays they name, which the host may connect to; for a publish, whether an article or a document, its title and size; for a profile, the display name and whether it will be searchable; for a nickname, the feed key and the nickname.
 - While it is shown the keyboard goes to the host. Y allows; N or Escape refuses; other keys, Enter included, do nothing.
 - One request is asked about at a time; others wait, in increasing handle order.
 - A refusal completes the request with `05h`.

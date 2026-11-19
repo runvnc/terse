@@ -166,6 +166,10 @@ struct Fixture {
     nicknames: Vec<(FeedKey, String)>,
     /// The host's relays (none: no network).
     relays: Vec<String>,
+    /// The hints of subscribed feeds (NETWORK 4.9).
+    hints: Vec<(FeedKey, String)>,
+    /// Hint relays at loopback addresses are used (for relays in this test).
+    loopback_hints: bool,
 }
 
 impl Fixture {
@@ -181,6 +185,8 @@ impl Fixture {
             time: T0,
             nicknames: Vec::new(),
             relays: Vec::new(),
+            hints: Vec::new(),
+            loopback_hints: false,
         }
     }
 
@@ -248,7 +254,16 @@ impl Fixture {
         for url in &self.relays {
             node.add_relay(url, terse_net::relay::RelayClient::websocket(url, terse_net::relay::DEFAULT_TIMEOUT));
         }
-        node.set_subscriptions(Subscriptions::in_memory(self.feeds.iter().copied()));
+        let mut subscriptions = Subscriptions::in_memory(self.feeds.iter().copied());
+        for (feed, hints) in &self.hints {
+            subscriptions.set_hints(feed, Some(hints)).unwrap();
+        }
+        node.set_subscriptions(subscriptions);
+        if self.loopback_hints {
+            node.set_feed_relays_unrestricted(Box::new(|url| {
+                terse_net::relay::RelayClient::websocket(url, terse_net::relay::DEFAULT_TIMEOUT)
+            }));
+        }
         node.set_identity_path(self.config.path().join("identity.key")).unwrap();
         let mut nicknames = terse_net::profile::Nicknames::in_memory();
         for (feed, name) in &self.nicknames {
@@ -275,6 +290,8 @@ struct Run {
     submits: Vec<u32>,
     /// Every get the program sent: frame, blob, length.
     gets: Vec<(u32, [u8; 32], u16)>,
+    /// Every subscribe the program sent: the feed and its hints.
+    subscribes: Vec<([u8; 32], Vec<u8>)>,
     /// The most requests pending at once.
     most_pending: usize,
     pending: usize,
@@ -302,6 +319,7 @@ impl Run {
             heights: Vec::new(),
             submits: Vec::new(),
             gets: Vec::new(),
+            subscribes: Vec::new(),
             most_pending: 0,
             pending: 0,
             reading: false,
@@ -344,6 +362,9 @@ impl Run {
         for r in &requests {
             if let terse_core::RequestKind::Get { id, length, .. } = r.kind {
                 self.gets.push((frame, id, length));
+            }
+            if let terse_core::RequestKind::Subscribe { feed, hints } = &r.kind {
+                self.subscribes.push((*feed, hints.clone()));
             }
         }
         self.pending += requests.len();
@@ -666,7 +687,7 @@ fn subscribe_by_key() {
     let view = run.view();
     golden("feeds-entry", &view);
     let entry = row(&view, 28);
-    assert_eq!(entry.trim_end(), format!(" Feed key: {}", to_hex(&bob().feed_key())));
+    assert_eq!(entry.trim_end(), format!(" Address: {}", to_hex(&bob().feed_key())));
     assert_eq!(run.machine.page().unwrap().region().h, 448, "the page leaves row 28 to the entry");
     blank_rows(&view, 28);
     run.press("enter");
@@ -691,11 +712,11 @@ fn subscribe_with_a_malformed_key() {
     let mut run = Run::with_consent(&f, "10 press f\n12 press s\n", Consent::Allow);
     run.frames(14);
     run.press("enter");
-    assert_eq!(run.status(), " Type or paste a feed key (64 hex digits), or Esc to cancel");
+    assert_eq!(run.status(), " Type or paste a feed key or address (key@relay), or Esc to cancel");
     run.text("abc 123");
     run.press("enter");
     assert_eq!(run.status(), " Not a feed key: 6 hex digits, but a key has 64");
-    assert!(row(&run.screen(), 28).starts_with(" Feed key: abc123"), "still typing: {}", row(&run.screen(), 28));
+    assert!(row(&run.screen(), 28).starts_with(" Address: abc123"), "still typing: {}", row(&run.screen(), 28));
     run.press("backspace");
     run.text("xyz");
     run.press("enter");
@@ -708,6 +729,19 @@ fn subscribe_with_a_malformed_key() {
     run.text(&format!("{k}0"));
     run.press("enter");
     assert_eq!(run.status(), " Not a feed key: 65 hex digits, but a key has 64");
+    // Addresses (NETWORK 4.9): malformed hints are named as such.
+    for bad in ["@", "@a.example,b.example,c.example", "@a.example:0", "@a_b.example", "@a.example."] {
+        run.press("esc");
+        run.press("s");
+        run.text(&format!("{k}{bad}"));
+        run.press("enter");
+        assert_eq!(
+            run.status(),
+            " Not a feed address: after @ give one or two relays, host or host:port",
+            "{bad}"
+        );
+    }
+    assert!(run.subscribes.is_empty(), "nothing was asked: {:?}", run.subscribes);
     run.press("esc");
     run.press("esc");
     assert!(run.page_text().starts_with("Timeline\n10 articles  ·  2 feeds"));
@@ -751,7 +785,7 @@ fn unsubscribe() {
 }
 
 #[test]
-fn help_shows_the_own_key() {
+fn help_shows_the_own_address() {
     let f = Fixture::populated().with_identity(false);
     let mut run = Run::new(&f, "10 text ?\n");
     run.frames(14);
@@ -763,7 +797,9 @@ fn help_shows_the_own_key() {
     let want = format!("{} {} {} {}\n{} {} {} {}\n", group(0), group(1), group(2), group(3), group(4), group(5), group(6), group(7));
     assert!(run.page_text().contains(&want), "{}", run.page_text());
     assert!(view.contains("mono15"), "the key in the mono face");
-    assert!(run.page_text().contains("subscribe: type or paste a feed key"));
+    assert!(run.page_text().contains("subscribe: type or paste a feed key or address"));
+    assert!(run.page_text().contains("Your feed address\n"), "{}", run.page_text());
+    assert!(run.page_text().contains("only people who use the same relay as you will find your feed"), "{}", run.page_text());
     // It is longer than the screen: it scrolls, with its position shown.
     assert_eq!(run.pct(), Some(0), "{}", run.status());
     run.press("end");
@@ -775,6 +811,146 @@ fn help_shows_the_own_key() {
     let mut run = Run::new(&f, "10 press f1\n");
     run.frames(14);
     assert!(run.page_text().contains("This host has no feed key yet. Press T to publish a test article"), "{}", run.page_text());
+}
+
+/// A profile of carol's (the host's own feed, NETWORK 4.6) whose relay
+/// lines name public relays and a private one, stored as received.
+fn carol_profile_with_relays(f: &Fixture) {
+    let doc = b"listed: no\nrelay: ws://192.168.1.5:7878\nrelay: ws://relay.example:7878\nrelay: ws://[2001:db8::7]:9000/\n";
+    BlobStore::open(f.store.path(), None).unwrap().put(doc).unwrap();
+    let e = terse_net::Entry::profile(carol().feed_key(), 9, T0, doc, "Carol").sign(&carol()).unwrap();
+    terse_net::FeedStore::beside_blobs(f.store.path()).insert(&e).unwrap();
+}
+
+/// NETWORK 4.9: the help page shows the own address with the hints the
+/// host gives (identity, SPEC 9.5): the public relays of the profile.
+#[test]
+fn help_shows_the_own_address_with_hints() {
+    let f = Fixture::populated().with_identity(false);
+    carol_profile_with_relays(&f);
+    let mut run = Run::new(&f, "10 text ?\n");
+    run.frames(14);
+    let view = run.view();
+    golden("help-hinted", &view);
+    let h = to_hex(&carol().feed_key());
+    let group = |g: usize| &h[g * 8..g * 8 + 8];
+    let want = format!(
+        "{} {} {} {}\n{} {} {} {}\n@relay.example,\n[2001:db8::7]:9000\n",
+        group(0),
+        group(1),
+        group(2),
+        group(3),
+        group(4),
+        group(5),
+        group(6),
+        group(7)
+    );
+    assert!(run.page_text().contains(&want), "{}", run.page_text());
+    assert!(run.page_text().contains("names your public relays"), "{}", run.page_text());
+    // On a host of the reading profile too.
+    let mut run = Run::reading(&f, "10 text ?\n", Consent::Deny);
+    run.frames(14);
+    assert!(run.page_text().contains(&want), "{}", run.page_text());
+}
+
+/// NETWORK 4.9: an address pasted into the subscribe entry, as a link,
+/// with its hints, which go with the subscribe (SPEC 9.5).
+#[test]
+fn subscribe_by_pasted_address() {
+    let mut f = Fixture::populated();
+    f.feeds = vec![alice().feed_key()];
+    let mut run = Run::with_consent(&f, "10 press f\n12 press s\n", Consent::Allow);
+    run.frames(14);
+    let address = format!("  terse:feed/{}@relay.example:7000,[2001:db8::1]\n", grouped(&bob().feed_key()));
+    run.text(&address);
+    let view = run.view();
+    golden("feeds-entry-address", &view);
+    assert!(row(&view, 28).starts_with(" Address: …"), "{}", row(&view, 28));
+    assert!(row(&view, 28).trim_end().ends_with("@relay.example:7000,[2001:db8::1]"), "{}", row(&view, 28));
+    run.press("enter");
+    run.frames(4);
+    assert_eq!(run.subscribes, [(bob().feed_key(), b"relay.example:7000,[2001:db8::1]".to_vec())]);
+    assert_eq!(run.status(), format!(" Subscribed to {}", short(&bob().feed_key())));
+    assert!(run.page_text().starts_with("Feeds\n2 subscriptions"), "{}", run.page_text());
+    // The same on a host of the reading profile, which must carry it out.
+    let mut run = Run::reading(&f, "10 press f\n12 press s\n", Consent::Allow);
+    run.frames(14);
+    run.text(&format!("{}@relay.example", to_hex(&bob().feed_key())));
+    run.press("enter");
+    run.frames(4);
+    assert_eq!(run.subscribes, [(bob().feed_key(), b"relay.example".to_vec())]);
+    assert_eq!(run.status(), format!(" Subscribed to {}", short(&bob().feed_key())));
+}
+
+/// NETWORK 4.9, ARTICLE.md 4.1: a feed link with hints opens the feed's
+/// page, which shows them and passes them on when S subscribes.
+#[test]
+fn feed_page_from_a_hinted_link() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let text = format!(
+        "Follow bob at terse:feed/{}@relay.example:7000,203.0.113.9 (his relays).\n",
+        to_hex(&bob().feed_key())
+    );
+    f.publish(&alice(), "Bob's address", text.as_bytes(), None);
+    let mut run = Run::with_consent(&f, "10 press enter\n14 press tab\n", Consent::Allow);
+    run.frames(18);
+    let shown = format!("[terse:feed/{}@relay.example:7000,203.0.113.9]{{1}}", short(&bob().feed_key()));
+    assert!(run.page_text().contains(&shown), "{}", run.page_text());
+    assert!(run.status().contains("@relay.example:7000,203.0.113.9  (a feed)"), "{}", run.status());
+    run.press("enter");
+    run.frames(2);
+    let view = run.view();
+    golden("feed-page-hinted", &view);
+    let text = run.page_text();
+    assert!(text.contains("Relays its address names:\nrelay.example:7000\n203.0.113.9\n"), "{text}");
+    assert!(text.contains("your host connects to"), "{text}");
+    run.press("s");
+    run.frames(4);
+    assert_eq!(run.subscribes, [(bob().feed_key(), b"relay.example:7000,203.0.113.9".to_vec())]);
+    assert_eq!(run.status(), format!(" Subscribed to {}", short(&bob().feed_key())));
+    // A feed page reached otherwise has no hints.
+    run.press("esc");
+    run.press("esc");
+    run.press("f");
+    run.press("enter");
+    run.frames(2);
+    assert!(!run.page_text().contains("Relays its address names"), "{}", run.page_text());
+}
+
+/// NETWORK 4.9: a feed followed through a relay its address names is
+/// marked in the feeds view (names flag 08h, SPEC 9.5), over two real
+/// relays: the host's own (A), which does not hold bob's feed, and B.
+#[test]
+fn feeds_view_marks_a_feed_followed_through_a_hint() {
+    let dirs: Vec<tempfile::TempDir> = (0..2).map(|_| tempfile::tempdir().unwrap()).collect();
+    let serve = |dir: &std::path::Path| {
+        let relay = std::sync::Arc::new(terse_relay::Relay::new(BlobStore::open(dir, None).unwrap(), 1024));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let r = relay.clone();
+        std::thread::spawn(move || terse_relay::serve(listener, r));
+        (url, relay)
+    };
+    let (url_a, _a) = serve(dirs[0].path());
+    let (url_b, b) = serve(dirs[1].path());
+    let article = b"On B only.\n".to_vec();
+    b.blobs().put(&article).unwrap();
+    let e = terse_net::Entry::article(bob().feed_key(), 1, T0, &article, None, "Bob on B").sign(&bob()).unwrap();
+    assert_eq!(b.publish(&e.bytes), 1);
+    let mut f = Fixture::new();
+    f.feeds = vec![bob().feed_key()];
+    f.relays = vec![url_a];
+    f.hints = vec![(bob().feed_key(), url_b.strip_prefix("ws://").unwrap().to_string())];
+    f.loopback_hints = true;
+    let mut run = Run::new(&f, "10 press f\n");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !run.page_text().contains("@ through a relay its address names") {
+        assert!(std::time::Instant::now() < deadline, "no mark: {}", run.page_text());
+        run.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(run.page_text().contains("@ through a relay its address names  ·  highest #1"), "{}", run.page_text());
 }
 
 #[test]

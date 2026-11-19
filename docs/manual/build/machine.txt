@@ -198,7 +198,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:3ec63f64ea30e370f7d0f8d59f35820f3212530b74dca4e4f5e06f83d7996859), slot 1, always present:
+[The system device](terse:b90f908341dc1bc21cebed98256c6751a21e2ab68a6a3e2dd0c802ba606391e9), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -237,7 +237,7 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:6b2721c9a17a006a7dbc4e07db116ff7f2e87b8050f77765fb40a8d56a4a94d9), [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) and [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a)):
+The content device, slot 4 (see [blobs](terse:555cb77fb400d5ce32c41ecd174cd2edd4ab3f60f445eb2bb3d1e41ef15d5d90), [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) and [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

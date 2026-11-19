@@ -13,9 +13,12 @@
 //! that do not trust the disk decode (and so verify) them again.
 //!
 //! A host's subscription list is a separate text file, one feed key in hex
-//! per line (see [`Subscriptions`]).
+//! per line (see [`Subscriptions`]); the hints a subscription was made with
+//! (NETWORK 4.9) are in another, `subscription-hints` beside it, one
+//! `<key hex>@<hint list>` per line, so that older versions still read the
+//! list.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -201,17 +204,43 @@ impl FeedStore {
 }
 
 /// A host's subscribed feeds (NETWORK 4.4), optionally saved to a file of
-/// hex keys, one per line, rewritten atomically on every change.
+/// hex keys, one per line, rewritten atomically on every change, and the
+/// hint list each was subscribed with, if any (NETWORK 4.9).
 #[derive(Debug, Default)]
 pub struct Subscriptions {
     path: Option<PathBuf>,
     feeds: BTreeSet<FeedKey>,
+    /// Valid hint lists, as written; only for feeds in `feeds`.
+    hints: BTreeMap<FeedKey, String>,
+}
+
+/// The file of hints beside the subscription list at `path`.
+fn hints_path(path: &Path) -> PathBuf {
+    path.with_file_name("subscription-hints")
+}
+
+/// Writes `text` to `path` atomically.
+fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    crate::identity::private_dir(dir)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut f = fs::File::create(&temp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        fs::rename(&temp, path)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written
 }
 
 impl Subscriptions {
     /// An unsaved list.
     pub fn in_memory(feeds: impl IntoIterator<Item = FeedKey>) -> Self {
-        Subscriptions { path: None, feeds: feeds.into_iter().collect() }
+        Subscriptions { path: None, feeds: feeds.into_iter().collect(), hints: BTreeMap::new() }
     }
 
     /// Loads the list in `path` (empty if the file does not exist).
@@ -227,7 +256,47 @@ impl Subscriptions {
             let key = parse_hex(line.trim()).ok_or(format!("{}:{}: not a feed key", path.display(), i + 1))?;
             feeds.insert(key);
         }
-        Ok(Subscriptions { path: Some(path), feeds })
+        // Hints: lines that are not a subscribed key and a valid hint list
+        // are skipped (the file is only an aid).
+        let mut hints = BTreeMap::new();
+        if let Ok(text) = fs::read_to_string(hints_path(&path)) {
+            for line in text.lines() {
+                let Some((key, list)) = line.trim().split_once('@') else { continue };
+                if let Some(key) = parse_hex(key).filter(|k| feeds.contains(k))
+                    && list.len() <= terse_core::hints::MAX_HINT_LIST
+                    && terse_core::hints::parse_hints(list.as_bytes()).is_ok()
+                {
+                    hints.insert(key, list.to_string());
+                }
+            }
+        }
+        Ok(Subscriptions { path: Some(path), feeds, hints })
+    }
+
+    /// The hint list `feed` was subscribed with, if any.
+    pub fn hints(&self, feed: &FeedKey) -> Option<&str> {
+        self.hints.get(feed).map(String::as_str)
+    }
+
+    /// The feeds subscribed with hints.
+    pub fn hinted(&self) -> impl Iterator<Item = (&FeedKey, &str)> {
+        self.hints.iter().map(|(k, h)| (k, h.as_str()))
+    }
+
+    /// Remembers (or with `None` forgets) the hint list of a subscribed
+    /// feed; `hints` must be a valid hint list. False if nothing changed.
+    pub fn set_hints(&mut self, feed: &FeedKey, hints: Option<&str>) -> io::Result<bool> {
+        if !self.feeds.contains(feed) {
+            return Ok(false);
+        }
+        let changed = match hints {
+            Some(h) => self.hints.insert(*feed, h.to_string()).as_deref() != Some(h),
+            None => self.hints.remove(feed).is_some(),
+        };
+        if changed {
+            self.save_hints()?;
+        }
+        Ok(changed)
     }
 
     pub fn feeds(&self) -> impl Iterator<Item = &FeedKey> {
@@ -256,26 +325,23 @@ impl Subscriptions {
         let removed = self.feeds.remove(feed);
         if removed {
             self.save()?;
+            if self.hints.remove(feed).is_some() {
+                self.save_hints()?;
+            }
         }
         Ok(removed)
     }
 
     fn save(&self) -> io::Result<()> {
         let Some(path) = &self.path else { return Ok(()) };
-        let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        crate::identity::private_dir(dir)?;
         let text: String = self.feeds.iter().map(|k| format!("{}\n", to_hex(k))).collect();
-        let temp = dir.join(format!(".subscriptions.{}.tmp", std::process::id()));
-        let written = (|| {
-            let mut f = fs::File::create(&temp)?;
-            f.write_all(text.as_bytes())?;
-            f.sync_all()?;
-            fs::rename(&temp, path)
-        })();
-        if written.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        written
+        write_atomic(path, &text)
+    }
+
+    fn save_hints(&self) -> io::Result<()> {
+        let Some(path) = &self.path else { return Ok(()) };
+        let text: String = self.hints.iter().map(|(k, h)| format!("{}@{h}\n", to_hex(k))).collect();
+        write_atomic(&hints_path(path), &text)
     }
 }
 
@@ -358,6 +424,19 @@ mod tests {
         let reloaded = Subscriptions::load(&path).unwrap();
         assert_eq!(reloaded.feeds().collect::<Vec<_>>(), [&[1; 32]]);
         assert_eq!(fs::read_to_string(&path).unwrap(), format!("{}\n", to_hex(&[1; 32])));
+        // Hints are kept beside the list, for subscribed feeds only.
+        assert!(!subs.set_hints(&[2; 32], Some("b.example")).unwrap());
+        assert!(subs.set_hints(&[1; 32], Some("a.example,b.example:1")).unwrap());
+        assert!(!subs.set_hints(&[1; 32], Some("a.example,b.example:1")).unwrap());
+        let reloaded = Subscriptions::load(&path).unwrap();
+        assert_eq!(reloaded.hints(&[1; 32]), Some("a.example,b.example:1"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), format!("{}\n", to_hex(&[1; 32])), "the list is unchanged");
+        let hints = dir.path().join("config/subscription-hints");
+        fs::write(&hints, format!("{}@a,b,c\n{}@ok.example\njunk\n", to_hex(&[1; 32]), to_hex(&[3; 32]))).unwrap();
+        assert_eq!(Subscriptions::load(&path).unwrap().hinted().count(), 0, "bad and unsubscribed lines skipped");
+        assert!(subs.set_hints(&[1; 32], Some("a.example")).unwrap());
+        assert!(subs.remove(&[1; 32]).unwrap());
+        assert_eq!(fs::read_to_string(&hints).unwrap(), "");
         fs::write(&path, "nonsense\n").unwrap();
         assert!(Subscriptions::load(&path).is_err());
     }

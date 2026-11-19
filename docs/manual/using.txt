@@ -10,7 +10,7 @@ cargo run --release -p terse-host -- --demo
 
 builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (`~/.config/terse/identity.key`), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, `cargo run --release -p terse-host` with no image named opens the shell.
 
-Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed keys. How relays work is in [The network](terse:{network}).
+Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:{network}).
 
 The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective).
 
@@ -62,7 +62,7 @@ A program may ask the host to subscribe to a feed, unsubscribe from one, publish
 
 | Request | The prompt shows |
 |---|---|
-| Subscribe, unsubscribe | the feed key, as its first and last six hex digits (`3fa9c2…c21e07`) |
+| Subscribe, unsubscribe | the feed key, as its first and last six hex digits (`3fa9c2…c21e07`), and the relays a feed address names (the host may connect to them) |
 | Publish | whether it is an article or a document, its title and size |
 | Set profile | the display name, and whether search may find it |
 | Set nickname | the feed key and the nickname |
@@ -71,7 +71,7 @@ Every prompt names the title of the program that asks. Y allows; N or Esc refuse
 
 ## The reader
 
-The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed key. The help page (? or F1) lists the keys of every view and shows your own feed key in full, in groups of eight hex digits.
+The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed address. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then `@` and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.
 
 Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and `↳ reply` or `not downloaded` where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.
 
@@ -88,13 +88,13 @@ Timeline: the articles of the feeds you follow, newest first, each with its titl
 
 T publishes "Test article N", a few paragraphs: the reader puts the article, publishes it and, if you do not yet follow your own feed, subscribes you to it so that it shows in the timeline. The host asks you first, and the status row says what came of each step. T works in the timeline, feeds and help views.
 
-Feeds (F): the feeds you follow, each with its name and short key (`you` marks your own, `your nickname` a name you gave it), the highest entry number and how many entries are held.
+Feeds (F): the feeds you follow, each with its name and short key (`you` marks your own, `your nickname` a name you gave it, `@ through a relay its address names` one your relays do not hold), the highest entry number and how many entries are held.
 
 | Key | In the feeds view |
 |---|---|
 | Up, Down, PgUp, PgDn, Home, End, wheel, click | select a feed |
 | Enter | the feed's page |
-| S | subscribe: type or paste a feed key on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes |
+| S | subscribe: type or paste a feed key or address (`key@relay`, or a `terse:feed/` link) on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes |
 | U | unsubscribe from the selected feed |
 | N | a nickname for the selected feed, which only you see; empty removes it |
 | P | your public name, then Y or N: whether search may find it |
@@ -110,7 +110,7 @@ Search (/): type words and press Enter. The reader searches two places at once a
 
 Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so "köln" finds "Köln", but "KÖLN" does not). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
 
-Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full and whether you follow it. S subscribes, U unsubscribes, Esc goes back.
+Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full, the relays a link's address names, and whether you follow it. S subscribes (with those relays, which your host contacts only if your relays lack the feed), U unsubscribes, Esc goes back.
 
 ## Reading an article
 

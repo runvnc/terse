@@ -250,7 +250,8 @@ provides the machine's **reading profile**:
   (section 11), each complete except as said next for device 4;
 - within Content it must carry out get (`01h`, section 9.2),
   subscriptions (`03h`), timeline (`04h`), names (`09h`), identity
-  (`08h`), subscribe (`05h`) and unsubscribe (`06h`) (section 9.5), and
+  (`08h`, with the own address's hints), subscribe (`05h`, with the hints
+  of a feed address) and unsubscribe (`06h`) (section 9.5), and
   may complete any other operation (put, publish, find, set profile,
   set nickname, programs, and the named records of section 9.6) with
   status `05h` (Refused), without asking and without carrying it out (the
@@ -703,8 +704,8 @@ any alignment.
 | 2 | 2 | Reserved; ignored | — |
 | 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key; save, load and delete: the record's name (section 9.6). Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
 | 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored; publish: the entry's kind, 0 or 1 (article) or 4 (document) | program |
-| 40 | 4 | `length`: get, load, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; read at submit. | both |
-| 44 | 4 | `addr`: address of the data. Get, load, records and find: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. | program |
+| 40 | 4 | `length`: get, load, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; subscribe: the hints' length, 0 to 161; read at submit. Identity: the size of a buffer for the own address's hints, 0 (none) to 16,384; on completion, if not 0, the bytes written. | both |
+| 44 | 4 | `addr`: address of the data. Get, load, records and find: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. Subscribe: the hints, `length` bytes, wholly in ROM or wholly in RAM. Identity: the buffer, `length` bytes, which must lie in RAM. | program |
 | 48 | 4 | `size`: get: blob size, written on completion; load: the record's size, written on completion. Put: 1 to 1,048,576, read at submit; save: 0 to 65,536, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
 
 ### 9.2 Submit and completion
@@ -716,7 +717,8 @@ any alignment.
 2. If the request is invalid (unknown `op`, a length, size, scope or
    publish kind out of range, a data range not wholly where section 9.1 requires, a publish
    title or find query that is not valid UTF-8, a name that is not a valid
-   display name, section 9.5, a record name that is not valid, section 9.6),
+   display name, section 9.5, subscribe hints that are not a valid hint
+   list, section 9.5, a record name that is not valid, section 9.6),
    the device writes status `04h` to the block and rejects the submit.
 3. If eight requests are already pending, the submit is rejected and the
    block is not changed. (The result is 0 as in step 1, and the block is
@@ -727,7 +729,7 @@ any alignment.
    and save, the device copies the `size` bytes at `addr` at this moment;
    for publish,
    the title; for find, the query; for set profile and set nickname, the
-   name.
+   name; for subscribe, the hints.
 
 The device does not look at the other pending requests: a block that is
 already pending may be submitted again, and then two requests write the
@@ -746,7 +748,8 @@ request:
 - subscribe, unsubscribe, set nickname, save and delete, on success: nothing
   more;
 - publish and set profile, on success: writes `size`;
-- identity, on success: writes `id`;
+- identity, on success: writes `id`, and, if `length` was not 0, the own
+  address's hints to `addr` and `length` (section 9.5);
 - in every case writes `status`, frees the handle, and queues a content-done
   event (section 5). If the event queue is full the event is dropped; the
   block is still updated.
@@ -854,11 +857,20 @@ request with status `05h`.
 
 **Subscribe** (`05h`) adds the feed whose key is `id` to the host's
 subscriptions, and **unsubscribe** (`06h`) removes it (`NETWORK.md` section
-4.4). `offset`, `length`, `addr` and `size` are not used. The host completes
-with status `01h` once the subscription list has changed (the entries
+4.4). For subscribe, `length` and `addr` may give the **hints** of the
+feed's address (`NETWORK.md` section 4.9): the text after its `@`
+exactly, one or two hints separated by `,` (`relay.example:9000` or
+`a.example,[2001:db8::7]`), 1 to 161 bytes wholly in ROM or wholly in
+RAM, copied at submit; `length` 0 gives none. Hints that are not a
+valid hint list, or longer than 161 bytes, make the request invalid
+(section 9.2: status `04h`). The host keeps them with the subscription
+and uses them as `NETWORK.md` section 4.9 says. Unsubscribe does not use
+`length` and `addr`, and neither uses `offset` and `size`. The host
+completes with status `01h` once the subscription list has changed (the entries
 arrive later, each announced as usual by a feeds-updated event); at once,
 without asking, if the list already is as asked (subscribing to a feed
-already subscribed, unsubscribing from one that is not); and with `05h`
+already subscribed, unsubscribing from one that is not; the hints of a
+feed already subscribed are not changed); and with `05h`
 without asking if `id` is not a valid feed key (`NETWORK.md` section 4.1).
 
 **Publish** (`07h`) publishes the blob whose hash is `id` as the next entry
@@ -876,8 +888,19 @@ its identity first if it has none. On success `size` is the new entry's
 `seq`. A host that offers only the machine's reading profile (section 2.1) may complete every put and publish with status `05h`.
 
 **Identity** (`08h`): on completion `id` is the host's own feed key, or the
-status is `02h` if the host has no identity yet. `offset`, `length`, `addr`
-and `size` are not used.
+status is `02h` if the host has no identity yet. If `length` is not 0, the
+`length` bytes at `addr` (1 to 16,384, in RAM) are a buffer for the hints
+of the host's own feed address (`NETWORK.md` section 4.9): on success the
+host writes there the hint list (the text after the `@`, at most 161
+bytes), or as many of its hints as fit whole (the first, or none), and
+sets `length` to the bytes written; 0 means the host has no hints to give
+(no public relay), so its address is the bare key. A program shows the
+address as the key, `@` and those bytes. `offset` and `size` are not used,
+nor `addr` when `length` is 0. (A program written before hints existed
+and that leaves another request's `length` and `addr` in the block may
+now get the hints written there; one that leaves a `length` over 16,384,
+or a range not in RAM, gets `04h`. Programs set `length` to 0, as the
+library's `content_identity` does.)
 
 **Display names.** A name given to set profile, and a non-empty name given
 to set nickname, must be a valid display name: valid UTF-8, 1 to 48 bytes,
@@ -891,7 +914,7 @@ nickname, in increasing order of feed key:
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | `L`: number of bytes that follow in this record, 33 to 81 |
-| 1 | 1 | Flags. Bit 0: the name is the user's local nickname for the feed. Bit 1: the feed has a profile in force (`NETWORK.md` section 4.6). Bit 2: the feed is not subscribed (it is listed for its nickname). Other bits are zero. |
+| 1 | 1 | Flags. Bit 0: the name is the user's local nickname for the feed. Bit 1: the feed has a profile in force (`NETWORK.md` section 4.6). Bit 2: the feed is not subscribed (it is listed for its nickname). Bit 3: the host follows the feed through a relay a hint of its address names (`NETWORK.md` section 4.9), since none of its own relays holds it. Other bits are zero. |
 | 2 | 32 | Feed key |
 | 34 | `L − 33` | The name, 0 to 48 bytes of UTF-8 |
 
@@ -949,7 +972,10 @@ over the bottom of the screen, on top of everything the program shows; the
 program cannot draw it, read it or answer it. The prompt names the image's
 title (in a system, that of the machine whose request it is) and what is
 asked: the feed key (for example as its first and last
-six hex digits, `3fa9c2…c21e07`); whether an article or a document is
+six hex digits, `3fa9c2…c21e07`) and, for a subscribe with hints, the
+relays they name, since the host may connect to them ("… asks to
+subscribe to 3fa9c2…c21e07 and look for it on relay.example:9000");
+whether an article or a document is
 published, its title and size; the display
 name and whether it will be searchable; or the feed key and the nickname.
 While a prompt is shown the keyboard's input goes to the host, not to the

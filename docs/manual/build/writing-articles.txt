@@ -97,18 +97,23 @@ These are links wherever text is shown, also in preformatted blocks, fences and 
 |---|---|
 | `terse:` and 64 hex digits | An article, by blob ID |
 | `terse:feed/` and 64 hex digits | A feed, by key |
+| `terse:feed/`, the key, `@` and hints | A feed, with the relays that hold it |
 | `terse:program/` key `/` name | A program, by publisher and name |
 | `[text](target)` | Any of these, shown as the text |
 
 The hex digits are lowercase. A link must not follow an ASCII letter or digit, and the 64 digits must not be followed by one.
 
+Give a feed's address rather than its bare key, so that readers who use other relays find it: after the key, `@` and one or two relays, `host` or `host:port`, separated by a comma (no spaces), as in `terse:feed/<key>@relay.example.org` or `terse:feed/<key>@relay.example:9000,[2001:db8::7]`. `terse feed address` prints yours. The hints are the longest run of letters, digits, `.`, `-`, `:`, `,` and brackets after the `@`, less every `.`, `,` and `:` at its end, so a sentence may end right after an address. If that is not one or two valid hints (three hints, a bad port), the link is the key alone and the rest is text; a reader that knows no hints does the same, so the link always leads to the feed.
+
 Articles do not link to the web. A web address such as https://example.org is ordinary text, shown as written and not followed, and so is a link with text whose target is not one of the `terse:` forms: all of [Example](https://example.org) stays as you see it, brackets and parentheses included. Write a web address as plain text if a reader needs it.
 
-Written for real, a bare link to an article (the manual's page on figures), a feed, the built-in sketch program, and a link with text to another part of this manual:
+Written for real, a bare link to an article (the manual's page on figures), a feed, a feed with a hint, the built-in sketch program, and a link with text to another part of this manual:
 
 terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04
 
 terse:feed/0000000000000000000000000000000000000000000000000000000000000000
+
+terse:feed/0000000000000000000000000000000000000000000000000000000000000000@relay.example.org.
 
 terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
 

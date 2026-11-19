@@ -211,12 +211,29 @@ or digit (`0`–`9`); hexadecimal digits in link forms are lowercase.
 | Form | Target |
 |---|---|
 | `terse:` and 64 hexadecimal digits | An article, by blob ID (`NETWORK.md` section 1) |
-| `terse:feed/` and 64 hexadecimal digits | A feed, by key (`NETWORK.md` section 4.1) |
+| `terse:feed/` and 64 hexadecimal digits, optionally `@` and hints | A feed, by key (`NETWORK.md` section 4.1), with the relay hints of its address (`NETWORK.md` section 4.9) |
 | `terse:program/`, 64 hexadecimal digits, `/`, a name | A program, by publisher's feed key (all zero for a program built into a machine host) and name |
 
 - A link is not preceded by a letter or digit. In the first two forms the
   64 digits are not followed by a letter or digit (else the text is not a
   link).
+- **Hints.** In a feed link, an `@` right after the 64 digits may start
+  the hint list of the feed's address (`NETWORK.md` section 4.9). The
+  candidate is the longest run of bytes after the `@` that are letters,
+  digits, `.`, `-`, `:`, `,`, `[` or `]` (a `]` only while a `[` of the
+  run is not yet closed by one), less every `.`, `,` and `:` at its end
+  (all of them, as for a program's name). If the candidate is a valid hint
+  list (one or two hints, `NETWORK.md` section 4.9), the link goes on to
+  its end; otherwise (an empty candidate, three hints, a bad port, a
+  label ending in `-`, ...) the link is the key alone and the `@` and
+  what follows are text. So a sentence's punctuation after an address
+  is not part of it (`…@relay.example.` and `…@relay.example, and` end
+  the link at `example`), a `)` or a blank always ends it, and a `]`
+  ends it unless it closes an IPv6 address.
+- A reader that does not know hints (one written to an earlier revision
+  of this document) sees `terse:feed/` and the key, followed by `@`, which
+  is not a letter or digit: the same feed link, then the hints as text.
+  Readers of both kinds show the same feed.
 - In a program link the name is the run of bytes `A`–`Z`, `a`–`z`,
   `0`–`9`, `-`, `.`, `_`, `~` and `%` followed by two hexadecimal digits
   (either case) that follows the `/`, less every `.` at its end (all of
@@ -227,8 +244,9 @@ or digit (`0`–`9`); hexadecimal digits in link forms are lowercase.
   letters, a final dot) are written as `%XX`.
 - A reader shows a bare link as written, or shortened so that it is
   still recognisable (the reference reader shows `terse:` and the first
-  and last six digits, `terse:360793…dec189`, and a program link's name
-  decoded after them).
+  and last six digits, `terse:360793…dec189`, a program link's name
+  decoded after them, and a feed link's hints as written,
+  `terse:feed/360793…dec189@relay.example`).
 
 ### 4.2 Links with text
 
@@ -236,7 +254,10 @@ A **link with text** is `[`, the text, `]`, `(`, the target, `)`, all on
 one line: the text is 1 to 200 bytes holding no `[`, `]`, backquote or
 link (counted as written: in a table cell `\|` is two bytes, though it is
 shown as `|`), and the target is a bare link by section 4.1 that is the whole of
-what is between the parentheses (so it holds no blank and no `)`). A
+what is between the parentheses (so it holds no blank and no `)`; with a
+feed link's hints, `[Bob](terse:feed/<key>@relay.example)` is one, and
+`[Bob](terse:feed/<key>@relay.example.)` is not, since the final `.` is
+not part of the bare link). A
 reader shows the text as the link and does not show the target (it may
 show the target when the link is selected or pointed at). Brackets that
 are not all of a link with text are ordinary text, and the links in them
@@ -248,6 +269,10 @@ count as bare links.
 |---|---|
 | `terse:` + 64 digits | a link to an article |
 | `see terse:` + 64 digits + `.` | a link; the final `.` is text |
+| `terse:feed/` + 64 digits + `@relay.example.` | a feed link with one hint; the final `.` is text |
+| `terse:feed/` + 64 digits + `@a.example,b.example:9000` | a feed link with two hints |
+| `terse:feed/` + 64 digits + `@a.example,b.example,c.example` | a feed link (the key alone), then text `@a.example,b.example,c.example` |
+| `[Bob](terse:feed/` + 64 digits + `@relay.example)` | a feed link with a hint, shown as "Bob" |
 | `xterse:` + 64 digits | text (preceded by a letter) |
 | `[Notes](terse:` + 64 digits + `)` | a link shown as "Notes" |
 | `[Notes]( terse:` + 64 digits + `)` | text `[Notes]( `, a bare link, text `)` |
@@ -272,7 +297,10 @@ itself; it may fetch an article link's blob ahead of time (prefetch,
   (section 1), saying so.
 - **Feed link.** The reader shows the feed: its name with its key
   (`NETWORK.md` section 4.6) and what it holds of it, and may offer to
-  subscribe.
+  subscribe. If the link has hints, a reader that subscribes from it
+  subscribes with them (`NETWORK.md` section 4.9) and shows them first,
+  since subscribing may make it connect to the relays they name; it
+  never connects to them only because the link is shown or followed.
 - **Program link.** A reader without the machine says that it cannot run
   programs (it may show the publisher's key and the name). On a machine
   host the reader asks the shell to start it (section 11).
@@ -456,6 +484,8 @@ that way.
   toolkit does.
 - Shorten bare links, offer keys to move between links, prefetch linked
   articles, or show the targets of links with text.
+- Use a feed link's hints (it still recognises them as part of the link,
+  section 4.1).
 - Open program links or documents (section 4.4).
 - Show more of a long article, more rows of a long table, or more of a
   costly figure than its own limits allow (sections 1, 2.5, 6.3), as

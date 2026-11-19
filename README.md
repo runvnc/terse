@@ -103,10 +103,14 @@ The other names it once, then runs the shell (and the reader in it) as usual:
     cargo run --release -p terse-cli --bin terse -- relay add ws://their-host:7878
     cargo run --release -p terse-host
 
-Exchange feed keys (press ? in the reader to see yours in full; read it out
-or send it), then in the reader press F, then S, type or paste the other's
-key (Ctrl+V or Shift+Insert pastes into the program), press Enter and
-answer Y. Everything the other has published, and everything they publish
+Exchange feed addresses (press ? in the reader to see yours in full: your
+key, then `@` and your public relays, if any; `terse feed address` prints it
+too; read it out or send it), then in the reader press F, then S, type or
+paste the other's address (Ctrl+V or Shift+Insert pastes into the program),
+press Enter and answer Y. An address with a relay (`key@their-host:7878`,
+NETWORK.md 4.9) lets your host find the feed there even if you never added
+that relay: it connects to it only if your own relays do not hold the
+feed, and only to a public address. Everything the other has published, and everything they publish
 from then on, appears in your timeline. The relay protocol is plain
 WebSocket (`ws://`) without encryption or accounts: anyone who can reach
 the relay can read and publish through it; entries are signed, so nobody
@@ -367,8 +371,15 @@ Commands:
   from one version to the next (see [Named records](#named-records)).
 - `feed programs [<key>]` lists the current version of each program held, of one feed
   or of all.
-- `feed subscribe <key>`, `feed unsubscribe <key>`, `feed subscriptions` (each feed's
-  key, then its name if known: your nickname, else the name its profile declares).
+- `feed subscribe <address>`, `feed unsubscribe <address>`, `feed subscriptions` (each
+  feed's key, then its name if known: your nickname, else the name its profile declares,
+  then the hints it was subscribed with). An address is a key, optionally `@` and one or
+  two relays (`host` or `host:port`, NETWORK.md 4.9), also as a `terse:feed/` link; the
+  hints are kept in `<config>/subscription-hints`. `feed sync` follows a feed on its
+  hinted relays when your relays hold none of it (public addresses only; not with
+  `--no-feed-relays`), and says which feeds no relay held. `feed address` prints your
+  own address: your key and up to two public relays from your profile, then your relay
+  list.
 - `feed nickname <key> [<name>]` sets your own name for a feed, kept only in
   `<config>/nicknames`; without a name it removes it. It is shown instead of the
   declared name.
@@ -775,10 +786,12 @@ the terminal shows only the status row (row 29: key hints, the position such as
   public name, then asks on the status row whether search may find it (Y/N), and
   publishes your profile (op 0Bh). Both names are checked first (1 to 48 bytes, no
   control characters, no space at either end) and the host asks you before either
-  is set. S opens the key entry on
-  row 28: type or paste a feed key (whitespace is ignored, so the grouped form from
-  the help page pastes as is); Enter subscribes (the host asks you), Esc cancels,
-  Backspace deletes; a malformed key is reported on the status row. U unsubscribes
+  is set. S opens the address entry on
+  row 28: type or paste a feed key, an address (`key@relay`) or a `terse:feed/` link
+  (whitespace is ignored, so the grouped form from the help page pastes as is); Enter
+  subscribes with the address's hints (the host asks you, naming the relays), Esc
+  cancels, Backspace deletes; a malformed key or address is reported on the status
+  row. Feeds followed through a relay their address names are marked `@`. U unsubscribes
   from the selected feed. Esc, Backspace or Left go back.
 - **Search** (/ from the timeline or feeds): type words and press Enter. The
   reader searches two places at once and lists both, under a heading each:
@@ -821,8 +834,10 @@ the terminal shows only the status row (row 29: key hints, the position such as
 - **The manual** (M on the timeline, also named on the empty timeline's page and
   in help): opens the index of [the manual](#manual), which every host carries;
   Esc goes back to the timeline.
-- **Help** (? or F1): the keys of every view and your own feed key in full, in the
-  monospaced face, in groups of eight hex digits. T publishes a test article
+- **Help** (? or F1): the keys of every view and your own feed address in the
+  monospaced face: the key in groups of eight hex digits, then `@` and the hints
+  the host gives (op 08h with a buffer), or a note that without a public relay
+  only people on the same relay find your feed. T publishes a test article
   ("Test article N", a few paragraphs with the frame and time in them): the reader
   puts it (op 02h), publishes it (op 07h), and if you do not yet follow your own
   feed, subscribes to it (op 05h) so that the article shows in the timeline; each

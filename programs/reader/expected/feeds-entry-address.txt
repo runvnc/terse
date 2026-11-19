@@ -1,0 +1,35 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Address: …d3ac5dbec2306f06948c10da8eb6e39f2d@relay.example:7000,[2001:db8::1]
+ Type or paste it (a key, or key@relay)   Enter: subscribe   Esc: cancel
+-- page: height 86, scroll 0 (stored 0), region 32 0 576 448 --
+    8  20     0   sans16b |Feeds
+   28  15     0   sans12 |1 subscription  ·  no key of your own yet
+   51  20     0   sans16 |[66be7e…0c473a]{1}
+   71  15     0   sans12 |[highest #9  ·  5 articles held]{1}

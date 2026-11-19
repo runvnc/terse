@@ -66,10 +66,18 @@ pub fn fit(s: &str, cols: usize) -> String {
 pub fn describe(program: &str, asked: &Asked) -> (String, String) {
     let program = fit(program, 16);
     match asked {
-        Asked::Subscribe(key) => (
-            format!("“{program}” asks to subscribe to the feed {}.", short_key(key)),
+        Asked::Subscribe { feed, hints } if hints.is_empty() => (
+            format!("“{program}” asks to subscribe to the feed {}.", short_key(feed)),
             "Its articles will be downloaded and shown in your timeline.".into(),
         ),
+        // NETWORK 4.9: the hints name relays the host will connect to; they
+        // get the second line, the reason after them if it fits.
+        Asked::Subscribe { feed, hints } => {
+            let hints = hints.replace(',', ", ");
+            let why = " — contacted if your relays lack it.";
+            let then = if (hints.clone() + why).chars().count() <= COLS - 2 { hints + why } else { fit(&hints, COLS - 2) };
+            (format!("“{program}” asks to subscribe to {} and look for it on", short_key(feed)), then)
+        }
         Asked::Unsubscribe(key) => (
             format!("“{program}” asks to unsubscribe from the feed {}.", short_key(key)),
             "Its articles will no longer be shown in your timeline.".into(),
@@ -172,7 +180,14 @@ mod tests {
         assert!(nick.0.contains("ababab…ababab") && nick.0.contains("“Bo”"), "{nick:?}");
         let gone = describe("reader", &Asked::SetNickname { feed: [0xAB; 32], name: String::new() });
         assert!(gone.0.contains("remove"), "{gone:?}");
-        for (a, b) in [listed, unlisted, nick, gone] {
+        let hinted = describe("reader", &Asked::Subscribe { feed: [0xAB; 32], hints: "relay.example:7000,b.example".into() });
+        assert!(hinted.0.ends_with("ababab…ababab and look for it on"), "{hinted:?}");
+        assert!(hinted.1.starts_with("relay.example:7000, b.example — contacted if your relays lack it"), "{hinted:?}");
+        let long = describe("reader", &Asked::Subscribe { feed: [0xAB; 32], hints: format!("{0}.e,{0}.f", "a".repeat(60)) });
+        assert!(long.1.ends_with('…') && !long.1.contains("contacted"), "{long:?}");
+        let plain = describe("a program with a long name", &Asked::Subscribe { feed: [0xAB; 32], hints: String::new() });
+        assert!(plain.1.contains("timeline"), "{plain:?}");
+        for (a, b) in [listed, unlisted, nick, gone, hinted, long, plain] {
             assert!(a.chars().count() <= COLS - 2 && b.chars().count() <= COLS - 2, "{a} / {b}");
         }
     }

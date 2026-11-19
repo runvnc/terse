@@ -8,7 +8,7 @@ Clients exchange immutable blobs and signed feeds through relays: blob stores re
 
 A blob is 1 to 1,048,576 bytes. Its ID is the BLAKE3-256 hash of its bytes: 32 bytes, written as 64 lowercase hex digits. A program image is a blob, so an image ID is a blob ID.
 
-A client keeps a local blob store (a cache) and uses it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then uses it. A blob that fails the check counts as not found on that relay. Since a get reply carries the whole blob, a client learns a blob's size only from an entry that points at it or by downloading it. A put stores the blob locally and sends it to every connected relay. Clients never trust relays: every blob is verified on receipt.
+A client keeps a local blob store (a cache) and uses it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then uses it. A blob that fails the check counts as not found on that relay. A put stores the blob locally and sends it to every connected relay. Clients never trust relays: every blob is verified on receipt.
 
 A blob reached without an entry (by a link) tells what it is by its first four bytes: `TERS` is a program image, `TDOC` a document (data for a program), anything else an article.
 
@@ -77,7 +77,7 @@ An entry is valid if: `n` is at most 120 and the entry's length matches it; the 
 
 Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name).
 
-An entry of a kind not listed here (5 to 254) is not invalid for that: it is valid if it meets the rules above, and the kind-specific ones (a display name as title, a profile's 4,096-byte limit) apply only to the kinds that have them. Relays store and pass it on like any other entry, so that kinds a later revision adds reach clients that know them. A client keeps or skips it without error, does not download its blob automatically, does not put it in the timeline, and does not offer to open it (`terse feed list` shows it as `[kind 9: title]`).
+An entry of a kind not listed here (5 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (`terse feed list` shows `[kind 9: title]`).
 
 ## Relay feed messages
 
@@ -92,10 +92,16 @@ An entry of a kind not listed here (5 to 254) is not invalid for that: it is val
 - The client keeps a list of subscribed feeds and every valid entry received for them. On connecting to a relay it subscribes to each feed with `after` = the highest `seq` it holds.
 - Subscribing (when the user asks) adds the feed and subscribes at once when connected; for a feed it holds nothing of, `after` is 0, so the relay sends all it holds. Unsubscribing removes the feed and unsubscribes on the connection. Only valid keys are subscribed to.
 - Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the client gets the blob unasked, profiles and documents included (not programs, below, or kinds not listed above). A blob whose length differs from the entry's size is not associated with it. Larger blobs are fetched on request.
-- Program download (a client that runs programs): once a feed is caught up, and whenever one of its program entries arrives, the client gets the image of the current version of each of the feed's programs it lacks, up to 131,136 bytes (the largest image); never older versions. The user may turn this off.
-- Prefetch: when automatic download stores an article (kind 1), the client gets the first 8 distinct `terse:` article links in it (link targets included, and the scan may find one in a code span) whose blobs it neither holds nor is fetching, within the automatic limit. Program links and blobs named by program entries are never prefetched; documents and prefetched blobs are not scanned. The user may turn this off.
+- Program download (a client that runs programs): once a feed is caught up, and when a program entry arrives, the client gets the image of the current version of each of its programs it lacks (any size up to the largest image), never older ones. The user may turn this off.
+- Prefetch: when automatic download stores an article (kind 1), the client gets the first 8 distinct article links in it whose blobs it lacks, within the automatic limit; never program links or images, and prefetched blobs are not scanned. The user may turn this off.
 - Arrival order: the client records the order in which it first stored each entry, across restarts; it is the order of its timeline (kinds 1 and 4), newest first. Unsubscribing hides a feed's entries from the timeline; subscribing again puts them back where they were.
 - Publishing an article or document: the client puts the blob, then signs and publishes an entry with the next `seq` (one more than the highest it holds or has used for its own feed). The entry is stored like a received one; if the client subscribes to its own feed, it is in the timeline at once.
+
+## Feed addresses
+
+A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: `<key>@relay.example.org` or `<key>@relay.example:9000,[2001:db8::7]`. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and a port (7878 if left out), at most 80 bytes, meaning `ws://host:port`. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.
+
+A client keeps the hints with the subscription. If none of its own relays holds an entry of the feed (each answers `highest` 0), it follows the feed on the hinted relays too, as feed relays (below: same address checks, same switch, same cap), until the feed's profile has `relay` lines. Its user's own address takes its hints from their profile's `relay` lines, then the client's relays, public ones only; with none, only people on the same relays find the feed.
 
 ## Profiles, display names and nicknames
 
@@ -124,27 +130,27 @@ A find's scope is 1 (feeds by display name), 2 (article and document titles) or 
 
 A relay returns at most 16 results from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.
 
-Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result in relay order, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. A search that no relay answered and at least one refused is refused.
+Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. NETWORK.md 4.7 has the rest.
 
 ## Lookup
 
-A lookup's kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed's program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest `seq` (stored, not subscribed), then gets the image; a machine host does so when a shell starts a program it holds no entry for.
+A lookup's kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed's program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest `seq` (stored, not subscribed), then gets the image (a machine host, when a shell starts a program it holds no entry for).
 
 ## Several relays
 
-A client's relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has `relay` lines, up to two of those not already among its own: the feed relays, which may be turned off. A client keeps at most 16 relay connections. It ignores a `relay` line that names `localhost` (or a name under it) or a loopback, unspecified, private or link-local address (NETWORK.md 5.1 lists the ranges), does not connect if a name resolves to one, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.
+A client's relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has `relay` lines, up to two of those not already among its own (else up to two hints of its address, above): the feed relays, which may be turned off. A client keeps at most 16 relay connections. It ignores a `relay` line that names `localhost` (or a name under it) or a loopback, unspecified, private or link-local address (NETWORK.md 5.1 lists the ranges), does not connect if a name resolves to one, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.
 
 Put and publish go to every connected relay and succeed when one accepts (an article's entry once a relay has its blob); subscribe goes to every connected relay that serves the feed (the client's own and the feed's relays); find and lookup go to all. A get asks the feed's relays first, then the rest two at a time, and is not found only when every connected relay said so or failed.
 
 ## Relays that mirror each other
 
-A relay may be given other relays as peers: it connects to each and sends Peer (`07h`). Every entry a relay newly stores, and every newly stored blob up to 16,384 bytes, it passes to its other peers; it subscribes on its peers to the feeds its clients follow, and asks them for a blob a client wants that it lacks (waiting at most 3 s). Because a relay passes on only what it newly stores, an entry crosses each peer link at most once in each direction. NETWORK.md 5.2 has the details.
+A relay may be given other relays as peers: it connects to each and sends Peer (`07h`). It passes every entry, and every blob up to 16,384 bytes, that it newly stores to its other peers, subscribes on them to the feeds its clients follow and asks them for blobs it lacks. NETWORK.md 5.2 has the details.
 
 ## What a reading client must and may do
 
 A reading client shows people the articles of the feeds they follow: a native reader, or a machine host running the reader program.
 
-It must hold blobs by ID and verify each one, talk to at least one relay, verify entries, subscribe and unsubscribe by key, keep the timeline in arrival order, show articles by ARTICLE.md and show every name with its key. It may publish, set a profile and nicknames, search, use several relays, download automatically and prefetch.
+It must hold blobs by ID and verify each one, talk to at least one relay, verify entries, subscribe and unsubscribe by key or address, keep the timeline in arrival order, show articles by ARTICLE.md and show every name with its key. It may publish, set a profile and nicknames, search, use several relays and hints, download automatically and prefetch.
 
 Entries of kinds it does not handle (programs and documents, for a client without the machine; kinds not yet defined, for every client) are kept or skipped without error and shown, if at all, as something it cannot open; so are links to programs, and links to blobs that turn out to be images or documents. "Writing a reader without the machine" walks through building one.
 

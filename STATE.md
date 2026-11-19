@@ -140,8 +140,8 @@ Each request record is 53 bytes:
 | 1 | 4 | Address of its request block (u32) |
 | 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit; save, load, delete: the record's name as read at submit (`id`, zero padded). Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
 | 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find; publish: the kind, 0, 1 or 4); set profile: the listed bit, 0 or 1; else zero |
-| 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, publish, set profile, set nickname), else zero |
-| 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find), else zero |
+| 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, publish, set profile, set nickname, subscribe: the hints' length, identity: the hint buffer's, 0 for none), else zero |
+| 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find; identity: the hint buffer's, zero if `length` is 0), else zero |
 | 49 | 4 | `size` read at submit (put, save; find: the query's length), else zero |
 
 Let `P` be the offset after this section.
@@ -420,6 +420,7 @@ fields:
 | `04h` | Done (subscribe, unsubscribe, set nickname, save, delete) | — |
 | `05h` | Publish or set profile succeeded | seq (u32) |
 | `06h` | Identity succeeded | the feed key (32) |
+| `0Ch` | Identity succeeded, with the hints of the host's own address (SPEC 9.5) | the feed key (32), n (u32), the n bytes of the hint list (1 to 161) |
 | `07h` | Not found | — |
 | `08h` | Failed | — |
 | `09h` | Refused | — |

@@ -28,22 +28,23 @@
 
 
  0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
--- page: height 1296, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1331, scroll 0 (stored 0), region 64 0 512 464 --
    16  30     0   sans24b |Help
-   62  22     0   sans17b |Your feed key
+   62  22     0   sans17b |Your feed address
    92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
   111  19    12   mono15 |afc8ad82 c8839b76 44359b9e ba9a4b3a
   138  17     0   sans13 |Others subscribe to your feed with this key: in this reader, F, then S, then
-  155  17     0   sans13 |paste it.
-  188  22     0   sans17b |Timeline
-  214  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
-  236  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell
-  254  18    12   sans14 |to open
-  276  18    12   sans14b |/   search
-  298  18    12   sans14b |F   feeds
-  320  18    12   sans14b |? or F1   this help
-  342  18    12   sans14b |T   publish a test article
-  364  18    12   sans14b |M   the Terse manual
-  386  18    12   sans14b |Esc   quit
-  420  22     0   sans17b |Article
-  446  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll
+  155  17     0   sans13 |type or paste it. None of your relays is public, so your address has no relay
+  172  17     0   sans13 |after an @: only people who use the same relay as you will find your feed.
+  205  22     0   sans17b |Timeline
+  231  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
+  253  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell
+  271  18    12   sans14 |to open
+  293  18    12   sans14b |/   search
+  315  18    12   sans14b |F   feeds
+  337  18    12   sans14b |? or F1   this help
+  359  18    12   sans14b |T   publish a test article
+  381  18    12   sans14b |M   the Terse manual
+  403  18    12   sans14b |Esc   quit
+  437  22     0   sans17b |Article
+  463  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll

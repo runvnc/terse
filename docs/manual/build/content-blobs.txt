@@ -1,6 +1,6 @@
 # Content: blobs, requests and statuses (device 4)
 
-The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:a049258bc2f3575c5839bf0738553f78ed5493560e620d07f6a560f488d72f07).
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:f11575d33ae9e1eccb62fa565632d5f74ca5a7da65f87f495b95296b2c4696b9).
 
 An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
 
@@ -61,17 +61,17 @@ Fields an op does not use are ignored.
 |---|---|---|
 | `01h` | Get | below |
 | `02h` | Put | below |
-| `03h` | Subscriptions | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `04h` | Timeline | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `05h` | Subscribe | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `06h` | Unsubscribe | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `07h` | Publish | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `08h` | Identity | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `09h` | Names | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `0Ah` | Find | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `0Bh` | Set profile | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `0Ch` | Set nickname | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
-| `0Dh` | Programs | [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
+| `03h` | Subscriptions | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `04h` | Timeline | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `05h` | Subscribe | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `06h` | Unsubscribe | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `07h` | Publish | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `08h` | Identity | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `09h` | Names | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `0Ah` | Find | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `0Bh` | Set profile | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `0Ch` | Set nickname | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
+| `0Dh` | Programs | [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
 | `0Eh` | Save | [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a) |
 | `0Fh` | Load | [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a) |
 | `10h` | Delete | [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a) |
