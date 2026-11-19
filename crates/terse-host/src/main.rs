@@ -16,6 +16,8 @@ mod glyphs;
 mod keymap;
 mod page;
 mod phosphor;
+#[cfg(test)]
+mod reference;
 #[cfg(feature = "gpu")]
 mod renderer;
 #[cfg(feature = "gpu")]
