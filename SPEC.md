@@ -1096,8 +1096,9 @@ the scroll value is 0 and the background is `FF00_0000h`, opaque black.
 
 A document is 1 to 65,536 bytes: a sequence of commands, each an opcode byte
 followed by its operands, little-endian. It ends at an End command, at the
-end of the bytes, at an unknown opcode or at a command whose operands are
-cut off; the commands before that are used.
+end of the bytes, at an unknown opcode, at a command whose operands are
+cut off or at a Table command whose column count is 0 or above 8; the
+commands before that are used.
 
 | Opcode | Command | Operands | Effect |
 |---|---|---|---|
@@ -1110,6 +1111,9 @@ cut off; the commands before that are used.
 | `06h` | Rule | — | Starts a new paragraph that is a horizontal line across the rectangle, in the current colour |
 | `07h` | Anchor | id (2 bytes) | Later text and figures belong to anchor `id`; 0 is no anchor |
 | `08h` | Figure | width (2 bytes), height (2 bytes), align (1 byte), n (2 bytes), then n bytes of path commands | A figure: a block of its own, width × height screen units |
+| `09h` | Table | columns (1 byte, 1–8), flags (1 byte: bit 0 header), then one align byte per column (0 start, 1 centre, 2 end; anything else is 0) | Starts a table: a block of its own, a grid of cells |
+| `0Ah` | Cell | — | Starts the table's next cell |
+| `0Bh` | End table | — | Ends the table |
 
 State at the start of a document: sans, no flags, size 14, colour
 (229, 229, 229), anchor 0, and an implicit first paragraph that is
@@ -1152,6 +1156,30 @@ anchor carry on across paragraphs.
   no space above it (put an empty Paragraph before it for a gap). Text that
   follows a rule starts a new paragraph with the properties of the latest
   Paragraph command (or those of the implicit first one).
+- **Table.** A table is a block of its own, a grid of cells laid out as
+  section 11.4 says. It ends the current paragraph and takes its space as
+  a figure does: the space of the latest Paragraph command (or of the
+  implicit first paragraph) above it, or, if the current paragraph has no
+  text yet, it takes that paragraph's place and its space. Other flag bits
+  are ignored. The cells come in rows of `columns` cells: each Cell
+  command starts the next cell, in row order (the first Cell starts the
+  first cell of the first row), and the last row's missing cells are
+  empty. In a table, Text adds to the current cell in the current font,
+  size, colour and anchor, and Font, Size, Colour and Anchor work as
+  anywhere; text before the table's first Cell command is ignored. U+000A
+  breaks the line in a cell. A table ends at an End table command, and
+  also at a Paragraph, Rule, Figure or Table command, which then does what
+  it does, and at the end of the document. Text after a table starts a new
+  paragraph as after a rule. A table with no cells takes its space and
+  nothing else. The colour in effect at the Table command is the colour of
+  the table's rules. With flag bit 0 the first row is a **header**: its
+  text is drawn bold, whatever the bold flag of its font, and a rule is
+  drawn under it. A Cell command or End table outside a table does
+  nothing.
+- **Table limits.** A table holds at most 1,024 cells and a document at
+  most 4,096 cells in all its tables. A Cell command that would pass
+  either limit, and the text after it up to the end of its table, are
+  ignored (Font, Size, Colour and Anchor commands still change the state).
 - **Line height** is the host's natural line height for the font and size;
   a line's height is that of the largest text on it. A line break at the end
   of a paragraph's text gives an empty last line.
@@ -1216,12 +1244,51 @@ scrolling, clipped to it. How the text looks (fonts, hinting, smoothing, how
 a line that does not fit is cut) and how figures are smoothed are up to the
 host and cannot be observed by the program.
 
+**Tables.** A table is laid out in these steps, with lengths in screen
+units (a host measures text with its fonts; the reference layout,
+section 11.6, says how it measures):
+
+1. **Padding.** Each cell has 6 units of padding at its left and right
+   and 3 at its top and bottom.
+2. **Natural widths.** A cell's natural width is the width of its widest
+   line when its text is broken only at U+000A, plus 12; a cell with no
+   text has 12. A column's natural width is the largest of its cells'.
+3. **Column widths.** If the columns' natural widths add up to at most
+   the rectangle's width W, each column is its natural width. Otherwise
+   the widest columns are narrowed first, all to the same width: each
+   column's width is the smaller of its natural width and a cap C, where
+   C is the largest width for which these widths add up to at most W; but
+   C is never less than 48. (When C is 48 the table may be wider than the
+   rectangle: it is cut off at the rectangle's right edge, like a
+   figure.)
+4. **Rows.** Each cell's text is laid out as a paragraph (wrapped, no
+   indent, aligned as its column says) at its column's width less 12, its
+   first line 3 units below the top of its row. A row is as high as the
+   tallest text of its cells plus 6 (a cell with no text counts 0). The
+   table is as high as its rows.
+5. **Placing.** The columns are placed side by side from the rectangle's
+   left edge, the first column leftmost; the rows one below another.
+6. **Rules.** Rules take no room: each is a line about one unit thick
+   across the table's width, in the table's rule colour, centred on the
+   bottom edge of a row. A table with a header (flag bit 0) has a rule
+   under its first row, also when that is its only row. Every other row
+   but the last has a faint rule under it: drawn at about a third of the
+   colour's opacity, so the page's background shows through. There is no
+   rule above the first row or under the last (but for a header that is
+   the only row).
+
+A line of a cell is a line for the page's events (section 11.5): a press
+on anchored text in a cell reports its anchor, and `locate` gives the
+first line that carries the anchor, lines being taken in order of their
+tops (for a table row, its cells' lines from the left to the right).
+
 Figures are drawn as outlines when the vector display is in the phosphor
 style or in fill mode 1 (section 10.3; an image without the vector display
 has the clean style and fill mode 0): nothing is filled, and a path that is
 filled but not stroked is stroked one unit wide in its fill colour.
 
-Cost stays bounded: a document is at most 65,536 bytes; the host lays it out
+Cost stays bounded: a document is at most 65,536 bytes and holds at most
+4,096 table cells (section 11.3); the host lays it out
 outside the machine's frames (a host may take several frames, on another
 thread, while the machine runs on and the previous layout or nothing is
 shown); the machine never waits for a layout and is not charged for it; the
@@ -1313,9 +1380,16 @@ users see.
 - A figure is a line as high as the figure, placed as in section 11.3 (the
   leftover width halved and rounded down for centre); a press within its
   box hits its anchor.
+- A table is laid out as section 11.4 says, with widths in half units:
+  a line's width is the sum of its characters' advances, C is the largest
+  whole number of half units that fits, and a cell's lines are wrapped,
+  aligned as a paragraph's are (greedy wrapping at spaces). Its rules
+  are lines of height 0 at the rows' bottom edges.
 - A locate gives the y and height of the first line (a figure is a line)
-  with a character or figure of that anchor.
-- The height is the sum of the spaces, line heights, rules and figures.
+  with a character or figure of that anchor; a table's lines are taken in
+  order of y, and lines of the same y from left to right.
+- The height is the sum of the spaces, line heights, rules, figures and
+  tables.
 
 ### 11.7 Determinism
 

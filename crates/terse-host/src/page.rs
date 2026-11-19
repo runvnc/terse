@@ -28,7 +28,7 @@ use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Angle, Format, Transform, Vector};
 use terse_core::page::{
-    self as core_page, Align, FigureBox, FigurePath, LayoutKey, Layouter, Page, PageWatch, Paragraph,
+    self as core_page, Align, FigureBox, FigurePath, LayoutKey, Layouter, Page, PageWatch, Paragraph, Run, Table,
 };
 use terse_core::Event;
 #[cfg(feature = "gpu")]
@@ -198,7 +198,7 @@ impl Typesetter {
         for p in core_page::parse(doc) {
             y += p.space as f32;
             if let Some(rgb) = p.rule {
-                out.lines.push(HostLine { top: y, height: core_page::RULE_HEIGHT as f32, baseline: 0.0, x: 0.0, glyphs: 0..0, rule: Some(rgb) });
+                out.lines.push(HostLine::rule(y, core_page::RULE_HEIGHT as f32, rgb, 0.0, 0.0, 255));
                 y += core_page::RULE_HEIGHT as f32;
                 continue;
             }
@@ -217,12 +217,23 @@ impl Typesetter {
                 y += f.height as f32;
                 continue;
             }
+            if let Some(t) = &p.table {
+                y = self.table(t, width, y, &mut out);
+                continue;
+            }
             if !p.has_text() {
                 continue;
             }
             y = self.paragraph(&p, width, y, &mut out);
         }
         out.height = y;
+        // Lines are in order of their tops; `reach` is the lowest bottom so
+        // far, for finding the first line in view.
+        let mut reach = 0.0f32;
+        for l in &mut out.lines {
+            reach = reach.max(l.top + l.height);
+            l.reach = reach;
+        }
         for g in &out.glyphs {
             out.fonts.entry((g.glyph.font_id, g.glyph.font_weight)).or_insert(None);
         }
@@ -289,11 +300,122 @@ impl Typesetter {
                 x,
                 glyphs: start..out.glyphs.len(),
                 rule: None,
+                width: 0.0,
+                alpha: 255,
+                reach: 0.0,
             });
             bottom = y + run.line_top + run.line_height;
         }
         bottom
     }
+
+    /// A cell's text in a buffer, shaped on one line (broken only at line
+    /// breaks), and its natural width: its widest line.
+    fn cell_buffer(&mut self, runs: &[Run], align: Align) -> (Buffer, f32) {
+        let Typesetter { fonts, faces } = self;
+        let first_size = runs[0].style.size as f32;
+        let mut buffer = Buffer::new(fonts, Metrics::new(first_size, first_size * 1.25));
+        buffer.set_wrap(Wrap::None);
+        buffer.set_size(None, None);
+        let align = match align {
+            Align::Start => None,
+            Align::Centre => Some(CtAlign::Center),
+            Align::End => Some(CtAlign::End),
+        };
+        let spans: Vec<(&str, Attrs)> = runs.iter().map(|r| (r.text.as_str(), attrs(faces, &r.style))).collect();
+        let default = attrs(faces, &runs[runs.len() - 1].style);
+        buffer.set_rich_text(spans, &default, Shaping::Advanced, align);
+        buffer.shape_until_scroll(fonts, false);
+        let natural = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
+        (buffer, natural)
+    }
+
+    /// Lays out a table (SPEC 11.4) with its top at `y`; returns its bottom.
+    fn table(&mut self, t: &Table, width: f32, y: f32, out: &mut HostLayout) -> f32 {
+        let n = t.columns as usize;
+        let (pad_x, pad_y) = (core_page::CELL_PAD_X as f32, core_page::CELL_PAD_Y as f32);
+        let mut buffers: Vec<Option<Buffer>> = Vec::with_capacity(t.cells.len());
+        let mut natural = vec![2.0 * pad_x; n];
+        for (i, cell) in t.cells.iter().enumerate() {
+            if cell.is_empty() {
+                buffers.push(None);
+                continue;
+            }
+            let align = t.align.get(i % n).copied().unwrap_or_default();
+            let (buffer, w) = self.cell_buffer(cell, align);
+            natural[i % n] = natural[i % n].max(w + 2.0 * pad_x);
+            buffers.push(Some(buffer));
+        }
+        let widths = column_widths(&natural, width, core_page::MIN_COLUMN_CAP as f32);
+        let table_w: f32 = widths.iter().sum();
+        let rows = t.rows();
+        let mut top = y;
+        for row in 0..rows {
+            let first = out.lines.len();
+            let mut tallest = 0.0f32;
+            let mut x = 0.0;
+            for (c, &w) in widths.iter().enumerate() {
+                let i = row * n + c;
+                if let Some(Some(buffer)) = buffers.get_mut(i) {
+                    let Typesetter { fonts, .. } = self;
+                    buffer.set_wrap(Wrap::WordOrGlyph);
+                    buffer.set_size(Some((w - 2.0 * pad_x).max(1.0)), None);
+                    buffer.shape_until_scroll(fonts, false);
+                    let base = top + pad_y;
+                    for run in buffer.layout_runs() {
+                        let start = out.glyphs.len();
+                        out.glyphs.extend(run.glyphs.iter().map(|g| HostGlyph { glyph: g.clone() }));
+                        out.lines.push(HostLine {
+                            top: base + run.line_top,
+                            height: run.line_height,
+                            baseline: base + run.line_y,
+                            x: x + pad_x,
+                            glyphs: start..out.glyphs.len(),
+                            rule: None,
+                            width: 0.0,
+                            alpha: 255,
+                            reach: 0.0,
+                        });
+                        tallest = tallest.max(run.line_top + run.line_height);
+                    }
+                }
+                x += w;
+            }
+            // The row's lines in order of their tops, cells left to right.
+            out.lines[first..].sort_by(|a, b| a.top.total_cmp(&b.top));
+            top += tallest + 2.0 * pad_y;
+            let header_rule = t.header && row == 0;
+            if header_rule || row + 1 < rows {
+                let alpha = if header_rule { 255 } else { core_page::FAINT_RULE_ALPHA };
+                out.lines.push(HostLine::rule(top - 1.0, 2.0, t.rgb, 0.0, table_w, alpha));
+            }
+        }
+        top
+    }
+}
+
+/// The columns' widths (SPEC 11.4 step 3) in screen units: the natural
+/// widths if they fit in `width`, else each narrowed to a common cap, the
+/// largest that fits but at least `floor`.
+pub(crate) fn column_widths(natural: &[f32], width: f32, floor: f32) -> Vec<f32> {
+    if natural.iter().sum::<f32>() <= width {
+        return natural.to_vec();
+    }
+    // The sum of min(w, cap) grows with the cap: find the cap that fills
+    // the width, from the narrowest column up.
+    let mut sorted = natural.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let (mut left, mut cap) = (width, 0.0);
+    for (k, &w) in sorted.iter().enumerate() {
+        let rest = (sorted.len() - k) as f32;
+        if w * rest > left {
+            cap = left / rest;
+            break;
+        }
+        left -= w;
+    }
+    let cap = cap.max(floor);
+    natural.iter().map(|&w| w.min(cap)).collect()
 }
 
 /// A glyph as cosmic-text laid it out (x relative to its paragraph, y 0 at
@@ -323,8 +445,36 @@ pub struct HostLine {
     /// The paragraph's x offset (its indent, for left-to-right text).
     pub x: f32,
     pub(crate) glyphs: std::ops::Range<usize>,
-    /// A rule across the rectangle in this colour.
+    /// A rule in this colour, at the middle of the line: across the
+    /// rectangle, or from `x` for `width` units if that is not 0.
     pub rule: Option<[u8; 3]>,
+    pub width: f32,
+    /// A rule's opacity (a table's faint rules).
+    pub alpha: u8,
+    /// The lowest bottom of this line and those before it.
+    pub reach: f32,
+}
+
+impl HostLine {
+    fn rule(top: f32, height: f32, rgb: [u8; 3], x: f32, width: f32, alpha: u8) -> Self {
+        HostLine { top, height, baseline: 0.0, x, glyphs: 0..0, rule: Some(rgb), width, alpha, reach: 0.0 }
+    }
+
+    /// A rule's extent in pixels: its top, thickness, left and right, for
+    /// a rectangle whose top left corner is at (`rx`, `ry`) pixels,
+    /// scrolled by `scroll` units, `s` pixels a unit, clipped to `x0`..`x1`.
+    pub(crate) fn rule_pixels(&self, (rx, ry): (f32, f32), scroll: f32, s: f32, (x0, x1): (f32, f32)) -> (f32, f32, f32, f32) {
+        let y = (ry + (self.top + self.height / 2.0 - scroll) * s).round();
+        let t = (RULE_THICKNESS * s).round().max(1.0);
+        let y = y - (t / 2.0).floor();
+        if self.width > 0.0 {
+            let l = (rx + self.x * s).round().max(x0);
+            let r = (rx + (self.x + self.width) * s).round().min(x1);
+            (y, t, l, r.max(l))
+        } else {
+            (y, t, x0, x1)
+        }
+    }
 }
 
 /// A laid-out figure, in screen units: its box (x from the rectangle's
@@ -1063,13 +1213,11 @@ impl PageLayer {
                 let scroll = self.shown_scroll.unwrap_or(0.0);
                 let top = scroll;
                 let bottom = scroll + r.h as f32;
-                let first = layout.lines.partition_point(|l| l.top + l.height <= top);
+                let first = layout.lines.partition_point(|l| l.reach <= top);
                 for line in layout.lines[first..].iter().take_while(|l| l.top < bottom) {
                     if let Some([cr, cg, cb]) = line.rule {
-                        let y = (ry + (line.top + core_page::RULE_HEIGHT as f32 / 2.0 - scroll) * s).round();
-                        let t = (RULE_THICKNESS * s).round().max(1.0);
-                        let y = y - (t / 2.0).floor();
-                        push(&mut self.scratch, [x0 as f32, y, x1 as f32, y + t], [0.0; 4], [cr, cg, cb, 255], 0);
+                        let (y, t, l, r) = line.rule_pixels((rx, ry), scroll, s, (x0 as f32, x1 as f32));
+                        push(&mut self.scratch, [l, y, r, y + t], [0.0; 4], [cr, cg, cb, line.alpha], 0);
                         continue;
                     }
                     // Whole pixels for the baseline, so glyphs stay crisp.
@@ -1490,6 +1638,150 @@ mod tests {
         assert_eq!(line.x, 0.0);
         let right = l.glyphs[line.glyphs.clone()].iter().map(|g| g.glyph.x + g.glyph.w).fold(0.0, f32::max);
         assert!((right - 260.0).abs() < 1.0, "flush with the start (right) edge less the indent: {right}");
+    }
+
+    /// A table of `columns` (no header unless `flags`), its cells' texts.
+    fn table(columns: u8, flags: u8, cells: &[&str]) -> Vec<u8> {
+        let mut v = vec![op::TABLE, columns, flags];
+        v.extend(std::iter::repeat_n(0, columns as usize));
+        for c in cells {
+            v.push(op::CELL);
+            if !c.is_empty() {
+                v.extend(text(c));
+            }
+        }
+        v.push(op::END_TABLE);
+        v
+    }
+
+    #[test]
+    fn column_widths_fill_the_rectangle() {
+        assert_eq!(column_widths(&[50.0, 100.0, 30.0], 200.0, 48.0), [50.0, 100.0, 30.0]);
+        assert_eq!(column_widths(&[30.0, 200.0, 150.0], 200.0, 48.0), [30.0, 85.0, 85.0]);
+        assert_eq!(column_widths(&[200.0; 8], 100.0, 48.0), [48.0; 8]);
+        // The same rule as the reference layout's (in whole units there).
+        let natural = [12u32, 80, 300, 41, 170];
+        let r = terse_core::page::Table::column_widths(&natural, 512, 48);
+        let h = column_widths(&natural.map(|w| w as f32), 512.0, 48.0);
+        for (a, b) in r.iter().zip(&h) {
+            assert!((*a as f32 - b).abs() < 1.0, "{r:?} {h:?}");
+        }
+    }
+
+    #[test]
+    fn tables_are_laid_out_in_columns() {
+        let Some(mut t) = typesetter() else { return };
+        let mut doc = vec![op::SIZE, 14, op::COLOUR, 50, 60, 70];
+        doc.extend(text("Above"));
+        doc.extend(table(2, 1, &["Key", "What it does", "Up", "moves", "Enter", "opens"]));
+        doc.extend(text("Below"));
+        let l = t.layout((1, 500), &doc, 500);
+        let line_text = |line: &HostLine| -> usize { line.glyphs.len() };
+        // Above, 3 rows of 2 cells (one line each), 2 rules, Below.
+        assert_eq!(l.lines.len(), 1 + 6 + 2 + 1, "{:?}", l.lines.iter().map(|l| (l.top, l.x, line_text(l))).collect::<Vec<_>>());
+        let above = &l.lines[0];
+        let (k, w) = (&l.lines[1], &l.lines[2]);
+        assert_eq!(k.top, above.top + above.height + 3.0);
+        assert_eq!(k.x, 6.0);
+        assert_eq!(k.top, w.top, "a row's cells side by side");
+        // The second column starts after the first's natural width.
+        let key_w = l.glyphs[l.lines[7].glyphs.clone()].iter().map(|g| g.glyph.x + g.glyph.w).fold(0.0, f32::max); // "Enter"
+        assert!((w.x - (key_w + 12.0 + 6.0)).abs() < 1.5, "{} {}", w.x, key_w);
+        // The header is bold, the rows are not.
+        assert!(l.glyphs[k.glyphs.clone()].iter().all(|g| g.glyph.font_weight.0 >= 600));
+        assert!(l.glyphs[l.lines[4].glyphs.clone()].iter().all(|g| g.glyph.font_weight.0 < 600));
+        // Rules: the header's opaque, the others faint, spanning the table.
+        let rules: Vec<&HostLine> = l.lines.iter().filter(|l| l.rule.is_some()).collect();
+        assert_eq!(rules.len(), 2);
+        assert_eq!((rules[0].alpha, rules[1].alpha, rules[0].rule), (255, core_page::FAINT_RULE_ALPHA, Some([50, 60, 70])));
+        assert!(rules[0].width > 0.0 && rules[0].width < 500.0);
+        assert_eq!(rules[0].top + 1.0, k.top + k.height + 3.0);
+        let below = l.lines.last().unwrap();
+        assert!(below.top >= l.lines[8].top + l.lines[8].height + 3.0);
+        // reach never decreases.
+        assert!(l.lines.windows(2).all(|p| p[0].reach <= p[1].reach));
+    }
+
+    #[test]
+    fn narrow_tables_wrap_their_widest_column() {
+        let Some(mut t) = typesetter() else { return };
+        let long = "This cell holds a long explanation that cannot fit on one line of a narrow table, so it wraps";
+        let mut doc = vec![op::SIZE, 14];
+        doc.extend(table(3, 0, &["0Ah", "Cell", long]));
+        let wide = t.layout((1, 2000), &doc, 2000);
+        let narrow = t.layout((1, 300), &doc, 300);
+        assert_eq!(wide.lines.len(), 3);
+        assert!(narrow.lines.len() > 3, "the long cell wraps");
+        // The two short columns keep their natural widths.
+        assert_eq!(narrow.lines[1].x, wide.lines[1].x);
+        assert_eq!(narrow.lines[2].x, wide.lines[2].x);
+        let right = narrow.lines.iter().skip(2).map(|line| line.x + narrow.glyphs[line.glyphs.clone()].iter().map(|g| g.glyph.x + g.glyph.w).fold(0.0, f32::max)).fold(0.0, f32::max);
+        assert!(right <= 300.0 - 6.0 + 0.5, "the text stays in the rectangle: {right}");
+        // Anchors in cells are hit and located.
+        let mut doc = vec![op::SIZE, 14];
+        doc.extend_from_slice(&[op::TABLE, 2, 0, 0, 0, op::CELL]);
+        doc.extend(text("plain"));
+        doc.extend_from_slice(&[op::CELL, op::ANCHOR, 5, 0]);
+        doc.extend(text("link"));
+        let l = t.layout((1, 300), &doc, 300);
+        let line = &l.lines[1];
+        let g = &l.glyphs[line.glyphs.clone()][0];
+        assert_eq!(l.anchor_at(line.x + g.glyph.x + 1.0, line.top + 2.0), 5);
+        assert_eq!(l.anchor_at(8.0, line.top + 2.0), 0);
+        assert_eq!(l.locate(5), Some((line.top.floor() as u32, ((line.top + line.height).ceil() - line.top.floor()) as u32)));
+    }
+
+    /// `cargo test --release -p terse-host table_layout_time -- --ignored --nocapture`:
+    /// hostile 64 KiB documents of tables against the worst of paragraphs.
+    #[test]
+    #[ignore]
+    fn table_layout_time() {
+        let Some(mut t) = typesetter() else { return };
+        let mut docs: Vec<(&str, Vec<u8>)> = Vec::new();
+        // The paragraph worst case: one-character paragraphs.
+        let mut d = Vec::new();
+        while d.len() + 9 < 65_536 {
+            d.extend_from_slice(&[op::PARAGRAPH, 0, 0, 0, 0]);
+            d.extend(text("x"));
+        }
+        docs.push(("7,000 one-character paragraphs", d));
+        // 4,096 cells of one character (four tables of 1,024), then text.
+        let mut d = Vec::new();
+        for _ in 0..4 {
+            d.extend(table(8, 1, &["x"; 1024]));
+        }
+        docs.push(("4,096 one-character cells", d));
+        // 4,096 cells of 14 bytes, wrapping in narrow columns.
+        let mut d = Vec::new();
+        for _ in 0..4 {
+            d.extend(table(8, 0, &["wrap me pls"; 760]));
+        }
+        docs.push(("3,040 cells of 11 bytes", d));
+        // Fewer, longer cells that wrap many times.
+        let long = "word ".repeat(60);
+        let mut d = Vec::new();
+        while d.len() < 60_000 {
+            d.extend(table(8, 0, &[long.as_str(); 16]));
+        }
+        docs.push(("cells of 300 bytes, 8 columns", d));
+        // Cells past the limits: ignored.
+        let mut d = Vec::new();
+        d.extend(table(8, 0, &["y"; 13_000]));
+        d.truncate(65_536);
+        docs.push(("13,000 cells in one table (1,024 used)", d));
+        for (name, doc) in &docs {
+            assert!(doc.len() <= 65_536, "{name}");
+            let _ = t.layout((0, 512), doc, 512);
+            let runs = 3;
+            let start = std::time::Instant::now();
+            let mut l = None;
+            for i in 0..runs {
+                l = Some(t.layout((i, 512), doc, 512));
+            }
+            let ms = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+            let l = l.unwrap();
+            println!("{name}: {} bytes, {ms:.1} ms, {} lines, height {}", doc.len(), l.lines.len(), l.reported_height());
+        }
     }
 
     /// `cargo test --release -p terse-host layout_time -- --ignored --nocapture`
