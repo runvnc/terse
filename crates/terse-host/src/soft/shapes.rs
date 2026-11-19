@@ -123,7 +123,7 @@ fn stroke(hw: f32, d: f32) -> f32 {
     if hw >= 0.5 { (hw + 0.5 - d).clamp(0.0, 1.0) } else { (1.0 - d).clamp(0.0, 1.0) * 2.0 * hw }
 }
 
-#[inline]
+#[cfg(test)]
 fn segment_distance(q: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let pa = (q.0 - a.0, q.1 - a.1);
     let ba = (b.0 - a.0, b.1 - a.1);
@@ -196,9 +196,11 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
     let px = g.px();
     let reach = shape.reach(g, glow);
     let table = halo_table();
-    // Sixteenths of a pixel's centre, and back.
-    let qx = |x: i32| (x as f32 + 0.5 - g.origin.0) / g.scale.0;
-    let qy = |y: i32| (y as f32 + 0.5 - g.origin.1) / g.scale.1;
+    // Sixteenths of a pixel's centre (by multiplying: no division per
+    // pixel), and back.
+    let (inv_sx, inv_sy, inv_px) = (1.0 / g.scale.0, 1.0 / g.scale.1, 1.0 / px);
+    let qx = |x: i32| (x as f32 + 0.5 - g.origin.0) * inv_sx;
+    let qy = |y: i32| (y as f32 + 0.5 - g.origin.1) * inv_sy;
     // Pixels whose centres lie in [lo, hi] sixteenths (one spare on each side).
     let cols = |lo: f32, hi: f32| {
         let x0 = (g.origin.0 + lo * g.scale.0 - 0.5).floor() as i32 - 1;
@@ -209,16 +211,24 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
         Shape::Line { a, b, hw, dwell, .. } => {
             let core = hw * CORE_WIDTH;
             let dw = Dwell::new(a, b, dwell, core, px);
+            let ba = (b.0 - a.0, b.1 - a.1);
+            let inv_len2 = 1.0 / (ba.0 * ba.0 + ba.1 * ba.1).max(1e-6);
+            let (hw_px, core_px) = (hw * inv_px, core * inv_px);
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
                 let Some((lo, hi)) = capsule_row(a, b, reach, yq) else { continue };
                 let (x0, x1) = cols(lo, hi);
+                let pay = yq - a.1;
                 for x in x0..x1 {
                     let q = (qx(x), yq);
-                    let d = segment_distance(q, a, b);
+                    // The distance to the segment.
+                    let pax = q.0 - a.0;
+                    let h = ((pax * ba.0 + pay * ba.1) * inv_len2).clamp(0.0, 1.0);
+                    let (dx, dy) = (pax - ba.0 * h, pay - ba.1 * h);
+                    let d = (dx * dx + dy * dy).sqrt();
                     let v = match mode {
-                        Mode::Cover => stroke(hw / px, d / px),
-                        Mode::Light => beam_light(core, d, px, table) * dw.at(q),
+                        Mode::Cover => stroke(hw_px, d * inv_px),
+                        Mode::Light => beam_light(core, core_px, d, inv_px, table) * dw.at(q),
                     };
                     if v > 0.0 {
                         f(x, y, v);
@@ -228,6 +238,7 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
         }
         Shape::Circle { c, r, hw, .. } => {
             let core = hw * CORE_WIDTH;
+            let (hw_px, core_px) = (hw * inv_px, core * inv_px);
             let (outer, inner) = (r + reach, r - reach);
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
@@ -247,8 +258,8 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                         let q = (qx(x), yq);
                         let d = (((q.0 - c.0).powi(2) + (q.1 - c.1).powi(2)).sqrt() - r).abs();
                         let v = match mode {
-                            Mode::Cover => stroke(hw / px, d / px),
-                            Mode::Light => beam_light(core, d, px, table),
+                            Mode::Cover => stroke(hw_px, d * inv_px),
+                            Mode::Light => beam_light(core, core_px, d, inv_px, table),
                         };
                         if v > 0.0 {
                             f(x, y, v);
@@ -268,7 +279,7 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                 for x in x0..x1 {
                     let q = (qx(x), yq);
                     let len = ((q.0 - c.0).powi(2) + (q.1 - c.1).powi(2)).sqrt();
-                    let v = ((r - len) / px + 0.5).clamp(0.0, 1.0);
+                    let v = ((r - len) * inv_px + 0.5).clamp(0.0, 1.0);
                     if v > 0.0 {
                         f(x, y, v);
                     }
@@ -346,17 +357,17 @@ fn halo_table() -> &'static [f32; HALO_STEPS + 2] {
     TABLE.get_or_init(|| std::array::from_fn(|i| halo(i as f32 * HALO_REACH / HALO_STEPS as f32)))
 }
 
-/// The light (before colour) a stroke with core half width `core` gives a
-/// pixel `d` sixteenths from its centre line (`px` sixteenths a pixel): a
-/// sharp core and a faint halo gone `HALO_REACH` past its edge (from the
-/// table, interpolated).
+/// The light (before colour) a stroke with core half width `core`
+/// (`core_px` in pixels) gives a pixel `d` sixteenths from its centre line
+/// (`inv_px` pixels a sixteenth): a sharp core and a faint halo gone
+/// `HALO_REACH` past its edge (from the table, interpolated).
 #[inline]
-fn beam_light(core: f32, d: f32, px: f32, table: &[f32; HALO_STEPS + 2]) -> f32 {
+fn beam_light(core: f32, core_px: f32, d: f32, inv_px: f32, table: &[f32; HALO_STEPS + 2]) -> f32 {
     let edge = (d - core).max(0.0);
     let f = (edge * (HALO_STEPS as f32 / HALO_REACH)).min(HALO_STEPS as f32);
     let i = f as usize;
     let h = table[i] + (table[i + 1] - table[i]) * (f - i as f32);
-    (CORE * stroke(core / px, d / px)).max(CORE * h)
+    (CORE * stroke(core_px, d * inv_px)).max(CORE * h)
 }
 
 /// The vertex dwell of a line: brighter near its ends (`phosphor::DWELL`),
@@ -423,23 +434,29 @@ mod tests {
             for mode in [Mode::Cover, Mode::Light] {
                 let shape = Shape::Line { a, b, hw, rgba: [255; 4], dwell: 0x11 };
                 let got = covered(&shape, &g, mode, clip);
-                let mut want = Vec::new();
+                let mut want: Vec<(i32, i32, f32)> = Vec::new();
                 let px = g.px();
                 let bounds = shape.bounds(&g, mode == Mode::Light).intersect(&clip);
                 for y in bounds.y0..bounds.y1 {
                     for x in bounds.x0..bounds.x1 {
                         let q = ((x as f32 + 0.5 - g.origin.0) / g.scale.0, (y as f32 + 0.5 - g.origin.1) / g.scale.1);
                         let d = segment_distance(q, a, b);
+                        let core = hw * CORE_WIDTH;
                         let v = match mode {
                             Mode::Cover => stroke(hw / px, d / px),
-                            Mode::Light => beam_light(hw * CORE_WIDTH, d, px, halo_table()) * Dwell::new(a, b, 0x11, hw * CORE_WIDTH, px).at(q),
+                            Mode::Light => beam_light(core, core / px, d, 1.0 / px, halo_table()) * Dwell::new(a, b, 0x11, core, px).at(q),
                         };
-                        if v > 0.0 {
+                        if v > 1e-4 {
                             want.push((x, y, v));
                         }
                     }
                 }
-                assert_eq!(got, want, "{a:?} {b:?} {hw}");
+                // The same pixels (but for vanishing ones), within rounding.
+                let got: Vec<_> = got.into_iter().filter(|p| p.2 > 1e-4).collect();
+                assert_eq!(got.len(), want.len(), "{a:?} {b:?} {hw}");
+                for (g, w) in got.iter().zip(&want) {
+                    assert!(g.0 == w.0 && g.1 == w.1 && (g.2 - w.2).abs() < 1e-4, "{g:?} {w:?}");
+                }
             }
         }
     }

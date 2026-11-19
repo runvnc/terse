@@ -382,6 +382,10 @@ impl PageQuads {
                             continue;
                         }
                         let c = pack(*cr, *cg, *cb);
+                        if *a == 255 {
+                            out.fill(c);
+                            continue;
+                        }
                         for p in out.iter_mut() {
                             *p = mix(*p, c, *a as u32);
                         }

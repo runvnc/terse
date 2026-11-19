@@ -35,8 +35,33 @@ use crate::phosphor::{
     GLYPH_BLOOM, GLYPH_BLOOM_RADIUS, SPILL, SPILL_FROM, TONE_KNEE,
 };
 
-/// Rows handed to a thread at a time.
+/// Rows handed to a thread at a time (even, so a band holds whole rows
+/// of a half-resolution bloom).
 const BAND: usize = 16;
+
+/// How the bloom is computed (`--bloom`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BloomRes {
+    /// At the screen's resolution, as the GPU renderer does.
+    Full,
+    /// At half the resolution in each direction: the light averaged over
+    /// 2 × 2 pixels, blurred with half the radius (less the spread the
+    /// averaging and the upsampling add), and sampled back bilinearly.
+    /// About an eighth of the blur's work.
+    Half,
+    /// Half from `HALF_BLOOM_FROM` pixels wide, else full.
+    Auto,
+}
+
+/// From this width (pixels) `BloomRes::Auto` computes the bloom at half
+/// resolution: its radius (`BLOOM_SIGMA` scaled) is then at least 2.6
+/// pixels, wide enough that the difference does not show.
+pub const HALF_BLOOM_FROM: usize = 1200;
+
+/// The variance (in pixels²) that averaging 2 × 2 pixels (0.25) and
+/// sampling back bilinearly (about 0.67) add to the half-resolution blur,
+/// taken off its own.
+const HALF_SPREAD: f32 = 0.92;
 
 /// A row's blocks of columns that may hold light: bit i covers columns
 /// `i << shift` up to the next block.
@@ -157,6 +182,12 @@ pub struct Light<'a> {
 pub struct Tube {
     pub size: (usize, usize),
     blocks: Blocks,
+    /// The bloom at half resolution: its buffers (`hblur`, `bloom` and
+    /// their masks) are then `bsize`, and a mask bit covers the same
+    /// columns as one of the screen's.
+    half: bool,
+    bsize: (usize, usize),
+    bblocks: Blocks,
     beam: Vec<f32>,
     fast: Vec<f32>,
     slow: Vec<f32>,
@@ -188,23 +219,38 @@ struct Band<'a> {
 }
 
 impl Tube {
-    pub fn new(size: (usize, usize)) -> Self {
+    pub fn new(size: (usize, usize), bloom: BloomRes) -> Self {
         let n = size.0 * size.1 * 3;
         let rows = size.1;
         let blocks = Blocks::new(size.0);
+        let half = match bloom {
+            BloomRes::Full => false,
+            BloomRes::Half => true,
+            BloomRes::Auto => size.0 >= HALF_BLOOM_FROM,
+        };
+        let (bsize, bblocks) = if half {
+            let bsize = (size.0.div_ceil(2), size.1.div_ceil(2));
+            (bsize, Blocks { shift: blocks.shift - 1, width: bsize.0 })
+        } else {
+            (size, blocks)
+        };
+        let bn = bsize.0 * bsize.1 * 3;
         Tube {
             size,
             blocks,
+            half,
+            bsize,
+            bblocks,
             beam: vec![0.0; n],
             fast: vec![0.0; n],
             slow: vec![0.0; n],
             glyph: vec![0.0; n],
-            hblur: vec![0.0; n],
-            bloom: vec![0.0; n],
+            hblur: vec![0.0; bn],
+            bloom: vec![0.0; bn],
             beam_m: vec![0; rows],
             glow_m: vec![0; rows],
-            h_m: vec![0; rows],
-            bloom_m: vec![0; rows],
+            h_m: vec![0; bsize.1],
+            bloom_m: vec![0; bsize.1],
             glyph_m: vec![0; rows],
             shown_m: vec![blocks.all(); rows],
             srgb: srgb_table(),
@@ -230,12 +276,18 @@ impl Tube {
         let slow_decay = crate::phosphor::slow_decay(l.persistence);
         let geom = Geom::for_rect((0.0, 0.0, tw as f32, th as f32));
         let sigma = (BLOOM_SIGMA * l.width / 640.0).max(0.5);
-        let taps = (3.0 * sigma).ceil().min(BLOOM_MAX_TAPS) as usize;
+        // The blur in the bloom's own pixels.
+        let (f, sigma) = if self.half { (2, (sigma * sigma - HALF_SPREAD).max(0.25).sqrt() / 2.0) } else { (1, sigma) };
+        let taps = (3.0 * sigma).ceil().min(BLOOM_MAX_TAPS / f as f32) as usize;
         let mut weights: Vec<f32> = (-(taps as i32)..=taps as i32).map(|i| (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()).collect();
         let total: f32 = weights.iter().sum();
         weights.iter_mut().for_each(|w| *w /= total);
+        let (bw, bh) = self.bsize;
+        let bstride = bw * 3;
+        let bblocks = self.bblocks;
+        let band_b = BAND / f;
         // Blocks within the blur's reach of a block.
-        let reach = taps.div_ceil(1 << blocks.shift) as u32;
+        let reach = taps.div_ceil(1 << bblocks.shift) as u32;
         let shift = blocks.shift;
 
         // Pass 1: beam, afterglow and the horizontal blur, band by band.
@@ -247,10 +299,10 @@ impl Tube {
                 .chunks_mut(BAND * stride)
                 .zip(self.fast.chunks_mut(BAND * stride))
                 .zip(self.slow.chunks_mut(BAND * stride))
-                .zip(self.hblur.chunks_mut(BAND * stride))
+                .zip(self.hblur.chunks_mut(band_b * bstride))
                 .zip(self.beam_m.chunks_mut(BAND))
                 .zip(self.glow_m.chunks_mut(BAND))
-                .zip(self.h_m.chunks_mut(BAND))
+                .zip(self.h_m.chunks_mut(band_b))
                 .enumerate()
                 .map(|(i, ((((((beam, fast), slow), hblur), beam_m), glow_m), h_m))| Band {
                     y0: i * BAND,
@@ -388,38 +440,51 @@ impl Tube {
                         b.glow_m[j] = keep;
                     }
                 }
-                // The horizontal blur of the whitened light, over the lit
+                // The horizontal blur of the whitened light (averaged over
+                // f × f pixels for a half-resolution bloom), over the lit
                 // blocks and those within its reach.
                 let mut src = Vec::new();
-                for j in 0..rows {
-                    let lit = b.beam_m[j] | b.glow_m[j];
-                    let out_m = blocks.dilate(lit, reach);
+                for jj in 0..b.h_m.len() {
+                    let ja = jj * f;
+                    let pair = if f == 2 && ja + 1 < rows { ja..ja + 2 } else { ja..ja + 1 };
+                    let lit = pair.clone().fold(0, |m, j| m | b.beam_m[j] | b.glow_m[j]);
+                    let out_m = bblocks.dilate(lit, reach);
                     // Keep the blur zero outside its mask.
-                    for (x0, x1) in blocks.runs(b.h_m[j] & !out_m) {
-                        b.hblur[j * stride + x0 * 3..j * stride + x1 * 3].fill(0.0);
+                    for (x0, x1) in bblocks.runs(b.h_m[jj] & !out_m) {
+                        b.hblur[jj * bstride + x0 * 3..jj * bstride + x1 * 3].fill(0.0);
                     }
-                    b.h_m[j] = out_m;
+                    b.h_m[jj] = out_m;
                     let n = taps;
-                    for (lo, hi) in blocks.runs(out_m) {
+                    for (lo, hi) in bblocks.runs(out_m) {
                         // The source over the run, zero-padded by the taps on
                         // each side: column x at index x - lo + n.
                         src.clear();
                         src.resize((hi - lo + 2 * n) * 3, 0.0);
                         for x in lo..hi {
-                            let at = j * stride + x * 3;
-                            let c = [
-                                b.beam[at] + b.fast[at] + b.slow[at],
-                                b.beam[at + 1] + b.fast[at + 1] + b.slow[at + 1],
-                                b.beam[at + 2] + b.fast[at + 2] + b.slow[at + 2],
-                            ];
-                            let peak = c[0].max(c[1]).max(c[2]);
-                            let white = (peak - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
+                            let mut sum = [0.0f32; 3];
+                            let mut count = 0.0;
+                            for j in pair.clone() {
+                                for sx in x * f..(x * f + f).min(tw) {
+                                    let at = j * stride + sx * 3;
+                                    let c = [
+                                        b.beam[at] + b.fast[at] + b.slow[at],
+                                        b.beam[at + 1] + b.fast[at + 1] + b.slow[at + 1],
+                                        b.beam[at + 2] + b.fast[at + 2] + b.slow[at + 2],
+                                    ];
+                                    let peak = c[0].max(c[1]).max(c[2]);
+                                    let white = (peak - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
+                                    sum[0] += c[0] + white;
+                                    sum[1] += c[1] + white;
+                                    sum[2] += c[2] + white;
+                                    count += 1.0;
+                                }
+                            }
                             let o = (x - lo + n) * 3;
-                            src[o] = c[0] + white;
-                            src[o + 1] = c[1] + white;
-                            src[o + 2] = c[2] + white;
+                            src[o] = sum[0] / count;
+                            src[o + 1] = sum[1] / count;
+                            src[o + 2] = sum[2] / count;
                         }
-                        let out = &mut b.hblur[j * stride + lo * 3..j * stride + hi * 3];
+                        let out = &mut b.hblur[jj * bstride + lo * 3..jj * bstride + hi * 3];
                         out.fill(0.0);
                         for (i, &w) in weights.iter().enumerate() {
                             // Output x reads source x + i - n, at index x - lo + i.
@@ -439,7 +504,7 @@ impl Tube {
         let n = taps as i32;
         let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
             .bloom
-            .chunks_mut(BAND * stride)
+            .chunks_mut(BAND * bstride)
             .zip(self.bloom_m.chunks_mut(BAND))
             .enumerate()
             .map(|(i, (bloom, m))| (i * BAND, bloom, m))
@@ -448,22 +513,22 @@ impl Tube {
             for j in 0..bloom_m.len() {
                 let y = (y0 + j) as i32;
                 let mut m = 0;
-                for i in (y - n).max(0)..(y + n + 1).min(th as i32) {
+                for i in (y - n).max(0)..(y + n + 1).min(bh as i32) {
                     m |= h_m[i as usize];
                 }
-                for (x0, x1) in blocks.runs(bloom_m[j] & !m) {
-                    bloom[j * stride + x0 * 3..j * stride + x1 * 3].fill(0.0);
+                for (x0, x1) in bblocks.runs(bloom_m[j] & !m) {
+                    bloom[j * bstride + x0 * 3..j * bstride + x1 * 3].fill(0.0);
                 }
                 bloom_m[j] = m;
-                for (x0, x1) in blocks.runs(m) {
-                    let out = &mut bloom[j * stride + x0 * 3..j * stride + x1 * 3];
+                for (x0, x1) in bblocks.runs(m) {
+                    let out = &mut bloom[j * bstride + x0 * 3..j * bstride + x1 * 3];
                     out.fill(0.0);
                     for (k, &w) in weights.iter().enumerate() {
                         let sy = y + k as i32 - n;
-                        if sy < 0 || sy >= th as i32 || h_m[sy as usize] & blocks.of(x0, x1) == 0 {
+                        if sy < 0 || sy >= bh as i32 || h_m[sy as usize] & bblocks.of(x0, x1) == 0 {
                             continue;
                         }
-                        let row = &hblur[sy as usize * stride + x0 * 3..sy as usize * stride + x1 * 3];
+                        let row = &hblur[sy as usize * bstride + x0 * 3..sy as usize * bstride + x1 * 3];
                         for (o, s) in out.iter_mut().zip(row) {
                             *o += w * s;
                         }
@@ -485,6 +550,8 @@ impl Tube {
         let (beam, fast, slow, bloom) = (&self.beam, &self.fast, &self.slow, &self.bloom);
         let (beam_m, glow_m, bloom_m) = (&self.beam_m, &self.glow_m, &self.bloom_m);
         let srgb = &self.srgb;
+        let (half, (bw, bh)) = (self.half, self.bsize);
+        let bstride = bw * 3;
         let first = (oy + rows.start) * stride;
         let image = &mut image[first..first + rows.len() * stride];
         let shown = &mut self.shown_m[rows.clone()];
@@ -496,9 +563,20 @@ impl Tube {
             .collect();
         pool.each(bands, |(y0, img, shown)| {
             let mut light = vec![0.0f32; tstride];
+            let mut glow = vec![0.0f32; tstride];
+            let mut vrow = Vec::new();
             for j in 0..shown.len() {
                 let y = y0 + j;
-                let now = beam_m[y] | glow_m[y] | bloom_m[y];
+                // The bloom's rows for this row (two, weighted, at half
+                // resolution: centres at (2i + 1) / 2).
+                let (r0, r1, fy) = if half {
+                    let yf = (y as f32 + 0.5) / 2.0 - 0.5;
+                    let r0 = yf.floor().max(0.0) as usize;
+                    (r0, (r0 + 1).min(bh - 1), (yf - r0 as f32).clamp(0.0, 1.0))
+                } else {
+                    (y, y, 0.0)
+                };
+                let now = beam_m[y] | glow_m[y] | bloom_m[r0] | bloom_m[r1];
                 let out = &mut img[j * stride + ox..j * stride + ox + tw];
                 // Black where there was light and is none now.
                 for (x0, x1) in blocks.runs(shown[j] & !now) {
@@ -511,10 +589,37 @@ impl Tube {
                     // which vectorise: the light, the spill (per pixel), and
                     // the tone curve to an index into the sRGB table.
                     let (lo, hi) = (at + x0 * 3, at + x1 * 3);
+                    let g = &mut glow[..hi - lo];
+                    if half {
+                        // Bilinear from the half-resolution bloom: first
+                        // between its two rows (edges repeated), then each
+                        // pixel 3:1 between the two nearest columns.
+                        let (row0, row1) = (&bloom[r0 * bstride..][..bstride], &bloom[r1 * bstride..][..bstride]);
+                        let xlo = (x0 / 2) as isize - 1;
+                        let xhi = ((x1 - 1) / 2) as isize + 1;
+                        vrow.clear();
+                        for c in xlo..=xhi {
+                            let c = c.clamp(0, bw as isize - 1) as usize * 3;
+                            for ch in 0..3 {
+                                vrow.push(row0[c + ch] + (row1[c + ch] - row0[c + ch]) * fy);
+                            }
+                        }
+                        for (k, p) in g.chunks_exact_mut(3).enumerate() {
+                            let x = x0 + k;
+                            let c = (x / 2) as isize - xlo;
+                            let (ia, ib, wa) = if x % 2 == 0 { (c - 1, c, 0.25) } else { (c, c + 1, 0.75) };
+                            let (va, vb) = (&vrow[ia as usize * 3..][..3], &vrow[ib as usize * 3..][..3]);
+                            for ch in 0..3 {
+                                p[ch] = va[ch] * wa + vb[ch] * (1.0 - wa);
+                            }
+                        }
+                    } else {
+                        g.copy_from_slice(&bloom[lo..hi]);
+                    }
                     let c = &mut light[..hi - lo];
                     for (k, c) in c.iter_mut().enumerate() {
                         let i = lo + k;
-                        *c = beam[i] + fast[i] + slow[i] + BLOOM * bloom[i];
+                        *c = beam[i] + fast[i] + slow[i] + BLOOM * g[k];
                     }
                     for p in c.chunks_exact_mut(3) {
                         let spill = (p[0].max(p[1]).max(p[2]) - SPILL_FROM).max(0.0) * SPILL;

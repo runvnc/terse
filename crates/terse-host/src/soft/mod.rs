@@ -20,6 +20,8 @@
 pub mod base;
 mod page;
 mod phosphor;
+
+pub use phosphor::BloomRes;
 mod screen;
 mod shapes;
 
@@ -52,6 +54,7 @@ pub struct SoftScreens {
     no_trails: bool,
     force_phosphor: bool,
     animate_page: bool,
+    bloom: BloomRes,
     pool: Pool,
     frame: Pixels,
     damage: Damage,
@@ -71,6 +74,7 @@ impl SoftScreens {
             no_trails: false,
             force_phosphor: false,
             animate_page: true,
+            bloom: BloomRes::Auto,
             pool: Pool::new(threads),
             frame: Pixels::default(),
             damage: Damage::default(),
@@ -96,6 +100,12 @@ impl SoftScreens {
     pub fn set_page_animation(&mut self, on: bool) {
         self.animate_page = on;
         self.shell.set_page_animation(on);
+    }
+
+    /// At which resolution the phosphor bloom is computed (`--bloom`).
+    pub fn set_bloom(&mut self, bloom: BloomRes) {
+        self.bloom = bloom;
+        self.shell.set_bloom(bloom);
     }
 
     /// Brings the frame up to date for `viewport`: each screen draws what
@@ -219,13 +229,14 @@ impl Display for SoftScreens {
             let Some(machine) = &child.machine else { continue };
             let rect = picture_rect(shell_rect, p);
             let fresh = !self.children.contains_key(&child.serial);
-            let (no_trails, force, animate) = (self.no_trails, self.force_phosphor, self.animate_page);
+            let (no_trails, force, animate, bloom) = (self.no_trails, self.force_phosphor, self.animate_page, self.bloom);
             let shell_s = &self.shell;
             let (_, s) = self.children.entry(child.serial).or_insert_with(|| {
                 let mut s = SoftScreen::new(shell_s.glyphs_for(cell_width_for(rect)));
                 s.set_no_trails(no_trails);
                 s.set_force_phosphor(force);
                 s.set_page_animation(animate);
+                s.set_bloom(bloom);
                 (h, s)
             });
             s.set_rect(Some(rect));

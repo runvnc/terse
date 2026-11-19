@@ -139,6 +139,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut consent, mut demo) = (None, false);
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let (mut renderer, mut threads, mut bench, mut warmup) = (RendererChoice::Auto, 0usize, false, None);
+    let mut bloom = soft::BloomRes::Auto;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -152,6 +153,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--threads" => {
                 let v = it.next().ok_or(USAGE)?;
                 threads = v.parse().map_err(|_| format!("bad --threads {v}"))?;
+            }
+            "--bloom" => {
+                bloom = match it.next().ok_or(USAGE)?.as_str() {
+                    "full" => soft::BloomRes::Full,
+                    "half" => soft::BloomRes::Half,
+                    "auto" => soft::BloomRes::Auto,
+                    v => return Err(format!("bad --bloom {v} (full, half or auto)")),
+                };
             }
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
@@ -303,7 +312,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -319,14 +328,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0) };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads };
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -334,7 +343,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom })
         }
         _ => Err(USAGE.into()),
     }
@@ -378,6 +387,8 @@ pub struct Looks {
     pub renderer: RendererChoice,
     /// `--threads`: the software renderer's drawing threads (0: one per core).
     pub threads: usize,
+    /// `--bloom`: the software renderer's phosphor bloom resolution.
+    pub bloom: soft::BloomRes,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -463,7 +474,9 @@ fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
             return Err("this terse-host was built without the GPU renderer (feature \"gpu\")".into());
         }
     }
-    Ok(Box::new(soft::SoftScreens::new(Box::new(glyphs), looks.threads)))
+    let mut display = soft::SoftScreens::new(Box::new(glyphs), looks.threads);
+    display.set_bloom(looks.bloom);
+    Ok(Box::new(display))
 }
 
 /// The GPU renderer drawing offscreen; with `hardware_only` (`--renderer

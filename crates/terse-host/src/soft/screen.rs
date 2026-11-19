@@ -27,7 +27,7 @@ use terse_core::{COLS, CONTINUATION, Primitive, ROWS, SCREEN_HEIGHT, SCREEN_WIDT
 
 use super::base::{Damage, IRect, Pixels, Pool, TILE, mix, over, pack, tile_rows};
 use super::page::{PageKey, PageQuads, SoftPage};
-use super::phosphor::{Light, Smear, Tube, linear_table};
+use super::phosphor::{BloomRes, Light, Smear, Tube, linear_table};
 use super::shapes::{Geom, Mode, Shape, visit};
 use crate::display::{GlyphSource, decode_shapes, grid_rect, outlined, screen_pos};
 use crate::page::HostLayout;
@@ -213,6 +213,7 @@ pub struct SoftScreen {
     tube: Option<Tube>,
     /// The overlay drawn last over the phosphor picture.
     tube_overlay: u32,
+    bloom: BloomRes,
 }
 
 impl SoftScreen {
@@ -251,6 +252,15 @@ impl SoftScreen {
             drawn: Drawn::default(),
             tube: None,
             tube_overlay: 0,
+            bloom: BloomRes::Auto,
+        }
+    }
+
+    /// At which resolution the phosphor bloom is computed.
+    pub fn set_bloom(&mut self, bloom: BloomRes) {
+        if bloom != self.bloom {
+            self.bloom = bloom;
+            self.tube = None;
         }
     }
 
@@ -505,7 +515,7 @@ impl SoftScreen {
         let rect = self.screen_rect(viewport);
         let size = ((rect.2.ceil() as usize).max(1), (rect.3.ceil() as usize).max(1));
         if self.tube.is_none() {
-            self.tube = Some(Tube::new(size));
+            self.tube = Some(Tube::new(size, self.bloom));
             self.phosphor_stale = true;
         }
         self.page.prepare((0.0, 0.0, rect.2, rect.3), (size.0 as u32, size.1 as u32), true);
@@ -702,6 +712,7 @@ impl SoftScreen {
             bounds: &self.drawn.bounds,
             palette: &self.palette_px,
             overlay: self.overlay as usize,
+            col_px: &self.col_px,
         };
         let rows = damage.rows();
         let mut work = Vec::new();
@@ -737,11 +748,25 @@ struct Clean<'a> {
     bounds: &'a [IRect],
     palette: &'a [u32; 256],
     overlay: usize,
+    /// Each cell column's pixels (frame coordinates).
+    col_px: &'a [(i32, i32)],
 }
 
 impl Clean<'_> {
+    /// The cells of a pixel row (frame coordinates) that meet `run`: the
+    /// cell column and its pixels, clipped to the run.
+    fn cells(&self, run: IRect) -> Vec<(usize, i32, i32)> {
+        (0..COLS)
+            .filter_map(|c| {
+                let (x0, x1) = self.col_px[c];
+                let (x0, x1) = (x0.max(run.x0), x1.min(run.x1));
+                (x0 < x1).then_some((c, x0, x1))
+            })
+            .collect()
+    }
+
     /// Draws `run` (frame coordinates, within `band`'s rows starting at
-    /// `y0`) from scratch.
+    /// `y0`) from scratch, cell by cell: a blank cell is a fill.
     fn draw(&self, band: &mut [u32], y0: i32, stride: usize, run: IRect) {
         let g = &self.grid;
         let ax = self.area.x0;
@@ -749,25 +774,36 @@ impl Clean<'_> {
         let clip = run.intersect(&self.scissor);
         let shapes: Vec<usize> = (0..self.shapes.len()).filter(|&i| !self.bounds[i].intersect(&clip).is_empty()).collect();
         let layered = page || !shapes.is_empty();
-        let (xs, xe) = ((run.x0 - ax) as usize, (run.x1 - ax) as usize);
+        let cells = self.cells(run);
+        // Columns of the run outside the grid (a letterbox): palette 0.
+        let (gx0, gx1) = cells.first().zip(cells.last()).map_or((run.x1, run.x1), |(f, l)| (f.1, l.2));
+        let cursor = g.cursor;
+        let glyph = |r: usize, c: usize| g.cells[r * COLS + c].slot != 0 || cursor == Some((c, r));
+        let at = |x: i32| (x - ax) as usize;
         // 1. Backgrounds (and, if nothing lies between, the glyphs at once).
         for y in run.y0..run.y1 {
             let line = &mut band[(y - y0) as usize * stride..][..stride];
-            let row = g.row((y - self.area.y0) as usize);
-            for x in xs..xe {
-                let px = &mut line[x];
-                let (Some((r, gy)), Some((c, gx))) = (row, g.col(x)) else {
-                    *px = self.palette[0];
-                    continue;
-                };
+            let Some((r, gy)) = g.row((y - self.area.y0) as usize) else {
+                line[at(run.x0)..at(run.x1)].fill(self.palette[0]);
+                continue;
+            };
+            line[at(run.x0)..at(gx0)].fill(self.palette[0]);
+            line[at(gx1)..at(run.x1)].fill(self.palette[0]);
+            let overlay = self.overlay > 0 && r >= self.overlay;
+            for &(c, x0, x1) in &cells {
                 let cell = g.cells[r * COLS + c];
-                if layered || r >= self.overlay && self.overlay > 0 {
-                    *px = self.palette[cell.bg as usize];
+                let bg = self.palette[cell.bg as usize];
+                let span = &mut line[at(x0)..at(x1)];
+                if layered || overlay || !glyph(r, c) {
+                    span.fill(bg);
                     continue;
                 }
-                let (cov, fg) = g.coverage(r, gy, c, gx);
-                let bg = self.palette[cell.bg as usize];
-                *px = if cov == 0 { bg } else { mix(bg, self.palette[fg as usize], cov as u32) };
+                let fg = self.palette[cell.fg as usize];
+                for (i, p) in span.iter_mut().enumerate() {
+                    let (_, gx) = g.col(at(x0) + i).expect("in the grid");
+                    let (cov, _) = g.coverage(r, gy, c, gx);
+                    *p = if cov == 0 { bg } else { mix(bg, fg, cov as u32) };
+                }
             }
         }
         if layered {
@@ -796,11 +832,17 @@ impl Clean<'_> {
                     continue;
                 }
                 let line = &mut band[(y - y0) as usize * stride..][..stride];
-                for x in xs..xe {
-                    let Some((c, gx)) = g.col(x) else { continue };
-                    let (cov, fg) = g.coverage(r, gy, c, gx);
-                    if cov > 0 {
-                        line[x] = mix(line[x], self.palette[fg as usize], cov as u32);
+                for &(c, x0, x1) in &cells {
+                    if !glyph(r, c) {
+                        continue;
+                    }
+                    let fg = self.palette[g.cells[r * COLS + c].fg as usize];
+                    for x in at(x0)..at(x1) {
+                        let (_, gx) = g.col(x).expect("in the grid");
+                        let (cov, _) = g.coverage(r, gy, c, gx);
+                        if cov > 0 {
+                            line[x] = mix(line[x], fg, cov as u32);
+                        }
                     }
                 }
             }
@@ -813,11 +855,14 @@ impl Clean<'_> {
                     continue;
                 }
                 let line = &mut band[(y - y0) as usize * stride..][..stride];
-                for x in xs..xe {
-                    let Some((c, gx)) = g.col(x) else { continue };
-                    let (cov, _) = g.coverage(r, gy, c, gx);
+                for &(c, x0, x1) in &cells {
                     let cell = g.cells[r * COLS + c];
-                    line[x] = mix(overlay_bg(cell.bg), overlay_fg(cell.fg), cov as u32);
+                    let (bg, fg) = (overlay_bg(cell.bg), overlay_fg(cell.fg));
+                    for x in at(x0)..at(x1) {
+                        let (_, gx) = g.col(x).expect("in the grid");
+                        let (cov, _) = g.coverage(r, gy, c, gx);
+                        line[x] = mix(bg, fg, cov as u32);
+                    }
                 }
             }
         }

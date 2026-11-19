@@ -51,6 +51,7 @@ fn looks() -> Option<Looks> {
         window: None,
         renderer: RendererChoice::Software,
         threads: 2,
+        bloom: crate::soft::BloomRes::Auto,
     })
 }
 
