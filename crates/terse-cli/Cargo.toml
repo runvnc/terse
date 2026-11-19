@@ -16,5 +16,6 @@ terse-net.workspace = true
 [dev-dependencies]
 terse-net.workspace = true
 terse-relay.workspace = true
+terse-bus.workspace = true
 tempfile = "3"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

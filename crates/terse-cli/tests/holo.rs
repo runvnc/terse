@@ -24,11 +24,40 @@ fn screen(m: &Machine) -> String {
 }
 
 /// Runs `frames` frames as `terse run` does (holo has no content device).
+/// On the device bus too (common/twin.rs), the same hash every frame.
 fn run(script: &str, frames: u32) -> (Machine, Vec<FrameResult>) {
-    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let image = Image::parse(IMAGE).unwrap();
+    let mut m = Machine::new(&image);
     let mut h = Headless::new(None, Script::parse(script).unwrap());
-    let results = (0..frames).map(|_| h.frame(&mut m)).collect();
+    let mut twin = common::twin::Twin::start(twin_setup(&image, script));
+    let results = (0..frames)
+        .map(|_| {
+            let r = h.frame(&mut m);
+            if let Some(t) = &mut twin {
+                t.follow_machine(&m);
+            }
+            r
+        })
+        .collect();
     (m, results)
+}
+
+/// holo as a single machine with no content device, for the bus twin.
+fn twin_setup<'a>(image: &'a Image, script: &'a str) -> common::twin::Setup<'a> {
+    common::twin::Setup {
+        image,
+        shell: None,
+        identity: None,
+        store: None,
+        data: None,
+        subscriptions: Vec::new(),
+        seed: None,
+        consent: terse_net::Consent::Deny,
+        relays: Vec::new(),
+        script,
+        content: false,
+        announced: false,
+    }
 }
 
 fn golden(name: &str, got: &str) {
@@ -178,8 +207,15 @@ fn cockpit_click_through_a_console() {
         let mut system = terse_core::System::new(&image, false, Vec::new());
         system.set_eye(eye);
         let mut h = terse_net::HeadlessSystem::new(None, Script::parse(&script).unwrap());
+        let mut twin = common::twin::Twin::start(twin_setup(&image, &script));
+        if let Some(t) = &mut twin {
+            t.set_eye(eye);
+        }
         for _ in 0..90 {
             h.frame(&mut system);
+            if let Some(t) = &mut twin {
+                t.follow(&system);
+            }
         }
         let got = screen(system.shell());
         assert!(got.contains(">DELTA") && got.contains("target DELTA"), "eye {eye:?}, click at ({x}, {y}):\n{got}");

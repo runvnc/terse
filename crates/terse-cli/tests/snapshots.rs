@@ -296,6 +296,8 @@ struct Sys {
     system: System,
     headless: HeadlessSystem,
     shell_units: Vec<u64>,
+    /// The same session on the device bus (common/twin.rs).
+    twin: Option<common::twin::Twin>,
 }
 
 impl Sys {
@@ -315,18 +317,36 @@ impl Sys {
         if let Some(id) = missing {
             node.store().remove(&id).unwrap();
         }
-        let content = ContentService::start_with_consent(node, Consent::Deny);
         let shell = Image::parse(SHELL).unwrap();
+        let identity = ProgramId { publisher: [0; 32], name: shell.title.clone() };
+        let twin = common::twin::Twin::start(common::twin::Setup {
+            image: &shell,
+            shell: Some(ids.clone()),
+            identity: Some(identity.clone()),
+            store: Some(store),
+            data: Some(data),
+            subscriptions: vec![alice().feed_key()],
+            seed: Some([11; 32]),
+            consent: Consent::Deny,
+            relays: Vec::new(),
+            script,
+            content: true,
+            announced: false,
+        });
+        let content = ContentService::start_with_consent(node, Consent::Deny);
         let mut system = System::new(&shell, true, ids);
-        system.set_shell_identity(Some(ProgramId { publisher: [0; 32], name: shell.title.clone() }));
+        system.set_shell_identity(Some(identity));
         terse_net::snapshots::load_table(&mut system, data);
-        Sys { system, headless: HeadlessSystem::new(Some(content), Script::parse(script).unwrap()), shell_units: Vec::new() }
+        Sys { system, headless: HeadlessSystem::new(Some(content), Script::parse(script).unwrap()), shell_units: Vec::new(), twin }
     }
 
     /// Runs system frames until the shell's frame counter is `frame`.
     fn run_until(&mut self, frame: u32) {
         while self.system.shell().frame() < frame {
             let r = self.headless.frame(&mut self.system);
+            if let Some(t) = &mut self.twin {
+                t.follow(&self.system);
+            }
             self.shell_units.push(r.shell.unwrap().used);
             assert!(self.system.stopped().is_none());
         }

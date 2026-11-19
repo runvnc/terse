@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+pub mod twin;
+
 use terse_core::{BUDGET_PER_FRAME, Image};
 
 pub fn workspace() -> PathBuf {
@@ -156,7 +158,13 @@ pub fn terse_command() -> Command {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         (tempfile::tempdir().unwrap(), port)
     });
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_terse"));
+    // Compiled into terse-devices' tests (common/twin.rs), the terse
+    // program is the one cargo built beside the drivers.
+    let exe = option_env!("CARGO_BIN_EXE_terse").map(PathBuf::from).unwrap_or_else(|| {
+        let driver = option_env!("CARGO_BIN_EXE_terse-dev-terminal").expect("built in terse-cli or terse-devices");
+        Path::new(driver).parent().unwrap().join("terse")
+    });
+    let mut cmd = Command::new(exe);
     for var in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"] {
         cmd.env(var, home.path().join(var));
     }
