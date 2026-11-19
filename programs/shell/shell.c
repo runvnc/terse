@@ -7,7 +7,14 @@
  * budget) and the clock (UTC). The machines are tiled below it: one zoomed
  * to the whole area, a master on the left half with the others stacked on
  * the right, or a grid; each picture at the top of its tile. The focused machine has a blue frame, drawn with
- * the vector display in the gap around its picture.
+ * the vector display in the gap around its picture. The fourth layout,
+ * the gallery, stands the machines' screens on a ring in the 3D display
+ * (device 9 Screens, SPEC 13.3), each in a wireframe box on a stand over a
+ * faint ground grid, the selected one at the front on the glass; the ring
+ * turns (eased over 20 frames) to bring another to the front, and the
+ * machine with the focus is faced (SPEC 12.2 face): its panel flies flat
+ * into the area below the bar and is shown there as a zoomed tile; the
+ * home key flies it back.
  *
  * The host's home key gives the focus back to the shell: command mode. A
  * launcher on the page lists the built-in programs, then the programs of
@@ -19,11 +26,12 @@
  * one version to the next. Keys in command mode: Up and Down move the
  * cursor, Enter starts the program under it (and focuses it) or focuses
  * the machine under it, Tab or Right and Shift+Tab or Left
- * select the next or previous machine, Esc returns the focus to the
- * selected machine, X stops it, P pauses or resumes it, Z zooms it (or
+ * select the next or previous machine (in the gallery, turning the ring),
+ * Esc returns the focus to the selected machine, X stops it, P pauses or resumes it, Z zooms it (or
  * goes back to the layout before), L cycles the layouts, 1-8 select a
- * machine by handle. A press on a machine's picture or its bar segment
- * focuses it; one on the home segment enters command mode. The layout
+ * machine by handle. A press on a machine's picture (or panel) or its bar
+ * segment focuses it (in the gallery a bar segment turns the ring to it, in
+ * command mode); one on the home segment enters command mode. The layout
  * chosen with L and Z is kept in the named record "layout" (SPEC 9.6).
  *
  * Open requests (SPEC 4 `open`, 12.2 `request`): a machine may ask the
@@ -68,8 +76,14 @@
 #define AREA_H (480 - AREA_Y)
 #define GAP 6     /* between tiles; the focus frame is drawn in it */
 #define PANEL_W 200 /* the launcher beside the tiles in command mode */
+#define G_CX 450    /* the gallery (see there) */
+#define G_CY 250
+#define G_GROUND 430
+#define G_HW 152
+#define G_HH 114
+#define G_DEPTH 16
 
-enum { ZOOM, MASTER, GRID, LAYOUTS };
+enum { ZOOM, MASTER, GRID, GALLERY, LAYOUTS };
 
 #define KEY_D 0x07
 #define KEY_S 0x16
@@ -302,6 +316,8 @@ static uint8_t zoomed(void)
     return nth_machine(0);
 }
 
+static uint8_t g_front(void);
+
 /* Places every machine in the area (beside the launcher in command mode)
  * and remembers the tiles and pictures. */
 static void place_all(void)
@@ -338,10 +354,182 @@ static void place_all(void)
             r.w = p.w;
             r.h = p.h;
         }
-        tile[h] = r;
         pic[h] = r.w && r.h ? fit(r) : r;
+        if (layout == GALLERY) {
+            /* Panels, not tiles; the front one's frame holds its label. */
+            rect f = { G_CX - G_HW, G_CY - G_HH, 2 * G_HW, 2 * G_HH }, z = { 0, 0, 0, 0 };
+            r = shown(h) && h == g_front() ? f : z;
+            pic[h] = z;
+        }
+        tile[h] = r;
+        if (layout == GALLERY)
+            r = pic[h];
         mach_place(h, r.x, r.y, r.w, r.h);
     }
+}
+
+/* --- The gallery ---------------------------------------------------------- */
+
+/* Units: the ring's centre axis at (G_CX, *, radius) so the front panel is
+ * on the glass, 2 G_HW wide about (G_CX, G_CY); the ground at G_GROUND. */
+static const uint16_t g_radius[MACH_MAX + 1] = { 0, 0, 200, 210, 250, 300, 350, 405, 460 };
+/* Smoothstep x 256 at t / 20. */
+static const uint8_t g_ease[20] = { 0, 2, 7, 16, 27, 40, 55, 72, 90, 109, 128, 147, 166, 184, 201, 216, 229, 240, 249, 254 };
+static uint8_t v3list[2048];
+static uint16_t ring, ring_from, ring_to;
+static uint8_t ring_on;                     /* ring_to is set */
+static int16_t ring_delta;
+static uint8_t ring_t = 20;                 /* frames into a turn; 20: none */
+static uint8_t g_faced;                     /* the machine asked to be faced */
+static uint8_t g_dirty = 1;                 /* the 3D list must be built again */
+static uint16_t g_rot[MACH_MAX], g_len;     /* where each panel's angle is in v3list; its length */
+static uint16_t g_face[MACH_MAX];           /* where each panel's own turn is */
+
+/* A panel at angle a on the ring turns back by half of it: it faces
+ * outward, towards the viewer's side. */
+static uint16_t g_back(uint16_t a) { return (uint16_t)(-(int16_t)a / 2); }
+
+/* The machine at the front: the selected one, else the first. */
+static uint8_t g_front(void) { return sel && shown(sel) ? sel : nth_machine(0); }
+
+static uint8_t has_picture(uint8_t h)
+{
+    uint8_t s = info[h].state;
+    return s >= MACH_RUNNING && s <= MACH_FAULTED;
+}
+
+/* A box about the panel: its edges on the screen's, a back G_DEPTH behind,
+ * the corners joined; then a stand to the ground and a cross at its foot.
+ * Bit 7 of a step: move there instead of drawing a line. */
+static const int8_t box_x[4] = { -1, 1, 1, -1 }, box_y[4] = { -1, -1, 1, 1 };
+static const uint8_t box_path[] = { 0x80, 1, 2, 3, 0, 4, 5, 6, 7, 4, 0x81, 5, 0x82, 6, 0x83, 7 };
+
+static void g_panel(uint8_t h, uint8_t i, uint8_t n)
+{
+    uint16_t r = g_radius[n];
+    v3_push();
+    v3_translate(G_CX * 16, G_CY * 16, r * 16);
+    uint16_t a = ring + (uint16_t)(i * (65536u / n));
+    v3_rotate(V3_AXIS_Y, a);
+    g_rot[i] = v3_ptr - v3list - 2;
+    v3_translate(0, 0, -r * 16);
+    v3_rotate(V3_AXIS_Y, g_back(a));
+    g_face[i] = v3_ptr - v3list - 2;
+    if (h == focus)
+        v3_colour(70, 150, 255, 255);
+    else if (h == g_front())
+        v3_colour(230, 180, 60, 255);
+    else
+        v3_colour(120, 130, 150, 255);
+    v3_width(32);
+    for (uint8_t k = 0; k < sizeof box_path; k++) {
+        uint8_t b = box_path[k], c = b & 3;
+        int16_t x = box_x[c] * G_HW * 16, y = box_y[c] * G_HH * 16, z = b & 4 ? G_DEPTH * 16 : 0;
+        if (b & 0x80)
+            v3_move(x, y, z);
+        else
+            v3_line(x, y, z);
+    }
+    int16_t foot = (G_GROUND - G_CY) * 16, mid = G_DEPTH * 8;
+    v3_move(0, G_HH * 16, mid);
+    v3_line(0, foot, mid);
+    v3_move(-960, foot, mid);
+    v3_line(960, foot, mid);
+    v3_move(0, foot, mid - 640);
+    v3_line(0, foot, mid + 640);
+    v3_screen(h, 2 * G_HW * 16);
+    v3_pop();
+}
+
+/* The ring: the ground grid, then each machine's panel. */
+static void g_build(void)
+{
+    uint8_t n = machine_count();
+    if (!n) {
+        v3_clear();
+        return;
+    }
+    int16_t zmax = 2 * g_radius[n] + 300, g = G_GROUND * 16;
+    v3_begin(v3list);
+    v3_colour(50, 70, 100, 255);
+    v3_width(16);
+    for (int16_t z = -64; z <= zmax; z += 128) {
+        v3_move((G_CX - 256) * 16, g, z * 16);
+        v3_line((G_CX + 512) * 16, g, z * 16);
+    }
+    for (int16_t x = G_CX - 256; x <= G_CX + 512; x += 128) {
+        v3_move(x * 16, g, -64 * 16);
+        v3_line(x * 16, g, zmax * 16);
+    }
+    for (uint8_t i = 0; i < n; i++)
+        g_panel(nth_machine(i), i, n);
+    v3_end();
+    g_len = v3_length(v3list);
+    v3_submit(v3list, g_len);
+}
+
+/* Only the ring turned: each panel's angle in the list, submitted again. */
+static void g_turn(void)
+{
+    uint8_t n = machine_count();
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t a = ring + (uint16_t)(i * (65536u / n)), b = g_back(a);
+        v3list[g_rot[i]] = a;
+        v3list[g_rot[i] + 1] = a >> 8;
+        v3list[g_face[i]] = b;
+        v3list[g_face[i] + 1] = b >> 8;
+    }
+    if (n)
+        v3_submit(v3list, g_len);
+}
+
+/* Once a frame: the ring turns towards the front machine, the list is
+ * built if anything changed, and the machine with the focus is faced (or
+ * the view returns) . */
+static void gallery(void)
+{
+    if (layout != GALLERY) {
+        if (g_faced)
+            mach_unface(0);
+        if (ring_on)
+            v3_clear();
+        g_faced = ring_on = 0;
+        g_dirty = 1;
+        return;
+    }
+    uint8_t n = machine_count(), f = g_front(), at = 0;
+    for (uint8_t i = 0; i < n; i++)
+        if (nth_machine(i) == f)
+            at = i; /* the front one's place on the ring */
+    uint16_t to = n ? -(uint16_t)(at * (65536u / n)) : 0;
+    if (to != ring_to || !ring_on) {
+        ring_from = ring;
+        ring_delta = (int16_t)(to - ring);
+        ring_t = ring_on ? 0 : 19; /* the first time: at once */
+        ring_to = to;
+        ring_on = 1;
+    }
+    uint8_t turned = ring_t < 20;
+    if (turned) {
+        ring_t++;
+        ring = ring_t == 20 ? ring_to : ring_from + (int16_t)(ring_delta * g_ease[ring_t] / 256);
+    }
+    if (g_dirty)
+        g_build();
+    else if (turned)
+        g_turn();
+    g_dirty = 0;
+    uint8_t want = focus && has_picture(focus) ? focus : 0;
+    if (want == g_faced)
+        return;
+    if (!want) {
+        mach_unface(20);
+        g_faced = 0;
+        return;
+    }
+    rect area = make(0, AREA_Y, 640, 480), p = fit(area);
+    if (mach_face(want, 20, p.x, area.y, p.w, p.h))
+        g_faced = want;
 }
 
 /* --- Drawing ------------------------------------------------------------- */
@@ -1275,8 +1463,19 @@ static void press(uint16_t x, uint16_t y)
     uint8_t width = n ? (TERM_COLS - 4 - 7) / n : 0;
     if (width > 20)
         width = 20;
-    if (col >= 4 && width && (col - 4) / width < n)
-        focus_machine(nth_machine((col - 4) / width));
+    if (col >= 4 && width && (col - 4) / width < n) {
+        uint8_t h = nth_machine((col - 4) / width);
+        if (layout != GALLERY) {
+            focus_machine(h);
+            return;
+        }
+        /* The gallery: back to the ring, turned to it. */
+        if (focus) {
+            enter_command_mode();
+            mach_focus(0);
+        }
+        select_machine(h);
+    }
 }
 
 /* The programs records (timeline records, SPEC 9.5) into fprog. */
@@ -1495,7 +1694,9 @@ int main(void)
             draw_labels();
             draw_frames();
             dirty = 0;
+            g_dirty = 1;
         }
+        gallery();
         show_launcher();
         /* The bar: on every change, and four times a second for the shares
          * and the clock. */

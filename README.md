@@ -39,7 +39,9 @@ launcher (no program ever sees F12). The bar at the top shows each machine:
 its handle, title and share of the frame budget, the focused one in blue.
 In the launcher, Esc goes back to the selected machine, Tab selects the next
 one, X stops it, P pauses it, Z zooms it, L changes the layout (master and
-stack, grid, zoom); a click on a machine's picture gives it the keyboard.
+stack, grid, gallery, zoom); a click on a machine's picture gives it the keyboard.
+In the gallery the machines' screens stand on a turning ring in 3D; Left and Right
+turn it, Enter flies the front one onto the screen, F12 sends it back.
 See [The shell](#the-shell).
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
@@ -198,7 +200,7 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>]`
+`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
 which starts the built-in programs (reader, sparks, fetch, hello, sketch and holo, also built in, and
@@ -248,7 +250,9 @@ Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
 (wgpu) or by the CPU (see [Software renderer](#software-renderer)); `auto`, the
 default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
 `--threads <n>` sets the software renderer's drawing threads (default one per core)
-and `--bloom full|half|auto` the resolution of its phosphor bloom.
+and `--bloom full|half|auto` the resolution of its phosphor bloom; `--panels flat`
+makes it draw the shell's panels upright instead of in perspective (`auto`, the
+default, is perspective; the GPU always draws them in perspective).
 `--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo] [--eye <dx>,<dy>]`
 (with no image or `--shell [<image>]`: the shell and its machines) runs
 headless like `terse run` (relay only with `--relay`; consent `deny` unless given; with
@@ -590,7 +594,7 @@ file, synced and renamed.
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (16 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
+program (19 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
@@ -604,8 +608,18 @@ each one's screen where the shell placed it, and routes input.
 - **Tiles**: below the bar, each machine's picture (its whole screen, scaled) at the
   top of its tile, a blue frame around the one with the keyboard. Layouts: master and
   stack (the first machine on the left half, the others stacked on the right; the
-  default), grid, and zoom (one machine over the whole area, the others hidden but
-  still running).
+  default), grid, zoom (one machine over the whole area, the others hidden but
+  still running), and the gallery.
+- **The gallery**: every machine's screen is a panel (a Screen on device 9, SPEC 13.3)
+  on a ring behind the glass, in a wireframe monitor case on a stand over a faint
+  ground grid, the selected machine at the front on the glass and the others turned
+  half way towards the viewer. Left and Right (and the bar's segments) turn the ring
+  to the next machine, 20 frames eased; the shell only changes the ring's angles.
+  Giving a machine the keyboard (Enter, Esc, a click on its panel, starting a
+  program, which joins the ring) `face`s it (SPEC 12.2): over 20 frames the host
+  moves the whole scene until its panel lies flat over the area below the bar, then
+  shows it there as a flat picture, as in zoom; F12 `unface`s it, back to the ring.
+  With the launcher open the ring stands right of it.
 - **The launcher** (on the page, while the shell has the keyboard: at start, and after
   F12, the home key): the built-in programs by title, then "From your feeds": the
   current version of each program of the feeds you follow, with its publisher's name
@@ -966,6 +980,24 @@ segments; a circle is 64 chords. The style and persistence are device 3's (calls
 `902h`, `903h` set the same setting), so a program with only device 9 can choose
 the phosphor style. Device 9 is drawn after device 3's shapes, under the terminal's
 characters, so text on the glass labels the models.
+
+**Screens** (Screen, opcode `0Dh`: a handle and a width) work only in the shell's
+list: each places that machine's whole screen as a flat 4:3 panel centred on the
+transform's origin, in its xy plane (with the identity it lies like the glass),
+drawn in perspective from the eye and hiding the shell's lines behind it like a face.
+The shell's screen is then drawn first without its 3D lines, the panels far to near
+over it, the lines over them, and flat pictures over everything (SPEC 12.3). Each
+panel's machine is drawn into a picture of its own at about the panel's size on the
+screen (a whole glyph cell per 80th, at most the shell's own), mipmapped (both
+renderers: trilinear, and anisotropic on the GPU), so text on a turning panel does
+not shimmer; seen from behind a panel is a dark plate. The pointer reaches the
+nearest panel the ray from the eye through it meets. Device 8's `face` and `unface`
+move the whole scene (a rigid motion and scale, eased) until a panel lies flat on
+the glass over a rectangle and then show that machine flat there, pixel for pixel
+as `place` would; the view's progress counts the shell's frames and is in its
+state. `--panels flat` makes the software renderer draw each panel's picture
+upright in the rectangle the panel covers instead (the fallback SPEC 13.5 allows a
+host that cannot draw in perspective).
 
 **Faces** (Face, opcode `0Ch`: 3 or 4 corners) draw nothing but hide the lines,
 points and circles behind them, as the eye in use sees them: a point is hidden when

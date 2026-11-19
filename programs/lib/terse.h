@@ -59,6 +59,8 @@
 #define CALL_MACH_RESTORE 0x80C
 #define CALL_MACH_SNAPSHOT_INFO 0x80D
 #define CALL_MACH_SNAPSHOT_DELETE 0x80E
+#define CALL_MACH_FACE 0x80F
+#define CALL_MACH_UNFACE 0x810
 #define CALL_V3_SUBMIT 0x900
 #define CALL_V3_CLEAR 0x901
 #define CALL_V3_STYLE 0x902
@@ -99,6 +101,20 @@ static inline uint32_t terse_call5(uint32_t n, uint32_t x, uint32_t y, uint32_t 
     register uint32_t a4 __asm__("a4") = v;
     register uint32_t a7 __asm__("a7") = n;
     __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
+/* Six arguments (a0-a5). */
+static inline uint32_t terse_call6(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t v, uint32_t u)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a3 __asm__("a3") = w;
+    register uint32_t a4 __asm__("a4") = v;
+    register uint32_t a5 __asm__("a5") = u;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a4), "r"(a5), "r"(a7) : "memory");
     return a0;
 }
 
@@ -350,6 +366,7 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define V3_OP_ROTATE 0x0A
 #define V3_OP_SCALE 0x0B
 #define V3_OP_FACE 0x0C
+#define V3_OP_SCREEN 0x0D
 
 /* Builder: appends commands at v3_ptr; the caller owns the buffer. */
 extern uint8_t *v3_ptr;
@@ -373,6 +390,11 @@ void v3_end(void);
  * 4-corner face is the triangles a-b-c and a-c-d. */
 void v3_face3(const int16_t *a, const int16_t *b, const int16_t *c);
 void v3_face4(const int16_t *a, const int16_t *b, const int16_t *c, const int16_t *d);
+/* Only in the shell's list: machine `handle`'s screen as a flat 4:3 panel
+ * `width` sixteenths wide, centred on the transform's origin in its xy
+ * plane, facing -z (as the glass faces the viewer). Opaque: it hides lines
+ * behind it. The current point stays. */
+void v3_screen(uint8_t handle, uint16_t width);
 
 /* Submits `len` bytes at `list` (in RAM); returns VEC_DONE or VEC_REJECTED.
  * Costs 1 unit per 4 bytes. */
@@ -731,6 +753,17 @@ static inline uint32_t mach_snapshot_info(uint32_t slot, mach_snapshot_record *r
     return terse_call(CALL_MACH_SNAPSHOT_INFO, slot, (uint32_t)r, 0);
 }
 static inline uint32_t mach_snapshot_delete(uint32_t slot) { return terse_call(CALL_MACH_SNAPSHOT_DELETE, slot, 0, 0); }
+
+/* Facing a panel (SPEC 12.2): over `frames` (0-600) the host moves its
+ * view of the whole 3D scene until machine h's panel (a Screen in the
+ * list submitted now) lies flat in the rectangle, shown there as by
+ * mach_place; 1, or 0 if h has no panel or the arguments are bad.
+ * mach_unface moves back to the scene as listed. */
+static inline uint32_t mach_face(uint32_t h, uint32_t frames, uint32_t x, uint32_t y, uint32_t w, uint32_t ht)
+{
+    return terse_call6(CALL_MACH_FACE, h, frames, x, y, w, ht);
+}
+static inline uint32_t mach_unface(uint32_t frames) { return terse_call(CALL_MACH_UNFACE, frames, 0, 0); }
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

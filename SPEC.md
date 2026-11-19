@@ -286,6 +286,8 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `80Ch` | `restore` | `a0` = slot | a handle 1–8, or 0 if none is free or the slot is out of range |
 | `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
 | `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+| `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
+| `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 | `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
 | `901h` | `clear` | — | 0 |
 | `902h` | `style` | `a0` = style | 0 done, 1 rejected |
@@ -1364,7 +1366,8 @@ and is then in one of these states:
 
 Each handle also has a **run flag**, a **rectangle** (x, y, width,
 height in the shell's screen units) and possibly an **identity**. The
-system has a **focus**: a handle, or 0 for the shell; it is 0 at reset.
+system has a **focus**: a handle, or 0 for the shell; it is 0 at reset;
+and a **view** of the shell's 3D scene (`face`, below): none at reset.
 
 A program's **identity** is its publisher's feed key and its name: the
 (feed key, title) of a program entry (`NETWORK.md` section 4.2). The
@@ -1503,6 +1506,35 @@ starts as its own built-in shell has the identity of a built-in. Section
   (for `snapshot_info` at once); the host removes its snapshot at the end
   of the frame, in order with the snapshots asked for in the same frame.
   Returns 1, or 0 for a slot out of range.
+- **`face`** moves the host's view of the shell's 3D scene (section 12.3)
+  so that machine `a0`'s panel comes to lie flat on the glass, over `a1`
+  frames (0–600), and shows it there as a flat picture in the rectangle
+  `a2`–`a5` (x, y, width, height, clamped as `place` clamps). It is
+  refused (returns 0, nothing changes) unless `a0` is 1–8, its machine
+  has a picture (running, paused, exited or faulted), its own rectangle
+  shows no picture (section 12.3), the shell's 3D list as it holds it now
+  has a Screen of `a0` (section 13.3; decoded only, the caps not counted),
+  `a1` is at most 600 and the rectangle shows a picture. Otherwise the view
+  becomes: handle `a0`, towards the glass, that rectangle, start frame
+  the shell's frame counter in this frame, `a1` frames, and as its start
+  progress the view's progress now if it already moved `a0`'s panel,
+  else 0. Returns 1.
+- **`unface`** moves the view back to the scene as listed over `a0`
+  frames (0–600), from its progress now: the direction becomes back, the
+  start progress the progress now, the start frame this frame's, the
+  duration `a0`. Refused (0) if `a0` is above 600 or there is no view.
+  Returns 1.
+
+  The view's **progress** is a number from 0 (the scene as listed) to
+  4,096 (the panel flat on the glass). Shown after the shell's frame with
+  counter f, with start progress p0, start frame s and duration d, it is
+  p0 + (e − p0) × k ÷ d, rounded towards zero, for k = f − s < d (as
+  32-bit unsigned numbers), and e from k = d on (also for d = 0), where e
+  is 4,096 towards the glass and 0 back. The view **moves** while the
+  progress is not e. At the end of each of the shell's frames (section
+  12.5, step 3), if the view's machine is not in use, has no picture, has
+  a rectangle that shows a picture, or has no Screen in the shell's 3D
+  list, the view becomes none: the scene is shown as listed at once.
 
 ### 12.3 Screens
 
@@ -1514,40 +1546,107 @@ If pw or ph is 0 nothing is shown. A machine that is running, paused,
 exited or faulted has a picture; one that is loading or failed has none.
 Exited and faulted machines show the screen as it was at their last frame.
 
-The host shows, from the bottom:
+A machine is shown **flat** in its picture: the picture of its own
+rectangle, or, once the view (section 12.2 `face`) of it has finished
+moving towards the glass, the picture of the view's rectangle. A machine
+is shown as a **panel** where the shell's 3D list has a Screen of it in
+effect (section 13.3), unless it is shown flat by the view.
+
+If the shell's 3D list has no Screen in effect, the host shows, from the
+bottom:
 
 1. the shell's screen, over the whole of the host's screen as a single
    machine's would be, combined as section 10.5 says;
-2. each machine's picture, in increasing handle order, each a complete
+2. each flat picture, in increasing handle order, each a complete
    screen (its own layers, style, afterglow and page, sections 10.5, 10.6,
    11) scaled into its picture and covering what is below it; outside the
    picture, the rest of the rectangle shows what is below;
 3. the host's own prompts (section 9.5), over everything; a consent prompt
    names the image title of the machine whose request it is.
 
+If it has at least one, the host shows the shell's **scene**, from the
+bottom:
+
+1. the shell's screen as above, without the lines, points and circles of
+   its 3D list;
+2. the panels, from the farthest to the nearest by the distance from the
+   eye in use (section 13.1) to the panel's centre (the mean of its
+   corners), the lower handle first where two are as far; each covers
+   what is below it;
+3. the lines, points and circles of the shell's 3D list as section 13
+   draws them, each Screen in effect hiding what is behind it as a face
+   of its four corners does;
+4. each flat picture, in increasing handle order, as step 2 above;
+5. the host's own prompts, as step 3 above.
+
+A **panel** shows its machine's complete screen (as a flat picture does)
+on its front, seen in perspective from the eye in use: the point of the
+panel a fraction u along its top edge from its top left corner and v
+down its left edge shows the point (640u, 480v) of the machine's screen.
+Seen from behind (section 13.3) it is an opaque plate of a dark colour
+the host chooses. Panels are cut at the near plane (z = −800) and at the
+edges of the shell's screen. A host that cannot draw a picture in
+perspective may draw each panel's picture flat instead: scaled uniformly
+into the bounding rectangle of the panel's projection (its part in front
+of the near plane), as a picture into a rectangle, and centred; the panel
+still hides what it would hide.
+
+**The view.** While there is a view whose machine has a Screen in
+effect, everything in steps 2 and 3 of the scene (panels, lines, points,
+circles and the faces that hide them) is moved by the view's transform
+before it is seen from the eye; the caps of section 13.4 are counted on
+the list as given. Let the view's machine's panel as listed have the
+centre c₀, the width w₀ and the orientation R₀ (the rotation whose
+columns are the unit vectors along its top edge, down its left edge, and
+their cross product), and let the picture of the view's rectangle be
+(px, py, pw, ph), with centre c₁ = (px + pw/2, py + ph/2, 0). At
+progress p (section 12.2) let t = p/4,096 and e = t² (3 − 2t). Then
+c = c₀ + (c₁ − c₀) e, w = w₀ (pw/w₀)^e, R the rotation the spherical
+interpolation of the quaternions of R₀ and the identity by e gives, by
+the shorter arc, and the transform takes a point q to
+c + (w/w₀) R R₀ᵀ (q − c₀). So at progress 0 the scene is as listed, and at
+4,096 the view's panel lies on the glass over the picture, upright,
+centred on it and as wide; the eye stays where it is, so what is not on
+the glass still moves with it. When the view has finished moving towards
+the glass its machine is shown flat (step 4) and not as a panel. A host
+that cannot animate may show every view as at its end (progress 0 or
+4,096) at once; the input is routed by the view as section 12.4 says.
+
 How the host scales a screen (fonts rasterised for the picture's size,
-smoothing) is presentation (section 8.6).
+smoothing) is presentation (section 8.6), and so are the resolution a
+panel's picture is drawn at, how it is filtered, and the smoothing of a
+panel's edges.
 
 ### 12.4 Input
 
 The host's input events (section 5) are in the shell's screen units. In each
-frame, before the shell runs, they are routed in order by the focus and the
-pictures as they are at that moment:
+frame, before the shell runs, they are routed in order by the focus, the
+flat pictures and the panels as they are at that moment (section 12.3, as
+shown after the shell's last frame, seen from the eye the host draws
+from):
 
 | Input | Goes to |
 |---|---|
 | Key down, key up, text, wheel | the machine with the focus if it is running; the shell if the focus is 0; otherwise nobody |
-| Pointer, over a picture | the machine whose picture it is (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
-| Pointer, over no picture | the shell, unchanged |
+| Pointer, over a flat picture | the machine whose picture it is (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
+| Pointer, over the front of a panel and no flat picture | while the view moves (section 12.2), nobody; otherwise the machine whose panel it is, mapped into its screen units, if it is running; otherwise nobody |
+| Pointer, over nothing else | the shell, unchanged |
 | Controllers (section 6) | the machine with the focus; every other machine reads every controller as not connected |
 | Content done, feeds updated, page events | each machine its own (sections 9, 11.5) |
 
 A position (x, y) over a picture (px, py, pw, ph) is mapped to
 x′ = ⌊(2(x − px) + 1) × 640 / (2pw)⌋ and y′ = ⌊(2(y − py) + 1) × 480 / (2ph)⌋.
-A pointer event that presses a button (sets a button bit that was clear in
-the previous pointer event, wherever that went) over a picture also gives
-the shell a machine pressed event, in the place among the shell's events
-that the pointer event had in the input.
+The pointer at (x, y) is over a panel if the ray from the eye in use
+(section 13.1) through the point (x + 1/2, y + 1/2, 0) meets the panel in
+front of the near plane (z > −800), at a fraction u along its top edge
+(0 ≤ u < 1) and v down its left edge (0 ≤ v < 1); of several, the one it
+meets nearest the eye counts. If that panel is seen from behind (section
+13.3), the pointer is over nothing; otherwise it is mapped to x′ = ⌊640u⌋,
+y′ = ⌊480v⌋. A pointer event that presses a button (sets a button bit that
+was clear in the previous pointer event, wherever that went) over a flat
+picture, or over a panel while the view does not move, also gives the
+shell a machine pressed event, in the place among the shell's events that
+the pointer event had in the input.
 
 **The home key.** A host reserves one key (or other input) as its home key;
 which one is up to the host. It is never delivered to any machine as a key
@@ -1596,7 +1695,9 @@ For each system frame the host does the following, in order:
    calls, and a slot whose snapshot was stored holds it from now on for
    `snapshot_info` (unless the shell deleted it after asking for it).
 2. **Route** the frame's input (section 12.4).
-3. **The shell** runs its frame (section 1.4).
+3. **The shell** runs its frame (section 1.4). Then, if the view's
+   machine is no longer shown as a panel, the view becomes none (section
+   12.2 `face`).
 4. **Starts and stops** the shell made in its frame are carried out in the
    order it made them, with the arguments it gave. A machine started in
    this frame is loading: its first frame is at the earliest in the next
@@ -1624,7 +1725,9 @@ requested and snapshot done events and what device 8 returns that the
 shell did not set itself: the latched records (states, exit codes, faults,
 failure reasons, the image IDs and identities of programs started by
 identity or restored, units, frame counters), the open requests `request`
-delivers, the built-in programs and what `snapshot_info` tells. For a machine
+delivers, the built-in programs and what `snapshot_info` tells; the view
+is the shell's own state, and the eye the host routes the pointer by is
+part of the input. For a machine
 the shell started, what `open` returns (whether a request of it still
 waits for the shell) is an input like a completion. The identities the shell gave are its own state. Device 8's state is part of the shell's state (`STATE.md`
 1.10); a started machine's state is its own and holds nothing of the
@@ -1667,7 +1770,8 @@ the restore.
 
 Draws lines, points and circles placed in a box around the screen, from a
 display list like device 3's (section 10); faces, which draw nothing, hide
-what is behind them. The program gives geometry, not
+what is behind them; in the shell's list, Screens place the screens of the
+machines it started as panels in the box (section 12.3). The program gives geometry, not
 a picture: the host projects it onto the screen from an eye it chooses
 (section 13.1), so it may let the viewer look around the models, and the
 program cannot observe that choice. As with device 3, nothing drawn can be
@@ -1735,6 +1839,7 @@ saved transforms, current point (0, 0, 0).
 | `0Ah` | Rotate | axis (1 byte: 0 x, 1 y, 2 z), angle (2 bytes, unsigned, in 1/65,536 of a turn) | Turns the transform about its axis |
 | `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly |
 | `0Ch` | Face | n (1 byte: 3 or 4), then n corners x, y, z | Hides what is behind it (below); draws nothing |
+| `0Dh` | Screen | handle (1 byte, 1–8), width w (2 bytes, unsigned) | Shows machine `handle`'s screen as a panel (below and section 12.3) |
 
 - **The transform.** A point p given to Move or Line is drawn at M(p),
   where M is the transform in force, with p and every translation in
@@ -1767,7 +1872,8 @@ saved transforms, current point (0, 0, 0).
 - The list ends at an End command, at the end of the submitted bytes, at
   an unknown opcode, at a command whose operands are cut off by the end of
   the list, at a Rotate whose axis is above 2, at a Face whose n is not 3
-  or 4, or as the stack rule says. Commands before that point are drawn.
+  or 4, at a Screen whose handle is 0 or above 8, or as the stack rule
+  says. Commands before that point are drawn.
 - Lines, points and circles are drawn in list order, each over the earlier
   ones, blended by opacity as in section 10.3. Only faces hide: a near line
   does not cover a far one any more than a later one covers an earlier one.
@@ -1800,6 +1906,25 @@ saved transforms, current point (0, 0, 0).
   hidden or not by each face. Faces do not hide one another and draw
   nothing, so no line is drawn where two faces cross unless the list draws
   one.
+- **A Screen** is a flat panel w/16 units wide and 3/4 of that high,
+  centred on the transform's origin in its xy plane: its corners are
+  M(−w/32, −3w/128, 0) (top left), M(w/32, −3w/128, 0) (top right),
+  M(w/32, 3w/128, 0) (bottom right) and M(−w/32, 3w/128, 0) (bottom left),
+  with w in sixteenths and M the transform in force (so it is scaled,
+  turned and moved with it). With the identity transform it lies like the
+  glass: its top edge along x, its left edge down along y, its front
+  towards the viewer. It does not change the current point. With a = top
+  right − top left and b = bottom left − top left, the panel is **seen
+  from behind** from an eye on the side of its plane that a × b points to
+  (or in its plane), else its front is seen.
+- **Which Screens are in effect.** A Screen is in effect only in the list
+  of the shell of a system (the machine that has device 8, section 12.1),
+  only if it is the first Screen of its handle in the list, the handle's
+  machine has a picture (section 12.3) and the handle's rectangle shows no
+  picture. Any other Screen is decoded and does nothing: it draws nothing,
+  hides nothing and is not counted. A Screen in effect is shown as section
+  12.3 says, and hides lines, points and circles exactly as a Face of its
+  four corners does; one of width 0 has no area and hides nothing.
 
 ### 13.4 Clipping and caps
 
@@ -1816,6 +1941,7 @@ Circle counts a **length** and a number of **segments**:
 | Point | 0 | 1 | 0 |
 | Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 | 0 |
 | Face | 0 | 0 | 1 |
+| Screen in effect | 0 | 0 | 1 |
 
 A command that would take the list's total length above 65,536, its
 number of segments above 16,384, its number of faces above 256, or its
@@ -1852,6 +1978,10 @@ those are depends on the eye.
   circles are beam light like the 2D display's lines: core, halo, bloom,
   afterglow and smear, with the vertex dwell at line ends and points but
   not where a circle's chords join or where a face cut a line.
+- **Screens** in effect are drawn as panels, in the shell's scene (section
+  12.3), not in the vector layer: the shell's lines, points and circles
+  are then drawn over the panels, and in the phosphor style how they are
+  lit there (beam, afterglow) is up to the host.
 - The trigonometry and the projection are the host's, and hosts may differ
   in the last pixel. Smoothing, the exact colour of blended pixels and how
   the eye moves are up to the host.
@@ -1861,7 +1991,9 @@ those are depends on the eye.
 The device's state is the copy of the list (STATE.md 1.11); the style and
 the persistence are device 3's (section 10.7, STATE.md 1.7), held once for
 both devices. It takes no input from the host: the eye is presentation,
-and so is what faces hide from it.
+and so is what faces hide from it. Which Screens are in effect depends on
+the shell's device 8 records, and only for what is shown; a shell's
+`face` reads its list as decoded (section 12.2).
 
 ---
 
@@ -1922,7 +2054,8 @@ These numbers are placeholders until weak hosts have been measured:
 - the figure caps: 256 paths, the area (8 × the figure's, at most
   4 × 640 × 480) and the length (65,536) of section 11.3;
 - the number of machines a shell can start, 8, and of its snapshot slots,
-  16 (section 12).
+  16 (section 12); the longest view motion, 600 frames, and the view's
+  progress steps, 4,096 (section 12.2 `face`).
 
 ## 17. Not yet specified
 
@@ -1938,7 +2071,10 @@ These numbers are placeholders until weak hosts have been measured:
   programs).
 - Devices 5 and 6.
 - On the 3D display (section 13): filled or shaded faces; the exact
-  intersection of faces (a line drawn where two faces cross); a stereo
+  intersection of faces (a line drawn where two faces cross); a program
+  showing its own 2D layers as a panel in its own scene; curved or
+  non-rectangular screens; panels that cross one another (they are drawn
+  far to near by their centres, and one does not cut another); a stereo
   picture or another display of the same geometry (the eye
   rule allows one; how a host shows it is not specified); a limit on the
   area its lines cover (as for the 2D display's lines below).
@@ -1953,8 +2089,9 @@ These numbers are placeholders until weak hosts have been measured:
   request carries one blob ID or program identity, and its machine is not
   told what became of it); arguments other than one blob ID; budgets
   other than one full budget per machine per frame; giving a machine less
-  than the whole screen; sound for several machines; what a host shows for
-  a machine with no picture.
+  than the whole screen; sound for several machines, and sound placed
+  with a panel in the scene; what a host shows for a machine with no
+  picture; telling the shell when a view has finished moving.
 - Snapshots (section 12.7): saving them without the shell asking (a host
   has no shutdown notification yet), snapshots of the shell itself, moving
   a snapshot to another host, and a machine asking to be snapshotted.

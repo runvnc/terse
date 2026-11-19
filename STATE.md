@@ -156,7 +156,7 @@ which are in the queue and RAM like any other input.
 
 Let `M` be the offset after this section.
 
-### 1.10 Machines (0, 1 or 1,108 + 32b + 83r bytes)
+### 1.10 Machines (0, 1 or 1,126 + 32b + 83r bytes)
 
 This section is there only if the image lists device 8; for any other image
 it is empty (0 bytes), so the hashes of images without device 8 are as they
@@ -171,6 +171,7 @@ were before device 8 existed.
 | M + 1,107 | 32 × b | Their image IDs, in `builtin` order |
 | M + 1,107 + 32b | 1 | r: the number of open requests the shell has been told of and has not read (SPEC 12.2 `request`), 0–8 |
 | M + 1,108 + 32b | 83 × r | Each: the handle (1), then the 82 bytes `request` would write; in increasing handle order |
+| M + 1,108 + 32b + 83r | 18 | The view (SPEC 12.2 `face`), below |
 
 Each handle's record is 138 bytes:
 
@@ -184,6 +185,17 @@ Each handle's record is 138 bytes:
 | 8 | 2 | Rectangle height (u16) |
 | 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC 12.2): exit code, fault kind, failure reason, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
 | 57 | 81 | The identity given to `start_program`, as `identity` writes it (SPEC 12.2), or all zero if the handle has none |
+
+The view is 18 bytes, all zero for none:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Handle of the machine it moves, 1–8, or 0 for none |
+| 1 | 1 | Direction: `01h` towards the glass (`face`), `00h` back (`unface`) |
+| 2 | 8 | The rectangle given to `face`, as clamped: x, y, width, height (u16 each) |
+| 10 | 2 | Start progress (u16), 0–4,096 |
+| 12 | 4 | Start frame (u32): the shell's frame counter in the frame of the call |
+| 16 | 2 | Duration in frames (u16), 0–600 |
 
 A handle not in use is all zero. The machines a shell starts are not part of
 its state: each has a state of its own, serialized as for any machine (it
@@ -217,7 +229,7 @@ as it was before arguments existed.
 
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,108 + 32b +
+(vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
 83r (machines), 0 or 4 + m (3D vector) and 0 or 32 (argument).
 
 ## 2. What is left out, and why

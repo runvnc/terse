@@ -670,6 +670,8 @@ impl App {
             ran: Vec::new(),
             trace: self.trace,
         };
+        // Panels are hit as the eye now sees them (SPEC 12.4).
+        self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
         self.pending.clear();

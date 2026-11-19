@@ -263,7 +263,7 @@ fn two_machines_master_and_stack() {
 
 #[test]
 fn four_machines_and_the_layouts() {
-    let mut s = Sys::new(&format!("{FOUR}50 home\n51 press l\n60 press l\n70 press l\n"), Setup::default());
+    let mut s = Sys::new(&format!("{FOUR}50 home\n51 press l\n60 press l\n65 press l\n70 press l\n"), Setup::default());
     s.run(45);
     let titles: Vec<&str> = s.system.children().map(|(_, c)| c.title.as_str()).collect();
     assert_eq!(titles, ["reader", "sparks", "fetch", "hello"]);
@@ -281,9 +281,14 @@ fn four_machines_and_the_layouts() {
     assert!(launcher.contains("[4  hello]{4}"), "{launcher}");
     let grid = [s.rect(1), s.rect(2), s.rect(3), s.rect(4)];
     assert_eq!(grid, [(203, 23, 214, 160), (423, 23, 214, 160), (203, 253, 214, 160), (423, 253, 214, 160)]);
-    // L: zoom (the selected machine, 4, alone).
+    // L: the gallery: no tiles, the machines are panels in the 3D list.
     s.run(10);
+    assert!((1..=4).all(|h| s.rect(h).2 == 0));
+    assert_eq!(terse_core::vector3::screens_in(s.system.shell().vector3().unwrap().list()), 0b1111);
+    // L: zoom (the selected machine, 4, alone).
+    s.run(5);
     assert_eq!(s.rect(4), (203, 23, 434, 325));
+    assert!(s.system.shell().vector3().unwrap().list().is_empty(), "the ring is gone");
     assert_eq!((s.rect(1).2, s.rect(2).2, s.rect(3).2), (0, 0, 0), "the others are hidden");
     assert!((1..=4).all(|h| s.state(h) == state::RUNNING), "hidden machines run on");
     // L: master and stack again.
@@ -499,9 +504,9 @@ fn budget() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0)]);
+    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0), (9, 0)]);
     assert_eq!(SHELL, builtin::SHELL, "the shell built into the hosts");
-    assert!(Image::parse(SHELL).unwrap().rom.len() < 131_072 / 8);
+    assert!(Image::parse(SHELL).unwrap().rom.len() < 20 * 1024);
 }
 
 
@@ -598,4 +603,268 @@ fn the_layout_is_remembered() {
     let mut fresh = Sys::new(FOUR, Setup::default());
     fresh.run(45);
     assert_ne!(fresh.rect(3).0, fresh.rect(1).0, "master and stack without the record");
+}
+
+// --- The gallery (SPEC 12.2 face, 13.3 Screen) ---------------------------
+
+/// Starts `n` built-ins from the launcher (reader, sparks, fetch, hello,
+/// sketch in turn), each focused as it starts, then the home key and L
+/// twice: master, grid, the gallery. Returns the script and the first
+/// frame after it.
+fn gallery_script(n: usize) -> (String, u32) {
+    let mut out = String::new();
+    let mut f = 2;
+    for k in 0..n {
+        if k > 0 {
+            out += &format!("{f} home\n");
+            out += &format!("{} press up\n", f + 1).repeat(14);
+        }
+        out += &format!("{} press down\n", f + 2).repeat(k);
+        out += &format!("{} press enter\n", f + 3);
+        f += 10;
+    }
+    out += &format!("{f} home\n{} press l\n{} press l\n", f + 1, f + 2);
+    (out, f + 3)
+}
+
+impl Sys {
+    /// Runs until the shell's frame counter is `frame`.
+    fn run_until(&mut self, frame: u32) {
+        let now = self.system.shell().frame();
+        self.run(frame.saturating_sub(now));
+    }
+
+    /// The view of the shell's 3D scene (SPEC 12.2 face).
+    fn view(&self) -> terse_core::machines::View {
+        *self.system.shell().machines().unwrap().view()
+    }
+
+    /// The view's progress after the shell's last frame.
+    fn progress(&self) -> u16 {
+        self.view().progress(self.system.shell().frame() - 1)
+    }
+
+    /// The dump, then the 3D list, the view and the flat pictures.
+    fn gallery_dump(&self) -> String {
+        let v = self.view();
+        let r = v.rect;
+        let mut out = self.dump();
+        out += &self.system.shell().vector3().unwrap().dump();
+        out += &format!(
+            "-- view: handle {} {} rect {} {} {} {} from {} start {} frames {} progress {} --\n",
+            v.handle,
+            if v.toward { "toward" } else { "back" },
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            v.from,
+            v.start,
+            v.duration,
+            self.progress()
+        );
+        for (h, p) in self.system.pictures() {
+            out += &format!("-- flat picture {h}: {} {} {} {} --\n", p.x, p.y, p.w, p.h);
+        }
+        out
+    }
+
+    /// The panels as seen from the reference eye.
+    fn panels(&self) -> Vec<terse_core::vector3::Panel> {
+        self.system.scene((0.0, 0.0)).map_or(Vec::new(), |s| s.panels)
+    }
+
+    fn screens(&self) -> u8 {
+        terse_core::vector3::screens_in(self.system.shell().vector3().unwrap().list())
+    }
+}
+
+/// A point on the glass (whole units) over the front of panel `h` from the
+/// reference eye, where the pointer meets that panel and no other.
+fn point_on(panels: &[terse_core::vector3::Panel], h: u8) -> (u16, u16) {
+    use terse_core::vector3::{EYE_X, EYE_Y, panel_hit, to_glass};
+    let p = panels.iter().find(|p| p.handle == h).unwrap_or_else(|| panic!("no panel {h}: {panels:?}"));
+    let g = p.corners.map(|c| to_glass(c, (EYE_X, EYE_Y)));
+    // Towards the centre from each corner in turn, until a point hits it.
+    for k in 0..4 {
+        for t in [0.5, 0.3, 0.7] {
+            let x = g[k].0 + ((g[0].0 + g[1].0 + g[2].0 + g[3].0) / 4.0 - g[k].0) * t;
+            let y = g[k].1 + ((g[0].1 + g[1].1 + g[2].1 + g[3].1) / 4.0 - g[k].1) * t;
+            let (x, y) = (x.floor() as u16, y.floor() as u16);
+            if let Some((hit, Some(_))) = panel_hit(panels, (0.0, 0.0), x as f64 + 0.5, y as f64 + 0.5)
+                && hit == h
+            {
+                return (x, y);
+            }
+        }
+    }
+    panic!("no point on panel {h}");
+}
+
+fn close(a: [f64; 3], b: [f64; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
+}
+
+/// The ring with 1, 3 and 5 machines: every machine a panel (none placed
+/// flat), the selected one (the last started) at the front on the glass,
+/// 304 units wide about (450, 250).
+#[test]
+fn gallery_rings() {
+    for n in [1usize, 3, 5] {
+        let (script, at) = gallery_script(n);
+        let mut s = Sys::new(&script, Setup::default());
+        s.run_until(at + 3);
+        assert_eq!(s.system.focus(), 0);
+        assert!((1..=n as u8).all(|h| s.state(h) == state::RUNNING && s.rect(h).2 == 0));
+        assert_eq!(s.screens(), (1u16 << n) as u8 - 1);
+        assert!(s.system.pictures().is_empty(), "nothing flat");
+        let panels = s.panels();
+        let front = panels.iter().find(|p| p.handle == n as u8).unwrap();
+        assert!(close(front.corners[0], [298.0, 136.0, 0.0]) && close(front.corners[2], [602.0, 364.0, 0.0]), "{:?}", front.corners);
+        assert!(front.front);
+        assert_eq!(s.view(), Default::default());
+        golden(&format!("gallery-ring-{n}"), &s.gallery_dump());
+    }
+}
+
+/// Left in command mode turns the ring over 20 frames to the previous
+/// machine: part way, then at rest with it at the front.
+#[test]
+fn gallery_turning() {
+    let (script, at) = gallery_script(3);
+    let t = at + 5;
+    let mut s = Sys::new(&format!("{script}{t} press left\n"), Setup::default());
+    s.run_until(t);
+    let before = s.system.shell().vector3().unwrap().list().to_vec();
+    s.run_until(t + 10);
+    let mid = s.system.shell().vector3().unwrap().list().to_vec();
+    assert_ne!(before, mid);
+    let p = s.panels();
+    assert!(!p.iter().any(|p| close(p.corners[0], [298.0, 136.0, 0.0])), "nothing at the front part way");
+    golden("gallery-turning", &s.gallery_dump());
+    s.run_until(t + 25);
+    let front = s.panels().into_iter().find(|p| p.handle == 2).unwrap();
+    assert!(close(front.corners[0], [298.0, 136.0, 0.0]), "{:?}", front.corners);
+    golden("gallery-turned", &s.gallery_dump());
+    // At rest the list is not submitted again: the same bytes.
+    let rest = s.system.shell().vector3().unwrap().generation();
+    s.run(10);
+    assert_eq!(s.system.shell().vector3().unwrap().generation(), rest);
+}
+
+/// Enter faces the selected machine: the view moves for 20 frames, then
+/// shows it flat over the zoom tile's picture and it has the keyboard;
+/// the home key moves the view back.
+#[test]
+fn gallery_face_and_unface() {
+    let (script, at) = gallery_script(3);
+    let (e, u) = (at + 5, at + 40);
+    let mut s = Sys::new(&format!("{script}{e} press enter\n{} text hi\n{u} home\n", e + 2), Setup::default());
+    s.run_until(e + 1);
+    assert_eq!(s.system.focus(), 3);
+    let v = s.view();
+    assert_eq!((v.handle, v.toward, v.start, v.duration), (3, true, e, 20));
+    assert_eq!((v.rect.x, v.rect.y, v.rect.w, v.rect.h), (17, 23, 605, 454));
+    assert!(s.system.scene((0.0, 0.0)).unwrap().moving);
+    s.run_until(e + 11);
+    assert_eq!(s.progress(), 2048);
+    s.run_until(e + 21);
+    assert_eq!(s.progress(), 4096);
+    let scene = s.system.scene((0.0, 0.0)).unwrap();
+    assert!(!scene.moving && scene.faced == 3);
+    assert!(scene.panels.iter().all(|p| p.handle != 3), "shown flat, not as a panel");
+    let pictures: Vec<_> = s.system.pictures().into_iter().map(|(h, p)| (h, p.x, p.y, p.w, p.h)).collect();
+    assert_eq!(pictures, [(3, 17, 23, 605, 453)]);
+    assert!(Sys::screen(s.machine(3)).contains("hi"), "the keyboard went to it");
+    golden("gallery-faced", &s.gallery_dump());
+    s.run_until(u + 1);
+    assert_eq!(s.system.focus(), 0);
+    let v = s.view();
+    assert_eq!((v.handle, v.toward, v.from, v.start), (3, false, 4096, u));
+    assert!(s.system.pictures().is_empty());
+    s.run_until(u + 21);
+    assert_eq!(s.progress(), 0);
+    let scene = s.system.scene((0.0, 0.0)).unwrap();
+    assert!(!scene.moving && scene.faced == 0 && scene.panels.len() == 3);
+    golden("gallery-unfaced", &s.gallery_dump());
+}
+
+/// A click on a side panel (seen from the reference eye) focuses that
+/// machine and faces it; a click over a panel while the view moves is not
+/// delivered.
+#[test]
+fn gallery_click_on_a_side_panel() {
+    let (script, at) = gallery_script(5);
+    let c = at + 5;
+    let mut first = Sys::new(&script, Setup::default());
+    first.run_until(c);
+    let panels = first.panels();
+    let side = panels.iter().rev().find(|p| p.front && p.handle != 5).map(|p| p.handle).unwrap();
+    let (x, y) = point_on(&panels, side);
+    let mut s = Sys::new(&format!("{script}{c} click {x} {y}\n"), Setup::default());
+    s.run_until(c + 1);
+    assert_eq!(s.system.focus(), side, "clicked at {x} {y}");
+    assert_eq!(s.view().handle, side);
+    s.run_until(c + 25);
+    assert_eq!(s.system.pictures().iter().map(|p| p.0).collect::<Vec<_>>(), [side]);
+    golden("gallery-clicked", &s.gallery_dump());
+
+    // Enter faces machine 5; five frames on, a click on a side panel.
+    let e = at + 5;
+    let mut first = Sys::new(&format!("{script}{e} press enter\n"), Setup::default());
+    first.run_until(e + 5);
+    let scene = first.system.scene((0.0, 0.0)).unwrap();
+    assert!(scene.moving);
+    let side = scene.panels.iter().rev().find(|p| p.front && p.handle != 5).map(|p| p.handle).unwrap();
+    let (x, y) = point_on(&scene.panels, side);
+    let mut s = Sys::new(&format!("{script}{e} press enter\n{} click {x} {y}\n", e + 5), Setup::default());
+    s.run_until(e + 7);
+    assert_eq!(s.system.focus(), 5, "not delivered");
+    assert_eq!(s.view().handle, 5);
+}
+
+/// Starting a program in the gallery puts it on the ring, turns to it and
+/// faces it once it runs.
+#[test]
+fn gallery_start_a_program() {
+    let (script, at) = gallery_script(2);
+    // The cursor is on machine 2's line (7): up 4 is hello.
+    let st = at + 5;
+    let mut s = Sys::new(&format!("{script}{}{st} press enter\n", format!("{} press up\n", st - 1).repeat(4)), Setup::default());
+    s.run_until(st + 1);
+    assert_eq!(s.state(3), state::LOADING);
+    assert_eq!(s.system.focus(), 3);
+    assert_eq!(s.view().handle, 0, "no picture yet");
+    s.run_until(st + 40);
+    assert_eq!(s.system.child(3).unwrap().title, "hello");
+    assert_eq!(s.screens(), 0b111);
+    let v = s.view();
+    assert_eq!((v.handle, v.toward), (3, true));
+    assert_eq!(s.progress(), 4096);
+    assert_eq!(s.system.pictures().iter().map(|p| p.0).collect::<Vec<_>>(), [3]);
+    golden("gallery-started", &s.gallery_dump());
+}
+
+/// The shell's frames in the gallery with five machines while the ring
+/// turns again and again, and machines are faced and unfaced.
+#[test]
+fn gallery_budget() {
+    let (mut script, at) = gallery_script(5);
+    let mut f = at + 5;
+    for k in 0..8 {
+        script += &format!("{f} press {}\n", if k % 3 == 2 { "right" } else { "left" });
+        f += 12;
+    }
+    script += &format!("{f} press enter\n{} home\n", f + 30);
+    let mut s = Sys::new(&script, Setup::default());
+    s.run(f + 60);
+    let all = FrameStats::new(&s.shell_units);
+    let gallery = FrameStats::new(&s.shell_units[at as usize..]);
+    println!("shell, whole run: {}", all.describe());
+    println!("shell, in the gallery: {}", gallery.describe());
+    // The busiest frames turn the ring and lay the launcher out again
+    // (as Tab does in any layout) and build the 3D list; while the ring
+    // turns only its angles are written again.
+    assert!(all.busiest < terse_core::BUDGET_PER_FRAME as u64 / 4, "{}", all.describe());
+    assert!(gallery.median < terse_core::BUDGET_PER_FRAME as u64 / 50, "{}", gallery.describe());
 }

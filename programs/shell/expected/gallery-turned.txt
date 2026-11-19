@@ -1,0 +1,156 @@
+ ⌂  1 reader         0% 2 sparks         2% 3 fetch          0%            00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- 3d vectors: 775 list bytes --
+colour 324664ff
+width 16
+move 3104 6880 -1024
+line 15392 6880 -1024
+move 3104 6880 1024
+line 15392 6880 1024
+move 3104 6880 3072
+line 15392 6880 3072
+move 3104 6880 5120
+line 15392 6880 5120
+move 3104 6880 7168
+line 15392 6880 7168
+move 3104 6880 9216
+line 15392 6880 9216
+move 3104 6880 11264
+line 15392 6880 11264
+move 3104 6880 -1024
+line 3104 6880 11520
+move 5152 6880 -1024
+line 5152 6880 11520
+move 7200 6880 -1024
+line 7200 6880 11520
+move 9248 6880 -1024
+line 9248 6880 11520
+move 11296 6880 -1024
+line 11296 6880 11520
+move 13344 6880 -1024
+line 13344 6880 11520
+move 15392 6880 -1024
+line 15392 6880 11520
+push
+translate 7200 4000 3360
+rotate y 43691
+translate 0 0 -3360
+rotate y 10922
+colour 788296ff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 1 4864
+pop
+push
+translate 7200 4000 3360
+rotate y 0
+translate 0 0 -3360
+rotate y 0
+colour e6b43cff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 2 4864
+pop
+push
+translate 7200 4000 3360
+rotate y 21845
+translate 0 0 -3360
+rotate y 54614
+colour 788296ff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 3 4864
+pop
+-- 3d: 58 segments, length 8358.5 units --
+-- view: handle 0 back rect 0 0 0 0 from 0 start 0 frames 0 progress 0 --

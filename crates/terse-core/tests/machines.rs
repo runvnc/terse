@@ -322,9 +322,9 @@ fn calls() {
     li a1, 0
     ecall
     sw a0, 96(s0)       # info into address 0: FFFFFFFE
-    li a7, 0x80F
+    li a7, 0x811
     ecall
-    sw a0, 100(s0)      # 80Fh: FFFFFFFF
+    sw a0, 100(s0)      # 811h: FFFFFFFF
 2:  li a7, 0x100
     ecall
     j 2b
@@ -372,7 +372,7 @@ fn calls() {
     // lists device 8, and differs with the grant.
     let granted = Machine::new_shell(&image, builtins).state();
     let absent = Machine::new(&image).state();
-    assert_eq!(granted.len(), absent.len() + 1 + 8 * (57 + 81) + 1 + 2 * 32 + 1, "no request waits");
+    assert_eq!(granted.len(), absent.len() + 1 + 8 * (57 + 81) + 1 + 2 * 32 + 1 + 18, "no request waits");
     assert_eq!(absent.last(), Some(&0));
 }
 

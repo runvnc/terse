@@ -1,0 +1,184 @@
+ ⌂  1 reader         0% 2 hello          0%                                00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 1 running 0 0 0 0 reader --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
+-- machine 2 running 0 0 0 0 hello --
+ Terse · hello
+
+  héllo, wörld — 你好
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 00000029
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- 3d vectors: 571 list bytes --
+colour 324664ff
+width 16
+move 3104 6880 -1024
+line 15392 6880 -1024
+move 3104 6880 1024
+line 15392 6880 1024
+move 3104 6880 3072
+line 15392 6880 3072
+move 3104 6880 5120
+line 15392 6880 5120
+move 3104 6880 7168
+line 15392 6880 7168
+move 3104 6880 9216
+line 15392 6880 9216
+move 3104 6880 -1024
+line 3104 6880 11200
+move 5152 6880 -1024
+line 5152 6880 11200
+move 7200 6880 -1024
+line 7200 6880 11200
+move 9248 6880 -1024
+line 9248 6880 11200
+move 11296 6880 -1024
+line 11296 6880 11200
+move 13344 6880 -1024
+line 13344 6880 11200
+move 15392 6880 -1024
+line 15392 6880 11200
+push
+translate 7200 4000 3200
+rotate y 32768
+translate 0 0 -3200
+rotate y 16384
+colour 788296ff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 1 4864
+pop
+push
+translate 7200 4000 3200
+rotate y 0
+translate 0 0 -3200
+rotate y 0
+colour 4696ffff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 2 4864
+pop
+-- 3d: 42 segments, length 6396.4 units --

@@ -400,6 +400,16 @@ void v3_push(void) { *v3_ptr++ = V3_OP_PUSH; }
 void v3_pop(void) { *v3_ptr++ = V3_OP_POP; }
 void v3_end(void) { *v3_ptr++ = V3_OP_END; }
 
+void v3_screen(uint8_t handle, uint16_t width)
+{
+    uint8_t *p = v3_ptr;
+    p[0] = V3_OP_SCREEN;
+    p[1] = handle;
+    p[2] = width;
+    p[3] = width >> 8;
+    v3_ptr = p + 4;
+}
+
 void v3_rotate(uint8_t axis, uint16_t angle)
 {
     uint8_t *p = v3_ptr;

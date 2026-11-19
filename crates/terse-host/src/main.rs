@@ -15,6 +15,8 @@ mod glyphs;
 #[cfg(feature = "window")]
 mod keymap;
 mod page;
+#[cfg(feature = "gpu")]
+mod panels;
 mod phosphor;
 #[cfg(test)]
 mod reference;
@@ -62,7 +64,7 @@ const USAGE: &str = "usage:
              [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
-             [--parallax off|pointer] [--eye <dx>,<dy>]
+             [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]
   terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--eye <dx>,<dy>]
              [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
@@ -76,6 +78,9 @@ const USAGE: &str = "usage:
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
   puts the eye there for --screenshot and --bench-render (and keeps it there with --parallax off).
+  --panels: how the software renderer draws the machines the shell shows as panels in its 3D
+  scene (SPEC 13.3 Screen): in perspective (perspective, auto: the default) or flat, upright in
+  the rectangle the panel covers; the GPU renderer always draws them in perspective.
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
   threads; default one per core).
@@ -152,6 +157,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut renderer, mut threads, mut bench, mut warmup, mut sweep) = (RendererChoice::Auto, 0usize, false, None, false);
     let mut bloom = soft::BloomRes::Auto;
     let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
+    let mut panels = soft::panel::PanelMode::Perspective;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -186,6 +192,13 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 eye = parsed
                     .filter(|&(x, y)| x.abs() <= max && y.abs() <= max)
                     .ok_or(format!("bad --eye {v} (<dx>,<dy>, each from -{max} to {max})"))?;
+            }
+            "--panels" => {
+                panels = match it.next().ok_or(USAGE)?.as_str() {
+                    "perspective" | "auto" => soft::panel::PanelMode::Perspective,
+                    "flat" => soft::panel::PanelMode::Flat,
+                    v => return Err(format!("bad --panels {v} (perspective, flat or auto)")),
+                };
             }
             "--parallax" => {
                 parallax = match it.next().ok_or(USAGE)?.as_str() {
@@ -348,7 +361,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax, panels };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -364,14 +377,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax, panels };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax };
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax, panels };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -379,7 +392,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax, panels })
         }
         _ => Err(USAGE.into()),
     }
@@ -435,6 +448,9 @@ pub struct Looks {
     /// `--parallax pointer` (the default): in a window the eye follows the
     /// pointer; `off`: it stays at `eye`.
     pub parallax: bool,
+    /// `--panels`: how the software renderer draws the shell's panels
+    /// (SPEC 13.5); the GPU renderer draws them in perspective.
+    pub panels: soft::panel::PanelMode,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -523,6 +539,7 @@ fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
     }
     let mut display = soft::SoftScreens::new(Box::new(glyphs), looks.threads);
     display.set_bloom(looks.bloom);
+    display.set_panel_mode(looks.panels);
     Ok(Box::new(display))
 }
 
@@ -584,6 +601,7 @@ fn run_headless(
     let image = &program.image;
     let mut system = System::new(image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    system.set_eye(looks.eye);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let mut headless = HeadlessSystem::new(content, script);
     // Each machine's page has its own layouter; the fonts are shared.
@@ -620,7 +638,9 @@ fn run_headless(
             Headless::Bench { warmup, sweep, .. } => {
                 if *sweep {
                     let a = f as f32 / 120.0 * std::f32::consts::TAU;
-                    display.set_eye((160.0 * a.cos(), 80.0 * a.sin()));
+                    let eye = (160.0 * a.cos(), 80.0 * a.sin());
+                    display.set_eye(eye);
+                    system.set_eye(eye);
                 }
                 let start = std::time::Instant::now();
                 display.update(&system, viewport, &ran, &shown, None);

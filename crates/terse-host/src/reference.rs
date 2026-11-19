@@ -54,6 +54,7 @@ fn looks() -> Option<Looks> {
         bloom: crate::soft::BloomRes::Auto,
         eye: (0.0, 0.0),
         parallax: false,
+        panels: crate::soft::panel::PanelMode::Perspective,
     })
 }
 
@@ -200,4 +201,170 @@ fn shell_four_machines() {
 #[test]
 fn consent_prompt() {
     check("consent", Some(READER), "10 press f\n14 press p\n18 text Carol\n22 press enter\n26 press y\n", 40, Consent::Ask);
+}
+
+/// The gallery's script: the shell in its gallery layout (L twice), the
+/// reader on an article, sparks in the phosphor style, sketch with a
+/// drawing, holo; then the ring turned back to the reader.
+const GALLERY: &str = "2 press l\n3 press l\n5 press enter\n40 press enter\n60 home\n61 press up\n62 press up\n63 press up\n64 press up\n\
+                       65 press up\n66 press enter\n80 press p\n90 home\n91 press up\n92 press up\n93 press up\n94 press enter\n\
+                       120 pointer 200 150 1\n121 pointer 260 120 1\n122 pointer 320 150 1\n123 pointer 380 120 1\n124 pointer 440 150 1\n\
+                       125 pointer 440 260 1\n126 pointer 320 360 1\n127 pointer 200 260 1\n128 pointer 200 150 1\n129 pointer 200 150 0\n\
+                       140 home\n141 press up\n142 press up\n143 press up\n144 press enter\n175 home\n176 press 1\n";
+
+/// The shell's gallery (SPEC 12.3): four machines' screens as panels on a
+/// ring, in perspective, the front one on the glass; the ring's lines and
+/// the panels hiding what is behind them.
+#[test]
+fn shell_gallery() {
+    check("shell-gallery", None, GALLERY, 210, Consent::Deny);
+}
+
+/// The reader's panel part way through flying onto the glass (`face`):
+/// the whole scene moved with it.
+#[test]
+fn shell_gallery_flying() {
+    check("shell-gallery-flying", None, &format!("{GALLERY}200 press enter\n"), 209, Consent::Deny);
+}
+
+/// A system run headless with the built-in shell and `events`, for tests
+/// that look at the system as well as the picture.
+fn system_after(events: &str, frames: u32) -> terse_core::System {
+    let dir = tempfile::tempdir().unwrap();
+    let node = Node::new(BlobStore::open(dir.path().join("store"), None).unwrap(), None);
+    let builtins = builtin::install(node.store(), &[]).unwrap();
+    let mut node = node;
+    node.set_records(terse_net::Records::in_data_dir(dir.path()));
+    let content = ContentService::start_with_consent(node, Consent::Deny);
+    let shell = Image::parse(builtin::SHELL).unwrap();
+    let mut system = terse_core::System::new(&shell, true, builtins);
+    let mut headless = terse_net::HeadlessSystem::new(Some(content), Script::parse(events).unwrap());
+    for _ in 0..frames {
+        headless.frame(&mut system);
+    }
+    system
+}
+
+/// The displays to compare: the software renderer, and the GPU's if this
+/// machine has an adapter.
+fn displays() -> Vec<Box<dyn crate::display::Display>> {
+    let Some(looks) = looks() else { return Vec::new() };
+    let mut out = vec![crate::headless_display(&looks).unwrap()];
+    #[cfg(feature = "gpu")]
+    {
+        let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+        match crate::gpu_display(glyphs, false) {
+            Ok(d) => out.push(d),
+            Err(e) => eprintln!("no GPU ({e}): the GPU renderer is not compared"),
+        }
+    }
+    out
+}
+
+/// What `display` shows of `system` (no page layouts: neither picture has
+/// one), as RGBA.
+fn shown(display: &mut dyn crate::display::Display, system: &terse_core::System) -> Vec<u8> {
+    display.configure(false, false, false);
+    display.update(system, SIZE, &[], &|_| None, None);
+    display.snapshot(SIZE).unwrap()
+}
+
+/// The pixels of `rect` (screen units of the shell, as drawn at SIZE).
+fn region(pixels: &[u8], p: terse_core::Region) -> Vec<u8> {
+    let r = crate::display::picture_rect(crate::display::system_rect(SIZE), p);
+    let (x0, y0, x1, y1) = (r.0 as usize, r.1 as usize, (r.0 + r.2) as usize, (r.1 + r.3) as usize);
+    (y0..y1).flat_map(|y| pixels[(y * SIZE.0 as usize + x0) * 4..(y * SIZE.0 as usize + x1) * 4].to_vec()).collect()
+}
+
+/// A machine whose panel has flown onto the glass (`face`, SPEC 12.2) is
+/// drawn exactly as the same machine placed flat in that rectangle, by
+/// both renderers; and a panel facing the viewer on the glass, as large as
+/// the screen, shows the picture a machine placed over the whole screen
+/// shows, within the reference pictures' tolerance. (One test: one GPU
+/// device for the process.)
+#[test]
+fn panels_and_flat_pictures() {
+    let mut displays = displays();
+    a_faced_panel_is_the_flat_picture(&mut displays);
+    a_panel_on_the_glass_is_the_flat_picture(&mut displays);
+}
+
+fn a_faced_panel_is_the_flat_picture(displays: &mut [Box<dyn crate::display::Display>]) {
+    // hello in the gallery, faced over 20 frames once it has loaded.
+    let mut system = system_after("2 press l\n3 press l\n4 press down\n5 press down\n6 press down\n7 press enter\n", 40);
+    let dev = system.shell().machines().unwrap();
+    let view = *dev.view();
+    assert_eq!((view.handle, view.toward), (1, true));
+    assert!(!view.moving(system.shell().frame() - 1), "the view has arrived");
+    let picture = terse_core::machines::picture(view.rect).unwrap();
+    assert_eq!(system.pictures(), [(1, picture)], "shown flat in the view's rectangle");
+    for d in displays.iter_mut() {
+        let faced = shown(d.as_mut(), &system);
+        // The same machine placed flat in that rectangle: its Screen is
+        // then ignored.
+        system.shell_mut().machines_mut().unwrap().slot_mut(1).rect = view.rect;
+        let flat = shown(d.as_mut(), &system);
+        assert_eq!(system.pictures(), [(1, picture)]);
+        system.shell_mut().machines_mut().unwrap().slot_mut(1).rect = terse_core::Region::default();
+        assert!(region(&faced, picture) == region(&flat, picture), "{}: the faced picture differs from the flat one", d.name());
+    }
+}
+
+fn a_panel_on_the_glass_is_the_flat_picture(displays: &mut [Box<dyn crate::display::Display>]) {
+    let mut system = system_after("2 press l\n3 press l\n4 press down\n5 press down\n6 press down\n7 press enter\n10 home\n", 40);
+    // The shell's list: only hello's Screen, at the identity, 640 wide.
+    let list = [&[0x09u8, 0x00, 0x14, 0x00, 0x0F, 0x00, 0x00][..], &[0x0D, 1, 0x00, 0x28]].concat();
+    let full = terse_core::Region { x: 0, y: 0, w: 640, h: 480 };
+    for d in displays.iter_mut() {
+        system.shell_mut().vector3_mut().unwrap().submit(&list);
+        assert_eq!(system.scene((0.0, 0.0)).unwrap().panels.len(), 1);
+        let panel = shown(d.as_mut(), &system);
+        system.shell_mut().vector3_mut().unwrap().clear();
+        system.shell_mut().machines_mut().unwrap().slot_mut(1).rect = full;
+        let flat = shown(d.as_mut(), &system);
+        system.shell_mut().machines_mut().unwrap().slot_mut(1).rect = terse_core::Region::default();
+        let (a, b) = (region(&panel, full), region(&flat, full));
+        let off = a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(p, q)| (0..3).any(|i| p[i].abs_diff(q[i]) > 8)).count();
+        let mean = a.iter().zip(&b).map(|(p, q)| p.abs_diff(*q) as f64).sum::<f64>() / a.len() as f64;
+        let share = off as f64 / (a.len() / 4) as f64;
+        eprintln!("{}: a panel on the glass against the flat picture: {:.3}% differ by more than 8, mean {mean:.3}", d.name(), share * 100.0);
+        assert!(share <= MAX_OFF * 4.0 && mean <= MAX_MEAN * 2.0, "{}: {:.3}% differ, mean {mean:.3}", d.name(), share * 100.0);
+    }
+}
+
+/// Without Screens, the shell's 3D lines are drawn as a single machine's,
+/// and nothing of the scene is in effect (the other reference pictures
+/// are unchanged by panels).
+#[test]
+fn no_screens_no_scene() {
+    let system = system_after("4 press down\n5 press down\n6 press down\n7 press enter\n", 20);
+    assert!(system.scene((0.0, 0.0)).is_none());
+    assert!(crate::display::scene_layers(&system, (0.0, 0.0)).is_none());
+}
+
+/// An idle gallery costs nothing: when no machine's screen changes, the eye
+/// stays and the list is the same, the software renderer draws nothing
+/// again; moving the eye draws the scene again.
+#[test]
+fn an_idle_gallery_draws_nothing() {
+    let Some(looks) = looks() else { return };
+    // hello on the ring, the launcher open; hello counts its frames, so
+    // it is paused with P.
+    let system = system_after("2 press l\n3 press l\n4 press down\n5 press down\n6 press down\n7 press enter\n30 home\n31 press p\n", 60);
+    assert!(system.scene((0.0, 0.0)).is_some());
+    let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+    let mut soft = crate::soft::SoftScreens::new(Box::new(glyphs), 1);
+    use crate::display::Display;
+    let ran: Vec<u32> = std::iter::once(0).chain(system.children().map(|(_, c)| c.serial)).collect();
+    for _ in 0..2 {
+        soft.update(&system, SIZE, &ran, &|_| None, None);
+        soft.render(SIZE);
+    }
+    soft.update(&system, SIZE, &ran, &|_| None, None);
+    soft.render(SIZE);
+    assert!(soft.damage().is_empty(), "idle: {:?}", soft.damage());
+    soft.set_eye((40.0, 0.0));
+    soft.update(&system, SIZE, &ran, &|_| None, None);
+    soft.render(SIZE);
+    assert!(!soft.damage().is_empty(), "the eye moved");
 }

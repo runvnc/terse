@@ -163,6 +163,64 @@ pub mod call {
     pub const RESTORE: u32 = 0x80C;
     pub const SNAPSHOT_INFO: u32 = 0x80D;
     pub const SNAPSHOT_DELETE: u32 = 0x80E;
+    pub const FACE: u32 = 0x80F;
+    pub const UNFACE: u32 = 0x810;
+}
+
+/// The longest view motion `face` and `unface` take, in frames (SPEC 12.2).
+pub const MAX_VIEW_FRAMES: u32 = 600;
+/// A view's progress runs from 0 (the scene as listed) to this (the panel
+/// flat on the glass).
+pub const VIEW_DONE: u16 = 4096;
+/// The view's bytes in the state (STATE.md 1.10).
+pub const VIEW_BYTES: usize = 18;
+
+/// The host's view of the shell's 3D scene (SPEC 12.2 `face`, STATE.md
+/// 1.10): the machine whose panel it moves to the glass (0: none), the
+/// rectangle, whether it moves there or back, the progress it started from,
+/// the shell's frame counter in the frame of the call and the duration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct View {
+    pub handle: u8,
+    pub toward: bool,
+    pub rect: Region,
+    pub from: u16,
+    pub start: u32,
+    pub duration: u16,
+}
+
+impl View {
+    /// The progress (0 to [`VIEW_DONE`]) shown after the shell's frame
+    /// `frame` (its frame counter in that frame): linear in the frames
+    /// since the call, from `from` to the end it moves to.
+    pub fn progress(&self, frame: u32) -> u16 {
+        let to = if self.toward { VIEW_DONE as i64 } else { 0 };
+        let k = frame.wrapping_sub(self.start) as i64;
+        if k >= self.duration as i64 {
+            return to as u16;
+        }
+        let from = self.from as i64;
+        (from + (to - from) * k / self.duration as i64) as u16
+    }
+
+    /// Whether the view still moves after frame `frame`.
+    pub fn moving(&self, frame: u32) -> bool {
+        self.handle != 0 && self.progress(frame) != if self.toward { VIEW_DONE } else { 0 }
+    }
+
+    /// The 18 bytes of STATE.md 1.10: handle, direction, rectangle,
+    /// progress at the start, start frame, duration.
+    pub fn bytes(&self) -> [u8; VIEW_BYTES] {
+        let mut b = [0; VIEW_BYTES];
+        b[0] = self.handle;
+        b[1] = self.toward as u8;
+        for (i, v) in [self.rect.x, self.rect.y, self.rect.w, self.rect.h, self.from].iter().enumerate() {
+            b[2 + 2 * i..4 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        b[12..16].copy_from_slice(&self.start.to_le_bytes());
+        b[16..18].copy_from_slice(&self.duration.to_le_bytes());
+        b
+    }
 }
 
 /// One handle's record.
@@ -267,6 +325,16 @@ pub struct Machines {
     /// The shell's snapshot slots as the host has them (SPEC 12.7): host
     /// data, an input; not machine state.
     snapshots: [Option<SnapshotInfo>; SLOTS],
+    /// The host's view of the shell's 3D scene (`face`, `unface`).
+    view: View,
+}
+
+/// What a call of device 8 may look at besides RAM and ROM: the shell's
+/// frame counter in this frame and its 3D list (`face`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CallContext<'a> {
+    pub frame: u32,
+    pub list: &'a [u8],
 }
 
 impl Machines {
@@ -276,8 +344,8 @@ impl Machines {
 
     /// Carries out call `n` (800h-8FFh); returns (result, units charged
     /// beyond the call itself).
-    pub fn call(&mut self, n: u32, a: [u32; 5], rom: &[u8], ram: &mut [u8]) -> (u32, u32) {
-        let [a0, a1, a2, a3, a4] = a;
+    pub fn call(&mut self, n: u32, a: [u32; 6], rom: &[u8], ram: &mut [u8], ctx: CallContext) -> (u32, u32) {
+        let [a0, a1, a2, a3, a4, a5] = a;
         let slot = |h: u32| (1..=MAX_MACHINES as u32).contains(&h).then(|| h as usize - 1);
         match n {
             call::START => {
@@ -438,6 +506,30 @@ impl Machines {
                 self.commands.push(Command::DeleteSnapshot { slot: a0 as u8 });
                 (1, 0)
             }
+            call::FACE => {
+                let mut page = crate::page::Page::default();
+                page.set_region(a2, a3, a4, a5);
+                let rect = page.region();
+                let ok = slot(a0).is_some_and(|i| self.shows_panel(i as u8 + 1, ctx.list))
+                    && a1 <= MAX_VIEW_FRAMES
+                    && picture(rect).is_some();
+                if !ok {
+                    return (0, 0);
+                }
+                // From where the view is now if it moves this machine's
+                // panel; else from the scene as listed.
+                let from = if self.view.handle == a0 as u8 { self.view.progress(ctx.frame) } else { 0 };
+                self.view = View { handle: a0 as u8, toward: true, rect, from, start: ctx.frame, duration: a1 as u16 };
+                (1, 0)
+            }
+            call::UNFACE => {
+                if a0 > MAX_VIEW_FRAMES || self.view.handle == 0 {
+                    return (0, 0);
+                }
+                let from = self.view.progress(ctx.frame);
+                self.view = View { toward: false, from, start: ctx.frame, duration: a0 as u16, ..self.view };
+                (1, 0)
+            }
             call::BUILTIN => {
                 let Some(at) = ram_range(ram.len(), a1, 32) else { return (ERR_BUFFER, 0) };
                 match self.builtins.get(a0 as usize) {
@@ -449,6 +541,40 @@ impl Machines {
                 }
             }
             _ => (crate::machine::ERR_UNKNOWN, 0),
+        }
+    }
+
+    /// Whether handle `h`'s machine may be shown as a panel (SPEC 13.3
+    /// Screen): it has a picture, its rectangle shows none, and `list` has a
+    /// Screen of it.
+    pub fn shows_panel(&self, h: u8, list: &[u8]) -> bool {
+        let s = &self.slots[h as usize - 1];
+        s.has_picture() && picture(s.rect).is_none() && crate::vector3::screens_in(list) & 1 << (h - 1) != 0
+    }
+
+    /// The handles whose Screens are in effect with the shell's `list`
+    /// (bit h − 1 for handle h): as [`Machines::shows_panel`], with the
+    /// machine there (`present`, the host's knowledge).
+    pub fn panel_mask(&self, list: &[u8], present: impl Fn(u8) -> bool) -> u8 {
+        let listed = crate::vector3::screens_in(list);
+        (1..=MAX_MACHINES as u8)
+            .filter(|&h| {
+                let s = &self.slots[h as usize - 1];
+                listed & 1 << (h - 1) != 0 && s.has_picture() && picture(s.rect).is_none() && present(h)
+            })
+            .fold(0, |m, h| m | 1 << (h - 1))
+    }
+
+    /// The view (SPEC 12.2 `face`).
+    pub fn view(&self) -> &View {
+        &self.view
+    }
+
+    /// At the end of the shell's frame: a view whose machine is no longer
+    /// shown as a panel with `list` returns at once (SPEC 12.2 `face`).
+    pub fn check_view(&mut self, list: &[u8]) {
+        if self.view.handle != 0 && !self.shows_panel(self.view.handle, list) {
+            self.view = View::default();
         }
     }
 
@@ -531,6 +657,7 @@ impl Machines {
                 out.extend_from_slice(r);
             }
         }
+        out.extend_from_slice(&self.view.bytes());
     }
 }
 
@@ -543,7 +670,7 @@ mod tests {
         let base = crate::cpu::RAM_BASE;
         let mut ram = vec![0u8; 8192];
         let mut m = Machines::new(Vec::new());
-        let call = |m: &mut Machines, n, a: [u32; 5], ram: &mut Vec<u8>| m.call(n, a, &[], ram).0;
+        let call = |m: &mut Machines, n, a: [u32; 5], ram: &mut Vec<u8>| m.call(n, [a[0], a[1], a[2], a[3], a[4], 0], &[], ram, CallContext::default()).0;
         assert_eq!(call(&mut m, call::SNAPSHOT, [1, 0, 0, 0, 0], &mut ram), 0, "no machine");
         assert_eq!(call(&mut m, call::RESTORE, [16, 0, 0, 0, 0], &mut ram), 0, "no slot 16");
         assert_eq!(call(&mut m, call::RESTORE, [3, 0, 0, 0, 0], &mut ram), 1);
@@ -570,6 +697,66 @@ mod tests {
             m.take_commands(),
             [Command::Restore { handle: 1, slot: 3 }, Command::Snapshot { handle: 1, slot: 15 }, Command::DeleteSnapshot { slot: 4 }]
         );
+    }
+
+    /// `face` and `unface` (SPEC 12.2): the checks, the progress counted
+    /// in the shell's frames, reversing part way, and the view's return when
+    /// its machine is no longer a panel.
+    #[test]
+    fn face_and_unface() {
+        let mut ram = vec![0u8; 64];
+        let screen = [crate::vector3::op::SCREEN, 1, 0x00, 0x19];
+        let mut m = Machines::new(Vec::new());
+        let mut call = |m: &mut Machines, n, a: [u32; 6], frame: u32, list: &[u8]| m.call(n, a, &[], &mut ram, CallContext { frame, list }).0;
+        let area = |h, d| [h, d, 3, 23, 634, 454];
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 100, &screen), 0, "handle 1 not in use");
+        m.slot_mut(1).state = state::LOADING;
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 100, &screen), 0, "no picture yet");
+        m.slot_mut(1).state = state::RUNNING;
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 100, &[]), 0, "no Screen in the list");
+        assert_eq!(call(&mut m, call::FACE, area(1, 601), 100, &screen), 0, "too long");
+        assert_eq!(call(&mut m, call::FACE, [1, 20, 3, 23, 0, 454], 100, &screen), 0, "no picture in the rectangle");
+        assert_eq!(call(&mut m, call::FACE, area(9, 20), 100, &screen), 0);
+        assert_eq!(call(&mut m, call::UNFACE, [20, 0, 0, 0, 0, 0], 100, &screen), 0, "no view");
+        m.slot_mut(1).rect = Region { x: 0, y: 0, w: 64, h: 48 };
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 100, &screen), 0, "placed flat: its Screen is ignored");
+        m.slot_mut(1).rect = Region::default();
+        assert_eq!(*m.view(), View::default());
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 100, &screen), 1);
+        let v = *m.view();
+        assert_eq!(v, View { handle: 1, toward: true, rect: Region { x: 3, y: 23, w: 634, h: 454 }, from: 0, start: 100, duration: 20 });
+        let p: Vec<u16> = [100, 101, 110, 119, 120, 500].iter().map(|&f| v.progress(f)).collect();
+        assert_eq!(p, [0, 204, 2048, 3891, 4096, 4096]);
+        assert!(v.moving(119) && !v.moving(120));
+        // Back from part way: from where it is.
+        assert_eq!(call(&mut m, call::UNFACE, [601, 0, 0, 0, 0, 0], 110, &screen), 0);
+        assert_eq!(call(&mut m, call::UNFACE, [10, 0, 0, 0, 0, 0], 110, &screen), 1);
+        let v = *m.view();
+        assert_eq!((v.toward, v.from, v.start, v.duration), (false, 2048, 110, 10));
+        assert_eq!((v.progress(115), v.progress(120)), (1024, 0));
+        assert!(v.moving(119) && !v.moving(120));
+        // Towards it again, from where it is; no frames: at once.
+        assert_eq!(call(&mut m, call::FACE, area(1, 10), 112, &screen), 1);
+        assert_eq!(m.view().from, 1639);
+        assert_eq!(call(&mut m, call::FACE, area(1, 0), 200, &screen), 1);
+        assert_eq!((m.view().progress(200), m.view().moving(200)), (4096, false));
+        // The state's bytes.
+        let mut out = Vec::new();
+        m.write_state(&mut out);
+        assert_eq!(out[out.len() - VIEW_BYTES..], [1, 1, 3, 0, 23, 0, 122, 2, 198, 1, 0, 16, 200, 0, 0, 0, 0, 0]);
+        // Its Screen leaves the list: the view returns at once.
+        m.check_view(&screen);
+        assert_eq!(m.view().handle, 1);
+        m.check_view(&[]);
+        assert_eq!(*m.view(), View::default());
+        // Its machine stopped: the view returns at once too.
+        assert_eq!(call(&mut m, call::FACE, area(1, 20), 300, &screen), 1);
+        assert_eq!(call(&mut m, call::STOP, [1, 0, 0, 0, 0, 0], 300, &screen), 1);
+        m.check_view(&screen);
+        assert_eq!(*m.view(), View::default());
+        let mut none = Vec::new();
+        m.write_state(&mut none);
+        assert_eq!(none[none.len() - VIEW_BYTES..], [0; VIEW_BYTES], "none: all zero");
     }
 
     #[test]

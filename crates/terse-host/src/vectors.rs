@@ -52,7 +52,7 @@ struct Params {
     viewport: vec2<f32>,  // framebuffer size in pixels
     scale: vec2<f32>,     // pixels per sixteenth, x and y
     glow: f32,            // 1 for the phosphor style: quads leave room for the glow
-    pad: f32,
+    linear: f32,          // 1: the target is sRGB, colours are converted to linear light
 }
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -209,7 +209,11 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     if cover <= 0.0 {
         discard;
     }
-    return vec4<f32>(in.color.rgb, in.color.a * cover);
+    var c = in.color.rgb;
+    if u.linear > 0.5 {
+        c = to_linear(c);
+    }
+    return vec4<f32>(c, in.color.a * cover);
 }
 
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
@@ -395,16 +399,19 @@ pub struct VectorLayer {
     prev_opcodes: Vec<u8>,
     deposits: Vec<Deposit>,
     scratch: Vec<u8>,
+    /// The target is sRGB and takes linear light (shapes drawn straight
+    /// into a target rather than into the layer).
+    linear: bool,
 }
 
 /// The shader's parameters for a target of `viewport` pixels in which the
 /// screen is `rect`.
-fn params_bytes(viewport: (u32, u32), rect: (f32, f32, f32, f32), glow: bool) -> Vec<u8> {
+fn params_bytes(viewport: (u32, u32), rect: (f32, f32, f32, f32), glow: bool, linear: bool) -> Vec<u8> {
     let (x, y, w, h) = rect;
     let mut bytes = Vec::with_capacity(32);
     // Equal for a 4:3 rectangle (Renderer::grid_size).
     let (sx, sy) = (w / (SCREEN_WIDTH as f32 * 16.0), h / (SCREEN_HEIGHT as f32 * 16.0));
-    for v in [x, y, viewport.0 as f32, viewport.1 as f32, sx, sy, glow as u32 as f32, 0.0] {
+    for v in [x, y, viewport.0 as f32, viewport.1 as f32, sx, sy, glow as u32 as f32, linear as u32 as f32] {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     bytes
@@ -589,6 +596,32 @@ impl VectorLayer {
             prev_opcodes: Vec::new(),
             deposits: Vec::new(),
             scratch: Vec::with_capacity(DEPOSIT_BUDGET * INSTANCE_BYTES),
+            linear: false,
+        }
+    }
+
+    /// Shapes drawn straight into an sRGB target (`format`), over what it
+    /// holds: their colours are converted to linear light.
+    pub fn for_target(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        VectorLayer { linear: format.is_srgb(), ..Self::new(device, format) }
+    }
+
+    /// Uploads `shapes` as they are (no vertex dwell), unless they are
+    /// what was uploaded last.
+    pub fn upload(&mut self, queue: &wgpu::Queue, shapes: &[Primitive]) {
+        if self.uploaded.is_none() && self.shapes == shapes {
+            return;
+        }
+        self.uploaded = None;
+        self.shapes.clear();
+        self.shapes.extend_from_slice(shapes);
+        self.scratch.clear();
+        for p in shapes.iter().take(MAX_SHAPES) {
+            instance(p, [0.0; 2], 0, &mut self.scratch);
+        }
+        self.count = shapes.len().min(MAX_SHAPES) as u32;
+        if !self.scratch.is_empty() {
+            queue.write_buffer(&self.instances, 0, &self.scratch);
         }
     }
 
@@ -636,7 +669,7 @@ impl VectorLayer {
             return;
         }
         let (x, y, w, h) = rect;
-        queue.write_buffer(&self.params, 0, &params_bytes(viewport, rect, false));
+        queue.write_buffer(&self.params, 0, &params_bytes(viewport, rect, false, self.linear));
         // Clip to the screen rectangle (SPEC 8.1).
         let x0 = x.max(0.0).floor() as u32;
         let y0 = y.max(0.0).floor() as u32;
@@ -671,7 +704,7 @@ impl VectorLayer {
         advance: bool,
     ) {
         let rect = (0.0, 0.0, size.0 as f32, size.1 as f32);
-        queue.write_buffer(&self.phosphor_params, 0, &params_bytes(size, rect, true));
+        queue.write_buffer(&self.phosphor_params, 0, &params_bytes(size, rect, true, false));
         let trails = persistence > 0;
         let slow_decay = phosphor::slow_decay(persistence);
         if advance {

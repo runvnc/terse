@@ -57,6 +57,7 @@ pub mod op {
     pub const ROTATE: u8 = 0x0A;
     pub const SCALE: u8 = 0x0B;
     pub const FACE: u8 = 0x0C;
+    pub const SCREEN: u8 = 0x0D;
 }
 
 /// Bit of [`Primitive::Beam`]'s `butt`: the end continues into the next
@@ -158,6 +159,9 @@ pub enum Command {
     Scale(u16),
     /// A face: its corners (3 or 4; the fourth is unused for 3).
     Face(u8, [Xyz; 4]),
+    /// A machine's screen as a panel: the handle (1-8) and the width in
+    /// sixteenths (SPEC 13.3).
+    Screen(u8, u16),
 }
 
 impl Command {
@@ -175,6 +179,7 @@ impl Command {
             Command::Rotate(..) => op::ROTATE,
             Command::Scale(_) => op::SCALE,
             Command::Face(..) => op::FACE,
+            Command::Screen(..) => op::SCREEN,
         }
     }
 }
@@ -199,6 +204,7 @@ impl fmt::Display for Command {
                 write!(f, "face {n}")?;
                 corners[..*n as usize].iter().try_for_each(|p| write!(f, " {}", xyz(p)))
             }
+            Command::Screen(h, w) => write!(f, "screen {h} {w}"),
         }
     }
 }
@@ -215,7 +221,7 @@ fn operand_len(opcode: u8, first: Option<u8>) -> Option<usize> {
         op::WIDTH | op::CIRCLE | op::SCALE => 2,
         op::MOVE | op::LINE | op::TRANSLATE => 6,
         op::POINT | op::PUSH | op::POP => 0,
-        op::ROTATE => 3,
+        op::ROTATE | op::SCREEN => 3,
         _ => return None,
     })
 }
@@ -227,7 +233,8 @@ pub fn decode(list: &[u8]) -> Decoder<'_> {
     Decoder { list, at: 0, depth: 0 }
 }
 
-/// Iterator over the commands of a list; see [`decode`].
+/// Iterator over the commands of a list; see [`decode`]. A Screen whose
+/// handle is not 1-8 ends the list.
 #[derive(Clone, Debug)]
 pub struct Decoder<'a> {
     list: &'a [u8],
@@ -277,6 +284,12 @@ impl Iterator for Decoder<'_> {
                 Command::Rotate(o[0], u16::from_le_bytes([o[1], o[2]]))
             }
             op::SCALE => Command::Scale(u16_at(0)),
+            op::SCREEN => {
+                if !(1..=8).contains(&o[0]) {
+                    return end(self);
+                }
+                Command::Screen(o[0], u16::from_le_bytes([o[1], o[2]]))
+            }
             op::FACE => {
                 let at = |i: usize| [0, 2, 4].map(|k| u16::from_le_bytes([o[1 + 6 * i + k], o[2 + 6 * i + k]]) as i16);
                 let mut corners = [[0; 3]; 4];
@@ -399,6 +412,9 @@ pub enum Figure {
     Point([f64; 3]),
     Circle(Vec<[f64; 3]>),
     Face(Vec<[f64; 3]>),
+    /// A machine's screen: the handle and the panel's corners (top left,
+    /// top right, bottom right, bottom left, as on the glass).
+    Screen(u8, [[f64; 3]; 4]),
 }
 
 impl State {
@@ -432,6 +448,11 @@ impl State {
             Command::Rotate(axis, a) => self.transform.rotate(axis, a as f64 / 65_536.0),
             Command::Scale(s) => self.transform.scale(s as f64 / 256.0),
             Command::Face(n, corners) => return Some(Figure::Face(corners[..n as usize].iter().map(|&p| self.transform.apply(units(p))).collect())),
+            Command::Screen(h, w) => {
+                let (x, y) = (w as f64 / 32.0, w as f64 * 3.0 / 128.0);
+                let corners = [[-x, -y, 0.0], [x, -y, 0.0], [x, y, 0.0], [-x, y, 0.0]].map(|p| self.transform.apply(p));
+                return Some(Figure::Screen(h, corners));
+            }
         }
         None
     }
@@ -554,24 +575,86 @@ pub fn project(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>) -> Projec
 /// [`project`], and into `pieces` (cleared), when the list has faces, the
 /// number of segments each line, point and circle gave, as 2 bytes
 /// (little-endian) each: two projections with the same opcodes and the
-/// same `pieces` give segments that line up one for one.
+/// same `pieces` give segments that line up one for one. Screens are
+/// ignored (the list of a machine that is not the shell, SPEC 13.3).
 pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pieces: &mut Vec<u8>) -> Projection {
+    project_scene(list, eye, &SceneView::LISTED, out, pieces, &mut Vec::new())
+}
+
+/// How the shell's scene is shown (SPEC 12.3, 13.3): which handles' Screens
+/// are in effect (bit h − 1 for handle h) and the host's view of the whole
+/// scene (`view`, SPEC 12.2 `face`): a rigid motion and uniform scale
+/// applied to everything after the caps are counted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneView {
+    pub screens: u8,
+    pub view: Transform,
+}
+
+impl Default for SceneView {
+    fn default() -> Self {
+        SceneView::LISTED
+    }
+}
+
+impl SceneView {
+    /// No Screens, the scene as listed.
+    pub const LISTED: SceneView = SceneView { screens: 0, view: Transform::IDENTITY };
+}
+
+/// A Screen in effect as the eye sees it: the machine's panel, its corners
+/// (top left, top right, bottom right, bottom left of the machine's
+/// picture) in screen units after the view, whether its front is towards
+/// the eye, and the distance from the eye to its centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Panel {
+    pub handle: u8,
+    pub corners: [[f64; 3]; 4],
+    pub front: bool,
+    pub distance: f64,
+}
+
+/// [`project_pieces`] for the shell's list (SPEC 13.3 Screen): the Screens
+/// of the handles in `scene.screens` (the first of each handle) count as
+/// faces and hide what is behind them, and go into `panels` (cleared), far
+/// to near; everything is moved by `scene.view` before it is seen from the
+/// eye. What the caps count is measured on the list as given.
+pub fn project_scene(
+    list: &[u8],
+    eye: (f32, f32),
+    scene: &SceneView,
+    out: &mut Vec<Primitive>,
+    pieces: &mut Vec<u8>,
+    panels: &mut Vec<Panel>,
+) -> Projection {
     let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
     let eye = (EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1));
     let start = out.len();
     pieces.clear();
+    panels.clear();
     let mut state = State::default();
     let (mut length, mut count) = (0.0f64, 0usize);
     let mut capped = false;
     let mut drawn = Vec::new();
     let mut faces = Vec::new();
+    let mut seen = 0u8;
+    let v = &scene.view;
+    let moved = *v != Transform::IDENTITY;
     for c in decode(list) {
         let Some(figure) = state.step(&c) else { continue };
+        if let Figure::Screen(h, _) = figure {
+            // Only the first Screen of a handle, and only in effect.
+            let first = seen & 1 << (h - 1) == 0;
+            seen |= 1 << (h - 1);
+            if !first || scene.screens & 1 << (h - 1) == 0 {
+                continue;
+            }
+        }
         let (n, len, f) = match &figure {
             Figure::Line(a, b) => (1, counted_length(*a, *b), 0),
             Figure::Point(_) => (1, 0.0, 0),
             Figure::Circle(ring) => (CIRCLE_CHORDS, (0..ring.len()).map(|k| counted_length(ring[k], ring[(k + 1) % ring.len()])).sum(), 0),
-            Figure::Face(_) => (0, 0.0, 1),
+            Figure::Face(_) | Figure::Screen(..) => (0, 0.0, 1),
         };
         let nf = faces.len() + f;
         if length + len > LENGTH_CAP || count + n > SEGMENT_CAP || nf > FACE_CAP || nf * (count + n) > FACE_WORK_CAP {
@@ -580,11 +663,20 @@ pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pi
         }
         length += len;
         count += n;
+        let figure = if moved { figure.moved(v) } else { figure };
         match figure {
             Figure::Face(corners) => faces.push(corners),
+            Figure::Screen(h, corners) => {
+                faces.push(corners.to_vec());
+                if let Some(p) = Panel::seen(h, corners, eye) {
+                    panels.push(p);
+                }
+            }
             figure => drawn.push((figure, state.width.clamp(1, MAX_WIDTH) as u8, state.rgba)),
         }
     }
+    // Far to near; the lower handle first where they are as far.
+    panels.sort_by(|a, b| b.distance.total_cmp(&a.distance).then(a.handle.cmp(&b.handle)));
     let mut hider = Hider::new(&faces, eye);
     let mut s = Segments { eye, hider: &mut hider, out, room: start + SEGMENT_CAP, capped: false };
     for (figure, width, rgba) in drawn {
@@ -597,7 +689,7 @@ pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pi
                     s.segment(ring[k], ring[(k + 1) % ring.len()], BUTT_START | BUTT_END, width, rgba);
                 }
             }
-            Figure::Face(_) => unreachable!(),
+            Figure::Face(_) | Figure::Screen(..) => unreachable!(),
         }
         if !faces.is_empty() {
             pieces.extend_from_slice(&((s.out.len() - before).min(u16::MAX as usize) as u16).to_le_bytes());
@@ -605,6 +697,187 @@ pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pi
     }
     capped |= s.capped;
     Projection { segments: out.len() - start, length, faces: faces.len(), capped }
+}
+
+impl Figure {
+    /// The figure with every point moved by `t`.
+    fn moved(self, t: &Transform) -> Figure {
+        match self {
+            Figure::Line(a, b) => Figure::Line(t.apply(a), t.apply(b)),
+            Figure::Point(p) => Figure::Point(t.apply(p)),
+            Figure::Circle(ring) => Figure::Circle(ring.into_iter().map(|p| t.apply(p)).collect()),
+            Figure::Face(c) => Figure::Face(c.into_iter().map(|p| t.apply(p)).collect()),
+            Figure::Screen(h, c) => Figure::Screen(h, c.map(|p| t.apply(p))),
+        }
+    }
+}
+
+impl Panel {
+    /// The panel of handle `h` with these corners, seen from the eye at
+    /// (ex, ey, −960); `None` if it has no area.
+    fn seen(handle: u8, corners: [[f64; 3]; 4], eye: (f64, f64)) -> Option<Panel> {
+        let e = [eye.0, eye.1, -EYE_DISTANCE];
+        let n = cross(sub(corners[1], corners[0]), sub(corners[3], corners[0]));
+        if dot(n, n) < 1e-18 {
+            return None;
+        }
+        let c = centre(&corners);
+        let to_eye = sub(e, c);
+        Some(Panel { handle, corners, front: dot(n, to_eye) < 0.0, distance: dot(to_eye, to_eye).sqrt() })
+    }
+}
+
+/// The centre of a panel's four corners.
+pub fn centre(c: &[[f64; 3]; 4]) -> [f64; 3] {
+    std::array::from_fn(|i| (c[0][i] + c[1][i] + c[2][i] + c[3][i]) / 4.0)
+}
+
+/// The handles that have a Screen in `list` as it decodes (SPEC 13.3), bit
+/// h − 1 for handle h, whatever the caps.
+pub fn screens_in(list: &[u8]) -> u8 {
+    decode(list).fold(0, |m, c| if let Command::Screen(h, _) = c { m | 1 << (h - 1) } else { m })
+}
+
+/// The corners of the first Screen of handle `h` in `list`, as listed
+/// (no view), if it has one.
+pub fn screen_corners(list: &[u8], h: u8) -> Option<[[f64; 3]; 4]> {
+    let mut state = State::default();
+    for c in decode(list) {
+        if let Some(Figure::Screen(k, corners)) = state.step(&c)
+            && k == h
+        {
+            return Some(corners);
+        }
+    }
+    None
+}
+
+/// The pointer at (x, y) on the glass (screen units) seen from the eye at
+/// `eye` (moved from the reference eye, as for [`project`]) against the
+/// panels (SPEC 12.4): the nearest panel the ray from the eye through the
+/// point meets in front of the near plane, and where on its machine's
+/// screen (0-639, 0-479), or `None` there if it is seen from behind.
+pub fn panel_hit(panels: &[Panel], eye: (f32, f32), x: f64, y: f64) -> Option<(u8, Option<(u16, u16)>)> {
+    let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
+    let e = [EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1), -EYE_DISTANCE];
+    let d = sub([x, y, 0.0], e);
+    let mut best: Option<(f64, u8, Option<(u16, u16)>)> = None;
+    for p in panels {
+        let c = &p.corners;
+        let (ex, ey) = (sub(c[1], c[0]), sub(c[3], c[0]));
+        let n = cross(ex, ey);
+        let dn = dot(n, d);
+        if dn.abs() < 1e-12 {
+            continue; // edge on
+        }
+        let t = dot(n, sub(c[0], e)) / dn;
+        let q = [e[0] + d[0] * t, e[1] + d[1] * t, e[2] + d[2] * t];
+        if t <= 0.0 || q[2] <= NEAR_Z || best.is_some_and(|b| b.0 <= t) {
+            continue;
+        }
+        let r = sub(q, c[0]);
+        let (u, v) = (dot(r, ex) / dot(ex, ex), dot(r, ey) / dot(ey, ey));
+        if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+            continue;
+        }
+        let at = p.front.then(|| (((u * 640.0) as u16).min(639), ((v * 480.0) as u16).min(479)));
+        best = Some((t, p.handle, at));
+    }
+    best.map(|(_, h, at)| (h, at))
+}
+
+/// The view of the whole scene in which a panel with corners `c` (as
+/// listed) has moved the fraction `e` (0 to 1, eased) of the way to lying
+/// flat on the glass over `target` (x, y, width, height in screen units):
+/// its centre goes straight to the target's, it turns by the shorter way
+/// (a slerp) to face the viewer upright, and its width changes
+/// geometrically to the target's width (SPEC 12.2 `face`).
+pub fn view_transform(c: &[[f64; 3]; 4], target: (f64, f64, f64, f64), e: f64) -> Transform {
+    let len = |v: [f64; 3]| dot(v, v).sqrt();
+    let (ax, ay) = (sub(c[1], c[0]), sub(c[3], c[0]));
+    let w0 = len(ax);
+    if w0 < 1e-9 || len(ay) < 1e-9 {
+        return Transform::IDENTITY;
+    }
+    let ux = ax.map(|v| v / w0);
+    let uy = ay.map(|v| v / len(ay));
+    let uz = cross(ux, uy);
+    // The panel's orientation: its axes are the columns.
+    let r0 = [[ux[0], uy[0], uz[0]], [ux[1], uy[1], uz[1]], [ux[2], uy[2], uz[2]]];
+    let q0 = quaternion(&r0);
+    // Towards the identity, the shorter way.
+    let q = slerp(q0, [1.0, 0.0, 0.0, 0.0], e);
+    let r = rotation(q);
+    let c0 = centre(c);
+    let c1 = [target.0 + target.2 / 2.0, target.1 + target.3 / 2.0, 0.0];
+    let ce = [c0[0] + (c1[0] - c0[0]) * e, c0[1] + (c1[1] - c0[1]) * e, c0[2] + (c1[2] - c0[2]) * e];
+    let s = (target.2 / w0).powf(e);
+    // V(p) = ce + s R R0ᵀ (p − c0).
+    let mut m = [[0.0; 3]; 3];
+    for (i, row) in m.iter_mut().enumerate() {
+        for (j, v) in row.iter_mut().enumerate() {
+            *v = s * (0..3).map(|k| r[i][k] * r0[j][k]).sum::<f64>();
+        }
+    }
+    let lin = Transform { m, t: [0.0; 3] };
+    let mc = lin.linear(c0);
+    Transform { m, t: [ce[0] - mc[0], ce[1] - mc[1], ce[2] - mc[2]] }
+}
+
+/// The eased fraction of a view's motion (SPEC 12.2 `face`): smoothstep of
+/// the linear progress `q` (0 to 4096).
+pub fn ease(q: u16) -> f64 {
+    let t = (q.min(4096) as f64) / 4096.0;
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The unit quaternion (w, x, y, z) of a rotation matrix.
+fn quaternion(m: &[[f64; 3]; 3]) -> [f64; 4] {
+    let tr = m[0][0] + m[1][1] + m[2][2];
+    let q = if tr > 0.0 {
+        let s = (tr + 1.0).sqrt() * 2.0;
+        [0.25 * s, (m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s]
+    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
+        let s = (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt() * 2.0;
+        [(m[2][1] - m[1][2]) / s, 0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s]
+    } else if m[1][1] > m[2][2] {
+        let s = (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt() * 2.0;
+        [(m[0][2] - m[2][0]) / s, (m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s]
+    } else {
+        let s = (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt() * 2.0;
+        [(m[1][0] - m[0][1]) / s, (m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s]
+    };
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    q.map(|v| v / n)
+}
+
+/// From `a` to `b` by the fraction `t`, the shorter way.
+fn slerp(a: [f64; 4], mut b: [f64; 4], t: f64) -> [f64; 4] {
+    let mut d: f64 = (0..4).map(|i| a[i] * b[i]).sum();
+    if d < 0.0 {
+        b = b.map(|v| -v);
+        d = -d;
+    }
+    let (ka, kb) = if d > 0.9995 {
+        (1.0 - t, t)
+    } else {
+        let th = d.min(1.0).acos();
+        let s = th.sin();
+        (((1.0 - t) * th).sin() / s, (t * th).sin() / s)
+    };
+    let q: [f64; 4] = std::array::from_fn(|i| ka * a[i] + kb * b[i]);
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    q.map(|v| v / n)
+}
+
+/// The rotation matrix of a unit quaternion.
+fn rotation(q: [f64; 4]) -> [[f64; 3]; 3] {
+    let [w, x, y, z] = q;
+    [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+    ]
 }
 
 /// Where segments go: the eye, the faces, the output and how far it may
@@ -921,7 +1194,7 @@ mod tests {
         let one = [Command::Point];
         assert_eq!(all(&point), one);
         assert_eq!(all(&[point.clone(), vec![op::END], point.clone()].concat()), one);
-        for unknown in [0x0D, 0x80, 0xFF] {
+        for unknown in [0x0E, 0x80, 0xFF] {
             assert_eq!(all(&[point.clone(), vec![unknown], point.clone()].concat()), one);
         }
         // Operands cut off.
@@ -1491,5 +1764,182 @@ mod tests {
         assert_eq!(pieces, [2, 0, 1, 0]);
         project_pieces(&list[20..], (0.0, 0.0), &mut Vec::new(), &mut pieces);
         assert!(pieces.is_empty());
+    }
+
+    /// A Screen command: handle and width in screen units.
+    fn screen(h: u8, w: f64) -> Vec<u8> {
+        cmd(op::SCREEN, &[&[h][..], &((w * 16.0) as u16).to_le_bytes()].concat())
+    }
+
+    fn translate(x: f64, y: f64, z: f64) -> Vec<u8> {
+        cmd(op::TRANSLATE, &xyz((x * 16.0) as i16, (y * 16.0) as i16, (z * 16.0) as i16))
+    }
+
+    /// The panels of a list with these Screens in effect, from `eye`.
+    fn panels(list: &[u8], screens: u8, eye: (f32, f32)) -> (Vec<Panel>, Vec<Primitive>, Projection) {
+        let (mut out, mut panels) = (Vec::new(), Vec::new());
+        let scene = SceneView { screens, view: Transform::IDENTITY };
+        let p = project_scene(list, eye, &scene, &mut out, &mut Vec::new(), &mut panels);
+        (panels, out, p)
+    }
+
+    fn near(a: (f64, f64), b: (f64, f64)) -> bool {
+        (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9
+    }
+
+    #[test]
+    fn screen_command() {
+        let list = [screen(3, 100.0), screen(8, 0.0)].concat();
+        assert_eq!(all(&list), [Command::Screen(3, 1600), Command::Screen(8, 0)]);
+        assert_eq!(all(&list)[0].to_string(), "screen 3 1600");
+        assert_eq!(opcodes(&list), [op::SCREEN, op::SCREEN]);
+        // A handle outside 1-8 ends the list, as do cut-off operands.
+        for bad in [0u8, 9, 255] {
+            assert_eq!(all(&[screen(1, 10.0), cmd(op::SCREEN, &[bad, 0, 1]), cmd(op::POINT, &[])].concat()).len(), 1);
+        }
+        assert_eq!(all(&[op::SCREEN, 1, 0]), []);
+        assert_eq!(screens_in(&[screen(3, 1.0), screen(3, 2.0), screen(1, 0.0)].concat()), 0b101);
+        assert_eq!(screens_in(&[cmd(op::POP, &[]), screen(3, 1.0)].concat()), 0, "after the end");
+        // The current point stays; the panel lies about the origin.
+        let mut s = State::default();
+        s.step(&Command::Move([16, 32, 48]));
+        let Some(Figure::Screen(2, c)) = s.step(&Command::Screen(2, 640)) else { panic!() };
+        assert_eq!(c, [[-20.0, -15.0, 0.0], [20.0, -15.0, 0.0], [20.0, 15.0, 0.0], [-20.0, 15.0, 0.0]]);
+        assert_eq!(s.point, [1.0, 2.0, 3.0]);
+    }
+
+    /// Panel corners on the glass against values worked out by hand.
+    #[test]
+    fn panel_corners() {
+        let glass = |p: &Panel, eye: (f64, f64)| p.corners.map(|c| to_glass(c, (EYE_X + eye.0, EYE_Y + eye.1)));
+        // The whole screen on the glass: the same from every eye.
+        let list = [translate(320.0, 240.0, 0.0), screen(1, 640.0)].concat();
+        for eye in [(0.0, 0.0), (160.0, -160.0)] {
+            let (p, ..) = panels(&list, 1, (eye.0 as f32, eye.1 as f32));
+            let g = glass(&p[0], eye);
+            assert!(near(g[0], (0.0, 0.0)) && near(g[1], (640.0, 0.0)) && near(g[2], (640.0, 480.0)) && near(g[3], (0.0, 480.0)), "{g:?}");
+            assert!(p[0].front);
+        }
+        // 960 units behind the glass, 320 wide: half its size, towards
+        // the eye's point.
+        let list = [translate(320.0, 240.0, 960.0), screen(1, 320.0)].concat();
+        let (p, ..) = panels(&list, 1, (0.0, 0.0));
+        let g = glass(&p[0], (0.0, 0.0));
+        assert!(near(g[0], (240.0, 180.0)) && near(g[2], (400.0, 300.0)), "{g:?}");
+        let (p, ..) = panels(&list, 1, (160.0, 0.0));
+        let g = glass(&p[0], (160.0, 0.0));
+        assert!(near(g[0], (320.0, 180.0)) && near(g[1], (480.0, 180.0)), "{g:?}");
+        // Scaled: 2 × 100 wide about (100, 100).
+        let list = [translate(100.0, 100.0, 0.0), cmd(op::SCALE, &512u16.to_le_bytes()), screen(1, 100.0)].concat();
+        let (p, ..) = panels(&list, 1, (0.0, 0.0));
+        assert_eq!(p[0].corners, [[0.0, 25.0, 0.0], [200.0, 25.0, 0.0], [200.0, 175.0, 0.0], [0.0, 175.0, 0.0]]);
+        // A quarter turn about y: its left edge 640 deep, its right 320;
+        // seen from 160 units left of the reference eye, its front.
+        let list = [translate(320.0, 240.0, 480.0), cmd(op::ROTATE, &[1, 0x00, 0x40]), screen(1, 320.0)].concat();
+        let (p, ..) = panels(&list, 1, (-160.0, 0.0));
+        assert!(close(p[0].corners[0], [320.0, 120.0, 640.0]) && close(p[0].corners[1], [320.0, 120.0, 320.0]), "{:?}", p[0].corners);
+        let g = glass(&p[0], (-160.0, 0.0));
+        assert!(near(g[0], (256.0, 168.0)) && near(g[1], (280.0, 150.0)), "{g:?}");
+        assert!(p[0].front);
+        let (p, ..) = panels(&list, 1, (160.0, 0.0));
+        assert!(!p[0].front, "from the right: its back");
+        // Edge on from the reference eye: no front, and no pointer hit.
+        let (p, ..) = panels(&list, 1, (0.0, 0.0));
+        assert!(!p[0].front);
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.0, 200.0), None);
+    }
+
+    /// Screens count as faces, hide what is behind them, are drawn far to
+    /// near, and only the first of a handle and only those in effect count.
+    #[test]
+    fn screens_in_a_scene() {
+        let behind = line([0.0, 240.0, 100.0], [640.0, 240.0, 100.0]);
+        let before = line([0.0, 200.0, -100.0], [640.0, 200.0, -100.0]);
+        let full = [cmd(op::PUSH, &[]), translate(320.0, 240.0, 0.0), screen(1, 640.0), cmd(op::POP, &[])].concat();
+        let list = [full.clone(), behind.clone(), before.clone()].concat();
+        // Not in effect (the list of a machine that is not the shell): no
+        // face, both lines drawn whole.
+        let (p, out, proj) = panels(&list, 0, (0.0, 0.0));
+        assert_eq!((p.len(), out.len(), proj.faces), (0, 2, 0));
+        assert_eq!(beams(&list, (0.0, 0.0)), out);
+        // In effect: a face that hides the line behind it.
+        let (p, out, proj) = panels(&list, 1, (0.0, 0.0));
+        assert_eq!((p.len(), proj.faces), (1, 1));
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], Primitive::Beam { y0: 3126, .. }), "the line in front: {out:?}");
+        // A second Screen of the same handle is ignored; another handle's is
+        // a panel of its own, drawn first if it is further away.
+        let far = [translate(0.0, 0.0, 900.0), screen(2, 100.0)].concat();
+        let list = [full.clone(), screen(1, 10.0), far, behind].concat();
+        let (p, _, proj) = panels(&list, 0b11, (0.0, 0.0));
+        assert_eq!(p.iter().map(|p| p.handle).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(proj.faces, 2);
+        let (p, _, _) = panels(&list, 0b10, (0.0, 0.0));
+        assert_eq!(p.iter().map(|p| p.handle).collect::<Vec<_>>(), [2]);
+        // The face caps: 256 faces, then a Screen is not drawn.
+        let mut many: Vec<u8> = std::iter::repeat_n(face(&TRIANGLE), 256).flatten().collect();
+        many.extend(screen(1, 100.0));
+        let (p, _, proj) = panels(&many, 1, (0.0, 0.0));
+        assert_eq!((p.len(), proj.faces, proj.capped), (0, 256, true));
+    }
+
+    /// The pointer against the panels (SPEC 12.4).
+    #[test]
+    fn pointer_hits() {
+        let full = [translate(320.0, 240.0, 0.0), screen(1, 640.0)].concat();
+        let (p, ..) = panels(&full, 1, (0.0, 0.0));
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.5, 240.5), Some((1, Some((320, 240)))));
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 0.5, 0.5), Some((1, Some((0, 0)))));
+        assert_eq!(panel_hit(&p, (90.0, -40.0), 639.5, 479.5), Some((1, Some((639, 479)))), "on the glass: any eye");
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 640.5, 240.0), None);
+        // A small one in front of a large one far away: the nearer wins.
+        let list = [translate(320.0, 240.0, 0.0), screen(1, 320.0), translate(0.0, 0.0, 960.0), screen(2, 1280.0)].concat();
+        let (p, ..) = panels(&list, 0b11, (0.0, 0.0));
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.5, 240.5), Some((1, Some((321, 241)))));
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 10.5, 10.5), Some((2, Some((10, 10)))));
+        // The far one seen from an eye moved right: a point on the glass
+        // meets it further right.
+        let (p, ..) = panels(&list, 0b10, (160.0, 0.0));
+        assert_eq!(panel_hit(&p, (160.0, 0.0), 10.5, 10.5), None);
+        assert_eq!(panel_hit(&p, (160.0, 0.0), 200.5, 10.5), Some((2, Some((120, 10)))));
+        // From behind (half a turn about y): hit, but not delivered.
+        let list = [translate(320.0, 240.0, 100.0), cmd(op::ROTATE, &[1, 0x00, 0x80]), screen(3, 320.0)].concat();
+        let (p, ..) = panels(&list, 0b100, (0.0, 0.0));
+        assert!(!p[0].front);
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.0, 240.0), Some((3, None)));
+        // Behind the near plane: not hit.
+        let list = [translate(320.0, 240.0, -900.0), screen(1, 640.0)].concat();
+        let (p, ..) = panels(&list, 1, (0.0, 0.0));
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.5, 240.5), None);
+    }
+
+    /// The view moves a panel, turned and far away, onto the glass over the
+    /// target, and is the scene as listed at its start.
+    #[test]
+    fn view_onto_the_glass() {
+        let list = [translate(320.0, 240.0, 480.0), cmd(op::ROTATE, &[1, 0x00, 0x30]), screen(1, 320.0)].concat();
+        let c = screen_corners(&list, 1).unwrap();
+        assert_eq!(screen_corners(&list, 2), None);
+        let target = (17.0, 23.0, 605.0, 453.0);
+        let v = view_transform(&c, target, 0.0);
+        for k in 0..4 {
+            assert!((0..3).all(|i| (v.apply(c[k])[i] - c[k][i]).abs() < 1e-9));
+        }
+        let v = view_transform(&c, target, 1.0);
+        // Centred on the target: 453.75 high about y = 249.5.
+        let want = [[17.0, 22.625], [622.0, 22.625], [622.0, 476.375], [17.0, 476.375]];
+        for k in 0..4 {
+            let p = v.apply(c[k]);
+            assert!((p[0] - want[k][0]).abs() < 1e-6 && (p[1] - want[k][1]).abs() < 1e-6 && p[2].abs() < 1e-6, "{k}: {p:?}");
+        }
+        // Half way: the centre half way, the width the geometric mean.
+        let v = view_transform(&c, target, 0.5);
+        let m: Vec<[f64; 3]> = c.iter().map(|&p| v.apply(p)).collect();
+        let mc = centre(&[m[0], m[1], m[2], m[3]]);
+        let c0 = centre(&c);
+        assert!((mc[0] - (c0[0] + 319.5) / 2.0).abs() < 1e-6 && (mc[2] - c0[2] / 2.0).abs() < 1e-6, "{mc:?}");
+        let w = (0..3).map(|i| (m[1][i] - m[0][i]).powi(2)).sum::<f64>().sqrt();
+        assert!((w - (320.0f64 * 605.0).sqrt()).abs() < 1e-6, "{w}");
+        assert_eq!((ease(0), ease(2048), ease(4096), ease(5000)), (0.0, 0.5, 1.0, 1.0));
     }
 }

@@ -599,7 +599,11 @@ impl Machine {
                 handle
             }
             0x800..=0x8FF if self.machines.is_some() => {
-                let (r, extra) = self.machines.as_mut().unwrap().call(n, [a0, a1, a2, a3, x[14]], rom, ram);
+                let ctx = crate::machines::CallContext {
+                    frame: self.system.frame(),
+                    list: self.vector3.as_ref().map_or(&[][..], Vector3::list),
+                };
+                let (r, extra) = self.machines.as_mut().unwrap().call(n, [a0, a1, a2, a3, x[14], x[15]], rom, ram, ctx);
                 units += extra;
                 r
             }
@@ -687,6 +691,12 @@ impl Machine {
     /// Device 9, if the image lists it.
     pub fn vector3(&self) -> Option<&Vector3> {
         self.vector3.as_ref()
+    }
+
+    /// The 3D display, to change its list from outside a frame (hosts'
+    /// tests).
+    pub fn vector3_mut(&mut self) -> Option<&mut Vector3> {
+        self.vector3.as_mut()
     }
 
     pub fn vector_list(&self) -> &[u8] {

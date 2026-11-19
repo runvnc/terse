@@ -1,0 +1,86 @@
+ ⌂  1 reader         0%                                                    00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- 3d vectors: 339 list bytes --
+colour 324664ff
+width 16
+move 3104 6880 -1024
+line 15392 6880 -1024
+move 3104 6880 1024
+line 15392 6880 1024
+move 3104 6880 3072
+line 15392 6880 3072
+move 3104 6880 -1024
+line 3104 6880 4800
+move 5152 6880 -1024
+line 5152 6880 4800
+move 7200 6880 -1024
+line 7200 6880 4800
+move 9248 6880 -1024
+line 9248 6880 4800
+move 11296 6880 -1024
+line 11296 6880 4800
+move 13344 6880 -1024
+line 13344 6880 4800
+move 15392 6880 -1024
+line 15392 6880 4800
+push
+translate 7200 4000 0
+rotate y 0
+translate 0 0 0
+rotate y 0
+colour e6b43cff
+width 32
+move -2432 -1824 0
+line 2432 -1824 0
+line 2432 1824 0
+line -2432 1824 0
+line -2432 -1824 0
+line -2432 -1824 256
+line 2432 -1824 256
+line 2432 1824 256
+line -2432 1824 256
+line -2432 -1824 256
+move 2432 -1824 0
+line 2432 -1824 256
+move 2432 1824 0
+line 2432 1824 256
+move -2432 1824 0
+line -2432 1824 256
+move 0 1824 128
+line 0 2880 128
+move -960 2880 128
+line 960 2880 128
+move 0 2880 -512
+line 0 2880 768
+screen 1 4864
+pop
+-- 3d: 23 segments, length 3974.5 units --
+-- view: handle 0 back rect 0 0 0 0 from 0 start 0 frames 0 progress 0 --

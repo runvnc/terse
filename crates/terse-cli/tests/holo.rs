@@ -193,7 +193,7 @@ fn encode(c: &terse_core::vector3::Command) -> Vec<u8> {
         Command::Colour(rgba) => v.extend(rgba),
         Command::Width(w) | Command::Circle(w) | Command::Scale(w) => v.extend(w.to_le_bytes()),
         Command::Move(p) | Command::Line(p) | Command::Translate(p) => v.extend(xyz(p)),
-        Command::Rotate(axis, a) => {
+        Command::Rotate(axis, a) | Command::Screen(axis, a) => {
             v.push(*axis);
             v.extend(a.to_le_bytes());
         }

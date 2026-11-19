@@ -553,6 +553,33 @@ fn a_session_with_a_missing_image_or_a_bad_snapshot() {
     golden("session-failed", &dump);
 }
 
+/// A session saved in the gallery layout comes back in it: the machines on
+/// the ring, and the selected one faced with the keyboard once it runs.
+#[test]
+fn a_session_in_the_gallery() {
+    let (store, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // Reader, then hello; the home key, L twice (grid, gallery), S.
+    let script = "2 press enter\n10 home\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press l\n22 press l\n30 press s\n";
+    let mut s = Sys::new(store.path(), data.path(), script);
+    s.run_until(40);
+    assert!(s.bar().contains("Session saved"), "{}", s.bar());
+    let owner = s.owner();
+    let record = Records::in_data_dir(data.path()).load(&owner, b"session").unwrap().unwrap();
+    assert_eq!(record, [1, 3, 3, 1, 2], "version, the gallery, before zoom, slot 1 (hello) selected, 2 machines");
+    drop(s);
+    let mut t = Sys::new(store.path(), data.path(), "4 press enter\n");
+    t.run_until(30);
+    assert_eq!(t.system.focus(), 2);
+    assert!(t.rects().iter().all(|r| r.2 == 0), "no tiles: panels");
+    let dev = t.system.shell().machines().unwrap();
+    let v = *dev.view();
+    assert_eq!((v.handle, v.toward, v.progress(t.system.shell().frame() - 1)), (2, true, 4096));
+    let pictures: Vec<_> = t.system.pictures().into_iter().map(|(h, p)| (h, p.x, p.y, p.w, p.h)).collect();
+    assert_eq!(pictures, [(2, 17, 23, 605, 453)]);
+    assert_eq!(terse_core::vector3::screens_in(t.system.shell().vector3().unwrap().list()), 0b11);
+    golden("session-gallery", &format!("{}{}", t.dump(), t.system.shell().vector3().unwrap().dump()));
+}
+
 #[test]
 fn a_session_discarded() {
     let Saved { store, data, first, .. } = saved_session();

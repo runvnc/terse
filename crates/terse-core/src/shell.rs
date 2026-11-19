@@ -106,6 +106,24 @@ pub struct System {
     saving: Vec<(u8, SnapshotInfo)>,
     /// Snapshot results to report at the next latch: slot, stored.
     saved: Vec<(u8, bool)>,
+    /// The eye the host draws the 3D scene from (SPEC 13.1), for routing
+    /// the pointer over panels.
+    eye: (f32, f32),
+}
+
+/// The shell's 3D scene as the host shows it after a frame (SPEC 12.3):
+/// which Screens are in effect, the view of the whole scene, the panels as
+/// seen from the eye (far to near; not the machine a finished view shows
+/// flat) and whether the view is moving.
+#[derive(Clone, Debug, Default)]
+pub struct Scene {
+    pub view: crate::vector3::SceneView,
+    pub panels: Vec<crate::vector3::Panel>,
+    pub moving: bool,
+    /// The machine a finished view shows flat (0: none).
+    pub faced: u8,
+    /// The view's progress, 0 to 4096, eased by the host.
+    pub progress: u16,
 }
 
 const NO_CONTROLLERS: [Controller; CONTROLLERS] = [Controller { connected: false, buttons: 0, left: (0, 0), right: (0, 0) }; CONTROLLERS];
@@ -116,13 +134,13 @@ impl System {
     /// the host's built-in programs. Without, it is a single machine.
     pub fn new(image: &Image, shell: bool, builtins: Vec<[u8; 32]>) -> Self {
         let shell = if shell { Machine::new_shell(image, builtins) } else { Machine::new(image) };
-        System { shell, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new() }
+        System { shell, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new(), eye: (0.0, 0.0) }
     }
 
     /// A single machine that already exists (a restored one, `terse run
     /// --load-state`).
     pub fn with_machine(machine: Machine) -> Self {
-        System { shell: machine, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new() }
+        System { shell: machine, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new(), eye: (0.0, 0.0) }
     }
 
     /// The shell's snapshot slots as the host has them when the system
@@ -199,14 +217,82 @@ impl System {
         self.shell.machines().map_or(0, |m| m.focus())
     }
 
-    /// The children's pictures as the host shows them: handle, rectangle
-    /// of the picture in the shell's units, in drawing order (SPEC 12.3).
+    /// The eye the host draws the 3D scene from (SPEC 13.1): screen units
+    /// from the reference eye. Panels are hit as seen from it (SPEC 12.4).
+    pub fn set_eye(&mut self, eye: (f32, f32)) {
+        self.eye = eye;
+    }
+
+    /// The children's pictures as the host shows them flat: handle,
+    /// rectangle of the picture in the shell's units, in drawing order
+    /// (SPEC 12.3); the machine a finished view shows flat in its
+    /// rectangle among them.
     pub fn pictures(&self) -> Vec<(u8, crate::page::Region)> {
         let Some(dev) = self.shell.machines() else { return Vec::new() };
+        let faced = self.faced();
         self.children()
             .filter(|(h, c)| c.machine.is_some() && dev.slot(*h).has_picture())
-            .filter_map(|(h, _)| Some((h, picture(dev.slot(h).rect)?)))
+            .filter_map(|(h, _)| {
+                let rect = if h == faced { dev.view().rect } else { dev.slot(h).rect };
+                Some((h, picture(rect)?))
+            })
             .collect()
+    }
+
+    /// The frame counter of the shell's last frame (the view's progress is
+    /// counted in it).
+    fn shell_frame(&self) -> u32 {
+        self.shell.frame().wrapping_sub(1)
+    }
+
+    /// The machine a finished view shows flat, if any.
+    fn faced(&self) -> u8 {
+        let Some(dev) = self.shell.machines() else { return 0 };
+        let v = dev.view();
+        if v.handle != 0 && v.toward && v.progress(self.shell_frame()) == crate::machines::VIEW_DONE && self.panel_mask() & 1 << (v.handle - 1) != 0 {
+            v.handle
+        } else {
+            0
+        }
+    }
+
+    /// The handles whose Screens in the shell's 3D list are in effect (SPEC
+    /// 13.3): bit h − 1 for handle h.
+    pub fn panel_mask(&self) -> u8 {
+        let (Some(dev), Some(v3)) = (self.shell.machines(), self.shell.vector3()) else { return 0 };
+        dev.panel_mask(v3.list(), |h| self.child(h).is_some_and(|c| c.machine.is_some()))
+    }
+
+    /// The shell's 3D scene as the host shows it now, seen from `eye`
+    /// (SPEC 12.2 `face`, 12.3). `None` when no Screen is in effect: the
+    /// shell's screen is drawn as a single machine's.
+    pub fn scene(&self, eye: (f32, f32)) -> Option<Scene> {
+        let mask = self.panel_mask();
+        if mask == 0 {
+            return None;
+        }
+        let dev = self.shell.machines()?;
+        let list = self.shell.vector3()?.list();
+        let v = dev.view();
+        let frame = self.shell_frame();
+        let mut scene = Scene::default();
+        scene.view.screens = mask;
+        if v.handle != 0 && mask & 1 << (v.handle - 1) != 0 {
+            let q = v.progress(frame);
+            scene.progress = q;
+            scene.moving = v.moving(frame);
+            if let (Some(corners), Some(p)) = (crate::vector3::screen_corners(list, v.handle), picture(v.rect)) {
+                let target = (p.x as f64, p.y as f64, p.w as f64, p.h as f64);
+                scene.view.view = crate::vector3::view_transform(&corners, target, crate::vector3::ease(q));
+            }
+            if !scene.moving && v.toward {
+                scene.faced = v.handle;
+            }
+        }
+        crate::vector3::project_scene(list, eye, &scene.view, &mut Vec::new(), &mut Vec::new(), &mut scene.panels);
+        let faced = scene.faced;
+        scene.panels.retain(|p| p.handle != faced);
+        Some(scene)
     }
 
     /// The image for machine `serial` arrived, or could not be had; it is
@@ -244,6 +330,12 @@ impl System {
         // Its starts and stops, in order; snapshots after the machines'
         // frames.
         let mut at_end = Vec::new();
+        // A view whose machine is no longer a panel returns at once (SPEC
+        // 12.2 `face`).
+        let list = self.shell.vector3().map_or(Vec::new(), |v| v.list().to_vec());
+        if let Some(dev) = self.shell.machines_mut() {
+            dev.check_view(&list);
+        }
         if let Some((builtins, commands)) = self.shell.machines_mut().map(|d| (d.builtins().to_vec(), d.take_commands())) {
             for command in commands {
                 match command {
@@ -469,6 +561,7 @@ impl System {
             return;
         }
         let pictures = self.pictures();
+        let scene = self.scene(self.eye);
         for &e in events {
             match e.kind {
                 Event::HOME => {
@@ -479,8 +572,21 @@ impl System {
                     let (x, y, buttons) = e.pointer_parts();
                     let pressed = buttons & !self.buttons != 0;
                     self.buttons = buttons;
-                    // The topmost picture under the pointer: the highest handle.
-                    let hit = pictures.iter().rev().find_map(|&(h, p)| Some((h, map_into(p, x, y)?)));
+                    // The topmost picture under the pointer: the highest
+                    // handle; then the nearest panel (SPEC 12.4).
+                    let mut hit = pictures.iter().rev().find_map(|&(h, p)| Some((h, map_into(p, x, y)?)));
+                    if hit.is_none()
+                        && let Some(scene) = &scene
+                        && let Some((h, at)) = crate::vector3::panel_hit(&scene.panels, self.eye, x as f64 + 0.5, y as f64 + 0.5)
+                    {
+                        match at {
+                            // Seen from behind: as if over no picture.
+                            None => {}
+                            // Over a moving scene: nobody.
+                            Some(_) if scene.moving => continue,
+                            Some(at) => hit = Some((h, at)),
+                        }
+                    }
                     match hit {
                         None => shell.push(e),
                         Some((h, (cx, cy))) => {

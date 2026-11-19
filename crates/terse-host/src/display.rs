@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use terse_core::vector::{MAX_LIST, decode, decode_outlines};
+use terse_core::vector3::Panel;
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH, System, Vector, Vector3};
 use terse_net::Prompt;
 
@@ -154,6 +155,77 @@ impl VectorScene<'_> {
         }
     }
 }
+
+/// The shell's 3D scene as the host draws it (SPEC 12.3) when Screens are
+/// in effect: the panels, far to near (not the machine a finished view
+/// shows flat), and the shell's 3D segments, cut by its faces and the
+/// panels, which are drawn over the panels. `None`: no Screen is in
+/// effect, and the shell's screen is drawn as a single machine's, its 3D
+/// list in its vector layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneLayers {
+    pub panels: Vec<Panel>,
+    pub lines: Vec<Primitive>,
+}
+
+/// The scene of `system` seen from `eye`.
+pub fn scene_layers(system: &System, eye: Eye) -> Option<SceneLayers> {
+    let scene = system.scene(eye)?;
+    let list = system.shell().vector3()?.list();
+    let (mut lines, mut panels) = (Vec::new(), Vec::new());
+    terse_core::vector3::project_scene(list, eye, &scene.view, &mut lines, &mut Vec::new(), &mut panels);
+    panels.retain(|p| p.handle != scene.faced);
+    Some(SceneLayers { panels, lines })
+}
+
+/// The eye at (ex, ey) in screen units, as `project` places it.
+pub fn eye_point(eye: Eye) -> (f64, f64) {
+    let m = terse_core::vector3::MAX_EYE_OFFSET;
+    (terse_core::vector3::EYE_X + eye.0.clamp(-m, m) as f64, terse_core::vector3::EYE_Y + eye.1.clamp(-m, m) as f64)
+}
+
+/// A point of the scene on a screen drawn into `rect` (pixels): its pixel
+/// position and its w = (960 + z) / 960, by which a GPU divides (SPEC
+/// 13.1), for a point in front of the near plane.
+pub fn to_pixels(p: [f64; 3], eye: (f64, f64), rect: (f32, f32, f32, f32)) -> (f64, f64, f64) {
+    let (gx, gy) = terse_core::vector3::to_glass(p, eye);
+    let s = rect.2 as f64 / SCREEN_WIDTH as f64;
+    (rect.0 as f64 + gx * s, rect.1 as f64 + gy * s, (terse_core::vector3::EYE_DISTANCE + p[2]) / terse_core::vector3::EYE_DISTANCE)
+}
+
+/// How wide (pixels) a panel looks on a screen drawn into `rect`: the
+/// longer of its top and bottom edges, or 4/3 of the longer of its sides,
+/// on the glass (points behind the near plane taken at it).
+pub fn panel_width_px(p: &Panel, eye: Eye, rect: (f32, f32, f32, f32)) -> f64 {
+    let eye = eye_point(eye);
+    let g = p.corners.map(|c| {
+        let c = [c[0], c[1], c[2].max(terse_core::vector3::NEAR_Z + 1.0)];
+        let (x, y, _) = to_pixels(c, eye, rect);
+        (x, y)
+    });
+    let len = |a: (f64, f64), b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
+    len(g[0], g[1]).max(len(g[3], g[2])).max(len(g[0], g[3]).max(len(g[1], g[2])) * 4.0 / 3.0)
+}
+
+/// The glyph cell width (pixels) a panel's machine is drawn with (its
+/// picture is 80 cells wide, so 80 × the cell width pixels): the nearest
+/// to `width` pixels on the target (so a panel facing the viewer is drawn
+/// from one level, magnified or minified by less than half a cell), at
+/// least 2 and at most `cap` (the cell of the shell's own screen: never
+/// sharper than a machine shown flat over the whole screen); `current` is
+/// kept while it is at most one less and two more, so a panel that moves
+/// a little is not drawn again at every size.
+pub fn panel_cell_width(width: f64, cap: u32, current: Option<u32>) -> u32 {
+    let cap = cap.max(2);
+    let need = ((width / terse_core::COLS as f64).round() as u32).clamp(2, cap);
+    match current {
+        Some(c) if c + 1 >= need && c <= (need + 2).min(cap) => c,
+        _ => need,
+    }
+}
+
+/// The colour of a panel seen from behind (SPEC 13.5): opaque, dark.
+pub const PANEL_BACK: [u8; 3] = [24, 26, 32];
 
 /// The host's consent prompt as the screens show it: the prompt, how many
 /// requests wait, and the asking machine's title.
