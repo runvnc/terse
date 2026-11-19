@@ -70,7 +70,7 @@ impl Owner {
         }
     }
 
-    fn dir(&self, root: &Path) -> PathBuf {
+    pub(crate) fn dir(&self, root: &Path) -> PathBuf {
         match self {
             Owner::Program { publisher, name } => root.join("program").join(to_hex(publisher)).join(hex(name)),
             Owner::Image(id) => root.join("image").join(to_hex(id)),
@@ -233,7 +233,7 @@ fn subdirs(dir: &Path) -> io::Result<Vec<(String, PathBuf)>> {
 }
 
 /// Makes a rename in `dir` durable (where the platform allows it).
-fn sync_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     fs::File::open(dir)?.sync_all()?;
     #[cfg(not(unix))]

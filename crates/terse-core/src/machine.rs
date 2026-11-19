@@ -327,7 +327,17 @@ impl Machine {
         let mut delivered_charge = 0;
         match &mut self.content {
             Some(content) => {
-                let (ignored, dropped, delivered) = content.complete(input.completions, &mut self.ram, &mut self.system);
+                // After a restore, the requests pending in the snapshot fail
+                // first (SPEC 9.2).
+                let orphans = content.take_orphans();
+                let joined: Vec<Completion>;
+                let completions = if orphans.is_empty() {
+                    input.completions
+                } else {
+                    joined = orphans.into_iter().chain(input.completions.iter().cloned()).collect();
+                    &joined
+                };
+                let (ignored, dropped, delivered) = content.complete(completions, &mut self.ram, &mut self.system);
                 result.completions_ignored = ignored;
                 result.events_dropped += dropped;
                 delivered_charge = copy_charge(delivered) as i64;
@@ -775,5 +785,96 @@ impl Machine {
     /// The state hash: BLAKE3-256 of [`Machine::state`].
     pub fn state_hash(&self) -> [u8; 32] {
         *blake3::hash(&self.state()).as_bytes()
+    }
+
+    /// The machine whose state serialization is `state`, for `image`
+    /// (STATE.md 4): `state()` of the result is `state`, byte for byte, and
+    /// given the same inputs it runs as the machine it was taken of. A
+    /// shell's state (section 1.10 present) is not restorable. Content
+    /// requests that were pending complete with status 03h (failed) in its
+    /// first frame (SPEC 9.2). The identity and whether it is in a system
+    /// are the caller's to set.
+    pub fn restore(image: &Image, state: &[u8]) -> Result<Machine, crate::snapshot::RestoreError> {
+        use crate::snapshot::{RestoreError, Reader, bad};
+        let mut r = Reader::new(state);
+        if r.take(STATE_DOMAIN.len())? != STATE_DOMAIN {
+            return Err(bad("not a terse-state-1 serialization"));
+        }
+        if r.array::<32>()? != image.id {
+            return Err(RestoreError::WrongImage);
+        }
+        let mut m = Machine::new(image);
+        m.cpu.pc = r.u32()?;
+        for i in 1..32 {
+            m.cpu.x[i] = r.u32()?;
+        }
+        m.cpu.min_sp = m.cpu.x[2];
+        let frame = r.u32()?;
+        let (stopped, code, kind, detail, pc, addr) = (r.u8()?, r.u8()?, r.u8()?, r.u32()?, r.u32()?, r.u32()?);
+        m.stopped = match stopped {
+            0 => None,
+            1 => Some(Stopped::Exit(code)),
+            2 => {
+                let kind = match kind {
+                    1 => FaultKind::Illegal(detail),
+                    2 => FaultKind::Ebreak,
+                    3 => FaultKind::Fetch,
+                    4 => FaultKind::Load,
+                    5 => FaultKind::Store,
+                    6 => FaultKind::Misaligned,
+                    _ => return Err(bad("fault kind")),
+                };
+                Some(Stopped::Fault(Fault { kind, pc, addr }))
+            }
+            _ => return Err(bad("stopped")),
+        };
+        let budget = r.u32()? as i32;
+        if budget > 0 {
+            return Err(bad("a positive budget carried"));
+        }
+        m.budget = budget as i64;
+        if r.u32()? as usize != m.ram.len() {
+            return Err(bad("RAM size"));
+        }
+        let n = m.ram.len();
+        m.ram.copy_from_slice(r.take(n)?);
+        m.system.restore(frame, &mut r)?;
+        if r.flag()? != m.terminal.is_some() {
+            return Err(bad("terminal present"));
+        }
+        if let Some(t) = &mut m.terminal {
+            t.restore(&mut r)?;
+        }
+        if r.flag()? != m.vector.is_some() {
+            return Err(bad("vector display present"));
+        }
+        if let Some(v) = &mut m.vector {
+            v.restore(&mut r)?;
+        }
+        if r.flag()? != m.content.is_some() {
+            return Err(bad("content present"));
+        }
+        if let Some(c) = &mut m.content {
+            c.restore(&mut r, m.ram.len())?;
+        }
+        if r.flag()? != m.page.is_some() {
+            return Err(bad("page present"));
+        }
+        if let Some(p) = &mut m.page {
+            p.restore(&mut r)?;
+        }
+        if m.lists_machines && r.u8()? != 0 {
+            return Err(bad("the state of a shell cannot be restored"));
+        }
+        m.argument = match r.remaining() {
+            0 => None,
+            32 => Some(r.array()?),
+            _ => return Err(bad("length")),
+        };
+        // Every field as `state` writes it, so nothing was out of range.
+        if m.state() != state {
+            return Err(bad("not as this machine would write it"));
+        }
+        Ok(m)
     }
 }

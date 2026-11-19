@@ -16,6 +16,7 @@
 //! - [`node`]: host behaviour (NETWORK 2, 4.4): store first, then the relay,
 //!   with verification; following and publishing feeds.
 //! - [`records`]: named records, the data programs keep on this host (SPEC 9.6).
+//! - [`snapshots`]: snapshots of the machines a shell runs (SPEC 12.7).
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
@@ -32,6 +33,7 @@ pub mod protocol;
 pub mod records;
 pub mod relay;
 pub mod service;
+pub mod snapshots;
 pub mod store;
 pub mod timeline;
 
@@ -42,4 +44,5 @@ pub use identity::{FeedKey, Identity};
 pub use node::{Article, Done, Draft, FeedEvent, Node};
 pub use records::{Owner, Records};
 pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt};
+pub use snapshots::Snapshots;
 pub use store::{BlobStore, default_config_dir, default_data_dir, default_store_dir};

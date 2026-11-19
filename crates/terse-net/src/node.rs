@@ -269,6 +269,8 @@ pub struct Node {
     program_download: bool,
     /// Named records (SPEC 9.6), if the host keeps them.
     records: Option<crate::records::Records>,
+    /// Snapshots of a shell's machines (SPEC 12.7), if the host keeps them.
+    snapshots: Option<crate::snapshots::Snapshots>,
     /// Operations waiting for a relay to be connected, and since when.
     deferred: Vec<Deferred>,
     deferred_since: Option<Instant>,
@@ -313,6 +315,7 @@ impl Node {
             prefetch: true,
             program_download: true,
             records: None,
+            snapshots: None,
             deferred: Vec::new(),
             deferred_since: None,
             feed_relays: true,
@@ -464,6 +467,15 @@ impl Node {
 
     pub fn records(&self) -> Option<&crate::records::Records> {
         self.records.as_ref()
+    }
+
+    /// Keeps the snapshots a shell asks for (SPEC 12.7) in `snapshots`.
+    pub fn set_snapshots(&mut self, snapshots: crate::snapshots::Snapshots) {
+        self.snapshots = Some(snapshots);
+    }
+
+    pub fn snapshots(&self) -> Option<&crate::snapshots::Snapshots> {
+        self.snapshots.as_ref()
     }
 
     /// The current version of each program of a feed (NETWORK 4.2: its

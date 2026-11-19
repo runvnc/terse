@@ -48,6 +48,7 @@ impl Event {
     pub const PAGE_LOCATED: u8 = 0x0D;
     pub const PAGE_LOCATED_Y: u8 = 0x0E;
     pub const OPEN_REQUESTED: u8 = 0x0F;
+    pub const SNAPSHOT_DONE: u8 = 0x10;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -130,6 +131,11 @@ impl Event {
     /// Machine `handle` asked the shell to open something (SPEC 12.4).
     pub fn open_requested(handle: u8) -> Self {
         Event { kind: Self::OPEN_REQUESTED, a: handle, b: 0, c: 0 }
+    }
+
+    /// The snapshot for `slot` was stored (status 1) or not (3) (SPEC 12.4).
+    pub fn snapshot_done(slot: u8, status: u8) -> Self {
+        Event { kind: Self::SNAPSHOT_DONE, a: slot, b: status, c: 0 }
     }
 
     /// A content request finished (SPEC 7.3).
@@ -266,6 +272,25 @@ impl System {
     /// The Unix time latched at the start of the frame.
     pub fn time(&self) -> u32 {
         self.time
+    }
+
+    /// The frame counter, then the system section as `write_state` wrote
+    /// it (STATE.md 4).
+    pub(crate) fn restore(&mut self, frame: u32, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+        self.frame = frame;
+        self.time = r.u32()?;
+        let n = r.u8()? as usize;
+        if n > QUEUE_CAPACITY {
+            return Err(crate::snapshot::bad("event queue"));
+        }
+        for _ in 0..n {
+            let [kind, a, b, c] = r.array()?;
+            self.queue.push_back(Event { kind, a, b, c });
+        }
+        for c in &mut self.controllers {
+            *c = r.array()?;
+        }
+        Ok(())
     }
 
     /// The latches and the event queue (STATE.md, system section). This

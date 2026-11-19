@@ -132,7 +132,7 @@ images were built with clang and LLD 23.1.4.
   `--hash-all` also `<handle> <hash>` per machine started (`-` while loading or
   failed). The exit status is the shell's. Without `--shell`, an image runs alone,
   as follows.
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -160,6 +160,11 @@ images were built with clang and LLD 23.1.4.
   whose frame counter is a multiple of N (after frames N, 2N, …). `--bench` prints,
   on stderr, the emulation time per frame (p50, p99, max; the machine and the
   headless content service) and how many times faster than real time the run was.
+  `--save-state <file>` writes the machine's snapshot (STATE.md 4) after the last
+  frame; `--load-state <file>` starts from one instead of from reset (the image is
+  `<image|id>` if given, else the one the snapshot names, by ID), so `--frames 0
+  --hash` prints the hash it was saved with and a continued run has the hashes of an
+  uninterrupted one. Both are for a single machine, not `--shell`.
 - **Exit status of `run`.** When the program exits, `terse run` exits with its
   exit code (0–255). When the machine stops with a fault (SPEC 1.5), it prints
   `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself
@@ -555,7 +560,12 @@ from a file or started by image ID has the records of that exact image. They nev
 leave the machine and no other program can read them. Hosts keep them in
 `<data>/records` (`--data`, default `$XDG_DATA_HOME/terse`, else
 `~/.local/share/terse`); `terse run` and `terse-host` take `--data`. Sparks keeps its
-high score there, the shell its layout.
+high score there, the shell its layout and its session.
+
+The shell's snapshots (SPEC 12.7, below) are kept beside them, in
+`<data>/snapshots/<owner>/00` … `15` (the owner as for records): private, never sent
+anywhere, one file per slot in the format of STATE.md 4, each written to a temporary
+file, synced and renamed.
 
 - `records list [<owner>] [--data <dir>]`: every owner with its count and bytes, or one
   owner's records (size, name). An owner is `builtin:<title>`,
@@ -566,7 +576,7 @@ high score there, the shell its layout.
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (15 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
+program (16 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
@@ -597,6 +607,18 @@ each one's screen where the shell placed it, and routes input.
   goes back); L cycles the layouts; 1–8 select a machine by handle. A click on a
   program starts it, one on a machine selects and focuses it. The layout chosen with
   L and Z is kept in the shell's named record `layout` for the next run.
+- **Sessions** (SPEC 12.7): S in the launcher saves the session: every running or
+  paused machine as a snapshot (its whole state; slots 0, 1, … in handle order) and
+  the named record `session` (layout, which machine was selected, how many), with
+  "Session saved" or "Could not save the session" in the bar. When the
+  shell starts and a session was saved, the launcher's first entry is "Restore last
+  session (N programs)": Enter restores the machines in their order, where they
+  were (sparks mid-game, the reader on its article at the same place, a drawing), with
+  the layout and the keyboard on the machine that was selected; D discards the session.
+  A machine that cannot be restored (its image is gone from the store and no relay has
+  it, or the snapshot is unreadable) shows why, like a failed start. A snapshot holds
+  one exact version of a program; named records are not in it. Nothing is saved
+  without S yet.
 - A click on a machine's picture gives it the keyboard (the click also reaches the
   machine). A machine that exits or faults keeps its tile, with its last picture (a
   fault shown on its bottom row), until X stops it; the keyboard then goes back to the
@@ -1273,7 +1295,7 @@ recorded sessions.
 | reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
-| shell | 10,832 bytes | 3 pages | 11,384 (9.1%, the launcher rebuilt with 4 machines) | 498 (0.4%) | — |
+| shell | 16,344 bytes | 3 pages | 12,353 (9.9%, the launcher rebuilt with 4 machines); saving a session of 3 machines 7,373 (5.9%), restoring it 5,730 (4.6%) | 515 (0.4%) | — |
 
 A system in a 1320 × 990 window (`terse-host --selftest --shell --size 1320x990`,
 1,200 frames, RTX 2060; the machines started by script in the first 300 frames;

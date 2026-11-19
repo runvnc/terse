@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use terse_core::page::{Layouter, PageInput};
 use terse_core::system::CONTROLLERS;
+use terse_core::machines::failure;
 use terse_core::{
     Completion, Controller, Driver, Event, FrameInput, FrameResult, Machine, Outcome, ProgramId, Request, RequestKind,
-    Script, StartFailure, System, SystemFrame, Who,
+    Script, Snapshot, StartFailure, System, SystemFrame, Who,
 };
 
 use crate::identity::{FeedKey, valid_feed_key};
@@ -47,6 +48,12 @@ enum Work {
     /// completed like `Fetch`: not found if the host holds no such program.
     /// A built-in (the all-zero key) is looked for among these images.
     Program(u32, ProgramId, Vec<[u8; 32]>),
+    /// Store a snapshot file in a slot of the owner's snapshots (SPEC
+    /// 12.7); reported in [`ContentService::take_snapshot_results`].
+    SaveSnapshot(Owner, u8, Vec<u8>),
+    /// Read a slot's snapshot and get its image, for machine `tag`.
+    Restore(u32, Owner, u8),
+    DeleteSnapshot(Owner, u8),
 }
 
 /// How the host answers the requests that need the user's consent
@@ -98,6 +105,12 @@ pub struct Prompt {
 enum Finished {
     Done(u32, Completion),
     Ask(Prompt, Request),
+    /// A snapshot was stored in a slot (or not).
+    Saved(u8, bool),
+    /// A snapshot was deleted (so that waiting for everything waits for it).
+    Deleted,
+    /// The snapshot and image for a restored machine, or why not.
+    Restored(u32, Result<(terse_core::Image, Snapshot), StartFailure>),
 }
 
 pub struct ContentService {
@@ -113,6 +126,10 @@ pub struct ContentService {
     refused: Vec<(u32, Completion)>,
     /// The node has a relay and subscriptions.
     following: bool,
+    /// Snapshot results not yet taken: slots stored (or not), machines'
+    /// snapshots and images.
+    saved: Vec<(u8, bool)>,
+    restored: Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>,
 }
 
 /// What the worker needs to turn a `Done` into a completion.
@@ -130,6 +147,8 @@ enum Job {
     /// The relays asked for a program the host does not hold (NETWORK
     /// 4.8); its image is fetched next.
     Lookup(ProgramId),
+    /// The image of a snapshot being restored (SPEC 12.7).
+    Restore(Box<Snapshot>),
 }
 
 impl ContentService {
@@ -156,6 +175,8 @@ impl ContentService {
             prompts: VecDeque::new(),
             refused: Vec::new(),
             following,
+            saved: Vec::new(),
+            restored: Vec::new(),
         }
     }
 
@@ -193,6 +214,9 @@ impl ContentService {
         self.outstanding -= 1;
         match f {
             Finished::Done(tag, c) => done.push((tag, c)),
+            Finished::Saved(slot, ok) => self.saved.push((slot, ok)),
+            Finished::Deleted => {}
+            Finished::Restored(tag, r) => self.restored.push((tag, r)),
             Finished::Ask(prompt, request) => {
                 // Queued in (tag, handle) order among those not yet shown.
                 let key = (prompt.tag, prompt.handle);
@@ -268,6 +292,34 @@ impl ContentService {
     pub fn fetch(&mut self, tag: u32, id: [u8; 32]) {
         self.outstanding += 1;
         let _ = self.jobs.send(Work::Fetch(tag, id));
+    }
+
+    /// Stores `snapshot` in slot `slot` of `owner`'s snapshots (SPEC
+    /// 12.7); the result comes from [`Self::take_snapshot_results`].
+    pub fn save_snapshot(&mut self, owner: Owner, slot: u8, snapshot: &Snapshot) {
+        self.outstanding += 1;
+        let _ = self.jobs.send(Work::SaveSnapshot(owner, slot, snapshot.encode()));
+    }
+
+    /// Reads slot `slot` of `owner`'s snapshots and gets its image (store,
+    /// else the relays), for machine `tag`; the result comes from
+    /// [`Self::take_snapshot_results`].
+    pub fn restore_snapshot(&mut self, tag: u32, owner: Owner, slot: u8) {
+        self.outstanding += 1;
+        let _ = self.jobs.send(Work::Restore(tag, owner, slot));
+    }
+
+    pub fn delete_snapshot(&mut self, owner: Owner, slot: u8) {
+        self.outstanding += 1;
+        let _ = self.jobs.send(Work::DeleteSnapshot(owner, slot));
+    }
+
+    /// Snapshots stored (slot, whether it was) and restores ready (tag, the
+    /// image and snapshot or why not) since the last call; collected by
+    /// `take_finished_tagged` and `wait_finished_tagged`.
+    #[allow(clippy::type_complexity)]
+    pub fn take_snapshot_results(&mut self) -> (Vec<(u8, bool)>, Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>) {
+        (std::mem::take(&mut self.saved), std::mem::take(&mut self.restored))
     }
 
     pub fn feed(&self, command: FeedCommand) {
@@ -411,6 +463,9 @@ pub struct HeadlessSystem {
     wanted: Vec<(u32, Wanted)>,
     /// Images to deliver at the start of the next frame.
     images: Vec<(u32, Result<terse_core::Image, StartFailure>)>,
+    /// Snapshots (with their images) to deliver at the start of the next
+    /// frame (SPEC 12.7).
+    restores: Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>,
     /// Makes the layouter of each machine's page (default: the reference
     /// layout).
     layouter: Box<dyn Fn(u32) -> Box<dyn Layouter + Send>>,
@@ -424,6 +479,7 @@ impl HeadlessSystem {
             machines: HashMap::new(),
             wanted: Vec::new(),
             images: Vec::new(),
+            restores: Vec::new(),
             layouter: Box::new(|_| Box::new(terse_core::page::ReferenceLayouter::default())),
         }
     }
@@ -451,6 +507,9 @@ impl HeadlessSystem {
         for (serial, image) in self.images.drain(..) {
             system.deliver_image(serial, image);
         }
+        for (serial, restored) in self.restores.drain(..) {
+            system.deliver_snapshot(serial, restored);
+        }
         let frame = system.shell().frame();
         let events = self.script.events(frame).to_vec();
         let controllers = self.script.controllers(frame);
@@ -474,6 +533,13 @@ impl HeadlessSystem {
                         m.completions.push(c);
                     }
                 }
+                // SPEC 12.7: snapshots stored are reported, and restored
+                // machines delivered, at the start of the next frame.
+                let (saved, restored) = content.take_snapshot_results();
+                for (slot, stored) in saved {
+                    system.snapshot_done(slot, stored);
+                }
+                self.restores.extend(restored);
                 if content.feeds_updated() {
                     for (&serial, m) in self.machines.iter_mut() {
                         if system.machine_by_serial(serial).is_some_and(|(_, m)| m.content().is_some()) {
@@ -530,8 +596,29 @@ impl Driver for HeadlessSystem {
     fn removed(&mut self, serial: u32) {
         self.machines.remove(&serial);
         self.images.retain(|i| i.0 != serial);
+        self.restores.retain(|i| i.0 != serial);
         if let Some(content) = &mut self.content {
             content.cancel(serial);
+        }
+    }
+
+    fn save_snapshot(&mut self, shell: &Machine, slot: u8, snapshot: Snapshot) -> Option<bool> {
+        let Some(content) = self.content.as_mut() else { return Some(false) };
+        content.save_snapshot(Owner::of(shell), slot, &snapshot);
+        None
+    }
+
+    fn want_snapshot(&mut self, serial: u32, shell: &Machine, slot: u8) -> Option<Result<(terse_core::Image, Snapshot), StartFailure>> {
+        let Some(content) = self.content.as_mut() else {
+            return Some(Err(StartFailure { reason: failure::SNAPSHOT, image: None, message: "no content device".into() }));
+        };
+        content.restore_snapshot(serial, Owner::of(shell), slot);
+        None
+    }
+
+    fn delete_snapshot(&mut self, shell: &Machine, slot: u8) {
+        if let Some(content) = self.content.as_mut() {
+            content.delete_snapshot(Owner::of(shell), slot);
         }
     }
 }
@@ -557,7 +644,9 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Fetch, Done::Got(blob)) => (0, Outcome::Got { size: blob.len() as u32, data: blob }),
         (Job::Fetch, Done::NotFound) => (0, Outcome::NotFound),
         (Job::Fetch, _) => (0, Outcome::Failed),
-        (Job::FeedPublish | Job::Lookup(_), _) => unreachable!("publishes are feed events; lookups go on to a fetch"),
+        (Job::FeedPublish | Job::Lookup(_) | Job::Restore(_), _) => {
+            unreachable!("publishes are feed events; lookups go on to a fetch; restores are reported apart")
+        }
     };
     Completion { handle, outcome }
 }
@@ -860,6 +949,42 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 pending.insert(next, (0, Job::FeedPublish));
                 node.start_publish_article(next, &draft);
             }
+            // SPEC 12.7: snapshots, in this host's data directory.
+            Some(Work::SaveSnapshot(owner, slot, file)) => {
+                let ok = node.snapshots().is_some_and(|s| s.save(&owner, slot, &file).is_ok());
+                if finished.send(Finished::Saved(slot, ok)).is_err() {
+                    return;
+                }
+            }
+            Some(Work::DeleteSnapshot(owner, slot)) => {
+                if let Some(s) = node.snapshots() {
+                    let _ = s.delete(&owner, slot);
+                }
+                if finished.send(Finished::Deleted).is_err() {
+                    return;
+                }
+            }
+            Some(Work::Restore(tag, owner, slot)) => {
+                let unreadable = |message: String| StartFailure { reason: failure::SNAPSHOT, image: None, message };
+                let read = match node.snapshots().map(|s| s.load(&owner, slot)) {
+                    None => Err(unreadable("this host keeps no snapshots".into())),
+                    Some(Err(e)) => Err(unreadable(format!("snapshot {slot}: {e}"))),
+                    Some(Ok(None)) => Err(unreadable(format!("no snapshot in slot {slot}"))),
+                    Some(Ok(Some(file))) => Snapshot::decode(&file).map_err(|e| unreadable(format!("snapshot {slot}: {e}"))),
+                };
+                match read {
+                    Ok(snapshot) => {
+                        let id = snapshot.image_id();
+                        pending.insert(next, (tag, Job::Restore(Box::new(snapshot))));
+                        node.start_get(next, id);
+                    }
+                    Err(f) => {
+                        if finished.send(Finished::Restored(tag, Err(f))).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
             // A subscription list that cannot be saved still applies to
             // this run.
             Some(Work::Feed(FeedCommand::Subscribe(feed))) => drop(node.subscribe(feed)),
@@ -889,6 +1014,15 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     }
                     _ => finished.send(Finished::Done(tag, Completion { handle: 0, outcome: Outcome::NotFound })).is_ok(),
                 },
+                // SPEC 12.7: the snapshot's image, by its ID.
+                Some((tag, Job::Restore(snapshot))) => {
+                    let result = match done {
+                        Done::Got(blob) => terse_core::load_image(&blob).map(|image| (image, *snapshot)),
+                        Done::NotFound => Err(StartFailure::not_found("the snapshot's image was not found")),
+                        _ => Err(StartFailure::not_found("the snapshot's image could not be fetched")),
+                    };
+                    finished.send(Finished::Restored(tag, result)).is_ok()
+                }
                 Some((tag, job)) => finished.send(Finished::Done(tag, completion(job, done))).is_ok(),
                 None => true,
             };

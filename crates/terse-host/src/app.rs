@@ -78,6 +78,7 @@ pub fn run(
     let title = if program.shell { "Terse".to_string() } else { format!("{} — Terse", program.image.title_lossy()) };
     let mut system = System::new(&program.image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    terse_net::snapshots::load_table(&mut system, &program.data);
     let mut app = App {
         system,
         io: HashMap::new(),
@@ -501,6 +502,27 @@ impl Driver for FrameDriver<'_> {
             content.cancel(serial);
         }
     }
+
+    fn save_snapshot(&mut self, shell: &Machine, slot: u8, snapshot: terse_core::Snapshot) -> Option<bool> {
+        let Some(content) = self.content.as_mut() else { return Some(false) };
+        content.save_snapshot(terse_net::Owner::of(shell), slot, &snapshot);
+        None
+    }
+
+    fn want_snapshot(&mut self, serial: u32, shell: &Machine, slot: u8) -> Option<Result<(terse_core::Image, terse_core::Snapshot), terse_core::StartFailure>> {
+        let Some(content) = self.content.as_mut() else {
+            let failure = terse_core::machines::failure::SNAPSHOT;
+            return Some(Err(terse_core::StartFailure { reason: failure, image: None, message: "no content device".into() }));
+        };
+        content.restore_snapshot(serial, terse_net::Owner::of(shell), slot);
+        None
+    }
+
+    fn delete_snapshot(&mut self, shell: &Machine, slot: u8) {
+        if let Some(content) = self.content.as_mut() {
+            content.delete_snapshot(terse_net::Owner::of(shell), slot);
+        }
+    }
 }
 
 struct App {
@@ -590,6 +612,14 @@ impl App {
                 } else if let Some(io) = self.io.get_mut(&tag) {
                     io.completions.push(c);
                 }
+            }
+            // SPEC 12.7: snapshots stored, machines restored.
+            let (saved, restored) = content.take_snapshot_results();
+            for (slot, stored) in saved {
+                self.system.snapshot_done(slot, stored);
+            }
+            for (tag, r) in restored {
+                self.system.deliver_snapshot(tag, r);
             }
         }
         // Pasted text, as much as the focused machine's queue has room for

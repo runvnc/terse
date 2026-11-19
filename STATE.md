@@ -4,6 +4,8 @@ Status: part of SPEC section 14 (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
 Nth). The first frame whose hashes differ is where the implementations diverge.
+The serialization is also a machine's snapshot (SPEC 12.7): section 4 says how
+a machine is restored from it.
 
 The **state hash** is the BLAKE3-256 hash (unkeyed, 32 bytes) of the **state
 serialization** defined below, written as 64 lowercase hexadecimal digits. The
@@ -236,6 +238,9 @@ That is the end of the serialization. Its length is
   host reports is an input event. The locates a program made (SPEC 11.2)
   are not included either: a host takes them after the frame, and the
   answers are input events.
+- **The shell's snapshot slots** (SPEC 12.7): host data; what
+  `snapshot_info` tells and the snapshot done events are the shell's
+  inputs.
 
 ## 3. Test vectors
 
@@ -259,3 +264,50 @@ zeros), all controllers disconnected, no completions — what `terse run` uses.
 counter is a multiple of N. For a system (`terse run --shell`) these are
 the shell's hashes; `--hash-all` also prints `<handle> <hash>` for each
 machine the shell started (`-` for one that has no image yet).
+
+## 4. Restoring, and snapshot files
+
+A machine is **restored** from a serialization S and an image whose ID is
+the one in S's header. S is read section by section as section 1 lays it
+out, with the sections the image's device list implies; it is refused
+(SPEC 12.2 `restore`, reason 5) if it is cut short or longer, if its image
+ID is another, if section 1.10 is present (a shell), or if serializing the
+restored machine would not give S again, byte for byte (so every field is
+in range: a flag is `00h` or `01h`, the stopped and fault fields agree, the
+budget is zero or negative, L is the image's RAM size, n ≤ 64, the cursor
+is on the grid, the incomplete sequence is one, the style, fill mode and
+list length are valid, the page rectangle is clamped, a document is at most
+65,536 bytes, every pending request has a known `op`, its block in RAM and
+its fields as a submit leaves them). The restored machine's state hash is
+S's hash, and it is between frames: its next frame is the one whose number
+is S's frame counter.
+
+Everything else a machine needs is in S. Host bookkeeping starts afresh:
+the content requests pending in S fail in the next frame (SPEC 9.2), the
+page is laid out and its height reported as for a new document, and the
+afterglow is empty.
+
+A host keeps a snapshot (SPEC 12.7) in a file:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic: `54h 53h 4Eh 50h` (`TSNP`) |
+| 4 | 1 | Version: `0` |
+| 5 | 81 | The identity, as SPEC 12.2 `identity` writes it; all zero for none |
+| 86 | 4 | The Unix time latched for the machine's last frame (u32) |
+| 90 | 4 | N (u32): the length of S |
+| 94 | 200 | Bytes 0–199 of S: header, CPU, frame loop and L |
+| 294 | 16 | Page map: bit k (byte k / 8, bit k mod 8) is set if RAM page k (8,192 bytes at S offset 200 + 8,192 k) is stored below; bits past the last page are clear |
+| 310 | 8,192 × p | The p pages whose bit is set, in increasing order. A page whose bit is clear is all zero. |
+| 310 + 8,192p | N − 200 − L | The rest of S, from offset 200 + L |
+| … | 32 | The state hash of S |
+
+A writer sets a page's bit exactly when the page is not all zero; a reader
+accepts any page stored. A file that does not end right after the hash, or
+whose hash is not S's, is refused like a malformed S.
+
+`terse run <image> --save-state <file>` writes such a file after the last
+frame, and `--load-state <file>` starts from one: with `--hash` the hash
+after `--frames 0` is the hash printed when the file was saved, and the
+hashes of a continued run equal those of the uninterrupted run with the
+same inputs.

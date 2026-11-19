@@ -172,6 +172,25 @@ impl Vector {
         out.extend_from_slice(&self.list);
     }
 
+    /// The vector section as `write_state` wrote it (STATE.md 4).
+    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+        use crate::snapshot::bad;
+        let [style, persistence, outlines] = r.array()?;
+        if style > STYLE_PHOSPHOR || outlines > 1 {
+            return Err(bad("vector style or fill mode"));
+        }
+        let m = r.u32()? as usize;
+        if m > MAX_LIST {
+            return Err(bad("display list length"));
+        }
+        self.style = style;
+        self.persistence = persistence;
+        self.fill = outlines == 0;
+        self.list = r.take(m)?.to_vec();
+        self.generation = !self.list.is_empty() as u64;
+        Ok(())
+    }
+
     /// A counter that changes whenever [`Vector::list`] changes.
     pub fn generation(&self) -> u64 {
         self.generation

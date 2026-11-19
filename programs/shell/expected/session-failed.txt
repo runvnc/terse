@@ -1,0 +1,63 @@
+ ⌂  1 reader         0% 2✗sparks         0% 3✗sketch         0%            00:00
+
+
+
+
+
+
+
+                                          2 sparks
+                                          no usable snapshot
+
+
+
+
+
+
+
+
+
+
+
+
+                                          3 sketch
+                                          not found
+
+
+
+
+
+
+-- machine 1 running 3 23 314 235 reader --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 55%                     Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
+-- machine 2 failed 331 23 298 224  --
+-- machine 3 failed 331 253 298 224  --

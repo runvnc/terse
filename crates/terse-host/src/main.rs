@@ -248,6 +248,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         node.set_prefetch(prefetch);
         node.set_program_download(program_download);
         node.set_records(terse_net::Records::in_data_dir(&data));
+        node.set_snapshots(terse_net::Snapshots::in_data_dir(&data));
         Ok::<Node, String>(node)
     };
     let mut node = None;
@@ -298,7 +299,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     // The built-in shell has the identity of a built-in (SPEC 12.2).
     let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
-    let program = Program { image, shell, builtins, identity };
+    let program = Program { image, shell, builtins, identity, data };
 
     if selftest {
         if screenshot.is_some() {
@@ -368,6 +369,8 @@ pub struct Program {
     pub builtins: Vec<[u8; 32]>,
     /// The built-in shell's identity (SPEC 12.2), for its named records.
     pub identity: Option<terse_core::ProgramId>,
+    /// The data directory: the shell's snapshots (SPEC 12.7).
+    pub data: PathBuf,
 }
 
 #[cfg(feature = "window")]
@@ -549,6 +552,7 @@ fn run_headless(
     let image = &program.image;
     let mut system = System::new(image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    terse_net::snapshots::load_table(&mut system, &program.data);
     let mut headless = HeadlessSystem::new(content, script);
     // Each machine's page has its own layouter; the fonts are shared.
     type Latest = Arc<Mutex<Option<Arc<page::HostLayout>>>>;

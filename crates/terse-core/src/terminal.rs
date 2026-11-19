@@ -185,6 +185,39 @@ impl Terminal {
         out.extend_from_slice(&self.decoder.bytes);
     }
 
+    /// The terminal section as `write_state` wrote it (STATE.md 4). The
+    /// incomplete sequence is decoded again from its bytes.
+    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+        use crate::snapshot::bad;
+        self.cells.copy_from_slice(r.take(CELL_MEMORY)?);
+        let [col, row, fg, bg] = r.array()?;
+        if col as usize >= COLS || row as usize >= ROWS {
+            return Err(bad("cursor"));
+        }
+        (self.col, self.row, self.fg, self.bg) = (col, row, fg, bg);
+        self.cursor_visible = r.flag()?;
+        self.pending_wrap = r.flag()?;
+        for entry in &mut self.palette {
+            *entry = r.array()?;
+        }
+        let k = r.u8()? as usize;
+        let bytes: [u8; 3] = r.array()?;
+        if k > 3 {
+            return Err(bad("incomplete UTF-8 sequence"));
+        }
+        let mut d = Utf8Decoder::default();
+        for &b in &bytes[..k] {
+            if d.feed(b) != [None, None] {
+                return Err(bad("incomplete UTF-8 sequence"));
+            }
+        }
+        if d.len as usize != k || d.bytes != bytes {
+            return Err(bad("incomplete UTF-8 sequence"));
+        }
+        self.decoder = d;
+        Ok(())
+    }
+
     /// Put character (SPEC 8.3) for each byte of a UTF-8 stream; a sequence
     /// may continue in the next call. Returns the clears and scrolls done.
     pub fn write(&mut self, bytes: &[u8]) -> u32 {

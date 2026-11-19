@@ -1,0 +1,40 @@
+ ⌂                                                                         00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- launcher --
+PROGRAMS
+Restore last session (3 programs)
+reader
+sparks
+fetch
+hello
+sketch
+Up, Down choose · Enter start · the home key comes back
+here · D discards the session

@@ -44,7 +44,18 @@
  * first time its identity is asked for in this run, asked about as above,
  * then without asking); anything else starts the built-in reader with the
  * blob as its argument. Failures (not found, no free handle) are a brief
- * message in the bar. */
+ * message in the bar.
+ *
+ * Sessions (SPEC 12.7): S in command mode keeps every running or paused
+ * machine as a snapshot, in slots 0, 1, ... in handle order, and then the
+ * record "session": version 1, layout, before_zoom, the slot of the
+ * selected machine (FFh: none) and the number of machines; the bar says
+ * when it is done or failed. When the shell starts with a session record,
+ * the launcher's first entry is "Restore last session (N programs)": Enter
+ * restores the machines in their order (new handles, so the same tiles),
+ * the layout and the focus; D discards the session (its slots and the
+ * record). A machine that cannot be restored shows why, like a failed
+ * start. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -60,6 +71,8 @@
 
 enum { ZOOM, MASTER, GRID, LAYOUTS };
 
+#define KEY_D 0x07
+#define KEY_S 0x16
 #define KEY_1 0x1E
 #define KEY_8 0x25
 #define KEY_L 0x0F
@@ -113,6 +126,14 @@ static uint8_t names_handle, names_again = 1;
 /* The layout, kept in the record "layout": layout, before_zoom. */
 static content_req layout_req, layout_save_req;
 static uint8_t layout_buf[2], layout_handle;
+
+/* The session (record "session": version, layout, before_zoom, focused
+ * slot, count). sess_n: machines of the session offered in the launcher
+ * (0: none); save_left: snapshots of a save not yet done. */
+#define SESSION_LEN 5
+static content_req sess_req, sess_save_req, sess_del_req;
+static uint8_t sess_buf[SESSION_LEN], sess_handle, sess_save_handle, sess_n;
+static uint8_t save_left, save_bad;
 
 /* Each machine's title (from its image's header, for a machine that is not
  * a built-in) and the name it was started under. */
@@ -199,8 +220,11 @@ static uint8_t prog_of(const uint8_t *id)
 
 static uint8_t prog_ix[MACH_MAX + 1]; /* each machine's program, MAX_PROGS if none */
 
-/* The programs the launcher lists before the machines. */
-static uint8_t nprogs(void) { return prog_n + fprog_n; }
+/* The launcher's first entry restores the session, if one is offered. */
+static uint8_t top(void) { return sess_n != 0; }
+
+/* The entries the launcher lists before the machines. */
+static uint8_t nprogs(void) { return top() + prog_n + fprog_n; }
 
 /* A machine's title: a built-in's, else its image's, else the name it was
  * started under. */
@@ -443,8 +467,9 @@ static void draw_bar(void)
 static const char *failure_name(uint8_t f)
 {
     static const char *const names[] = { "could not start", "not found", "not a valid image",
-                                         "needs a device this host does not have", "no room for another machine" };
-    return f < 5 ? names[f] : names[0];
+                                         "needs a device this host does not have", "no room for another machine",
+                                         "no usable snapshot" };
+    return f < 6 ? names[f] : names[0];
 }
 
 /* Labels in the shell's own cells where a machine has no picture yet (or
@@ -582,8 +607,14 @@ static void build_launcher(void)
     doc_str("PROGRAMS");
     doc_font(DOC_SANS, 0);
     doc_size(15);
+    if (sess_n) {
+        line(0, 300);
+        doc_str("Restore last session (");
+        doc_num(sess_n, 0);
+        doc_str(sess_n == 1 ? " program)" : " programs)");
+    }
     for (uint8_t i = 0; i < prog_n; i++) {
-        line(i, 100 + i);
+        line(top() + i, 100 + i);
         if (prog_known[i])
             doc_text(prog_title[i], title_len(prog_title[i]));
         else
@@ -600,7 +631,7 @@ static void build_launcher(void)
         for (uint8_t i = 0; i < fprog_n; i++) {
             feed_prog *f = &fprog[i];
             doc_size(15);
-            line(prog_n + i, 200 + i);
+            line(top() + prog_n + i, 200 + i);
             doc_text(f->name, f->len);
             if (!f->local) {
                 doc_colour(150, 160, 180);
@@ -672,8 +703,10 @@ static void build_launcher(void)
     doc_colour(130, 138, 155);
     doc_paragraph(DOC_START, 6, 16, 0);
     doc_str(n ? "Enter start or focus \xC2\xB7 Esc back \xC2\xB7 Tab next machine \xC2\xB7 X stop \xC2\xB7 P pause "
-                "\xC2\xB7 Z zoom \xC2\xB7 L layout \xC2\xB7 1-8 select"
+                "\xC2\xB7 Z zoom \xC2\xB7 L layout \xC2\xB7 1-8 select \xC2\xB7 S save session"
               : "Up, Down choose \xC2\xB7 Enter start \xC2\xB7 the home key comes back here");
+    if (sess_n)
+        doc_str(" \xC2\xB7 D discards the session");
     doc_end();
     page_submit_doc(doc);
 }
@@ -1032,6 +1065,102 @@ static void save_layout(void)
     record_save(&layout_save_req, "layout", layout_buf, 2);
 }
 
+/* The session entry goes (the cursor stays on the same line). */
+static void drop_session_entry(void)
+{
+    if (sess_n && cursor)
+        cursor--;
+    sess_n = 0;
+    doc_dirty = 1;
+}
+
+/* S: every running or paused machine into slots 0, 1, ...; the record
+ * follows once all are stored. */
+static void save_session(void)
+{
+    uint8_t n = 0, f = 0xFF;
+    if (save_left)
+        return;
+    for (uint8_t h = 1; h <= MACH_MAX; h++) {
+        uint8_t s = info[h].state;
+        if (shown(h) && (s == MACH_RUNNING || s == MACH_PAUSED) && mach_snapshot(h, n)) {
+            if (h == sel)
+                f = n;
+            n++;
+        }
+    }
+    if (!n) {
+        bar_msg("No programs to save", 0, 0);
+        return;
+    }
+    sess_buf[0] = 1;
+    sess_buf[1] = layout;
+    sess_buf[2] = before_zoom;
+    sess_buf[3] = f;
+    sess_buf[4] = n;
+    save_left = n;
+    save_bad = 0;
+    drop_session_entry();
+}
+
+static void snapshot_done(uint8_t status)
+{
+    if (!save_left)
+        return;
+    save_bad |= status != 1;
+    if (--save_left)
+        return;
+    if (save_bad) {
+        bar_msg("Could not save the session", 0, 0);
+        return;
+    }
+    /* Slots past the session's are not needed any more. */
+    for (uint8_t k = sess_buf[4]; k < MACH_MAX; k++)
+        mach_snapshot_delete(k);
+    sess_save_handle = record_save(&sess_save_req, "session", sess_buf, SESSION_LEN);
+}
+
+/* Enter on the session entry: its machines in their order, then its
+ * layout and focus. */
+static void restore_session(void)
+{
+    uint8_t n = sess_n, fh = 0;
+    mach_snapshot_record si;
+    drop_session_entry();
+    for (uint8_t k = 0; k < n; k++) {
+        uint32_t h = mach_restore(k);
+        if (!h) {
+            bar_msg("No free handle: stop a machine first", 0, 0);
+            break;
+        }
+        info[h].state = MACH_LOADING;
+        memset(info[h].image, 0, 32);
+        uint8_t len = mach_snapshot_info(k, &si) && si.name_len ? si.name_len : 0;
+        if (len > 16)
+            len = 16;
+        memcpy(mname[h], si.name, len);
+        mname[h][len] = 0;
+        mtitle_state[h] = 0;
+        if (k == sess_buf[3])
+            fh = h;
+    }
+    layout = sess_buf[1];
+    before_zoom = sess_buf[2];
+    if (fh)
+        focus_machine(fh);
+    dirty = 1;
+}
+
+/* D on the session entry: its slots and the record go. */
+static void discard_session(void)
+{
+    for (uint8_t k = 0; k < sess_n; k++)
+        mach_snapshot_delete(k);
+    record_delete(&sess_del_req, "session");
+    drop_session_entry();
+    bar_msg("Session discarded", 0, 0);
+}
+
 static void step_machine(int8_t d)
 {
     uint8_t n = machine_count();
@@ -1066,12 +1195,21 @@ static void command_key(uint8_t key, uint8_t mods)
         step_machine(-1);
         return;
     case KEY_ENTER:
-        if (cursor < prog_n)
-            start_program(cursor);
+        if (cursor < top())
+            restore_session();
+        else if (cursor < top() + prog_n)
+            start_program(cursor - top());
         else if (cursor < nprogs())
-            start_feed_program(cursor - prog_n);
+            start_feed_program(cursor - top() - prog_n);
         else
             focus_machine(nth_machine(cursor - nprogs()));
+        return;
+    case KEY_S:
+        save_session();
+        return;
+    case KEY_D:
+        if (cursor < top())
+            discard_session();
         return;
     case KEY_ESCAPE:
         if (sel && live(sel))
@@ -1220,7 +1358,9 @@ static void handle(void)
         break;
     case EV_PAGE_ANCHOR: {
         uint16_t id = EV_ANCHOR_ID(ev);
-        if (id >= 100 && id < 100 + prog_n)
+        if (id == 300 && sess_n)
+            restore_session();
+        else if (id >= 100 && id < 100 + prog_n)
             start_program(id - 100);
         else if (id >= 200 && id < 200 + fprog_n)
             start_feed_program(id - 200);
@@ -1230,6 +1370,9 @@ static void handle(void)
     }
     case EV_FEEDS_UPDATED:
         progs_again = names_again = 1;
+        break;
+    case EV_SNAPSHOT_DONE:
+        snapshot_done(ev.b);
         break;
     case EV_CONTENT_DONE:
         if (oj == OJ_GET && ev.a == oj_chandle && oj_creq.status != STATUS_PENDING) {
@@ -1245,6 +1388,17 @@ static void handle(void)
             if (names_req.status == STATUS_DONE)
                 take_names();
             doc_dirty = 1;
+        } else if (ev.a == sess_handle && sess_req.status != STATUS_PENDING) {
+            sess_handle = 0;
+            uint8_t *b = sess_buf;
+            if (sess_req.status == STATUS_DONE && sess_req.length == SESSION_LEN && b[0] == 1 && b[1] < LAYOUTS
+                && b[2] < LAYOUTS && b[4] && b[4] <= MACH_MAX) {
+                sess_n = b[4];
+                doc_dirty = 1;
+            }
+        } else if (ev.a == sess_save_handle && sess_save_req.status != STATUS_PENDING) {
+            sess_save_handle = 0;
+            bar_msg(sess_save_req.status == STATUS_DONE ? "Session saved" : "Could not save the session", 0, 0);
         } else if (ev.a == layout_handle && layout_req.status != STATUS_PENDING) {
             layout_handle = 0;
             if (layout_req.status == STATUS_DONE && layout_req.length == 2 && layout_buf[0] < LAYOUTS
@@ -1292,6 +1446,8 @@ int main(void)
         prog_n++;
     /* The layout kept from the last run, applied when it arrives. */
     layout_handle = record_load(&layout_req, "layout", 0, 2, layout_buf);
+    /* A session kept from an earlier run is offered in the launcher. */
+    sess_handle = record_load(&sess_req, "session", 0, SESSION_LEN, sess_buf);
     uint8_t last_state[MACH_MAX + 1] = { 0 };
     for (;;) {
         /* The programs of the followed feeds and their publishers' names,

@@ -13,7 +13,8 @@ no dependencies; a program published in a feed also has an identity, its
 publisher and name, that stays the same from one version to the next
 (section 12.1). A host may run several machines as one system, in which one
 machine, the shell, starts the others and lays out their screens, and
-which a machine may ask to open a program or a blob (section 12).
+which a machine may ask to open a program or a blob (section 12). A shell
+can keep a machine as a snapshot and restore it later (section 12.7).
 
 Design rules that every part of this spec follows:
 
@@ -281,6 +282,10 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
 | `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
 | `80Ah` | `argument` | `a0` = handle, `a1` = address of a blob ID (32 bytes, read) | 1, or 0 if the handle is not loading |
+| `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused |
+| `80Ch` | `restore` | `a0` = slot | a handle 1–8, or 0 if none is free or the slot is out of range |
+| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
+| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
 
 Sections 4 to 12 define each call.
 
@@ -361,6 +366,7 @@ full is dropped.
 | `0Dh` | Page located | anchor id bits 0–7 | bits 8–15 | line height |
 | `0Eh` | Page located y | y bits 0–7 | bits 8–15 | bits 16–23 |
 | `0Fh` | Open requested | handle | 0 | 0 |
+| `10h` | Snapshot done | slot | status | 0 |
 
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
@@ -390,8 +396,9 @@ full is dropped.
   up, is announced by a feeds-updated event of its own when it ends.
 - **Page laid out**, **page anchor**, **page located** and **page located
   y** come from the page device (section 11.5).
-- **Machine changed**, **home**, **machine pressed** and **open
-  requested** are sent only to the shell of a system (section 12.4).
+- **Machine changed**, **home**, **machine pressed**, **open
+  requested** and **snapshot done** are sent only to the shell of a
+  system (section 12.4).
 
 ## 6. Controllers
 
@@ -613,6 +620,14 @@ applied in increasing handle order. A get whose `offset` is at or beyond the
 end of the blob completes with status `01h` and `length` 0; so does a load
 at or beyond the end of its record.
 
+**After a restore.** A machine restored from a snapshot (section 12.7)
+has the requests that were pending when the snapshot was taken, and no
+host will carry them out. Each of them completes with status `03h`
+(failed) in the machine's first frame after the restore, in increasing
+handle order, before any other completion of that frame; a request that
+was waiting for the user's consent completes the same way. Nothing else
+of the block is written.
+
 ### 9.3 Status values
 
 | Value | Meaning |
@@ -630,7 +645,8 @@ at or beyond the end of its record.
 Completions (which handle, in which frame, with what status, size and bytes)
 are inputs to the machine, alongside those of section 4. A request waiting
 for the user's consent (section 9.5) is simply pending; the user's answer
-reaches the machine only as its completion.
+reaches the machine only as its completion. The failed completions of a
+restore (section 9.2) are inputs like any other.
 
 ### 9.5 Feeds, names and search
 
@@ -1339,7 +1355,7 @@ and is then in one of these states:
 | 3 | paused | runs no frames and receives no input |
 | 4 | exited | stopped by `exit` (section 1.5) |
 | 5 | faulted | stopped by a fault (section 1.5) |
-| 6 | failed | the image could not be had, is not an image the host can run, or the host has no room for another machine; `info` gives the reason |
+| 6 | failed | the image could not be had, is not an image the host can run, the host has no room for another machine, or a snapshot could not be restored; `info` gives the reason |
 
 Each handle also has a **run flag**, a **rectangle** (x, y, width,
 height in the shell's screen units) and possibly an **identity**. The
@@ -1350,7 +1366,8 @@ A program's **identity** is its publisher's feed key and its name: the
 host's built-in programs have the identity (32 zero bytes, image title). A
 machine started with `start_program` has that identity for its whole life,
 whatever version of the program it runs; one started with `start` (by blob
-ID), and an image a host runs from a file, have none. A shell the host
+ID), and an image a host runs from a file, have none; a restored machine
+has the identity of the machine its snapshot was taken of. A shell the host
 starts as its own built-in shell has the identity of a built-in. Section
 9.6 says what the identity is for.
 
@@ -1409,11 +1426,11 @@ starts as its own built-in shell has the identity of a built-in. Section
   | 0 | 1 | State |
   | 1 | 1 | Exit code if exited, else 0 |
   | 2 | 1 | Fault kind if faulted, numbered as in `STATE.md` 1.3 (1 illegal instruction … 6 misaligned), else 0 |
-  | 3 | 1 | Why the start failed, if failed: 1 not found, 2 not a valid image, 3 the image needs a device (slot, version) the host does not provide, 4 no room for another machine; else 0 |
+  | 3 | 1 | Why the start failed, if failed: 1 not found, 2 not a valid image, 3 the image needs a device (slot, version) the host does not provide, 4 no room for another machine, 5 no snapshot in the slot, or one that cannot be read or does not fit its image (`restore`); else 0 |
   | 4 | 4 | Units the machine used in its last frame (section 1.4, delivered content included), 0 before its first |
   | 8 | 4 | The machine's frame counter |
   | 12 | 4 | Fault `pc` if faulted, else 0 |
-  | 16 | 32 | The image ID given to `start`; for `start_program`, zeros while loading, then the ID of the version the host got (also when it failed as not an image the host can run); zeros for a handle not in use |
+  | 16 | 32 | The image ID given to `start`; for `start_program` and `restore`, zeros while loading, then the ID of the image the host got (also when it failed as not an image the host can run, or as not fitting the snapshot); zeros for a handle not in use |
 
   The record is as the host latched it at the start of the frame (section
   12.5), with the changes the shell's own calls made since.
@@ -1439,6 +1456,48 @@ starts as its own built-in shell has the identity of a built-in. Section
   (section 4, `argument`), replacing one given before, and the call
   returns 1; otherwise it returns 0 and changes nothing. The argument is
   given to the machine when it becomes running or paused (section 12.5).
+  A machine being restored keeps the argument in its snapshot; one given
+  to it is ignored.
+- **`snapshot`** with a handle that is running or paused and a slot 0–15:
+  the host keeps the machine's snapshot (section 12.7) in that slot,
+  replacing what was there, taken at the end of this system frame (step
+  6 of section 12.5, after the machine's own frame if it runs one). Returns
+  1; returns 0 and does nothing for any other handle or slot. The result
+  arrives as a snapshot done event (section 12.4): status 1 stored, 3
+  failed (the machine was stopped in the same frame, or the host could not
+  store it).
+- **`restore`** with a slot 0–15: if every handle is in use it returns 0.
+  Otherwise the lowest handle not in use becomes loading, with the run
+  flag set, the rectangle (0, 0, 0, 0), image ID zero and no identity,
+  and the call returns it. The host reads the slot's snapshot and gets the
+  image it names, in its store first and then as section 9 does for a get;
+  a later frame takes the result into account (section 12.5): the handle
+  becomes running (paused if the run flag is clear) with the machine as
+  it was when the snapshot was taken, its record's image ID that of the
+  snapshot and its identity that of the snapshot, or failed: reason 5 if
+  the slot holds no snapshot, one the host cannot read, or one that does
+  not fit its image (`STATE.md` 4), reasons 1–3 as for `start` if the
+  image cannot be had or run. The host may take any number of frames. A
+  slot out of range returns 0.
+- **`snapshot_info`** writes a 122-byte record of slot `a0`, as the host's
+  snapshots are at the start of the frame with the changes the shell's
+  own `snapshot_delete` calls made since, to the buffer, which must lie
+  wholly in RAM (else `FFFF_FFFEh`), and returns 1 if the slot holds a
+  snapshot; for an empty slot the record is all zero and it returns 0;
+  for a slot out of range it writes nothing and returns 0.
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 1 | Present: 1, or 0 for an empty slot |
+  | 1 | 32 | The image ID |
+  | 33 | 81 | The identity, as `identity` writes it; all zero for none |
+  | 114 | 4 | The machine's frame counter when it was taken |
+  | 118 | 4 | When it was taken: the Unix time latched for the machine's last frame |
+
+- **`snapshot_delete`** with a slot 0–15: the slot is empty from now on
+  (for `snapshot_info` at once); the host removes its snapshot at the end
+  of the frame, in order with the snapshots asked for in the same frame.
+  Returns 1, or 0 for a slot out of range.
 
 ### 12.3 Screens
 
@@ -1498,9 +1557,12 @@ for the shell.
 | `0Bh` | Home | 0 | 0 | 0 |
 | `0Ch` | Machine pressed | handle | buttons | 0 |
 | `0Fh` | Open requested | handle | 0 | 0 |
+| `10h` | Snapshot done | slot | 1 stored, 3 failed | 0 |
 
 Open requested says that machine `a` made an open request the shell can
-read with `request`; there is one such event per request.
+read with `request`; there is one such event per request. Snapshot done
+answers a `snapshot` call; there is one per accepted call, in the order of
+the calls.
 
 Machine changed is sent for every change of state the shell did not make
 with a call: loading to running, paused or failed; running to exited or
@@ -1523,7 +1585,11 @@ For each system frame the host does the following, in order:
    requested event is queued for the shell, after the machine changed
    events and ahead of the frame's input. A machine that becomes running
    or paused here is reset with the argument its handle was given, if
-   any.
+   any, or, for `restore`, is the machine of the snapshot. Then each
+   snapshot the host has stored, or failed to store, since the last
+   frame queues a snapshot done event, in the order of the `snapshot`
+   calls, and a slot whose snapshot was stored holds it from now on for
+   `snapshot_info` (unless the shell deleted it after asking for it).
 2. **Route** the frame's input (section 12.4).
 3. **The shell** runs its frame (section 1.4).
 4. **Starts and stops** the shell made in its frame are carried out in the
@@ -1536,6 +1602,10 @@ For each system frame the host does the following, in order:
    run one frame (section 1.4) with a full budget and their own carry. So a
    `run`, `stop` or `place` made by the shell takes effect in the same
    frame; a `focus` takes effect for the next frame's routing.
+6. **Snapshots and deletes** the shell asked for in its frame are carried
+   out in the order it asked for them: each snapshot is taken of the
+   machine as it is now (failed if it no longer exists), each delete
+   removes a slot's snapshot.
 
 Paused, loading, exited, faulted and failed machines run no frames, and
 their frame counters do not advance. When the shell stops (section 1.5), the
@@ -1544,15 +1614,47 @@ system stops: no machine runs any more frames.
 ### 12.6 Determinism
 
 Each machine is deterministic given its own inputs (sections 4 and 9.4). For
-the shell they include the machine changed, home, machine pressed and open
-requested events and what device 8 returns that the shell did not set
-itself: the latched records (states, exit codes, faults, failure reasons,
-the image IDs of programs started by identity, units, frame counters), the
-open requests `request` delivers and the built-in programs. For a machine
+the shell they include the machine changed, home, machine pressed, open
+requested and snapshot done events and what device 8 returns that the
+shell did not set itself: the latched records (states, exit codes, faults,
+failure reasons, the image IDs and identities of programs started by
+identity or restored, units, frame counters), the open requests `request`
+delivers, the built-in programs and what `snapshot_info` tells. For a machine
 the shell started, what `open` returns (whether a request of it still
 waits for the shell) is an input like a completion. The identities the shell gave are its own state. Device 8's state is part of the shell's state (`STATE.md`
 1.10); a started machine's state is its own and holds nothing of the
 system.
+
+### 12.7 Snapshots
+
+A **snapshot** is a machine's complete state, its state serialization
+(`STATE.md` 1), with what is needed to recreate it: the image ID and the
+argument (both in the serialization) and the program's identity. A machine
+restored from a snapshot has the state hash the machine had when the
+snapshot was taken and, given the same later inputs, runs exactly as that
+machine would have. Its frame counter goes on from the snapshot's; the
+time, random bytes and every other input are what the host supplies after
+the restore.
+
+- The shell has 16 **slots**, 0 to 15. They are the host's local data,
+  kept per shell as named records are (by the shell's identity, else its
+  image ID, section 9.6), durably (written to a temporary file, synced,
+  renamed into place), and never sent anywhere. `STATE.md` 4 gives a
+  host's file format; a snapshot may be over 1 MiB.
+- A snapshot belongs to its exact image. After a program is updated, a
+  snapshot of the old version still restores the old version, by its
+  image ID, as long as the host can get that image; it never restores
+  into another image.
+- Named records (section 9.6) are not part of a snapshot: a restored
+  machine reads its owner's records as they are now.
+- Requests the machine had pending complete as failed in its first frame
+  (section 9.2). An open request that waited for the shell (section 4
+  `open`) is dropped. Locates the machine made in its last frame before
+  the snapshot (section 11.2) are not answered. A host lays the page out
+  and reports its height (section 11.5) as for a new document, and draws
+  the vector display without afterglow (section 10.6).
+- The shell itself is never snapshotted: a state with section 1.10
+  present cannot be restored.
 
 ---
 
@@ -1567,7 +1669,7 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written) and `argument` (32, when the ID is read); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -1608,7 +1710,8 @@ These numbers are placeholders until weak hosts have been measured:
 - the fill cap, 4 × 640 × 480 square units (section 10.4);
 - the figure caps: 256 paths, the area (8 × the figure's, at most
   4 × 640 × 480) and the length (65,536) of section 11.3;
-- the number of machines a shell can start, 8 (section 12).
+- the number of machines a shell can start, 8, and of its snapshot slots,
+  16 (section 12).
 
 ## 16. Not yet specified
 
@@ -1636,7 +1739,9 @@ These numbers are placeholders until weak hosts have been measured:
   other than one full budget per machine per frame; giving a machine less
   than the whole screen; sound for several machines; what a host shows for
   a machine with no picture.
-- Snapshots.
+- Snapshots (section 12.7): saving them without the shell asking (a host
+  has no shutdown notification yet), snapshots of the shell itself, moving
+  a snapshot to another host, and a machine asking to be snapshotted.
 - Named records (section 9.6): moving records from one owner to another
   (for example when a program run from a file is later published), keeping
   them in step between a user's machines, and sharing a record with

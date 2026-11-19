@@ -322,9 +322,9 @@ fn calls() {
     li a1, 0
     ecall
     sw a0, 96(s0)       # info into address 0: FFFFFFFE
-    li a7, 0x80B
+    li a7, 0x80F
     ecall
-    sw a0, 100(s0)      # 80Bh: FFFFFFFF
+    sw a0, 100(s0)      # 80Fh: FFFFFFFF
 2:  li a7, 0x100
     ecall
     j 2b

@@ -10,7 +10,8 @@
 
 use crate::image::Image;
 use crate::machine::{FrameResult, Machine, Stopped};
-use crate::machines::{MAX_MACHINES, ProgramId, StartFailure, map_into, picture, state};
+use crate::machines::{Command, MAX_MACHINES, ProgramId, StartFailure, failure, map_into, picture, state};
+use crate::snapshot::{SLOTS, Snapshot, SnapshotInfo};
 use crate::system::{CONTROLLERS, Controller, Event};
 
 /// Which machine a driver is asked to run: handle 0 is the shell; `serial`
@@ -38,6 +39,25 @@ pub trait Driver {
     fn want_program(&mut self, serial: u32, program: &ProgramId, builtins: &[[u8; 32]]);
     /// Machine `serial` ceased to exist (the shell stopped it).
     fn removed(&mut self, serial: u32);
+    /// Store `snapshot` in slot `slot` of the snapshots of `shell` (SPEC
+    /// 12.7), durably. Returns the result if it is known at once; else the
+    /// host reports it later with [`System::snapshot_done`]. The default
+    /// keeps no snapshots.
+    fn save_snapshot(&mut self, shell: &Machine, slot: u8, snapshot: Snapshot) -> Option<bool> {
+        let _ = (shell, slot, snapshot);
+        Some(false)
+    }
+    /// The shell asked to restore the snapshot in `slot` as machine
+    /// `serial`: read it, get its image (store, else network) and hand both
+    /// to [`System::deliver_snapshot`], or return them at once.
+    fn want_snapshot(&mut self, serial: u32, shell: &Machine, slot: u8) -> Option<Result<(Image, Snapshot), StartFailure>> {
+        let _ = (serial, shell);
+        Some(Err(StartFailure { reason: failure::SNAPSHOT, image: None, message: format!("no snapshot in slot {slot}") }))
+    }
+    /// Remove the snapshot in `slot` of `shell`'s snapshots.
+    fn delete_snapshot(&mut self, shell: &Machine, slot: u8) {
+        let _ = (shell, slot);
+    }
 }
 
 /// A machine the shell started.
@@ -58,6 +78,10 @@ pub struct Child {
     pub argument: Option<[u8; 32]>,
     /// The image, delivered but not yet latched (SPEC 12.5).
     delivered: Option<Result<Image, StartFailure>>,
+    /// The snapshot slot it is restored from (`restore`), and the snapshot
+    /// once delivered with its image.
+    pub restore: Option<u8>,
+    snapshot: Option<Snapshot>,
     /// Units used in its last frame.
     last_used: u32,
 }
@@ -77,6 +101,11 @@ pub struct System {
     next_serial: u32,
     /// Buttons of the last pointer event (to tell presses).
     buttons: u8,
+    /// Snapshots handed to the driver and not yet reported: slot and what
+    /// `snapshot_info` will tell once stored.
+    saving: Vec<(u8, SnapshotInfo)>,
+    /// Snapshot results to report at the next latch: slot, stored.
+    saved: Vec<(u8, bool)>,
 }
 
 const NO_CONTROLLERS: [Controller; CONTROLLERS] = [Controller { connected: false, buttons: 0, left: (0, 0), right: (0, 0) }; CONTROLLERS];
@@ -87,7 +116,40 @@ impl System {
     /// the host's built-in programs. Without, it is a single machine.
     pub fn new(image: &Image, shell: bool, builtins: Vec<[u8; 32]>) -> Self {
         let shell = if shell { Machine::new_shell(image, builtins) } else { Machine::new(image) };
-        System { shell, children: Default::default(), next_serial: 1, buttons: 0 }
+        System { shell, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new() }
+    }
+
+    /// A single machine that already exists (a restored one, `terse run
+    /// --load-state`).
+    pub fn with_machine(machine: Machine) -> Self {
+        System { shell: machine, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new() }
+    }
+
+    /// The shell's snapshot slots as the host has them when the system
+    /// starts (SPEC 12.7).
+    pub fn set_snapshot_table(&mut self, table: [Option<SnapshotInfo>; SLOTS]) {
+        if let Some(dev) = self.shell.machines_mut() {
+            for (slot, info) in table.into_iter().enumerate() {
+                dev.set_snapshot(slot as u8, info);
+            }
+        }
+    }
+
+    /// The host stored the snapshot it was given for `slot` (or could not):
+    /// reported to the shell at the start of the next frame (SPEC 12.5).
+    pub fn snapshot_done(&mut self, slot: u8, stored: bool) {
+        self.saved.push((slot, stored));
+    }
+
+    /// The snapshot and image for restored machine `serial` arrived, or
+    /// could not be had; taken into account at the start of the next frame.
+    pub fn deliver_snapshot(&mut self, serial: u32, delivered: Result<(Image, Snapshot), StartFailure>) {
+        if let Some(c) = self.children.iter_mut().flatten().find(|c| c.serial == serial && c.machine.is_none()) {
+            c.delivered = Some(delivered.map(|(image, snapshot)| {
+                c.snapshot = Some(snapshot);
+                image
+            }));
+        }
     }
 
     pub fn shell(&self) -> &Machine {
@@ -179,21 +241,23 @@ impl System {
         let shell_controllers = if focus == 0 { controllers } else { NO_CONTROLLERS };
         out.shell = Some(driver.frame(Who { handle: 0, serial: 0 }, &mut self.shell, shell_events, shell_controllers));
 
-        // Its starts and stops, in order.
-        if let Some(dev) = self.shell.machines_mut() {
-            let builtins = dev.builtins().to_vec();
-            for command in dev.take_commands() {
+        // Its starts and stops, in order; snapshots after the machines'
+        // frames.
+        let mut at_end = Vec::new();
+        if let Some((builtins, commands)) = self.shell.machines_mut().map(|d| (d.builtins().to_vec(), d.take_commands())) {
+            for command in commands {
                 match command {
-                    crate::machines::Command::Start { handle, .. } | crate::machines::Command::StartProgram { handle, .. } => {
+                    Command::Start { handle, .. } | Command::StartProgram { handle, .. } | Command::Restore { handle, .. } => {
                         let serial = self.next_serial;
                         self.next_serial += 1;
                         let i = handle as usize - 1;
                         if let Some(old) = self.children[i].take() {
                             driver.removed(old.serial);
                         }
-                        let (image, identity) = match &command {
-                            crate::machines::Command::Start { image, .. } => (*image, None),
-                            crate::machines::Command::StartProgram { program, .. } => ([0; 32], Some(program.clone())),
+                        let (image, identity, restore) = match &command {
+                            Command::Start { image, .. } => (*image, None, None),
+                            Command::StartProgram { program, .. } => ([0; 32], Some(program.clone()), None),
+                            Command::Restore { slot, .. } => ([0; 32], None, Some(*slot)),
                             _ => unreachable!(),
                         };
                         self.children[i] = Some(Child {
@@ -205,27 +269,41 @@ impl System {
                             error: None,
                             argument: None,
                             delivered: None,
+                            restore,
+                            snapshot: None,
                             last_used: 0,
                         });
-                        match &identity {
-                            None => driver.want_image(serial, image),
-                            Some(program) => driver.want_program(serial, program, &builtins),
+                        match (&identity, restore) {
+                            (_, Some(slot)) => {
+                                if let Some(d) = driver.want_snapshot(serial, &self.shell, slot) {
+                                    let child = self.children[i].as_mut().unwrap();
+                                    child.delivered = Some(d.map(|(image, snapshot)| {
+                                        child.snapshot = Some(snapshot);
+                                        image
+                                    }));
+                                }
+                            }
+                            (None, None) => driver.want_image(serial, image),
+                            (Some(program), None) => driver.want_program(serial, program, &builtins),
                         }
                     }
-                    crate::machines::Command::Stop { handle } => {
+                    Command::Stop { handle } => {
                         if let Some(old) = self.children[handle as usize - 1].take() {
                             driver.removed(old.serial);
                         }
                     }
-                    crate::machines::Command::Argument { handle, id } => {
-                        if let Some(child) = self.children[handle as usize - 1].as_mut() {
+                    // A restored machine keeps the argument it had.
+                    Command::Argument { handle, id } => {
+                        if let Some(child) = self.children[handle as usize - 1].as_mut().filter(|c| c.restore.is_none()) {
                             child.argument = Some(id);
                         }
                     }
+                    Command::Snapshot { .. } | Command::DeleteSnapshot { .. } => at_end.push(command),
                 }
             }
             // Requests the shell read with `request` may be followed by
             // others.
+            let dev = self.shell.machines().unwrap();
             for (i, slot) in self.children.iter_mut().enumerate() {
                 let Some(machine) = slot.as_mut().and_then(|c| c.machine.as_mut()) else { continue };
                 if machine.open_request().is_some_and(|r| r.1) && !dev.request_waiting(i as u8 + 1) {
@@ -249,6 +327,29 @@ impl System {
             child.last_used = result.used.min(u32::MAX as u64) as u32;
             out.children.push((h, result));
         }
+
+        // Snapshots and deletes, in the order the shell asked for them
+        // (SPEC 12.5 step 6).
+        for command in at_end {
+            match command {
+                Command::Snapshot { handle, slot } => {
+                    let Some(machine) = self.children[handle as usize - 1].as_ref().and_then(|c| c.machine.as_ref()) else {
+                        self.saved.push((slot, false));
+                        continue;
+                    };
+                    let snapshot = Snapshot::of(machine);
+                    self.saving.push((slot, snapshot.info()));
+                    if let Some(stored) = driver.save_snapshot(&self.shell, slot, snapshot) {
+                        self.saved.push((slot, stored));
+                    }
+                }
+                Command::DeleteSnapshot { slot } => {
+                    self.saving.retain(|s| s.0 != slot);
+                    driver.delete_snapshot(&self.shell, slot);
+                }
+                _ => unreachable!(),
+            }
+        }
         out
     }
 
@@ -265,6 +366,28 @@ impl System {
             let mut new = None;
             match record_state {
                 state::LOADING => match child.delivered.take() {
+                    // A restore: the machine as it was (SPEC 12.7), with its
+                    // image ID and identity.
+                    Some(Ok(image)) if let Some(snapshot) = child.snapshot.take() => {
+                        child.title = image.title_lossy();
+                        child.image = image.id;
+                        let s = dev.slot_mut(h);
+                        s.image = image.id;
+                        match snapshot.restore(&image) {
+                            Ok(mut machine) => {
+                                machine.set_in_system(true);
+                                child.identity = snapshot.identity.clone();
+                                s.identity = snapshot.identity;
+                                child.machine = Some(machine);
+                                new = Some(if run { state::RUNNING } else { state::PAUSED });
+                            }
+                            Err(e) => {
+                                child.error = Some(e.to_string());
+                                s.failure = failure::SNAPSHOT;
+                                new = Some(state::FAILED);
+                            }
+                        }
+                    }
                     Some(Ok(image)) => {
                         child.title = image.title_lossy();
                         child.image = image.id;
@@ -323,6 +446,17 @@ impl System {
                 dev.set_request(i as u8 + 1, request);
                 events.push(Event::open_requested(i as u8 + 1));
             }
+        }
+        // Snapshots stored (or not) since the last frame, and the slots
+        // as they are now (SPEC 12.5).
+        for (slot, stored) in std::mem::take(&mut self.saved) {
+            if let Some(i) = self.saving.iter().position(|s| s.0 == slot) {
+                let (_, info) = self.saving.remove(i);
+                if stored {
+                    dev.set_snapshot(slot, Some(info));
+                }
+            }
+            events.push(Event::snapshot_done(slot, if stored { 1 } else { 3 }));
         }
         events
     }

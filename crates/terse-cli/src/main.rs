@@ -16,6 +16,7 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
+            [--save-state <file>] [--load-state <file>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
@@ -74,6 +75,10 @@ image:<image id>; without one, `records list` lists every owner.
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
+--save-state writes the machine's snapshot (STATE.md 4) to <file> after the last frame; --load-state
+starts the machine from the snapshot in <file> instead of from reset (its image: <image|id> if given, else
+the one the snapshot names, by ID); its hash is then the hash at the moment of the snapshot. Not with
+--shell. A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC 12.7).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
 --shell runs a system (SPEC 12): the image (default: the built-in shell, programs/shell) is the shell,
@@ -318,6 +323,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--builtin",
         "--data",
         "--no-program-download",
+        "--save-state",
+        "--load-state",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
@@ -326,10 +333,19 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if !shell && (args.has("--builtin") || args.has("--hash-all")) {
         return Err("--builtin and --hash-all need --shell".into());
     }
+    if shell && (args.has("--save-state") || args.has("--load-state")) {
+        return Err("--save-state and --load-state are for a single machine, not --shell".into());
+    }
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None, find: false };
-    let image = match args.positional.as_slice() {
-        [] if shell => Image::parse(builtin::SHELL).map_err(|e| format!("built-in shell: {e}"))?,
+    // STATE.md 4: a machine started from a snapshot.
+    let snapshot = match args.get("--load-state") {
+        Some(path) => Some(terse_core::Snapshot::decode(&read(path)?).map_err(|e| format!("{path}: {e}"))?),
+        None => None,
+    };
+    let image = match (args.positional.as_slice(), &snapshot) {
+        ([], _) if shell => Image::parse(builtin::SHELL).map_err(|e| format!("built-in shell: {e}"))?,
+        ([], Some(s)) => load_image(&to_hex(&s.image_id()), &mut net)?,
         _ => load_image(args.one_positional()?, &mut net)?,
     };
     let frames: Option<u64> = match args.get("--frames") {
@@ -360,6 +376,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         node.set_identity_path(feed::identity_path(&args)?)?;
         node.set_nicknames(feed::load_nicknames(&args)?);
         node.set_records(terse_net::Records::in_data_dir(&data_dir(&args)?));
+        if shell {
+            node.set_snapshots(terse_net::Snapshots::in_data_dir(&data_dir(&args)?));
+        }
         node.set_program_download(!args.has("--no-program-download"));
         let mut content = ContentService::start_with_consent(node, consent);
         // Start from a caught-up store, so that a run sees what the relay
@@ -373,10 +392,20 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     } else {
         None
     };
-    let mut system = System::new(&image, shell, builtins);
+    let mut system = match &snapshot {
+        Some(s) => {
+            let path = args.get("--load-state").unwrap_or_default();
+            System::with_machine(s.restore(&image).map_err(|e| format!("{path}: {e}"))?)
+        }
+        None => System::new(&image, shell, builtins),
+    };
     // The built-in shell has the identity of a built-in (SPEC 12.2).
     if shell && args.positional.is_empty() {
         system.set_shell_identity(Some(terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() }));
+    }
+    // SPEC 12.7: the shell's snapshots, as this host has them.
+    if system.is_system() {
+        terse_net::snapshots::load_table(&mut system, &data_dir(&args)?);
     }
     // Headless runs are reproducible (see `HeadlessSystem`).
     let mut headless = HeadlessSystem::new(content, script);
@@ -408,6 +437,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 
     if args.has("--bench") {
         bench_report(&mut times);
+    }
+    if let Some(path) = args.get("--save-state") {
+        write(path, &terse_core::Snapshot::of(system.shell()).encode())?;
     }
     if args.has("--hash") || args.has("--hash-all") {
         println!("{}", to_hex(&system.shell().state_hash()));

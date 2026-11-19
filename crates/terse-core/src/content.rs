@@ -277,6 +277,9 @@ struct Slot {
 pub struct Content {
     slots: [Option<Slot>; MAX_PENDING],
     submitted: Vec<Request>,
+    /// Restored with pending requests that no host will answer: they fail
+    /// in the next frame (not machine state).
+    orphaned: bool,
 }
 
 /// Whether `data` can be the answer to a subscriptions, timeline, names or
@@ -598,6 +601,58 @@ impl Content {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+    }
+
+    /// The content section as `write_state` wrote it (STATE.md 4). Every
+    /// request restored pending is to fail in the machine's next frame
+    /// ([`Content::take_orphans`]); the host never had it.
+    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader, ram_len: usize) -> Result<(), crate::snapshot::RestoreError> {
+        use crate::snapshot::bad;
+        for slot in &mut self.slots {
+            let op = r.u8()?;
+            let block = r.u32()?;
+            let id: [u8; 32] = r.array()?;
+            let (offset, length, addr, size) = (r.u32()?, r.u32()?, r.u32()?, r.u32()?);
+            if op == 0 {
+                // A free handle: the rest is zero (checked with the whole).
+                continue;
+            }
+            if ram_range(ram_len, block, BLOCK_LEN).is_none() {
+                return Err(bad("request block"));
+            }
+            let length16 = u16::try_from(length).map_err(|_| bad("request length"))?;
+            let small = |v: u32| u8::try_from(v).map_err(|_| bad("request field"));
+            let pending = match op {
+                OP_GET => Pending::Get { id, offset, length: length16, addr },
+                OP_PUT => Pending::Put { id, size },
+                OP_SUBSCRIPTIONS | OP_TIMELINE | OP_NAMES | OP_PROGRAMS | OP_RECORDS => {
+                    Pending::Records { op, offset, length: length16, addr }
+                }
+                OP_FIND => Pending::Find { scope: small(offset)?, length: length16, addr, query_len: small(size)? },
+                OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_IDENTITY | OP_SET_PROFILE | OP_SET_NICKNAME => {
+                    Pending::Feed { op, id, offset: small(offset)?, len: small(length)? }
+                }
+                OP_SAVE | OP_LOAD | OP_DELETE => {
+                    if record_name_len(&id).is_none() {
+                        return Err(bad("record name"));
+                    }
+                    Pending::Named { op, name: id, offset, length: length16, addr, size }
+                }
+                _ => return Err(bad("request op")),
+            };
+            *slot = Some(Slot { block, pending });
+        }
+        self.orphaned = self.slots.iter().any(Option::is_some);
+        Ok(())
+    }
+
+    /// After a restore: a failed completion for each request that was
+    /// pending in the snapshot, once (SPEC 9.2).
+    pub(crate) fn take_orphans(&mut self) -> Vec<Completion> {
+        if !std::mem::take(&mut self.orphaned) {
+            return Vec::new();
+        }
+        self.pending_handles().into_iter().map(|handle| Completion { handle, outcome: Outcome::Failed }).collect()
     }
 
     /// Requests accepted since the last call, in submit order.

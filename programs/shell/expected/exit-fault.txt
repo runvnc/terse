@@ -105,4 +105,4 @@ MACHINES
 Enter start or focus · Esc back ·
 Tab next machine · X stop · P
 pause · Z zoom · L layout · 1-8
-select
+select · S save session

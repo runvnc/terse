@@ -208,6 +208,22 @@ impl Page {
         self.generation
     }
 
+    /// The page section as `write_state` wrote it (STATE.md 4). A restored
+    /// document counts as new: a host lays it out and reports its height.
+    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+        let (x, y, w, h) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
+        self.set_region(x as u32, y as u32, w as u32, h as u32);
+        self.scroll = r.u32()?;
+        self.background = r.u32()?;
+        let d = r.u32()? as usize;
+        if d > MAX_DOCUMENT {
+            return Err(crate::snapshot::bad("document length"));
+        }
+        self.document = (d > 0).then(|| r.take(d).map(<[u8]>::to_vec)).transpose()?;
+        self.generation = self.document.is_some() as u64;
+        Ok(())
+    }
+
     /// The rectangle, scroll value, background and document (STATE.md,
     /// page section); not the generation counter.
     pub(crate) fn write_state(&self, out: &mut Vec<u8>) {

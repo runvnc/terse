@@ -7,6 +7,7 @@
 use crate::content::{ram_range, readable};
 use crate::machine::{ERR_BUFFER, copy_charge};
 use crate::page::Region;
+use crate::snapshot::{INFO_BYTES as SNAPSHOT_INFO_BYTES, SLOTS, SnapshotInfo};
 use crate::system::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 /// The device slot and the version this implementation provides.
@@ -60,6 +61,9 @@ pub mod failure {
     pub const INVALID: u8 = 2;
     pub const NEEDS_DEVICE: u8 = 3;
     pub const NO_ROOM: u8 = 4;
+    /// `restore`: no snapshot in the slot, or one that cannot be read or
+    /// does not fit its image.
+    pub const SNAPSHOT: u8 = 5;
 }
 
 /// A program's identity (SPEC 12.2): the feed that publishes it and its
@@ -155,6 +159,10 @@ pub mod call {
     pub const IDENTITY: u32 = 0x808;
     pub const REQUEST: u32 = 0x809;
     pub const ARGUMENT: u32 = 0x80A;
+    pub const SNAPSHOT: u32 = 0x80B;
+    pub const RESTORE: u32 = 0x80C;
+    pub const SNAPSHOT_INFO: u32 = 0x80D;
+    pub const SNAPSHOT_DELETE: u32 = 0x80E;
 }
 
 /// One handle's record.
@@ -236,6 +244,13 @@ pub enum Command {
     Stop { handle: u8 },
     /// `argument`: the blob ID the machine is given (SPEC 12.2).
     Argument { handle: u8, id: [u8; 32] },
+    /// `restore`: a new machine from the snapshot in `slot`.
+    Restore { handle: u8, slot: u8 },
+    /// `snapshot`: carried out at the end of the system frame.
+    Snapshot { handle: u8, slot: u8 },
+    /// `snapshot_delete`: the host removes the slot's snapshot (at the end
+    /// of the frame, in order with the snapshots).
+    DeleteSnapshot { slot: u8 },
 }
 
 /// Device 8's state (STATE.md 1.10) and the shell's requests.
@@ -249,6 +264,9 @@ pub struct Machines {
     requests: [Option<[u8; REQUEST_BYTES]>; MAX_MACHINES],
     /// Starts and stops since the host last took them (not machine state).
     commands: Vec<Command>,
+    /// The shell's snapshot slots as the host has them (SPEC 12.7): host
+    /// data, an input; not machine state.
+    snapshots: [Option<SnapshotInfo>; SLOTS],
 }
 
 impl Machines {
@@ -383,6 +401,43 @@ impl Machines {
                     }
                 }
             }
+            call::SNAPSHOT => {
+                let ok = slot(a0).is_some_and(|i| matches!(self.slots[i].state, state::RUNNING | state::PAUSED))
+                    && (a1 as usize) < SLOTS;
+                if !ok {
+                    return (0, 0);
+                }
+                self.commands.push(Command::Snapshot { handle: a0 as u8, slot: a1 as u8 });
+                (1, 0)
+            }
+            call::RESTORE => {
+                if a0 as usize >= SLOTS {
+                    return (0, 0);
+                }
+                let Some(i) = self.slots.iter().position(|s| s.state == state::NONE) else { return (0, 0) };
+                self.slots[i] = Slot { state: state::LOADING, run: true, ..Slot::default() };
+                self.requests[i] = None;
+                let handle = i as u8 + 1;
+                self.commands.push(Command::Restore { handle, slot: a0 as u8 });
+                (handle as u32, 0)
+            }
+            call::SNAPSHOT_INFO => {
+                let Some(at) = ram_range(ram.len(), a1, SNAPSHOT_INFO_BYTES) else { return (ERR_BUFFER, 0) };
+                if a0 as usize >= SLOTS {
+                    return (0, 0);
+                }
+                let record = self.snapshots[a0 as usize].as_ref().map_or([0; SNAPSHOT_INFO_BYTES], SnapshotInfo::record);
+                ram[at..at + SNAPSHOT_INFO_BYTES].copy_from_slice(&record);
+                (record[0] as u32, copy_charge(SNAPSHOT_INFO_BYTES))
+            }
+            call::SNAPSHOT_DELETE => {
+                if a0 as usize >= SLOTS {
+                    return (0, 0);
+                }
+                self.snapshots[a0 as usize] = None;
+                self.commands.push(Command::DeleteSnapshot { slot: a0 as u8 });
+                (1, 0)
+            }
             call::BUILTIN => {
                 let Some(at) = ram_range(ram.len(), a1, 32) else { return (ERR_BUFFER, 0) };
                 match self.builtins.get(a0 as usize) {
@@ -440,6 +495,15 @@ impl Machines {
         self.requests[h as usize - 1] = Some(request);
     }
 
+    /// The shell's snapshot slots as the host has them (SPEC 12.7).
+    pub fn snapshots(&self) -> &[Option<SnapshotInfo>; SLOTS] {
+        &self.snapshots
+    }
+
+    pub fn set_snapshot(&mut self, slot: u8, info: Option<SnapshotInfo>) {
+        self.snapshots[slot as usize] = info;
+    }
+
     /// Whether machine `h`'s request still waits for the shell to read it.
     pub fn request_waiting(&self, h: u8) -> bool {
         self.requests[h as usize - 1].is_some()
@@ -473,6 +537,40 @@ impl Machines {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_calls() {
+        let base = crate::cpu::RAM_BASE;
+        let mut ram = vec![0u8; 8192];
+        let mut m = Machines::new(Vec::new());
+        let call = |m: &mut Machines, n, a: [u32; 5], ram: &mut Vec<u8>| m.call(n, a, &[], ram).0;
+        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 0, 0, 0, 0], &mut ram), 0, "no machine");
+        assert_eq!(call(&mut m, call::RESTORE, [16, 0, 0, 0, 0], &mut ram), 0, "no slot 16");
+        assert_eq!(call(&mut m, call::RESTORE, [3, 0, 0, 0, 0], &mut ram), 1);
+        assert_eq!((m.slot(1).state, m.slot(1).run, m.slot(1).image), (state::LOADING, true, [0; 32]));
+        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 0, 0, 0, 0], &mut ram), 0, "a loading machine");
+        m.slot_mut(1).state = state::PAUSED;
+        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 15, 0, 0, 0], &mut ram), 1);
+        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 16, 0, 0, 0], &mut ram), 0);
+        // Info: an empty slot, a full one, out of range, a bad buffer.
+        ram[..122].fill(0xEE);
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 0);
+        assert_eq!(ram[..122], [0; 122]);
+        let info = SnapshotInfo { image: [7; 32], identity: None, frames: 99, time: 5 };
+        m.set_snapshot(4, Some(info.clone()));
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 1);
+        assert_eq!(ram[..122], info.record());
+        assert_eq!((ram[0], &ram[1..33], &ram[114..122]), (1, &[7; 32][..], &[99, 0, 0, 0, 5, 0, 0, 0][..]));
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [16, base, 0, 0, 0], &mut ram), 0);
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base + 8190, 0, 0, 0], &mut ram), crate::machine::ERR_BUFFER);
+        assert_eq!(call(&mut m, call::SNAPSHOT_DELETE, [4, 0, 0, 0, 0], &mut ram), 1);
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 0, "empty at once");
+        assert_eq!(call(&mut m, call::SNAPSHOT_DELETE, [16, 0, 0, 0, 0], &mut ram), 0);
+        assert_eq!(
+            m.take_commands(),
+            [Command::Restore { handle: 1, slot: 3 }, Command::Snapshot { handle: 1, slot: 15 }, Command::DeleteSnapshot { slot: 4 }]
+        );
+    }
 
     #[test]
     fn pictures_fit_and_centre() {

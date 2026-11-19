@@ -55,6 +55,10 @@
 #define CALL_MACH_IDENTITY 0x808
 #define CALL_MACH_REQUEST 0x809
 #define CALL_MACH_ARGUMENT 0x80A
+#define CALL_MACH_SNAPSHOT 0x80B
+#define CALL_MACH_RESTORE 0x80C
+#define CALL_MACH_SNAPSHOT_INFO 0x80D
+#define CALL_MACH_SNAPSHOT_DELETE 0x80E
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -127,6 +131,8 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
 #define EV_PAGE_LOCATED_Y 0x0E
 /* For the shell: machine a asked to open something (mach_request). */
 #define EV_OPEN_REQUESTED 0x0F
+/* For the shell: the snapshot for slot a was stored (b = 1) or not (3). */
+#define EV_SNAPSHOT_DONE 0x10
 
 /* USB HID key codes used by most programs. */
 #define KEY_ENTER 0x28
@@ -588,6 +594,7 @@ void path_points(uint8_t op, uint32_t n, const int16_t *xy);
 #define MACH_FAIL_INVALID 2
 #define MACH_FAIL_NEEDS_DEVICE 3
 #define MACH_FAIL_NO_ROOM 4
+#define MACH_FAIL_SNAPSHOT 5 /* restore: no snapshot, unreadable, or not of its image */
 
 /* The 48-byte record of mach_info. */
 typedef struct {
@@ -634,6 +641,33 @@ static inline uint32_t mach_request(uint32_t h, uint8_t *out) { return terse_cal
 /* Gives loading machine h the blob ID `id` as its argument (terse_argument);
  * 1, or 0 if h is not loading. */
 static inline uint32_t mach_argument(uint32_t h, const uint8_t *id) { return terse_call(CALL_MACH_ARGUMENT, h, (uint32_t)id, 0); }
+
+/* Snapshots (SPEC 12.7): slots 0-15 of the host's snapshots for this
+ * shell. mach_snapshot keeps machine h (running or paused) in a slot at
+ * the end of this frame; EV_SNAPSHOT_DONE tells how it went. 1 if
+ * accepted. */
+#define MACH_SNAPSHOT_SLOTS 16
+static inline uint32_t mach_snapshot(uint32_t h, uint32_t slot) { return terse_call(CALL_MACH_SNAPSHOT, h, slot, 0); }
+/* A new machine from the slot's snapshot, as it was (running, hidden): its
+ * handle, 0 if none is free. Loading until the host has the image; failed
+ * (MACH_FAIL_SNAPSHOT) if the slot holds no snapshot it can restore. */
+static inline uint32_t mach_restore(uint32_t slot) { return terse_call(CALL_MACH_RESTORE, slot, 0, 0); }
+/* The 122-byte record of mach_snapshot_info. */
+typedef struct __attribute__((packed)) {
+    uint8_t present;
+    uint8_t image[32];   /* the image's blob ID */
+    uint8_t key[32];     /* its identity: publisher (all zero: a built-in) */
+    uint8_t name_len;    /* and name; 0: no identity */
+    uint8_t name[48];
+    uint32_t frames;     /* frames it had run */
+    uint32_t time;       /* Unix time it was taken */
+} mach_snapshot_record;
+/* The slot's record: 1 if it holds a snapshot, else 0 (present 0). */
+static inline uint32_t mach_snapshot_info(uint32_t slot, mach_snapshot_record *r)
+{
+    return terse_call(CALL_MACH_SNAPSHOT_INFO, slot, (uint32_t)r, 0);
+}
+static inline uint32_t mach_snapshot_delete(uint32_t slot) { return terse_call(CALL_MACH_SNAPSHOT_DELETE, slot, 0, 0); }
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);
