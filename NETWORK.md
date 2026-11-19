@@ -280,22 +280,20 @@ below), which then starts the next block.
   that is not preceded by a backslash; what is left is cut at every `|`
   that is not preceded by a backslash, and the blanks at the start and
   end of each piece are dropped. Each piece is a cell (so a row has at
-  least one). In a cell, `\|` stands for `|`, also in a code span (it
-  counts as one byte there); any other backslash is
-  itself. The first row's number of cells, at most 8, is the table's
-  number of columns (a first row of more than 8 cells has its cells
-  beyond the eighth dropped): a later row's cells beyond that are
-  dropped, and a
-  row with fewer has empty cells at its end. If the table's second line
-  is made only of `|`, `-`, `:` and blanks and holds at least one `-`, it
-  is an **alignment row**: it is not shown, the first row is the table's
+  least one). In a cell, `\|` stands for `|`, also in a code span; any
+  other backslash is itself. The first row's number of cells, at most 8,
+  is the table's number of columns: the cells of any row beyond that
+  number are dropped (the first row's too), and a row with fewer has
+  empty cells at its end. If the table's second line is made only of
+  `|`, `-`, `:` and blanks and holds at least one `-`, it is an
+  **alignment row**: it is not shown, the first row is the table's
   header, and its cells give the columns' alignment in order: a cell of
   two or more bytes that starts and ends with `:` centres its column, one
   that ends with `:` and does not start with one (or is only `:`) aligns
-  it to the end, any other to the start, which is also the
-  alignment of a column it gives none for and of every column of a table
-  without an alignment row. A cell is one line of ordinary text: links
-  and code spans count in it. A reader that does not lay tables out
+  it to the end, any other to the start, which is also the alignment of
+  a column it gives none for and of every column of a table without an
+  alignment row. A cell is one line of ordinary text: links and code
+  spans count in it. A reader that does not lay tables out
   shows their lines as a paragraph's, which reads well enough.
 
 **Figures.** A fence whose info string is the word `path` (after optional

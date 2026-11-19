@@ -43,7 +43,7 @@ stack, grid, zoom); a click on a machine's picture gives it the keyboard.
 See [The shell](#the-shell).
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
-(and quits from the timeline); F manages the feeds you follow; ? (or F1)
+(and quits from the timeline); M opens the Terse manual; F manages the feeds you follow; ? (or F1)
 shows help and your own feed key; T on the help page publishes a test
 article. See [The reader](#the-reader).
 
@@ -186,6 +186,8 @@ images were built with clang and LLD 23.1.4.
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
 - `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
   [Feeds](#feeds).
+- `manual build|check [--dir <docs/manual>]` and `manual publish`: the manual, see
+  [Manual](#manual).
 - `relay add <ws://host:port>` and `relay remove <url>` change the relay list in
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
@@ -544,7 +546,16 @@ lines separate blocks; the markers count only at the start of a line:
   shown as written (anything after the opening backquotes is ignored, except
   `path`);
 - `` ```path W H `` (W × H screen units, 1–1024): a figure, drawn from the path
-  string in it, up to the closing backquotes.
+  string in it, up to the closing backquotes;
+- lines that start with `|`: a table, cells separated by `|` (`\|` for a bar in
+  a cell), at most 8 columns; a second line such as `|---|:-:|--:|` makes the
+  first row a header and sets each column's alignment (start, centre, end);
+- inline, a run between two backquotes on one line (`` `like this` ``) is code,
+  in a monospaced face; there is no other inline markup.
+
+    | Key | What it does |
+    |-----|--------------|
+    | `M` | the manual   |
 
 The path string is SVG path data (`M L H V C S Q T Z`, lowercase relative, numbers
 with an optional sign and fraction, no exponents, coordinates in screen units within
@@ -560,9 +571,40 @@ panel:
     fill #e06c75 stroke fg 2 M30 75 L80 15 130 75 Z
     ```
 
+The reader shows a table as a grid laid out by the host (the page's Table
+command, SPEC 11.3–11.4: columns as wide as their widest cell, the widest
+narrowed and wrapped when the table is wider than the column); a reader that does
+not know tables shows its lines as a paragraph.
+
 `crates/terse-host/demo/pictures.txt` (the "Pictures in articles" sample) has a
 chart, a badge and a diagram. A reader that does not draw figures shows their text,
 so an article still reads as plain text.
+
+## Manual
+
+`docs/manual` is the Terse manual: twenty articles, written in the article format,
+that describe the whole system (the machine, every device call, event, record and
+limit, the network, the tools, the shell and the reader). Every host carries it:
+`terse-host` and `terse run` put its articles into the store at start, and M on
+the reader's timeline opens its index, from which Tab and Enter follow its links.
+
+Articles link to each other with placeholders, `[the page](terse:{device-page})`,
+which `terse manual build` replaces with the blob IDs, in dependency order (the
+links must form no cycle: an article links only to those after it in
+`docs/manual/manifest`); the result is checked in as `docs/manual/build`, which
+`terse-net` embeds, and `programs/reader/build.sh` compiles the index's ID into
+the reader. After editing the manual:
+
+    cargo run -p terse-cli --bin terse -- manual build
+    programs/reader/build.sh
+
+`terse manual check` tells whether the build is up to date. `terse manual publish`
+(with the usual `--relay`, `--store` and `--config`) publishes the manual as article
+entries of your own feed, each with its title, the index last, so that others can
+read it. `cargo test -p terse-cli --test manual` checks the build, that every link
+resolves to a blob every host carries, that the manual names every call, event,
+content operation and status of SPEC.md, and publishing to a relay;
+`docs/manual/README` has the rules for writing it.
 
 ## Named records
 
@@ -692,6 +734,9 @@ the terminal shows only the status row (row 29: key hints, the position such as
 - **Feed page** (Enter on a feed, or a `terse:feed/<key>` link): the feed's name
   (and whether it is your nickname or the feed's own), its key in full and whether
   you follow it; S subscribes, U unsubscribes, Esc goes back.
+- **The manual** (M on the timeline, also named on the empty timeline's page and
+  in help): opens the index of [the manual](#manual), which every host carries;
+  Esc goes back to the timeline.
 - **Help** (? or F1): the keys of every view and your own feed key in full, in the
   monospaced face, in groups of eight hex digits. T publishes a test article
   ("Test article N", a few paragraphs with the frame and time in them): the reader
@@ -717,7 +762,11 @@ background. It shows the title (26 units, bold), a grey line
 the article, formatted as [Writing an article](#writing-an-article) says:
 paragraphs wrapped, headings in bold (21 and 17 units), list items with a bullet,
 preformatted blocks and fences in monospace without wrapping, figures centred (one
-wider than the column scaled down to its 512 units). Bare `http://` and `https://`
+wider than the column scaled down to its 512 units), tables in 14-unit text (the
+header bold, under a rule), code spans in the monospaced face a unit smaller, in
+green. An article that has no entry (one opened by a link, or the manual) and
+whose first line is a heading (`# `) is titled by that heading, which is then
+not shown twice; so is one whose entry has that title. Bare `http://` and `https://`
 URLs get an anchor and a link colour; pressing one shows the URL in the status bar,
 since there is no browser. So do `terse:<id>` links (an article, by its blob ID) and
 `terse:feed/<key>` links (a feed), shown shortened (`terse:360793…dec189`), and
@@ -791,11 +840,12 @@ document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
 height arrives in the next; the whole height of a 48 KiB article arrives 15 frames
-after Enter. The busiest frame uses 73,044 units (58% of 125,000, building an
-article's document; 61,252 for an article with a 4 KB figure path); outside the article view at most 32,232
-(26%, publishing a test article); a typical frame 162; no frame runs out of budget.
-ROM 46,042 bytes, 28 RAM pages (the 64 KiB document, the 48 KiB article, the
-timeline records, the names and the search results). Following a `terse:` link to
+after Enter. The busiest frame uses 77,927 units (62% of 125,000, building an
+article's document; 88,683 (71%) for a 48 KiB article of nothing but tables, 1,566
+cells with code spans and links); outside the article view at most 32,284 (26%);
+a typical frame 164; no frame runs out of budget.
+ROM 52,584 bytes, 29 RAM pages (the 64 KiB document, the 48 KiB article, the
+timeline records, the names, the search results and a table's 1,024 cells). Following a `terse:` link to
 a local article: the article is on the page 2 frames after Enter, busiest frame
 39,497 units; a search: busiest frame 20,381 units.
 
@@ -1413,7 +1463,7 @@ recorded sessions.
 |---|---|---|---|---|---|
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
+| reader | 52,584 bytes | 29 pages | 88,683 (71%, building a 48 KiB article of tables) | 164 (0.1%) | — |
 | holo | 5,460 bytes | 2 pages | 24,898 (19.9%) in the city (11 solid blocks: 55 faces, 3,195 list bytes); 20,753 (16.6%) in the starfield | 10,698 (8.6%) | the city's projection 0.14 ms |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |

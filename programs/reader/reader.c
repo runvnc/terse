@@ -94,6 +94,18 @@
  *     figure is the body colour, so the initial stroke is fg. A figure
  *     that is malformed, has no closing line, or whose commands do not fit
  *     in the document (or in 65,535 bytes) is shown as its fence would be.
+ *   - A table (lines that start with "|"): a Table command (the first
+ *     row's cells, at most 8, are the columns; a second line of only
+ *     "|-:" and blanks with a "-" is the alignment row: header and
+ *     alignment), then a Cell command and the cell's text for each cell,
+ *     row by row (missing cells empty, extra ones dropped), then End
+ *     table; text 14 units, rules grey. B_FIND cuts each line into cells
+ *     as it looks for its LF and keeps them (tc_s, tc_e: at most TC_MAX,
+ *     the page's limit; later rows are not shown); "\|" is a "|". Links
+ *     and code spans count in cells.
+ *   - A code span (a backquote, 1-200 bytes with no backquote or LF, a
+ *     backquote) in a paragraph, item, heading or cell: mono, a unit
+ *     smaller, in the code colour.
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
  *   - Links: http(s) URLs, terse:<blob ID> (an article),
@@ -139,6 +151,10 @@
  *     fetches and keeps the whole blob), at most 2 at a time and only
  *     while fewer than 4 requests of any kind are pending (program links
  *     never).
+ * An article without an entry (or whose entry has the same title) whose
+ * first line is a heading is titled by it, and the heading is not shown
+ * again. M on the timeline opens the manual's index (manual_id.h, from
+ * docs/manual/build), which every host has in its store.
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
