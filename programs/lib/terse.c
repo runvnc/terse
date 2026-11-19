@@ -469,6 +469,18 @@ void v3_screen(uint8_t handle, uint16_t width)
     }
 }
 
+void v3_surface(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t width)
+{
+    uint8_t *p = v3_room(11, V3_OP_SURFACE);
+    if (p) {
+        put16(p, x);
+        put16(p + 2, y);
+        put16(p + 4, w);
+        put16(p + 6, h);
+        put16(p + 8, width);
+    }
+}
+
 void v3_rotate(uint8_t axis, uint16_t angle)
 {
     uint8_t *p = v3_room(4, V3_OP_ROTATE);

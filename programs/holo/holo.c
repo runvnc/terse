@@ -1,7 +1,9 @@
 /* holo: a few scenes on the 3D vector display (device 9, SPEC 13): a
  * rotating cube and icosahedron labelled on the glass, nested rotating
- * rings, a starfield receding in depth, a small orrery and a turning city
- * of solid blocks on a ground grid. The host does
+ * rings, a starfield receding in depth, a small orrery, a turning city
+ * of solid blocks on a ground grid, and a cockpit whose consoles show parts
+ * of the terminal (Surfaces: the program's own 2D layers on panels in its
+ * scene, with a list on one that can be clicked). The host does
  * every rotation and the projection (it chooses the eye: move the pointer
  * to look around the models); the program only changes angles, so it does
  * no trigonometry and stays tiny. The terminal (device 2) has the labels
@@ -10,10 +12,13 @@
  * Coordinates are sixteenths of a screen unit: x right, y down, z away
  * from the viewer, 0 at the glass. Angles are 1/65,536 of a turn.
  *
- * Keys: Space (or Tab) next scene, 1-5 a scene, arrows turn the model, A
- * stops and starts the turning, R resets the view, P switches between the
- * clean and the phosphor display style, H makes the wireframes solid (their
- * faces hide what is behind them) and wire again.
+ * Keys: Space (or Tab) next scene, 1-6 a scene, arrows turn the model (in
+ * the cockpit: bank and pitch the craft), A stops and starts the turning,
+ * R resets the view, P switches between the clean and the phosphor display
+ * style, H makes the wireframes solid (their faces hide what is behind
+ * them) and wire again. In the cockpit a click on a row of the right-hand
+ * console's list selects it: the host delivers a pointer over a Surface as
+ * a pointer inside the rectangle it shows, so the program does no geometry.
  *
  * Solids: faces (v3_face3, v3_face4) give no light but hide the lines
  * behind them, as the host's eye sees them; a solid is its edges and its
@@ -30,15 +35,19 @@
 #define KEY_R 0x15
 #define KEY_1 0x1E
 
-enum { WIREFRAMES, RINGS, STARFIELD, ORRERY, CITY, SCENES };
+enum { WIREFRAMES, RINGS, STARFIELD, ORRERY, CITY, COCKPIT, SCENES };
 
-static const char *const names[SCENES] = { "WIREFRAMES", "RINGS", "STARFIELD", "ORRERY", "CITY" };
+static const char *const names[SCENES] = { "WIREFRAMES", "RINGS", "STARFIELD", "ORRERY", "CITY", "COCKPIT" };
 
 static uint8_t list[8192];
 static uint8_t scene, phosphor, still, solid, dirty = 1;
+static uint8_t buttons;      /* of the last pointer event */
+static uint8_t selected = 2; /* the cockpit list's selected row */
 static uint8_t key_left, key_right, key_up, key_down;
 static uint32_t t;       /* frames the models have turned */
 static uint16_t yaw, pitch; /* the user's turn of the model */
+
+static void consoles_text(void);
 
 /* --- Text on the glass ---------------------------------------------------- */
 
@@ -68,14 +77,14 @@ static void text(void)
     term_color(7, 0);
     term_cmd(TERM_CLEAR);
     put_at(1, 0, 15, "HOLO");
-    uint8_t col = 8;
+    uint8_t col = 7;
     for (uint8_t i = 0; i < SCENES; i++) {
         char n[3] = { '1' + i, ' ', 0 };
         put_at(col, 0, i == scene ? 11 : 8, n);
         put_at(col + 2, 0, i == scene ? 15 : 8, names[i]);
-        col += 5 + len(names[i]);
+        col += 4 + len(names[i]);
     }
-    put_at(1, 29, 8, "Space next  1-5 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid");
+    put_at(1, 29, 8, "Space next  1-6 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid");
     if (phosphor)
         put_at(71, 0, 10, "PHOSPHOR");
     if (scene == WIREFRAMES) {
@@ -90,8 +99,10 @@ static void text(void)
         label(320, 26, 12, "384 points receding from the glass");
     } else if (scene == ORRERY) {
         label(320, 27, 14, "an orrery: four planets on tilted orbits, two moons");
-    } else {
+    } else if (scene == CITY) {
         label(320, 27, 10, "solid blocks hiding one another and the ground");
+    } else {
+        consoles_text();
     }
 }
 
@@ -255,6 +266,7 @@ static void rings(void)
 #define STARS 384
 #define STAR_FAR 2000  /* units */
 #define STAR_NEAR -240
+#define COCKPIT_STARS 160 /* the cockpit shows the first 160 */
 static int16_t star[STARS][3]; /* x, y in units, z in units */
 static uint32_t seed = 0x2545F491;
 
@@ -278,9 +290,10 @@ static void stars_init(void)
         new_star(i, STAR_NEAR + rnd(STAR_FAR - STAR_NEAR));
 }
 
-static void stars_step(void)
+/* The first `n` stars move on. */
+static void stars_step(uint16_t n)
 {
-    for (uint16_t i = 0; i < STARS; i++) {
+    for (uint16_t i = 0; i < n; i++) {
         star[i][2] += 4;
         if (star[i][2] >= STAR_FAR)
             new_star(i, STAR_NEAR);
@@ -424,12 +437,339 @@ static void city(void)
     v3_pop();
 }
 
+/* --- The cockpit ---------------------------------------------------------------- */
+
+/* Three regions of the terminal, each shown on a console by a Surface and
+ * so not on the glass: the instruments (x, y, w, h in units), the log and
+ * the list. Rows 4-11; the status line (row 1) stays on the glass. */
+#define TOP 4
+#define ROWS_SHOWN 8
+#define INSTR_COL 1
+#define LOG_COL 30
+#define LIST_COL 59
+#define INSTR_W 28
+#define LOG_W 28
+#define LIST_W 20
+#define LIST_ROWS 6
+#define LOG_ROWS 7
+#define BG_PANEL 236 /* the consoles' dark grey */
+
+static const char *const targets[LIST_ROWS] = { "ALPHA    0.4 AU", "BETA     1.1 AU", "GAMMA    2.7 AU",
+                                                "DELTA    3.0 AU", "EPSILON  5.2 AU", "ZETA     9.5 AU" };
+static const char *const events[6] = { "nav fix", "comms ping", "hull temp ok", "course trim", "beacon heard", "sensor sweep" };
+
+/* `n` as decimal, at least `digits` digits (zero-padded), into `s`;
+ * returns the end. */
+static char *num(char *s, uint32_t n, uint8_t digits)
+{
+    char d[10];
+    uint8_t k = 0;
+    do {
+        d[k++] = '0' + n % 10;
+        n /= 10;
+    } while (n || k < digits);
+    while (k)
+        *s++ = d[--k];
+    return s;
+}
+
+static char *str(char *s, const char *t)
+{
+    while (*t)
+        *s++ = *t++;
+    return s;
+}
+
+/* A signed angle in 1/65,536 of a turn as whole degrees: "+012". */
+static char *degrees(char *s, uint16_t a)
+{
+    int32_t d = (int32_t)(int16_t)a * 360 / 65536;
+    *s++ = d < 0 ? '-' : '+';
+    return num(s, (uint32_t)(d < 0 ? -d : d), 3);
+}
+
+/* Row `row` of a region at `col`, `w` cells: `s` (to its end), padded. */
+static void region_row(uint8_t col, uint8_t row, uint8_t w, uint8_t fg, uint8_t bg, char *s, char *end)
+{
+    /* Padded where it is: every buffer holds at least `w` characters. */
+    while (end < s + w)
+        *end++ = ' ';
+    term_goto(col, row);
+    term_color(fg, bg);
+    term_write(s, w);
+}
+
+/* The instruments: the readouts that change every frame, and with `all`
+ * the attitude and the target too. */
+static void instruments(uint8_t all)
+{
+    char b[32], *e;
+    uint32_t secs = t / 60;
+    e = str(b, " INSTRUMENTS        T+");
+    e = num(e, secs / 60 % 100, 2);
+    *e++ = ':';
+    e = num(e, secs % 60, 2);
+    region_row(INSTR_COL, TOP, INSTR_W, 14, BG_PANEL, b, e);
+    uint32_t h = t * 13 % 3600;
+    e = str(b, " HEADING   ");
+    e = num(e, h / 10, 3);
+    *e++ = '.';
+    e = num(e, h % 10, 1);
+    region_row(INSTR_COL, TOP + 1, INSTR_W, 10, BG_PANEL, b, e);
+    e = str(b, " SPEED     0.");
+    e = num(e, 300 + t * 7 % 200, 3);
+    e = str(e, " c");
+    region_row(INSTR_COL, TOP + 2, INSTR_W, 10, BG_PANEL, b, e);
+    /* A bar gauge going up and down. */
+    uint8_t phase = t % 64, level = (phase < 32 ? phase : 63 - phase) / 2;
+    e = str(b, " THRUST [");
+    for (uint8_t i = 0; i < 16; i++)
+        *e++ = i < level ? '#' : '.';
+    *e++ = ']';
+    region_row(INSTR_COL, TOP + 3, INSTR_W, 11, BG_PANEL, b, e);
+    if (t % 8 == 0 || all) {
+        uint32_t fuel = 1000 - t / 8 % 1000;
+        e = str(b, " FUEL      ");
+        e = num(e, fuel / 10, 2);
+        *e++ = '.';
+        e = num(e, fuel % 10, 1);
+        e = str(e, " %");
+        region_row(INSTR_COL, TOP + 6, INSTR_W, 7, BG_PANEL, b, e);
+    }
+    if (!all)
+        return;
+    e = str(b, " BANK ");
+    e = degrees(e, yaw);
+    e = str(e, "    PITCH ");
+    e = degrees(e, pitch);
+    region_row(INSTR_COL, TOP + 4, INSTR_W, 7, BG_PANEL, b, e);
+    e = str(b, " TARGET  ");
+    e = str(e, targets[selected]);
+    region_row(INSTR_COL, TOP + 5, INSTR_W, 12, BG_PANEL, b, e);
+    region_row(INSTR_COL, TOP + 7, INSTR_W, 7, BG_PANEL, b, b);
+}
+
+/* The log: a line every 40 frames, the newest at the bottom. */
+static void log_lines(void)
+{
+    char b[32], *e;
+    e = str(b, " LOG");
+    region_row(LOG_COL, TOP, LOG_W, 14, BG_PANEL, b, e);
+    uint32_t n = t / 40 + 4;
+    for (uint8_t i = 0; i < LOG_ROWS; i++) {
+        e = b;
+        if (n + i >= LOG_ROWS) {
+            uint32_t k = n + i - LOG_ROWS;
+            e = str(b, " T+");
+            e = num(e, k * 40 / 60, 4);
+            *e++ = ' ';
+            e = str(e, events[k % 6]);
+        }
+        region_row(LOG_COL, TOP + 1 + i, LOG_W, i == LOG_ROWS - 1 ? 15 : 8, BG_PANEL, b, e);
+    }
+}
+
+/* The list: the selected row highlighted. */
+static void list_rows(void)
+{
+    char b[32], *e;
+    e = str(b, " TARGETS");
+    region_row(LIST_COL, TOP, LIST_W, 14, BG_PANEL, b, e);
+    for (uint8_t i = 0; i < LIST_ROWS; i++) {
+        e = str(b, i == selected ? ">" : " ");
+        e = str(e, targets[i]);
+        region_row(LIST_COL, TOP + 1 + i, LIST_W, i != selected ? 7 : phosphor ? 11 : 0, i == selected && !phosphor ? 11 : BG_PANEL, b, e);
+    }
+    e = str(b, " click a row");
+    region_row(LIST_COL, TOP + 1 + LIST_ROWS, LIST_W, 8, BG_PANEL, b, e);
+}
+
+/* The status line, on the glass. */
+static void status(void)
+{
+    char b[80], *e;
+    e = str(b, "COCKPIT  bank ");
+    e = degrees(e, yaw);
+    e = str(e, "  pitch ");
+    e = degrees(e, pitch);
+    e = str(e, "  target ");
+    const char *n = targets[selected];
+    while (*n != ' ')
+        *e++ = *n++;
+    e = str(e, "   the consoles show the terminal");
+    region_row(1, 1, 78, 10, 0, b, e);
+}
+
+/* The attitude the status line and the instruments show. */
+static uint16_t shown_yaw, shown_pitch;
+
+static void consoles_text(void)
+{
+    status();
+    instruments(1);
+    log_lines();
+    list_rows();
+    shown_yaw = yaw;
+    shown_pitch = pitch;
+}
+
+/* A frame of the cockpit's text: the readouts, the attitude when it
+ * changed, the log now and then. */
+static void consoles_step(void)
+{
+    uint8_t turned = yaw != shown_yaw || pitch != shown_pitch;
+    instruments(turned);
+    if (turned)
+        status();
+    if (t % 40 == 0)
+        log_lines();
+    shown_yaw = yaw;
+    shown_pitch = pitch;
+}
+
+/* A press at (x, y) on the screen: a row of the list (it arrives here also
+ * when it was made on the console that shows the list). */
+static void press(uint16_t x, uint16_t y)
+{
+    uint8_t col = x / 8, row = y / 16;
+    if (col >= LIST_COL && col < LIST_COL + LIST_W && row >= TOP + 1 && row < TOP + 1 + LIST_ROWS) {
+        selected = row - TOP - 1;
+        list_rows();
+        status();
+        instruments(1);
+    }
+}
+
+/* An octahedron `r` units across its corners, about the current origin. */
+static void octahedron(int16_t r)
+{
+    static const int8_t c[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+    for (uint8_t i = 0; i < 6; i++)
+        for (uint8_t j = i + 1; j < 6; j++)
+            if (i / 2 != j / 2) {
+                v3_move(c[i][0] * r, c[i][1] * r, c[i][2] * r);
+                v3_line(c[j][0] * r, c[j][1] * r, c[j][2] * r);
+            }
+}
+
+/* A console: the Surface showing `x`..`x + w` of rows TOP.. of the
+ * terminal, `width` units wide, and a frame just in front of it. */
+static void console(uint16_t x, uint16_t w, uint16_t width)
+{
+    uint16_t h = ROWS_SHOWN * 16;
+    v3_surface(x, TOP * 16, w, h, width * U);
+    int16_t hx = width * U / 2, hy = (int32_t)width * h * U / w / 2;
+    v3_colour(120, 140, 170, 255);
+    v3_width(20);
+    v3_move(-hx - 3 * U, -hy - 3 * U, -U);
+    v3_line(hx + 3 * U, -hy - 3 * U, -U);
+    v3_line(hx + 3 * U, hy + 3 * U, -U);
+    v3_line(-hx - 3 * U, hy + 3 * U, -U);
+    v3_line(-hx - 3 * U, -hy - 3 * U, -U);
+}
+
+#define TILT 59164 /* -35 degrees about x: a console's top leans away */
+#define ANGLE 4005 /* 22 degrees about y */
+
+static void cockpit(void)
+{
+    /* The world: stars streaming towards the craft, and three wire shapes
+     * receding ahead. */
+    v3_width(36);
+    v3_colour(220, 230, 255, 255);
+    for (uint16_t i = 0; i < COCKPIT_STARS; i++) {
+        v3_move(star[i][0] * U, (star[i][1] - 60) * U, (STAR_FAR + STAR_NEAR - star[i][2]) * U);
+        v3_point();
+    }
+    v3_width(16);
+    for (uint8_t k = 0; k < 3; k++) {
+        uint16_t z = (t * 3 + 600 * k) % 1800 + 150;
+        v3_push();
+        v3_translate((200 + 120 * k) * U, (150 + 40 * (k & 1)) * U, z * U);
+        v3_rotate(V3_AXIS_Y, t * 300 + 0x5000 * k);
+        v3_rotate(V3_AXIS_X, t * 170);
+        v3_colour(k == 0 ? 255 : 120, k == 1 ? 255 : 160, k == 2 ? 255 : 120, 255);
+        octahedron(40 * U);
+        v3_pop();
+    }
+    /* The craft: canopy, dashboard and consoles, one model turned about a
+     * point between them. */
+    v3_push();
+    v3_translate(320 * U, 330 * U, 0);
+    v3_rotate(V3_AXIS_Z, yaw);
+    v3_rotate(V3_AXIS_X, pitch);
+    /* The dashboard: a solid face behind the consoles, its top edge lit. */
+    static const int16_t dash[4][3] = {
+        { -310 * U, -12 * U, 70 * U }, { 310 * U, -12 * U, 70 * U }, { 310 * U, 150 * U, 70 * U }, { -310 * U, 150 * U, 70 * U },
+    };
+    v3_face4(dash[0], dash[1], dash[2], dash[3]);
+    v3_colour(90, 110, 140, 255);
+    v3_width(24);
+    v3_move(dash[0][0], dash[0][1], dash[0][2]);
+    v3_line(dash[1][0], dash[1][1], dash[1][2]);
+    /* The canopy: the window's frame near and far, and the struts. */
+    static const int16_t near[4][3] = {
+        { -330 * U, -330 * U, -160 * U }, { 330 * U, -330 * U, -160 * U }, { 330 * U, -12 * U, -160 * U }, { -330 * U, -12 * U, -160 * U },
+    };
+    static const int16_t far[4][3] = {
+        { -240 * U, -250 * U, 260 * U }, { 240 * U, -250 * U, 260 * U }, { 260 * U, -12 * U, 260 * U }, { -260 * U, -12 * U, 260 * U },
+    };
+    v3_colour(150, 200, 255, 255);
+    v3_width(28);
+    for (uint8_t i = 0; i < 4; i++) {
+        uint8_t j = (i + 1) % 4;
+        v3_move(far[i][0], far[i][1], far[i][2]);
+        v3_line(far[j][0], far[j][1], far[j][2]);
+        v3_move(near[i][0], near[i][1], near[i][2]);
+        v3_line(far[i][0], far[i][1], far[i][2]);
+    }
+    /* The centre strut, and two struts down past the side consoles. */
+    v3_move(0, -330 * U, -160 * U);
+    v3_line(0, -250 * U, 260 * U);
+    v3_move(-330 * U, -330 * U, -160 * U);
+    v3_line(-200 * U, 150 * U, -110 * U);
+    v3_move(330 * U, -330 * U, -160 * U);
+    v3_line(200 * U, 150 * U, -110 * U);
+    /* A sight in the middle of the window. */
+    v3_colour(255, 160, 80, 255);
+    v3_width(16);
+    v3_move(0, -170 * U, 120 * U);
+    v3_circle(18 * U);
+    /* The consoles: the instruments in the middle, the log on the left,
+     * the list on the right, each turned towards the pilot. */
+    v3_push();
+    v3_translate(0, 50 * U, 0);
+    v3_rotate(V3_AXIS_X, TILT);
+    console(INSTR_COL * 8, INSTR_W * 8, 220);
+    v3_pop();
+    v3_push();
+    v3_translate(-195 * U, 55 * U, 10 * U);
+    v3_rotate(V3_AXIS_Y, -ANGLE);
+    v3_rotate(V3_AXIS_X, TILT);
+    console(LOG_COL * 8, LOG_W * 8, 170);
+    v3_pop();
+    v3_push();
+    v3_translate(190 * U, 55 * U, 10 * U);
+    v3_rotate(V3_AXIS_Y, ANGLE);
+    v3_rotate(V3_AXIS_X, TILT);
+    console(LIST_COL * 8, LIST_W * 8, 140);
+    v3_pop();
+    v3_pop();
+}
+
 /* --- The frame ---------------------------------------------------------------- */
 
 static void input(void)
 {
     terse_event ev;
     while (terse_event_pop(&ev) != EV_NONE) {
+        if (ev.type == EV_POINTER) {
+            uint8_t b = EV_POINTER_BUTTONS(ev);
+            if (b & ~buttons & 1 && scene == COCKPIT)
+                press(EV_POINTER_X(ev), EV_POINTER_Y(ev));
+            buttons = b;
+            continue;
+        }
         if (ev.type != EV_KEY_DOWN && ev.type != EV_KEY_UP)
             continue;
         uint8_t down = ev.type == EV_KEY_DOWN;
@@ -459,6 +799,7 @@ static void input(void)
         } else if (ev.a == KEY_R) {
             yaw = pitch = 0;
             t = 0;
+            dirty = 1;
         }
     }
     yaw += (key_right - key_left) * 400;
@@ -468,13 +809,15 @@ static void input(void)
 static void draw(void)
 {
     v3_begin(list, sizeof list);
-    glass();
+    if (scene != COCKPIT)
+        glass();
     switch (scene) {
     case WIREFRAMES: wireframes(); break;
     case RINGS: rings(); break;
     case STARFIELD: starfield(); break;
     case ORRERY: orrery(); break;
-    default: city(); break;
+    case CITY: city(); break;
+    default: cockpit(); break;
     }
     v3_end();
     v3_submit_list(list);
@@ -487,13 +830,15 @@ int main(void)
     stars_init();
     for (;;) {
         input();
+        if (!still) {
+            t++;
+            stars_step(scene == COCKPIT ? COCKPIT_STARS : STARS);
+        }
         if (dirty) {
             text();
             dirty = 0;
-        }
-        if (!still) {
-            t++;
-            stars_step();
+        } else if (scene == COCKPIT) {
+            consoles_step();
         }
         draw();
         terse_wait_frame();
