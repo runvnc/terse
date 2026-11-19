@@ -32,7 +32,7 @@ feed got the first three samples from an earlier `--demo`, publish the fourth
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 **The shell.** The window opens on the launcher: the programs built into
-`terse-host` (reader, sparks, fetch, hello). Up and Down choose one, Enter
+`terse-host` (reader, sparks, fetch, hello, sketch). Up and Down choose one, Enter
 starts it as a machine of its own, and it gets the keyboard. Start more the
 same way: **F12 is the home key**, which always brings you back to the
 launcher (no program ever sees F12). The bar at the top shows each machine:
@@ -120,7 +120,7 @@ images were built with clang and LLD 23.1.4.
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
   below runs a system (SPEC 12): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
-  sparks, fetch, hello, then each `--builtin` image) are put into the store
+  sparks, fetch, hello, sketch, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
   script's events are the host's input and the system routes them: `home` is the
   home key, pointer positions are in units of the whole screen, keys and text go to
@@ -192,7 +192,7 @@ also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 
 `terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
-which starts the built-in programs (reader, sparks, fetch and hello, also built in, and
+which starts the built-in programs (reader, sparks, fetch, hello and sketch, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
 machine, with every key (F12 included) going to it. With `--demo` it first sets up the
@@ -554,7 +554,7 @@ high score there, the shell its layout.
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (11 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
+program (15 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
@@ -589,6 +589,20 @@ each one's screen where the shell placed it, and routes input.
   machine). A machine that exits or faults keeps its tile, with its last picture (a
   fault shown on its bottom row), until X stops it; the keyboard then goes back to the
   shell.
+- **Open requests** (SPEC 4 `open`): a machine may ask the shell to open a program
+  (by its identity) or a blob (by its ID); the reader does this when you follow a
+  link to a program, an image or a document. The shell takes them one at a time, only
+  from the machine that has the keyboard, at most one a second from each, and drops a
+  machine's requests for ten seconds after you say no. A built-in program starts at
+  once in a new tile. Any other program is fetched first (the host looks it up on its
+  relays if it holds no entry for it), then the bar asks
+  `reader asks to start Tool by Alice 3fa9c2…c21e07. Y/N` (the keyboard goes to the
+  shell until you answer): Y starts it in a new tile with the keyboard, N or Esc does
+  not. For a blob the shell reads its first bytes: an image (`TERS`) is asked about as
+  an unpublished program (its title and short ID); a document (`TDOC`, SPEC 9.7) starts
+  its format's program with the document as its argument (a published format is asked
+  about the first time in a run); anything else opens in a new reader tile. A failure
+  (not found, no free handle) is a brief message in the bar.
 
 ## The reader
 
@@ -1033,6 +1047,28 @@ Measured with `cargo test --release -p terse-cli --test sparks budget -- --nocap
 the busiest frame is frame 0 (setting up, 8,953 units, 7.2% of the budget); after
 that at most 5,400 (4.3%), a typical frame 2,077 (1.7%), about 12 µs of host time.
 ROM 6,464 bytes, 1 RAM page; devices 2, 3 and 4.
+
+## Sketch
+
+`programs/sketch` is a small drawing program for the vector display, in C, built in
+so that documents (SPEC 9.7) have a program to open them. Draw strokes with the
+pointer (press and drag); 1–6 choose the colour (white, red, yellow, green, blue,
+magenta, shown by the disc at the bottom right), U undoes the last stroke, C clears,
+F switches between the clean and the [phosphor](#phosphor-style) style.
+
+- S saves the drawing to the named record `drawing`, which is loaded at start.
+- P publishes it: the drawing is put as a document of the built-in format (zero key,
+  `sketch`) and published as an entry of kind 4 titled `Sketch N` (N counts this
+  host's publishes, in the record `published`); the host asks first, as for any
+  publish.
+- Started with an argument (a shell opening a sketch document, for example from a
+  reader link or a timeline entry), it shows that document read-only; the first
+  stroke starts editing a copy, which S saves as the `drawing`.
+
+The data is a list of strokes (colour, point count, points in screen units), at most
+8,192 bytes, so a published sketch stays under the automatic download limit; the
+exact layout is in the header comment of `sketch.c`. ROM 4,544 bytes, 4 RAM pages;
+devices 2, 3 and 4. Tests: `crates/terse-cli/tests/sketch.rs`.
 
 ## Conformance image
 

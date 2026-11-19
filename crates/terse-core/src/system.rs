@@ -47,6 +47,7 @@ impl Event {
     pub const MACHINE_PRESSED: u8 = 0x0C;
     pub const PAGE_LOCATED: u8 = 0x0D;
     pub const PAGE_LOCATED_Y: u8 = 0x0E;
+    pub const OPEN_REQUESTED: u8 = 0x0F;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -124,6 +125,11 @@ impl Event {
     /// A pointer button was pressed over machine `handle`'s picture (SPEC 12.4).
     pub fn machine_pressed(handle: u8, buttons: u8) -> Self {
         Event { kind: Self::MACHINE_PRESSED, a: handle, b: buttons & 0x07, c: 0 }
+    }
+
+    /// Machine `handle` asked the shell to open something (SPEC 12.4).
+    pub fn open_requested(handle: u8) -> Self {
+        Event { kind: Self::OPEN_REQUESTED, a: handle, b: 0, c: 0 }
     }
 
     /// A content request finished (SPEC 7.3).

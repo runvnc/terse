@@ -131,7 +131,7 @@ Esc: exit.
   Palette entries 0-15, written with cells_write:
    0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
 
-  frame 00000009
+  frame 00000008
 
 >
 

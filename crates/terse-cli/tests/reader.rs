@@ -2071,3 +2071,227 @@ fn link_to_a_large_article() {
     assert!(text.starts_with("Big\n"), "{text}");
     assert!(text.contains("Too large: this article is 50.8 KB, and this reader shows articles\nof up to 48 KB."), "{text}");
 }
+
+impl Fixture {
+    /// Publishes a document (entry kind 4) into the store.
+    fn publish_document(&mut self, who: &Identity, title: &str, data: &[u8]) {
+        self.author.set_identity(who.clone());
+        self.time += 600;
+        self.author.start_publish_document(0, data, title, self.time);
+        loop {
+            if let Some((_, done)) = self.author.poll().into_iter().find(|(t, _)| *t == 0) {
+                assert!(matches!(done, terse_net::Done::Published { .. }), "{done:?}");
+                return;
+            }
+        }
+    }
+
+    /// Puts a blob into the store (no entry).
+    fn put(&mut self, data: &[u8]) -> [u8; 32] {
+        assert!(!matches!(self.author.publish(data), terse_net::Done::Failed));
+        blob_id(data)
+    }
+}
+
+/// A document blob of format `format` (a built-in program's: owner key 0).
+fn document(format: &str, data: &[u8]) -> Vec<u8> {
+    let mut d = b"TDOC\0".to_vec();
+    d.extend_from_slice(&[0; 32]);
+    d.push(format.len() as u8);
+    d.extend_from_slice(format.as_bytes());
+    d.extend_from_slice(data);
+    d
+}
+
+/// The open request the machine made: its kind and the rest.
+fn open_request(run: &Run) -> Option<(u8, Vec<u8>)> {
+    run.machine.open_request().map(|(b, _)| (b[0], b[1..].to_vec()))
+}
+
+/// Started with an argument (a blob ID from the shell): the reader shows
+/// that article at once, titled by its timeline entry; Esc goes to the
+/// timeline. An ID the timeline does not have is titled by its short form.
+#[test]
+fn argument_opens_an_article() {
+    let mut f = Fixture::populated();
+    let elsewhere = f.put(b"An article without an entry.\n");
+    let mut run = Run::new(&f, "");
+    run.machine.set_argument(Some(blob_id(TEA.as_bytes())));
+    run.frames(6);
+    let text = run.page_text();
+    assert!(text.starts_with(&format!("{TEA_TITLE}\n{}  ·  #", short(&bob().feed_key()))), "the entry's title: {text}");
+    assert!(text.contains("Tea is drunk almost everywhere"), "{text}");
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
+
+    let mut run = Run::new(&f, "");
+    run.machine.set_argument(Some(elsewhere));
+    run.frames(6);
+    let text = run.page_text();
+    assert!(text.starts_with(&format!("{}\nterse:{}  ·  not in your timeline", short_id(&elsewhere), short_id(&elsewhere))), "{text}");
+    assert!(text.contains("An article without an entry."), "{text}");
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    eprintln!("reader: an argument, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+
+    // A document as the argument: passed back to the shell; the timeline.
+    let doc = f.put(&document("sketch", b"lines"));
+    let mut run = Run::new(&f, "");
+    run.machine.set_argument(Some(doc));
+    run.frames(6);
+    assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
+    assert_eq!(run.status(), " This needs the shell");
+}
+
+/// A program's key and a name with a space and a non-ASCII character,
+/// percent-encoded.
+fn program_links(f: &mut Fixture) -> String {
+    let key = to_hex(&alice().feed_key());
+    let text = format!(
+        "Programs.\n\nA bare one: terse:program/{key}/Sketch%20pad%20%C3%a9 and with text: \
+         [the pad](terse:program/{key}/Sketch%20pad%20%c3%A9). Then one at a sentence's end: terse:program/{key}/Pad.\n"
+    );
+    f.publish(&alice(), "Programs", text.as_bytes(), None);
+    key
+}
+
+/// A program link: shown with its name decoded, the status row names the
+/// program and its feed, Enter asks the shell (OPEN_PROGRAM) and the
+/// article stays; without a shell the status row says so.
+#[test]
+fn program_links_ask_the_shell() {
+    let mut f = named();
+    let key = program_links(&mut f);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.machine.set_in_system(true);
+    run.frames(16);
+    let text = run.page_text().replace('\n', " ");
+    let shown = format!("terse:program/{}…{}/Sketch pad é", &key[..6], &key[58..]);
+    assert!(text.contains(&format!("A bare one: [{shown}]{{1}} and with text: [the pad]{{2}}.")), "{text}");
+    assert!(text.contains(&format!("[terse:program/{}…{}/Pad]{{3}}.", &key[..6], &key[58..])), "the trailing dot is not the link's: {text}");
+    run.press("tab");
+    assert_eq!(run.status(), format!(" Link 1: program “Sketch pad é” by Alice ({})   Enter: open", short(&alice().feed_key())));
+    run.press("enter");
+    let mut want = alice().feed_key().to_vec();
+    want.push("Sketch pad é".len() as u8);
+    want.extend_from_slice("Sketch pad é".as_bytes());
+    want.resize(81, 0);
+    assert_eq!(open_request(&run), Some((2, want)));
+    assert_eq!(run.status(), " Opened in a new tile");
+    assert!(run.page_text().starts_with("Programs\n"), "the article stays: {}", run.page_text());
+    assert!(!run.gets.iter().any(|g| g.2 == 1), "program links are not prefetched: {:?}", run.gets);
+    // The link with text: the same request; the third: "Pad".
+    run.machine.clear_open_request();
+    run.press("tab");
+    run.press("tab");
+    run.press("enter");
+    let (kind, rest) = open_request(&run).unwrap();
+    assert_eq!((kind, &rest[..32], rest[32], &rest[33..36]), (2, &alice().feed_key()[..], 3, &b"Pad"[..]));
+    // Standalone (no shell).
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.frames(16);
+    run.press("tab");
+    run.press("enter");
+    assert_eq!(run.status(), " This needs the shell");
+    assert!(open_request(&run).is_none());
+    assert!(run.page_text().starts_with("Programs\n"));
+}
+
+/// Program links that are not: the key not 64 lowercase hex digits, a
+/// name that is empty, starts with a bad escape, is not UTF-8, holds a
+/// control character, starts with a space or is over 48 bytes.
+#[test]
+fn malformed_program_links() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let key = to_hex(&alice().feed_key());
+    let bad = [
+        format!("terse:program/{}/Name", key.to_uppercase()),
+        format!("terse:program/{}/Name", &key[1..]),
+        format!("terse:program/{key}Name"),
+        format!("terse:program/{key}/"),
+        format!("terse:program/{key}/%G1name"),
+        format!("terse:program/{key}/%C3"),
+        format!("terse:program/{key}/a%0Ab"),
+        format!("terse:program/{key}/%20name"),
+        format!("terse:program/{key}/name%20"),
+        format!("terse:program/{key}/{}", "x".repeat(49)),
+        format!("terse:program/{key}/{}", "%C3%A9".repeat(25)),
+    ];
+    let text = format!("Not links.\n\n{}\n", bad.iter().map(|b| format!("{b} .")).collect::<Vec<_>>().join("\n\n"));
+    let run = open_only("Not links", &text, 16);
+    let page = run.page_text().replace('\n', "");
+    assert!(!page.contains("{1}"), "no links: {page}");
+    for b in &bad {
+        assert!(page.contains(b.as_str()), "{b} as text: {page}");
+    }
+    // 48 bytes is a name.
+    let ok = format!("terse:program/{key}/{}", "%C3%A9".repeat(24));
+    let run = open_only("A link", &format!("{ok}\n"), 16);
+    assert!(run.page_text().contains(&format!("/{}]{{1}}", "é".repeat(24))), "{}", run.page_text());
+}
+
+/// A terse: link to a program image or a document: the first bytes are
+/// got, the shell asked to open the blob (OPEN_BLOB) and nothing of it is
+/// shown: the article stays.
+#[test]
+fn links_to_images_and_documents() {
+    let mut f = Fixture::new();
+    f.feeds = vec![alice().feed_key()];
+    let image = f.put(b"TERS\x01not really an image, but its magic");
+    let doc = f.put(&document("sketch", b"some lines"));
+    let text = format!("Two links.\n\nAn image: terse:{}\n\nA [document](terse:{}).\n", to_hex(&image), to_hex(&doc));
+    f.publish(&alice(), "Two links", text.as_bytes(), None);
+    let mut run = Run::new(&f, "12 press enter\n");
+    run.machine.set_in_system(true);
+    run.frames(16);
+    run.press("tab");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(open_request(&run), Some((1, [&image[..], &[0; 49][..]].concat())));
+    assert_eq!(run.status(), " Opened in a new tile");
+    assert!(run.page_text().starts_with("Two links\n"), "{}", run.page_text());
+    assert!(run.gets.iter().any(|g| g.1 == image && g.2 == 4), "the first bytes: {:?}", run.gets);
+    run.machine.clear_open_request();
+    run.press("tab");
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(open_request(&run), Some((1, [&doc[..], &[0; 49][..]].concat())));
+    assert!(run.page_text().starts_with("Two links\n"), "{}", run.page_text());
+    assert!(!run.page_text().contains("some lines"));
+    // Esc: the timeline (nothing went on the back stack).
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    eprintln!("reader: links to images and documents, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}
+
+/// A document's entry in the timeline: a mark before its title, its
+/// format name (from the blob's head) on the details line; Enter or a
+/// click asks the shell to open it.
+#[test]
+fn documents_in_the_timeline() {
+    let mut f = named();
+    let data = document("sketch", b"strokes");
+    f.publish_document(&alice(), "My drawing", &data);
+    let mut run = Run::new(&f, "");
+    run.machine.set_in_system(true);
+    run.frames(12);
+    let entries = run.entries();
+    assert_eq!(entries[0].0, "◆ My drawing", "{entries:?}");
+    let text = run.page_text();
+    assert!(text.contains(&format!("[◆ My drawing]{{1}}\n[sketch document  ·  Alice ({})  ·  ", short(&alice().feed_key()))), "{text}");
+    assert!(run.gets.iter().any(|g| g.1 == blob_id(&data) && g.2 == 86), "the head: {:?}", run.gets);
+    golden("timeline-document", &run.view());
+    run.press("enter");
+    assert_eq!(open_request(&run), Some((1, [&blob_id(&data)[..], &[0; 49][..]].concat())));
+    assert_eq!(run.status(), " Opened in a new tile");
+    assert!(run.page_text().starts_with("Timeline\n"));
+    run.machine.clear_open_request();
+    run.click_anchor(1);
+    assert!(open_request(&run).is_some_and(|r| r.0 == 1), "a click too");
+    let (worst, waited) = run.busiest();
+    assert!(waited);
+    eprintln!("reader: documents in the timeline, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}

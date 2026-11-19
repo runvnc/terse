@@ -123,7 +123,7 @@ Each request record is 53 bytes:
 | 0 | 1 | `op` of the pending request (`01h`–`11h`), or `00h` if the handle is free (then every other field is zero) |
 | 1 | 4 | Address of its request block (u32) |
 | 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit; save, load, delete: the record's name as read at submit (`id`, zero padded). Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
-| 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find); set profile: the listed bit, 0 or 1; else zero |
+| 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find; publish: the kind, 0, 1 or 4); set profile: the listed bit, 0 or 1; else zero |
 | 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, publish, set profile, set nickname), else zero |
 | 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find), else zero |
 | 49 | 4 | `size` read at submit (put, save; find: the query's length), else zero |
@@ -150,7 +150,7 @@ which are in the queue and RAM like any other input.
 
 Let `M` be the offset after this section.
 
-### 1.10 Machines (0, 1 or 1,107 + 32b bytes)
+### 1.10 Machines (0, 1 or 1,108 + 32b + 83r bytes)
 
 This section is there only if the image lists device 8; for any other image
 the serialization ends at `M`, so the hashes of images without device 8 are
@@ -163,6 +163,8 @@ as they were before device 8 existed.
 | M + 2 | 8 × 138 | Handle 1, then 2, …, 8 |
 | M + 1,106 | 1 | b: the number of built-in programs, 0–255 |
 | M + 1,107 | 32 × b | Their image IDs, in `builtin` order |
+| M + 1,107 + 32b | 1 | r: the number of open requests the shell has been told of and has not read (SPEC 12.2 `request`), 0–8 |
+| M + 1,108 + 32b | 83 × r | Each: the handle (1), then the 82 bytes `request` would write; in increasing handle order |
 
 Each handle's record is 138 bytes:
 
@@ -182,10 +184,20 @@ its state: each has a state of its own, serialized as for any machine (it
 never has device 8, so its section 1.10 is `00h` if its image lists device 8,
 and absent otherwise).
 
+### 1.11 Argument (0 or 32 bytes)
+
+| Offset | Size | Field |
+|---|---|---|
+| A | 32 | The machine's argument (SPEC 4 `argument`); there only if the shell gave it one |
+
+`A` is the offset after section 1.10. A machine with no argument (every
+machine run on its own, and every shell) has nothing here, so its hash is
+as it was before arguments existed.
+
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector), 1 or 425 (content), 1 or 21 + d (page) and 0, 1 or 1,107 + 32b
-(machines).
+(vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,108 + 32b +
+83r (machines) and 0 or 32 (argument).
 
 ## 2. What is left out, and why
 
@@ -205,6 +217,10 @@ That is the end of the serialization. Its length is
   identity is in the shell's handle record (1.10), not in its own state. Whether a
   request waits for the user's consent (SPEC 9.5) is host state; to the
   machine it is pending.
+- **Whether a machine's open request waits** (SPEC 4 `open`): it stops
+  waiting when the shell reads it, which the machine cannot see; what
+  `open` returns is an input to the machine (SPEC 12.6). The shell's side,
+  the requests it has been told of and not read, is in 1.10.
 - **Host bookkeeping**: counters that tell a host the display list changed,
   per-frame statistics (units used, events dropped), the decoded form of ROM,
   caches.

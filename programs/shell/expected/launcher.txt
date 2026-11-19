@@ -34,5 +34,6 @@ PROGRAMS
 [sparks]{101}
 [fetch]{102}
 [hello]{103}
+[sketch]{104}
 Up, Down choose · Enter start · the home key comes back
 here

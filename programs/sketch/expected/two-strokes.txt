@@ -1,0 +1,37 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Saved                      1-6 colour U undo C clear S save P publish F glow
+-- vectors: 66 list bytes --
+line 1600 1600 1600 1600 w 32 c f0f0f0ff
+line 1600 1600 1760 1600 w 32 c f0f0f0ff
+line 1760 1600 1920 1680 w 32 c f0f0f0ff
+line 3200 3200 3200 3200 w 32 c ff463cff
+disc 10048 7552 r 80 c ff463cff
+circle 10048 7552 r 104 w 16 c a0a0a0ff

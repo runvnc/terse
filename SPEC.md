@@ -12,7 +12,8 @@ in one machine. Programs are identified by the hash of their image and have
 no dependencies; a program published in a feed also has an identity, its
 publisher and name, that stays the same from one version to the next
 (section 12.1). A host may run several machines as one system, in which one
-machine, the shell, starts the others and lays out their screens (section 12).
+machine, the shell, starts the others and lays out their screens, and
+which a machine may ask to open a program or a blob (section 12).
 
 Design rules that every part of this spec follows:
 
@@ -245,6 +246,8 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `104h` | `random` | `a0` = buffer (written), `a1` = length, at most 256 | the length |
 | `105h` | `controller` | `a0` = controller number, `a1` = buffer (8 bytes, written) | byte 0 of the state |
 | `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return |
+| `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
+| `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length | bytes consumed |
 | `201h` | `command` | `a0` = command | 0 |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 |
@@ -276,6 +279,8 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
 | `807h` | `start_program` | `a0` = address of a program record (read) | a handle 1–8, or 0 if none is free |
 | `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
+| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
+| `80Ah` | `argument` | `a0` = handle, `a1` = address of a blob ID (32 bytes, read) | 1, or 0 if the handle is not loading |
 
 Sections 4 to 12 define each call.
 
@@ -304,6 +309,31 @@ Sections 4 to 12 define each call.
   (section 6) and returns byte 0. A controller number above 3 reads as a
   controller that is not connected.
 - **`exit`** stops the machine with exit code `a0 & FFh` (section 1.5).
+- **`open`** asks the shell to open something. `a0` is the address of an
+  **open request**, which must lie wholly in ROM or wholly in RAM:
+
+  | Offset | Size | Field |
+  |---|---|---|
+  | 0 | 1 | Kind: `1` a blob, `2` a program |
+  | 1 | 32 | Kind 1: the blob ID. Kind 2: the publisher's feed key (all zero for a built-in program) |
+  | 33 | 1 | Kind 2: the name's length n, 1 to 48 |
+  | 34 | n | Kind 2: the name, a valid display name (section 9.5) |
+
+  A request of another kind, or one that does not lie wholly in ROM or
+  RAM, or whose name is not valid, is a bad buffer (`FFFF_FFFEh`). If the
+  machine is not one a shell started (it runs on its own, or it is the
+  shell itself), or a request of this machine still waits (the shell has
+  not read it with `request`, section 12.2), the call returns 0 and does
+  nothing else. Otherwise the request waits for the shell, which is told
+  of it at the start of the next system frame (section 12.5), and the call
+  returns 1. What the shell does with it is the shell's business; the
+  machine is not told.
+- **`argument`** writes the machine's **argument**, the blob ID the shell
+  gave it when it started it (section 12.2), to the buffer, 32 bytes wholly
+  in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
+  shell gave none, it runs on its own, or it is the shell) gets 0 and
+  nothing is written. The argument never changes and is part of the
+  machine's state (`STATE.md` 1.11).
 
 Events, the latched time, the random bytes and controller state are the
 machine's only inputs from this device. A host that records them per frame
@@ -330,6 +360,7 @@ full is dropped.
 | `0Ch` | Machine pressed | handle | buttons | 0 |
 | `0Dh` | Page located | anchor id bits 0–7 | bits 8–15 | line height |
 | `0Eh` | Page located y | y bits 0–7 | bits 8–15 | bits 16–23 |
+| `0Fh` | Open requested | handle | 0 | 0 |
 
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
@@ -359,8 +390,8 @@ full is dropped.
   up, is announced by a feeds-updated event of its own when it ends.
 - **Page laid out**, **page anchor**, **page located** and **page located
   y** come from the page device (section 11.5).
-- **Machine changed**, **home** and **machine pressed** are sent only to the
-  shell of a system (section 12.4).
+- **Machine changed**, **home**, **machine pressed** and **open
+  requested** are sent only to the shell of a system (section 12.4).
 
 ## 6. Controllers
 
@@ -533,7 +564,7 @@ any alignment.
 | 1 | 1 | `status` (section 9.3) | device |
 | 2 | 2 | Reserved; ignored | — |
 | 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key; save, load and delete: the record's name (section 9.6). Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
-| 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored | program |
+| 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored; publish: the entry's kind, 0 or 1 (article) or 4 (document) | program |
 | 40 | 4 | `length`: get, load, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; read at submit. | both |
 | 44 | 4 | `addr`: address of the data. Get, load, records and find: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. | program |
 | 48 | 4 | `size`: get: blob size, written on completion; load: the record's size, written on completion. Put: 1 to 1,048,576, read at submit; save: 0 to 65,536, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
@@ -544,8 +575,8 @@ any alignment.
 
 1. If the 52 bytes at `a0` do not lie wholly in RAM, the submit is rejected
    (it returns 0) and nothing is written.
-2. If the request is invalid (unknown `op`, a length, size or scope out of
-   range, a data range not wholly where section 9.1 requires, a publish
+2. If the request is invalid (unknown `op`, a length, size, scope or
+   publish kind out of range, a data range not wholly where section 9.1 requires, a publish
    title or find query that is not valid UTF-8, a name that is not a valid
    display name, section 9.5, a record name that is not valid, section 9.6),
    the device writes status `04h` to the block and rejects the submit.
@@ -640,16 +671,18 @@ increasing order of feed key:
 | 0 | 32 | Feed key |
 | 32 | 4 | Highest `seq` held for that feed, or 0 |
 
-**Timeline** delivers the article entries (kind 1) of all subscribed feeds,
-newest first by the order in which the host received them; profile and
-program entries (kinds 2 and 3) are not included. Index 0 is the most recently received entry
+**Timeline** delivers the article and document entries (kinds 1 and 4,
+section 9.7) of all subscribed feeds, newest first by the order in which
+the host received them; profile and program entries (kinds 2 and 3) are
+not included; a program tells articles and documents apart by the kind
+byte of the entry (byte 40). Index 0 is the most recently received entry
 (`NETWORK.md` section 4.4 defines the order). Entries of a feed the host
 has unsubscribed from are not included. Each record is:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | `L`: number of bytes that follow in this record |
-| 1 | 1 | Flags. Bit 0: the article blob is in the host's store, so a get will complete without the network. Other bits are zero. |
+| 1 | 1 | Flags. Bit 0: the entry's blob is in the host's store, so a get will complete without the network. Other bits are zero. |
 | 2 | `L − 1` | The entry without its signature (`NETWORK.md` section 4.2, bytes 0 to 108 + `n`) |
 
 The host has already verified every entry it delivers. When new entries
@@ -673,11 +706,16 @@ already subscribed, unsubscribing from one that is not); and with `05h`
 without asking if `id` is not a valid feed key (`NETWORK.md` section 4.1).
 
 **Publish** (`07h`) publishes the blob whose hash is `id` as the next entry
-of the host's own feed (`NETWORK.md` section 4.4): kind article, the size of
-the blob, no reply-to, the title copied at submit and the time from the
-host's clock. The blob must already be in the host's store (a program puts
-it first with op `02h`); if it is not, the request completes with status
-`02h`, without asking. The host signs the entry with its own key, creating
+of the host's own feed (`NETWORK.md` section 4.4): the kind given in
+`offset` (0 or 1: an article, 4: a document; any other value makes the
+request invalid), the size of the blob, no reply-to, the title copied at
+submit and the time from the host's clock. The blob must already be in
+the host's store (a program puts it first with op `02h`); if it is not,
+the request completes with status `02h`, without asking. A document's
+blob must start with a valid document header (section 9.7); if it does
+not, the request completes with status `04h`, without asking (the host
+checks this at completion, since the blob is not the program's to read at
+submit). The host signs the entry with its own key, creating
 its identity first if it has none. On success `size` is the new entry's
 `seq`.
 
@@ -710,14 +748,14 @@ unique: a program that shows a name should show the short key beside it.
 
 **Find** (`0Ah`) searches the relays (`NETWORK.md` section 4.7). `id` is not
 used. `offset` is the scope: 1 searches feeds by their profiles, 2 searches
-articles by their titles, 3 searches programs by their names (current
-versions only); any other value is invalid. The query is the
+articles and documents by their titles, 3 searches programs by their
+names (current versions only); any other value is invalid. The query is the
 `size` bytes at `addr`, 1 to 48 bytes of valid UTF-8, which must lie in RAM
 and are copied at submit. `length` is the size of the buffer at `addr` for
 the results (1 to 16,384, in RAM), so the results overwrite the query. On
 completion the buffer holds the results as timeline records (only flag bit
-0 may be set): profile entries (kind 2) for scope 1, article entries (kind
-1) for scope 2, program entries (kind 3) for scope 3. As many whole results as fit are delivered, in order;
+0 may be set): profile entries (kind 2) for scope 1, article and document
+entries (kinds 1 and 4) for scope 2, program entries (kind 3) for scope 3. As many whole results as fit are delivered, in order;
 `length` is the number of bytes delivered and `size` the number of results
 the host has, at most 16. The host asks all its relays, verifies every
 entry they return and discards invalid ones and duplicates, and orders and
@@ -754,7 +792,8 @@ over the bottom of the screen, on top of everything the program shows; the
 program cannot draw it, read it or answer it. The prompt names the image's
 title (in a system, that of the machine whose request it is) and what is
 asked: the feed key (for example as its first and last
-six hex digits, `3fa9c2…c21e07`); the article's title and size; the display
+six hex digits, `3fa9c2…c21e07`); whether an article or a document is
+published, its title and size; the display
 name and whether it will be searchable; or the feed key and the nickname.
 While a prompt is shown the keyboard's input goes to the host, not to the
 program; Y allows, N or Escape refuses, and other keys (Enter included) do
@@ -805,6 +844,28 @@ an I/O error) completes the request with `03h`. No consent is asked.
 Records are inputs like any completion (section 9.4): what a load delivers
 and the status of a save are recorded, so a run replays without the
 records directory.
+
+### 9.7 Documents
+
+A **document** is a blob that says which program reads it. It starts with
+a header:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic: `54h 44h 4Fh 43h` (`TDOC`) |
+| 4 | 1 | Version: `0` |
+| 5 | 32 | The format owner's feed key; all zero for a built-in program's format |
+| 37 | 1 | n: the format name's length, 1 to 48 |
+| 38 | n | The format name, a valid display name (section 9.5) |
+| 38 + n | — | The data, in the format's own layout (possibly empty) |
+
+A header is valid if all of it is there and every field is as the table
+says. The format (owner key, name) is the identity of the program that
+defines it (section 12.1): a shell opens a document by starting that
+program with the document as its argument (section 12.2). A blob that
+starts with `TERS` is an image (section 2); a blob with neither is an
+article (`NETWORK.md` 4.5). A document is published as an entry of kind
+4 (publish, section 9.5; `NETWORK.md` 4.2).
 
 ---
 
@@ -1362,6 +1423,22 @@ starts as its own built-in shell has the identity of a built-in. Section
   built-in programs are images the host has in its store, in an order it
   chooses, the same for the whole run. A shell learns a program's title by
   getting the first 32 bytes of its image with the content device.
+- **`request`** reads the open request (section 4, `open`) machine `a0`
+  made: if one waits and the shell has been told of it (an open requested
+  event, section 12.4), it writes 82 bytes to the buffer, which must lie
+  wholly in RAM (else `FFFF_FFFEh`): the kind (1), then for kind 1 the
+  blob ID (32) and zeros, for kind 2 the program record as `identity`
+  writes it (feed key, name length, name padded with `00h` to 48 bytes).
+  The request no longer waits (the machine may make another) and the call
+  returns 1. Otherwise, and for `a0` outside 1–8, it writes nothing and
+  returns 0. A `stop` of the handle, and a `start` that reuses it, drop
+  its request. What the shell does next is its own policy.
+- **`argument`** reads a blob ID, 32 bytes wholly in ROM or wholly in RAM
+  at `a1` (else `FFFF_FFFEh`). If handle `a0` is loading (so the machine
+  has not run its first frame), the ID becomes the machine's argument
+  (section 4, `argument`), replacing one given before, and the call
+  returns 1; otherwise it returns 0 and changes nothing. The argument is
+  given to the machine when it becomes running or paused (section 12.5).
 
 ### 12.3 Screens
 
@@ -1420,6 +1497,10 @@ for the shell.
 | `0Ah` | Machine changed | handle | the new state | 0 |
 | `0Bh` | Home | 0 | 0 | 0 |
 | `0Ch` | Machine pressed | handle | buttons | 0 |
+| `0Fh` | Open requested | handle | 0 | 0 |
+
+Open requested says that machine `a` made an open request the shell can
+read with `request`; there is one such event per request.
 
 Machine changed is sent for every change of state the shell did not make
 with a call: loading to running, paused or failed; running to exited or
@@ -1436,13 +1517,21 @@ For each system frame the host does the following, in order:
    machine stopped in an earlier frame becomes exited or faulted, with its
    exit code or fault kind and `pc`. Each of these changes queues a machine
    changed event for the shell, ahead of the frame's input. Each record then
-   takes the machine's units and frame counter (section 12.2).
+   takes the machine's units and frame counter (section 12.2). Then, in
+   increasing handle order, each machine that made an open request in its
+   last frame (section 4) has it waiting for `request`, and an open
+   requested event is queued for the shell, after the machine changed
+   events and ahead of the frame's input. A machine that becomes running
+   or paused here is reset with the argument its handle was given, if
+   any.
 2. **Route** the frame's input (section 12.4).
 3. **The shell** runs its frame (section 1.4).
 4. **Starts and stops** the shell made in its frame are carried out in the
-   order it made them. A machine started in this frame is loading: its first
-   frame is at the earliest in the next system frame, the one in whose step
-   1 it becomes running.
+   order it made them, with the arguments it gave. A machine started in
+   this frame is loading: its first frame is at the earliest in the next
+   system frame, the one in whose step 1 it becomes running. A request
+   the shell read with `request` in its frame no longer waits, so the
+   machine's next `open` (in step 5) can make another.
 5. **The machines** that are running now, in increasing handle order, each
    run one frame (section 1.4) with a full budget and their own carry. So a
    `run`, `stop` or `place` made by the shell takes effect in the same
@@ -1455,11 +1544,13 @@ system stops: no machine runs any more frames.
 ### 12.6 Determinism
 
 Each machine is deterministic given its own inputs (sections 4 and 9.4). For
-the shell they include the machine changed, home and machine pressed events
-and what device 8 returns that the shell did not set itself: the latched
-records (states, exit codes, faults, failure reasons, the image IDs of
-programs started by identity, units, frame counters) and the built-in
-programs. The identities the shell gave are its own state. Device 8's state is part of the shell's state (`STATE.md`
+the shell they include the machine changed, home, machine pressed and open
+requested events and what device 8 returns that the shell did not set
+itself: the latched records (states, exit codes, faults, failure reasons,
+the image IDs of programs started by identity, units, frame counters), the
+open requests `request` delivers and the built-in programs. For a machine
+the shell started, what `open` returns (whether a request of it still
+waits for the shell) is an input like a completion. The identities the shell gave are its own state. Device 8's state is part of the shell's state (`STATE.md`
 1.10); a started machine's state is its own and holds nothing of the
 system.
 
@@ -1476,7 +1567,7 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written) and `identity` (81, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written) and `argument` (32, when the ID is read); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -1528,8 +1619,9 @@ These numbers are placeholders until weak hosts have been measured:
   request.
 - For the requests that need consent (section 9.5): telling the program
   that one waits for the user, remembering a user's answer for later
-  requests, and publishing replies or kinds of entry other than articles
-  and profiles.
+  requests, and publishing replies or kinds of entry other than articles,
+  documents and profiles (programs are published by the host, not by
+  programs).
 - Devices 5, 6 and 10.
 - On the page: bitmap images, arcs and gradients in figures, links the host
   follows itself, selecting and copying
@@ -1538,10 +1630,12 @@ These numbers are placeholders until weak hosts have been measured:
   does not apply to them, so a legal list of about 3,000 maximum-width lines
   across the whole screen still costs a host far more fill than four
   screens.
-- In a system (section 12): communication between machines; a machine
-  asking the shell to start another; budgets other than one full budget per
-  machine per frame; giving a machine less than the whole screen; sound for
-  several machines; what a host shows for a machine with no picture.
+- In a system (section 12): communication between machines (an open
+  request carries one blob ID or program identity, and its machine is not
+  told what became of it); arguments other than one blob ID; budgets
+  other than one full budget per machine per frame; giving a machine less
+  than the whole screen; sound for several machines; what a host shows for
+  a machine with no picture.
 - Snapshots.
 - Named records (section 9.6): moving records from one owner to another
   (for example when a program run from a file is later published), keeping

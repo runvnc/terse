@@ -24,7 +24,27 @@
  * goes back to the layout before), L cycles the layouts, 1-8 select a
  * machine by handle. A press on a machine's picture or its bar segment
  * focuses it; one on the home segment enters command mode. The layout
- * chosen with L and Z is kept in the named record "layout" (SPEC 9.6). */
+ * chosen with L and Z is kept in the named record "layout" (SPEC 9.6).
+ *
+ * Open requests (SPEC 4 `open`, 12.2 `request`): a machine may ask the
+ * shell to open a program or a blob. The shell takes one request at a
+ * time (the others wait, so their machines' `open` returns 0) and only
+ * from the machine that has the focus, at most one a second from each;
+ * after a refusal that machine's requests are dropped for ten seconds.
+ * A program identity: a built-in (zero key) starts at once; another is
+ * started paused and kept out of the layout until it has loaded (the host
+ * looks it up on its relays if need be), then the bar asks "<title> asks
+ * to start <name> by <publisher> <short key>.", "Y/N" at its right end
+ * (a long question is cut before it; the keyboard goes to
+ * the shell meanwhile); Y runs it in a new tile with the focus, N or Esc
+ * stops it. A blob: the shell gets its first 86 bytes. An image ("TERS")
+ * is asked about as an unpublished program (its title and short ID) and
+ * started by its ID; a document ("TDOC") starts its format's program
+ * with the blob as its argument (a built-in at once; another program the
+ * first time its identity is asked for in this run, asked about as above,
+ * then without asking); anything else starts the built-in reader with the
+ * blob as its argument. Failures (not found, no free handle) are a brief
+ * message in the bar. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -118,7 +138,33 @@ static uint32_t bar[TERM_COLS];
 static uint8_t vlist[512];
 static uint8_t doc[4096];
 
+/* --- Open requests ------------------------------------------------------ */
+
+enum { OJ_IDLE, OJ_GET, OJ_LOAD, OJ_ASK };
+#define REQ_GAP 60      /* frames between two requests of one machine */
+#define REFUSED_GAP 600 /* frames a machine's requests are dropped after a no */
+#define HDR_LEN (TDOC_HEAD + 48)
+#define MAX_FORMATS 8
+#define KEY_N 0x11
+#define KEY_Y 0x1C
+static uint8_t open_wait;              /* bit h - 1: a request of machine h waits */
+static uint32_t open_next[MACH_MAX + 1]; /* the frame from which h's requests are taken */
+static uint8_t oj, oj_from, oj_h;      /* the request in hand, its machine, the one started */
+static uint8_t oj_req[82], oj_hdr[HDR_LEN];
+static uint8_t oj_doc;                 /* it opens a document of a published format */
+static content_req oj_creq;
+static uint8_t oj_chandle;
+static uint8_t question[200];
+static uint8_t q_n;
+/* A brief message in the bar, until frame msg_until. */
+static uint8_t bmsg[80], bmsg_n;
+static uint32_t msg_until;
+/* The published formats the user allowed in this run: key, name. */
+static uint8_t fmt_key[MAX_FORMATS][32], fmt_name[MAX_FORMATS][48], fmt_len[MAX_FORMATS], fmt_n;
+
 static uint8_t in_use(uint8_t h) { return info[h].state != MACH_NONE; }
+/* A machine waiting for the user's answer is in use but not shown. */
+static uint8_t shown(uint8_t h) { return in_use(h) && !(h == oj_h && (oj == OJ_LOAD || oj == OJ_ASK)); }
 static uint8_t live(uint8_t h)
 {
     uint8_t s = info[h].state;
@@ -129,7 +175,7 @@ static uint8_t machine_count(void)
 {
     uint8_t n = 0;
     for (uint8_t h = 1; h <= MACH_MAX; h++)
-        n += in_use(h);
+        n += shown(h);
     return n;
 }
 
@@ -137,7 +183,7 @@ static uint8_t machine_count(void)
 static uint8_t nth_machine(uint8_t n)
 {
     for (uint8_t h = 1; h <= MACH_MAX; h++)
-        if (in_use(h) && n-- == 0)
+        if (shown(h) && n-- == 0)
             return h;
     return 0;
 }
@@ -244,7 +290,7 @@ static void place_all(void)
     uint8_t i = 0;
     for (uint8_t h = 1; h <= MACH_MAX; h++) {
         rect r = { 0, 0, 0, 0 };
-        if (in_use(h)) {
+        if (shown(h)) {
             if (layout == ZOOM) {
                 if (h == z)
                     r = make(ax, ay, ax + aw, ay + ah);
@@ -331,8 +377,26 @@ static void draw_bar(void)
     uint8_t width = n ? (TERM_COLS - 4 - 7) / n : 0;
     if (width > 20)
         width = 20;
-    for (uint8_t h = 1; h <= MACH_MAX; h++) {
-        if (!in_use(h))
+    if (oj == OJ_ASK || bmsg_n) {
+        /* The question or a message instead of the machines. */
+        uint8_t fg = oj == OJ_ASK ? SEL_FG : FOCUS_FG, bg = oj == OJ_ASK ? SEL_BG : FOCUS_BG;
+        uint8_t w = TERM_COLS - 4 - 7;
+        if (oj == OJ_ASK)
+            w = TERM_COLS - 4; /* over the clock too */
+        for (uint8_t i = 0; i < w; i++)
+            bar[col + i] = cell(' ', fg, bg);
+        if (oj == OJ_ASK) {
+            /* "Y/N" always shows, at the right; a long question is cut. */
+            if (bar_text(col + 1, w - 6, question, q_n, fg, bg) == w - 6)
+                bar[col + w - 6] = cell(0x2026, fg, bg);
+            bar_text(col + w - 4, 3, (const uint8_t *)"Y/N", 3, fg, bg);
+        } else {
+            bar_text(col + 1, w - 2, bmsg, bmsg_n, fg, bg);
+        }
+        n = 0;
+    }
+    for (uint8_t h = 1; h <= MACH_MAX && n; h++) {
+        if (!shown(h))
             continue;
         uint8_t fg = BAR_FG, bg = 238;
         if (h == focus)
@@ -362,6 +426,10 @@ static void draw_bar(void)
     /* The clock, UTC. */
     uint32_t t = terse_time(), m = t / 60 % 60, hr = t / 3600 % 24;
     uint8_t c = TERM_COLS - 6;
+    if (oj == OJ_ASK) {
+        term_cells_write(0, bar, TERM_COLS);
+        return;
+    }
     bar[c] = cell(' ', BAR_FG, BAR_BG);
     bar[c + 1] = cell('0' + hr / 10, BAR_FG, BAR_BG);
     bar[c + 2] = cell('0' + hr % 10, BAR_FG, BAR_BG);
@@ -713,6 +781,249 @@ static void start_feed_program(uint8_t i)
     start_named(fprog[i].key, fprog[i].name, fprog[i].len);
 }
 
+
+/* --- Open requests (the policy is in the header comment) ---------------- */
+
+static void q_add(const uint8_t *p, uint32_t n)
+{
+    while (n-- && q_n < sizeof question)
+        question[q_n++] = *p++;
+}
+
+static void q_str(const char *s)
+{
+    while (*s && q_n < sizeof question)
+        question[q_n++] = (uint8_t)*s++;
+}
+
+/* The first and last six hex digits of 32 bytes, an ellipsis between. */
+static void q_short(const uint8_t *key)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (uint8_t i = 0; i < 3; i++) {
+        uint8_t h[2] = { (uint8_t)hex[key[i] >> 4], (uint8_t)hex[key[i] & 15] };
+        q_add(h, 2);
+    }
+    q_str("\xE2\x80\xA6");
+    for (uint8_t i = 29; i < 32; i++) {
+        uint8_t h[2] = { (uint8_t)hex[key[i] >> 4], (uint8_t)hex[key[i] & 15] };
+        q_add(h, 2);
+    }
+}
+
+/* A message in the bar for three seconds. */
+static void bar_msg(const char *a, const uint8_t *b, uint32_t bn)
+{
+    bmsg_n = 0;
+    while (*a && bmsg_n < sizeof bmsg)
+        bmsg[bmsg_n++] = (uint8_t)*a++;
+    while (bn-- && *b && bmsg_n < sizeof bmsg)
+        bmsg[bmsg_n++] = *b++;
+    msg_until = terse_frame() + 180;
+    bar_dirty = 1;
+}
+
+/* Starts `name` of feed `key` by its identity, with the blob `arg` (if
+ * any) as its argument; paused (and out of the layout) unless `run`.
+ * Returns the handle, 0 (with a message) if none is free. */
+static uint8_t open_start(const uint8_t *key, const uint8_t *name, uint8_t len, const uint8_t *arg, uint8_t run)
+{
+    uint32_t h = mach_start_named(key, name, len);
+    if (!h || h > MACH_MAX) {
+        bar_msg(h ? "Not a program name" : "No free handle: stop a machine first", 0, 0);
+        return 0;
+    }
+    if (arg)
+        mach_argument(h, arg);
+    info[h].state = MACH_LOADING;
+    memset(info[h].image, 0, 32);
+    uint8_t n = len < 16 ? len : 16;
+    memcpy(mname[h], name, n);
+    mname[h][n] = 0;
+    mtitle_state[h] = 0;
+    if (run) {
+        focus_machine(h);
+    } else {
+        mach_run(h, 0);
+        oj_h = h;
+        oj = OJ_LOAD;
+    }
+    return h;
+}
+
+/* Puts the question about the program the request names (a key and name
+ * at oj_req + 1, or an image's title) in the bar; the keyboard comes to
+ * the shell until it is answered. */
+static void ask(void)
+{
+    q_n = 0;
+    const uint8_t *t = title_of(oj_from);
+    q_add(t, title_len(t));
+    if (oj_req[0] == OPEN_BLOB && oj_hdr[0] == 'T' && oj_hdr[1] == 'E') {
+        q_str(" asks to start an unpublished program ");
+        q_add(oj_hdr + 16, title_len(oj_hdr + 16));
+        q_str(" (");
+        q_short(oj_req + 1);
+        q_str(").");
+    } else {
+        const uint8_t *key = oj_doc ? oj_hdr + 5 : oj_req + 1;
+        const uint8_t *name = oj_doc ? oj_hdr + TDOC_HEAD : oj_req + 34;
+        q_str(" asks to start ");
+        q_add(name, oj_doc ? oj_hdr[37] : oj_req[33]);
+        q_str(" by ");
+        const feed_name *n = name_of(key);
+        if (n && n->len) {
+            q_add(n->name, n->len);
+            q_str(" ");
+        }
+        q_short(key);
+        q_str(oj_doc ? " to open a document." : ".");
+    }
+    oj = OJ_ASK;
+    mach_focus(0);
+    dirty = bar_dirty = 1;
+}
+
+static void open_done(void)
+{
+    oj = OJ_IDLE;
+    oj_h = 0;
+    dirty = doc_dirty = bar_dirty = 1;
+}
+
+/* The answer to the question (or Esc, the home key, a press elsewhere). */
+static void answer(uint8_t yes)
+{
+    if (oj != OJ_ASK)
+        return;
+    if (!yes) {
+        open_next[oj_from] = terse_frame() + REFUSED_GAP;
+        if (oj_h) {
+            mach_stop(oj_h);
+            info[oj_h].state = MACH_NONE;
+        }
+        uint8_t back = oj_from;
+        open_done();
+        focus_machine(live(back) ? back : 0);
+        return;
+    }
+    if (oj_doc && fmt_n < MAX_FORMATS) {
+        memcpy(fmt_key[fmt_n], oj_hdr + 5, 32);
+        fmt_len[fmt_n] = oj_hdr[37];
+        memcpy(fmt_name[fmt_n++], oj_hdr + TDOC_HEAD, oj_hdr[37]);
+    }
+    if (oj_h) {
+        uint8_t h = oj_h;
+        mach_run(h, 1);
+        open_done();
+        focus_machine(h);
+        return;
+    }
+    /* An unpublished image: started now, by its ID. */
+    open_done();
+    uint8_t h = mach_start(oj_req + 1);
+    if (!h) {
+        bar_msg("No free handle: stop a machine first", 0, 0);
+        return;
+    }
+    info[h].state = MACH_LOADING;
+    memcpy(info[h].image, oj_req + 1, 32);
+    mname[h][0] = 0;
+    mtitle_state[h] = 0;
+    focus_machine(h);
+}
+
+/* Whether the user allowed the document format at oj_hdr in this run. */
+static uint8_t format_allowed(void)
+{
+    for (uint8_t i = 0; i < fmt_n; i++)
+        if (!memcmp(fmt_key[i], oj_hdr + 5, 32) && fmt_len[i] == oj_hdr[37]
+            && !memcmp(fmt_name[i], oj_hdr + TDOC_HEAD, fmt_len[i]))
+            return 1;
+    return 0;
+}
+
+/* The first bytes of the requested blob arrived. */
+static void blob_head(void)
+{
+    static const uint8_t zero[32];
+    const uint8_t *id = oj_req + 1;
+    oj = OJ_IDLE;
+    if (oj_creq.status != STATUS_DONE) {
+        bar_msg(oj_creq.status == STATUS_NOT_FOUND ? "Could not open: not found" : "Could not open: the fetch failed", 0, 0);
+        return;
+    }
+    uint32_t n = oj_creq.length;
+    if (n >= 32 && !memcmp(oj_hdr, "TERS", 4)) {
+        oj_h = 0;
+        oj_doc = 0;
+        ask();
+        return;
+    }
+    if (n >= TDOC_HEAD + 1 && !memcmp(oj_hdr, "TDOC", 4) && !oj_hdr[4] && oj_hdr[37] && oj_hdr[37] <= 48
+        && n >= TDOC_HEAD + oj_hdr[37]) {
+        const uint8_t *name = oj_hdr + TDOC_HEAD;
+        if (!memcmp(oj_hdr + 5, zero, 32)) {
+            open_start(zero, name, oj_hdr[37], id, 1);
+            return;
+        }
+        oj_doc = 1;
+        uint8_t ok = format_allowed();
+        if (open_start(oj_hdr + 5, name, oj_hdr[37], id, ok) && !ok)
+            return; /* asked once it has loaded */
+        oj_doc = 0;
+        return;
+    }
+    open_start(zero, (const uint8_t *)"reader", 6, id, 1);
+}
+
+/* Takes the next waiting request, if the shell is free for it. */
+static void take_request(void)
+{
+    static const uint8_t zero[32];
+    if (oj != OJ_IDLE || !open_wait)
+        return;
+    uint8_t h = 1;
+    while (!(open_wait >> (h - 1) & 1))
+        h++;
+    open_wait &= ~(1 << (h - 1));
+    if (!mach_request(h, oj_req))
+        return;
+    /* Only from the machine with the focus, at most one a second. */
+    uint32_t now = terse_frame();
+    if (h != focus || (int32_t)(now - open_next[h]) < 0)
+        return;
+    open_next[h] = now + REQ_GAP;
+    oj_from = h;
+    oj_h = 0;
+    oj_doc = 0;
+    if (oj_req[0] == OPEN_PROGRAM) {
+        uint8_t builtin = !memcmp(oj_req + 1, zero, 32);
+        open_start(oj_req + 1, oj_req + 34, oj_req[33], 0, builtin);
+        return;
+    }
+    if ((oj_chandle = content_get(&oj_creq, oj_req + 1, 0, HDR_LEN, oj_hdr)))
+        oj = OJ_GET;
+    else
+        bar_msg("Could not open: the shell is busy", 0, 0);
+}
+
+/* A machine changed state: the one started for a request has loaded (ask
+ * about it) or could not be had. */
+static void open_changed(uint8_t h, uint8_t state)
+{
+    if (oj != OJ_LOAD || h != oj_h)
+        return;
+    if (state == MACH_PAUSED) {
+        ask();
+        return;
+    }
+    mach_stop(h);
+    info[h].state = MACH_NONE;
+    open_done();
+    bar_msg("Could not start ", oj_doc ? oj_hdr + TDOC_HEAD : oj_req + 34, oj_doc ? oj_hdr[37] : oj_req[33]);
+}
+
 /* Keeps the layout for the next run. */
 static void save_layout(void)
 {
@@ -869,11 +1180,17 @@ static void handle(void)
 {
     switch (ev.type) {
     case EV_HOME:
+        answer(0);
         enter_command_mode();
+        break;
+    case EV_OPEN_REQUESTED:
+        if (ev.a >= 1 && ev.a <= MACH_MAX)
+            open_wait |= 1 << (ev.a - 1);
         break;
     case EV_MACHINE_CHANGED: {
         uint8_t h = ev.a;
         info[h].state = ev.b;
+        open_changed(h, ev.b);
         if (h == focus && !live(h)) {
             focus = 0;
             select_machine(h);
@@ -882,12 +1199,17 @@ static void handle(void)
         break;
     }
     case EV_MACHINE_PRESSED:
+        answer(0);
         if (ev.a != focus)
             focus_machine(ev.a);
         break;
     case EV_KEY_DOWN:
-        if (!focus)
+        if (oj == OJ_ASK) {
+            if (ev.a == KEY_Y || ev.a == KEY_N || ev.a == KEY_ESCAPE)
+                answer(ev.a == KEY_Y);
+        } else if (!focus) {
             command_key(ev.a, ev.b);
+        }
         break;
     case EV_POINTER:
         if (EV_POINTER_BUTTONS(ev) & BUTTON_PRIMARY)
@@ -910,17 +1232,20 @@ static void handle(void)
         progs_again = names_again = 1;
         break;
     case EV_CONTENT_DONE:
-        if (ev.a == progs_handle) {
+        if (oj == OJ_GET && ev.a == oj_chandle && oj_creq.status != STATUS_PENDING) {
+            oj_chandle = 0;
+            blob_head();
+        } else if (ev.a == progs_handle && progs_req.status != STATUS_PENDING) {
             progs_handle = 0;
             if (progs_req.status == STATUS_DONE)
                 take_programs();
             dirty = doc_dirty = 1;
-        } else if (ev.a == names_handle) {
+        } else if (ev.a == names_handle && names_req.status != STATUS_PENDING) {
             names_handle = 0;
             if (names_req.status == STATUS_DONE)
                 take_names();
             doc_dirty = 1;
-        } else if (ev.a == layout_handle) {
+        } else if (ev.a == layout_handle && layout_req.status != STATUS_PENDING) {
             layout_handle = 0;
             if (layout_req.status == STATUS_DONE && layout_req.length == 2 && layout_buf[0] < LAYOUTS
                 && layout_buf[1] < LAYOUTS && layout_buf[1] != ZOOM) {
@@ -930,7 +1255,7 @@ static void handle(void)
             }
         }
         for (uint8_t h = 1; h <= MACH_MAX; h++) {
-            if (mtitle_state[h] == 1 && mtitle_handle[h] == ev.a) {
+            if (mtitle_state[h] == 1 && mtitle_handle[h] == ev.a && mtitle_req[h].status != STATUS_PENDING) {
                 mtitle_state[h] = 2;
                 mtitle[h][0] = 0;
                 if (mtitle_req[h].status == STATUS_DONE && mtitle_req[h].length == 32) {
@@ -941,7 +1266,9 @@ static void handle(void)
             }
         }
         for (uint8_t i = 0; i < prog_n; i++) {
-            if (prog_asked[i] == ev.a && !prog_known[i]) {
+            /* A handle may have been given to a newer request in the same
+             * frame: only a request that is no longer pending is done. */
+            if (prog_asked[i] == ev.a && !prog_known[i] && prog_req[i].status != STATUS_PENDING) {
                 prog_asked[i] = 0;
                 if (prog_req[i].status == STATUS_DONE) {
                     memcpy(prog_title[i], prog_hdr[i] + 16, 16);
@@ -987,6 +1314,11 @@ int main(void)
                 prog_asked[i] = content_get(&prog_req[i], prog_id[i], 0, 32, prog_hdr[i]);
         while (terse_event_pop(&ev))
             handle();
+        take_request();
+        if (bmsg_n && (int32_t)(terse_frame() - msg_until) >= 0) {
+            bmsg_n = 0;
+            bar_dirty = 1;
+        }
         for (uint8_t h = 1; h <= MACH_MAX; h++) {
             mach_info(h, &info[h]);
             if (info[h].state != last_state[h]) {

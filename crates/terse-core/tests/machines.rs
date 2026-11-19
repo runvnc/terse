@@ -322,9 +322,9 @@ fn calls() {
     li a1, 0
     ecall
     sw a0, 96(s0)       # info into address 0: FFFFFFFE
-    li a7, 0x809
+    li a7, 0x80B
     ecall
-    sw a0, 100(s0)      # 809h: FFFFFFFF
+    sw a0, 100(s0)      # 80Bh: FFFFFFFF
 2:  li a7, 0x100
     ecall
     j 2b
@@ -372,7 +372,7 @@ fn calls() {
     // lists device 8, and differs with the grant.
     let granted = Machine::new_shell(&image, builtins).state();
     let absent = Machine::new(&image).state();
-    assert_eq!(granted.len(), absent.len() + 1 + 8 * (57 + 81) + 1 + 2 * 32);
+    assert_eq!(granted.len(), absent.len() + 1 + 8 * (57 + 81) + 1 + 2 * 32 + 1, "no request waits");
     assert_eq!(absent.last(), Some(&0));
 }
 
@@ -543,4 +543,157 @@ long:   .fill 32, 1, 0x22
     // The identity is the shell's state (STATE.md 1.10).
     let state = system.shell().state();
     assert!(state.windows(81).any(|w| w == &record[..]));
+}
+
+/// A machine that, in every frame, asks the shell to open blob ABAB…
+/// (`open`, 107h) and keeps the result at RAM + 256 + 4 × frame; in its
+/// first frame it also asks a second time (RAM + 0), with a bad kind (RAM +
+/// 4), with a bad name (RAM + 8), reads its argument (RAM + 12; the bytes
+/// at RAM + 32).
+fn opener() -> Vec<u8> {
+    assemble(
+        "
+    li s0, 0x100000
+    li s1, 0
+    li a7, 0x107
+    la a0, req
+    ecall
+    sw a0, 256(s0)
+    la a0, req
+    ecall
+    sw a0, 0(s0)
+    la a0, bad
+    ecall
+    sw a0, 4(s0)
+    la a0, badname
+    ecall
+    sw a0, 8(s0)
+    li a7, 0x108
+    addi a0, s0, 32
+    ecall
+    sw a0, 12(s0)
+1:  li a7, 0x100
+    ecall
+    addi s1, s1, 4
+    add t0, s0, s1
+    li a7, 0x107
+    la a0, req
+    ecall
+    sw a0, 256(t0)
+    j 1b
+req: .byte 1
+    .fill 32, 1, 0xAB
+bad: .byte 9
+    .fill 32, 1, 0
+badname: .byte 2
+    .fill 32, 1, 0
+    .byte 2
+    .ascii \" x\"
+",
+    )
+}
+
+/// A shell that starts the image whose ID ends its ROM as handle 1 and gives
+/// it that same ID as its argument (RAM + 0, + 4; handle 2: RAM + 8), calls
+/// `open` itself (RAM + 12), counts open-requested events (RAM + 20) and,
+/// from its frame 5 on, reads machine 1's request in every frame
+/// (`request`, 809h: the requests read at RAM + 16, the last at RAM + 128).
+fn opening_shell(child: &[u8; 32]) -> Image {
+    let mut rom = assemble(
+        "
+    li s0, 0x100000
+    la s1, child
+    li a7, 0x800
+    mv a0, s1
+    ecall
+    sw a0, 0(s0)
+    li a7, 0x80A
+    li a0, 1
+    mv a1, s1
+    ecall
+    sw a0, 4(s0)
+    li a0, 2
+    ecall
+    sw a0, 8(s0)
+    li a7, 0x107
+    la a0, req
+    ecall
+    sw a0, 12(s0)
+1:  li a7, 0x100
+    ecall
+2:  li a7, 0x101
+    addi a0, s0, 32
+    ecall
+    beqz a0, 3f
+    lbu t0, 32(s0)
+    li t1, 0x0F
+    bne t0, t1, 2b
+    lw t2, 20(s0)
+    addi t2, t2, 1
+    sw t2, 20(s0)
+    j 2b
+3:  li a7, 0x102
+    ecall
+    li t0, 5
+    bltu a0, t0, 1b
+    li a7, 0x809
+    li a0, 1
+    addi a1, s0, 128
+    ecall
+    lw t2, 16(s0)
+    add t2, t2, a0
+    sw t2, 16(s0)
+    j 1b
+req: .byte 1
+    .fill 32, 1, 0
+child: .fill 32, 1, 0
+",
+    );
+    let n = rom.len();
+    rom[n - 32..].copy_from_slice(child);
+    program(&rom, 1, &[MACHINES])
+}
+
+/// SPEC 4 `open` and `argument`, SPEC 12.2 `request` and `argument`: one
+/// request waits at a time until the shell reads it; the shell is told
+/// once per request; the shell's own `open` and a machine run alone get 0;
+/// the argument is the child's state (STATE.md 1.11).
+#[test]
+fn open_requests_and_arguments() {
+    if !common::have_tools() {
+        return;
+    }
+    let child = program(&opener(), 1, &[]);
+    let mut rec = Rec::default();
+    rec.images.insert(child.id, child.clone());
+    let mut r = Run { system: System::new(&opening_shell(&child.id), true, Vec::new()), rec };
+    r.frames(12);
+    let word = |ram: &[u8], at: usize| u32::from_le_bytes(ram[at..at + 4].try_into().unwrap());
+    let shell = r.system.shell().ram().to_vec();
+    assert_eq!((word(&shell, 0), word(&shell, 4), word(&shell, 8), word(&shell, 12)), (1, 1, 0, 0));
+    let c = r.system.child(1).unwrap().machine.as_ref().unwrap();
+    let ram = c.ram();
+    assert_eq!((word(ram, 0), word(ram, 4), word(ram, 8)), (0, 0xFFFF_FFFE, 0xFFFF_FFFE));
+    assert_eq!(word(ram, 12), 1);
+    assert_eq!(&ram[32..64], &child.id);
+    // The child's frames 0-10 (system frames 1-11): the first request
+    // waits until the shell's frame 5 reads it (the child's frame 4 runs
+    // after that); from then on each is read in the frame after it.
+    let results: Vec<u32> = (0..11).map(|f| word(ram, 256 + 4 * f)).collect();
+    assert_eq!(results, [1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1]);
+    // Requests read in shell frames 5-11; one event per request made
+    // (the one made in the last frame is announced in the next).
+    assert_eq!((word(&shell, 16), word(&shell, 20)), (7, 7));
+    assert_eq!(shell[128], 1);
+    assert_eq!(&shell[129..161], &[0xAB; 32]);
+    assert!(shell[161..210].iter().all(|&b| b == 0));
+    // The argument ends the child's state.
+    let state = c.state();
+    assert_eq!(&state[state.len() - 32..], &child.id);
+    // Alone: no shell to pass a request to, no argument.
+    let mut alone = Machine::new(&child);
+    alone.run_frame(&FrameInput::default());
+    let ram = alone.ram();
+    assert_eq!((word(ram, 256), word(ram, 12)), (0, 0));
+    assert_eq!(alone.state().len() + 32, c.state().len());
 }

@@ -28,7 +28,7 @@
 
 
  0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
--- page: height 1162, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1216, scroll 0 (stored 0), region 64 0 512 464 --
    16  30     0   sans24b |Help
    62  22     0   sans17b |Your feed key
    92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
@@ -37,13 +37,13 @@
   155  17     0   sans13 |paste it.
   188  22     0   sans17b |Timeline
   214  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
-  236  18    12   sans14b |Enter, click   open the article
-  258  18    12   sans14b |/   search
-  280  18    12   sans14b |F   feeds
-  302  18    12   sans14b |? or F1   this help
-  324  18    12   sans14b |T   publish a test article
-  346  18    12   sans14b |Esc   quit
-  380  22     0   sans17b |Article
-  406  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll
-  428  18    12   sans14b |Tab, Shift+Tab   the next or previous link, in amber, scrolled into
-  446  18    12   sans14 |view (after you scroll: the first one in view)
+  236  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell,
+  254  18    12   sans14 |which opens it in a new tile
+  276  18    12   sans14b |/   search
+  298  18    12   sans14b |F   feeds
+  320  18    12   sans14b |? or F1   this help
+  342  18    12   sans14b |T   publish a test article
+  364  18    12   sans14b |Esc   quit
+  398  22     0   sans17b |Article
+  424  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll
+  446  18    12   sans14b |Tab, Shift+Tab   the next or previous link, in amber, scrolled into

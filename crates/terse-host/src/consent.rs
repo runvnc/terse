@@ -74,11 +74,13 @@ pub fn describe(program: &str, asked: &Asked) -> (String, String) {
             format!("“{program}” asks to unsubscribe from the feed {}.", short_key(key)),
             "Its articles will no longer be shown in your timeline.".into(),
         ),
-        Asked::Publish { title, size } => {
+        Asked::Publish { title, size, document } => {
             let size = size_text(*size);
-            let room = COLS - 2 - format!("“{program}” asks to publish “” ({size}).").chars().count();
+            let what = if *document { "the document" } else { "" };
+            let room = COLS - 2 - format!("“{program}” asks to publish {what}“” ({size}).").chars().count();
+            let what = if *document { "the document " } else { "" };
             (
-                format!("“{program}” asks to publish “{}” ({size}).", fit(title, room)),
+                format!("“{program}” asks to publish {what}“{}” ({size}).", fit(title, room)),
                 "It will be signed with your key and sent to the relay for anyone to read.".into(),
             )
         }
@@ -152,7 +154,7 @@ mod tests {
         assert_eq!((size_text(812), size_text(6150), size_text(1_048_576)), ("812 bytes".into(), "6.1 KB".into(), "1.0 MB".into()));
         assert_eq!(fit("a\u{1b}b", 10), "a\u{FFFD}b");
         assert_eq!(fit("日本語の題名", 7), "日本語…");
-        let p = Prompt { tag: 0, handle: 1, asked: Asked::Publish { title: "x".repeat(120), size: 2000 } };
+        let p = Prompt { tag: 0, handle: 1, asked: Asked::Publish { title: "x".repeat(120), size: 2000, document: false } };
         let t = with_prompt(&Terminal::default(), "reader", &p, 3);
         let text = t.text();
         let rows: Vec<&str> = text.lines().collect();

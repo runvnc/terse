@@ -15,6 +15,9 @@ pub const KIND_PROFILE: u8 = 2;
 /// A program (NETWORK 4.2): the title is the program's name (a display
 /// name) and the blob a Terse image.
 pub const KIND_PROGRAM: u8 = 3;
+/// A document (NETWORK 4.2, SPEC 9.7): the title is the document's name
+/// and the blob starts with a document header.
+pub const KIND_DOCUMENT: u8 = 4;
 /// The largest Terse image (SPEC 2): a header, 16 device pairs and 128 KiB
 /// of ROM. Programs are downloaded automatically up to this size.
 pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 131_072;
@@ -114,6 +117,11 @@ impl Entry {
         Entry { kind: KIND_PROGRAM, ..Self::article(feed, seq, time, image, None, name) }
     }
 
+    /// A document entry (kind 4) for the document `data`, titled `title`.
+    pub fn document(feed: FeedKey, seq: u32, time: u32, data: &[u8], title: &str) -> Self {
+        Entry { kind: KIND_DOCUMENT, ..Self::article(feed, seq, time, data, None, title) }
+    }
+
     /// The validity rules that do not involve the signature.
     fn check(&self) -> Result<(), Invalid> {
         if self.title.len() > MAX_TITLE {
@@ -123,7 +131,7 @@ impl Entry {
             return Err(Invalid::Seq);
         }
         let max = match self.kind {
-            KIND_ARTICLE | KIND_PROGRAM => MAX_BLOB,
+            KIND_ARTICLE | KIND_PROGRAM | KIND_DOCUMENT => MAX_BLOB,
             KIND_PROFILE => crate::profile::MAX_DOCUMENT,
             _ => return Err(Invalid::Kind),
         };
@@ -282,7 +290,8 @@ mod tests {
         assert_eq!(decode(&good[..HEAD + SIG - 1]), Err(Invalid::Length));
         assert_eq!(decode(&edited(HEAD - 1, 6)), Err(Invalid::Length), "n says 6, title is 5");
         assert_eq!(decode(&edited(32, 0)), Err(Invalid::Seq));
-        assert_eq!(decode(&edited(40, 4)), Err(Invalid::Kind));
+        assert_eq!(decode(&edited(40, 5)), Err(Invalid::Kind));
+        assert!(decode(&edited(40, KIND_DOCUMENT)).is_ok(), "a document");
         assert_eq!(decode(&edited(40, 0)), Err(Invalid::Kind));
         let mut zero_size = good.clone();
         zero_size[41..44].fill(0);
@@ -386,7 +395,8 @@ mod tests {
         };
         assert_eq!(with(|e| e.seq = 0), Err(Invalid::Seq));
         assert_eq!(with(|e| e.size = 0), Err(Invalid::Size));
-        assert_eq!(with(|e| e.kind = 4), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = 5), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = KIND_DOCUMENT), Ok(()));
         assert_eq!(with(|e| e.title = "x".repeat(121)), Err(Invalid::TitleLength));
         assert_eq!(sample(&id).sign(&Identity::from_seed([1; 32])), Err(Invalid::WrongIdentity));
     }

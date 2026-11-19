@@ -54,6 +54,8 @@ pub struct Child {
     pub title: String,
     /// Why the start failed, if it did.
     pub error: Option<String>,
+    /// The argument the shell gave it before its first frame (SPEC 12.2).
+    pub argument: Option<[u8; 32]>,
     /// The image, delivered but not yet latched (SPEC 12.5).
     delivered: Option<Result<Image, StartFailure>>,
     /// Units used in its last frame.
@@ -201,6 +203,7 @@ impl System {
                             machine: None,
                             title: String::new(),
                             error: None,
+                            argument: None,
                             delivered: None,
                             last_used: 0,
                         });
@@ -214,6 +217,19 @@ impl System {
                             driver.removed(old.serial);
                         }
                     }
+                    crate::machines::Command::Argument { handle, id } => {
+                        if let Some(child) = self.children[handle as usize - 1].as_mut() {
+                            child.argument = Some(id);
+                        }
+                    }
+                }
+            }
+            // Requests the shell read with `request` may be followed by
+            // others.
+            for (i, slot) in self.children.iter_mut().enumerate() {
+                let Some(machine) = slot.as_mut().and_then(|c| c.machine.as_mut()) else { continue };
+                if machine.open_request().is_some_and(|r| r.1) && !dev.request_waiting(i as u8 + 1) {
+                    machine.clear_open_request();
                 }
             }
         }
@@ -254,6 +270,8 @@ impl System {
                         child.image = image.id;
                         let mut machine = Machine::new(&image);
                         machine.set_identity(child.identity.clone());
+                        machine.set_in_system(true);
+                        machine.set_argument(child.argument);
                         child.machine = Some(machine);
                         dev.slot_mut(h).image = image.id;
                         new = Some(if run { state::RUNNING } else { state::PAUSED });
@@ -295,6 +313,15 @@ impl System {
                 let s = dev.slot_mut(h);
                 s.units = child.last_used;
                 s.frames = m.frame();
+            }
+        }
+        // Open requests made in the last frame (SPEC 12.5), after the
+        // changes of state.
+        for (i, slot) in self.children.iter_mut().enumerate() {
+            let Some(machine) = slot.as_mut().and_then(|c| c.machine.as_mut()) else { continue };
+            if let Some(request) = machine.announce_open_request() {
+                dev.set_request(i as u8 + 1, request);
+                events.push(Event::open_requested(i as u8 + 1));
             }
         }
         events

@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 
 use crate::article;
 use crate::blob::{BlobId, blob_id, to_hex, valid_size};
-use crate::entry::{self, Entry, KIND_ARTICLE, KIND_PROFILE, KIND_PROGRAM, MAX_IMAGE, MAX_TITLE, SignedEntry};
+use crate::entry::{self, Entry, KIND_ARTICLE, KIND_DOCUMENT, KIND_PROFILE, KIND_PROGRAM, MAX_IMAGE, MAX_TITLE, SignedEntry};
 use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
 use crate::profile::{self, Document, Nicknames};
@@ -179,6 +179,8 @@ enum Op {
     Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool },
     /// The verified results of each relay that answered, by link.
     Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, refused: bool, found: BTreeMap<u64, Vec<SignedEntry>> },
+    /// The highest `seq` of the valid answers so far.
+    Lookup { token: Token, feed: FeedKey, name: Vec<u8>, in_flight: usize, refused: bool, not_found: bool, best: Option<SignedEntry> },
 }
 
 /// One relay connection.
@@ -259,6 +261,8 @@ pub struct Node {
     /// subscribed feeds when first needed, then as entries are stored).
     blob_sizes: HashMap<BlobId, u32>,
     blob_sizes_loaded: bool,
+    /// Blobs a program entry (kind 3) names: images, not prefetched.
+    program_blobs: BTreeSet<BlobId>,
     prefetch: bool,
     /// Download the current version of each program of the subscribed
     /// feeds (NETWORK 4.4).
@@ -305,6 +309,7 @@ impl Node {
             blob_feeds: HashMap::new(),
             blob_sizes: HashMap::new(),
             blob_sizes_loaded: false,
+            program_blobs: BTreeSet::new(),
             prefetch: true,
             program_download: true,
             records: None,
@@ -694,7 +699,8 @@ impl Node {
     /// Starts publishing blob `id`, which must be in the local store, as the
     /// next entry of the identity's feed (creating the identity if needed):
     /// `NotFound` if the store does not hold it.
-    pub fn start_publish_blob(&mut self, token: Token, id: BlobId, title: &str, time: u32) {
+    /// `kind` is [`KIND_ARTICLE`] or [`KIND_DOCUMENT`].
+    pub fn start_publish_blob(&mut self, token: Token, id: BlobId, title: &str, kind: u8, time: u32) {
         let data = match self.store.read(&id) {
             Ok(Some(bytes)) if blob_id(&bytes) == id => bytes,
             Ok(_) => return self.ready.push((token, Done::NotFound)),
@@ -703,7 +709,21 @@ impl Node {
         if self.ensure_identity().is_err() {
             return self.ready.push((token, Done::Failed));
         }
+        if kind == KIND_DOCUMENT {
+            return self.start_publish_document(token, &data, title, time);
+        }
         self.start_publish_article(token, &Draft { data, title: title.into(), reply_to: None, time });
+    }
+
+    /// Starts publishing a document (NETWORK 4.2, kind 4) titled `title`;
+    /// whether `data` has a document header is the caller's business.
+    pub fn start_publish_document(&mut self, token: Token, data: &[u8], title: &str, time: u32) {
+        let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
+        if title.len() > MAX_TITLE || !valid_size(data.len()) {
+            return self.ready.push((token, Done::Failed));
+        }
+        let entry = Entry::document(identity.feed_key(), 0, time, data, title);
+        self.start_publish(token, data, entry);
     }
 
     fn publish_entry(&mut self, token: Token, mut entry: Entry) {
@@ -749,6 +769,9 @@ impl Node {
             let _ = self.arrivals.record(&signed.entry.feed, signed.entry.seq);
             self.blob_feeds.insert(signed.entry.blob, signed.entry.feed);
             self.blob_sizes.insert(signed.entry.blob, signed.entry.size);
+            if signed.entry.kind == KIND_PROGRAM {
+                self.program_blobs.insert(signed.entry.blob);
+            }
             if signed.entry.kind == KIND_PROFILE {
                 self.feed_relays_dirty = true;
             }
@@ -785,6 +808,39 @@ impl Node {
         }
     }
 
+    /// Asks every connected relay for the current version of the program
+    /// `name` of `feed` (NETWORK 4.8); a valid answer is stored like a
+    /// received entry and finishes as `Done::Found` with that entry (the
+    /// highest `seq` of the answers); `NotFound` if a relay said so and
+    /// none had it, `Refused` if they refused, else `Failed`.
+    pub fn start_lookup(&mut self, token: Token, feed: FeedKey, name: &[u8]) {
+        if !std::str::from_utf8(name).is_ok_and(profile::valid_name) {
+            return self.ready.push((token, Done::Failed));
+        }
+        self.maintain();
+        let copy = name.to_vec();
+        if self.defer(move |n| n.start_lookup(token, feed, &copy)) {
+            return;
+        }
+        let targets = self.connected_links();
+        if targets.is_empty() {
+            return self.ready.push((token, Done::NotFound));
+        }
+        let op = self.new_op(Op::Lookup {
+            token,
+            feed,
+            name: name.to_vec(),
+            in_flight: targets.len(),
+            refused: false,
+            not_found: false,
+            best: None,
+        });
+        for lid in targets {
+            let req = self.links.get_mut(&lid).unwrap().client.lookup(&feed, KIND_PROGRAM, name);
+            self.waiting.insert((lid, req), Waiting::Op(op));
+        }
+    }
+
     /// Adds a feed to the subscriptions (saved if they are backed by a file)
     /// and subscribes on the current connections.
     pub fn subscribe(&mut self, feed: FeedKey) -> std::io::Result<()> {
@@ -815,7 +871,7 @@ impl Node {
 
     /// Whether any operation is waiting for a relay.
     pub fn busy(&self) -> bool {
-        !self.waiting.is_empty() || !self.deferred.is_empty()
+        !self.waiting.is_empty() || !self.deferred.is_empty() || !self.ready.is_empty()
     }
 
     /// Whether the node has subscriptions and a relay, so it follows feeds.
@@ -895,7 +951,7 @@ impl Node {
             held.into_iter().flat_map(|(feed, seqs)| seqs.into_iter().map(move |seq| (feed, seq))).collect();
         rest.sort_by(|a, b| (b.1, b.0).cmp(&(a.1, a.0)));
         out.extend(rest);
-        out.retain(|&(feed, seq)| self.verified_entry(feed, seq).is_some_and(|(e, _)| e.kind == KIND_ARTICLE));
+        out.retain(|&(feed, seq)| self.verified_entry(feed, seq).is_some_and(|(e, _)| e.kind == KIND_ARTICLE || e.kind == KIND_DOCUMENT));
         out
     }
 
@@ -1191,6 +1247,9 @@ impl Node {
             for feed in feeds {
                 for s in self.feeds.entries(&feed).unwrap_or_default() {
                     self.blob_sizes.entry(s.entry.blob).or_insert(s.entry.size);
+                    if s.entry.kind == KIND_PROGRAM {
+                        self.program_blobs.insert(s.entry.blob);
+                    }
                 }
             }
         }
@@ -1207,7 +1266,8 @@ impl Node {
             chosen.push(id);
         }
         for id in chosen {
-            if self.blob_sizes.get(&id).is_none_or(|&size| size <= self.auto_limit) {
+            // An image a program entry names is not prefetched (NETWORK 4.4).
+            if self.blob_sizes.get(&id).is_none_or(|&size| size <= self.auto_limit) && !self.program_blobs.contains(&id) {
                 self.fetch_from_relays(GetFor::Prefetch, id);
             }
         }
@@ -1314,14 +1374,52 @@ impl Node {
                     }
                 }
             }
+            Op::Lookup { feed, name, in_flight, refused, not_found, best, .. } => {
+                *in_flight -= 1;
+                match reply {
+                    // Verified: the feed, kind and name asked for.
+                    RelayReply::LookedUp(bytes) => match entry::decode(&bytes) {
+                        Ok(s) if s.entry.feed == *feed && s.entry.kind == KIND_PROGRAM && s.entry.title.as_bytes() == &name[..] => {
+                            if best.as_ref().is_none_or(|b| b.entry.seq < s.entry.seq) {
+                                *best = Some(s);
+                            }
+                        }
+                        _ => {}
+                    },
+                    RelayReply::NotFound => *not_found = true,
+                    RelayReply::Refused => *refused = true,
+                    _ => {}
+                }
+                if *in_flight == 0 {
+                    let Some(Op::Lookup { token, best, refused, not_found, .. }) = self.ops.remove(&op_id) else {
+                        unreachable!()
+                    };
+                    let done = match best {
+                        // The first received of a seq wins (NETWORK 4.2):
+                        // a different one already held is the one used.
+                        Some(s) => match self.insert(&s) {
+                            Ok(Insert::New | Insert::Duplicate) => Done::Found(vec![s]),
+                            Ok(Insert::Conflict) => match self.current_program(&s.entry.feed, s.entry.title.as_bytes()) {
+                                Some(_) => Done::Found(Vec::new()),
+                                None => Done::NotFound,
+                            },
+                            Err(_) => Done::Failed,
+                        },
+                        None if not_found => Done::NotFound,
+                        None if refused => Done::Refused,
+                        None => Done::Failed,
+                    };
+                    self.ready.push((token, done));
+                }
+            }
             Op::Find { scope, query, in_flight, refused, found, .. } => {
                 *in_flight -= 1;
                 *refused |= reply == RelayReply::Refused;
                 if let RelayReply::Found(entries) = reply {
-                    let kind = match *scope {
-                        SCOPE_FEEDS => KIND_PROFILE,
-                        SCOPE_ENTRIES => KIND_ARTICLE,
-                        _ => KIND_PROGRAM,
+                    let kinds: &[u8] = match *scope {
+                        SCOPE_FEEDS => &[KIND_PROFILE],
+                        SCOPE_ENTRIES => &[KIND_ARTICLE, KIND_DOCUMENT],
+                        _ => &[KIND_PROGRAM],
                     };
                     // NETWORK 4.7: every result is verified; forged ones and
                     // ones that do not answer the query are dropped.
@@ -1329,7 +1427,7 @@ impl Node {
                         entries
                             .iter()
                             .filter_map(|b| entry::decode(b).ok())
-                            .filter(|s| s.entry.kind == kind && profile::matches(s.entry.title.as_bytes(), query)),
+                            .filter(|s| kinds.contains(&s.entry.kind) && profile::matches(s.entry.title.as_bytes(), query)),
                     );
                 }
                 if *in_flight == 0 {
@@ -1616,6 +1714,8 @@ mod tests {
         /// The blobs asked for, in order.
         asked: Vec<BlobId>,
         puts: usize,
+        /// Entry every lookup returns, if set.
+        lookup_reply: Option<Vec<u8>>,
     }
 
     struct Fake {
@@ -1663,6 +1763,22 @@ mod tests {
                 }
                 Request::Find { req, .. } => protocol::encode_find_reply(req, status::DONE, &s.find),
                 Request::Peer => return Ok(()),
+                // The held program entry of that feed and name with the
+                // highest seq, or the forged reply if one is scripted.
+                Request::Lookup { req, feed, name, .. } => {
+                    let hit = s.lookup_reply.clone().or_else(|| {
+                        let seq = |e: &Vec<u8>| u32::from_le_bytes(e[32..36].try_into().unwrap());
+                        s.held
+                            .iter()
+                            .filter(|e| e[..32] == feed && e[40] == KIND_PROGRAM && e.get(109..109 + e[108] as usize) == Some(name))
+                            .max_by_key(|e| seq(e))
+                            .cloned()
+                    });
+                    match hit {
+                        Some(e) => protocol::encode_lookup_reply(req, status::DONE, &e),
+                        None => protocol::encode_lookup_reply(req, status::NOT_FOUND, &[]),
+                    }
+                }
             };
             self.inbox.push_back(reply);
             Ok(())
@@ -1728,6 +1844,54 @@ mod tests {
     /// the current versions (not older ones), whatever the article limit,
     /// once the feed is caught up, up to the largest image; programs are not
     /// in the timeline; the programs records (SPEC 9.5).
+    /// NETWORK 4.8: a lookup asks the relays for the current version of a
+    /// program of a feed the host does not follow; the answer is verified
+    /// (forged or mismatched ones are dropped) and stored.
+    #[test]
+    fn lookup_programs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, script) = node_with_fake(dir.path());
+        let author = Identity::from_seed([2; 32]);
+        let feed = author.feed_key();
+        let program = |seq: u32, data: &[u8], name: &str| Entry::program(feed, seq, 100, data, name).sign(&author).unwrap().bytes;
+        script.lock().unwrap().held = vec![program(1, b"v1", "tool"), program(2, b"v2", "tool"), program(3, b"x", "other")];
+        let mut run = |node: &mut Node, token: Token, name: &[u8]| {
+            node.start_lookup(token, feed, name);
+            node.wait_for(token)
+        };
+        let Done::Found(found) = run(&mut node, 1, b"tool") else { panic!() };
+        assert_eq!((found.len(), found[0].entry.seq), (1, 2));
+        assert_eq!(node.current_program(&feed, b"tool").map(|e| e.blob), Some(blob_id(b"v2")), "stored");
+        assert!(!node.subscriptions().contains(&feed), "without subscribing");
+        assert_eq!(run(&mut node, 2, b"nope"), Done::NotFound);
+        assert_eq!(run(&mut node, 3, b" bad name"), Done::Failed);
+        // Forged: an entry of another feed, or of another name.
+        let other = Identity::from_seed([3; 32]);
+        script.lock().unwrap().lookup_reply = Some(Entry::program(other.feed_key(), 1, 0, b"evil", "fresh").sign(&other).unwrap().bytes);
+        assert_eq!(run(&mut node, 4, b"fresh"), Done::Failed);
+        script.lock().unwrap().lookup_reply = Some(program(9, b"evil", "tool"));
+        assert_eq!(run(&mut node, 5, b"fresh"), Done::Failed);
+        assert!(node.current_program(&feed, b"fresh").is_none());
+    }
+
+    /// Documents (kind 4) are in the timeline with the articles.
+    #[test]
+    fn documents_in_the_timeline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let author = Identity::from_seed([6; 32]);
+        node.set_identity(author.clone());
+        assert!(matches!(node.publish_article(&Draft { data: b"text".to_vec(), title: "A".into(), reply_to: None, time: 0 }), Done::Published { .. }));
+        let doc = [&b"TDOC\0"[..], &[0; 32], &[6], b"sketch", b"data"].concat();
+        node.start_publish_document(9, &doc, "Sketch 1", 0);
+        assert!(matches!(node.wait_for(9), Done::Published { seq: 2, .. }));
+        assert!(matches!(node.publish_program(b"image", "tool", 0), Done::Published { seq: 3, .. }));
+        node.set_subscriptions(Subscriptions::in_memory([author.feed_key()]));
+        let (total, data) = node.timeline_records(0, 4096);
+        assert_eq!(total, 2, "the article and the document, not the program");
+        assert_eq!((data[2 + 40], &data[2 + 109..2 + 117]), (KIND_DOCUMENT, &b"Sketch 1"[..]));
+    }
+
     #[test]
     fn programs_current_versions_and_their_download() {
         let dir = tempfile::tempdir().unwrap();

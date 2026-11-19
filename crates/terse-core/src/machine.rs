@@ -72,6 +72,8 @@ pub mod call {
     pub const RANDOM: u32 = 0x104;
     pub const CONTROLLER: u32 = 0x105;
     pub const EXIT: u32 = 0x106;
+    pub const OPEN: u32 = 0x107;
+    pub const ARGUMENT: u32 = 0x108;
 
     pub const TERM_WRITE: u32 = 0x200;
     pub const TERM_COMMAND: u32 = 0x201;
@@ -188,6 +190,15 @@ pub struct Machine {
     /// The program's identity (SPEC 12.2), if it was started as one; whose
     /// named records it reads (SPEC 9.6). Not machine state.
     identity: Option<ProgramId>,
+    /// The machine was started by a shell (SPEC 12.1), so `open` can pass
+    /// a request to it.
+    in_system: bool,
+    /// The request `open` passed that the shell has not read yet, and
+    /// whether the shell has been told of it (SPEC 4). Not machine state.
+    open_request: Option<([u8; crate::machines::REQUEST_BYTES], bool)>,
+    /// The blob ID the shell gave the machine before its first frame
+    /// (STATE.md 1.11).
+    argument: Option<[u8; 32]>,
 }
 
 impl Machine {
@@ -213,7 +224,42 @@ impl Machine {
             instructions: 0,
             calls: 0,
             identity: None,
+            in_system: false,
+            open_request: None,
+            argument: None,
         }
+    }
+
+    /// The machine is one a shell started (SPEC 12.1): `open` passes its
+    /// requests to the shell.
+    pub fn set_in_system(&mut self, on: bool) {
+        self.in_system = on;
+    }
+
+    /// Its argument (SPEC 4, 12.2), set before its first frame.
+    pub fn set_argument(&mut self, argument: Option<[u8; 32]>) {
+        self.argument = argument;
+    }
+
+    pub fn argument(&self) -> Option<&[u8; 32]> {
+        self.argument.as_ref()
+    }
+
+    /// The open request waiting for the shell (SPEC 4), if any, and whether
+    /// the shell has been told of it.
+    pub fn open_request(&self) -> Option<&([u8; crate::machines::REQUEST_BYTES], bool)> {
+        self.open_request.as_ref()
+    }
+
+    /// The shell has been told of the waiting request (SPEC 12.5).
+    pub fn announce_open_request(&mut self) -> Option<[u8; crate::machines::REQUEST_BYTES]> {
+        let (bytes, told) = self.open_request.as_mut()?;
+        (!std::mem::replace(told, true)).then_some(*bytes)
+    }
+
+    /// The shell read the request: another may be made.
+    pub fn clear_open_request(&mut self) {
+        self.open_request = None;
     }
 
     /// The identity the host started the machine with (SPEC 12.2).
@@ -377,6 +423,29 @@ impl Machine {
                 self.stopped = Some(Stopped::Exit(a0 as u8));
                 0
             }
+            call::OPEN => match crate::machines::read_open_request(rom, ram, a0) {
+                None => ERR_BUFFER,
+                Some((request, read)) => {
+                    units += copy_charge(read);
+                    if !self.in_system || self.open_request.is_some() {
+                        0
+                    } else {
+                        self.open_request = Some((request, false));
+                        1
+                    }
+                }
+            },
+            call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
+                None => ERR_BUFFER,
+                Some(at) => match &self.argument {
+                    None => 0,
+                    Some(id) => {
+                        ram[at..at + 32].copy_from_slice(id);
+                        units += copy_charge(32);
+                        1
+                    }
+                },
+            },
             0x200..=0x2FF if self.terminal.is_some() => {
                 let t = self.terminal.as_mut().unwrap();
                 match n {
@@ -695,6 +764,10 @@ impl Machine {
             if let Some(m) = &self.machines {
                 m.write_state(&mut out);
             }
+        }
+        // Only for a machine given an argument (STATE.md 1.11).
+        if let Some(id) = &self.argument {
+            out.extend_from_slice(id);
         }
         out
     }

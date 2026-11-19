@@ -212,7 +212,7 @@ fn feed_operations_replay() {
         m.run_frame(&FrameInput::default());
         let requests = m.take_content_requests();
         assert_eq!(requests.len(), 3, "{requests:?}");
-        assert_eq!(requests[1].kind, terse_core::RequestKind::Publish { blob: [0; 32], title: b"hi".to_vec() });
+        assert_eq!(requests[1].kind, terse_core::RequestKind::Publish { blob: [0; 32], title: b"hi".to_vec(), kind: 1 });
         hashes.push(m.state_hash());
         let done = answers(subscribe);
         let r = m.run_frame(&FrameInput { completions: &done, ..Default::default() });

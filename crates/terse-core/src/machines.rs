@@ -21,6 +21,37 @@ pub const INFO_BYTES: usize = 48;
 pub const IDENTITY_BYTES: usize = 81;
 /// Longest program name (SPEC 12.2), as a display name.
 pub const MAX_PROGRAM_NAME: usize = 48;
+/// An open request as `request` writes it (SPEC 12.2): the kind, then a
+/// blob ID, or a program identity as `identity` writes it.
+pub const REQUEST_BYTES: usize = 82;
+/// Open request kinds (SPEC 4 `open`).
+pub const OPEN_BLOB: u8 = 1;
+pub const OPEN_PROGRAM: u8 = 2;
+
+/// Reads the request record of `open` at `addr` (SPEC 4): kind 1 and a
+/// blob ID, or kind 2, a feed key, the name's length and a valid program
+/// name; all wholly in ROM or wholly in RAM. Returns the request as
+/// `request` writes it and the number of bytes read, or `None` for a bad
+/// buffer.
+pub fn read_open_request(rom: &[u8], ram: &[u8], addr: u32) -> Option<([u8; REQUEST_BYTES], usize)> {
+    let mut out = [0; REQUEST_BYTES];
+    match readable(rom, ram, addr, 1)?[0] {
+        OPEN_BLOB => {
+            out[..33].copy_from_slice(readable(rom, ram, addr, 33)?);
+            Some((out, 33))
+        }
+        OPEN_PROGRAM => {
+            let n = readable(rom, ram, addr, 34)?[33] as usize;
+            let record = readable(rom, ram, addr, 34 + n)?;
+            if n > MAX_PROGRAM_NAME || !crate::content::valid_display_name(&record[34..]) {
+                return None;
+            }
+            out[..34 + n].copy_from_slice(record);
+            Some((out, 34 + n))
+        }
+        _ => None,
+    }
+}
 
 /// Why a start failed: byte 3 of the `info` record of a failed handle
 /// (SPEC 12.2).
@@ -122,6 +153,8 @@ pub mod call {
     pub const BUILTIN: u32 = 0x806;
     pub const START_PROGRAM: u32 = 0x807;
     pub const IDENTITY: u32 = 0x808;
+    pub const REQUEST: u32 = 0x809;
+    pub const ARGUMENT: u32 = 0x80A;
 }
 
 /// One handle's record.
@@ -201,6 +234,8 @@ pub enum Command {
     /// program.
     StartProgram { handle: u8, program: ProgramId },
     Stop { handle: u8 },
+    /// `argument`: the blob ID the machine is given (SPEC 12.2).
+    Argument { handle: u8, id: [u8; 32] },
 }
 
 /// Device 8's state (STATE.md 1.10) and the shell's requests.
@@ -209,6 +244,9 @@ pub struct Machines {
     slots: [Slot; MAX_MACHINES],
     focus: u8,
     builtins: Vec<[u8; 32]>,
+    /// The open requests the machines made that the shell has been told of
+    /// and not yet read (SPEC 12.2 `request`), by handle.
+    requests: [Option<[u8; REQUEST_BYTES]>; MAX_MACHINES],
     /// Starts and stops since the host last took them (not machine state).
     commands: Vec<Command>,
 }
@@ -231,6 +269,7 @@ impl Machines {
                     return (0, copy_charge(32));
                 };
                 self.slots[i] = Slot { state: state::LOADING, run: true, image: id, ..Slot::default() };
+                self.requests[i] = None;
                 let handle = i as u8 + 1;
                 self.commands.push(Command::Start { handle, image: id });
                 (handle as u32, copy_charge(32))
@@ -248,6 +287,7 @@ impl Machines {
                 let charge = copy_charge(33 + n);
                 let Some(i) = self.slots.iter().position(|s| s.state == state::NONE) else { return (0, charge) };
                 self.slots[i] = Slot { state: state::LOADING, run: true, identity: Some(program.clone()), ..Slot::default() };
+                self.requests[i] = None;
                 let handle = i as u8 + 1;
                 self.commands.push(Command::StartProgram { handle, program });
                 (handle as u32, charge)
@@ -266,6 +306,7 @@ impl Machines {
                 None => (0, 0),
                 Some(i) => {
                     self.slots[i] = Slot::default();
+                    self.requests[i] = None;
                     if self.focus as usize == i + 1 {
                         self.focus = 0;
                     }
@@ -321,6 +362,27 @@ impl Machines {
                     }
                 }
             }
+            call::REQUEST => {
+                let Some(at) = ram_range(ram.len(), a1, REQUEST_BYTES) else { return (ERR_BUFFER, 0) };
+                match slot(a0).and_then(|i| self.requests[i].take()) {
+                    None => (0, 0),
+                    Some(request) => {
+                        ram[at..at + REQUEST_BYTES].copy_from_slice(&request);
+                        (1, copy_charge(REQUEST_BYTES))
+                    }
+                }
+            }
+            call::ARGUMENT => {
+                let Some(id) = readable(rom, ram, a1, 32) else { return (ERR_BUFFER, 0) };
+                let id: [u8; 32] = id.try_into().unwrap();
+                match slot(a0).filter(|&i| self.slots[i].state == state::LOADING) {
+                    None => (0, copy_charge(32)),
+                    Some(_) => {
+                        self.commands.push(Command::Argument { handle: a0 as u8, id });
+                        (1, copy_charge(32))
+                    }
+                }
+            }
             call::BUILTIN => {
                 let Some(at) = ram_range(ram.len(), a1, 32) else { return (ERR_BUFFER, 0) };
                 match self.builtins.get(a0 as usize) {
@@ -373,6 +435,16 @@ impl Machines {
         &self.builtins
     }
 
+    /// Machine `h`'s open request, for the shell to read (SPEC 12.5).
+    pub fn set_request(&mut self, h: u8, request: [u8; REQUEST_BYTES]) {
+        self.requests[h as usize - 1] = Some(request);
+    }
+
+    /// Whether machine `h`'s request still waits for the shell to read it.
+    pub fn request_waiting(&self, h: u8) -> bool {
+        self.requests[h as usize - 1].is_some()
+    }
+
     /// STATE.md 1.10, after the present flag.
     pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
         out.push(self.focus);
@@ -387,6 +459,13 @@ impl Machines {
         out.push(self.builtins.len() as u8);
         for id in &self.builtins {
             out.extend_from_slice(id);
+        }
+        out.push(self.requests.iter().flatten().count() as u8);
+        for (i, r) in self.requests.iter().enumerate() {
+            if let Some(r) = r {
+                out.push(i as u8 + 1);
+                out.extend_from_slice(r);
+            }
         }
     }
 }

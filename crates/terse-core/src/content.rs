@@ -34,6 +34,27 @@ pub const OP_LOAD: u8 = 0x0F;
 pub const OP_DELETE: u8 = 0x10;
 pub const OP_RECORDS: u8 = 0x11;
 
+/// Entry kinds a program may publish (SPEC 9.5, NETWORK 4.2).
+pub const ENTRY_ARTICLE: u8 = 1;
+pub const ENTRY_DOCUMENT: u8 = 4;
+/// A document starts with these bytes (SPEC 9.7).
+pub const DOCUMENT_MAGIC: &[u8; 4] = b"TDOC";
+/// Bytes of a document header before the format name: magic, version,
+/// owner key, name length.
+pub const DOCUMENT_HEAD: usize = 38;
+
+/// The format of a document (SPEC 9.7): the owner's key and the format
+/// name, and where the data starts; `None` if `blob` does not start with a
+/// valid document header.
+pub fn document_format(blob: &[u8]) -> Option<([u8; 32], &[u8], usize)> {
+    if blob.len() < DOCUMENT_HEAD || &blob[..4] != DOCUMENT_MAGIC || blob[4] != 0 {
+        return None;
+    }
+    let n = blob[37] as usize;
+    let name = blob.get(DOCUMENT_HEAD..DOCUMENT_HEAD + n)?;
+    valid_display_name(name).then(|| (blob[5..37].try_into().unwrap(), name, DOCUMENT_HEAD + n))
+}
+
 /// Largest named record (SPEC 9.6).
 pub const MAX_RECORD: usize = 65_536;
 /// Longest record name, in bytes (SPEC 9.6).
@@ -152,7 +173,9 @@ pub enum RequestKind {
     /// Publish blob `blob` as the next entry of the host's own feed, with
     /// `title` (valid UTF-8, at most 120 bytes, copied at submit); needs the
     /// user's consent.
-    Publish { blob: [u8; 32], title: Vec<u8> },
+    /// `kind` is the entry's kind: [`ENTRY_ARTICLE`] or [`ENTRY_DOCUMENT`]
+    /// (SPEC 9.5).
+    Publish { blob: [u8; 32], title: Vec<u8>, kind: u8 },
     /// The host's own feed key.
     Identity,
     /// Names records from index `offset`, at most `length` bytes (SPEC 9.5).
@@ -218,6 +241,9 @@ pub enum Outcome {
     Refused,
     /// A save would exceed the owner's limits (SPEC 9.6).
     NoRoom,
+    /// A document publish whose blob has no valid document header (SPEC
+    /// 9.5): status 04h.
+    BadRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,9 +260,10 @@ enum Pending {
     Find { scope: u8, length: u16, addr: u32, query_len: u8 },
     /// Subscribe, unsubscribe, publish, identity, set profile and set
     /// nickname: the `id` read at submit (zero for identity and set
-    /// profile), set profile's listed bit and the length of a publish's
+    /// profile), set profile's listed bit or a publish's kind as given
+    /// (`offset`) and the length of a publish's
     /// title or the name.
-    Feed { op: u8, id: [u8; 32], listed: bool, len: u8 },
+    Feed { op: u8, id: [u8; 32], offset: u8, len: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -337,15 +364,20 @@ impl Content {
                     OP_UNSUBSCRIBE => RequestKind::Unsubscribe { feed: id },
                     _ => RequestKind::Identity,
                 };
-                Some((Pending::Feed { op: b[OP], id, listed: false, len: 0 }, kind))
+                Some((Pending::Feed { op: b[OP], id, offset: 0, len: 0 }, kind))
             }
             // The title is copied (and charged) only once the request is
             // accepted, after step 3.
+            // SPEC 9.5: the kind is 0 or 1 (article) or 4 (document).
             OP_PUBLISH => (length as usize <= MAX_TITLE
+                && matches!(offset, 0 | 1 | 4)
                 && readable(rom, ram, addr, length as usize).is_some_and(|t| std::str::from_utf8(t).is_ok()))
             .then(|| {
                 let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
-                (Pending::Feed { op: OP_PUBLISH, id, listed: false, len: length as u8 }, RequestKind::Publish { blob: id, title: Vec::new() })
+                (
+                    Pending::Feed { op: OP_PUBLISH, id, offset: offset as u8, len: length as u8 },
+                    RequestKind::Publish { blob: id, title: Vec::new(), kind: if offset == 4 { ENTRY_DOCUMENT } else { ENTRY_ARTICLE } },
+                )
             }),
             // The query and the names are copied (and charged) after step 3,
             // like a publish title. A find's query and results share `addr`.
@@ -377,13 +409,13 @@ impl Content {
             }),
             OP_SET_PROFILE => readable(rom, ram, addr, length as usize).is_some_and(valid_display_name).then(|| {
                 let listed = offset & 1 != 0;
-                (Pending::Feed { op: OP_SET_PROFILE, id: [0; 32], listed, len: length as u8 }, RequestKind::SetProfile { name: Vec::new(), listed })
+                (Pending::Feed { op: OP_SET_PROFILE, id: [0; 32], offset: listed as u8, len: length as u8 }, RequestKind::SetProfile { name: Vec::new(), listed })
             }),
             OP_SET_NICKNAME => (length as usize <= MAX_NAME
                 && readable(rom, ram, addr, length as usize).is_some_and(|n| n.is_empty() || valid_display_name(n)))
             .then(|| {
                 let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
-                (Pending::Feed { op: OP_SET_NICKNAME, id, listed: false, len: length as u8 }, RequestKind::SetNickname { feed: id, name: Vec::new() })
+                (Pending::Feed { op: OP_SET_NICKNAME, id, offset: 0, len: length as u8 }, RequestKind::SetNickname { feed: id, name: Vec::new() })
             }),
             _ => None,
         };
@@ -507,6 +539,7 @@ impl Content {
             }
             (&Pending::Named { op: OP_SAVE | OP_DELETE, .. }, Outcome::Done) => status::DONE,
             (&Pending::Named { op: OP_SAVE, .. }, Outcome::NoRoom) => status::NO_ROOM,
+            (&Pending::Feed { op: OP_PUBLISH, .. }, Outcome::BadRequest) => status::BAD_REQUEST,
             (Pending::Put { id: want, .. }, Outcome::Put { id }) => {
                 if id != want {
                     return None;
@@ -552,7 +585,7 @@ impl Content {
                     Pending::Find { scope, length, addr, query_len } => {
                         (OP_FIND, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
                     }
-                    Pending::Feed { op, id, listed, len } => (op, *block, id, listed as u32, len as u32, 0, 0),
+                    Pending::Feed { op, id, offset, len } => (op, *block, id, offset as u32, len as u32, 0, 0),
                     Pending::Named { op, name, offset, length, addr, size } => {
                         (op, *block, name, offset, length as u32, addr, size)
                     }
@@ -1010,6 +1043,37 @@ mod tests {
         Completion { handle, outcome }
     }
 
+    /// SPEC 9.5: a publish's `offset` is the kind (0 or 1 article, 4
+    /// document; others are bad requests); a document whose blob has no
+    /// header completes with 04h. SPEC 9.7: the document header.
+    #[test]
+    fn publish_kinds_and_documents() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"T");
+        for (kind, want) in [(0, Some(ENTRY_ARTICLE)), (1, Some(ENTRY_ARTICLE)), (4, Some(ENTRY_DOCUMENT)), (2, None), (3, None), (5, None)] {
+            let (handle, _) = rig.submit(BLOCK, Some(&block(OP_PUBLISH, [5; 32], kind, 1, DATA, 0)));
+            match want {
+                None => assert_eq!((handle, status(&rig, BLOCK)), (0, status::BAD_REQUEST), "kind {kind}"),
+                Some(k) => {
+                    assert_eq!(rig.content.take_requests(), [Request { handle, kind: RequestKind::Publish { blob: [5; 32], title: b"T".to_vec(), kind: k } }]);
+                    assert_eq!(rig.complete(&[done(handle, Outcome::BadRequest)]), (0, 0));
+                    assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+                }
+            }
+        }
+        let doc = |name: &[u8]| [&b"TDOC\0"[..], &[7; 32], &[name.len() as u8], name, b"data"].concat();
+        assert_eq!(document_format(&doc(b"sketch")), Some(([7; 32], &b"sketch"[..], 44)));
+        assert_eq!(document_format(&doc(b"sketch")[..44]).map(|f| f.2), Some(44), "no data");
+        assert_eq!(document_format(&doc(b"")), None);
+        assert_eq!(document_format(&doc(b" x")), None);
+        assert_eq!(document_format(&doc(&[b'x'; 49])), None);
+        assert_eq!(document_format(&doc(b"sketch")[..40]), None, "cut short");
+        let mut v1 = doc(b"sketch");
+        v1[4] = 1;
+        assert_eq!(document_format(&v1), None, "version 1");
+        assert_eq!(document_format(b"TERS\0\x01"), None);
+    }
+
     /// SPEC 9.5: subscribe, unsubscribe, publish and identity are submitted
     /// like the other requests and complete with their own outcomes.
     #[test]
@@ -1031,10 +1095,10 @@ mod tests {
             [
                 Request { handle: 1, kind: RequestKind::Subscribe { feed: [3; 32] } },
                 Request { handle: 2, kind: RequestKind::Unsubscribe { feed: [4; 32] } },
-                Request { handle: 3, kind: RequestKind::Publish { blob: [5; 32], title: "Hello, ünïcode".into() } },
+                Request { handle: 3, kind: RequestKind::Publish { blob: [5; 32], title: "Hello, ünïcode".into(), kind: 1 } },
                 Request { handle: 4, kind: RequestKind::Identity },
-                Request { handle: 5, kind: RequestKind::Publish { blob: [7; 32], title: b"rom".to_vec() } },
-                Request { handle: 6, kind: RequestKind::Publish { blob: [8; 32], title: Vec::new() } },
+                Request { handle: 5, kind: RequestKind::Publish { blob: [7; 32], title: b"rom".to_vec(), kind: 1 } },
+                Request { handle: 6, kind: RequestKind::Publish { blob: [8; 32], title: Vec::new(), kind: 1 } },
             ]
         );
         // Outcomes that do not fit the request are ignored.

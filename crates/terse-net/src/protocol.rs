@@ -12,12 +12,15 @@ pub const UNSUBSCRIBE: u8 = 0x05;
 pub const FIND: u8 = 0x06;
 /// A relay announcing itself to another (NETWORK 5); no body, no reply.
 pub const PEER: u8 = 0x07;
+/// A feed's current entry of a kind and name (NETWORK 4.8).
+pub const LOOKUP: u8 = 0x08;
 pub const GET_REPLY: u8 = 0x81;
 pub const PUT_REPLY: u8 = 0x82;
 pub const PUBLISH_REPLY: u8 = 0x83;
 pub const SUBSCRIBE_REPLY: u8 = 0x84;
 pub const UNSUBSCRIBE_REPLY: u8 = 0x85;
 pub const FIND_REPLY: u8 = 0x86;
+pub const LOOKUP_REPLY: u8 = 0x88;
 /// An entry pushed by the relay; it has no `req`.
 pub const ENTRY: u8 = 0x90;
 
@@ -40,6 +43,8 @@ pub enum Request<'a> {
     /// `scope` and `query` are not yet checked.
     Find { req: u32, scope: u8, query: &'a [u8] },
     Peer,
+    /// `kind` and `name` are not yet checked.
+    Lookup { req: u32, feed: FeedKey, kind: u8, name: &'a [u8] },
 }
 
 /// Find scopes (NETWORK 4.7).
@@ -77,6 +82,8 @@ pub enum Reply {
     Entry(Vec<u8>),
     /// A find reply: the entries, not yet validated (empty unless done).
     Found { req: u32, status: u8, entries: Vec<Vec<u8>> },
+    /// A lookup reply: the entry, not yet validated, if found.
+    LookedUp { req: u32, status: u8, entry: Option<Vec<u8>> },
 }
 
 fn header(kind: u8, req: u32, extra: usize) -> Vec<u8> {
@@ -174,6 +181,24 @@ pub fn encode_find_reply<E: AsRef<[u8]>>(req: u32, status: u8, entries: &[E]) ->
     m
 }
 
+pub fn encode_lookup(req: u32, feed: &FeedKey, kind: u8, name: &[u8]) -> Vec<u8> {
+    let mut m = header(LOOKUP, req, 34 + name.len());
+    m.extend_from_slice(feed);
+    m.push(kind);
+    m.push(name.len() as u8);
+    m.extend_from_slice(name);
+    m
+}
+
+/// Lookup reply; `entry` is sent only with status 1.
+pub fn encode_lookup_reply(req: u32, status: u8, entry: &[u8]) -> Vec<u8> {
+    let entry = if status == status::DONE { entry } else { &[] };
+    let mut m = header(LOOKUP_REPLY, req, 1 + entry.len());
+    m.push(status);
+    m.extend_from_slice(entry);
+    m
+}
+
 pub fn encode_peer() -> Vec<u8> {
     vec![PEER]
 }
@@ -190,7 +215,7 @@ fn split(msg: &[u8]) -> Option<(u8, u32, &[u8])> {
 
 /// Whether a message type is one this relay knows as a request.
 fn known_request(kind: u8) -> bool {
-    (GET..=PEER).contains(&kind)
+    (GET..=LOOKUP).contains(&kind)
 }
 
 pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
@@ -220,6 +245,13 @@ pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
             Ok(Request::Find { req, scope: *scope, query })
         }
         (FIND, req, _) => Err(Malformed::Refuse { reply: FIND_REPLY, req }),
+        (LOOKUP, req, rest) if rest.len() >= 34 && rest.len() == 34 + rest[33] as usize => Ok(Request::Lookup {
+            req,
+            feed: rest[..32].try_into().unwrap(),
+            kind: rest[32],
+            name: &rest[34..],
+        }),
+        (LOOKUP, req, _) => Err(Malformed::Refuse { reply: LOOKUP_REPLY, req }),
         _ => Err(Malformed::Close),
     }
 }
@@ -253,6 +285,8 @@ pub fn decode_reply(msg: &[u8]) -> Option<Reply> {
         PUBLISH_REPLY | SUBSCRIBE_REPLY | UNSUBSCRIBE_REPLY if body.is_empty() => Some(Reply::Status { kind, req, status }),
         FIND_REPLY if done => Some(Reply::Found { req, status, entries: decode_found(body)? }),
         FIND_REPLY if body == [0] => Some(Reply::Found { req, status, entries: Vec::new() }),
+        LOOKUP_REPLY if done && !body.is_empty() => Some(Reply::LookedUp { req, status, entry: Some(body.to_vec()) }),
+        LOOKUP_REPLY if !done && body.is_empty() => Some(Reply::LookedUp { req, status, entry: None }),
         _ => None,
     }
 }
@@ -281,7 +315,7 @@ mod tests {
         assert_eq!(decode_request(&encode_get(5, &id)[..36]), Err(Malformed::Refuse { reply: GET_REPLY, req: 5 }));
         assert_eq!(decode_request(&[GET, 1, 2, 3]), Err(Malformed::Close));
         assert_eq!(decode_request(&[0x7F, 1, 2, 3, 4]), Err(Malformed::Unknown));
-        assert_eq!(decode_request(&[0x08]), Err(Malformed::Unknown));
+        assert_eq!(decode_request(&[0x09]), Err(Malformed::Unknown));
         assert_eq!(decode_request(&[0x86, 1, 2, 3, 4, 1, 0]), Err(Malformed::Unknown));
         assert_eq!(decode_request(&[]), Err(Malformed::Close));
         assert_eq!(decode_request(&[PEER]), Ok(Request::Peer));
@@ -347,5 +381,22 @@ mod tests {
         assert_eq!(refused, [FIND_REPLY, 7, 0, 0, 0, 3, 0]);
         assert_eq!(decode_reply(&refused), Some(Reply::Found { req: 7, status: 3, entries: Vec::new() }));
         assert_eq!(encode_peer(), [PEER]);
+    }
+
+    #[test]
+    fn lookup_messages() {
+        let key = [4; 32];
+        let m = encode_lookup(0x0403_0201, &key, 3, b"tool");
+        assert_eq!(m.len(), 5 + 32 + 2 + 4);
+        assert_eq!((m[0], m[37], m[38]), (LOOKUP, 3, 4));
+        assert_eq!(decode_request(&m), Ok(Request::Lookup { req: 0x0403_0201, feed: key, kind: 3, name: b"tool" }));
+        assert_eq!(decode_request(&m[..m.len() - 1]), Err(Malformed::Refuse { reply: LOOKUP_REPLY, req: 0x0403_0201 }));
+        let reply = encode_lookup_reply(7, status::DONE, b"entry");
+        assert_eq!(reply, [LOOKUP_REPLY, 7, 0, 0, 0, 1, b'e', b'n', b't', b'r', b'y']);
+        assert_eq!(decode_reply(&reply), Some(Reply::LookedUp { req: 7, status: 1, entry: Some(b"entry".to_vec()) }));
+        let none = encode_lookup_reply(7, status::NOT_FOUND, b"x");
+        assert_eq!(none, [LOOKUP_REPLY, 7, 0, 0, 0, 2]);
+        assert_eq!(decode_reply(&none), Some(Reply::LookedUp { req: 7, status: 2, entry: None }));
+        assert_eq!(decode_reply(&[LOOKUP_REPLY, 7, 0, 0, 0, 1]), None, "done without an entry");
     }
 }

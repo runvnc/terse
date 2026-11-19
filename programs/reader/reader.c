@@ -10,6 +10,23 @@
  * The rows under the page are blank, in the colour of the page's
  * background (xterm 234, (28, 28, 28)), which is opaque.
  *
+ * Started with an argument (a blob ID the shell gave it, SPEC 4), the
+ * reader shows that blob as an article at once, as if opened from the
+ * timeline (titled by its entry if the timeline has one, else by the ID's
+ * short form); Esc then goes to the timeline.
+ *
+ * The shell: the reader never starts a program or shows one. A program
+ * image or a document (a blob that begins with "TERS" or "TDOC") is passed
+ * to the shell with `open` (OPEN_BLOB, the blob ID), a program link with
+ * OPEN_PROGRAM (key and name), and the status row says "Opened in a new
+ * tile", or "This needs the shell" if `open` returned 0 (no shell, or a
+ * request of this machine still waits). That happens on Enter or a click
+ * on a document's entry (the timeline and search show the timeline's
+ * document entries, kind 4, too), on following a link to such a blob or a
+ * program link, and if an article opened from the timeline or the
+ * argument turns out to be one (the view it would have been shown in is
+ * left, as by Esc).
+ *
  * Names: wherever a feed is shown (the timeline's details line, the feeds
  * list, an article's details line, a feed's page, search results) it is
  * its name, then its short key in brackets (the key alone if no name is
@@ -42,7 +59,13 @@
  * characters and line or paragraph
  * separators in them become spaces, so a slot always has two lines. Each
  * entry is an anchor (its index + 1): a click on it opens it (timeline) or
- * selects it (feeds). The selection is shown by colour.
+ * selects it (feeds). The selection is shown by colour. A document's
+ * title has a mark before it (U+25C6 "◆" and a space) and its details
+ * line begins with its format name ("sketch document"): the first
+ * TDOC_HEAD + 48 bytes of the blobs of the documents in view that are in
+ * the host's store are got, one at a time while few requests are pending,
+ * and the names kept for 32 blobs; "document" until the name is known
+ * (or if the head is not valid).
  *
  * The article view: the page's rectangle covers rows 0-28 (y 0-464), x
  * 64-576: 512 units, about 68 characters of 15-unit body text, centred.
@@ -73,9 +96,15 @@
  *     in the document (or in 65,535 bytes) is shown as its fence would be.
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
- *   - Links: http(s) URLs, terse:<blob ID> (an article) and
- *     terse:feed/<key> (a feed), bare (a terse: link shown shortened to
- *     its first and last six digits, "terse:360793…dec189") or with text
+ *   - Links: http(s) URLs, terse:<blob ID> (an article),
+ *     terse:feed/<key> (a feed) and terse:program/<key>/<name> (a
+ *     program: the name percent-encoded, the bytes other than A-Z a-z 0-9
+ *     - . _ ~ as %XX, either case; the name is the run of those characters
+ *     and %XX triples, less any "." at its end, and must decode to a
+ *     display name or the text is no link), bare (a terse: link shown
+ *     shortened to its first and last six digits, "terse:360793…dec189",
+ *     a program link with its name decoded after them,
+ *     "terse:program/360793…dec189/Sketch pad") or with text
  *     ("[text](target)", shown as the text). A link with text is found at
  *     the colon of its target, by looking back for "](" and its "["; so
  *     that a frame's share of building never ends inside one, it ends
@@ -83,7 +112,8 @@
  *     2, ... and the link colour. Tab and Shift+Tab make the next or
  *     previous link the current one, in amber (its Colour command is
  *     changed in place and the document submitted again, keeping the
- *     scroll value), and the status row shows its target; Enter or a click
+ *     scroll value), and the status row shows its target (a program link:
+ *     program “name” by the feed's name and short key); Enter or a click
  *     follows it. The reader then asks the page where the link's line is
  *     (locate, SPEC 11.2; the answer comes in a later frame) and scrolls
  *     just enough to show it whole, MARGIN units from the edges. After the
@@ -91,19 +121,24 @@
  *     view and Shift+Tab to the last above its bottom instead, found by a
  *     binary search over the links' places (one locate a frame; Tabs
  *     pressed meanwhile are counted and applied after it). A web link only
- *     shows its URL (there is no browser). An
- *     article link opens that article: the one shown goes on a back stack
- *     of 8 (Esc goes back through it, each to its scroll value, then to
- *     the view the first was opened from); its title is the timeline's if
- *     the host has an entry for the blob (the timeline buffer is looked
- *     at, then the whole timeline read, one request at a time, before the
- *     document is built), else the ID's short form; one larger than
+ *     shows its URL (there is no browser). An article link first gets the
+ *     blob's first 4 bytes: a program image or a document goes to the
+ *     shell and the article stays; else the link opens that article (if
+ *     the 4 bytes could not be got, its page says so at once): the one
+ *     shown goes on a back stack of 8 (Esc goes back through it, each to
+ *     its scroll value, then to the view the first was opened from); its
+ *     title is the timeline's if the host has an entry for the blob (the
+ *     timeline buffer is looked at, then the whole timeline read, one
+ *     request at a time, before the document is built), else the ID's
+ *     short form; one larger than
  *     ART_CAP is not shown. A feed link opens the feed's page (name, keys,
  *     subscribed or not; S, U), from which Esc returns to the article.
+ *     A program link asks the shell for the program.
  *   - Prefetch: the first 8 distinct article links of the article shown
  *     are got with one-byte gets as they are met while building (the host
  *     fetches and keeps the whole blob), at most 2 at a time and only
- *     while fewer than 4 requests of any kind are pending.
+ *     while fewer than 4 requests of any kind are pending (program links
+ *     never).
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
@@ -148,7 +183,8 @@
  * others: a heading slot for each section (with its count, or why it is
  * empty), the feeds (name; short key, "you", "subscribed") and the
  * articles (title; feed, date, size). Headings are not selectable; Enter
- * or a click opens a feed's page or an article (Esc comes back).
+ * or a click opens a feed's page or an article (Esc comes back), or passes
+ * a document to the shell.
  *
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
  * timeline buffer, a 16 KiB buffer for counting, a 16 KiB buffer for
@@ -184,6 +220,7 @@
 #define R_FEED 2
 #define R_SEQ 34
 #define R_TIME 38
+#define R_KIND 42
 #define R_SIZE 43
 #define R_BLOB 46
 #define R_REPLY 78
@@ -271,7 +308,10 @@
 enum { TIMELINE, FEEDS, HELP, ARTICLE, SEARCH, FEED };
 enum { FETCHING, READY, NOT_FOUND, FAILED, TOO_LARGE };
 /* Kinds of link (NETWORK 4.5). */
-enum { LK_WEB, LK_ARTICLE, LK_FEED };
+enum { LK_WEB, LK_ARTICLE, LK_FEED, LK_PROGRAM };
+/* A program link: "terse:program/", the key, "/" and the name. */
+#define PROG_KEY 14
+#define PROG_NAME 79
 
 static uint8_t view;
 static uint32_t now; /* Unix time of this frame; 0 if the host has none */
@@ -416,6 +456,24 @@ static int32_t bk_scroll[BACK_N];
 static uint8_t pf_ids[PF_N][32], pf_n, pf_next;
 static content_req pf_req[PF_SLOTS];
 static uint8_t pf_handle[PF_SLOTS], pf_byte[PF_SLOTS];
+
+/* Following an article link: the first bytes of the linked blob are got
+ * first (pr_id; pr_from: the article it was followed from), so that a
+ * program image or a document is passed to the shell instead of shown. */
+static content_req pr_req;
+static uint8_t pr_handle, pr_buf[4], pr_id[32], pr_from[32];
+
+/* The request for the shell (terse_open): a blob, or a program. */
+static uint8_t open_req[1 + 32 + 1 + 48];
+
+/* The format names of documents in the lists, from the head of their
+ * blobs (TDOC_HEAD + 48 bytes), one get at a time, by blob ID: dn_state 0
+ * free, 1 asked, 2 known (dn_len 0: no valid name). dn_scan: a list was
+ * shown since the last look for documents in it. */
+#define DN_N 32
+static content_req dn_req;
+static uint8_t dn_handle, dn_slot, dn_next, dn_scan, dn_buf[TDOC_HEAD + 48];
+static uint8_t dn_id[DN_N][32], dn_state[DN_N], dn_len[DN_N], dn_name[DN_N][48];
 
 /* The document and how far it is built (offsets into art). */
 static uint8_t doc[DOC_CAP];
@@ -962,10 +1020,76 @@ static uint8_t hex64_at(uint32_t i, uint32_t end)
     return i + 64 == end || !is_alnum(art[i + 64]);
 }
 
+static uint8_t is_space(uint32_t c);
+
+/* Whether the n bytes at p are a display name (NETWORK 4.6): UTF-8, 1-48
+ * bytes, no control characters, no white space at either end. */
+static uint8_t valid_name(const uint8_t *p, uint32_t n)
+{
+    uint32_t i = 0, c = 0, len, min, k;
+    uint8_t b;
+    if (!n || n > 48)
+        return 0;
+    while (i < n) {
+        b = p[i];
+        if (b < 0x80) {
+            c = b, len = 1, min = 0;
+        } else if (b >= 0xC2 && b < 0xE0) {
+            c = b & 0x1F, len = 2, min = 0x80;
+        } else if (b >= 0xE0 && b < 0xF0) {
+            c = b & 0x0F, len = 3, min = 0x800;
+        } else if (b >= 0xF0 && b < 0xF5) {
+            c = b & 0x07, len = 4, min = 0x10000;
+        } else {
+            return 0;
+        }
+        if (n - i < len)
+            return 0;
+        for (k = 1; k < len; k++) {
+            if ((p[i + k] & 0xC0) != 0x80)
+                return 0;
+            c = c << 6 | (p[i + k] & 0x3F);
+        }
+        if (c < min || c > 0x10FFFF || (c >= 0xD800 && c < 0xE000) || c < 0x20 || (c >= 0x7F && c < 0xA0)
+            || (!i && is_space(c)))
+            return 0;
+        i += len;
+    }
+    return !is_space(c);
+}
+
+/* A program link's name: the n bytes at t, percent-encoded (checked by
+ * terse_length), decoded into out (48 bytes); its length, 0 if it is not
+ * a display name. */
+static uint8_t prog_name(const uint8_t *t, uint32_t n, uint8_t *out)
+{
+    uint32_t i = 0, k = 0;
+    while (i < n) {
+        if (k == 48)
+            return 0;
+        if (t[i] == '%') {
+            out[k++] = hex_value(t[i + 1]) << 4 | hex_value(t[i + 2]);
+            i += 3;
+        } else {
+            out[k++] = t[i++];
+        }
+    }
+    return valid_name(out, k) ? k : 0;
+}
+
+/* A byte a program link's name may hold as itself (RFC 3986's
+ * unreserved characters). */
+static uint8_t unreserved(uint8_t c)
+{
+    return is_alnum(c) || c == '-' || c == '.' || c == '_' || c == '~';
+}
+
 /* The length of the terse: link at art[i] (a 't'), 0 if none, and its
  * kind; the block ends at `end`. */
 static uint32_t terse_length(uint32_t i, uint32_t end, uint8_t *kind)
 {
+    uint32_t s, k;
+    uint8_t name[48];
     if (end - i < 70 || memcmp(art + i, "terse:", 6) || (i > b_start && is_alnum(art[i - 1])))
         return 0;
     spend(W_TERSE);
@@ -976,6 +1100,27 @@ static uint32_t terse_length(uint32_t i, uint32_t end, uint8_t *kind)
     if (end - i >= 75 && !memcmp(art + i + 6, "feed/", 5) && hex64_at(i + 11, end)) {
         *kind = LK_FEED;
         return 75;
+    }
+    /* A program: the name is the run of unreserved characters and %XX
+     * triples after the key's "/", less any "." at its end. */
+    if (end - i > PROG_NAME && !memcmp(art + i + 6, "program/", 8) && hex64_at(i + PROG_KEY, end)
+        && art[i + PROG_NAME - 1] == '/') {
+        s = k = i + PROG_NAME;
+        while (k < end) {
+            if (unreserved(art[k]))
+                k++;
+            else if (art[k] == '%' && end - k >= 3 && hex_value(art[k + 1]) < 16 && hex_value(art[k + 2]) < 16)
+                k += 3;
+            else
+                break;
+        }
+        spend((k - s) * W_EMIT);
+        while (k > s && art[k - 1] == '.')
+            k--;
+        if (k - s <= 48 * 3 && prog_name(art + s, k - s, name)) {
+            *kind = LK_PROGRAM;
+            return k - i;
+        }
     }
     return 0;
 }
@@ -998,7 +1143,7 @@ static void prefetch_add(const uint8_t *id);
  * link is also queued for prefetching. */
 static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show, uint32_t n, uint32_t next)
 {
-    uint8_t sb[11 + 6 + 3 + 6], anchored = links < MAX_LINKS;
+    uint8_t sb[11 + 6 + 3 + 6], anchored = links < MAX_LINKS, name[48];
     b_text = next;
     spend(W_LINK + (next - i) * W_EMIT);
     if (doc_overflow)
@@ -1011,7 +1156,17 @@ static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show
     if (!show) {
         show = art + i;
         n = len;
-        if (kind != LK_WEB) {
+        if (kind == LK_PROGRAM) {
+            /* "terse:program/", six digits, "…", six digits, "/", the
+             * name decoded. */
+            tb_n = 0;
+            tb_bytes(art + i, PROG_KEY + 6);
+            tb_s("\xE2\x80\xA6");
+            tb_bytes(art + i + PROG_NAME - 7, 7);
+            tb_name(name, prog_name(art + i + PROG_NAME, len - PROG_NAME, name));
+            show = (const uint8_t *)tb;
+            n = tb_n;
+        } else if (kind != LK_WEB) {
             /* "terse:" or "terse:feed/", six digits, "…", six digits. */
             n = len - 58;
             memcpy(sb, art + i, n);
@@ -1412,7 +1567,8 @@ static uint8_t emit_block(void)
             }
         } else {
             /* A link has "http:" or "https:" before its "//", or is
-             * "terse:" and an ID or "feed/" and a key. */
+             * "terse:" and an ID, "feed/" and a key or "program/", a key
+             * and a name. */
             uint32_t c = p - art, at = c - 4, len, ts;
             uint8_t kind = LK_WEB;
             if (c >= b_text + 5 && art[c - 1] == 's')
@@ -1429,7 +1585,7 @@ static uint8_t emit_block(void)
                 }
             }
             at = c - 5;
-            if (c >= b_text + 5 && art[at] == 't' && c + 1 < end && is_lower_hex(art[c + 1])) {
+            if (c >= b_text + 5 && art[at] == 't' && c + 1 < end && (is_lower_hex(art[c + 1]) || art[c + 1] == 'p')) {
                 if (at && art[at - 1] == '(' && (len = text_link(at, end, &ts, &kind)))
                     goto text;
                 if ((len = terse_length(at, end, &kind))) {
@@ -2281,6 +2437,70 @@ static void count_done(uint8_t status)
         page_dirty = 1;
 }
 
+/* --- Documents in the lists ---------------------------------------------- */
+
+/* The cache slot of blob `id`'s format name, or -1. */
+static int32_t dn_find(const uint8_t *id)
+{
+    int32_t k;
+    for (k = 0; k < DN_N; k++)
+        if (dn_state[k] && !memcmp(dn_id[k], id, 32))
+            return k;
+    return -1;
+}
+
+/* Asks for the head of record r's blob if it is a document in the
+ * host's store whose format name is not known; 1 if it did. */
+static uint8_t dn_want(const uint8_t *r)
+{
+    if (r[R_KIND] != ENTRY_DOCUMENT || !(r[R_FLAGS] & TIMELINE_LOCAL) || dn_find(r + R_BLOB) >= 0)
+        return 0;
+    dn_slot = dn_next;
+    dn_next = (dn_next + 1) % DN_N;
+    dn_state[dn_slot] = 1;
+    memcpy(dn_id[dn_slot], r + R_BLOB, 32);
+    dn_handle = content_get(&dn_req, dn_id[dn_slot], 0, sizeof dn_buf, dn_buf);
+    return 1;
+}
+
+static void dn_done(uint8_t status)
+{
+    uint8_t n = dn_buf[TDOC_HEAD - 1];
+    dn_handle = 0;
+    dn_state[dn_slot] = 2;
+    dn_len[dn_slot] = 0;
+    if (status == STATUS_DONE && dn_req.length >= TDOC_HEAD + n && !memcmp(dn_buf, "TDOC", 4) && !dn_buf[4]
+        && valid_name(dn_buf + TDOC_HEAD, n)) {
+        memcpy(dn_name[dn_slot], dn_buf + TDOC_HEAD, n);
+        dn_len[dn_slot] = n;
+    }
+    if (view == TIMELINE || view == SEARCH)
+        page_dirty = 1;
+}
+
+/* An entry's title in a list, a document's with a mark before it. */
+static void entry_title(const uint8_t *r)
+{
+    if (r[R_KIND] == ENTRY_DOCUMENT)
+        doc_s("\xE2\x97\x86 ");
+    doc_title(r + R_TITLE, r[R_N]);
+}
+
+/* A document's format name ("sketch document  ·  ", or "document  ·  "
+ * while it is not known) at the start of its details line. */
+static void tb_kind(const uint8_t *r)
+{
+    int32_t k;
+    if (r[R_KIND] != ENTRY_DOCUMENT)
+        return;
+    k = dn_find(r + R_BLOB);
+    if (k >= 0 && dn_state[k] == 2 && dn_len[k]) {
+        tb_name(dn_name[k], dn_len[k]);
+        tb_s(" ");
+    }
+    tb_s("document  \xC2\xB7  ");
+}
+
 /* The header slot: a title and a line of details. */
 static void header_slot(const char *title)
 {
@@ -2352,9 +2572,10 @@ static void timeline_doc(void)
             sel_id_ok = 1;
         }
         slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
-        doc_title(r + R_TITLE, r[R_N]);
+        entry_title(r);
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
+        tb_kind(r);
         tb_feed(r + R_FEED);
         tb_s("  \xC2\xB7  ");
         tb_date(get32(r + R_TIME));
@@ -2370,6 +2591,7 @@ static void timeline_doc(void)
         slot_end(i + 1);
     }
     list_submit(slots);
+    dn_scan = 1;
     dirty[STATUS_ROW] = 1; /* the position */
 }
 
@@ -2553,7 +2775,10 @@ static void search_doc(void)
         r = s_record(i);
         s = i == srp.sel;
         slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
-        doc_title(r + R_TITLE, r[R_N]);
+        if (i <= sf_n)
+            doc_title(r + R_TITLE, r[R_N]);
+        else
+            entry_title(r);
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
         if (i <= sf_n) {
@@ -2569,6 +2794,7 @@ static void search_doc(void)
             if (find_sub(r + R_FEED) >= 0)
                 tb_s("  \xC2\xB7  subscribed");
         } else {
+            tb_kind(r);
             tb_feed(r + R_FEED);
             tb_s("  \xC2\xB7  ");
             tb_date(get32(r + R_TIME));
@@ -2579,6 +2805,7 @@ static void search_doc(void)
         slot_end(i + 1);
     }
     list_submit(slots);
+    dn_scan = 1;
 }
 
 /* --- The feed page --------------------------------------------------------- */
@@ -2685,7 +2912,7 @@ static void help_line(const char *keys, const char *what)
 static const char *const help_keys[] = {
     0, "Timeline",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "move the selection",
-    "Enter, click", "open the article",
+    "Enter, click", "open the article; a document (\xE2\x97\x86) is passed to the shell, which opens it in a new tile",
     "/", "search",
     "F", "feeds",
     "? or F1", "this help",
@@ -2694,7 +2921,8 @@ static const char *const help_keys[] = {
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
     "Tab, Shift+Tab", "the next or previous link, in amber, scrolled into view (after you scroll: the first one in view)",
-    "Enter, click", "follow the link: terse: links open the article or the feed's page; a web link shows its address",
+    "Enter, click", "follow the link: terse: links open the article or the feed's page; a link to a program, a program "
+                    "image or a document is passed to the shell, which opens it in a new tile; a web link shows its address",
     "Esc, Backspace, \xE2\x86\x90", "back to the previous article, then to where you came from",
     0, "Feeds",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel, click", "select a feed",
@@ -2707,7 +2935,7 @@ static const char *const help_keys[] = {
     "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
     0, "Search",
     "Enter", "search your relays for listed feeds by name and their articles by title",
-    "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (a feed's page, where S subscribes)",
+    "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (a feed's page, where S subscribes; a document as in the timeline)",
     "Esc", "back",
     0, "Help",
     "T", "publish a test article, and subscribe to your own feed so that it shows in the timeline",
@@ -2950,13 +3178,15 @@ static void lookup_request(void)
 }
 
 /* Starts reading art_blob (its entry known or not); `restore`: the
- * scroll value to go back to, or -1. */
-static void article_start(int32_t restore)
+ * scroll value to go back to, or -1; `state`: FETCHING, or NOT_FOUND or
+ * FAILED if that is known already (nothing is requested). */
+static void article_start(int32_t restore, uint8_t state)
 {
     art_want = art_entry && art_size < ART_CAP ? art_size : ART_CAP;
     art_have = 0;
-    art_state = FETCHING;
-    request_chunk();
+    art_state = state;
+    if (state == FETCHING)
+        request_chunk();
     view = ARTICLE;
     b_phase = B_START;
     b_line = b_lines = b_in_line = 0;
@@ -2974,17 +3204,45 @@ static void article_start(int32_t restore)
     article_page();
 }
 
+/* The outcome of an open request, on the status row (instead of the
+ * current link). */
+static void opened(uint32_t r)
+{
+    tb_n = 0;
+    tb_s(r == 1 ? "Opened in a new tile" : "This needs the shell");
+    say(r == 1 ? C_OK : C_INFO);
+    link_shown = 0;
+}
+
+/* Asks the shell to open blob `id` (a program image or a document). */
+static void open_in_shell(const uint8_t *id)
+{
+    open_req[0] = OPEN_BLOB;
+    memcpy(open_req + 1, id, 32);
+    opened(terse_open(open_req));
+}
+
+/* Whether the n bytes at p begin a program image or a document. */
+static uint8_t not_text(const uint8_t *p, uint32_t n)
+{
+    return n >= 4 && (!memcmp(p, "TERS", 4) || !memcmp(p, "TDOC", 4));
+}
+
 /* Opens the article of record r (timeline or search); Esc goes back to
- * view `from`. */
+ * view `from`. A document's entry is passed to the shell instead. */
 static void open_record(const uint8_t *r, uint8_t from)
 {
+    if (r[R_KIND] == ENTRY_DOCUMENT) {
+        open_in_shell(r + R_BLOB);
+        return;
+    }
     if (art_handle)
         return;
     take_entry(r);
     art_link = 0;
     art_return = from;
     bk_n = 0;
-    article_start(-1);
+    article_start(-1, FETCHING);
 }
 
 static void open_article(uint16_t i)
@@ -2996,8 +3254,8 @@ static void open_article(uint16_t i)
 
 /* Opens the article whose blob ID is `id`: its entry is the timeline's
  * if the host has one (the timeline buffer is looked at first, then the
- * whole timeline is read). */
-static void open_blob(const uint8_t *id, uint8_t link, int32_t restore)
+ * whole timeline is read, unless the buffer holds all of it). */
+static void open_blob(const uint8_t *id, uint8_t link, int32_t restore, uint8_t state)
 {
     uint16_t i;
     memcpy(art_blob, id, 32);
@@ -3008,14 +3266,14 @@ static void open_blob(const uint8_t *id, uint8_t link, int32_t restore)
             take_entry(tl_buf + rec_at[i]);
             break;
         }
-    if (!art_entry && tl_total && !(tl_base == 0 && tl_count >= tl_total)) {
+    if (!art_entry && !(tl_loaded && (!tl_total || (tl_base == 0 && tl_count >= tl_total)))) {
         lk_pos = 0;
         if (lk_handle)
             lk_restart = 1; /* when the one in progress is in */
         else
             lookup_request();
     }
-    article_start(restore);
+    article_start(restore, state);
 }
 
 static void lookup_done(uint8_t status)
@@ -3047,6 +3305,8 @@ static void lookup_done(uint8_t status)
     }
 }
 
+static void article_back(void);
+
 static void article_done(uint8_t status)
 {
     uint32_t size;
@@ -3064,6 +3324,15 @@ static void article_done(uint8_t status)
             say(C_ERROR);
         }
         dirty[STATUS_ROW] = 1;
+        return;
+    }
+    /* A program image or a document is not shown: the shell is asked to
+     * open it, and the view is left. */
+    if (!art_have && not_text(art, art_req.length)) {
+        art_state = FAILED;
+        open_in_shell(art_blob);
+        if (view == ARTICLE)
+            article_back();
         return;
     }
     size = art_req.size;
@@ -3224,41 +3493,65 @@ static void located(void)
     scroll_to(s);
 }
 
-/* Follows link `id`: an article link opens the article (the one shown
- * goes on the back stack), a feed link the feed's page; a web link only
- * shows its address. */
+/* Follows link `id`: an article link gets the first bytes of the blob
+ * (probe_done goes on), a feed link opens the feed's page, a program link
+ * asks the shell to open the program; a web link only shows its address. */
 static void follow(uint16_t id)
 {
     const uint8_t *t = art + link_at[id - 1];
     uint8_t target[32];
     switch (link_kind[id - 1]) {
     case LK_ARTICLE:
-        if (art_handle) {
+        if (art_handle || pr_handle) {
             tb_n = 0;
-            tb_s("Wait: this article is still being read");
+            tb_s(art_handle ? "Wait: this article is still being read" : "Wait: the link is being fetched");
             say(C_INFO);
             return;
         }
-        unhex(t + 6, target);
-        if (bk_n == BACK_N) {
-            memmove(bk_blob, bk_blob + 1, sizeof bk_blob - 32);
-            memmove(bk_link, bk_link + 1, BACK_N - 1);
-            memmove(bk_scroll, bk_scroll + 1, sizeof bk_scroll - sizeof bk_scroll[0]);
-            bk_n--;
-        }
-        memcpy(bk_blob[bk_n], art_blob, 32);
-        bk_link[bk_n] = art_link;
-        bk_scroll[bk_n] = scroll;
-        bk_n++;
-        open_blob(target, 1, -1);
+        unhex(t + 6, pr_id);
+        memcpy(pr_from, art_blob, 32);
+        pr_handle = content_get(&pr_req, pr_id, 0, sizeof pr_buf, pr_buf);
         break;
     case LK_FEED:
         unhex(t + 11, target);
         feed_page(target, ARTICLE);
         break;
+    case LK_PROGRAM:
+        open_req[0] = OPEN_PROGRAM;
+        unhex(t + PROG_KEY, open_req + 1);
+        open_req[33] = prog_name(t + PROG_NAME, link_len[id - 1] - PROG_NAME, open_req + 34);
+        opened(terse_open(open_req));
+        break;
     default:
         set_cur_link(id);
     }
+}
+
+/* The first bytes of a linked blob are in (or it could not be got): a
+ * program image or a document goes to the shell, and the article stays;
+ * else the linked article opens (the one shown goes on the back stack).
+ * Nothing happens if the article it was followed from is no longer
+ * shown. */
+static void probe_done(uint8_t status)
+{
+    pr_handle = 0;
+    if (view != ARTICLE || art_handle || memcmp(pr_from, art_blob, 32))
+        return;
+    if (status == STATUS_DONE && not_text(pr_buf, pr_req.length)) {
+        open_in_shell(pr_id);
+        return;
+    }
+    if (bk_n == BACK_N) {
+        memmove(bk_blob, bk_blob + 1, sizeof bk_blob - 32);
+        memmove(bk_link, bk_link + 1, BACK_N - 1);
+        memmove(bk_scroll, bk_scroll + 1, sizeof bk_scroll - sizeof bk_scroll[0]);
+        bk_n--;
+    }
+    memcpy(bk_blob[bk_n], art_blob, 32);
+    bk_link[bk_n] = art_link;
+    bk_scroll[bk_n] = scroll;
+    bk_n++;
+    open_blob(pr_id, 1, -1, status == STATUS_DONE ? FETCHING : status == STATUS_NOT_FOUND ? NOT_FOUND : FAILED);
 }
 
 /* Esc in an article: the previous article of the back stack, else the
@@ -3276,7 +3569,7 @@ static void article_back(void)
         return;
     }
     bk_n--;
-    open_blob(bk_blob[bk_n], bk_link[bk_n], bk_scroll[bk_n]);
+    open_blob(bk_blob[bk_n], bk_link[bk_n], bk_scroll[bk_n], FETCHING);
 }
 
 /* Back to the article from the feed page: its document is submitted
@@ -3318,7 +3611,29 @@ static void prefetch_add(const uint8_t *id)
 static uint8_t pending(void)
 {
     return !!tl_handle + !!sub_handle + !!cnt_handle + !!id_handle + !!op_handle + !!art_handle + !!nm_handle
-           + !!lk_handle + !!sf_handle + !!sa_handle + !!pf_handle[0] + !!pf_handle[1];
+           + !!lk_handle + !!sf_handle + !!sa_handle + !!pf_handle[0] + !!pf_handle[1] + !!pr_handle + !!dn_handle;
+}
+
+/* Asks for the format name of the first document on the list shown whose
+ * name is not known (one at a time, while few requests are pending; once
+ * there is none, until a list is shown again). */
+static void dn_step(void)
+{
+    uint16_t i, end;
+    if (!dn_scan || dn_handle || pending() >= PF_PENDING)
+        return;
+    if (view == TIMELINE) {
+        end = tlp.top + vis() + 1;
+        for (i = tlp.top; i < end && i < tl_total; i++)
+            if (in_window(i) && dn_want(record(i)))
+                return;
+    } else if (view == SEARCH && s_ran) {
+        end = srp.top + vis() + 1;
+        for (i = srp.top; i < end && i < s_rows(); i++)
+            if (i > sf_n + 1 && dn_want(s_record(i)))
+                return;
+    }
+    dn_scan = 0;
 }
 
 /* Sends queued prefetches while few requests are pending. */
@@ -3949,6 +4264,15 @@ static void link_status(void)
         tb_s("terse:feed/");
         tb_key(key);
         tb_s("  (a feed)   Enter: open");
+    } else if (link_kind[id - 1] == LK_PROGRAM) {
+        uint8_t key[32], name[48];
+        unhex(t + PROG_KEY, key);
+        tb_n = 0;
+        tb_s("program \xE2\x80\x9C");
+        tb_name(name, prog_name(t + PROG_NAME, n - PROG_NAME, name));
+        tb_s("\xE2\x80\x9D by ");
+        tb_feed(key);
+        tb_s("   Enter: open");
     } else {
         uint8_t id32[32];
         unhex(t + 6, id32);
@@ -4315,6 +4639,10 @@ static uint8_t handle_events(void)
                 find_done(1, ev.b);
             else if (done_for(sa_handle, &sa_req))
                 find_done(0, ev.b);
+            else if (done_for(pr_handle, &pr_req))
+                probe_done(ev.b);
+            else if (done_for(dn_handle, &dn_req))
+                dn_done(ev.b);
             else if (done_for(pf_handle[0], &pf_req[0]))
                 pf_handle[0] = 0;
             else if (done_for(pf_handle[1], &pf_req[1]))
@@ -4351,6 +4679,7 @@ static void render(void)
             help_doc();
     }
     prefetch_step();
+    dn_step();
     if (view == ARTICLE)
         build();
     if (view == ARTICLE || view == HELP)
@@ -4376,6 +4705,12 @@ int main(void)
     load_timeline(0);
     id_handle = content_identity(&id_req);
     dirty[STATUS_ROW] = 1;
+    /* Started with a blob (by the shell): it is shown as an article, and
+     * Esc goes to the timeline. */
+    if (terse_argument(pr_id) == 1) {
+        art_return = TIMELINE;
+        open_blob(pr_id, 0, -1, FETCHING);
+    }
     for (;;) {
         now = terse_time();
         if (handle_events())

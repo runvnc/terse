@@ -149,6 +149,8 @@ pub enum RelayReply {
     Subscribed { highest: u32 },
     /// A find succeeded: the entries, not yet verified.
     Found(Vec<Vec<u8>>),
+    /// A lookup found an entry, not yet verified.
+    LookedUp(Vec<u8>),
     NotFound,
     Refused,
     /// Connection error, protocol error or timeout.
@@ -222,6 +224,13 @@ impl RelayClient {
     pub fn find(&mut self, scope: u8, query: &[u8]) -> u32 {
         let req = self.next_req();
         self.send(req, protocol::encode_find(req, scope, query));
+        req
+    }
+
+    /// Asks for a feed's current entry of a kind and name (NETWORK 4.8).
+    pub fn lookup(&mut self, feed: &FeedKey, kind: u8, name: &[u8]) -> u32 {
+        let req = self.next_req();
+        self.send(req, protocol::encode_lookup(req, feed, kind, name));
         req
     }
 
@@ -410,6 +419,9 @@ impl RelayClient {
                 Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
                 Some(Reply::Found { req, status: status::DONE, entries }) => (req, RelayReply::Found(entries)),
                 Some(Reply::Found { req, .. }) => (req, RelayReply::Refused),
+                Some(Reply::LookedUp { req, entry: Some(entry), .. }) => (req, RelayReply::LookedUp(entry)),
+                Some(Reply::LookedUp { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
+                Some(Reply::LookedUp { req, .. }) => (req, RelayReply::Refused),
                 Some(Reply::Get { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
                 Some(Reply::Get { req, .. } | Reply::Put { req, .. } | Reply::Status { req, .. }) => {
                     (req, RelayReply::Refused)

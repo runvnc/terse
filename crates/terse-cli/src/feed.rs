@@ -342,6 +342,7 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
         match entry.kind {
             terse_net::entry::KIND_PROFILE => format!("[profile: {title}]"),
             terse_net::entry::KIND_PROGRAM => format!("[program: {title}]"),
+            terse_net::entry::KIND_DOCUMENT => format!("[document: {title}]"),
             _ => title,
         }
     )

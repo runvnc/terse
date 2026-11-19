@@ -20,6 +20,8 @@
 #define CALL_RANDOM 0x104
 #define CALL_CONTROLLER 0x105
 #define CALL_EXIT 0x106
+#define CALL_OPEN 0x107
+#define CALL_ARGUMENT 0x108
 #define CALL_TERM_WRITE 0x200
 #define CALL_TERM_COMMAND 0x201
 #define CALL_TERM_SET_CURSOR 0x202
@@ -51,6 +53,8 @@
 #define CALL_MACH_BUILTIN 0x806
 #define CALL_MACH_START_PROGRAM 0x807
 #define CALL_MACH_IDENTITY 0x808
+#define CALL_MACH_REQUEST 0x809
+#define CALL_MACH_ARGUMENT 0x80A
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -121,6 +125,8 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
  * anchor and its line's height, then the line's y (page_place_event). */
 #define EV_PAGE_LOCATED 0x0D
 #define EV_PAGE_LOCATED_Y 0x0E
+/* For the shell: machine a asked to open something (mach_request). */
+#define EV_OPEN_REQUESTED 0x0F
 
 /* USB HID key codes used by most programs. */
 #define KEY_ENTER 0x28
@@ -178,6 +184,19 @@ static inline uint8_t terse_random_byte(void)
     terse_random(&b, 1);
     return b;
 }
+
+/* Asks the shell to open something (SPEC 4): `request` (ROM or RAM) is
+ * OPEN_BLOB and a blob ID (32), or OPEN_PROGRAM, a feed key (32; zero: a
+ * built-in), the name's length (1) and the name (1-48). 1 if the request
+ * was passed to a shell; 0 if there is none (the machine runs on its own)
+ * or a request of this machine still waits; TERSE_ERR_BUFFER if malformed.
+ * What the shell does with it, the machine is not told. */
+#define OPEN_BLOB 1
+#define OPEN_PROGRAM 2
+static inline uint32_t terse_open(const void *request) { return terse_call(CALL_OPEN, (uint32_t)request, 0, 0); }
+/* The blob ID the shell gave this machine when it started it, into 32
+ * bytes of RAM: 1, or 0 if it has none. */
+static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGUMENT, (uint32_t)id, 0, 0); }
 
 /* Controllers (SPEC 6): the 8-byte state. */
 typedef struct {
@@ -344,6 +363,18 @@ uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
  * most 120, copied at submit). The host asks the user; on completion
  * r->size is the entry's seq. */
 uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len);
+/* The same with the entry's kind: 0 or ENTRY_ARTICLE, or ENTRY_DOCUMENT for
+ * a blob that starts with a document header (TDOC_*); STATUS_BAD_REQUEST
+ * on completion if it does not. */
+#define ENTRY_ARTICLE 1
+#define ENTRY_PROFILE 2
+#define ENTRY_PROGRAM 3
+#define ENTRY_DOCUMENT 4
+uint8_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind);
+/* A document (SPEC 9.7) starts with "TDOC", version 0, the format owner's
+ * feed key (32; zero: a built-in program's format), the format name's
+ * length (1) and the name (1-48), then the data. */
+#define TDOC_HEAD 38
 /* The host's own feed key, in r->id on completion; STATUS_NOT_FOUND if the
  * host has no identity yet. */
 uint8_t content_identity(content_req *r);
@@ -595,6 +626,14 @@ uint32_t mach_start_named(const uint8_t *key, const void *name, uint32_t len);
 /* Machine h's identity into 81 bytes at `out`: feed key (32), name length
  * (1), name (48, zero padded); 1, or 0 if it has none. */
 static inline uint32_t mach_identity(uint32_t h, uint8_t *out) { return terse_call(CALL_MACH_IDENTITY, h, (uint32_t)out, 0); }
+
+/* Machine h's open request (after EV_OPEN_REQUESTED) into 82 bytes of RAM:
+ * the kind, then the blob ID, or the feed key, name length and name (zero
+ * padded to 48). 1, and the request is no longer waiting; 0 if none waits. */
+static inline uint32_t mach_request(uint32_t h, uint8_t *out) { return terse_call(CALL_MACH_REQUEST, h, (uint32_t)out, 0); }
+/* Gives loading machine h the blob ID `id` as its argument (terse_argument);
+ * 1, or 0 if h is not loading. */
+static inline uint32_t mach_argument(uint32_t h, const uint8_t *id) { return terse_call(CALL_MACH_ARGUMENT, h, (uint32_t)id, 0); }
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

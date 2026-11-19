@@ -94,7 +94,7 @@ fn malformed_requests() {
     // A type the relay does not know is ignored (NETWORK 3), so is a reply
     // type from a client that is not a peer; the connection stays usable.
     ws.send(Message::binary(vec![0x55, 0, 0, 0, 0, 0])).unwrap();
-    ws.send(Message::binary(vec![0x08])).unwrap();
+    ws.send(Message::binary(vec![0x09])).unwrap();
     ws.send(Message::binary(protocol::encode_get_reply(1, status::DONE, b"x"))).unwrap();
     assert_eq!(ask(&mut ws, protocol::encode_get(7, &[0; 32])), [GET_REPLY, 7, 0, 0, 0, status::NOT_FOUND]);
     // Find: a bad scope, an empty or long query, a cut message: refused.

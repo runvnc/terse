@@ -46,8 +46,8 @@ order.
 Status: `1` done, `2` not found, `3` refused (too large, empty, store full,
 or malformed request).
 
-Message types `01h`–`07h` are requests, `81h`–`86h` replies and `90h` a
-pushed entry (sections 4.3, 4.7, 5).
+Message types `01h`–`08h` are requests, `81h`–`86h` and `88h` replies and
+`90h` a pushed entry (sections 4.3, 4.7, 4.8, 5).
 
 - The relay computes the ID of a put itself; the client does not send it.
 - A relay must refuse blobs larger than 1,048,576 bytes and may impose a
@@ -81,7 +81,7 @@ see secret keys.
 | 0 | 32 | Feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing by 1 |
 | 36 | 4 | Time: Unix seconds, as claimed by the author |
-| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program |
+| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document |
 | 41 | 3 | Size of the blob in bytes |
 | 44 | 32 | Blob ID |
 | 76 | 32 | Reply-to: the blob ID this entry responds to, or all zeros |
@@ -106,6 +106,12 @@ program is started. A feed's **current version** of a program is its valid
 program entry with that name and the highest `seq` (of those a host or
 relay holds). A program's identity is (feed key, name) (SPEC.md section
 12.1).
+
+A **document** entry (kind 4) publishes a document (SPEC.md section 9.7):
+its title is the document's name (any title, as for an article), its blob
+a document. The entry is valid whether or not the blob starts with a
+document header; a host that publishes one for a program checks it first
+(SPEC.md section 9.5).
 
 If two different valid entries have the same feed key and `seq`, the one
 received first is kept.
@@ -153,8 +159,8 @@ received first is kept.
   removes the feed from the list and unsubscribes on the connection.
 - **Automatic download:** when the host receives an entry for a subscribed
   feed whose size is at most 16,384 bytes (the user may change this limit),
-  it gets the blob without being asked. This applies to profile entries
-  too. If the blob's length differs from the entry's size, the blob is not
+  it gets the blob without being asked. This applies to profile and
+  document entries too. If the blob's length differs from the entry's size, the blob is not
   associated with the entry. Larger blobs are fetched only on request.
 - **Programs** are downloaded differently: once a subscribed feed is caught
   up (section 4.3), and after that whenever one of its program entries
@@ -169,15 +175,22 @@ received first is kept.
   ones whose blobs it does not hold and is not already fetching, and gets
   them. It skips a link when an entry it holds gives the blob a size over
   the automatic download limit, and discards a fetched blob over that
-  limit. Prefetched blobs are not scanned. The user may turn prefetch off.
+  limit. Program links (`terse:program/`, section 4.5) are not article
+  links and are never prefetched. A host does not prefetch a blob that a
+  program entry (kind 3) it holds names, since that blob is an image; it
+  cannot tell that any other linked blob is an image (or a document)
+  before it has fetched it, so such a blob is fetched like an article,
+  within the limit. Documents are not scanned for links. Prefetched blobs
+  are not scanned. The user may turn prefetch off.
 - **Arrival order:** the host records the order in which it first stored
   each entry, and keeps that record across restarts. This is the order of
   the timeline that programs read (SPEC.md section 9.5), which holds only
-  article entries (kind 1), not profiles or programs. Unsubscribing
+  article and document entries (kinds 1 and 4), not profiles or
+  programs. Unsubscribing
   removes a feed's entries from the timeline but not from the record;
   subscribing again puts them back where they were.
-- Publishing an article (by the user, or by a program with the user's
-  consent: SPEC.md section 9.5): the host puts the blob, then signs and
+- Publishing an article or a document (by the user, or by a program with
+  the user's consent: SPEC.md section 9.5): the host puts the blob, then signs and
   publishes an entry with the next `seq` (one more than the highest it holds
   or has used for its own feed). The entry is stored locally like a
   received one; if the host subscribes to its own feed it is in the
@@ -230,7 +243,16 @@ below), which then starts the next block.
   followed by 64 lowercase hexadecimal digits (an article, by blob ID) or
   `terse:feed/` followed by 64 lowercase hexadecimal digits (a feed key),
   not preceded by a letter or digit, with the digits not followed by a
-  letter or digit. Links count in every block that shows text.
+  letter or digit. A link is also `terse:program/`, 64 lowercase
+  hexadecimal digits (the publisher's feed key, all zero for a built-in
+  program), `/` and the program's name, not preceded by a letter or digit:
+  the name is the run of bytes `A`–`Z`, `a`–`z`, `0`–`9`, `-`, `.`, `_`,
+  `~` and `%` followed by two hexadecimal digits (either case) that
+  follows the `/`, less any `.` at its end; each `%XX` stands for the byte XX,
+  every other byte for itself, and the bytes so decoded must be a valid
+  display name (section 4.6), else the text is not a link. So a name's
+  other bytes (a space, non-ASCII letters, a final dot) are written as
+  `%XX`. Links count in every block that shows text.
 - A **link with text** is `[`, the text, `]`, `(`, the target, `)`, all
   on one line: the text is 1 to 200 bytes holding no `[`, `]` or link,
   and the target is a link by the rules above that is the whole of what is
@@ -337,7 +359,8 @@ declared name.
 | client → relay | Find | `06h`, `req` (4), `scope` (1), `n` (1), query (`n` bytes) |
 | relay → client | Find reply | `86h`, `req` (4), `status` (1), `count` (1), then `count` times: `length` (2), entry (`length` bytes, complete with its signature) |
 
-- `scope` `1` searches feeds by display name; `2` searches article titles;
+- `scope` `1` searches feeds by display name; `2` searches article and
+  document titles;
   `3` searches program names. The query is 1 to 48 bytes of UTF-8. A find with another scope or a bad
   query is refused (status `3`, `count` 0).
 - **Matching:** the query must occur as a contiguous run of bytes in the
@@ -347,7 +370,8 @@ declared name.
   document says `listed: yes` and whose display name matches: names that
   start with the query (same folding) first, then the others, each group in
   increasing order of feed key.
-- **Scope 2** returns article entries (kind 1) of feeds with a listed
+- **Scope 2** returns article and document entries (kinds 1 and 4) of
+  feeds with a listed
   profile in force whose title matches, newest first by the order in which
   the relay stored them (not by the time the author claims).
 - **Scope 3** returns program entries (kind 3) of feeds with a listed
@@ -368,6 +392,28 @@ declared name.
   program is then dropped if another result has the same feed and name and
   a higher `seq`. They keep the first 16. A
   search that no relay answered and at least one refused is refused.
+
+### 4.8 Lookup
+
+| Direction | Message | Layout |
+|---|---|---|
+| client → relay | Lookup | `08h`, `req` (4), feed key (32), `kind` (1), `n` (1), name (`n` bytes) |
+| relay → client | Lookup reply | `88h`, `req` (4), `status` (1), then if `status` is 1: the entry (complete, with its signature) |
+
+- In v0 `kind` must be `3` (a program) and the name a valid display name
+  (section 4.6); otherwise the lookup is refused (status `3`).
+- The relay answers with the feed's current version of the program of
+  that name that it holds (its program entry of that name with the highest
+  `seq`, section 4.2), status `1`, or status `2` if it holds none. It
+  answers whether or not the feed has a listed profile, or any profile.
+- A relay may refuse a lookup (status `3`) from a connection that asks
+  too often; lookups and finds may share one allowance.
+- **Hosts** ask all their connected relays, verify every entry returned
+  and drop one that is invalid or not of the feed, kind and name asked
+  for, and take the one with the highest `seq`. The entry is stored like
+  a received one (it is not added to the subscriptions). A host asks when
+  a shell starts a program it holds no entry for (SPEC.md section 12.2
+  `start_program`), and then gets the image.
 
 ## 5. Several relays
 
@@ -401,7 +447,7 @@ briefly for the others).
   the profile in force of a feed with an entry pointing at the blob, then
   the rest, two at a time. The blob is not found only when every connected
   relay has said so or failed.
-- **Find** asks every connected relay (section 4.7).
+- **Find** and **lookup** ask every connected relay (sections 4.7, 4.8).
 
 ### 5.2 Relays that mirror each other
 
@@ -430,7 +476,7 @@ ordinary messages.
   wins and is stored (if the store has room) and served. If every peer
   says not found or fails, or none answers within 3 s, the reply is "not
   found". A get from a peer is answered from the relay's store only.
-- Find is answered from the relay's own index only.
+- Find and lookup are answered from the relay's own store only.
 
 Because a relay passes on only what it newly stores, an entry crosses each
 peer link at most once in each direction.
@@ -447,7 +493,8 @@ peer link at most once in each direction.
   to a blob (not the display names of section 4.6).
 - Messages and topics.
 - A relay keeping the current version of every program of a feed however
-  old (it keeps only the latest profile so).
+  old (it keeps only the latest profile so), so a lookup can miss an old
+  program of a busy feed. Lookups of kinds other than programs.
 - Sharding content among relays by hash, so that each relay holds only part
   of it.
 - Relay discovery beyond configuration, the local relay and the `relay`

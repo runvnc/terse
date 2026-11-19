@@ -16,7 +16,7 @@
 //! [`terse_net::timeline::Arrivals`]); entries stored before the log
 //! existed are added to it at start, by feed key and then `seq`. A
 //! connection may search at most [`FINDS_PER_SECOND`] times in any second;
-//! further finds are refused.
+//! further finds are refused. Lookups (NETWORK 4.8) count as finds.
 //!
 //! Peers (NETWORK 5): a connection on which a Peer message arrived, or one
 //! this relay opened to a `--peer` URL. Both sides may send requests on it.
@@ -34,7 +34,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use terse_net::blob::{BlobId, blob_id, valid_size};
-use terse_net::entry::{self, KIND_ARTICLE, KIND_PROFILE, KIND_PROGRAM};
+use terse_net::entry::{self, KIND_ARTICLE, KIND_DOCUMENT, KIND_PROFILE, KIND_PROGRAM};
 use terse_net::feeds::Insert;
 use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Document};
@@ -273,6 +273,18 @@ impl Relay {
                 Some(found) => protocol::encode_find_reply(req, status::DONE, &found),
                 None => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[]),
             },
+            // NETWORK 4.8: answered for any feed, listed or not; counted
+            // with the finds.
+            Ok(Request::Lookup { req, feed, kind, name }) => {
+                if kind != KIND_PROGRAM || !std::str::from_utf8(name).is_ok_and(profile::valid_name) || !self.allow_find(conn) {
+                    protocol::encode_lookup_reply(req, status::REFUSED, &[])
+                } else {
+                    match self.lookup(&feed, name) {
+                        Some(bytes) => protocol::encode_lookup_reply(req, status::DONE, &bytes),
+                        None => protocol::encode_lookup_reply(req, status::NOT_FOUND, &[]),
+                    }
+                }
+            }
             Ok(Request::Peer) => {
                 self.mark_peer(conn);
                 return Answer::Nothing;
@@ -283,6 +295,9 @@ impl Relay {
             }
             Err(Malformed::Refuse { reply: protocol::PUT_REPLY, req }) => {
                 protocol::encode_put_reply(req, status::REFUSED, &[0; 32])
+            }
+            Err(Malformed::Refuse { reply: protocol::LOOKUP_REPLY, req }) => {
+                protocol::encode_lookup_reply(req, status::REFUSED, &[])
             }
             Err(Malformed::Refuse { reply: protocol::FIND_REPLY, req }) => {
                 protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[])
@@ -507,7 +522,8 @@ impl Relay {
             Ok(o) => o.iter().rev().filter(|(f, _)| listed.contains(f)).copied().collect(),
             Err(_) => Vec::new(),
         };
-        let want = if scope == SCOPE_ENTRIES { KIND_ARTICLE } else { KIND_PROGRAM };
+        // Scope 2: articles and documents.
+        let want: &[u8] = if scope == SCOPE_ENTRIES { &[KIND_ARTICLE, KIND_DOCUMENT] } else { &[KIND_PROGRAM] };
         let mut hits = Vec::new();
         for (feed, seq) in order {
             if hits.len() == MAX_FIND_RESULTS {
@@ -516,12 +532,12 @@ impl Relay {
             // Stored entries were verified when they arrived.
             let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
             let Some((kind, title)) = kind_and_title(&bytes) else { continue };
-            if kind != want || !profile::matches(title, query) {
+            if !want.contains(&kind) || !profile::matches(title, query) {
                 continue;
             }
             // Programs: current versions only (no entry of the same name
             // with a higher seq is held).
-            if want == KIND_PROGRAM {
+            if kind == KIND_PROGRAM {
                 let newer = self.feeds.seqs(&feed).unwrap_or_default().into_iter().filter(|&s| s > seq).any(|s| {
                     let Ok(Some(b)) = self.feeds.get(&feed, s) else { return false };
                     kind_and_title(&b) == Some((KIND_PROGRAM, title))
@@ -533,6 +549,18 @@ impl Relay {
             hits.push(bytes.clone());
         }
         Some(hits)
+    }
+}
+
+impl Relay {
+    /// The current version of program `name` of `feed` that this relay
+    /// holds: its program entry of that name with the highest `seq`.
+    pub fn lookup(&self, feed: &FeedKey, name: &[u8]) -> Option<Vec<u8>> {
+        let seqs = self.feeds.seqs(feed).ok()?;
+        seqs.into_iter().rev().find_map(|seq| {
+            let bytes = self.feeds.get(feed, seq).ok()??;
+            (kind_and_title(&bytes) == Some((KIND_PROGRAM, name))).then_some(bytes)
+        })
     }
 }
 

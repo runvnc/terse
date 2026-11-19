@@ -181,8 +181,14 @@ uint8_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
 
 uint8_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len)
 {
+    return content_publish_kind(r, blob, title, len, 0);
+}
+
+uint8_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind)
+{
     r->op = CONTENT_PUBLISH;
     memcpy(r->id, blob, 32);
+    r->offset = kind;
     r->addr = (uint32_t)title;
     r->length = len;
     return content_submit(r);

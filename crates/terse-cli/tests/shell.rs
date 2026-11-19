@@ -188,24 +188,27 @@ fn golden(name: &str, got: &str) {
 
 /// From the launcher at start: reader (handle 1), then sparks, fetch and
 /// hello, each started from the launcher after the home key (the cursor is
-/// then on the focused machine's line, below the four programs).
+/// then on the focused machine's line, below the five programs).
 const FOUR: &str = "\
 2 press enter
 10 home
 11 press up
 12 press up
 13 press up
-14 press enter
+14 press up
+15 press enter
 20 home
 21 press up
 22 press up
 23 press up
-24 press enter
+24 press up
+25 press enter
 30 home
 31 press up
 32 press up
 33 press up
-34 press enter
+34 press up
+35 press enter
 ";
 
 #[test]
@@ -215,7 +218,7 @@ fn launcher_at_start() {
     assert_eq!(s.system.focus(), 0);
     assert_eq!(s.system.children().count(), 0);
     let launcher = s.launcher();
-    assert!(launcher.starts_with("PROGRAMS\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n"), "{launcher}");
+    assert!(launcher.starts_with("PROGRAMS\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n"), "{launcher}");
     let page = s.system.shell().page().unwrap().region();
     assert_eq!((page.x, page.y, page.w), (160, 80, 320), "centred while there are no machines");
     assert!(page.h < 340, "as high as the launcher's text: {}", page.h);
@@ -241,7 +244,7 @@ fn one_machine_fills_the_area() {
 
 #[test]
 fn two_machines_master_and_stack() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n12 press enter\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n12 press up\n13 press enter\n", Setup::default());
     s.run(40);
     assert_eq!((s.state(1), s.state(2)), (state::RUNNING, state::RUNNING));
     assert_eq!(s.system.child(2).unwrap().title, "hello");
@@ -300,7 +303,8 @@ fn typed_text_reaches_only_the_focused_machine() {
 10 text one
 20 home
 21 press up
-22 press enter
+22 press up
+23 press enter
 30 text two
 40 home
 41 text not for anyone
@@ -356,7 +360,7 @@ fn a_click_in_a_tile_reaches_the_reader_mapped() {
 fn a_click_focuses_a_tile_and_the_bar() {
     // Two machines (reader, hello: hello focused); a click in the
     // reader's tile focuses it; one on hello's bar segment focuses hello.
-    let script = "2 press enter\n10 home\n11 press up\n12 press enter\n30 click 100 100\n40 click 330 8\n";
+    let script = "2 press enter\n10 home\n11 press up\n12 press up\n13 press enter\n30 click 100 100\n40 click 330 8\n";
     let mut s = Sys::new(script, Setup::default());
     s.run(31);
     assert_eq!(s.system.focus(), 1);
@@ -382,7 +386,7 @@ fn pause_and_resume() {
 
 #[test]
 fn stop() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n12 press enter\n20 home\n21 press x\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n12 press up\n13 press enter\n20 home\n21 press x\n", Setup::default());
     s.run(25);
     assert_eq!(s.state(2), state::NONE);
     assert!(s.system.child(2).is_none());
@@ -394,7 +398,7 @@ fn stop() {
 
 #[test]
 fn exit_and_fault_are_reported() {
-    // hello exits on Esc; the crash image (the fifth program) faults at once.
+    // hello exits on Esc; the crash image (the sixth program) faults at once.
     let script = "\
 2 press down
 3 press down
@@ -414,7 +418,7 @@ fn exit_and_fault_are_reported() {
     assert_eq!(s.state(2), state::FAULTED);
     let slot = s.system.shell().machines().unwrap().slot(2).clone();
     assert_eq!((slot.fault_kind, slot.fault_pc), (4, 0x0001_0014));
-    assert!(s.bar().contains("2!crash"), "{}", s.bar());
+    assert!(s.bar().contains("2!crash"), "{}\n{}", s.bar(), s.launcher());
     assert!(s.launcher().contains("load at pc 00010014"), "{}", s.launcher());
     golden("exit-fault", &format!("{}-- launcher --\n{}", s.dump(), s.launcher()));
 }
@@ -423,10 +427,10 @@ fn exit_and_fault_are_reported() {
 fn a_start_that_fails() {
     // The fifth program's ID is in no store: its title is unknown, and
     // starting it fails.
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press enter\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n7 press enter\n";
     let mut s = Sys::new(script, Setup { unknown: true, ..Setup::default() });
     s.run(5);
-    assert!(s.launcher().contains("[?]{104}"), "{}", s.launcher());
+    assert!(s.launcher().contains("[?]{105}"), "{}", s.launcher());
     s.run(10);
     assert_eq!(s.state(1), state::FAILED);
     assert!(s.system.child(1).unwrap().machine.is_none());
@@ -518,6 +522,7 @@ fn feed_programs() -> Vec<(String, Vec<u8>, bool)> {
 #[test]
 fn programs_from_feeds() {
     let script = "\
+2 press down
 3 press down
 4 press down
 5 press down

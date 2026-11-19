@@ -76,8 +76,9 @@ impl Consent {
 pub enum Asked {
     Subscribe(FeedKey),
     Unsubscribe(FeedKey),
-    /// Publish an article (`size` bytes) with this title.
-    Publish { title: String, size: u32 },
+    /// Publish an article, or with `document` a document (`size` bytes),
+    /// with this title.
+    Publish { title: String, size: u32, document: bool },
     /// Publish a profile with this display name; `listed`: findable by
     /// search.
     SetProfile { name: String, listed: bool },
@@ -126,6 +127,9 @@ enum Job {
     FeedPublish,
     /// A whole blob for `fetch`.
     Fetch,
+    /// The relays asked for a program the host does not hold (NETWORK
+    /// 4.8); its image is fetched next.
+    Lookup(ProgramId),
 }
 
 impl ContentService {
@@ -553,7 +557,7 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Fetch, Done::Got(blob)) => (0, Outcome::Got { size: blob.len() as u32, data: blob }),
         (Job::Fetch, Done::NotFound) => (0, Outcome::NotFound),
         (Job::Fetch, _) => (0, Outcome::Failed),
-        (Job::FeedPublish, _) => unreachable!("publishes are reported as feed events"),
+        (Job::FeedPublish | Job::Lookup(_), _) => unreachable!("publishes are feed events; lookups go on to a fetch"),
     };
     Completion { handle, outcome }
 }
@@ -602,8 +606,16 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
         RequestKind::SetNickname { feed, name } => {
             Asked::SetNickname { feed: *feed, name: String::from_utf8_lossy(name).into_owned() }
         }
-        RequestKind::Publish { blob, title } => match node.store().read(blob) {
-            Ok(Some(bytes)) => Asked::Publish { title: String::from_utf8_lossy(title).into_owned(), size: bytes.len() as u32 },
+        RequestKind::Publish { blob, title, kind } => match node.store().read(blob) {
+            // SPEC 9.5: a document must start with a document header.
+            Ok(Some(bytes)) if *kind == terse_core::content::ENTRY_DOCUMENT && terse_core::content::document_format(&bytes).is_none() => {
+                return Step::Complete(Outcome::BadRequest);
+            }
+            Ok(Some(bytes)) => Asked::Publish {
+                title: String::from_utf8_lossy(title).into_owned(),
+                size: bytes.len() as u32,
+                document: *kind == terse_core::content::ENTRY_DOCUMENT,
+            },
             Ok(None) => return Step::Complete(Outcome::NotFound),
             Err(_) => return Step::Complete(Outcome::Failed),
         },
@@ -620,8 +632,8 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
             RequestKind::Unsubscribe { feed } => {
                 Step::Complete(if node.unsubscribe(feed).is_ok() { Outcome::Done } else { Outcome::Failed })
             }
-            RequestKind::Publish { blob, title } => {
-                node.start_publish_blob(token, *blob, &String::from_utf8_lossy(title), now());
+            RequestKind::Publish { blob, title, kind } => {
+                node.start_publish_blob(token, *blob, &String::from_utf8_lossy(title), *kind, now());
                 Step::Started
             }
             RequestKind::SetProfile { name, listed } => {
@@ -746,6 +758,12 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     pending.insert(next, (tag, Job::Fetch));
                     node.start_get(next, id);
                 }
+                // SPEC 12.2: a published program the host does not hold is
+                // looked up on the relays first.
+                None if !program.is_builtin() => {
+                    pending.insert(next, (tag, Job::Lookup(program.clone())));
+                    node.start_lookup(next, program.publisher, &program.name);
+                }
                 None => {
                     let c = Completion { handle: 0, outcome: Outcome::NotFound };
                     if finished.send(Finished::Done(tag, c)).is_err() {
@@ -862,6 +880,15 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     let outcome = Outcome::Records { total, data };
                     finished.send(Finished::Done(tag, Completion { handle, outcome })).is_ok()
                 }
+                Some((tag, Job::Lookup(program))) => match done {
+                    Done::Found(_) if let Some(id) = node.current_program(&program.publisher, &program.name).map(|e| e.blob) => {
+                        next += 1;
+                        pending.insert(next, (tag, Job::Fetch));
+                        node.start_get(next, id);
+                        true
+                    }
+                    _ => finished.send(Finished::Done(tag, Completion { handle: 0, outcome: Outcome::NotFound })).is_ok(),
+                },
                 Some((tag, job)) => finished.send(Finished::Done(tag, completion(job, done))).is_ok(),
                 None => true,
             };
@@ -983,8 +1010,8 @@ mod tests {
                 RequestKind::Subscribe { feed: a },
                 RequestKind::Unsubscribe { feed: b },
                 RequestKind::Unsubscribe { feed: a },
-                RequestKind::Publish { blob: article, title: b"t".to_vec() },
-                RequestKind::Publish { blob: [9; 32], title: b"t".to_vec() },
+                RequestKind::Publish { blob: article, title: b"t".to_vec(), kind: 1 },
+                RequestKind::Publish { blob: [9; 32], title: b"t".to_vec(), kind: 1 },
                 RequestKind::Identity,
                 RequestKind::Subscribe { feed: [0; 32] },
             ],
@@ -1018,7 +1045,7 @@ mod tests {
         let (mut service, done) = feed_requests(
             node,
             Consent::Allow,
-            vec![RequestKind::Subscribe { feed: b }, RequestKind::Publish { blob: article, title: "Tïtle".into() }],
+            vec![RequestKind::Subscribe { feed: b }, RequestKind::Publish { blob: article, title: "Tïtle".into(), kind: 1 }],
         );
         assert_eq!(outcomes(&done), [Outcome::Done, Outcome::Published { seq: 1 }]);
         // The identity was created; the subscription saved.
@@ -1261,6 +1288,28 @@ mod tests {
         assert_eq!(&data[2 + 113 + 2 + 32..2 + 113 + 2 + 36], &2u32.to_le_bytes(), "tool, version 2");
     }
 
+    /// SPEC 9.5: a document publish (kind 4) needs a valid document
+    /// header (else 04h, without asking); the prompt says it is a
+    /// document; the entry is kind 4.
+    #[test]
+    fn publishing_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let doc = store.put(&[&b"TDOC\0"[..], &[0; 32], &[6], b"sketch", b"lines"].concat()).unwrap();
+        let text = store.put(b"just text").unwrap();
+        let mut node = Node::new(store, None);
+        let me = crate::Identity::from_seed([3; 32]);
+        node.set_identity(me.clone());
+        let publish = |blob, kind| RequestKind::Publish { blob, title: b"Sketch 1".to_vec(), kind };
+        let (mut service, done) = feed_requests(node, Consent::Ask, vec![publish(text, 4), publish(doc, 4)]);
+        assert_eq!(done, [Completion { handle: 1, outcome: Outcome::BadRequest }]);
+        assert_eq!(service.prompt().unwrap().asked, Asked::Publish { title: "Sketch 1".into(), size: 49, document: true });
+        service.answer(true);
+        assert_eq!(outcomes(&service.wait_finished()), [Outcome::Published { seq: 1 }]);
+        let held = crate::FeedStore::beside_blobs(dir.path()).entries(&me.feed_key()).unwrap();
+        assert_eq!((held[0].entry.kind, held[0].entry.blob), (crate::entry::KIND_DOCUMENT, doc));
+    }
+
     /// Asked: one prompt at a time, in handle order; a yes carries the
     /// request out, a no refuses it.
     #[test]
@@ -1276,7 +1325,7 @@ mod tests {
             Consent::Ask,
             vec![
                 RequestKind::Subscribe { feed: b },
-                RequestKind::Publish { blob: article, title: b"T".to_vec() },
+                RequestKind::Publish { blob: article, title: b"T".to_vec(), kind: 1 },
                 RequestKind::Identity,
             ],
         );
@@ -1284,7 +1333,7 @@ mod tests {
         assert_eq!(service.prompts_waiting(), 2);
         assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 1, asked: Asked::Subscribe(b) }));
         service.answer(false);
-        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 2, asked: Asked::Publish { title: "T".into(), size: 5 } }));
+        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 2, asked: Asked::Publish { title: "T".into(), size: 5, document: false } }));
         service.answer(true);
         assert_eq!(service.prompt(), None);
         let mut done = service.wait_finished();
