@@ -29,7 +29,7 @@ include!(concat!(env!("OUT_DIR"), "/manual.rs"));
 /// when it runs one image on its own, so that its reader finds them).
 pub fn install_manual(store: &BlobStore) -> Result<(), String> {
     for m in MANUAL {
-        store.put(m.2).map_err(|e| format!("blob store: {e}"))?;
+        store.put_unsynced(m.2).map_err(|e| format!("blob store: {e}"))?;
     }
     Ok(())
 }
@@ -38,7 +38,7 @@ pub fn install_manual(store: &BlobStore) -> Result<(), String> {
 /// the built-in programs' data and the manual's articles.
 pub fn install_data(store: &BlobStore) -> Result<(), String> {
     for data in DATA.iter().copied().chain(MANUAL.iter().map(|m| m.2)) {
-        store.put(data).map_err(|e| format!("blob store: {e}"))?;
+        store.put_unsynced(data).map_err(|e| format!("blob store: {e}"))?;
     }
     Ok(())
 }
@@ -49,7 +49,7 @@ pub fn install(store: &BlobStore, extra: &[Vec<u8>]) -> Result<Vec<BlobId>, Stri
     install_data(store)?;
     let mut ids = Vec::new();
     for image in PROGRAMS.iter().copied().chain(extra.iter().map(Vec::as_slice)) {
-        ids.push(store.put(image).map_err(|e| format!("blob store: {e}"))?);
+        ids.push(store.put_unsynced(image).map_err(|e| format!("blob store: {e}"))?);
     }
     Ok(ids)
 }

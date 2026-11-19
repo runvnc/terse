@@ -86,6 +86,19 @@ impl BlobStore {
 
     /// Stores a blob; returns its ID and whether it was not stored before.
     pub fn put_new(&self, bytes: &[u8]) -> Result<(BlobId, bool), PutError> {
+        self.put_with(bytes, true)
+    }
+
+    /// Stores a blob without forcing it to disk first: for blobs the host
+    /// can always produce again (its built-in programs and manual). A sync
+    /// per blob can take seconds on a busy disk, and these are written
+    /// before the window opens. Reads verify a blob against its ID, so a
+    /// blob lost to a crash is noticed and stored again.
+    pub fn put_unsynced(&self, bytes: &[u8]) -> Result<BlobId, PutError> {
+        self.put_with(bytes, false).map(|(id, _)| id)
+    }
+
+    fn put_with(&self, bytes: &[u8], sync: bool) -> Result<(BlobId, bool), PutError> {
         if bytes.is_empty() {
             return Err(PutError::Empty);
         }
@@ -106,7 +119,9 @@ impl BlobStore {
         let written = (|| {
             let mut f = fs::File::create(&temp)?;
             f.write_all(bytes)?;
-            f.sync_all()?;
+            if sync {
+                f.sync_all()?;
+            }
             fs::rename(&temp, &path)
         })();
         if let Err(e) = written {
