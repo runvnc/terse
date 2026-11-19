@@ -59,4 +59,4 @@ Feeds also carry programs (kind 3) and documents (kind 4) for the machine. A rea
 
 Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with `terse manual publish`, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.
 
-The details of the network are in [the network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f); how the built-in reader lays articles out on the machine is in [the page device](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c), which you do not need to follow.
+The details of the network are in [the network](terse:f56696e1a4a27ab5600db27b8cacccf20a2e1ec0add9ff772705ea3130738c4d); how the built-in reader lays articles out on the machine is in [the page device](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c), which you do not need to follow.

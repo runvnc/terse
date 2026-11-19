@@ -116,7 +116,8 @@ The event queue's 64 and the 256 random bytes a call are provisional.
 | Line width | 1 to 255 sixteenths (0 counts as 1) | provisional |
 | Length a list draws | 65,536 screen units | provisional |
 | Segments a list draws | 16,384 | provisional |
-| Faces | 256 a list, each Screen in effect counting as one | provisional |
+| Faces | 256 a list, each Screen and Surface in effect counting as one | provisional |
+| Surfaces in effect | 4 a list, each showing a rectangle of the screen | provisional |
 | Faces times segments | 131,072 | provisional |
 | Pieces drawn after hiding | 16,384, counted within 32 units of the screen | provisional |
 | What a face hides | points more than 2 sixteenths beyond its plane | provisional |

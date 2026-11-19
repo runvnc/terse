@@ -8,44 +8,44 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:c41d9aa5d162e14f9610adc16d0aa137ffbb2f3743679c9cb63b634a7a9e6959): the overall picture in two pages:
+- [What Terse is](terse:52888f979b3cf3c33142f4e2b464981e27414c9a7a8e216aa540036096fadccc): the overall picture in two pages:
   the machine and its frame budget, the devices, determinism, the
   network and the shell.
-- [Writing a program](terse:551ebc96dbde5357479b5f29b56022638e2b50d60ee93bcf6dc458a47d3999b6): the toolchain, the C
+- [Writing a program](terse:193dcfdf16c10f93f45986efdb3b12f25d0f07433a1f3a9211d613324c02d137): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:d8e7794e4fbcba10069a6d28ea65eb46ce09a2d0e9f363d0547a2a3684eb0859): the keys of the
+- [Using the shell and the reader](terse:d136c2415562eb49290422465d9b9b5a58d0b77815b970b83bfb8d17bade8294): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
 - [Writing an article](terse:558b031fbdd5adde552b6e2d7ce7e3df2e8db856288a97dc85e85ba4f17ef561): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:dbb060abaa4ae7c1a187d311d856995c4ce4e6d1a5901d3e71087c6df527fbc2): what a machine's state
+- [State, replay and conformance](terse:4397eb07b979758e6f4baed7bc498826007ab5d2309d55cad85aa4020e901032): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
 
-- [The machine](terse:56b568c4f7f12a92fe3988f4e6ac948f37148e609db52df8ef8e16f8852347dd): the CPU, the memory map, reset, frames
+- [The machine](terse:5807a304cf4ec971010631ac1abb6a227f5863eebf31ea34c729f70a6f09d00d): the CPU, the memory map, reset, frames
   and the budget, faults, the image format, the call convention and the
   whole call table.
-- [Events and input](terse:ecb820736fa26b9d30a97d6159bdc8ac5e15c93b14514ada68967530ecd204fd): every event, the queue, keys,
+- [Events and input](terse:f1ddc4848d77b68237cd12bc872db91b19a2f1e193fdc1b8628d72d6d84b3176): every event, the queue, keys,
   text, the pointer, the wheel and controllers.
-- [Charges and limits](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116): every charge and every numeric
+- [Charges and limits](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527): every charge and every numeric
   limit on one page.
 
 ## The devices
 
 | Slot | Device | Article |
 |---|---|---|
-| 1 | System | [The system device](terse:5f82638835499ca5be8a6e2457b745e04bde08351a522ab5b1d8ae270fc1460a) |
-| 2 | Terminal | [The terminal](terse:c03cf85e24b043e93e91108f384bad242d088f5418c1cd377702551eb4296c36) |
-| 3 | 2D vector display | [The 2D vector display](terse:36442b7f04baf7ccba1dc764dec2397d6c695cfeed816b28a8ab20eba534f6f9) |
-| 4 | Content | [Blobs, requests and statuses](terse:2b4627d744cd50276e8ca722bdf753f8ce4001f76a6ff08103d837193cbe6084) |
-| 4 | Content | [Feeds, names, search and publishing](terse:cd48f9c9b5e5d67101934450ae0392c29795f6030c80262f6d733dbbd766d590) |
-| 4 | Content | [Named records](terse:eaf2802e0c046a9d7034f118c0fc12932bcaa5a9a938fd0d6e07db42cb8afc5e) |
+| 1 | System | [The system device](terse:d03b1dc040f6f069400009113e3eb6eac531a0f07d3451adbaad0af5be0a8dc7) |
+| 2 | Terminal | [The terminal](terse:baf6964b924071679f516731098f5f542f0fa281418880a180d9e70f0a532a0c) |
+| 3 | 2D vector display | [The 2D vector display](terse:ab0adc2a36d8a3d17f1cbcdd8b03ba822b74547456b3e45cb2f27f60e475039c) |
+| 4 | Content | [Blobs, requests and statuses](terse:1b44b1c5379ab63c172efb751f778f9c261b5069cf5f9db25c07a44f643dfcd4) |
+| 4 | Content | [Feeds, names, search and publishing](terse:dc57af6cfed8937f49b1317218bcdc6cf0d4beae9bbccf740e34a8062313a86c) |
+| 4 | Content | [Named records](terse:6dbd7121598adc74296b04a58ebcbb2aecab5186e720070f63b2180a0f5665e8) |
 | 7 | Page | [The page](terse:243e00174823ac4b20f60e9b7d53fa05244c9b4d7d4cd22e800a392a75f8114c) |
 | 7 | Page | [Figures on the page](terse:3b68f588c26da43927c1fd8cec7b33d3f6d9a2a525ec1865eb308b838b253313) |
-| 8 | Machines | [The Machines device](terse:162acc23fd333834b6b0de421cba73d5c2645b254c5f491e97ce4b82db7820d7) |
-| 8 | Machines | [Screens, panels and input](terse:126e1063f8301683be167ce23a61c3894586cd2ba7b493ee853ab05fd8a8d874) |
-| 9 | 3D vector display | [The 3D vector display](terse:334651ebc53b467caa2f5bfe723fd2d165b6bd92027a405cf34eeb5b1be36904) |
+| 8 | Machines | [The Machines device](terse:6f8cd2527094cb879ba5b588d62dcba835da8e9c39e35061cd06d4219b7878bf) |
+| 8 | Machines | [Screens, panels and input](terse:3d066c82b27d31095a32bf7b43d5ad765cdbcc77b8ea2bb494a110bf3447f64c) |
+| 9 | 3D vector display | [The 3D vector display](terse:bb1d3f966c8f18157af9f7dd9bcc915f90d880704476b37a47a14fee7c85d059) |
 
 - The system device: frames, events, time, random bytes, controllers,
   exit, and asking the shell to open something.
@@ -63,9 +63,9 @@ Each article below says what it covers.
 
 ## The network
 
-- [The network](terse:59e9d7cf936d13f54021f37931bfd8080bfcb07183350ac38fb9c03f4aeb750f): blobs and relays, feeds and entries,
+- [The network](terse:f56696e1a4a27ab5600db27b8cacccf20a2e1ec0add9ff772705ea3130738c4d): blobs and relays, feeds and entries,
   profiles, names and search, programs, and relays that mirror each
   other.
-- [Writing a reader without the machine](terse:471193aef113c101f9f395183cf6e83ecf46e104f2b2ba6a8af441159ada2ffe): what
+- [Writing a reader without the machine](terse:0bdbe324550abb22041931b0ef063992d926614ee60877803a4df0891484ecc9): what
   a native reader must do to be a complete Terse client, with only the
   network and the article format.

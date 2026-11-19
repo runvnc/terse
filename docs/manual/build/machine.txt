@@ -186,7 +186,7 @@ write; `pc` continues after the `ecall`.
 - A call checks its buffer before its other arguments: a bad buffer gives
   `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
-  see [charges](terse:4e83a44d65bb71e3d37b0c001dcb3dd1c1cd71c8e15d351717b82bbf6a567116).
+  see [charges](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527).
 
 In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
 and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
@@ -194,7 +194,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-[The system device](terse:5f82638835499ca5be8a6e2457b745e04bde08351a522ab5b1d8ae270fc1460a), slot 1, always present:
+[The system device](terse:d03b1dc040f6f069400009113e3eb6eac531a0f07d3451adbaad0af5be0a8dc7), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -208,7 +208,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 
-[The terminal](terse:c03cf85e24b043e93e91108f384bad242d088f5418c1cd377702551eb4296c36), slot 2:
+[The terminal](terse:baf6964b924071679f516731098f5f542f0fa281418880a180d9e70f0a532a0c), slot 2:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -223,7 +223,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows |
 
-[The 2D vector display](terse:36442b7f04baf7ccba1dc764dec2397d6c695cfeed816b28a8ab20eba534f6f9), slot 3:
+[The 2D vector display](terse:ab0adc2a36d8a3d17f1cbcdd8b03ba822b74547456b3e45cb2f27f60e475039c), slot 3:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -233,7 +233,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
 
-The content device, slot 4 (see [blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce4001f76a6ff08103d837193cbe6084), [feeds](terse:cd48f9c9b5e5d67101934450ae0392c29795f6030c80262f6d733dbbd766d590) and [named records](terse:eaf2802e0c046a9d7034f118c0fc12932bcaa5a9a938fd0d6e07db42cb8afc5e)):
+The content device, slot 4 (see [blobs](terse:1b44b1c5379ab63c172efb751f778f9c261b5069cf5f9db25c07a44f643dfcd4), [feeds](terse:dc57af6cfed8937f49b1317218bcdc6cf0d4beae9bbccf740e34a8062313a86c) and [named records](terse:6dbd7121598adc74296b04a58ebcbb2aecab5186e720070f63b2180a0f5665e8)):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -250,7 +250,7 @@ The content device, slot 4 (see [blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce
 | `704h` | `background` | `a0` = colour | 0 |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
 
-[Machines](terse:162acc23fd333834b6b0de421cba73d5c2645b254c5f491e97ce4b82db7820d7), slot 8, the shell only:
+[Machines](terse:6f8cd2527094cb879ba5b588d62dcba835da8e9c39e35061cd06d4219b7878bf), slot 8, the shell only:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -272,7 +272,7 @@ The content device, slot 4 (see [blobs](terse:2b4627d744cd50276e8ca722bdf753f8ce
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 
-[The 3D vector display](terse:334651ebc53b467caa2f5bfe723fd2d165b6bd92027a405cf34eeb5b1be36904), slot 9:
+[The 3D vector display](terse:bb1d3f966c8f18157af9f7dd9bcc915f90d880704476b37a47a14fee7c85d059), slot 9:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
