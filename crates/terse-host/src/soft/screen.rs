@@ -367,11 +367,10 @@ impl SoftScreen {
             }
         }
         let bytes = terminal.cell_bytes();
-        if bytes == self.terminal_bytes.as_slice() {
+        if bytes == self.terminal_bytes {
             return;
         }
-        self.terminal_bytes.clear();
-        self.terminal_bytes.extend_from_slice(bytes);
+        self.terminal_bytes = bytes;
         if self.atlas.next + 2 * (COLS * ROWS) as u32 > ATLAS_SLOTS {
             self.atlas = CellAtlas::new(self.cell_px);
         }

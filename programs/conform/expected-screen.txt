@@ -19,9 +19,9 @@ PASS controllers
 PASS budget: ROM loop, calls per frame = 17856 17856 17857
 PASS budget: RAM loop, calls per frame = 7811 7811 7811
 PASS budget: scroll loop, deficit carried = 758 758 757
-PASS budget: bytes one frame's writes take = 124922
+PASS budget: write loop, deficit carried = 16 15 15
 PASS content: put, get, not found
-PASS content: delivery charge, ROM loop = 17856 17853
+PASS content: delivery charge, ROM loop = 17848 17852
 PASS content: bad requests, blocks outside RAM
 PASS content: eight pending, ninth rejected
 PASS content: subscriptions, timeline

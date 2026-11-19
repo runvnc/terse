@@ -1,5 +1,11 @@
 //! Device 2, Terminal (SPEC 8). Its operations return how many clears and
-//! scrolls they did, which the machine charges for (SPEC 14).
+//! scrolls they did, which the machine charges for when a command does them
+//! (SPEC 14; inside a `write` they are not charged).
+//!
+//! A scroll or a clear costs a host time proportional to one row at most
+//! (SPEC 8.6): the rows are a ring (`top` is the stored row shown first), and
+//! a row that a scroll or clear blanked is only filled when something is
+//! written to it.
 
 use crate::wide::is_wide;
 
@@ -80,9 +86,19 @@ impl Utf8Decoder {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Terminal {
+    /// The rows as stored: stored row `(top + r) % ROWS` is row `r`.
     cells: Vec<u8>,
+    top: usize,
+    /// Per stored row: the cell every cell of it holds, if it was blanked
+    /// and not written since (its bytes in `cells` are then stale).
+    blank: [Option<[u8; CELL_BYTES]>; ROWS],
+    /// Clears so far, and the cell the last one blanked every row with: a
+    /// stored row whose `stamp` is below `clears` holds `clear_cell`.
+    clears: u64,
+    clear_cell: [u8; CELL_BYTES],
+    stamp: [u64; ROWS],
     col: u8,
     row: u8,
     fg: u8,
@@ -99,6 +115,11 @@ impl Default for Terminal {
         // SPEC 8.5
         let mut t = Terminal {
             cells: vec![0; CELL_MEMORY],
+            top: 0,
+            blank: [None; ROWS],
+            clears: 0,
+            clear_cell: [0; CELL_BYTES],
+            stamp: [0; ROWS],
             col: 0,
             row: 0,
             fg: 7,
@@ -113,16 +134,72 @@ impl Default for Terminal {
     }
 }
 
+impl PartialEq for Terminal {
+    fn eq(&self, other: &Self) -> bool {
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        self.write_state(&mut a);
+        other.write_state(&mut b);
+        a == b
+    }
+}
+
+impl Eq for Terminal {}
+
+const ROW_BYTES: usize = COLS * CELL_BYTES;
+
 impl Terminal {
+    /// The stored row that is row `row`.
+    #[inline(always)]
+    fn stored(&self, row: usize) -> usize {
+        let p = self.top + row;
+        if p >= ROWS { p - ROWS } else { p }
+    }
+
+    /// The cell all of stored row `p` holds, if it is blank.
+    #[inline(always)]
+    fn blank_cell(&self, p: usize) -> Option<[u8; CELL_BYTES]> {
+        if self.stamp[p] < self.clears { Some(self.clear_cell) } else { self.blank[p] }
+    }
+
+    /// Row `row`'s bytes, or the one cell all of it holds.
+    fn row_bytes(&self, row: usize) -> Result<&[u8], [u8; CELL_BYTES]> {
+        let p = self.stored(row);
+        match self.blank_cell(p) {
+            Some(c) => Err(c),
+            None => Ok(&self.cells[p * ROW_BYTES..(p + 1) * ROW_BYTES]),
+        }
+    }
+
+    /// Row `row`'s bytes, to change: a blanked row is filled first (the
+    /// only work proportional to a row that a scroll or clear causes).
+    #[inline(always)]
+    fn row_mut(&mut self, row: usize) -> &mut [u8] {
+        let p = self.stored(row);
+        let blank = self.blank_cell(p);
+        self.blank[p] = None;
+        self.stamp[p] = self.clears;
+        let r = &mut self.cells[p * ROW_BYTES..(p + 1) * ROW_BYTES];
+        if let Some(c) = blank {
+            for cell in r.chunks_exact_mut(CELL_BYTES) {
+                cell.copy_from_slice(&c);
+            }
+        }
+        r
+    }
+
     pub fn cell(&self, col: usize, row: usize) -> Cell {
-        let i = (row * COLS + col) * CELL_BYTES;
-        let c = &self.cells[i..i + CELL_BYTES];
+        let c = match self.row_bytes(row) {
+            Ok(r) => r[col * CELL_BYTES..(col + 1) * CELL_BYTES].try_into().unwrap(),
+            Err(c) => c,
+        };
         Cell { ch: u16::from_le_bytes([c[0], c[1]]), fg: c[2], bg: c[3] }
     }
 
-    /// Raw cell memory, 4 bytes per cell (SPEC 8.1).
-    pub fn cell_bytes(&self) -> &[u8] {
-        &self.cells
+    /// The cell memory, 4 bytes per cell (SPEC 8.1).
+    pub fn cell_bytes(&self) -> Vec<u8> {
+        let mut out = vec![0; CELL_MEMORY];
+        self.cells_read(0, &mut out);
+        out
     }
 
     pub fn palette(&self) -> &[[u8; 3]; 256] {
@@ -177,7 +254,9 @@ impl Terminal {
     /// Cells, cursor, colours, palette and the put-character decoder
     /// (STATE.md, terminal section).
     pub fn write_state(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.cells);
+        let at = out.len();
+        out.resize(at + CELL_MEMORY, 0);
+        self.cells_read(0, &mut out[at..]);
         out.extend_from_slice(&[self.col, self.row, self.fg, self.bg]);
         out.extend_from_slice(&[self.cursor_visible as u8, self.pending_wrap as u8]);
         out.extend(self.palette.iter().flatten());
@@ -190,6 +269,9 @@ impl Terminal {
     pub fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         use crate::snapshot::bad;
         self.cells.copy_from_slice(r.take(CELL_MEMORY)?);
+        self.top = 0;
+        self.blank = [None; ROWS];
+        self.stamp = [self.clears; ROWS];
         let [col, row, fg, bg] = r.array()?;
         if col as usize >= COLS || row as usize >= ROWS {
             return Err(bad("cursor"));
@@ -228,22 +310,6 @@ impl Terminal {
         ops
     }
 
-    /// `write` as the call does it (SPEC 8.2): each byte is charged
-    /// `per_byte` plus `per_op` for each clear or scroll it causes, and the
-    /// write stops after the byte whose charge brings `budget` to zero or
-    /// below (always after at least one byte). Returns (bytes consumed,
-    /// units charged).
-    pub fn write_limited(&mut self, bytes: &[u8], budget: i64, per_byte: u32, per_op: u32) -> (usize, u32) {
-        let mut charged: u32 = 0;
-        for (i, &b) in bytes.iter().enumerate() {
-            charged += per_byte + self.put_byte(b) * per_op;
-            if budget - charged as i64 <= 0 {
-                return (i + 1, charged);
-            }
-        }
-        (bytes.len(), charged)
-    }
-
     /// One byte of put character; returns the clears and scrolls done.
     #[inline(always)]
     fn put_byte(&mut self, b: u8) -> u32 {
@@ -251,13 +317,15 @@ impl Terminal {
         if (0x20..0x7F).contains(&b) && self.decoder.needed == 0 && !self.pending_wrap {
             let col = self.col as usize;
             if col < COLS - 1 {
-                let i = (self.row as usize * COLS + col) * CELL_BYTES;
-                let here = u16::from_le_bytes([self.cells[i], self.cells[i + 1]]);
-                let next = u16::from_le_bytes([self.cells[i + 4], self.cells[i + 5]]);
+                let (fg, bg) = (self.fg, self.bg);
+                let r = self.row_mut(self.row as usize);
+                let i = col * CELL_BYTES;
+                let here = u16::from_le_bytes([r[i], r[i + 1]]);
+                let next = u16::from_le_bytes([r[i + 4], r[i + 5]]);
                 // Not part of a wide pair (no neighbour to blank, SPEC 8.3
                 // step 3) and no wrap: just the cell and the cursor.
                 if here != CONTINUATION && next != CONTINUATION {
-                    self.cells[i..i + CELL_BYTES].copy_from_slice(&[b, 0, self.fg, self.bg]);
+                    r[i..i + CELL_BYTES].copy_from_slice(&[b, 0, fg, bg]);
                     self.col += 1;
                     return 0;
                 }
@@ -289,10 +357,25 @@ impl Terminal {
         let mut at = first * CELL_BYTES % CELL_MEMORY;
         let mut done = 0;
         while done < out.len() {
-            let n = (out.len() - done).min(CELL_MEMORY - at);
-            out[done..done + n].copy_from_slice(&self.cells[at..at + n]);
+            // To the end of the row at most.
+            let (row, off) = (at / ROW_BYTES, at % ROW_BYTES);
+            let n = (out.len() - done).min(ROW_BYTES - off);
+            let dst = &mut out[done..done + n];
+            match self.row_bytes(row) {
+                Ok(r) => dst.copy_from_slice(&r[off..off + n]),
+                Err(c) => {
+                    // A piece starts on a cell (count × 4 bytes from cell `first`).
+                    let mut cells = dst.chunks_exact_mut(CELL_BYTES);
+                    for cell in &mut cells {
+                        cell.copy_from_slice(&c);
+                    }
+                    let rest = cells.into_remainder();
+                    let k = rest.len();
+                    rest.copy_from_slice(&c[..k]);
+                }
+            }
             done += n;
-            at = 0;
+            at = (at + n) % CELL_MEMORY;
         }
     }
 
@@ -302,10 +385,11 @@ impl Terminal {
         let mut at = first * CELL_BYTES % CELL_MEMORY;
         let mut done = 0;
         while done < data.len() {
-            let n = (data.len() - done).min(CELL_MEMORY - at);
-            self.cells[at..at + n].copy_from_slice(&data[done..done + n]);
+            let (row, off) = (at / ROW_BYTES, at % ROW_BYTES);
+            let n = (data.len() - done).min(ROW_BYTES - off);
+            self.row_mut(row)[off..off + n].copy_from_slice(&data[done..done + n]);
             done += n;
-            at = 0;
+            at = (at + n) % CELL_MEMORY;
         }
     }
 
@@ -323,8 +407,7 @@ impl Terminal {
             0x01 => self.clear(),
             0x02 => self.scroll_up(),
             0x03 => {
-                let row = COLS * CELL_BYTES;
-                self.cells.copy_within(0..CELL_MEMORY - row, row);
+                self.top = self.stored(ROWS - 1);
                 self.fill_rows(0..1);
                 1
             }
@@ -334,8 +417,8 @@ impl Terminal {
                 // SPEC 8.3 step 3.
                 let (col, row) = (self.col as usize, self.row as usize);
                 if col > 0 && self.is_pair(col - 1, row) {
-                    let i = (row * COLS + col - 1) * CELL_BYTES;
-                    self.cells[i..i + 2].copy_from_slice(&SPACE.to_le_bytes());
+                    let i = (col - 1) * CELL_BYTES;
+                    self.row_mut(row)[i..i + 2].copy_from_slice(&SPACE.to_le_bytes());
                 }
                 for c in col..COLS {
                     self.set_cell(c, row, SPACE);
@@ -419,8 +502,8 @@ impl Terminal {
             self.is_pair(end - 1, row).then_some(end),
         ];
         for c in broken.into_iter().flatten() {
-            let i = (row * COLS + c) * CELL_BYTES;
-            self.cells[i..i + 2].copy_from_slice(&SPACE.to_le_bytes());
+            let i = c * CELL_BYTES;
+            self.row_mut(row)[i..i + 2].copy_from_slice(&SPACE.to_le_bytes());
         }
         for (i, &ch) in chars.iter().enumerate() {
             self.set_cell(col + i, row, ch);
@@ -445,33 +528,32 @@ impl Terminal {
     }
 
     fn scroll_up(&mut self) -> u32 {
-        let row = COLS * CELL_BYTES;
-        self.cells.copy_within(row.., 0);
+        self.top = self.stored(1);
         self.fill_rows(ROWS - 1..ROWS);
         1
     }
 
     fn set_cell(&mut self, col: usize, row: usize, ch: u16) {
-        let i = (row * COLS + col) * CELL_BYTES;
+        let i = col * CELL_BYTES;
         let [lo, hi] = ch.to_le_bytes();
-        self.cells[i..i + CELL_BYTES].copy_from_slice(&[lo, hi, self.fg, self.bg]);
+        let (fg, bg) = (self.fg, self.bg);
+        self.row_mut(row)[i..i + CELL_BYTES].copy_from_slice(&[lo, hi, fg, bg]);
     }
 
+    /// Blanks the rows with spaces in the current colours (filled later,
+    /// when written).
     fn fill_rows(&mut self, rows: std::ops::Range<usize>) {
         let [lo, hi] = SPACE.to_le_bytes();
         let cell = [lo, hi, self.fg, self.bg];
-        let row_bytes = COLS * CELL_BYTES;
-        let (start, end) = (rows.start * row_bytes, rows.end * row_bytes);
-        if start == end {
+        if rows == (0..ROWS) {
+            self.clears += 1;
+            self.clear_cell = cell;
             return;
         }
-        // One cell, then doubling copies.
-        self.cells[start..start + CELL_BYTES].copy_from_slice(&cell);
-        let mut done = CELL_BYTES;
-        while start + done < end {
-            let n = done.min(end - start - done);
-            self.cells.copy_within(start..start + n, start + done);
-            done += n;
+        for row in rows {
+            let p = self.stored(row);
+            self.blank[p] = Some(cell);
+            self.stamp[p] = self.clears;
         }
     }
 }
@@ -947,18 +1029,39 @@ mod tests {
         assert_eq!(t.cell(0, 0).ch, 'a' as u16);
     }
 
+    /// Scrolls and clears turn the ring and blank rows lazily; what the
+    /// program and the state see is the grid as SPEC 8 says.
     #[test]
-    fn write_limited_stops_when_the_budget_is_used() {
+    fn scrolls_and_clears_keep_the_grid() {
         let mut t = Terminal::default();
-        assert_eq!(t.write_limited(b"abcdef", 3, 1, 150), (3, 3));
-        assert_eq!(t.cursor(), (3, 0));
-        // Already out of budget: still one byte, so a program always progresses.
-        assert_eq!(t.write_limited(b"xyz", -50, 1, 150), (1, 1));
-        // A scroll is charged with the byte that caused it.
-        t.set_cursor(0, 29);
-        assert_eq!(t.write_limited(b"\n\nq", 1000, 1, 150), (3, 303));
-        assert_eq!(t.write_limited(b"\n\nq", 100, 1, 150), (1, 151));
-        assert_eq!(t.write_limited(b"", 100, 1, 150), (0, 0));
+        let text: String = (0..45).map(|i| format!("line {i}\n")).collect();
+        assert_eq!(t.write(text.as_bytes()), 16);
+        let rows: Vec<String> = t.text().lines().map(str::to_string).collect();
+        assert_eq!((rows[0].as_str(), rows[28].as_str(), rows[29].as_str()), ("line 16", "line 44", ""));
+        t.set_colours(3, 4);
+        assert_eq!(t.command(3), 1, "scroll down");
+        assert_eq!(t.cell(5, 0), Cell { ch: 0x20, fg: 3, bg: 4 });
+        assert_eq!(t.cell(0, 1).ch, 'l' as u16);
+        // cells_read and the state across the ring's seam and blank rows.
+        let bytes = t.cell_bytes();
+        for (i, c) in bytes.chunks(4).enumerate() {
+            let cell = t.cell(i % COLS, i / COLS);
+            assert_eq!(c, [cell.ch as u8, (cell.ch >> 8) as u8, cell.fg, cell.bg]);
+        }
+        let mut odd = vec![0u8; 4 * 101];
+        t.cells_read(2399 - 50, &mut odd);
+        assert_eq!(&odd[..204], &bytes[(2399 - 50) * 4..]);
+        assert_eq!(&odd[204..], &bytes[..200]);
+        // The state restores to an equal terminal.
+        let mut state = Vec::new();
+        t.write_state(&mut state);
+        let mut u = Terminal::default();
+        u.restore(&mut crate::snapshot::Reader::new(&state)).unwrap();
+        assert_eq!(t, u);
+        assert_eq!(t.write(b"\x0Cx"), 1);
+        assert_eq!((t.cell(0, 0).ch, t.cell(1, 0), t.cell(79, 29)), ('x' as u16, Cell { ch: 0x20, fg: 3, bg: 4 }, Cell { ch: 0x20, fg: 3, bg: 4 }));
+        t.cells_write(2399, &[b'A', 0, 1, 2, b'B', 0, 3, 4]);
+        assert_eq!((t.cell(79, 29).ch, t.cell(0, 0).ch, t.cell(1, 0).ch), ('A' as u16, 'B' as u16, 0x20));
     }
 
     #[test]

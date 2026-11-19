@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use terse_bus::bus::{Bus, BusConfig};
+use terse_bus::bus::{Bus, BusConfig, SharedMemory};
 use terse_bus::compose::{Compositor, screen_rect};
-use terse_bus::core::{Core, Memory};
 use terse_bus::inproc::ContentOptions;
 use terse_bus::proto::MEMORY_RAM_OFFSET;
 use terse_bus::transport::{self, Mapping};
-use terse_core::{Controller, Image, Script, System};
+use terse_core::devices::Memory;
+use terse_core::{FrameInput, Image, Machine, Script, System};
 use terse_net::{BlobStore, Draft, HeadlessSystem, Identity, Node, Subscriptions};
 
 fn workspace() -> PathBuf {
@@ -78,7 +78,7 @@ fn default_driver(slot: u8, content: &ContentOptions) -> Vec<String> {
 }
 
 /// A started bus core for `image`.
-fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, replay: bool) -> (Core<Bus>, PathBuf) {
+fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, replay: bool) -> (Machine<Bus>, PathBuf) {
     let session = transport::session_dir().unwrap();
     let ram_len = image.ram_pages as usize * 8192;
     let memory_path = session.join("memory");
@@ -100,7 +100,8 @@ fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, rep
         driver_cpus: Vec::new(),
     };
     let bus = Bus::start(&config, &wanted, image.id, &image.rom, ram_len as u32, Some(&memory_path)).unwrap();
-    (Core::new(image.clone(), Memory::Shared { map, rom_len: image.rom.len(), ram_len }, bus), session)
+    let memory = Memory::Backed(Box::new(SharedMemory { map, rom_len: image.rom.len(), ram_len }));
+    (Machine::with_devices(image, memory, bus), session)
 }
 
 /// Runs `frames` frames with the script; the hash after every frame that
@@ -110,15 +111,15 @@ fn bus_hashes(image: &Image, script: &Script, frames: u32, every: u32, run: &Run
     let mut out = Vec::new();
     for _ in 0..frames {
         let f = core.frame();
-        core.run_frame(0, script.events(f), &[], &script.controllers(f), None).unwrap();
+        core.try_run_frame(&input(script, f)).unwrap();
         if core.frame() % every == 0 {
-            out.push(format!("{} {}", core.frame(), hex(&core.state_hash().unwrap())));
+            out.push(format!("{} {}", core.frame(), hex(&core.try_state_hash().unwrap())));
         }
         if core.stopped().is_some() {
             break;
         }
     }
-    core.devices.shutdown();
+    core.devices_mut().shutdown();
     let _ = std::fs::remove_dir_all(session);
     out
 }
@@ -140,6 +141,11 @@ fn reference_hashes(image: &Image, script: &Script, frames: u32, every: u32, con
         }
     }
     out
+}
+
+/// Frame `f`'s input from the script.
+fn input(s: &Script, f: u32) -> FrameInput<'_> {
+    FrameInput { events: s.events(f), controllers: s.controllers(f), ..Default::default() }
 }
 
 fn script(path: &Path) -> Script {
@@ -280,10 +286,11 @@ fn record_and_replay() {
     let mut frames = Vec::new();
     for _ in 0..200 {
         let f = core.frame();
-        let (_, records) = core.run_frame(0, s.events(f), &[], &s.controllers(f), None).unwrap();
-        frames.push((f, s.events(f).to_vec(), records, core.state_hash().unwrap()));
+        core.try_run_frame(&input(&s, f)).unwrap();
+        let records = std::mem::take(&mut core.devices_mut().records);
+        frames.push((f, s.events(f).to_vec(), records, core.try_state_hash().unwrap()));
     }
-    core.devices.shutdown();
+    core.devices_mut().shutdown();
     let _ = std::fs::remove_dir_all(session);
     assert!(frames.iter().any(|f| !f.2.is_empty()), "the content and page drivers recorded inputs");
     // Replay with no store at all: the content driver must not need one.
@@ -291,10 +298,11 @@ fn record_and_replay() {
     let (mut core, session) = start(&img, &Run { socket: true, ..Default::default() }, &none, false, true);
     for (f, events, records, hash) in &frames {
         assert_eq!(core.frame(), *f);
-        core.run_frame(0, events, &[], &[Controller::default(); 4], Some(records)).unwrap();
-        assert_eq!(core.state_hash().unwrap(), *hash, "frame {f}");
+        core.devices_mut().replay = Some(records.clone());
+        core.try_run_frame(&FrameInput { events, ..Default::default() }).unwrap();
+        assert_eq!(core.try_state_hash().unwrap(), *hash, "frame {f}");
     }
-    core.devices.shutdown();
+    core.devices_mut().shutdown();
     let _ = std::fs::remove_dir_all(session);
 }
 
@@ -308,16 +316,15 @@ fn state_restore() {
     let (mut core, session) = start(&img, &Run::default(), &dirs.options(), false, false);
     for _ in 0..60 {
         let f = core.frame();
-        core.run_frame(0, s.events(f), &[], &s.controllers(f), None).unwrap();
+        core.try_run_frame(&input(&s, f)).unwrap();
     }
-    use terse_bus::core::Devices;
     for slot in [2u8, 4, 7] {
-        let section = core.devices.state(slot).unwrap();
-        assert!(core.devices.restore(slot, &section).unwrap(), "slot {slot}");
-        assert_eq!(core.devices.state(slot).unwrap(), section);
-        assert!(!core.devices.restore(slot, &section[..section.len() - 1]).unwrap(), "slot {slot} took a cut section");
+        let section = core.devices_mut().state(slot).unwrap();
+        assert!(core.devices_mut().restore(slot, &section).unwrap(), "slot {slot}");
+        assert_eq!(core.devices_mut().state(slot).unwrap(), section);
+        assert!(!core.devices_mut().restore(slot, &section[..section.len() - 1]).unwrap(), "slot {slot} took a cut section");
     }
-    core.devices.shutdown();
+    core.devices_mut().shutdown();
     let _ = std::fs::remove_dir_all(session);
 }
 
@@ -365,15 +372,15 @@ fn bus_picture(img: &Image, s: &Script, frames: u32, size: (u32, u32), content: 
     let (mut core, session) = start(img, &Run::default(), content, true, false);
     for _ in 0..frames {
         let f = core.frame();
-        core.run_frame(0, s.events(f), &[], &s.controllers(f), None).unwrap();
+        core.try_run_frame(&input(s, f)).unwrap();
     }
-    let native = core.devices.native().unwrap();
-    let order = core.devices.layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
+    let native = core.devices_mut().native().unwrap();
+    let order = core.devices_mut().layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
     let mut comp = Compositor::new(size, order);
-    let updates = core.devices.present(size, screen_rect(native, size)).unwrap();
+    let updates = core.devices_mut().present(size, screen_rect(native, size)).unwrap();
     comp.update(&updates).unwrap();
     terse_bus::compose::write_png(out, &comp.rgba(), size).unwrap();
-    core.devices.shutdown();
+    core.devices_mut().shutdown();
     let _ = std::fs::remove_dir_all(session);
 }
 

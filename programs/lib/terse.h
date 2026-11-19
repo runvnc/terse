@@ -273,9 +273,12 @@ static inline void terse_pad_read(uint8_t n, terse_pad *pad) { terse_call(CALL_C
 #define TERM_CURSOR_OFF 0x06
 #define TERM_CONTINUATION 0xFFFF
 
-/* Put character for each of `len` bytes (SPEC 8.3). A write call stops
- * when the frame's budget runs out; this repeats it until every byte is
- * written (continuing in the next frame if need be). */
+/* The longest write call (SPEC 8.2). */
+#define TERM_WRITE_MAX 4096
+
+/* Put character for each of `len` bytes (SPEC 8.3). A write call takes
+ * its whole buffer, at most TERM_WRITE_MAX bytes, whatever the budget (2
+ * units a byte); this splits a longer text into such calls. */
 void term_write(const void *p, uint32_t len);
 static inline void term_goto(uint8_t col, uint8_t row) { terse_call(CALL_TERM_SET_CURSOR, col, row, 0); }
 static inline void term_color(uint8_t fg, uint8_t bg) { terse_call(CALL_TERM_SET_COLOURS, fg, bg, 0); }

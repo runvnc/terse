@@ -32,10 +32,11 @@ void terse_random(void *buf, uint32_t len)
 
 void term_write(const void *p, uint32_t len)
 {
+    /* write takes the whole buffer, at most TERM_WRITE_MAX bytes a call. */
     const uint8_t *b = p;
     while (len) {
-        uint32_t n = terse_call(CALL_TERM_WRITE, (uint32_t)b, len, 0);
-        if (n > len)
+        uint32_t n = len > TERM_WRITE_MAX ? TERM_WRITE_MAX : len;
+        if (terse_call(CALL_TERM_WRITE, (uint32_t)b, n, 0) != n)
             return; /* a bad buffer */
         b += n;
         len -= n;

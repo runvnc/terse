@@ -253,7 +253,7 @@ fn wait_frame_discards_the_rest_and_device_charges_carry() {
     if !common::have_tools() {
         return;
     }
-    // Frame 0: wait. Frame 1: a terminal write of 4,000 bytes (4,000 units
+    // Frame 0: wait. Frame 1: a terminal write of 4,000 bytes (8,000 units
     // of charge), then wait. Then exit with the frame number.
     let src = "    li a7, 0x100\n    ecall\n    mv s0, a0\n    li a0, 0x100000\n    li a1, 4000\n    li a7, 0x200\n    ecall\n\
                li a7, 0x100\n    ecall\n    add a0, a0, s0\n    li a7, 0x106\n    ecall\n";
@@ -266,7 +266,7 @@ fn wait_frame_discards_the_rest_and_device_charges_carry() {
     assert!(r.waited);
     // mv, li (lui), li (lui+addi), li, ecall + call + 4,000, li, ecall +
     // call; 4,000 zero bytes print nothing but are still charged.
-    assert_eq!(r.used, 1 + 1 + 2 + 1 + 1 + call + 4000 + 1 + 1 + call);
+    assert_eq!(r.used, 1 + 1 + 2 + 1 + 1 + call + 2 * 4000 + 1 + 1 + call);
     let r = frame(&mut m);
     // wait_frame returned 1, then 2.
     assert_eq!(r.stopped, Some(Stopped::Exit(3)));
@@ -296,26 +296,26 @@ fn a_charge_beyond_the_budget_carries_into_the_next_frame() {
 }
 
 #[test]
-fn write_is_cut_by_the_budget_and_charges_carry() {
+fn write_takes_the_whole_buffer_and_charges_carry() {
     if !common::have_tools() {
         return;
     }
-    // Write 200,000 bytes of RAM (zeros) from frame 0: the call returns
-    // after the byte that uses up the budget; the program writes the rest.
-    let src = "    li s0, 0x100000\n    li s1, 200000\n    li s2, 0\n\
-               1:  mv a0, s0\n    mv a1, s1\n    li a7, 0x200\n    ecall\n    addi s2, s2, 1\n    add s0, s0, a0\n\
-               sub s1, s1, a0\n    bnez s1, 1b\n    mv a0, s2\n    li a7, 0x106\n    ecall\n";
+    // Writes of 4,096 bytes of RAM (zeros) again and again: each takes the
+    // whole buffer (SPEC 8.2) and costs 4 + 2 per byte, so a frame ends
+    // with the budget at most one write below zero, which carries.
+    let src = "    li s0, 0x100000\n    lui s1, 1\n    li s2, 0\n\
+               1:  mv a0, s0\n    mv a1, s1\n    li a7, 0x200\n    ecall\n    add s2, s2, a0\n    j 1b\n";
     let mut m = Machine::new(&common::program(&assemble(src), 32, &[common::TERMINAL]));
-    let mut used = Vec::new();
-    while m.stopped().is_none() && used.len() < 10 {
-        used.push(frame(&mut m).used);
+    let per = 5 + charge::CALL as i64 + 2 * 4096;
+    let mut start = BUDGET_PER_FRAME;
+    for _ in 0..5 {
+        let r = frame(&mut m);
+        assert_eq!(m.cpu().x[10], 4096, "the length back");
+        assert!(m.budget() <= 0 && m.budget() > -per, "carry {}", m.budget());
+        assert_eq!(r.used as i64, start - m.budget());
+        start = BUDGET_PER_FRAME + m.budget();
     }
-    // Each frame's write ends at the first byte with the budget at zero.
-    assert_eq!(m.exit_code(), Some(2), "two writes: {used:?}");
-    assert_eq!(used.len(), 2);
-    assert_eq!(used[0], BUDGET_PER_FRAME as u64);
-    let total = 200_000 + 2 * charge::CALL as u64;
-    assert!(used[1] > total - 125_000 && used[1] < total - 125_000 + 30, "{used:?}");
+    assert_eq!(m.cpu().x[18] % 4096, 0);
 }
 
 #[test]
@@ -425,17 +425,15 @@ fn input_events_before_completions_and_wait_frame_returns_next_frame() {
     assert!(r.used > 8 * 4096);
 }
 
-/// SPEC 8.2, 14: `write` measures the budget after the `ecall`
-/// instruction and the call's 4 are charged: a write that starts a frame
-/// after 4 one-unit instructions consumes 125,000 − 4 − 4 bytes.
-/// `palette_set` with `first` above 255 or `count` above 256 returns
+/// SPEC 8.2: a `write` longer than 4,096 bytes returns FFFF_FFFEh and
+/// writes nothing (one of 4,096 is taken whole). `palette_set` with `first` above 255 or `count` above 256 returns
 /// FFFF_FFFEh (SPEC 8.2).
 #[test]
 fn write_budget_and_palette_set_arguments() {
     if !common::have_tools() {
         return;
     }
-    let src = "    lui a0, 0x100\n    lui a1, 0x31\n    li a7, 0x200\n    ecall\n    mv s1, a0\n\
+    let src = "    lui a0, 0x100\n    lui a1, 1\n    addi a1, a1, 1\n    li a7, 0x200\n    ecall\n    mv s1, a0\n\
                li a7, 0x100\n    ecall\n    lui s0, 0x100\n    sw s1, 0(s0)\n\
                li a0, 256\n    mv a1, s0\n    li a2, 1\n    li a7, 0x208\n    ecall\n    sw a0, 4(s0)\n\
                li a0, 0\n    mv a1, s0\n    li a2, 257\n    ecall\n    sw a0, 8(s0)\n\
@@ -447,7 +445,8 @@ fn write_budget_and_palette_set_arguments() {
     }
     assert_eq!(m.exit_code(), Some(0), "{:?}", m.fault());
     let w: Vec<u32> = m.ram()[..16].chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
-    assert_eq!(w, [(BUDGET_PER_FRAME - 4 - charge::CALL as i64) as u32, terse_core::ERR_BUFFER, terse_core::ERR_BUFFER, 256]);
+    assert_eq!(w, [terse_core::ERR_BUFFER, terse_core::ERR_BUFFER, terse_core::ERR_BUFFER, 256]);
+    assert_eq!(m.terminal().unwrap().cursor(), (0, 0), "nothing written");
 }
 
 #[test]

@@ -4,7 +4,11 @@ Status: draft, written with the prototype in `crates/terse-bus` (the core
 host and the protocol) and `crates/terse-devices` (the drivers). Nothing in
 `SPEC.md` depends on this document: it describes one way of building a
 machine host, not the machine. A host that compiles its devices in, as
-`terse run` and `terse-host` do, is just as conforming.
+`terse run` and `terse-host` do, is just as conforming. In this
+repository both are one machine: terse-core's `Machine` runs the frame
+loop and the System and Machines devices over a `Devices` trait, whose
+implementations are the devices compiled in (`terse run`, `terse-host`, a
+system's machines) and the bus (`terse-bus`).
 
 A **device driver** is a separate program that implements one device of
 `SPEC.md` (one slot) and speaks the protocol below to a **core host**. The
@@ -25,17 +29,18 @@ Design rules:
    handshake.
 2. **The machine's semantics are kept exactly.** A run with drivers gives
    the same state hash after every frame as the same run with the devices
-   built in (`STATE.md`). Charges, results, partial writes and the order of
-   events are the drivers' to compute; the core applies them.
+   built in (`STATE.md`). Charges, results and the order of events are the
+   drivers' to compute; the core applies them.
 3. **Calls are synchronous; inputs arrive at frame boundaries.** A call's
    reply carries its result, its charge and the bytes it writes, and
    nothing else. A driver delivers events, content completions and
    anything else SPEC lists as an input when the core begins a frame.
 4. **The core can check what it cannot interpret.** The call table says
    where each call's buffer is and how long it is, so the core applies
-   SPEC 3.1's rules for buffers itself, and for calls whose result needs
-   no device state it can compute the result and the charge itself and
-   send the call later, in a batch (section 6).
+   SPEC 3.1's rules for buffers itself, and for the calls SPEC 14 calls
+   deferred, whose result and charge need no device state, it computes
+   the result and the charge itself and sends the call later, in a batch
+   (section 6).
 
 All integers are little-endian. `h` suffix means hexadecimal. "Core" and
 "driver" name the two ends.
@@ -139,15 +144,13 @@ image.
 | 1 | 1 | Function (the low byte of `a7`) |
 | 2 | 2 | Reserved |
 | 4 | 24 | `a0`–`a5` (u32 each) |
-| 28 | 8 | Budget (i64): what is left after the `ecall` instruction and the call's 4 (SPEC 14) |
+| 28 | 8 | Budget (i64): what is left after the `ecall` instruction and the call's 4 (SPEC 14); no reference driver needs it |
 | 36 | 4 | `n`: the bytes of the call's read buffer that follow |
 | 40 | `n` | Those bytes, from the buffer's start |
 
 On the socket transport the core sends the buffer the device reads (the
-whole buffer; for a call whose table entry has access bit 3, only the
-first max(1, budget) bytes, since the device cannot consume more). On shared
-memory it sends none (`n` = 0) and the driver reads guest memory itself,
-except in a batch (section 6).
+whole buffer). On shared memory it sends none (`n` = 0) and the driver
+reads guest memory itself, except in a batch (section 6).
 
 The driver replies RESULT:
 
@@ -158,12 +161,13 @@ The driver replies RESULT:
 | 2 | 2 | Reserved |
 | 4 | 4 | `a0` |
 | 8 | 4 | `a1` (ignored unless flag bit 0) |
-| 12 | 4 | Charge: units on top of the call's 4 (u32) |
+| 12 | 4 | Charge: units on top of the call's base charge (u32) |
 | 16 | 4 | `w`: number of writes |
 | 20 | … | `w` writes: address (u32), length `n` (u32), `n` bytes |
 
-- The core charges 4 + the charge, sets `a0` (and `a1`), and copies the
-  writes into RAM in order. A write must lie wholly within the call's
+- The core charges the call's base charge (4, or 64 for an answered call:
+  section 5) + the charge, sets `a0` (and `a1`), and copies the writes
+  into RAM in order. A write must lie wholly within the call's
   write buffer (section 5); otherwise the core stops the machine with an
   error (a driver bug, not a fault of the program).
 - On shared memory a driver may instead write its buffer in place, in the
@@ -336,7 +340,10 @@ READ) as a packet of one message.
 
 All control words are aligned 32-bit words, written and read only as
 single atomic operations. Each side starts from the sequence numbers it
-finds when it maps the file.
+finds when it maps the file; a driver maps it (and reads `req_seq`)
+before it sends its HELLO reply, since the core may send its first
+request as soon as it has the reply. (The prototype's Rust drivers mapped
+it after replying, and could miss the first BEGIN and wait for ever.)
 
 **Hand-over.** The writer writes the packet, then its length, then
 increments the sequence number with release ordering; if the other side's
@@ -371,16 +378,27 @@ Each entry is 64 bytes and describes one function of the device. A
 function not in the table is an unknown call: the core returns
 `FFFF_FFFFh` and charges 4, without the driver (SPEC 3.1).
 
+The table also gives each call's class (SPEC 14). A call with flag bit 1
+is **deferred**: its result and charge follow from its arguments and its
+buffer's length by the entry's rules (section 6), so the core can compute
+them; its base charge is 4. Every other call is **answered**: only the
+driver knows its result or charge, and its base charge is 64, which the
+core charges, also when one of its checks fails; the driver's charge is
+on top. So "deferred" is exactly "computable by the core from the table",
+and a driver that marks a call batchable states that its class is
+deferred. The System device's calls and device 8's are the machine's own
+(SPEC 14: core, 4) and never reach a driver.
+
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | Function |
-| 1 | 1 | Flags: bit 0 the call sets `a1`; bit 1 batchable (section 6); bit 2 the call has a buffer |
+| 1 | 1 | Flags: bit 0 the call sets `a1`; bit 1 deferred, so batchable (section 6), else answered; bit 2 the call has a buffer |
 | 2 | 1 | Buffer: the argument (0–5) holding its address |
 | 3 | 1 | Buffer: the argument holding its length, or `FFh` for a fixed length |
 | 4 | 4 | Buffer: bytes per unit of the length argument; for a fixed length, the length |
 | 8 | 4 | Buffer: least length in bytes |
 | 12 | 4 | Buffer: greatest length in bytes |
-| 16 | 1 | Buffer access: bit 0 the device reads it; bit 1 the device writes it; bit 2 it may lie in ROM (only for one not written); bit 3 the device reads at most one byte per unit of budget left (so the core sends at most that many) |
+| 16 | 1 | Buffer access: bit 0 the device reads it; bit 1 the device writes it; bit 2 it may lie in ROM (only for one not written) |
 | 17 | 1 | A checked argument (0–5), or `FFh` |
 | 18 | 2 | Reserved |
 | 20 | 4 | The checked argument's greatest value |
@@ -394,7 +412,7 @@ function not in the table is an unknown call: the core returns
 | 44 | 4 | Charge rule (batchable calls): constant units |
 | 48 | 1 | Charge rule flags: bit 0 add 1 per 4 bytes of the buffer, rounded up |
 | 49 | 1 | Charge rule: an argument, or `FFh` |
-| 50 | 2 | Reserved |
+| 50 | 2 | Charge rule: units added per byte of the buffer (u16) |
 | 52 | 4 | Charge rule: low |
 | 56 | 4 | Charge rule: high |
 | 60 | 4 | Charge rule: units added when low ≤ the argument ≤ high |
@@ -414,8 +432,8 @@ Fields an entry does not use are zero, but argument numbers, which are
    not, the place result (SPEC 3.1: a bad buffer and a bad argument give
    the same `FFFF_FFFEh` in every call that has both).
 
-A call that fails a check is charged 4 and does not reach the driver
-(SPEC 14: nothing is copied). This is the whole of SPEC 3.1's rules,
+A call that fails a check is charged its base charge (4, or 64 for an
+answered call) and does not reach the driver (SPEC 14: nothing is copied). This is the whole of SPEC 3.1's rules,
 including its four exceptions, which are only different results in the
 table.
 
@@ -423,15 +441,15 @@ table.
 
 Terminal (slot 2):
 
-| Fn | Call | Buffer (address, length × scale, range, access) | Checked | Batchable: result, charge |
+| Fn | Call | Buffer (address, length × scale, range, access) | Checked | Deferred: result, charge (else answered) |
 |---|---|---|---|---|
-| 0 | `write` | `a0`, `a1` × 1, 0 … FFFF_FFFFh, read, ROM, budget-bounded; else FFFF_FFFEh | — | no (section 6) |
+| 0 | `write` | `a0`, `a1` × 1, 0 … 4,096, read, ROM | — | `a0` = `a1`; 2 per byte |
 | 1 | `command` | — | — | `a0` = 0; 150 if 1 ≤ `a0` ≤ 3 |
 | 2 | `set_cursor` | — | — | 0; 0 |
-| 3 | `get_cursor` | — | — | no (reads state) |
+| 3 | `get_cursor` | — | — | answered (reads state) |
 | 4 | `set_colours` | — | — | 0; 0 |
-| 5 | `get_colours` | — | — | no |
-| 6 | `cells_read` | `a1`, `a2` × 4, 0 … 9,600, written, RAM | `a0` ≤ 2,399 | no (writes) |
+| 5 | `get_colours` | — | — | answered |
+| 6 | `cells_read` | `a1`, `a2` × 4, 0 … 9,600, written, RAM | `a0` ≤ 2,399 | answered (writes) |
 | 7 | `cells_write` | `a1`, `a2` × 4, 0 … 9,600, read, ROM | `a0` ≤ 2,399 | `a0` = `a2`; 1 per 4 bytes |
 | 8 | `palette_set` | `a1`, `a2` × 3, 0 … 768, read, ROM | `a0` ≤ 255 | `a0` = `a2`; 1 per 4 bytes |
 | 9 | `size` | — | — | 80 and 30 (`a1`); 0 |
@@ -439,21 +457,21 @@ Terminal (slot 2):
 All buffer failures give `FFFF_FFFEh`.
 
 2D vector display (slot 3): `submit` (`a0`, `a1` × 1, 1 … 16,384, read,
-RAM only; both failures give 1; batchable: 0, 1 per 4 bytes), `clear`
+RAM only; both failures give 1; deferred: 0, 1 per 4 bytes), `clear`
 (0), `style` (0 if `a0` ≤ 1 else 1), `persistence` (0 if `a0` ≤ 255 else
-1), `fill` (0 if `a0` ≤ 1 else 1); all batchable, charge 0 but `submit`'s.
+1), `fill` (0 if `a0` ≤ 1 else 1); all deferred, charge 0 but `submit`'s.
 
 Content (slot 4): `submit` (`a0`, fixed 52 bytes, read and written, RAM
-only; the place result is 0); not batchable.
+only; the place result is 0); answered.
 
 Page (slot 7): `submit` (`a0`, `a1` × 1, 1 … 65,536, read, ROM; length
-result 1, place result `FFFF_FFFEh`; batchable: 0, 1 per 4 bytes),
-`clear`, `region`, `scroll`, `background` (batchable, 0), `locate` (not
-batchable).
+result 1, place result `FFFF_FFFEh`; deferred: 0, 1 per 4 bytes),
+`clear`, `region`, `scroll`, `background` (deferred, 0), `locate`
+(answered).
 
 ## 6. Batching
 
-A call whose entry has bit 1 changes the device's state but returns
+A deferred call (entry flag bit 1) changes the device's state but returns
 nothing that depends on it: its result and charge follow from its
 arguments and its buffer's length by the entry's rules. The core does not
 wait for it. After its checks it computes the result and the charge,
@@ -476,7 +494,7 @@ and charge as the rule says; the prototype's drivers check this in debug
 builds.
 
 A call that writes guest memory, reads device state, or whose charge or
-result depends on the device's state or on the budget cannot be batched.
+result depends on the device's state cannot be batched: it is answered.
 
 ## 7. Layers and presentation
 
@@ -549,23 +567,20 @@ primitives); the prototype leaves it out.
 
 ### 6.1 What the reference devices allow
 
-Batchable: terminal `command`, `set_cursor`, `set_colours`,
-`cells_write`, `palette_set`, `size`; every call of the vector display;
-page `submit`, `clear`, `region`, `scroll`, `background`. Not batchable:
-terminal `get_cursor`, `get_colours` and `cells_read` (they read the
-device), content `submit` (the handle is the device's), page `locate` (it
-is refused when there is no document or after 8 in a frame: device state),
-and terminal `write`: how many bytes it consumes and what it charges depend
-on the budget left and on the cursor (a byte that wraps or scrolls costs
-150 more), so only the device knows its result. For `write` to be
-batchable its charge and result would have to follow from its arguments:
-for example, consume the whole buffer always and charge a flat price per
-byte that covers its worst case (each byte 1 + 150, or a bound on scrolls
-per byte such as 150 per `0Ah`/`0Ch` byte plus 150 per 80 printable bytes),
-with the buffer's length capped so that a call cannot overrun the frame;
-the program would then learn nothing from the result that it did not know.
-A batched call with a buffer carries a copy of it: on shared memory a big
-one costs more batched than sent (the vector display's 16 KiB list).
+Deferred, so batchable: terminal `write`, `command`, `set_cursor`,
+`set_colours`, `cells_write`, `palette_set`, `size`; every call of the
+vector display; page `submit`, `clear`, `region`, `scroll`, `background`.
+Answered: terminal `get_cursor`, `get_colours` and `cells_read` (they read
+the device), content `submit` (the handle is the device's), page `locate`
+(it is refused when there is no document or after 8 in a frame: device
+state). These are SPEC 14's classes exactly.
+
+`write` takes its whole buffer, at most 4,096 bytes, and costs 2 per byte
+however many scrolls it causes (SPEC 8.2), so its entry says "`a0` = `a1`;
+2 per byte" and a frame of one-byte writes goes to the driver as a few
+batches instead of one round trip a call. A batched call with a buffer
+carries a copy of it: on shared memory a big one costs more batched than
+sent (the vector display's 16 KiB list).
 
 ## 8. Recording and replay
 
@@ -599,7 +614,37 @@ length, bytes for each) and the state hash. It is not the format of
 `STATE.md` 5, whose completions are a content device's: a core that knows
 nothing of content cannot write that one.
 
-## 9. Open questions
+## 9. Measurements
+
+`programs/hostile` spends every frame's budget on the cheapest calls of
+one kind, 60 frames a phase; `terse-bus --bench --frame-times` gives each
+frame's emulation time, the bus included. On an i7-10750H, release build,
+the Rust drivers, batching on (default spin times); milliseconds per
+frame, median / worst of each phase:
+
+| Phase (calls per frame) | In-process | Shared memory | Socket |
+|---|---|---|---|
+| terminal `get_cursor`, answered (1,923) | 0.05 / 0.05 | 0.71 / 0.83 | 9.98 / 11.20 |
+| vector `clear`, deferred (25,000) | 0.58 / 0.61 | 2.06 / 3.11 | 2.02 / 2.34 |
+| page `locate`, answered (1,923) | 0.05 / 0.05 | 0.73 / 0.83 | 8.13 / 10.78 |
+| terminal `write` of 1 byte, deferred (12,500) | 0.56 / 0.56 | 1.42 / 2.01 | 1.39 / 1.63 |
+| terminal `cells_read` of 2,400 cells, answered (51) | 0.02 / 0.02 | 0.05 / 0.06 | 0.50 / 0.56 |
+| vector `submit` of 16,384 bytes, deferred (30) | 0.01 / 0.01 | 0.15 / 0.18 | 0.11 / 0.28 |
+| terminal `write` of 4,096 line feeds, deferred (15; 61,000 scrolls) | 0.35 / 0.39 | 0.41 / 0.44 | 0.39 / 0.41 |
+
+Every phase fits a 16.7 ms frame on every transport. Before answered calls
+cost 64 and `write` took its whole buffer (every call cost 4, and `write`
+was answered), the same program on the socket took 118 ms a frame for `get_cursor` and `locate`
+and 58 ms for one-byte writes (each a round trip of about 5 µs), and 9 ms
+on shared memory. Without batching the deferred calls are round trips
+again: on the socket 120 ms a frame for `clear` and 64 ms for one-byte
+writes (shared memory: 9 and 5 ms), so a core that offers the socket
+should batch. The C terminal driver gives the same figures within 10 %
+(1.9 ms for `cells_read`, which it copies byte by byte); the Python vector
+driver needs 21 ms a frame to carry out 25,000 batched `clear` calls, its
+own speed rather than the protocol's.
+
+## 10. Open questions
 
 - **Devices that share state.** SPEC 13.2 has device 9's `style` and
   `persistence` set device 3's (one section of the state, `STATE.md` 1.7).

@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 
 use terse_bus::bus::Bus;
 use terse_bus::compose::{Compositor, screen_rect};
-use terse_bus::core::Core;
-use terse_core::{Controller, Event, Script};
+use terse_core::{Controller, Event, FrameInput, Machine, Script};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -21,7 +20,7 @@ use winit::window::{Window, WindowId};
 const FRAME: Duration = Duration::from_micros(16_667);
 
 struct App {
-    core: Core<Bus>,
+    core: Machine<Bus>,
     script: Script,
     native: (u32, u32),
     comp: Compositor,
@@ -69,10 +68,10 @@ impl App {
         let mut events = self.script.events(frame).to_vec();
         events.append(&mut self.events);
         let controllers = [Controller::default(); terse_core::CONTROLLERS];
-        self.core.run_frame(0, &events, &[], &controllers, None)?;
-        self.core.devices.flush()?;
+        self.core.try_run_frame(&FrameInput { events: &events, controllers, ..Default::default() })?;
+        self.core.devices_mut().flush()?;
         let rect = screen_rect(self.native, self.comp.size);
-        let updates = self.core.devices.present(self.comp.size, rect)?;
+        let updates = self.core.devices_mut().present(self.comp.size, rect)?;
         self.comp.update(&updates)?;
         let Some(surface) = &mut self.surface else { return Ok(()) };
         let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
@@ -83,7 +82,7 @@ impl App {
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
         let (w, h) = (size.width.max(1), size.height.max(1));
-        let layers = self.core.devices.layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
+        let layers = self.core.devices_mut().layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
         self.comp = Compositor::new((w, h), layers);
         if let Some(s) = &mut self.surface {
             let _ = s.resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap());
@@ -195,7 +194,7 @@ impl ApplicationHandler for App {
 }
 
 /// Runs the machine in a window until it stops or the window is closed.
-pub fn run(core: Core<Bus>, script: Script, native: (u32, u32), comp: Compositor) -> Result<ExitCode, String> {
+pub fn run(core: Machine<Bus>, script: Script, native: (u32, u32), comp: Compositor) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let mut app = App {
         core,
@@ -211,7 +210,7 @@ pub fn run(core: Core<Bus>, script: Script, native: (u32, u32), comp: Compositor
         error: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
-    app.core.devices.shutdown();
+    app.core.devices_mut().shutdown();
     match app.error {
         Some(e) => Err(e),
         None => Ok(ExitCode::SUCCESS),

@@ -43,7 +43,7 @@ terse pack --rom prog.bin --title prog --ram-pages 4 \
 What `terse.h` provides, by area:
 
 - System: `terse_event_pop`, `terse_wait_frame`, `terse_frame`, `terse_time`, `terse_random` (repeats the call 256 bytes at a time), `terse_random_byte`, `terse_exit`, `terse_open`, `terse_argument`, `terse_pad_read`. Note that `terse_wait_frame` returns how many frames passed since its last call (at most 255), not the frame counter that `wait_frame` returns.
-- Terminal: `term_write` (repeats `write` until every byte is taken, since a write stops when the budget runs out), `term_puts`, `term_putc`, `term_put_ascii`, `term_put_cp` (one code point up to `FFFFh` as UTF-8), `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_fill`, `term_cells_write`, `term_cells_read`, `term_is_wide`.
+- Terminal: `term_write` (splits a text into writes of at most 4,096 bytes, the most one `write` takes), `term_puts`, `term_putc`, `term_put_ascii`, `term_put_cp` (one code point up to `FFFFh` as UTF-8), `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_fill`, `term_cells_write`, `term_cells_read`, `term_is_wide`.
 - 2D vector display: a list builder (`vec_begin`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`, `vec_end`, `vec_length`), `vec_submit`, `vec_submit_list`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`. The builder does not check the buffer's size.
 - 3D vector display: the same with `v3_` names.
 - Content: the 52-byte `content_req` block, `content_submit`, a `content_` function for each operation (`content_get`, `content_put`, `content_find` ...), and named records: `record_save`, `record_load`, `record_delete`, `record_list`.
@@ -161,7 +161,7 @@ runs the image alone in a window at 60 frames a second, with every key (F12 incl
 
 ## Costs to keep in mind
 
-An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write` costs 1 per byte, and a clear or scroll 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:{charges}).
+An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write` costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:{charges}).
 
 ## Publishing it
 

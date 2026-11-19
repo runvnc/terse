@@ -4,18 +4,18 @@
 //!
 //! - `proto`: the messages and the call table;
 //! - `transport`: the socket and shared-memory transports;
-//! - `core`: the machine, the System device, the frame loop, the state
-//!   serialization's frame, and the [`core::Devices`] trait;
-//! - `bus`: [`core::Devices`] over driver processes;
-//! - `inproc`: [`core::Devices`] with the devices compiled in, for
-//!   comparison;
+//! - `bus`: terse-core's `Devices` over driver processes, so that
+//!   terse-core's `Machine` (the CPU, the System device, the frame loop and
+//!   the state serialization's frame: the same loop `terse run` runs) runs
+//!   on the bus;
+//! - `inproc`: the devices compiled in, with the content service and page
+//!   layout of a host, for comparison;
 //! - `compose`: layers composed into a picture;
 //! - `record`: the bus's own recordings;
 //! - `driver`: the driver's side, for drivers written in Rust.
 
 pub mod bus;
 pub mod compose;
-pub mod core;
 pub mod driver;
 pub mod inproc;
 pub mod proto;

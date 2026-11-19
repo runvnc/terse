@@ -1,15 +1,17 @@
 /* hostile.S - a deliberately hostile program for the device bus
  * (DEVICES.md): it spends every frame's whole budget on device calls, the
- * cheapest there are (1 for the ecall and 4 for the call), in phases of
- * 60 frames, then exits:
+ * cheapest of each kind (1 for the ecall, and 4 for a deferred call or 64
+ * for an answered one, SPEC 14), in phases of 60 frames, then exits:
  *
- *   frames   0- 59  terminal get_cursor    (reads state: never batched)
- *   frames  60-119  vector clear           (batchable)
- *   frames 120-179  page locate            (needs a reply)
- *   frames 180-239  terminal write, 1 byte (budget-dependent: never batched)
- *   frames 240-299  terminal cells_read, all 2,400 cells (9,600 bytes copied
- *                   to RAM per call: the most bytes a unit buys)
- *   frames 300-359  vector submit of 16,384 bytes (batchable, copied inline)
+ *   frames   0- 59  terminal get_cursor    (answered: never batched)
+ *   frames  60-119  vector clear           (deferred: batched)
+ *   frames 120-179  page locate            (answered)
+ *   frames 180-239  terminal write, 1 byte (deferred: batched)
+ *   frames 240-299  terminal cells_read, all 2,400 cells (answered; 9,600
+ *                   bytes copied to RAM per call: the most bytes a unit buys)
+ *   frames 300-359  vector submit of 16,384 bytes (deferred, copied inline)
+ *   frames 360-419  terminal write of 4,096 line feeds (deferred; a scroll
+ *                   per byte, which a write does not charge)
  *
  * Eight calls an iteration, so the loop costs a quarter unit per call. */
 
@@ -53,6 +55,8 @@ next:
     bltu    a0, t0, p_cells
     li      t0, 360
     bltu    a0, t0, p_submit
+    li      t0, 420
+    bltu    a0, t0, p_feeds
     li      a0, 0
     li      a7, EXIT
     ecall
@@ -115,6 +119,19 @@ p_submit:
     bnez    s1, 1b
     j       next
 
+p_feeds:
+    li      a7, TERM_WRITE
+    la      s2, feeds
+    li      s3, 4096
+    li      s4, 0
+    li      s1, 2
+1:  EIGHT_SET
+    addi    s1, s1, -1
+    bnez    s1, 1b
+    j       next
+
     .section .rodata
 text:
     .ascii "x"
+feeds:
+    .fill   4096, 1, 10

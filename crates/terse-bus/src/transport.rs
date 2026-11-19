@@ -171,6 +171,7 @@ impl ShmEnd {
         Ok(ShmEnd { map, core, seen, spin, socket })
     }
 
+
     fn out_area(&self) -> usize {
         if self.core { CONTROL } else { CONTROL + AREA }
     }

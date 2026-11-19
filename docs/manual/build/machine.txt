@@ -186,7 +186,7 @@ write; `pc` continues after the `ecall`.
 - A call checks its buffer before its other arguments: a bad buffer gives
   `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
-  see [charges](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527).
+  see [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).
 
 In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
 and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
@@ -194,7 +194,11 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-[The system device](terse:82f46b529fe55432925655dbf050bcca5951cab4e2fddc8982a68fd832d13ae0), slot 1, always present:
+Class sets the base charge: 4 for a deferred call (its result and charge
+follow from its arguments), 64 for an answered one (they depend on the
+device's state). System and Machines calls cost 4.
+
+[The system device](terse:3ec63f64ea30e370f7d0f8d59f35820f3212530b74dca4e4f5e06f83d7996859), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -208,49 +212,49 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 
-[The terminal](terse:0a6930ef543784e6a6d2cb303942558600ac268ad6458a5954ed2a918f71caa8), slot 2:
+[The terminal](terse:169d0b10057f817f2030a724a7ba6ce8291217a02c9878a46ca18b971bca8134), slot 2:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `200h` | `write` | `a0` = buffer (read), `a1` = length | bytes consumed |
-| `201h` | `command` | `a0` = command | 0 |
-| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 |
-| `203h` | `get_cursor` | none | `a0` = column, `a1` = row |
-| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 |
-| `205h` | `get_colours` | none | `a0` = foreground, `a1` = background |
-| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count |
-| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count |
-| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
-| `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
+| `201h` | `command` | `a0` = command | 0 | deferred |
+| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
+| `203h` | `get_cursor` | none | `a0` = column, `a1` = row | answered |
+| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 | deferred |
+| `205h` | `get_colours` | none | `a0` = foreground, `a1` = background | answered |
+| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count | answered |
+| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:7916561d225e0ea5f1fa304e2ddbaf7ee898d5b4c02b42676ed268e0636b5b4e), slot 3:
+[The 2D vector display](terse:4ff0f43dbdab83085bddfee6e54af38b170276cab51b8d8e561a112ca3cba3b4), slot 3:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `301h` | `clear` | none | 0 |
-| `302h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
-| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `301h` | `clear` | none | 0 | deferred |
+| `302h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
+| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:cd31ef28c06273b16a385c39ed1477b1011df31fe47c5490187f228981212342), [feeds](terse:770e1f97310866d6aae294e750c8771b99c4d5dbdd792bf78f4fd3b4dc5d488b) and [named records](terse:6dbd7121598adc74296b04a58ebcbb2aecab5186e720070f63b2180a0f5665e8)):
+The content device, slot 4 (see [blobs](terse:6b2721c9a17a006a7dbc4e07db116ff7f2e87b8050f77765fb40a8d56a4a94d9), [feeds](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) and [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a)):
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected | answered |
 
 [The page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), slot 7:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected |
-| `701h` | `clear` | none | 0 |
-| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
-| `703h` | `scroll` | `a0` = y | 0 |
-| `704h` | `background` | `a0` = colour | 0 |
-| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected | deferred |
+| `701h` | `clear` | none | 0 | deferred |
+| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 | deferred |
+| `703h` | `scroll` | `a0` = y | 0 | deferred |
+| `704h` | `background` | `a0` = colour | 0 | deferred |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
-[Machines](terse:6f8cd2527094cb879ba5b588d62dcba835da8e9c39e35061cd06d4219b7878bf), slot 8, the shell only:
+[Machines](terse:ce60c12a99868267b77ab4887acbd2768c5da4797d152d07163cae047fb4124e), slot 8, the shell only:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -272,14 +276,14 @@ The content device, slot 4 (see [blobs](terse:cd31ef28c06273b16a385c39ed1477b101
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 
-[The 3D vector display](terse:bb1d3f966c8f18157af9f7dd9bcc915f90d880704476b37a47a14fee7c85d059), slot 9:
+[The 3D vector display](terse:e0dea6de1a019e7b8d17c2e87a3e0dfe6bac9d0be7d3b99eceb6d57b9dae0c6f), slot 9:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `901h` | `clear` | none | 0 |
-| `902h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `901h` | `clear` | none | 0 | deferred |
+| `902h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 
 ## Screen units
 

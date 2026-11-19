@@ -8,15 +8,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use terse_bus::bus::{Bus, BusConfig, split_command};
+use terse_bus::bus::{Bus, BusConfig, SharedMemory, split_command};
 use terse_bus::compose::{Compositor, screen_rect, write_png};
-use terse_bus::core::{Core, Devices, Memory};
-use terse_bus::inproc::{ContentOptions, InProcess};
+use terse_bus::inproc::{ContentOptions, InProcessHost};
 use terse_bus::proto::MEMORY_RAM_OFFSET;
 use terse_bus::record::{self, FrameRecord};
 use terse_bus::stats::spread;
 use terse_bus::transport::{self, Mapping};
-use terse_core::{Image, Script, Stopped};
+use terse_core::devices::{Devices, Memory};
+use terse_core::{FrameInput, Image, Machine, Script, Stopped};
 
 const USAGE: &str = "usage:
   terse-bus <image> [--frames N] [--events <file>] [--hash] [--hash-every N] [--dump]
@@ -207,11 +207,11 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     }
     if opts.in_process {
         let service = if image.has_device(4) { Some(opts.content.start()?) } else { None };
-        let devices = InProcess::new(&image, service);
+        let devices = InProcessHost::new(&image, service);
         let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
-        let mut core = Core::new(image, memory, devices);
+        let mut core = Machine::with_devices(&image, memory, devices);
         let startup = started.elapsed();
-        return frames(&opts, &mut core, &script, replay.as_deref(), None, startup);
+        return frames(&opts, &image, &mut core, &script, replay.as_deref(), None, startup);
     }
 
     // The drivers, in slot order.
@@ -245,17 +245,17 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         driver_cpus: if opts.pin { (2..2 + wanted.len()).collect() } else { Vec::new() },
     };
     let bus = Bus::start(&config, &wanted, image.id, &image.rom, ram_len as u32, Some(&memory_path))?;
-    let memory = Memory::Shared { map, rom_len: image.rom.len(), ram_len };
-    let mut core = Core::new(image, memory, bus);
+    let memory = Memory::Backed(Box::new(SharedMemory { map, rom_len: image.rom.len(), ram_len }));
+    let mut core = Machine::with_devices(&image, memory, bus);
     let startup = started.elapsed();
     if opts.bench {
-        for d in &core.devices.drivers {
+        for d in &core.devices().drivers {
             eprintln!("bus: slot {} {} ({}), transport {}", d.slot, d.info.name, d.command, if d.transport == 1 { "shm" } else { "socket" });
         }
     }
-    let native = core.devices.native().unwrap_or((640, 480));
+    let native = core.devices_mut().native().unwrap_or((640, 480));
     let picture = opts.size.unwrap_or(native);
-    let layers: Vec<(u8, u8)> = core.devices.layers().into_iter().map(|(_, slot, _, l)| (slot, l.id)).collect();
+    let layers: Vec<(u8, u8)> = core.devices_mut().layers().into_iter().map(|(_, slot, _, l)| (slot, l.id)).collect();
     let compositor = presents.then(|| Compositor::new(picture, layers));
     #[cfg(feature = "window")]
     if opts.window {
@@ -266,8 +266,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     if opts.window {
         return Err("this terse-bus was built without the window (feature \"window\")".into());
     }
-    let code = frames(&opts, &mut core, &script, replay.as_deref(), compositor.map(|c| (c, native)), startup);
-    core.devices.shutdown();
+    let code = frames(&opts, &image, &mut core, &script, replay.as_deref(), compositor.map(|c| (c, native)), startup);
+    core.devices_mut().shutdown();
     drop(session);
     code
 }
@@ -275,7 +275,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
 /// Runs the frames and prints what was asked for.
 fn frames<D: Devices + MaybeBus>(
     opts: &Opts,
-    core: &mut Core<D>,
+    image: &Image,
+    core: &mut Machine<D>,
     script: &Script,
     replay: Option<&[FrameRecord]>,
     mut comp: Option<(Compositor, (u32, u32))>,
@@ -283,7 +284,7 @@ fn frames<D: Devices + MaybeBus>(
 ) -> Result<ExitCode, String> {
     let mut times = Vec::new();
     let mut present_times = Vec::new();
-    let mut recording = opts.record.as_ref().map(|_| record::header(&core.image.id));
+    let mut recording = opts.record.as_ref().map(|_| record::header(&image.id));
     let total = match replay {
         Some(r) => opts.frames.map_or(r.len() as u64, |n| n.min(r.len() as u64)),
         None => opts.frames.unwrap_or(60 * 60 * 10),
@@ -313,7 +314,9 @@ fn frames<D: Devices + MaybeBus>(
             None => &[],
         };
         let start = Instant::now();
-        let (stats, records) = core.run_frame(0, &events, random, &controllers, rec)?;
+        core.devices_mut().set_replay(rec);
+        let stats = core.try_run_frame(&FrameInput { events: &events, random, controllers, ..Default::default() })?;
+        let records = core.devices_mut().take_records();
         let took = start.elapsed();
         if opts.bench {
             times.push(took.as_secs_f64() * 1000.0);
@@ -323,11 +326,11 @@ fn frames<D: Devices + MaybeBus>(
             && let Some((c, native)) = &mut comp
         {
             let t = Instant::now();
-            core.devices.present_if_bus(c, *native)?;
+            core.devices_mut().present_if_bus(c, *native)?;
             present_times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         if recording.is_some() || replay.is_some() {
-            let hash = core.state_hash()?;
+            let hash = core.try_state_hash()?;
             if let Some(out) = &mut recording {
                 let f = FrameRecord {
                     frame,
@@ -349,7 +352,7 @@ fn frames<D: Devices + MaybeBus>(
         if let Some(n) = opts.hash_every
             && core.frame() % n == 0
         {
-            println!("{} {}", core.frame(), hex(&core.state_hash()?));
+            println!("{} {}", core.frame(), hex(&core.try_state_hash()?));
         }
         if core.stopped().is_some() {
             break;
@@ -372,26 +375,27 @@ fn frames<D: Devices + MaybeBus>(
         eprintln!(
             "bench: {} frames, emulation per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms, mean {mean:.3} ms, over 16.7 ms: {over}; calls {}; start-up {:.1} ms",
             times.len(),
-            core.calls,
+            core.calls(),
             startup.as_secs_f64() * 1000.0
         );
         if !present_times.is_empty() {
             let (p50, p99, max) = spread(&mut present_times);
             eprintln!("bench: present and compose per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms");
         }
-        core.devices.report();
+        core.devices_mut().report();
     }
     if let Some(path) = &opts.screenshot
         && let Some((c, native)) = &mut comp
     {
-        core.devices.present_if_bus(c, *native)?;
+        core.devices_mut().present_if_bus(c, *native)?;
         write_png(path, &c.rgba(), c.size)?;
     }
     if opts.hash {
-        println!("{}", hex(&core.state_hash()?));
+        println!("{}", hex(&core.try_state_hash()?));
     }
-    if opts.dump && core.image.has_device(2) {
-        let state = core.devices.state(2)?;
+    if opts.dump && image.has_device(2) {
+        let mut state = Vec::new();
+        core.devices_mut().write_state(2, &mut state)?;
         let mut t = terse_core::Terminal::default();
         t.restore(&mut terse_core::snapshot::Reader::new(&state)).map_err(|e| format!("terminal state: {e}"))?;
         print!("{}", t.text());
@@ -407,14 +411,24 @@ fn frames<D: Devices + MaybeBus>(
 trait MaybeBus {
     fn present_if_bus(&mut self, comp: &mut Compositor, native: (u32, u32)) -> Result<(), String>;
     fn report(&self);
+    /// The recorded inputs to give the drivers in the next frame.
+    fn set_replay(&mut self, records: Option<&[(u8, Vec<u8>)]>);
+    /// The drivers' input records of the frame just run.
+    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)>;
 }
 
-impl MaybeBus for InProcess {
+impl MaybeBus for InProcessHost {
     fn present_if_bus(&mut self, _: &mut Compositor, _: (u32, u32)) -> Result<(), String> {
         Err("--in-process does not present".into())
     }
 
     fn report(&self) {}
+
+    fn set_replay(&mut self, _: Option<&[(u8, Vec<u8>)]>) {}
+
+    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)> {
+        Vec::new()
+    }
 }
 
 impl MaybeBus for Bus {
@@ -423,6 +437,14 @@ impl MaybeBus for Bus {
         let rect = screen_rect(native, comp.size);
         let updates = self.present(comp.size, rect)?;
         comp.update(&updates)
+    }
+
+    fn set_replay(&mut self, records: Option<&[(u8, Vec<u8>)]>) {
+        self.replay = records.map(<[_]>::to_vec);
+    }
+
+    fn take_records(&mut self) -> Vec<(u8, Vec<u8>)> {
+        std::mem::take(&mut self.records)
     }
 
     fn report(&self) {

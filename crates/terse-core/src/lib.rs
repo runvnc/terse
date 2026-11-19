@@ -6,6 +6,7 @@
 //! completions in through [`FrameInput`].
 
 pub mod content;
+pub mod devices;
 pub mod cpu;
 pub mod image;
 pub mod machine;

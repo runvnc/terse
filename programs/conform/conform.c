@@ -35,8 +35,8 @@
  *   0-5     CPU, RAM code, terminal, vector displays, system calls
  *   6       the events of frames 2-5;  9: the 70 text events of frame 8
  *   10-13   controllers
- *   14-31   the budget: timed loops (ROM, RAM, scroll carry, write)
- *   32-45   content requests (completions arrive one frame after submit)
+ *   14-33   the budget: timed loops (ROM, RAM, scroll carry, write carry)
+ *   34-47   content requests (completions arrive one frame after submit)
  *   49-108  stress (STRESS_START + 1, STRESS_A + STRESS_B frames)
  *   110     page calls (PAGE_START); the frame ends with a document
  *   111-118 height events (headless: one a frame in 111-114, none in
@@ -59,9 +59,11 @@
 #define BUDGET 125000           /* units per frame */
 #define ROM_COST 1              /* an instruction fetched from ROM */
 #define RAM_COST 4              /* an instruction fetched from RAM */
-#define CHARGE_CALL 4           /* every call, on top of the ecall */
-#define CHARGE_WRITE_BYTE 1     /* terminal write, per byte consumed */
-#define CHARGE_SCROLL 150       /* a terminal clear or scroll */
+#define CHARGE_CALL 4           /* a deferred call (and System), on top of the ecall */
+#define CHARGE_ANSWERED 64      /* an answered call (get_cursor, content submit, ...) */
+#define CHARGE_WRITE_BYTE 2     /* terminal write, per byte */
+#define WRITE_MAX 4096          /* the longest write */
+#define CHARGE_SCROLL 150       /* a terminal clear or scroll command */
 #define COPY_BYTES 4            /* bytes copied per unit, rounded up */
 
 #define ROM_BASE 0x00010000u
@@ -132,7 +134,7 @@ extern const char ram_frame[], ram_frame_end[], ram_last[], ram_last_end[];
 extern const char count_frames[], count_frames_end[];
 void count_frames_rom(uint32_t *out, uint32_t n, uint32_t call, uint32_t arg) __asm__("count_frames");
 void count_scroll(uint32_t *out, uint32_t n);
-uint32_t count_write(const void *buf, uint32_t len);
+void count_write(uint32_t *out, uint32_t n, const void *buf, uint32_t len);
 
 /* ------------------------------------------------------- C library parts */
 
@@ -185,13 +187,13 @@ static uint32_t slen(const char *s)
 
 /* ------------------------------------------------------------- terminal */
 
-/* Writes all of p (the write call may stop early when the budget runs out). */
+/* Writes all of p (a write call takes at most WRITE_MAX bytes). */
 static void twn(const void *p, uint32_t n)
 {
     const uint8_t *b = p;
     while (n) {
-        uint32_t k = call(T_WRITE, A(b), n, 0);
-        if (k > n)
+        uint32_t k = n > WRITE_MAX ? WRITE_MAX : n;
+        if (call(T_WRITE, A(b), k, 0) != k)
             return;
         b += k;
         n -= k;
@@ -812,6 +814,7 @@ static void t_cells(void)
     ck(call(T_WRITE, RAM_BASE - 1, 2, 0) == ERR_BUFFER);
     ck(call(T_WRITE, ROM_BASE - 1, 1, 0) == ERR_BUFFER);
     ck(call(T_WRITE, 0xFFFFFFFF, 2, 0) == ERR_BUFFER);
+    ck(call(T_WRITE, A(buf_a), WRITE_MAX + 1, 0) == ERR_BUFFER); /* too long: nothing written */
     CUR(0, 0);
     report("terminal: cells, palette, buffers");
 }
@@ -1178,7 +1181,8 @@ static void t_pads(void)
  * instructions use up the rest, and r carries into the next frame. With
  * the values above: count_frames from ROM has p = 7 (addi 1, frame_count
  * 1 + 4, beq 1), from RAM p = 16; count_scroll p = 165 (a scroll 1 + 4 +
- * 150 among six other instructions). The code below evaluates exactly
+ * 150 among six other instructions); count_write of 4,096 bytes p = 8,208
+ * (a write 1 + 4 + 8,192 among seven other units). The code below evaluates exactly
  * that, instruction by instruction (skipping whole periods where nothing
  * can change), rather than with the closed form.
  *
@@ -1255,9 +1259,11 @@ static void model_frames(uint32_t *out, uint32_t n, int32_t ic, int32_t extra)
     }
 }
 
-static void model_scroll(uint32_t *out, uint32_t n)
+/* count_scroll and count_write: a call of `nargs` argument instructions
+ * charged `charge` beyond CHARGE_CALL before each frame_count call. */
+static void model_loop(uint32_t *out, uint32_t n, int32_t nargs, int32_t charge)
 {
-    const int32_t call = ROM_COST + CHARGE_CALL, per = 5 * ROM_COST + 2 * CHARGE_CALL + CHARGE_SCROLL + 2 * ROM_COST;
+    const int32_t call = ROM_COST + CHARGE_CALL, per = (4 + nargs) * ROM_COST + 2 * call + charge;
     m_ins(ROM_COST);                /* li a7 */
     uint32_t t3 = m_ins(call), f;   /* frame_count */
     m_ins(ROM_COST);
@@ -1273,8 +1279,9 @@ static void model_scroll(uint32_t *out, uint32_t n)
             m_ins(ROM_COST);        /* addi */
             t0++;
             m_ins(ROM_COST);        /* li a7 */
-            m_ins(ROM_COST);        /* li a0 */
-            m_ins(call + CHARGE_SCROLL);
+            for (int32_t i = 0; i < nargs; i++)
+                m_ins(ROM_COST);    /* li a0, or mv a0 and mv a1 */
+            m_ins(call + charge);
             m_ins(ROM_COST);        /* li a7 */
             f = m_ins(call);
             m_ins(ROM_COST);        /* beq */
@@ -1287,28 +1294,6 @@ static void model_scroll(uint32_t *out, uint32_t n)
         t3 = f;
         t0 = 1;
     }
-}
-
-/* count_write: a write stops after the byte whose charge takes the budget
- * to zero or below (always one byte at least). */
-static uint32_t model_write(uint32_t len)
-{
-    uint32_t total = 0, n;
-    do {
-        m_ins(ROM_COST);            /* li a7 */
-        m_ins(ROM_COST);            /* mv a0 */
-        m_ins(ROM_COST);            /* mv a1 */
-        m_ins(ROM_COST);            /* ecall */
-        int32_t left = mb - CHARGE_CALL;
-        n = left <= 0 ? 1 : (uint32_t)(left + CHARGE_WRITE_BYTE - 1) / CHARGE_WRITE_BYTE;
-        if (n > len)
-            n = len;
-        mb -= CHARGE_CALL + n * CHARGE_WRITE_BYTE;
-        m_ins(ROM_COST);            /* add */
-        m_ins(ROM_COST);            /* beq */
-        total += n;
-    } while (n == len);
-    return total;
 }
 
 static void budget_line(const char *name, const uint32_t *got, const uint32_t *want, uint32_t n)
@@ -1342,18 +1327,19 @@ static void t_budget(void)
      * deficit carries into the next. */
     count_scroll(got, 3);
     m_start();
-    model_scroll(want, 3);
+    model_loop(want, 3, 1, CHARGE_SCROLL);
     budget_line("budget: scroll loop, deficit carried", got, want, 3);
     colours(7, 0);
     cmd(1);
 
-    /* write stops after the byte that uses up the budget. NUL bytes are
-     * ignored by the terminal, so only the byte charge counts. */
-    memset(buf_b, 0, 16384);
-    got[0] = count_write(buf_b, 16384);
+    /* write takes its whole buffer whatever the budget, at 2 a byte: a
+     * frame ends up to 8,201 units below zero and the deficit carries. NUL
+     * bytes are ignored by the terminal, so only the byte charge counts. */
+    memset(buf_b, 0, WRITE_MAX);
+    count_write(got, 3, buf_b, WRITE_MAX);
     m_start();
-    want[0] = model_write(16384);
-    budget_line("budget: bytes one frame's writes take", got, want, 1);
+    model_loop(want, 3, 2, WRITE_MAX * CHARGE_WRITE_BYTE);
+    budget_line("budget: write loop, deficit carried", got, want, 3);
 }
 
 /* =========================================================== 8. content */
@@ -1520,7 +1506,7 @@ static void t_content(void)
     m_start();
     m_dframe = 1;
     m_dcharge = (100 + COPY_BYTES - 1) / COPY_BYTES;
-    model_frames(want, 2, ROM_COST, 0);
+    model_frames(want, 2, ROM_COST, CHARGE_ANSWERED - CHARGE_CALL); /* a get copies nothing */
     for (uint32_t i = 0; i < 2; i++) {
         ck(got[i] == want[i]);
         val_u(got[i]);
@@ -2042,6 +2028,10 @@ int main(void)
     t_cpu();
     t_ram_code();
     t_terminal();
+    /* The checks so far fill most of a frame (the terminal's answered
+     * calls cost 64 each): the rest starts in the next, before the input
+     * of frame 2. */
+    wait();
 #ifndef READING
     t_vector();
     t_vector3();

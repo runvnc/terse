@@ -22,7 +22,8 @@ const OUTSIDE: u32 = u32::MAX;
 fn table() -> Vec<CallEntry> {
     let e = CallEntry::plain;
     vec![
-        e(0).buffer(0, 1, 1, 0, u32::MAX, access::READ | access::ROM | access::BUDGET_BOUNDED),
+        // write: the whole buffer, at most 4,096 bytes; its length back, 2 per byte.
+        e(0).buffer(0, 1, 1, 0, charge::MAX_WRITE, access::READ | access::ROM).batch(rule::ARGUMENT, 1, 0, 0, 0).per_byte(charge::WRITE_BYTE as u16),
         e(1).batch(rule::CONSTANT, 0, 0, 0, 0).charge_when(0, 1, 3, charge::SCROLL_CLEAR),
         e(2).batch(rule::CONSTANT, 0, 0, 0, 0),
         e(3).sets_a1(),
@@ -281,11 +282,12 @@ impl Device for TerminalDriver {
         let mut charge_units = 0;
         let mut r1 = None;
         let r0 = match c.function {
-            0 => {
-                let (done, charged) = t.write_limited(c.buf, c.budget, charge::WRITE_BYTE, charge::SCROLL_CLEAR);
-                charge_units = charged;
-                done as u32
+            0 if c.buf.len() == a1 as usize => {
+                t.write(c.buf);
+                charge_units = a1 * charge::WRITE_BYTE;
+                a1
             }
+            0 => ERR_BUFFER,
             1 => {
                 if a0 < 0x100 {
                     charge_units = t.command(a0 as u8) * charge::SCROLL_CLEAR;

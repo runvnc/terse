@@ -105,7 +105,7 @@ The exact brightness, core width, glow, fast decay, tone curve and where an outl
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).
 
 ## State
 
@@ -138,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:bb1d3f966c8f18157af9f7dd9bcc915f90d880704476b37a47a14fee7c85d059), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:e0dea6de1a019e7b8d17c2e87a3e0dfe6bac9d0be7d3b99eceb6d57b9dae0c6f), shares this display's style and layers.

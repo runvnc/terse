@@ -194,6 +194,10 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
+Class sets the base charge: 4 for a deferred call (its result and charge
+follow from its arguments), 64 for an answered one (they depend on the
+device's state). System and Machines calls cost 4.
+
 [The system device](terse:{device-system}), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
@@ -210,45 +214,45 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 [The terminal](terse:{device-terminal}), slot 2:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `200h` | `write` | `a0` = buffer (read), `a1` = length | bytes consumed |
-| `201h` | `command` | `a0` = command | 0 |
-| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 |
-| `203h` | `get_cursor` | none | `a0` = column, `a1` = row |
-| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 |
-| `205h` | `get_colours` | none | `a0` = foreground, `a1` = background |
-| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count |
-| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count |
-| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
-| `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
+| `201h` | `command` | `a0` = command | 0 | deferred |
+| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
+| `203h` | `get_cursor` | none | `a0` = column, `a1` = row | answered |
+| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 | deferred |
+| `205h` | `get_colours` | none | `a0` = foreground, `a1` = background | answered |
+| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count | answered |
+| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
 [The 2D vector display](terse:{device-vector}), slot 3:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `301h` | `clear` | none | 0 |
-| `302h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
-| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `301h` | `clear` | none | 0 | deferred |
+| `302h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
+| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
 The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{content-feeds}) and [named records](terse:{content-records})):
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected | answered |
 
 [The page](terse:{device-page}), slot 7:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected |
-| `701h` | `clear` | none | 0 |
-| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
-| `703h` | `scroll` | `a0` = y | 0 |
-| `704h` | `background` | `a0` = colour | 0 |
-| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected | deferred |
+| `701h` | `clear` | none | 0 | deferred |
+| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 | deferred |
+| `703h` | `scroll` | `a0` = y | 0 | deferred |
+| `704h` | `background` | `a0` = colour | 0 | deferred |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
 [Machines](terse:{device-machines}), slot 8, the shell only:
 
@@ -274,12 +278,12 @@ The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{c
 
 [The 3D vector display](terse:{device-vector3}), slot 9:
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `901h` | `clear` | none | 0 |
-| `902h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `901h` | `clear` | none | 0 | deferred |
+| `902h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 
 ## Screen units
 

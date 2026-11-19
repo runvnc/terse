@@ -37,7 +37,9 @@
 enum { COLS = 80, ROWS = 30, CELLS = COLS * ROWS, CELL_MEMORY = CELLS * 4 };
 enum { CONTINUATION = 0xFFFF, REPLACEMENT = 0xFFFD, SPACE = 0x0020 };
 enum { STATE_LEN = CELL_MEMORY + 6 + 768 + 4 }; /* 10,378 */
-enum { CHARGE_OP = 150 };                      /* a clear or scroll */
+enum { CHARGE_OP = 150 };                      /* a command's clear or scroll */
+enum { CHARGE_BYTE = 2, MAX_WRITE = 4096 };    /* write: per byte, longest */
+enum { ROW_BYTES = COLS * 4 };
 #define ERR_BUFFER 0xFFFFFFFEu
 #define ERR_UNKNOWN 0xFFFFFFFFu
 
@@ -81,11 +83,18 @@ typedef struct {
     uint8_t bytes[3];
 } Decoder;
 
+/* The rows are a ring: stored row (top + r) % ROWS is row r. A scroll or a
+ * clear only marks rows blank (one cell for the whole row); a blank row is
+ * filled when it is written to (SPEC 8.6: a scroll costs one row at most). A
+ * stored row whose stamp is below `clears` holds clear_cell. */
 static struct {
     uint8_t cells[CELL_MEMORY];
     uint8_t col, row, fg, bg, shown, wrap;
     uint8_t palette[768];
     Decoder dec;
+    int top;
+    uint8_t blank_set[ROWS], blank[ROWS][4], clear_cell[4];
+    uint64_t stamp[ROWS], clears;
 } t;
 
 /* Starts a sequence with byte b: 1 and *out if it is a whole character. */
@@ -127,11 +136,40 @@ static int dec_feed(uint8_t b, uint32_t out[2]) {
     return 0;
 }
 
-static uint8_t *cell(int col, int row) { return &t.cells[(row * COLS + col) * 4]; }
-static unsigned ch_at(int col, int row) { uint8_t *c = cell(col, row); return c[0] | (unsigned)c[1] << 8; }
-static void set_ch(int col, int row, unsigned ch) { uint8_t *c = cell(col, row); c[0] = ch & 0xFF; c[1] = ch >> 8; }
+static int stored(int row) { int p = t.top + row; return p >= ROWS ? p - ROWS : p; }
+/* The cell all of stored row p holds, or NULL if it is not blank. */
+static const uint8_t *blank_of(int p) {
+    if (t.stamp[p] < t.clears) return t.clear_cell;
+    return t.blank_set[p] ? t.blank[p] : NULL;
+}
+/* Row `row` to change: filled first if blank. */
+static uint8_t *row_mut(int row) {
+    int p = stored(row);
+    const uint8_t *b = blank_of(p);
+    uint8_t *r = &t.cells[p * ROW_BYTES];
+    if (b) {
+        uint8_t c[4];
+        memcpy(c, b, 4);
+        for (int i = 0; i < COLS; i++) memcpy(r + 4 * i, c, 4);
+    }
+    t.blank_set[p] = 0;
+    t.stamp[p] = t.clears;
+    return r;
+}
+/* Byte i of the grid (SPEC 8.1 order). */
+static uint8_t grid_byte(uint32_t i) {
+    int p = stored((int)(i / ROW_BYTES));
+    const uint8_t *b = blank_of(p);
+    return b ? b[i % 4] : t.cells[p * ROW_BYTES + i % ROW_BYTES];
+}
+static void set_grid_byte(uint32_t i, uint8_t v) { row_mut((int)(i / ROW_BYTES))[i % ROW_BYTES] = v; }
+static unsigned ch_at(int col, int row) {
+    uint32_t i = (uint32_t)(row * COLS + col) * 4;
+    return grid_byte(i) | (unsigned)grid_byte(i + 1) << 8;
+}
+static void set_ch(int col, int row, unsigned ch) { uint8_t *c = row_mut(row) + col * 4; c[0] = ch & 0xFF; c[1] = ch >> 8; }
 static void set_cell(int col, int row, unsigned ch) {
-    uint8_t *c = cell(col, row);
+    uint8_t *c = row_mut(row) + col * 4;
     c[0] = ch & 0xFF; c[1] = ch >> 8; c[2] = t.fg; c[3] = t.bg;
 }
 
@@ -140,9 +178,20 @@ static int is_pair(int col, int row) {
     return col + 1 < COLS && ch_at(col, row) != CONTINUATION && ch_at(col + 1, row) == CONTINUATION;
 }
 
+/* Blanks rows [from, to) with spaces in the current colours. */
 static void fill_rows(int from, int to) {
-    for (int r = from; r < to; r++)
-        for (int c = 0; c < COLS; c++) set_cell(c, r, SPACE);
+    uint8_t c[4] = { SPACE & 0xFF, SPACE >> 8, t.fg, t.bg };
+    if (from == 0 && to == ROWS) {
+        t.clears++;
+        memcpy(t.clear_cell, c, 4);
+        return;
+    }
+    for (int r = from; r < to; r++) {
+        int p = stored(r);
+        t.blank_set[p] = 1;
+        memcpy(t.blank[p], c, 4);
+        t.stamp[p] = t.clears;
+    }
 }
 
 static unsigned clear_grid(void) {
@@ -153,13 +202,13 @@ static unsigned clear_grid(void) {
 }
 
 static unsigned scroll_up(void) {
-    memmove(t.cells, t.cells + COLS * 4, CELL_MEMORY - COLS * 4);
+    t.top = stored(1);
     fill_rows(ROWS - 1, ROWS);
     return 1;
 }
 
 static unsigned scroll_down(void) {
-    memmove(t.cells + COLS * 4, t.cells, CELL_MEMORY - COLS * 4);
+    t.top = stored(ROWS - 1);
     fill_rows(0, 1);
     return 1;
 }
@@ -231,16 +280,9 @@ static unsigned put_byte(uint8_t b) {
     return ops;
 }
 
-/* `write` (SPEC 8.2): stops after the byte whose charge brings the budget
- * to zero or below. Returns the bytes consumed; *charged the units. */
-static uint32_t write_limited(const uint8_t *bytes, uint32_t n, int64_t budget, uint32_t *charged) {
-    int64_t c = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        c += 1 + (int64_t)put_byte(bytes[i]) * CHARGE_OP;
-        if (budget - c <= 0) { *charged = (uint32_t)c; return i + 1; }
-    }
-    *charged = (uint32_t)c;
-    return n;
+/* `write` (SPEC 8.2): every byte; scrolls and clears are not charged. */
+static void write_bytes(const uint8_t *bytes, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) put_byte(bytes[i]);
 }
 
 static unsigned command(uint32_t v) {
@@ -283,7 +325,7 @@ static void reset_device(void) {
 /* STATE.md 1.6, the bytes after the present flag. */
 static void write_state(uint8_t out[STATE_LEN]) {
     uint8_t *p = out;
-    memcpy(p, t.cells, CELL_MEMORY); p += CELL_MEMORY;
+    for (uint32_t i = 0; i < CELL_MEMORY; i++) *p++ = grid_byte(i);
     *p++ = t.col; *p++ = t.row; *p++ = t.fg; *p++ = t.bg; *p++ = t.shown; *p++ = t.wrap;
     memcpy(p, t.palette, 768); p += 768;
     *p++ = t.dec.len;
@@ -309,6 +351,9 @@ static int restore_state(const uint8_t *s, size_t n) {
     if (ok && (t.dec.len != k || memcmp(t.dec.bytes, seq, 3) != 0)) ok = 0;
     if (!ok) { t.dec = saved; return 0; }
     memcpy(t.cells, s, CELL_MEMORY);
+    t.top = 0;
+    memset(t.blank_set, 0, sizeof t.blank_set);
+    for (int r = 0; r < ROWS; r++) t.stamp[r] = t.clears;
     t.col = p[0]; t.row = p[1]; t.fg = p[2]; t.bg = p[3]; t.shown = p[4]; t.wrap = p[5];
     memcpy(t.palette, p + 6, 768);
     return 1;
@@ -337,7 +382,6 @@ static void putstr(Buf *b, const char *s) { size_t n = strlen(s); put16(b, (uint
 
 static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
-static int64_t rd64(const uint8_t *p) { return (int64_t)((uint64_t)rd32(p) | (uint64_t)rd32(p + 4) << 32); }
 
 /* ------------------------------------------------------------ transport */
 
@@ -519,17 +563,19 @@ typedef struct {
     uint8_t rule, rule_arg;
     uint32_t value, value2, charge;
     uint8_t charge_flags, charge_arg;
+    uint16_t per_byte;
     uint32_t low, high, units;
 } Entry;
 
 enum { F_A1 = 1, F_BATCH = 2, F_BUF = 4 };
-enum { A_READ = 1, A_WRITE = 2, A_ROM = 4, A_BUDGET = 8 };
+enum { A_READ = 1, A_WRITE = 2, A_ROM = 4 };
 
 static const Entry TABLE[] = {
-    /* write: a0, a1 x 1, any length, read, ROM, budget-bounded */
-    { .fn = 0, .flags = F_BUF, .addr_arg = 0, .len_arg = 1, .scale = 1, .least = 0, .greatest = 0xFFFFFFFF,
-      .access = A_READ | A_ROM | A_BUDGET, .checked = 0xFF,
-      .len_result = ERR_BUFFER, .place_result = ERR_BUFFER, .charge_arg = 0xFF },
+    /* write: a0, a1 x 1, 0-4,096, read, ROM; a0 = a1; 2 per byte */
+    { .fn = 0, .flags = F_BUF | F_BATCH, .addr_arg = 0, .len_arg = 1, .scale = 1, .least = 0, .greatest = MAX_WRITE,
+      .access = A_READ | A_ROM, .checked = 0xFF,
+      .len_result = ERR_BUFFER, .place_result = ERR_BUFFER, .rule = 2, .rule_arg = 1,
+      .charge_arg = 0xFF, .per_byte = CHARGE_BYTE },
     /* command: 0; 150 if 1 <= a0 <= 3 */
     { .fn = 1, .flags = F_BATCH, .len_arg = 0xFF, .checked = 0xFF, .rule = 1,
       .charge_arg = 0, .low = 1, .high = 3, .units = CHARGE_OP },
@@ -565,7 +611,7 @@ static void put_entry(Buf *b, const Entry *e) {
     put32(b, e->checked_max); put32(b, e->len_result); put32(b, e->place_result);
     put8(b, e->rule); put8(b, e->rule_arg); put16(b, 0);
     put32(b, e->value); put32(b, e->value2); put32(b, e->charge);
-    put8(b, e->charge_flags); put8(b, e->charge_arg); put16(b, 0);
+    put8(b, e->charge_flags); put8(b, e->charge_arg); put16(b, e->per_byte);
     put32(b, e->low); put32(b, e->high); put32(b, e->units);
     if (b->len - at != 64) fail("call table entry is not 64 bytes");
 }
@@ -579,7 +625,7 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
     uint8_t fn = m[1];
     uint32_t a[6];
     for (int i = 0; i < 6; i++) a[i] = rd32(m + 4 + 4 * i);
-    int64_t budget = rd64(m + 28);
+    /* the budget (m + 28) is not needed: every call's charge follows from its arguments */
     uint32_t nb = rd32(m + 36);
     if (nb > n - 40) fail("CALL buffer bytes cut short");
     const uint8_t *data = m + 40;
@@ -592,19 +638,17 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
     static uint8_t out[CELL_MEMORY];
 
     switch (fn) {
-    case 0: { /* write */
-        uint32_t len = a[1], avail = len;
+    case 0: { /* write: the whole buffer (the core checked its length) */
+        uint32_t len = a[1];
+        if (len > MAX_WRITE) { r0 = ERR_BUFFER; break; }
         if (inline_bytes) {
-            /* The core sends at most max(1, budget) bytes (access bit 3). */
-            uint64_t want = len == 0 ? 0 : budget < 1 ? 1 : (uint64_t)budget < len ? (uint64_t)budget : len;
-            if (nb < want) fail("write: %u bytes sent, %llu needed", nb, (unsigned long long)want);
-            avail = nb < len ? nb : len;
+            if (nb < len) fail("write: %u bytes sent, %u needed", nb, len);
         } else {
             data = guest(a[0], len);
         }
-        r0 = write_limited(data, avail, budget, &charge);
-        if (r0 == avail && avail < len && budget - (int64_t)charge > 0)
-            fail("write: buffer cut short before the budget was used");
+        write_bytes(data, len);
+        charge = CHARGE_BYTE * len;
+        r0 = len;
         break;
     }
     case 1:
@@ -626,12 +670,12 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
         if (a[0] >= CELLS || a[2] > CELLS) { r0 = ERR_BUFFER; break; }
         uint32_t len = a[2] * 4, at = a[0] * 4;
         if (fn == 6) {
-            for (uint32_t done = 0; done < len; done++) out[done] = t.cells[(at + done) % CELL_MEMORY];
+            for (uint32_t done = 0; done < len; done++) out[done] = grid_byte((at + done) % CELL_MEMORY);
             wbytes = out; waddr = a[1]; wlen = len;
         } else {
             if (inline_bytes && nb < len) fail("cells_write: %u bytes sent, %u needed", nb, len);
             const uint8_t *src = inline_bytes ? data : guest(a[1], len);
-            for (uint32_t done = 0; done < len; done++) t.cells[(at + done) % CELL_MEMORY] = src[done];
+            for (uint32_t done = 0; done < len; done++) set_grid_byte((at + done) % CELL_MEMORY, src[done]);
         }
         charge = (len + 3) / 4;
         r0 = a[2];

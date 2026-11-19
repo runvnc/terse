@@ -8,9 +8,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use terse_core::content::{ram_range, readable};
-use terse_core::{ERR_UNKNOWN, Event};
+use terse_core::devices::{Backing, CallOutcome, Devices, FrameInputs, GuestMem};
+use terse_core::{ERR_UNKNOWN, Event, FrameInput};
 
-use crate::core::{CallOutcome, Devices, FrameInputs, GuestMem};
 use crate::proto::{self, CallEntry, DeviceInfo, Hello, LayerDecl, PosEvent, Reader, Writer, access, hello_flags, msg};
 use crate::stats::Histogram;
 use crate::transport::{self, Mapping, ShmEnd, SocketEnd};
@@ -98,10 +98,33 @@ pub struct Bus {
     pub drivers: Vec<Driver>,
     by_slot: [Option<usize>; 256],
     batching: bool,
-    /// Gathered in `begin_frame`, applied by the core.
     scratch: Vec<u8>,
-    /// Whether this frame's batches are flushed (with END).
     pub session: PathBuf,
+    /// The drivers' recorded inputs for the next frame (replay), per slot.
+    pub replay: Option<Vec<(u8, Vec<u8>)>>,
+    /// The drivers' input records of the last frame (for recording).
+    pub records: Vec<(u8, Vec<u8>)>,
+}
+
+/// The machine's memory as the memory file (DEVICES.md 4.1): the guest's
+/// ROM and RAM, shared with the drivers.
+pub struct SharedMemory {
+    pub map: Mapping,
+    pub rom_len: usize,
+    pub ram_len: usize,
+}
+
+impl Backing for SharedMemory {
+    fn parts(&self) -> (&[u8], &[u8]) {
+        let b = self.map.bytes();
+        (&b[..self.rom_len], &b[proto::MEMORY_RAM_OFFSET..][..self.ram_len])
+    }
+
+    fn parts_mut(&mut self) -> (&[u8], &mut [u8]) {
+        let (rom_len, ram_len) = (self.rom_len, self.ram_len);
+        let (rom, rest) = self.map.bytes_mut().split_at_mut(proto::MEMORY_RAM_OFFSET);
+        (&rom[..rom_len], &mut rest[..ram_len])
+    }
 }
 
 /// Splits a command line at whitespace (no quoting: the prototype's
@@ -121,7 +144,15 @@ impl Bus {
         ram_len: u32,
         memory_path: Option<&Path>,
     ) -> Result<Bus, String> {
-        let mut bus = Bus { drivers: Vec::new(), by_slot: [None; 256], batching: config.batching, scratch: Vec::new(), session: config.session.clone() };
+        let mut bus = Bus {
+            drivers: Vec::new(),
+            by_slot: [None; 256],
+            batching: config.batching,
+            scratch: Vec::new(),
+            session: config.session.clone(),
+            replay: None,
+            records: Vec::new(),
+        };
         for (i, (slot, version, command)) in drivers.iter().enumerate() {
             let sock = config.session.join(format!("slot{slot}.sock"));
             let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
@@ -242,6 +273,15 @@ impl Bus {
             d.request(msg::RESET, |_| {}, None)?;
         }
         Ok(())
+    }
+
+    /// The slot's state section (STATE).
+    pub fn state(&mut self, slot: u8) -> Result<Vec<u8>, String> {
+        let d = self.driver(slot).ok_or(format!("no driver for slot {slot}"))?;
+        let reply = d.request(msg::STATE, |_| {}, None)?;
+        let mut r = Reader::new(&reply);
+        r.skip(4)?;
+        Ok(r.blob()?.to_vec())
     }
 
     /// Restores the slot's state section (RESTORE).
@@ -471,7 +511,14 @@ fn apply_writes(r: &mut Reader, ram: &mut [u8], within: Option<(u32, u32)>, slot
 }
 
 impl Devices for Bus {
-    fn begin_frame(&mut self, frame: u32, time: u32, host: &[Event], replay: Option<&[(u8, Vec<u8>)]>, mut mem: GuestMem) -> Result<FrameInputs, String> {
+    fn begin_frame(&mut self, frame: u32, input: &FrameInput, mut mem: GuestMem) -> Result<FrameInputs, String> {
+        let (time, host) = (input.unix_time, input.events);
+        if !input.completions.is_empty() {
+            return Err("the bus's content driver gives the completions".into());
+        }
+        let replay = self.replay.take();
+        let replay = replay.as_deref();
+        self.records.clear();
         let mut inputs = FrameInputs::default();
         // Send BEGIN to all, then collect: the drivers work at once.
         let mut msg_out = Vec::new();
@@ -529,7 +576,7 @@ impl Devices for Bus {
             apply_writes(&mut r, mem.ram, None, d.slot)?;
             let record = r.blob()?;
             if !record.is_empty() {
-                inputs.records.push((d.slot, record.to_vec()));
+                self.records.push((d.slot, record.to_vec()));
             }
             self.scratch = reply;
         }
@@ -543,12 +590,14 @@ impl Devices for Bus {
         let batching = self.batching;
         let Some(d) = self.driver(slot) else { return Ok(CallOutcome { a0: ERR_UNKNOWN, a1: None, charge: 0 }) };
         let Some(e) = d.table[function as usize] else { return Ok(CallOutcome { a0: ERR_UNKNOWN, a1: None, charge: 0 }) };
+        // An answered call's base charge, also when a check fails (SPEC 14).
+        let base = e.base_extra();
         // DEVICES.md 5: the core's checks.
         let mut buf: (u32, u32) = (0, 0);
         if e.has_buffer() {
             let Some(len) = e.buffer_len(&args) else {
                 d.stats.checked_out += 1;
-                return Ok(CallOutcome { a0: e.len_bad, a1: None, charge: 0 });
+                return Ok(CallOutcome { a0: e.len_bad, a1: None, charge: base });
             };
             let addr = args[e.buf_addr_arg as usize];
             let rom_ok = e.access & access::ROM != 0 && e.access & access::WRITE == 0;
@@ -557,13 +606,13 @@ impl Devices for Bus {
                 || (rom_ok && readable(mem.rom, &[], addr, len as usize).is_some());
             if !placed {
                 d.stats.checked_out += 1;
-                return Ok(CallOutcome { a0: e.place_bad, a1: None, charge: 0 });
+                return Ok(CallOutcome { a0: e.place_bad, a1: None, charge: base });
             }
             buf = (addr, len);
         }
         if e.check_arg != proto::NO_ARG && args[e.check_arg as usize] > e.check_max {
             d.stats.checked_out += 1;
-            return Ok(CallOutcome { a0: e.place_bad, a1: None, charge: 0 });
+            return Ok(CallOutcome { a0: e.place_bad, a1: None, charge: base });
         }
         let bytes: &[u8] = if e.has_buffer() && e.access & access::READ != 0 && buf.1 > 0 {
             readable(mem.rom, mem.ram, buf.0, buf.1 as usize).unwrap_or(&[])
@@ -575,12 +624,10 @@ impl Devices for Bus {
             proto::encode_call(&mut d.batch, function, &args, budget, bytes);
             d.batch_count += 1;
             d.stats.batched += 1;
-            return Ok(CallOutcome { a0, a1, charge });
+            return Ok(CallOutcome { a0, a1, charge: base + charge });
         }
-        // A real round trip. On the socket the read buffer goes inline (a
-        // budget-bounded one only as far as the budget reaches).
+        // A real round trip. On the socket the read buffer goes inline.
         let inline = match d.link {
-            Link::Socket(_) if e.access & access::BUDGET_BOUNDED != 0 => &bytes[..bytes.len().min(budget.max(1) as usize)],
             Link::Socket(_) => bytes,
             Link::Shm(_) => &[],
         };
@@ -626,7 +673,7 @@ impl Devices for Bus {
         d.reply = reply;
         d.stats.calls.add(start.elapsed());
         let _ = &mut gm;
-        Ok(CallOutcome { a0, a1: (flags & 1 != 0).then_some(a1), charge })
+        Ok(CallOutcome { a0, a1: (flags & 1 != 0).then_some(a1), charge: base + charge })
     }
 
     fn end_frame(&mut self, frame: u32, stopped: bool, _mem: GuestMem) -> Result<(), String> {
@@ -650,11 +697,8 @@ impl Devices for Bus {
         Ok(())
     }
 
-    fn state(&mut self, slot: u8) -> Result<Vec<u8>, String> {
-        let d = self.driver(slot).ok_or(format!("no driver for slot {slot}"))?;
-        let reply = d.request(msg::STATE, |_| {}, None)?;
-        let mut r = Reader::new(&reply);
-        r.skip(4)?;
-        Ok(r.blob()?.to_vec())
+    fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String> {
+        out.extend_from_slice(&self.state(slot)?);
+        Ok(())
     }
 }

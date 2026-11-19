@@ -23,22 +23,24 @@ The character code is a Unicode code point from `0000h` to `FFFFh`. A character 
 
 ## Calls
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `200h` | `write` | `a0` buffer, `a1` length | bytes consumed |
-| `201h` | `command` | `a0` command | 0 |
-| `202h` | `set_cursor` | `a0` column, `a1` row | 0 |
-| `203h` | `get_cursor` | none | `a0` column, `a1` row |
-| `204h` | `set_colours` | `a0` fg, `a1` bg | 0 |
-| `205h` | `get_colours` | none | `a0` fg, `a1` bg |
-| `206h` | `cells_read` | `a0` first, `a1` buffer, `a2` count | count |
-| `207h` | `cells_write` | `a0` first, `a1` buffer, `a2` count | count |
-| `208h` | `palette_set` | `a0` first, `a1` buffer, `a2` count | count |
-| `209h` | `size` | none | `a0` = 80, `a1` = 30 |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `200h` | `write` | `a0` buffer, `a1` length (at most 4,096) | the length | deferred |
+| `201h` | `command` | `a0` command | 0 | deferred |
+| `202h` | `set_cursor` | `a0` column, `a1` row | 0 | deferred |
+| `203h` | `get_cursor` | none | `a0` column, `a1` row | answered |
+| `204h` | `set_colours` | `a0` fg, `a1` bg | 0 | deferred |
+| `205h` | `get_colours` | none | `a0` fg, `a1` bg | answered |
+| `206h` | `cells_read` | `a0` first, `a1` buffer, `a2` count | count | answered |
+| `207h` | `cells_write` | `a0` first, `a1` buffer, `a2` count | count | deferred |
+| `208h` | `palette_set` | `a0` first, `a1` buffer, `a2` count | count | deferred |
+| `209h` | `size` | none | `a0` = 80, `a1` = 30 | deferred |
+
+An answered call (its result depends on the terminal's state) costs 64, a deferred one 4; see Charges below.
 
 A buffer the device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM; an empty one may be anywhere. Otherwise the call returns `FFFF_FFFEh` (a bad buffer) and does nothing else.
 
-- `write` puts characters (below) from the bytes of the buffer, in order, and returns how many bytes it consumed. Each byte is charged as it is consumed, and the call stops after the byte whose charge brings the frame's budget to zero or below, so it may consume fewer bytes than asked; a byte's charge is 1 plus 150 for each clear or scroll it causes, and the budget is counted after the `ecall` and the call's 4. It always consumes at least one byte of a non-empty buffer; an empty buffer gives 0. The program calls `write` again with the rest; if the budget is used up the machine pauses first, until the next frame. A UTF-8 sequence may be split across calls: the device keeps the incomplete part. `term_write` in the C library repeats the call until every byte is written.
+- `write` puts characters (below) from all the bytes of the buffer, in order, and returns the length. The buffer holds 0 to 4,096 bytes, in ROM or RAM; a longer one is a bad buffer (`FFFF_FFFEh`, nothing written). The whole buffer is taken whatever the budget: the call costs 4 plus 2 per byte, and nothing more for the scrolls and clears its bytes cause, so a write that starts with little budget left can take the budget below zero (by at most 8,199 units), which the next frame pays. A UTF-8 sequence may be split across calls: the device keeps the incomplete part. `term_write` in the C library splits a longer text into writes of 4,096 bytes (`TERM_WRITE_MAX`).
 - `command` carries out a command (table below). A value above 255, or one not in the table, does nothing; the result is 0 either way.
 - `set_cursor` moves the cursor to (`a0`, `a1`), each clamped to 79 and 29 (the arguments are unsigned, so any larger value gives the last column or row), and clears pending wrap.
 - `set_colours` sets the current foreground and background palette indexes. A value above 255 leaves that colour as it is, so `term_fg` passes `100h` as the background to change only the foreground.
@@ -115,18 +117,18 @@ At reset every cell is a space with foreground 7 and background 0. The cursor is
 
 | What | Charge |
 |---|---|
-| Any call, also one that fails | 4 |
-| `write`: each byte consumed | 1 |
-| A clear, scroll up or scroll down | 150 |
+| Any call, also one that fails | 4; 64 for `get_cursor`, `get_colours` and `cells_read` (answered) |
+| `write`: each byte of the buffer | 2 |
+| A clear, scroll up or scroll down by `command` | 150 |
 | `cells_read`, `cells_write`, `palette_set` | 1 per 4 bytes copied, rounded up |
 
-The 150 applies to commands `01h`, `02h` and `03h`, and to those that `write` causes: `0Ch`, `0Ah` on the last row, and a wrap (pending, or of a wide character at column 79) on the last row. Such a charge belongs to the byte that caused it, so it counts towards the byte that ends a `write`. Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units, on top of the `ecall` instruction. See [charges](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527) for the whole table.
+The 150 applies to commands `01h`, `02h` and `03h` only: the scrolls and clears a `write` causes (`0Ch`, `0Ah` on the last row, a wrap on the last row) are paid for by its 2 per byte, so a host makes them cheap (a scroll costs it one row at most). Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units and `cells_read` of them 64 + 2,400, on top of the `ecall` instruction. See [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef) for the whole table.
 
 ## State
 
 For determinism and snapshots the terminal's state is, in this order: a present flag (1 byte; if `00h` nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with `00h`. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (`C2h`-`F4h`) and the valid continuation bytes received after it.
 
-The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:7916561d225e0ea5f1fa304e2ddbaf7ee898d5b4c02b42676ed268e0636b5b4e) describes the layers.
+The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:4ff0f43dbdab83085bddfee6e54af38b170276cab51b8d8e561a112ca3cba3b4) describes the layers.
 
 ## Example
 

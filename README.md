@@ -538,8 +538,9 @@ clang lacks the riscv32 target).
 
 Costs to keep in mind (SPEC 14): an instruction from ROM costs 1 unit, one from
 RAM 4; a call costs 4 on top of its `ecall` (so 5 in all from ROM, 8 from RAM) plus 1 per
-4 bytes it copies; `write`
-costs 1 per byte, and a scroll or clear 150. Writing a whole row with one `write`
+4 bytes it copies, or 64 if it is answered (its result depends on the device's state:
+`get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write`
+costs 2 per byte and takes at most 4,096, and a scroll or clear command 150. Writing a whole row with one `write`
 or `term_cells_write` is far cheaper than a call per character.
 
 ## Scripted input

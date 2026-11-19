@@ -34,17 +34,9 @@ pub mod hello_flags {
     pub const REPLAY: u32 = 1 << 2;
 }
 
-/// Event positions in INPUTS (DEVICES.md 1.4).
-pub mod position {
-    pub const BEFORE: u8 = 0;
-    pub const AFTER_HOST: u8 = 1;
-    pub const AFTER_INPUT: u8 = 2;
-    pub const COMPLETION: u8 = 3;
-}
-
-/// An INPUTS event flag: this and the driver's next event are queued
-/// together or not at all.
-pub const EVENT_PAIR: u8 = 1;
+/// Event positions in INPUTS (DEVICES.md 1.4), the flag of a pair, and an
+/// event with its position: the machine's own (terse-core's `devices`).
+pub use terse_core::devices::{EVENT_PAIR, PosEvent, position};
 
 /// Transports (HELLO reply byte 4).
 pub const TRANSPORT_SOCKET: u8 = 0;
@@ -232,12 +224,13 @@ pub mod access {
     pub const READ: u8 = 1;
     pub const WRITE: u8 = 2;
     pub const ROM: u8 = 4;
-    pub const BUDGET_BOUNDED: u8 = 8;
 }
 
 /// Entry flags.
 pub mod entry_flags {
     pub const SETS_A1: u8 = 1;
+    /// Deferred (SPEC 14): computable by the core, so batchable; without
+    /// it a call is answered.
     pub const BATCHABLE: u8 = 2;
     pub const BUFFER: u8 = 4;
 }
@@ -275,6 +268,8 @@ pub struct CallEntry {
     pub charge_const: u32,
     pub charge_per4: bool,
     pub charge_arg: u8,
+    /// Units per byte of the buffer.
+    pub charge_per_byte: u16,
     pub charge_lo: u32,
     pub charge_hi: u32,
     pub charge_extra: u32,
@@ -303,6 +298,7 @@ impl CallEntry {
             charge_const: 0,
             charge_per4: false,
             charge_arg: NO_ARG,
+            charge_per_byte: 0,
             charge_lo: 0,
             charge_hi: 0,
             charge_extra: 0,
@@ -362,6 +358,12 @@ impl CallEntry {
         self
     }
 
+    /// Adds `units` per byte of the buffer to the charge.
+    pub const fn per_byte(mut self, units: u16) -> Self {
+        self.charge_per_byte = units;
+        self
+    }
+
     /// Adds `extra` to the charge when `lo` ≤ argument `arg` ≤ `hi`.
     pub const fn charge_when(mut self, arg: u8, lo: u32, hi: u32, extra: u32) -> Self {
         self.charge_arg = arg;
@@ -379,6 +381,12 @@ impl CallEntry {
         self.flags & entry_flags::BUFFER != 0
     }
 
+    /// The units the core charges beyond the call's 4 before the driver's
+    /// own charge (SPEC 14): the rest of an answered call's 64.
+    pub fn base_extra(&self) -> u32 {
+        if self.batchable() { 0 } else { terse_core::charge::ANSWERED - terse_core::charge::CALL }
+    }
+
     pub fn encode(&self, out: &mut Vec<u8>) {
         let start = out.len();
         out.extend_from_slice(&[self.function, self.flags, self.buf_addr_arg, self.buf_len_arg]);
@@ -393,7 +401,8 @@ impl CallEntry {
         for v in [self.value, self.value2, self.charge_const] {
             out.extend_from_slice(&v.to_le_bytes());
         }
-        out.extend_from_slice(&[self.charge_per4 as u8, self.charge_arg, 0, 0]);
+        out.extend_from_slice(&[self.charge_per4 as u8, self.charge_arg]);
+        out.extend_from_slice(&self.charge_per_byte.to_le_bytes());
         for v in [self.charge_lo, self.charge_hi, self.charge_extra] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -425,6 +434,7 @@ impl CallEntry {
             charge_const: u(44),
             charge_per4: b[48] & 1 != 0,
             charge_arg: b[49],
+            charge_per_byte: u16::from_le_bytes([b[50], b[51]]),
             charge_lo: u(52),
             charge_hi: u(56),
             charge_extra: u(60),
@@ -465,20 +475,12 @@ impl CallEntry {
         if self.charge_per4 {
             charge += buf_len.div_ceil(4);
         }
+        charge += buf_len * self.charge_per_byte as u32;
         if self.charge_arg != NO_ARG && (self.charge_lo..=self.charge_hi).contains(&args[self.charge_arg as usize]) {
             charge += self.charge_extra;
         }
         (r0, r1, charge)
     }
-}
-
-/// An event a driver gives at BEGIN (DEVICES.md 1.4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PosEvent {
-    pub event: terse_core::Event,
-    pub position: u8,
-    pub flags: u8,
-    pub index: u16,
 }
 
 /// A layer a driver declares: ID and z.
@@ -661,6 +663,13 @@ mod tests {
         assert_eq!(style.batch_outcome(&[2, 0, 0, 0, 0, 0], 0).0, 1);
         let size = CallEntry::plain(9).sets_a1().batch(rule::CONSTANT, 0, 80, 30, 0);
         assert_eq!(size.batch_outcome(&[0; 6], 0), (80, Some(30), 0));
+        // write: the length back, 2 per byte.
+        let write = CallEntry::plain(0).buffer(0, 1, 1, 0, 4096, access::READ | access::ROM).batch(rule::ARGUMENT, 1, 0, 0, 0).per_byte(2);
+        let mut b = Vec::new();
+        write.encode(&mut b);
+        assert_eq!(CallEntry::decode(&b).unwrap(), write);
+        assert_eq!(write.batch_outcome(&[0x10_0000, 100, 0, 0, 0, 0], 100), (100, None, 200));
+        assert_eq!((write.base_extra(), CallEntry::plain(3).base_extra()), (0, 60));
         // A written buffer in ROM, or batchable with a written buffer, is refused.
         let mut bad = Vec::new();
         CallEntry::plain(6).buffer(1, 2, 4, 0, 9600, access::WRITE | access::ROM).encode(&mut bad);

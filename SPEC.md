@@ -309,62 +309,66 @@ buffers it is said to write. `pc` continues after the `ecall`.
 
 ### 3.2 Call table
 
-| `a7` | Call | Arguments | Result |
-|---|---|---|---|
-| `100h` | `wait_frame` | — | the frame counter in the frame it returns in |
-| `101h` | `next_event` | `a0` = buffer (4 bytes, written) | 1 and the event, or 0 if the queue is empty |
-| `102h` | `frame_count` | — | the frame counter |
-| `103h` | `unix_time` | — | the Unix time latched at the start of the frame |
-| `104h` | `random` | `a0` = buffer (written), `a1` = length, at most 256 | the length |
-| `105h` | `controller` | `a0` = controller number, `a1` = buffer (8 bytes, written) | byte 0 of the state |
-| `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return |
-| `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
-| `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
-| `200h` | `write` | `a0` = buffer (read), `a1` = length | bytes consumed |
-| `201h` | `command` | `a0` = command | 0 |
-| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 |
-| `203h` | `get_cursor` | — | `a0` = column, `a1` = row |
-| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 |
-| `205h` | `get_colours` | — | `a0` = foreground, `a1` = background |
-| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count |
-| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count |
-| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
-| `209h` | `size` | — | `a0` = 80 columns, `a1` = 30 rows |
-| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `301h` | `clear` | — | 0 |
-| `302h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
-| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
-| `400h` | `submit` | `a0` = address of a request block | a handle 1–8, or 0 if rejected |
-| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected |
-| `701h` | `clear` | — | 0 |
-| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
-| `703h` | `scroll` | `a0` = y | 0 |
-| `704h` | `background` | `a0` = colour | 0 |
-| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
-| `800h` | `start` | `a0` = address of an image ID (32 bytes, read) | a handle 1–8, or 0 if none is free |
-| `801h` | `stop` | `a0` = handle | 1, or 0 if the handle is not in use |
-| `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if the handle is not in use |
-| `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused |
-| `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
-| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1–8 |
-| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
-| `807h` | `start_program` | `a0` = address of a program record (read) | a handle 1–8, or 0 if none is free |
-| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
-| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
-| `80Ah` | `argument` | `a0` = handle, `a1` = address of a blob ID (32 bytes, read) | 1, or 0 if the handle is not loading |
-| `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused |
-| `80Ch` | `restore` | `a0` = slot | a handle 1–8, or 0 if none is free or the slot is out of range |
-| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
-| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
-| `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
-| `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
-| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
-| `901h` | `clear` | — | 0 |
-| `902h` | `style` | `a0` = style | 0 done, 1 rejected |
-| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
+| `a7` | Call | Arguments | Result | Class |
+|---|---|---|---|---|
+| `100h` | `wait_frame` | — | the frame counter in the frame it returns in | core |
+| `101h` | `next_event` | `a0` = buffer (4 bytes, written) | 1 and the event, or 0 if the queue is empty | core |
+| `102h` | `frame_count` | — | the frame counter | core |
+| `103h` | `unix_time` | — | the Unix time latched at the start of the frame | core |
+| `104h` | `random` | `a0` = buffer (written), `a1` = length, at most 256 | the length | core |
+| `105h` | `controller` | `a0` = controller number, `a1` = buffer (8 bytes, written) | byte 0 of the state | core |
+| `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return | core |
+| `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
+| `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
+| `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
+| `201h` | `command` | `a0` = command | 0 | deferred |
+| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
+| `203h` | `get_cursor` | — | `a0` = column, `a1` = row | answered |
+| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 | deferred |
+| `205h` | `get_colours` | — | `a0` = foreground, `a1` = background | answered |
+| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count | answered |
+| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
+| `209h` | `size` | — | `a0` = 80 columns, `a1` = 30 rows | deferred |
+| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `301h` | `clear` | — | 0 | deferred |
+| `302h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
+| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
+| `400h` | `submit` | `a0` = address of a request block | a handle 1–8, or 0 if rejected | answered |
+| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected | deferred |
+| `701h` | `clear` | — | 0 | deferred |
+| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 | deferred |
+| `703h` | `scroll` | `a0` = y | 0 | deferred |
+| `704h` | `background` | `a0` = colour | 0 | deferred |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
+| `800h` | `start` | `a0` = address of an image ID (32 bytes, read) | a handle 1–8, or 0 if none is free | core |
+| `801h` | `stop` | `a0` = handle | 1, or 0 if the handle is not in use | core |
+| `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if the handle is not in use | core |
+| `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused | core |
+| `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused | core |
+| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1–8 | core |
+| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last | core |
+| `807h` | `start_program` | `a0` = address of a program record (read) | a handle 1–8, or 0 if none is free | core |
+| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none | core |
+| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits | core |
+| `80Ah` | `argument` | `a0` = handle, `a1` = address of a blob ID (32 bytes, read) | 1, or 0 if the handle is not loading | core |
+| `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused | core |
+| `80Ch` | `restore` | `a0` = slot | a handle 1–8, or 0 if none is free or the slot is out of range | core |
+| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 | core |
+| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range | core |
+| `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused | core |
+| `810h` | `unface` | `a0` = frames | 1, or 0 if refused | core |
+| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `901h` | `clear` | — | 0 | deferred |
+| `902h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
+| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 
-Sections 4 to 13 define each call.
+Sections 4 to 13 define each call. The class (section 14) sets a call's
+base charge: 4 for a **deferred** call, whose result and charge follow from
+its arguments, 64 for an **answered** one, whose result or charge depends
+on the device's state; the calls of devices 1 and 8 (**core**) are the
+machine's own and cost 4.
 
 ---
 
@@ -569,17 +573,17 @@ cell.
 
 ### 8.2 Calls
 
-- **`write`** puts characters (section 8.3) from the bytes of the buffer,
-  in order, and returns how many bytes it consumed. Each byte is charged as
-  it is consumed (section 14), and the call stops after the byte whose charge
-  brings the budget to zero or below, so it may consume fewer bytes than
-  asked; it always consumes at least one byte of a non-empty buffer. A
-  byte's charge is 1 plus 150 for each clear or scroll it causes, and the
-  budget it is measured against is what is left after the `ecall`
-  instruction and the call's 4 have been charged. An empty buffer
-  consumes nothing and returns 0. The
-  program calls `write` again with the rest (the machine pauses first if the
-  budget is used up). A UTF-8 sequence may be split across calls.
+- **`write`** puts characters (section 8.3) from all the bytes of the
+  buffer (`a0` = address, `a1` = length, 0 to 4,096 bytes, in ROM or RAM),
+  in order, and returns the length. A length above 4,096 is a bad buffer:
+  the call returns `FFFF_FFFEh` and does nothing (section 3.1). The device
+  takes the whole buffer whatever the budget; the charge is 2 per byte and
+  nothing for the scrolls and clears the bytes cause (section 14), so a call
+  that starts with little budget left can take the budget below zero, by
+  at most 8,199 units (an `ecall` from RAM, 4, the call's 4 and 8,192 for
+  4,096 bytes, started with 1 unit left), which carries into the next
+  frame (section 1.4). An empty buffer returns 0. A UTF-8 sequence may be
+  split across calls.
 - **`command`** carries out a command (section 8.4); a value above 255 or
   not in the table does nothing.
 - **`set_cursor`** moves the cursor to (`a0`, `a1`), each clamped to 79 and
@@ -667,7 +671,10 @@ bright colours, 16–231 the 6 × 6 × 6 colour cube, 232–255 the grey ramp.
 
 How the host draws the grid (font, size, cursor shape, smoothing) is not part
 of this spec and cannot be observed by the program. Section 10.5 says how the
-grid is combined with the vector display.
+grid is combined with the vector display. Since the scrolls and clears inside
+a `write` are not charged, a host should make a scroll or a clear cost time
+proportional to one row, not to the whole grid (for example, rows kept as a
+ring and a cleared row filled only when it is written to).
 
 ---
 
@@ -2356,15 +2363,34 @@ the call runs and may take it below zero (section 1.4).
 
 | What | Charge |
 |---|---|
-| Any call, including one that fails | 4 |
-| `write`: each byte consumed | 1 |
-| A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
+| Any call, including one that fails: its base charge | 4 for a deferred call and for every call of devices 1 and 8; 64 for an answered call |
+| `write`: each byte of the buffer | 2 |
+| A clear, scroll up or scroll down done by `command` (`01h`–`03h`) | 150 |
 | Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), a page `submit` whose bytes were copied (its length in range and its buffer valid), device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes: the bytes of all the frame's completions added up, then divided by 4 and rounded up once; subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
-fields a completion writes to a request block are free, and so is laying out
-the page, which the host does outside the machine's frames (section 11.4).
+scrolls and clears a `write` causes are covered by its 2 per byte (section
+8.6), the fields a completion writes to a request block are free, and so is
+laying out the page, which the host does outside the machine's frames
+(section 11.4).
+
+**Deferred and answered calls.** A device call is **deferred** if its
+result is one the program could work out without the device (a constant,
+one of its arguments, or a simple function of its arguments and of where
+its buffer lies) and its charge depends only on its arguments; it is
+**answered** if its result or its charge depends on the device's state.
+Section 3.2 gives every call's class. The answered calls are the
+terminal's `get_cursor`, `get_colours` and `cells_read`, content `submit`
+and page `locate`; every other call of devices 2, 3, 4, 7 and 9 is
+deferred. A host that keeps a device elsewhere (another process, a socket)
+can carry out its deferred calls later, together, without waiting for
+them, while an answered call needs a round trip, which its base charge of
+64 pays for. Devices 1 (System) and 8 (Machines) are the machine's own:
+the frame loop, the event queue, the host's inputs and the machines of a
+system are never carried elsewhere, so their calls cost 4 whatever they
+return, although several (`next_event`, `frame_count`, device 8's `info`,
+`start`, …) answer from state.
 
 The charges are chosen so that a frame spent entirely in any one kind of call
 costs a host no more per unit than a frame of instructions from ROM;
@@ -2406,8 +2432,9 @@ The budget and the charges:
 
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
-- the charges of section 14 (4 per call, 1 per `write` byte, 1 per 4 bytes
-  copied, 150 per clear or scroll).
+- the charges of section 14 (4 per deferred or core call, 64 per answered
+  call, 2 per `write` byte, 1 per 4 bytes copied, 150 per clear or scroll
+  command), and the longest `write`, 4,096 bytes (section 8.2).
 
 What one frame or one list may make a host draw:
 

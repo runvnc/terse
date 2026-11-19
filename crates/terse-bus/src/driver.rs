@@ -29,8 +29,7 @@ pub struct CallIn<'a> {
     pub function: u8,
     pub args: [u32; 6],
     pub budget: i64,
-    /// The bytes of the read buffer (all of it, or for a budget-bounded
-    /// buffer at least as many as the budget allows).
+    /// The bytes of the read buffer, all of it.
     pub buf: &'a [u8],
     /// Part of a batch: no reply is sent.
     pub batched: bool,
@@ -202,6 +201,17 @@ pub fn serve(device: &mut dyn Device) -> Result<(), String> {
     let session = Session { hello };
     let info = device.info(&session);
     let shm = session.hello.flags & hello_flags::SHM != 0 && !want_socket;
+    // Shared memory: the files are mapped, and the core's sequence number
+    // taken, before the reply, after which the core may send its first
+    // request (DEVICES.md 4.2).
+    let mapped = if shm {
+        let map = Mapping::open(Path::new(&session.hello.bus_path), true)?;
+        let memory = Mapping::open(Path::new(&session.hello.memory_path), true)?;
+        let socket = sock.stream.try_clone().map_err(|e| e.to_string())?;
+        Some((ShmEnd::new(map, false, spin, socket)?, memory))
+    } else {
+        None
+    };
     let mut out = Vec::new();
     info.encode(session.hello.slot, if shm { proto::TRANSPORT_SHM } else { proto::TRANSPORT_SOCKET }, &mut out);
     sock.send(&out)?;
@@ -209,12 +219,9 @@ pub fn serve(device: &mut dyn Device) -> Result<(), String> {
     for e in &info.table {
         table[e.function as usize] = Some(*e);
     }
-    let mut link = if shm {
-        let map = Mapping::open(Path::new(&session.hello.bus_path), true)?;
-        let memory = Mapping::open(Path::new(&session.hello.memory_path), true)?;
-        DriverLink::Shm { end: ShmEnd::new(map, false, spin, sock.stream)?, memory }
-    } else {
-        DriverLink::Socket(sock)
+    let mut link = match mapped {
+        Some((end, memory)) => DriverLink::Shm { end, memory },
+        None => DriverLink::Socket(sock),
     };
     let mut server = Server { table, session, writes: Vec::new(), out: Vec::new() };
     let mut packet = Vec::new();

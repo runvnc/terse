@@ -52,7 +52,7 @@ class Entry:
         (self.fn, self.flags, self.addr_arg, self.len_arg, self.scale, self.least,
          self.greatest, self.access, self.checked, _, self.checked_max, self.len_result,
          self.place_result, self.rule, self.rule_arg, _, self.value, self.value2,
-         self.charge, self.charge_flags, self.charge_arg, _, self.low, self.high,
+         self.charge, self.charge_flags, self.charge_arg, self.per_byte, self.low, self.high,
          self.units) = struct.unpack(self.FMT, raw)
 
 
@@ -206,7 +206,8 @@ class Core:
 
     # -- calls (DEVICES.md 5, 6)
     def call(self, fn, args, budget=125000):
-        """Returns (a0, a1 or None, charge on top of the 4)."""
+        """Returns (a0, a1 or None, the driver's charge: on top of the call's
+        base, 4 or, for an answered call, 64, which the core adds)."""
         args = list(args) + [0] * (6 - len(args))
         e = self.table.get(fn)
         if e is None:
@@ -223,10 +224,7 @@ class Core:
             if e.checked != 0xFF and args[e.checked] > e.checked_max:
                 return e.place_result, None, 0
             if e.access & 1:
-                send = length
-                if e.access & 8:
-                    send = min(length, max(1, budget))
-                buf = bytes(self.mem[off:off + send])
+                buf = bytes(self.mem[off:off + length])
         if self.batching and e.flags & 2:
             if e.rule == 1:
                 a0, a1 = e.value, e.value2
@@ -239,6 +237,7 @@ class Core:
             charge = e.charge
             if e.charge_flags & 1:
                 charge += (len(buf) + 3) // 4
+            charge += len(buf) * e.per_byte
             if e.charge_arg != 0xFF and e.low <= args[e.charge_arg] <= e.high:
                 charge += e.units
             self.batch.append(self.call_msg(fn, args, budget, buf))
@@ -331,7 +330,7 @@ def terminal_tests(core):
     assert core.call(9, [])[:2] == (80, 30)
     # Text, colours, cursor.
     core.call(4, [3, 4])
-    assert write(core, b"Hi\tx") == (4, None, 4)
+    assert write(core, b"Hi\tx") == (4, None, 8)
     s = core.state()
     assert chars(s, 0, 9)[:3] == [0x48, 0x69, 0x20] and chars(s, 0, 9)[8] == ord("x")
     assert s[2:4] == bytes([3, 4])
@@ -353,12 +352,11 @@ def terminal_tests(core):
     write(core, b"\x80")  # completes U+1F600: above FFFFh, so FFFDh
     s = core.state()
     assert chars(s, 0, 9)[8] == 0xFFFD and s[10374:10378] == bytes(4)
-    # Scroll charges 150 with the byte that caused it; partial write.
+    # write takes the whole buffer whatever the budget: 2 per byte, and
+    # nothing for the scrolls it causes.
     core.call(2, [0, 29])
-    assert write(core, b"\n\nq", 1000) == (3, None, 303)
-    assert write(core, b"\n\nq", 100) == (1, None, 151)
-    assert write(core, b"abcdef", 3) == (3, None, 3)
-    assert write(core, b"xyz", -50) == (1, None, 1)
+    assert write(core, b"\n\nq", 1) == (3, None, 6)
+    assert write(core, b"xyz", -50) == (3, None, 6)
     assert write(core, b"", 100) == (0, None, 0)
     # Commands.
     assert core.call(1, [2]) == (0, None, 150)

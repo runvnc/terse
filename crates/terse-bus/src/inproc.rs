@@ -1,39 +1,29 @@
-//! The same devices compiled into the core (terse-core's terminal, vector
-//! display, content and page, and terse-net's content service), behind the
-//! same [`Devices`] trait as the bus: for comparing the two with
-//! everything else equal (`terse-bus --in-process`).
+//! The same devices compiled into the core (terse-core's [`InProcess`]),
+//! with terse-net's content service and the reference page layout as the
+//! host's side, behind the same [`Devices`] trait as the bus: for comparing
+//! the two with everything else equal (`terse-bus --in-process`).
 
-use terse_core::content::{Content, ram_range, readable};
-use terse_core::machine::{call, charge, copy_charge};
-use terse_core::page::{Page, PageInput};
-use terse_core::system::System;
-use terse_core::terminal::{CELL_BYTES, CELLS};
-use terse_core::{COLS, Completion, ERR_BUFFER, ERR_UNKNOWN, Event, Image, ROWS, Terminal, Vector};
+use terse_core::devices::{CallOutcome, Devices, FrameInputs, GuestMem, InProcess, PosEvent};
+use terse_core::page::PageInput;
+use terse_core::{Completion, Event, FrameInput, Image};
 use terse_net::{ContentService, Owner};
 
-use crate::core::{CallOutcome, Devices, FrameInputs, GuestMem};
-use crate::proto::{EVENT_PAIR, PosEvent, position};
+use crate::proto::{EVENT_PAIR, position};
 
-pub struct InProcess {
+pub struct InProcessHost {
     image_id: [u8; 32],
-    terminal: Option<Terminal>,
-    vector: Option<Vector>,
-    content: Option<Content>,
-    page: Option<Page>,
+    pub devices: InProcess,
     page_input: PageInput,
     service: Option<ContentService>,
     completions: Vec<Completion>,
     feeds_updated: bool,
 }
 
-impl InProcess {
+impl InProcessHost {
     pub fn new(image: &Image, service: Option<ContentService>) -> Self {
-        InProcess {
+        InProcessHost {
             image_id: image.id,
-            terminal: image.has_device(2).then(Terminal::default),
-            vector: image.has_device(3).then(Vector::default),
-            content: image.has_device(4).then(Content::default),
-            page: image.has_device(7).then(Page::default),
+            devices: InProcess::new(image),
             page_input: PageInput::default(),
             service,
             completions: Vec::new(),
@@ -42,19 +32,19 @@ impl InProcess {
     }
 }
 
-impl Devices for InProcess {
-    fn begin_frame(&mut self, _frame: u32, _time: u32, host: &[Event], replay: Option<&[(u8, Vec<u8>)]>, mem: GuestMem) -> Result<FrameInputs, String> {
-        if replay.is_some() {
-            return Err("in-process devices do not replay".into());
+impl Devices for InProcessHost {
+    fn begin_frame(&mut self, frame: u32, input: &FrameInput, mem: GuestMem) -> Result<FrameInputs, String> {
+        if !input.completions.is_empty() {
+            return Err("the content service gives the completions".into());
         }
-        let mut out = FrameInputs::default();
-        if let Some(page) = &mut self.page {
-            page.begin_frame();
-        }
+        let completions = std::mem::take(&mut self.completions);
+        let mut out = self.devices.begin_frame(frame, &FrameInput { completions: &completions, ..*input }, mem)?;
         // The page's events among the host's: before the first host event,
         // or after host event i.
-        let all = self.page_input.events(self.page.as_ref(), host);
+        let host = input.events;
+        let all = self.page_input.events(self.devices.page(), host);
         let mut next_host = 0;
+        let mut placed = Vec::new();
         for e in all {
             if next_host < host.len() && e == host[next_host] {
                 next_host += 1;
@@ -62,193 +52,41 @@ impl Devices for InProcess {
             }
             let (position, index) = if next_host == 0 { (position::BEFORE, 0) } else { (position::AFTER_HOST, next_host as u16 - 1) };
             let flags = if e.kind == Event::PAGE_LOCATED { EVENT_PAIR } else { 0 };
-            out.events.push(PosEvent { event: e, position, flags, index });
+            placed.push(PosEvent { event: e, position, flags, index });
         }
         if std::mem::take(&mut self.feeds_updated) {
-            out.events.push(PosEvent { event: Event::feeds_updated(), position: position::AFTER_INPUT, flags: 0, index: 0 });
+            placed.push(PosEvent { event: Event::feeds_updated(), position: position::AFTER_INPUT, flags: 0, index: 0 });
         }
-        if let Some(content) = &mut self.content {
-            let mut completions = content.take_orphans();
-            completions.append(&mut self.completions);
-            let mut sys = System::default();
-            let (_, _, delivered) = content.complete(&completions, mem.ram, &mut sys);
-            out.charge = copy_charge(delivered);
-            for &e in sys.queue() {
-                out.events.push(PosEvent { event: e, position: position::COMPLETION, flags: 0, index: 0 });
-            }
-        }
+        placed.append(&mut out.events);
+        out.events = placed;
         Ok(out)
     }
 
-    fn call(&mut self, slot: u8, function: u8, args: [u32; 6], budget: i64, mem: GuestMem) -> Result<CallOutcome, String> {
-        let n = (slot as u32) << 8 | function as u32;
-        let [a0, a1, a2, a3, ..] = args;
-        let (rom, ram) = (mem.rom, mem.ram);
-        let mut units = 0;
-        let mut r1 = None;
-        let r0 = match slot {
-            2 => {
-                let t = self.terminal.as_mut().unwrap();
-                match n {
-                    call::TERM_WRITE => match readable(rom, ram, a0, a1 as usize) {
-                        None => ERR_BUFFER,
-                        Some(bytes) => {
-                            let (done, charged) = t.write_limited(bytes, budget, charge::WRITE_BYTE, charge::SCROLL_CLEAR);
-                            units += charged;
-                            done as u32
-                        }
-                    },
-                    call::TERM_COMMAND => {
-                        if a0 < 0x100 {
-                            units += t.command(a0 as u8) * charge::SCROLL_CLEAR;
-                        }
-                        0
-                    }
-                    call::TERM_SET_CURSOR => {
-                        t.set_cursor(a0, a1);
-                        0
-                    }
-                    call::TERM_GET_CURSOR => {
-                        let (col, row) = t.cursor();
-                        r1 = Some(row as u32);
-                        col as u32
-                    }
-                    call::TERM_SET_COLOURS => {
-                        let (fg, bg) = t.colors();
-                        t.set_colours(u8::try_from(a0).unwrap_or(fg), u8::try_from(a1).unwrap_or(bg));
-                        0
-                    }
-                    call::TERM_GET_COLOURS => {
-                        let (fg, bg) = t.colors();
-                        r1 = Some(bg as u32);
-                        fg as u32
-                    }
-                    call::TERM_CELLS_READ => {
-                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
-                        match ram_range(ram.len(), a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
-                            None => ERR_BUFFER,
-                            Some(at) => {
-                                t.cells_read(a0 as usize, &mut ram[at..at + len]);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_CELLS_WRITE => {
-                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
-                        match readable(rom, ram, a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
-                            None => ERR_BUFFER,
-                            Some(bytes) => {
-                                t.cells_write(a0 as usize, bytes);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_PALETTE_SET => {
-                        let len = if a2 <= 256 { a2 as usize * 3 } else { usize::MAX };
-                        match readable(rom, ram, a1, len).filter(|_| a0 < 256 && a2 <= 256) {
-                            None => ERR_BUFFER,
-                            Some(bytes) => {
-                                t.palette_set(a0 as usize, bytes);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_SIZE => {
-                        r1 = Some(ROWS as u32);
-                        COLS as u32
-                    }
-                    _ => ERR_UNKNOWN,
-                }
-            }
-            3 => {
-                let v = self.vector.as_mut().unwrap();
-                match n {
-                    call::VEC_SUBMIT => match ram_range(ram.len(), a0, a1 as usize) {
-                        Some(at) if v.submit(&ram[at..at + a1 as usize]) == terse_core::vector::RESULT_DONE => {
-                            units += copy_charge(a1 as usize);
-                            terse_core::vector::RESULT_DONE
-                        }
-                        _ => terse_core::vector::RESULT_REJECTED,
-                    },
-                    call::VEC_CLEAR => {
-                        v.clear();
-                        0
-                    }
-                    call::VEC_STYLE => v.set_style(a0),
-                    call::VEC_PERSISTENCE => v.set_persistence(a0),
-                    call::VEC_FILL => v.set_fill(a0),
-                    _ => ERR_UNKNOWN,
-                }
-            }
-            4 if n == call::CONTENT_SUBMIT => {
-                let (handle, taken) = self.content.as_mut().unwrap().submit(a0, rom, ram);
-                units += copy_charge(taken);
-                handle
-            }
-            7 => {
-                let page = self.page.as_mut().unwrap();
-                match n {
-                    call::PAGE_SUBMIT => {
-                        if a1 == 0 || a1 as usize > terse_core::page::MAX_DOCUMENT {
-                            terse_core::page::RESULT_REJECTED
-                        } else {
-                            match readable(rom, ram, a0, a1 as usize) {
-                                None => ERR_BUFFER,
-                                Some(bytes) => {
-                                    units += copy_charge(bytes.len());
-                                    page.submit(bytes)
-                                }
-                            }
-                        }
-                    }
-                    call::PAGE_CLEAR => {
-                        page.clear();
-                        0
-                    }
-                    call::PAGE_REGION => {
-                        page.set_region(a0, a1, a2, a3);
-                        0
-                    }
-                    call::PAGE_SCROLL => {
-                        page.set_scroll(a0);
-                        0
-                    }
-                    call::PAGE_BACKGROUND => {
-                        page.set_background(a0);
-                        0
-                    }
-                    call::PAGE_LOCATE => page.locate(a0),
-                    _ => ERR_UNKNOWN,
-                }
-            }
-            _ => ERR_UNKNOWN,
-        };
-        Ok(CallOutcome { a0: r0, a1: r1, charge: units })
+    fn idle_frame(&mut self) {
+        self.devices.idle_frame();
     }
 
-    fn end_frame(&mut self, _frame: u32, _stopped: bool, _mem: GuestMem) -> Result<(), String> {
-        self.page_input.after_frame(self.page.as_ref());
-        if let (Some(content), Some(service)) = (&mut self.content, &mut self.service) {
-            service.submit_owned(0, Owner::Image(self.image_id), content.take_requests());
+    fn call(&mut self, slot: u8, function: u8, args: [u32; 6], budget: i64, mem: GuestMem) -> Result<CallOutcome, String> {
+        self.devices.call(slot, function, args, budget, mem)
+    }
+
+    fn end_frame(&mut self, frame: u32, stopped: bool, mem: GuestMem) -> Result<(), String> {
+        self.devices.end_frame(frame, stopped, mem)?;
+        self.page_input.after_frame(self.devices.page());
+        if let Some(service) = &mut self.service {
+            service.submit_owned(0, Owner::Image(self.image_id), self.devices.take_content_requests());
             self.completions = service.wait_finished();
             self.feeds_updated = service.feeds_updated();
         }
         Ok(())
     }
 
-    fn state(&mut self, slot: u8) -> Result<Vec<u8>, String> {
-        let mut out = Vec::new();
-        match slot {
-            2 => self.terminal.as_ref().ok_or("no terminal")?.write_state(&mut out),
-            3 => self.vector.as_ref().ok_or("no vector display")?.write_state(&mut out),
-            4 => self.content.as_ref().ok_or("no content device")?.write_state(&mut out),
-            7 => self.page.as_ref().ok_or("no page")?.write_state(&mut out),
-            _ => return Err(format!("no state section for slot {slot}")),
-        }
-        Ok(out)
+    fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String> {
+        self.devices.write_state(slot, out)
+    }
+
+    fn list3(&self) -> &[u8] {
+        self.devices.list3()
     }
 }
 

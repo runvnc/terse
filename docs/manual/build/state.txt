@@ -133,7 +133,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,158,243 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:6f8cd2527094cb879ba5b588d62dcba835da8e9c39e35061cd06d4219b7878bf).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:ce60c12a99868267b77ab4887acbd2768c5da4797d152d07163cae047fb4124e).
 
 ## The conformance image
 
@@ -149,4 +149,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:03b1a9ac7f54c36118dca657c9af9c04df9c23cd8fcc9a2ca1a70bf382609e5d) for frames and the budget, and [charges](terse:08bc4aebd7bfe91d5a0cd66d8eadc177ac3efd491700de532a8c787e84bf1527).
+See [the machine](terse:c512234709e38814390267110ea016b3c40c625eed40cc865eefc192b2673509) for frames and the budget, and [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).

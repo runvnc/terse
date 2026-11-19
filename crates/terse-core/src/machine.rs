@@ -3,13 +3,14 @@
 
 use std::fmt;
 
-use crate::content::{Completion, Content, Request, ram_range, readable};
+use crate::content::{Completion, Content, Request, ram_range};
+use crate::devices::{Devices, EVENT_PAIR, FrameInputs, GuestMem, InProcess, Memory, position};
 use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
 use crate::image::Image;
 use crate::machines::{Machines, ProgramId};
 use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
-use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
+use crate::terminal::Terminal;
 use crate::vector::Vector;
 use crate::vector3::Vector3;
 
@@ -21,14 +22,20 @@ pub const BUDGET_PER_FRAME: i64 = 125_000;
 
 /// The charges of SPEC 14, in budget units. Provisional.
 pub mod charge {
-    /// Every call, on top of the `ecall` instruction itself.
+    /// Every call, on top of the `ecall` instruction itself: the base
+    /// charge of a deferred call, and of every System and Machines call.
     pub const CALL: u32 = 4;
+    /// The base charge of an answered call (SPEC 14: [`super::call::answered`]).
+    pub const ANSWERED: u32 = 64;
     /// Terminal `write`, per byte.
-    pub const WRITE_BYTE: u32 = 1;
+    pub const WRITE_BYTE: u32 = 2;
+    /// The longest terminal `write`, in bytes.
+    pub const MAX_WRITE: u32 = 4096;
     /// Raw copies between guest memory and a device: one unit per this many
     /// bytes, rounded up per call.
     pub const COPY_BYTES_PER_UNIT: usize = 4;
-    /// A terminal clear, scroll up or scroll down, also when caused by `write`.
+    /// A terminal command's clear, scroll up or scroll down (inside a
+    /// `write` they are not charged).
     pub const SCROLL_CLEAR: u32 = 150;
 }
 
@@ -106,6 +113,14 @@ pub mod call {
     pub const V3_CLEAR: u32 = 0x901;
     pub const V3_STYLE: u32 = 0x902;
     pub const V3_PERSISTENCE: u32 = 0x903;
+
+    /// The answered calls (SPEC 14): a device's calls whose result or
+    /// charge depends on the device's state. Every other call of devices
+    /// 2–7 and 9 is deferred; System and Machines calls are the machine's
+    /// own, never carried to a device elsewhere, and charged as deferred.
+    pub fn answered(n: u32) -> bool {
+        matches!(n, TERM_GET_CURSOR | TERM_GET_COLOURS | TERM_CELLS_READ | CONTENT_SUBMIT | PAGE_LOCATE)
+    }
 }
 
 /// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
@@ -157,6 +172,8 @@ pub struct FrameResult {
     /// Completions ignored because they matched no pending request (see
     /// `Content::complete`).
     pub completions_ignored: usize,
+    /// Device calls made in the frame.
+    pub calls: u64,
 }
 
 impl FrameResult {
@@ -169,27 +186,21 @@ impl FrameResult {
     }
 }
 
-pub struct Machine {
+/// A machine (SPEC 1): the CPU, ROM and RAM, the budget and the frame loop,
+/// the System device and, for a shell, the Machines device. Every other
+/// device is behind [`Devices`]: compiled in ([`InProcess`], the default)
+/// or elsewhere (terse-bus's driver processes).
+pub struct Machine<D: Devices = InProcess> {
     cpu: Cpu,
-    rom: Vec<u8>,
     /// The ROM, decoded once.
     code: Code,
-    ram: Vec<u8>,
+    memory: Memory,
     system: System,
-    terminal: Option<Terminal>,
-    /// Device 3; also there (for the style and persistence it shares with
-    /// device 9, SPEC 13.2) when the image lists only device 9.
-    vector: Option<Vector>,
-    /// The image lists device 3: its calls are answered.
-    lists_vector: bool,
-    /// Device 9 (SPEC 13).
-    vector3: Option<Vector3>,
-    content: Option<Content>,
-    page: Option<Page>,
+    devices: D,
+    /// Which slots the image lists.
+    listed: [bool; 256],
     /// Device 8, only for the shell (SPEC 12.1).
     machines: Option<Machines>,
-    /// The image lists device 8 (STATE.md 1.10 is then present).
-    lists_machines: bool,
     /// The budget; zero or negative between frames (a negative remainder
     /// carries into the next frame).
     budget: i64,
@@ -214,24 +225,123 @@ pub struct Machine {
 }
 
 impl Machine {
-    /// The machine at reset (SPEC 1.3).
+    /// The machine at reset (SPEC 1.3), with the devices compiled in.
     pub fn new(image: &Image) -> Self {
-        let ram = vec![0; image.ram_pages as usize * 8192];
-        let ram_end = RAM_BASE + ram.len() as u32;
+        let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
+        Machine::with_devices(image, memory, InProcess::new(image))
+    }
+
+    /// The machine at reset as the shell (SPEC 12.1): device 8 is granted
+    /// if the image lists it; `builtins` are the IDs `builtin` returns.
+    pub fn new_shell(image: &Image, builtins: Vec<[u8; 32]>) -> Self {
+        let mut m = Machine::new(image);
+        if m.listed[crate::machines::SLOT as usize] {
+            m.machines = Some(Machines::new(builtins));
+        }
+        m
+    }
+
+    /// Runs one frame (SPEC 1.4). Does nothing once the machine has stopped.
+    pub fn run_frame(&mut self, input: &FrameInput) -> FrameResult {
+        self.try_run_frame(input).expect("the devices compiled in do not fail")
+    }
+
+    /// The state serialization of STATE.md. Defined between frames.
+    pub fn state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(64 * 1024 + self.memory.ram().len());
+        self.write_core_state(&mut out);
+        let d = &self.devices;
+        for (slot, present) in [(2, d.terminal.is_some()), (3, d.vector.is_some()), (4, d.content.is_some()), (7, d.page.is_some())] {
+            out.push(present as u8);
+            if present {
+                match slot {
+                    2 => d.terminal.as_ref().unwrap().write_state(&mut out),
+                    3 => d.vector.as_ref().unwrap().write_state(&mut out),
+                    4 => d.content.as_ref().unwrap().write_state(&mut out),
+                    _ => d.page.as_ref().unwrap().write_state(&mut out),
+                }
+            }
+        }
+        self.write_machines_state(&mut out);
+        if let Some(v) = &d.vector3 {
+            v.write_state(&mut out);
+        }
+        self.write_argument(&mut out);
+        out
+    }
+
+    /// The state hash: BLAKE3-256 of [`Machine::state`].
+    pub fn state_hash(&self) -> [u8; 32] {
+        *blake3::hash(&self.state()).as_bytes()
+    }
+
+    pub fn terminal(&self) -> Option<&Terminal> {
+        self.devices.terminal()
+    }
+
+    pub fn vector(&self) -> Option<&Vector> {
+        self.devices.vector()
+    }
+
+    /// Whether the image lists device 3 (a machine with only device 9 has
+    /// a [`Vector`] for the shared style, but no 2D list).
+    pub fn lists_vector(&self) -> bool {
+        self.listed[3]
+    }
+
+    /// Device 9, if the image lists it.
+    pub fn vector3(&self) -> Option<&Vector3> {
+        self.devices.vector3()
+    }
+
+    /// The 3D display, to change its list from outside a frame (hosts'
+    /// tests).
+    pub fn vector3_mut(&mut self) -> Option<&mut Vector3> {
+        self.devices.vector3_mut()
+    }
+
+    pub fn vector_list(&self) -> &[u8] {
+        self.devices.vector().map_or(&[], Vector::list)
+    }
+
+    /// Changes whenever `vector_list` changes.
+    pub fn vector_generation(&self) -> u64 {
+        self.devices.vector().map_or(0, Vector::generation)
+    }
+
+    /// Device 7, if the image lists it.
+    pub fn page(&self) -> Option<&Page> {
+        self.devices.page()
+    }
+
+    pub fn content(&self) -> Option<&Content> {
+        self.devices.content()
+    }
+
+    /// Content requests submitted since the last call.
+    pub fn take_content_requests(&mut self) -> Vec<Request> {
+        self.devices.take_content_requests()
+    }
+}
+
+impl<D: Devices> Machine<D> {
+    /// The machine at reset (SPEC 1.3) with these devices and memory
+    /// (`memory` holds the image's ROM and a zeroed RAM of its size).
+    pub fn with_devices(image: &Image, memory: Memory, devices: D) -> Self {
+        let ram_end = RAM_BASE + image.ram_pages as u32 * 8192;
+        let mut listed = [false; 256];
+        for d in &image.devices {
+            listed[d.slot as usize] = true;
+        }
+        listed[1] = true;
         Machine {
             cpu: Cpu::new(ROM_BASE, ram_end),
-            rom: image.rom.clone(),
             code: Code::new(&image.rom),
-            ram,
+            memory,
             system: System::default(),
-            terminal: image.has_device(2).then(Terminal::default),
-            vector: (image.has_device(3) || image.has_device(crate::vector3::SLOT)).then(Vector::default),
-            lists_vector: image.has_device(3),
-            vector3: image.has_device(crate::vector3::SLOT).then(Vector3::default),
-            content: image.has_device(4).then(Content::default),
-            page: image.has_device(7).then(Page::default),
+            devices,
+            listed,
             machines: None,
-            lists_machines: image.has_device(crate::machines::SLOT),
             budget: 0,
             stopped: None,
             image_id: image.id,
@@ -242,6 +352,15 @@ impl Machine {
             open_request: None,
             argument: None,
         }
+    }
+
+    /// The devices.
+    pub fn devices(&self) -> &D {
+        &self.devices
+    }
+
+    pub fn devices_mut(&mut self) -> &mut D {
+        &mut self.devices
     }
 
     /// The machine is one a shell started (SPEC 12.1): `open` passes its
@@ -285,18 +404,9 @@ impl Machine {
         self.identity.as_ref()
     }
 
-    /// The machine at reset as the shell (SPEC 12.1): device 8 is granted
-    /// if the image lists it; `builtins` are the IDs `builtin` returns.
-    pub fn new_shell(image: &Image, builtins: Vec<[u8; 32]>) -> Self {
-        let mut m = Machine::new(image);
-        if m.lists_machines {
-            m.machines = Some(Machines::new(builtins));
-        }
-        m
-    }
-
-    /// Runs one frame (SPEC 1.4). Does nothing once the machine has stopped.
-    pub fn run_frame(&mut self, input: &FrameInput) -> FrameResult {
+    /// Runs one frame (SPEC 1.4). Does nothing once the machine has
+    /// stopped. An error is the devices' (a driver that failed).
+    pub fn try_run_frame(&mut self, input: &FrameInput) -> Result<FrameResult, String> {
         let mut result = FrameResult {
             stopped: self.stopped,
             used: 0,
@@ -304,67 +414,84 @@ impl Machine {
             events_dropped: 0,
             random_used: 0,
             completions_ignored: 0,
+            calls: 0,
         };
-        // The last frame's locates are the host's now.
-        if let Some(page) = &mut self.page {
-            page.begin_frame();
-        }
         if self.stopped.is_some() {
-            return result;
+            self.devices.idle_frame();
+            return Ok(result);
         }
 
-        // Step 1: inputs.
+        // Step 1: inputs. The devices' events go among the host's as their
+        // positions say (DEVICES.md 1.4).
+        let inputs = {
+            let (rom, ram) = self.memory.split();
+            self.devices.begin_frame(self.system.frame(), input, GuestMem { rom, ram })?
+        };
+        let FrameInputs { events, charge: delivered, completions_ignored } = inputs;
+        result.completions_ignored = completions_ignored;
+        // (event, flags, from the host)
+        let mut merged: Vec<(Event, u8, bool)> = Vec::with_capacity(input.events.len() + events.len());
+        let placed = |p: u8| events.iter().filter(move |e| e.position == p);
+        merged.extend(placed(position::BEFORE).map(|e| (e.event, e.flags, false)));
+        for (i, &h) in input.events.iter().enumerate() {
+            merged.push((h, 0, true));
+            merged.extend(placed(position::AFTER_HOST).filter(|e| e.index as usize == i).map(|e| (e.event, e.flags, false)));
+        }
+        merged.extend(placed(position::AFTER_INPUT).map(|e| (e.event, e.flags, false)));
+        // SPEC 5: at most one feeds-updated event a frame. SPEC 11.5: the
+        // two events of a located anchor are queued together or not at
+        // all (a host's pair by kind, a device's by its flag).
         let mut feeds_updated = false;
         let mut skip_y = false;
-        for &e in input.events {
+        let mut skip_next = false;
+        for (e, flags, host) in merged {
+            if std::mem::take(&mut skip_next) {
+                result.events_dropped += 1;
+                continue;
+            }
             if e.kind == Event::FEEDS_UPDATED && std::mem::replace(&mut feeds_updated, true) {
                 result.events_dropped += 1;
                 continue;
             }
-            // SPEC 11.5: the two events of a located anchor are queued
-            // together or not at all.
-            if e.kind == Event::PAGE_LOCATED_Y && std::mem::take(&mut skip_y) {
+            if host && e.kind == Event::PAGE_LOCATED_Y && std::mem::take(&mut skip_y) {
                 result.events_dropped += 1;
                 continue;
             }
-            if e.kind == Event::PAGE_LOCATED && self.system.queue().len() + 2 > crate::system::QUEUE_CAPACITY {
+            let pair = if host { e.kind == Event::PAGE_LOCATED } else { flags & EVENT_PAIR != 0 };
+            if pair && self.system.queue().len() + 2 > crate::system::QUEUE_CAPACITY {
                 result.events_dropped += 1;
-                skip_y = true;
+                if host {
+                    skip_y = true;
+                } else {
+                    skip_next = true;
+                }
                 continue;
             }
-            skip_y = false;
+            if host {
+                skip_y = false;
+            }
             if !self.system.push_event(e) {
                 result.events_dropped += 1;
             }
         }
         self.system.latch(input.unix_time, input.random, &input.controllers);
-        let mut delivered_charge = 0;
-        match &mut self.content {
-            Some(content) => {
-                // After a restore, the requests pending in the snapshot fail
-                // first (SPEC 9.2).
-                let orphans = content.take_orphans();
-                let joined: Vec<Completion>;
-                let completions = if orphans.is_empty() {
-                    input.completions
-                } else {
-                    joined = orphans.into_iter().chain(input.completions.iter().cloned()).collect();
-                    &joined
-                };
-                let (ignored, dropped, delivered) = content.complete(completions, &mut self.ram, &mut self.system);
-                result.completions_ignored = ignored;
-                result.events_dropped += dropped;
-                delivered_charge = copy_charge(delivered) as i64;
+        // The content-done events of the completions, after the input.
+        for e in placed(position::COMPLETION) {
+            if !self.system.push_event(e.event) {
+                result.events_dropped += 1;
             }
-            None => result.completions_ignored = input.completions.len(),
         }
 
         // Step 2: run.
+        let delivered_charge = delivered as i64;
         self.budget += BUDGET_PER_FRAME - delivered_charge;
         let start = self.budget;
         while self.budget > 0 {
             let before = self.budget;
-            let stop = self.cpu.run_cached(&self.code, &mut Bus { rom: &self.rom, ram: &mut self.ram }, &mut self.budget);
+            let stop = {
+                let (rom, ram) = self.memory.split();
+                self.cpu.run_cached(&self.code, &mut Bus { rom, ram }, &mut self.budget)
+            };
             self.instructions += (before - self.budget).max(0) as u64;
             match stop {
                 Stop::Budget => break,
@@ -374,7 +501,8 @@ impl Machine {
                 }
                 Stop::Ecall => {
                     self.calls += 1;
-                    let (units, wait) = self.ecall();
+                    result.calls += 1;
+                    let (units, wait) = self.ecall()?;
                     self.budget -= units as i64;
                     if wait {
                         result.waited = true;
@@ -394,387 +522,145 @@ impl Machine {
         self.system.end_frame();
         result.stopped = self.stopped;
         result.random_used = self.system.random_used();
-        result
+        let (frame, stopped) = (self.system.frame(), self.stopped.is_some());
+        let (rom, ram) = self.memory.split();
+        self.devices.end_frame(frame, stopped, GuestMem { rom, ram })?;
+        Ok(result)
     }
 
     /// Carries out the call in a7 (SPEC 3); returns (units charged beyond
-    /// the `ecall` instruction, whether the program waits for the next frame).
-    fn ecall(&mut self) -> (u32, bool) {
-        let x = &self.cpu.x;
-        let (n, a0, a1, a2, a3) = (x[17], x[10], x[11], x[12], x[13]);
+    /// the `ecall` instruction, whether the program waits for the next
+    /// frame). System and Machines calls are the machine's own; the rest go
+    /// to the devices.
+    fn ecall(&mut self) -> Result<(u32, bool), String> {
+        let x = self.cpu.x;
+        let (n, a0, a1) = (x[17], x[10], x[11]);
+        let args = [x[10], x[11], x[12], x[13], x[14], x[15]];
         let mut r1 = None;
         let mut units = charge::CALL;
         let mut wait = false;
-        let ram = &mut self.ram[..];
-        let rom = &self.rom[..];
-        let r0 = match n {
-            call::WAIT_FRAME => {
-                // Returns the number of the frame it returns in.
-                wait = true;
-                self.system.frame().wrapping_add(1)
-            }
-            call::NEXT_EVENT => match ram_range(ram.len(), a0, 4) {
-                None => ERR_BUFFER,
-                Some(at) => match self.system.pop_event() {
-                    None => 0,
-                    Some(e) => {
-                        ram[at..at + 4].copy_from_slice(&[e.kind, e.a, e.b, e.c]);
-                        units += copy_charge(4);
-                        1
-                    }
-                },
-            },
-            call::FRAME => self.system.frame(),
-            call::TIME => self.system.time(),
-            call::RANDOM => match ram_range(ram.len(), a0, a1 as usize).filter(|_| a1 <= MAX_RANDOM_PER_CALL) {
-                None => ERR_BUFFER,
-                Some(at) => {
-                    self.system.random(&mut ram[at..at + a1 as usize]);
-                    units += copy_charge(a1 as usize);
-                    a1
+        let slot = n >> 8;
+        let r0 = if slot == 1 {
+            let (rom, ram) = self.memory.split();
+            match n {
+                call::WAIT_FRAME => {
+                    // Returns the number of the frame it returns in.
+                    wait = true;
+                    self.system.frame().wrapping_add(1)
                 }
-            },
-            call::CONTROLLER => match ram_range(ram.len(), a1, 8) {
-                None => ERR_BUFFER,
-                Some(at) => {
-                    let bytes = self.system.controller(a0);
-                    ram[at..at + 8].copy_from_slice(&bytes);
-                    units += copy_charge(8);
-                    bytes[0] as u32
-                }
-            },
-            call::EXIT => {
-                self.stopped = Some(Stopped::Exit(a0 as u8));
-                0
-            }
-            call::OPEN => match crate::machines::read_open_request(rom, ram, a0) {
-                None => ERR_BUFFER,
-                Some((request, read)) => {
-                    units += copy_charge(read);
-                    if !self.in_system || self.open_request.is_some() {
-                        0
-                    } else {
-                        self.open_request = Some((request, false));
-                        1
-                    }
-                }
-            },
-            call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
-                None => ERR_BUFFER,
-                Some(at) => match &self.argument {
-                    None => 0,
-                    Some(id) => {
-                        ram[at..at + 32].copy_from_slice(id);
-                        units += copy_charge(32);
-                        1
-                    }
-                },
-            },
-            0x200..=0x2FF if self.terminal.is_some() => {
-                let t = self.terminal.as_mut().unwrap();
-                match n {
-                    call::TERM_WRITE => match readable(rom, ram, a0, a1 as usize) {
-                        None => ERR_BUFFER,
-                        Some(bytes) => {
-                            // Stops after the byte that uses up the budget.
-                            let left = self.budget - units as i64;
-                            let (done, charged) = t.write_limited(bytes, left, charge::WRITE_BYTE, charge::SCROLL_CLEAR);
-                            units += charged;
-                            done as u32
+                call::NEXT_EVENT => match ram_range(ram.len(), a0, 4) {
+                    None => ERR_BUFFER,
+                    Some(at) => match self.system.pop_event() {
+                        None => 0,
+                        Some(e) => {
+                            ram[at..at + 4].copy_from_slice(&[e.kind, e.a, e.b, e.c]);
+                            units += copy_charge(4);
+                            1
                         }
                     },
-                    call::TERM_COMMAND => {
-                        if a0 < 0x100 {
-                            units += t.command(a0 as u8) * charge::SCROLL_CLEAR;
-                        }
-                        0
+                },
+                call::FRAME => self.system.frame(),
+                call::TIME => self.system.time(),
+                call::RANDOM => match ram_range(ram.len(), a0, a1 as usize).filter(|_| a1 <= MAX_RANDOM_PER_CALL) {
+                    None => ERR_BUFFER,
+                    Some(at) => {
+                        self.system.random(&mut ram[at..at + a1 as usize]);
+                        units += copy_charge(a1 as usize);
+                        a1
                     }
-                    call::TERM_SET_CURSOR => {
-                        t.set_cursor(a0, a1);
-                        0
+                },
+                call::CONTROLLER => match ram_range(ram.len(), a1, 8) {
+                    None => ERR_BUFFER,
+                    Some(at) => {
+                        let bytes = self.system.controller(a0);
+                        ram[at..at + 8].copy_from_slice(&bytes);
+                        units += copy_charge(8);
+                        bytes[0] as u32
                     }
-                    call::TERM_GET_CURSOR => {
-                        let (col, row) = t.cursor();
-                        r1 = Some(row as u32);
-                        col as u32
-                    }
-                    call::TERM_SET_COLOURS => {
-                        // A value above 255 leaves that colour as it is.
-                        let (fg, bg) = t.colors();
-                        t.set_colours(u8::try_from(a0).unwrap_or(fg), u8::try_from(a1).unwrap_or(bg));
-                        0
-                    }
-                    call::TERM_GET_COLOURS => {
-                        let (fg, bg) = t.colors();
-                        r1 = Some(bg as u32);
-                        fg as u32
-                    }
-                    call::TERM_CELLS_READ => {
-                        // A count over 2,400 is refused before it is multiplied.
-                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
-                        match ram_range(ram.len(), a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
-                            None => ERR_BUFFER,
-                            Some(at) => {
-                                t.cells_read(a0 as usize, &mut ram[at..at + len]);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_CELLS_WRITE => {
-                        let len = if a2 as usize <= CELLS { a2 as usize * CELL_BYTES } else { usize::MAX };
-                        match readable(rom, ram, a1, len).filter(|_| (a0 as usize) < CELLS && a2 as usize <= CELLS) {
-                            None => ERR_BUFFER,
-                            Some(bytes) => {
-                                t.cells_write(a0 as usize, bytes);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_PALETTE_SET => {
-                        let len = if a2 <= 256 { a2 as usize * 3 } else { usize::MAX };
-                        match readable(rom, ram, a1, len).filter(|_| a0 < 256 && a2 <= 256) {
-                            None => ERR_BUFFER,
-                            Some(bytes) => {
-                                t.palette_set(a0 as usize, bytes);
-                                units += copy_charge(len);
-                                a2
-                            }
-                        }
-                    }
-                    call::TERM_SIZE => {
-                        r1 = Some(ROWS as u32);
-                        COLS as u32
-                    }
-                    _ => ERR_UNKNOWN,
+                },
+                call::EXIT => {
+                    self.stopped = Some(Stopped::Exit(a0 as u8));
+                    0
                 }
-            }
-            0x300..=0x3FF if self.lists_vector => {
-                let v = self.vector.as_mut().unwrap();
-                match n {
-                    call::VEC_SUBMIT => {
-                        // A list not wholly in RAM is rejected like a bad length.
-                        match ram_range(ram.len(), a0, a1 as usize) {
-                            Some(at) if v.submit(&ram[at..at + a1 as usize]) == crate::vector::RESULT_DONE => {
-                                units += copy_charge(a1 as usize);
-                                crate::vector::RESULT_DONE
-                            }
-                            _ => crate::vector::RESULT_REJECTED,
-                        }
-                    }
-                    call::VEC_CLEAR => {
-                        v.clear();
-                        0
-                    }
-                    call::VEC_STYLE => v.set_style(a0),
-                    call::VEC_PERSISTENCE => v.set_persistence(a0),
-                    call::VEC_FILL => v.set_fill(a0),
-                    _ => ERR_UNKNOWN,
-                }
-            }
-            0x900..=0x9FF if self.vector3.is_some() => {
-                let v = self.vector3.as_mut().unwrap();
-                match n {
-                    call::V3_SUBMIT => match ram_range(ram.len(), a0, a1 as usize) {
-                        Some(at) if v.submit(&ram[at..at + a1 as usize]) == crate::vector::RESULT_DONE => {
-                            units += copy_charge(a1 as usize);
-                            crate::vector::RESULT_DONE
-                        }
-                        _ => crate::vector::RESULT_REJECTED,
-                    },
-                    call::V3_CLEAR => {
-                        v.clear();
-                        0
-                    }
-                    // The style and persistence are device 3's (SPEC 13.2).
-                    call::V3_STYLE => self.vector.as_mut().unwrap().set_style(a0),
-                    call::V3_PERSISTENCE => self.vector.as_mut().unwrap().set_persistence(a0),
-                    _ => ERR_UNKNOWN,
-                }
-            }
-            call::CONTENT_SUBMIT if self.content.is_some() => {
-                let (handle, taken) = self.content.as_mut().unwrap().submit(a0, rom, ram);
-                units += copy_charge(taken);
-                handle
-            }
-            0x800..=0x8FF if self.machines.is_some() => {
-                let ctx = crate::machines::CallContext {
-                    frame: self.system.frame(),
-                    list: self.vector3.as_ref().map_or(&[][..], Vector3::list),
-                };
-                let (r, extra) = self.machines.as_mut().unwrap().call(n, [a0, a1, a2, a3, x[14], x[15]], rom, ram, ctx);
-                units += extra;
-                r
-            }
-            0x700..=0x7FF if self.page.is_some() => {
-                let page = self.page.as_mut().unwrap();
-                match n {
-                    call::PAGE_SUBMIT => {
-                        // The length is checked first; then the buffer.
-                        if a1 == 0 || a1 as usize > crate::page::MAX_DOCUMENT {
-                            crate::page::RESULT_REJECTED
+                call::OPEN => match crate::machines::read_open_request(rom, ram, a0) {
+                    None => ERR_BUFFER,
+                    Some((request, read)) => {
+                        units += copy_charge(read);
+                        if !self.in_system || self.open_request.is_some() {
+                            0
                         } else {
-                            match readable(rom, ram, a0, a1 as usize) {
-                                None => ERR_BUFFER,
-                                Some(bytes) => {
-                                    units += copy_charge(bytes.len());
-                                    page.submit(bytes)
-                                }
-                            }
+                            self.open_request = Some((request, false));
+                            1
                         }
                     }
-                    call::PAGE_CLEAR => {
-                        page.clear();
-                        0
-                    }
-                    call::PAGE_REGION => {
-                        page.set_region(a0, a1, a2, a3);
-                        0
-                    }
-                    call::PAGE_SCROLL => {
-                        page.set_scroll(a0);
-                        0
-                    }
-                    call::PAGE_BACKGROUND => {
-                        page.set_background(a0);
-                        0
-                    }
-                    call::PAGE_LOCATE => page.locate(a0),
-                    _ => ERR_UNKNOWN,
-                }
+                },
+                call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
+                    None => ERR_BUFFER,
+                    Some(at) => match &self.argument {
+                        None => 0,
+                        Some(id) => {
+                            ram[at..at + 32].copy_from_slice(id);
+                            units += copy_charge(32);
+                            1
+                        }
+                    },
+                },
+                _ => ERR_UNKNOWN,
             }
-            _ => ERR_UNKNOWN,
+        } else if slot == crate::machines::SLOT as u32 {
+            match &mut self.machines {
+                Some(machines) => {
+                    let (rom, ram) = self.memory.split();
+                    let ctx = crate::machines::CallContext { frame: self.system.frame(), list: self.devices.list3() };
+                    let (r, extra) = machines.call(n, args, rom, ram, ctx);
+                    units += extra;
+                    r
+                }
+                None => ERR_UNKNOWN,
+            }
+        } else if slot < 256 && self.listed[slot as usize] {
+            let budget = self.budget - units as i64;
+            let (rom, ram) = self.memory.split();
+            let out = self.devices.call(slot as u8, n as u8, args, budget, GuestMem { rom, ram })?;
+            units += out.charge;
+            r1 = out.a1;
+            out.a0
+        } else {
+            ERR_UNKNOWN
         };
         self.cpu.x[10] = r0;
         if let Some(r1) = r1 {
             self.cpu.x[11] = r1;
         }
-        (units, wait)
+        Ok((units, wait))
     }
 
-    /// Why the machine stopped, once it has.
-    pub fn stopped(&self) -> Option<Stopped> {
-        self.stopped
-    }
-
-    /// The exit code, once the program has exited (not after a fault).
-    pub fn exit_code(&self) -> Option<u8> {
-        match self.stopped {
-            Some(Stopped::Exit(code)) => Some(code),
-            _ => None,
+    /// The state serialization (STATE.md 1), the devices' sections asked
+    /// of them.
+    pub fn try_state(&mut self) -> Result<Vec<u8>, String> {
+        let mut out = Vec::with_capacity(64 * 1024 + self.memory.ram().len());
+        self.write_core_state(&mut out);
+        for slot in [2u8, 3, 4, 7] {
+            let present = self.listed[slot as usize] || (slot == 3 && self.listed[crate::vector3::SLOT as usize]);
+            out.push(present as u8);
+            if present {
+                self.devices.write_state(slot, &mut out)?;
+            }
         }
-    }
-
-    /// The fault that stopped the machine, if any.
-    pub fn fault(&self) -> Option<Fault> {
-        match self.stopped {
-            Some(Stopped::Fault(f)) => Some(f),
-            _ => None,
+        self.write_machines_state(&mut out);
+        if self.listed[crate::vector3::SLOT as usize] {
+            self.devices.write_state(crate::vector3::SLOT, &mut out)?;
         }
+        self.write_argument(&mut out);
+        Ok(out)
     }
 
-    pub fn terminal(&self) -> Option<&Terminal> {
-        self.terminal.as_ref()
+    pub fn try_state_hash(&mut self) -> Result<[u8; 32], String> {
+        Ok(*blake3::hash(&self.try_state()?).as_bytes())
     }
 
-    pub fn vector(&self) -> Option<&Vector> {
-        self.vector.as_ref()
-    }
-
-    /// Whether the image lists device 3 (a machine with only device 9 has
-    /// a [`Vector`] for the shared style, but no 2D list).
-    pub fn lists_vector(&self) -> bool {
-        self.lists_vector
-    }
-
-    /// Device 9, if the image lists it.
-    pub fn vector3(&self) -> Option<&Vector3> {
-        self.vector3.as_ref()
-    }
-
-    /// The 3D display, to change its list from outside a frame (hosts'
-    /// tests).
-    pub fn vector3_mut(&mut self) -> Option<&mut Vector3> {
-        self.vector3.as_mut()
-    }
-
-    pub fn vector_list(&self) -> &[u8] {
-        self.vector.as_ref().map_or(&[], Vector::list)
-    }
-
-    /// Changes whenever `vector_list` changes.
-    pub fn vector_generation(&self) -> u64 {
-        self.vector.as_ref().map_or(0, Vector::generation)
-    }
-
-    /// Device 7, if the image lists it.
-    pub fn page(&self) -> Option<&Page> {
-        self.page.as_ref()
-    }
-
-    /// Device 8, if this machine is the shell and the image lists it.
-    pub fn machines(&self) -> Option<&Machines> {
-        self.machines.as_ref()
-    }
-
-    pub fn machines_mut(&mut self) -> Option<&mut Machines> {
-        self.machines.as_mut()
-    }
-
-    pub fn content(&self) -> Option<&Content> {
-        self.content.as_ref()
-    }
-
-    /// Content requests submitted since the last call.
-    pub fn take_content_requests(&mut self) -> Vec<Request> {
-        self.content.as_mut().map_or_else(Vec::new, Content::take_requests)
-    }
-
-    pub fn system(&self) -> &System {
-        &self.system
-    }
-
-    /// The frame counter: frames run since reset.
-    pub fn frame(&self) -> u32 {
-        self.system.frame()
-    }
-
-    pub fn cpu(&self) -> &Cpu {
-        &self.cpu
-    }
-
-    pub fn ram(&self) -> &[u8] {
-        &self.ram
-    }
-
-    pub fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    /// The carried budget (zero or negative between frames).
-    pub fn budget(&self) -> i64 {
-        self.budget
-    }
-
-    pub fn image_id(&self) -> &[u8; 32] {
-        &self.image_id
-    }
-
-    /// Budget units spent on instructions since reset (an instruction from
-    /// RAM counts 4), call charges not included. Not machine state.
-    pub fn instructions(&self) -> u64 {
-        self.instructions
-    }
-
-    /// Device calls (`ecall`s) since reset. Not machine state.
-    pub fn calls(&self) -> u64 {
-        self.calls
-    }
-
-    /// The state serialization of STATE.md. Defined between frames.
-    pub fn state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(64 * 1024 + self.ram.len());
+    /// STATE.md 1.1–1.5.
+    fn write_core_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(STATE_DOMAIN);
         out.extend_from_slice(&self.image_id);
         // CPU.
@@ -803,49 +689,103 @@ impl Machine {
         }
         out.extend_from_slice(&(self.budget as i32).to_le_bytes());
         // RAM.
-        out.extend_from_slice(&(self.ram.len() as u32).to_le_bytes());
-        out.extend_from_slice(&self.ram);
-        // Devices.
-        self.system.write_state(&mut out);
-        out.push(self.terminal.is_some() as u8);
-        if let Some(t) = &self.terminal {
-            t.write_state(&mut out);
-        }
-        out.push(self.vector.is_some() as u8);
-        if let Some(v) = &self.vector {
-            v.write_state(&mut out);
-        }
-        out.push(self.content.is_some() as u8);
-        if let Some(c) = &self.content {
-            c.write_state(&mut out);
-        }
-        out.push(self.page.is_some() as u8);
-        if let Some(p) = &self.page {
-            p.write_state(&mut out);
-        }
-        // Only for an image that lists device 8 (STATE.md 1.10).
-        if self.lists_machines {
+        let ram = self.memory.ram();
+        out.extend_from_slice(&(ram.len() as u32).to_le_bytes());
+        out.extend_from_slice(ram);
+        self.system.write_state(out);
+    }
+
+    /// STATE.md 1.10: only for an image that lists device 8.
+    fn write_machines_state(&self, out: &mut Vec<u8>) {
+        if self.listed[crate::machines::SLOT as usize] {
             out.push(self.machines.is_some() as u8);
             if let Some(m) = &self.machines {
-                m.write_state(&mut out);
+                m.write_state(out);
             }
         }
-        // Only for an image that lists device 9 (STATE.md 1.11).
-        if let Some(v) = &self.vector3 {
-            v.write_state(&mut out);
-        }
-        // Only for a machine given an argument (STATE.md 1.12).
+    }
+
+    /// STATE.md 1.12: only for a machine given an argument.
+    fn write_argument(&self, out: &mut Vec<u8>) {
         if let Some(id) = &self.argument {
             out.extend_from_slice(id);
         }
-        out
     }
 
-    /// The state hash: BLAKE3-256 of [`Machine::state`].
-    pub fn state_hash(&self) -> [u8; 32] {
-        *blake3::hash(&self.state()).as_bytes()
+    /// Why the machine stopped, once it has.
+    pub fn stopped(&self) -> Option<Stopped> {
+        self.stopped
     }
 
+    /// The exit code, once the program has exited (not after a fault).
+    pub fn exit_code(&self) -> Option<u8> {
+        match self.stopped {
+            Some(Stopped::Exit(code)) => Some(code),
+            _ => None,
+        }
+    }
+
+    /// The fault that stopped the machine, if any.
+    pub fn fault(&self) -> Option<Fault> {
+        match self.stopped {
+            Some(Stopped::Fault(f)) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Device 8, if this machine is the shell and the image lists it.
+    pub fn machines(&self) -> Option<&Machines> {
+        self.machines.as_ref()
+    }
+
+    pub fn machines_mut(&mut self) -> Option<&mut Machines> {
+        self.machines.as_mut()
+    }
+
+    pub fn system(&self) -> &System {
+        &self.system
+    }
+
+    /// The frame counter: frames run since reset.
+    pub fn frame(&self) -> u32 {
+        self.system.frame()
+    }
+
+    pub fn cpu(&self) -> &Cpu {
+        &self.cpu
+    }
+
+    pub fn ram(&self) -> &[u8] {
+        self.memory.ram()
+    }
+
+    pub fn rom(&self) -> &[u8] {
+        self.memory.rom()
+    }
+
+    /// The carried budget (zero or negative between frames).
+    pub fn budget(&self) -> i64 {
+        self.budget
+    }
+
+    pub fn image_id(&self) -> &[u8; 32] {
+        &self.image_id
+    }
+
+    /// Budget units spent on instructions since reset (an instruction from
+    /// RAM counts 4), call charges not included. Not machine state.
+    pub fn instructions(&self) -> u64 {
+        self.instructions
+    }
+
+    /// Device calls (`ecall`s) since reset. Not machine state.
+    pub fn calls(&self) -> u64 {
+        self.calls
+    }
+
+}
+
+impl Machine {
     /// The machine whose state serialization is `state`, for `image`
     /// (STATE.md 4): `state()` of the result is `state`, byte for byte, and
     /// given the same inputs it runs as the machine it was taken of. A
@@ -892,44 +832,44 @@ impl Machine {
             return Err(bad("a positive budget carried"));
         }
         m.budget = budget as i64;
-        if r.u32()? as usize != m.ram.len() {
+        let ram_len = m.memory.ram().len();
+        if r.u32()? as usize != ram_len {
             return Err(bad("RAM size"));
         }
-        let n = m.ram.len();
-        m.ram.copy_from_slice(r.take(n)?);
+        m.memory.split().1.copy_from_slice(r.take(ram_len)?);
         m.system.restore(frame, &mut r)?;
-        if r.flag()? != m.terminal.is_some() {
+        if r.flag()? != m.devices.terminal.is_some() {
             return Err(bad("terminal present"));
         }
-        if let Some(t) = &mut m.terminal {
+        if let Some(t) = &mut m.devices.terminal {
             t.restore(&mut r)?;
         }
-        if r.flag()? != m.vector.is_some() {
+        if r.flag()? != m.devices.vector.is_some() {
             return Err(bad("vector display present"));
         }
-        if let Some(v) = &mut m.vector {
+        if let Some(v) = &mut m.devices.vector {
             v.restore(&mut r)?;
             // Without device 3 the fill mode and the 2D list cannot be set.
-            if !m.lists_vector && (!v.fill() || !v.list().is_empty()) {
+            if !m.listed[3] && (!v.fill() || !v.list().is_empty()) {
                 return Err(bad("a fill mode or 2D list without device 3"));
             }
         }
-        if r.flag()? != m.content.is_some() {
+        if r.flag()? != m.devices.content.is_some() {
             return Err(bad("content present"));
         }
-        if let Some(c) = &mut m.content {
-            c.restore(&mut r, m.ram.len())?;
+        if let Some(c) = &mut m.devices.content {
+            c.restore(&mut r, ram_len)?;
         }
-        if r.flag()? != m.page.is_some() {
+        if r.flag()? != m.devices.page.is_some() {
             return Err(bad("page present"));
         }
-        if let Some(p) = &mut m.page {
+        if let Some(p) = &mut m.devices.page {
             p.restore(&mut r)?;
         }
-        if m.lists_machines && r.u8()? != 0 {
+        if m.listed[crate::machines::SLOT as usize] && r.u8()? != 0 {
             return Err(bad("the state of a shell cannot be restored"));
         }
-        if let Some(v) = &mut m.vector3 {
+        if let Some(v) = &mut m.devices.vector3 {
             v.restore(&mut r)?;
         }
         m.argument = match r.remaining() {

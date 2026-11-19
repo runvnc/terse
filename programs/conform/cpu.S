@@ -849,22 +849,35 @@ count_scroll:
 
     .balign 4
     .globl count_write
-/* uint32_t count_write(const void *buf, uint32_t len)
- * After the waits, writes buf (len bytes) to the terminal again and again
- * until a write consumes fewer than len bytes (the budget ran out in it);
- * returns the bytes consumed. */
+/* void count_write(uint32_t *out, uint32_t n, const void *buf, uint32_t len)
+ * As count_scroll, with a terminal write of buf (len bytes) before each
+ * frame_count call: a write takes its whole buffer, so a frame can end up
+ * to 4 + 2 x len + 4 units below zero. */
 count_write:
     mv t1, a0
     mv t2, a1
-    li t0, 0
+    mv t4, a2
+    mv t5, a3
     li a7, 0x100
     ecall
     ecall
-1:  li a7, 0x200
-    mv a0, t1
-    mv a1, t2
+    li a7, 0x102
     ecall
-    add t0, t0, a0
-    beq a0, t2, 1b
-    mv a0, t0
+    mv t3, a0
+    li t0, 1
+1:  addi t0, t0, 1
+    li a7, 0x200
+    mv a0, t4
+    mv a1, t5
+    ecall                   /* write */
+    li a7, 0x102
+    ecall
+    beq a0, t3, 1b
+    addi t0, t0, -1
+    sw t0, 0(t1)
+    addi t1, t1, 4
+    mv t3, a0
+    li t0, 1
+    addi t2, t2, -1
+    bnez t2, 1b
     ret

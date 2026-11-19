@@ -14,9 +14,10 @@ A call's charge is subtracted as the call runs, on top of the `ecall` instructio
 |---|---|---|
 | An instruction fetched from ROM | 1 | as it runs (an `ecall` too) |
 | An instruction fetched from RAM | 4, provisional | as it runs (an `ecall` too) |
-| Any call, also an unknown or failing one | 4, provisional | every call |
-| `write`: each byte consumed | 1, provisional | as each byte is consumed; the call stops after the byte that takes the budget to zero or below |
-| A clear, scroll up or scroll down | 150, provisional | each one: commands `01h`, `02h`, `03h`, and those `write` causes (`0Ah` on the last row, `0Ch`, a wrap at the bottom) |
+| Any call, also an unknown or failing one: a deferred call, or one of the system device or Machines | 4, provisional | every call |
+| Any answered call, also a failing one | 64, provisional | `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate` |
+| `write`: each byte of the buffer | 2, provisional | the whole buffer (at most 4,096 bytes) is taken whatever the budget; the scrolls and clears it causes cost nothing more |
+| A clear, scroll up or scroll down by `command` | 150, provisional | commands `01h`, `02h`, `03h` |
 | Bytes copied between memory and a device | 1 per 4 bytes, rounded up, per call; provisional | by the calls of the next table |
 | Content delivered at completion | 1 per 4 bytes: the frame's completions added up, rounded up once; provisional | subtracted from the frame's budget before the CPU runs |
 
@@ -43,9 +44,11 @@ Bytes counted as copied:
 | machines `argument` (`80Ah`) | 32 | when the ID is read, also if it returns 0 |
 | `snapshot_info` | 122 | when written |
 
+A device call is **deferred** when its result is one the program could work out without the device (a constant, an argument, or a simple function of the arguments) and its charge depends only on its arguments; it is **answered** when its result or charge depends on the device's state. A host that keeps a device in another process can send deferred calls in batches without waiting for them; an answered call needs a round trip, which the 64 pays for. The calls of the system device and Machines are the machine's own and cost 4 whatever they return. The call table of the article The machine gives every call's class.
+
 Content delivered at completion is what a get, load, find or records-style request (subscriptions, timeline, names, programs, records) writes to its buffer. Nothing else is charged: a rejected submit copies nothing, the fields a completion writes into a request block are free, and laying out the page is free (the host does it outside the frames).
 
-Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and 4). Writing a whole 80-column row costs 85 with one `write` of 80 bytes or one `cells_write` of 80 cells, against at least 480 for 80 one-byte writes.
+Two examples. A deferred call that copies nothing costs 5 units from ROM (the `ecall` and 4), an answered one 65. Writing a whole 80-column row costs 165 with one `write` of 80 bytes, 85 with one `cells_write` of 80 cells, against at least 560 for 80 one-byte writes.
 
 ## Machine and image
 
