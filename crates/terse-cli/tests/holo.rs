@@ -38,7 +38,7 @@ fn golden(name: &str, got: &str) {
 /// Each scene after a second and a half of turning.
 #[test]
 fn scenes() {
-    for (key, name) in [("1", "wireframes"), ("2", "rings"), ("3", "starfield"), ("4", "orrery"), ("5", "city"), ("1\n3 press h", "wireframes-solid")] {
+    for (key, name) in [("1", "wireframes"), ("2", "rings"), ("3", "starfield"), ("4", "orrery"), ("5", "city"), ("6", "cockpit"), ("1\n3 press h", "wireframes-solid")] {
         let (m, results) = run(&format!("2 press {key}\n"), 90);
         assert!(results.iter().all(|r| r.stopped.is_none() && r.waited));
         let got = screen(&m);
@@ -54,11 +54,12 @@ fn scenes() {
 #[test]
 fn keys() {
     let list = |script: &str, frames: u32| run(script, frames).0.vector3().unwrap().list().to_vec();
-    // Space six times from the first: round the five scenes to the
-    // second; Tab once more.
-    let spaces = "2 press space\n3 press space\n4 press space\n5 press space\n6 press space\n7 press space\n";
+    // Space seven times from the first: round the six scenes to the
+    // second; Tab twice more (the orrery: what the starfield shows depends on
+    // how long the stars moved, and the cockpit moves only some).
+    let spaces = "2 press space\n3 press space\n4 press space\n5 press space\n6 press space\n7 press space\n8 press space\n";
     assert_eq!(list(spaces, 20), list("2 press 2\n", 20));
-    assert_eq!(list(&format!("{spaces}8 press tab\n"), 20), list("2 press 3\n", 20));
+    assert_eq!(list(&format!("{spaces}9 press tab\n10 press tab\n"), 20), list("2 press 4\n", 20));
     // A: the models stand still from frame 10 on.
     let (a, b) = (list("10 press a\n", 20), list("10 press a\n", 40));
     assert_eq!(a, b);
@@ -106,12 +107,13 @@ fn cli_dump_matches() {
 /// Every scene for 600 frames: each frame ends in wait_frame within its budget.
 #[test]
 fn budget() {
-    let script = "1 press 1\n600 press 2\n1200 press 3\n1800 press 4\n2400 press 5\n3000 press 1\n3001 press h\n3600 press 5\n3601 press p\n";
-    let (m, results) = run(script, 4200);
+    let script = "1 press 1\n600 press 2\n1200 press 3\n1800 press 4\n2400 press 5\n3000 press 1\n3001 press h\n3600 press 5\n3601 press p\n4200 press p\n4201 press 6\n4800 press p\n";
+    let (m, results) = run(script, 5400);
     assert!(results.iter().all(|r| r.stopped.is_none() && r.waited), "every frame ends in wait_frame");
     let used: Vec<u64> = results.iter().map(|r| r.used).collect();
     let stats = common::FrameStats::new(&used);
-    const SCENES: [&str; 7] = ["wireframes", "rings", "starfield", "orrery", "city", "wireframes, solid", "city, phosphor"];
+    const SCENES: [&str; 9] =
+        ["wireframes", "rings", "starfield", "orrery", "city", "wireframes, solid", "city, phosphor", "cockpit", "cockpit, phosphor"];
     let busiest_scene = SCENES[stats.busiest_frame / 600];
     eprintln!("holo: {} ({busiest_scene}); {} ROM bytes", stats.describe(), Image::parse(IMAGE).unwrap().rom.len());
     for (i, scene) in SCENES.iter().enumerate() {
@@ -119,10 +121,81 @@ fn budget() {
         eprintln!("  {scene}: busiest {} units ({:.2}%), typical {} ({:.2}%)", s.busiest, common::pct(s.busiest), s.median, common::pct(s.median));
     }
     assert!(stats.busiest < 125_000 / 4, "{}", stats.describe());
-    // The city's list (the longest) fits holo's 8,192-byte buffer.
-    let city = m.vector3().unwrap().list().len();
-    eprintln!("  city list: {city} bytes");
-    assert!(city < 8192);
+    // The city's list (the longest) and the cockpit's fit holo's 8,192-byte
+    // buffer.
+    let cockpit = m.vector3().unwrap().list().len();
+    let city = run("2 press 5\n", 90).0.vector3().unwrap().list().len();
+    eprintln!("  city list: {city} bytes, cockpit list: {cockpit} bytes");
+    assert!(city < 8192 && cockpit < 8192);
+}
+
+/// The cockpit: three consoles, each a Surface showing a region of the
+/// terminal (the instruments, the log, the list), in effect and within the
+/// caps; the regions are what the reference eye sees on the consoles, and
+/// the status line stays on the glass.
+#[test]
+fn cockpit_surfaces() {
+    let (m, _) = run("2 press 6\n", 90);
+    let list = m.vector3().unwrap().list();
+    let (panels, p) = terse_core::vector3::surfaces(list, (0.0, 0.0));
+    assert_eq!(p.surface_rects(), [[8, 64, 224, 128], [240, 64, 224, 128], [472, 64, 160, 128]]);
+    assert!(!p.capped && panels.len() == 3 && panels.iter().all(|p| p.front));
+    // The consoles lie below the window, on the lower half of the screen,
+    // tilted: their top edges further away than their bottom ones.
+    for q in &panels {
+        assert!(q.corners.iter().all(|c| c[1] > 240.0), "{q:?}");
+        assert!(q.corners[0][2] > q.corners[3][2] && q.corners[1][2] > q.corners[2][2], "{q:?}");
+    }
+    let text = m.terminal().unwrap().text();
+    let row = |r: usize| text.lines().nth(r).unwrap().to_string();
+    assert!(row(1).contains("COCKPIT  bank +000  pitch +000  target GAMMA"), "{text}");
+    assert!(row(5).contains("HEADING") && row(5).contains("ALPHA"), "{text}");
+    // The readouts change every frame.
+    let (later, _) = run("2 press 6\n", 91);
+    assert_ne!(later.terminal().unwrap().text(), text);
+}
+
+/// A click on a row of the list on the tilted right-hand console reaches
+/// holo as a pointer inside the list's region of the terminal (SPEC 13.3
+/// Surface), from any eye: the row is selected. The press is found by the
+/// core's own mapping, then checked by running holo as a single machine
+/// in a system, which routes it.
+#[test]
+fn cockpit_click_through_a_console() {
+    let image = Image::parse(IMAGE).unwrap();
+    for eye in [(0.0f32, 0.0f32), (-160.0, 0.0), (160.0, 80.0)] {
+        let (m, _) = run("2 press 6\n", 59);
+        let list = m.vector3().unwrap().list().to_vec();
+        // A glass position over DELTA (the list's row 4, screen y 128-143,
+        // x 472-631) on its console.
+        let over = |x: u16, y: u16| {
+            let (sx, sy) = terse_core::vector3::surface_pointer(&list, eye, x, y);
+            (sx, sy) != (x, y) && (480..600).contains(&sx) && (130..142).contains(&sy)
+        };
+        let (x, y) = (240..480u16).flat_map(|y| (320..640u16).map(move |x| (x, y))).find(|&(x, y)| over(x, y)).expect("DELTA on its console");
+        assert!(y > 300, "on the console, below the window: ({x}, {y})");
+        let script = format!("2 press 6\n60 pointer {x} {y} 1\n61 pointer {x} {y} 0\n");
+        let mut system = terse_core::System::new(&image, false, Vec::new());
+        system.set_eye(eye);
+        let mut h = terse_net::HeadlessSystem::new(None, Script::parse(&script).unwrap());
+        for _ in 0..90 {
+            h.frame(&mut system);
+        }
+        let got = screen(system.shell());
+        assert!(got.contains(">DELTA") && got.contains("target DELTA"), "eye {eye:?}, click at ({x}, {y}):\n{got}");
+        if eye == (0.0, 0.0) {
+            golden("cockpit-clicked.txt", &format!("-- clicked at ({x}, {y}) --\n{got}"));
+        }
+        // Over no Surface (the window): delivered as it is, not on the list.
+        let unmapped = "2 press 6\n60 pointer 320 200 1\n61 pointer 320 200 0\n";
+        let mut system = terse_core::System::new(&image, false, Vec::new());
+        system.set_eye(eye);
+        let mut h = terse_net::HeadlessSystem::new(None, Script::parse(unmapped).unwrap());
+        for _ in 0..90 {
+            h.frame(&mut system);
+        }
+        assert!(screen(system.shell()).contains(">GAMMA"), "eye {eye:?}");
+    }
 }
 
 /// Without faces, the projection is what it was before faces existed: the
@@ -200,6 +273,10 @@ fn encode(c: &terse_core::vector3::Command) -> Vec<u8> {
         Command::Face(n, corners) => {
             v.push(*n);
             corners[..*n as usize].iter().for_each(|p| v.extend(xyz(p)));
+        }
+        Command::Surface(r, w) => {
+            r.iter().for_each(|x| v.extend(x.to_le_bytes()));
+            v.extend(w.to_le_bytes());
         }
         Command::Point | Command::Push | Command::Pop => {}
     }

@@ -109,6 +109,12 @@ pub struct Placed {
     /// The target's screen rectangle: pixels per unit, origin.
     rect: (f64, f64, f64),
     front: bool,
+    /// The part of the pyramid's picture the panel shows: u0, v0, and its
+    /// width and height, as fractions of the picture (all of it for a
+    /// Screen).
+    window: [f32; 4],
+    /// Its source's width over its height (4/3 for a Screen).
+    shape: f32,
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -155,7 +161,15 @@ impl Placed {
             n: cross(ax, ay),
             rect: (rect.2 as f64 / terse_core::SCREEN_WIDTH as f64, rect.0 as f64, rect.1 as f64),
             front: p.front,
+            window: [0.0, 0.0, 1.0, 1.0],
+            shape: p.source[2] as f32 / p.source[3].max(1) as f32,
         }
+    }
+
+    /// The panel showing the part `window` (u0, v0, width, height, as
+    /// fractions) of its pyramid's picture.
+    pub fn with_window(self, window: [f32; 4]) -> Placed {
+        Placed { window, ..self }
     }
 
     /// The pixels the panel touches.
@@ -200,7 +214,7 @@ impl Placed {
     /// `size`: log2 of the larger footprint of a pixel, in texels.
     fn lod(&self, x: f64, y: f64, size: (usize, usize)) -> f32 {
         let Some((_, _, d)) = self.uv(x, y) else { return 0.0 };
-        let (w, h) = (size.0 as f64, size.1 as f64);
+        let (w, h) = (size.0 as f64 * self.window[2] as f64, size.1 as f64 * self.window[3] as f64);
         let rx = ((d[0] * w).powi(2) + (d[1] * h).powi(2)).sqrt();
         let ry = ((d[2] * w).powi(2) + (d[3] * h).powi(2)).sqrt();
         let rho = rx.max(ry);
@@ -237,7 +251,8 @@ impl Placed {
     fn fitted(&self) -> (f32, f32, f32, f32) {
         let b = self.bounds();
         let (w, h) = (b.width().saturating_sub(1).max(1) as f32, b.height().saturating_sub(1).max(1) as f32);
-        let (bw, bh) = if w * 3.0 <= h * 4.0 { (w, w * 0.75) } else { (h * 4.0 / 3.0, h) };
+        let k = self.shape;
+        let (bw, bh) = if w <= h * k { (w, w / k) } else { (h * k, h) };
         (b.x0 as f32 + (w - bw) / 2.0, b.y0 as f32 + (h - bh) / 2.0, bw, bh)
     }
 }
@@ -348,16 +363,17 @@ pub fn draw_panels(placed: &[(Placed, Option<&Pyramid>)], band: &mut [u32], area
                 continue;
             }
             let (fx, fy, fw, fh) = p.fitted();
-            let levels = pyramid.filter(|_| p.front).map(|pyr| Levels::new(pyr, (pyr.size().0 as f32 / fw).max(1.0).log2()));
+            let [u0, v0, du, dv] = p.window;
+            let levels = pyramid.filter(|_| p.front).map(|pyr| Levels::new(pyr, (pyr.size().0 as f32 * du / fw).max(1.0).log2()));
             for y in r.y0..r.y1 {
                 let row = &mut band[(y - y0) as usize * stride..][..stride];
-                let v = (y as f32 + 0.5 - fy) / fh;
+                let v = v0 + dv * (y as f32 + 0.5 - fy) / fh;
                 for x in r.x0..r.x1 {
                     if fitted[i + 1..].iter().any(|n| n.x0 <= x && x < n.x1 && n.y0 <= y && y < n.y1) {
                         continue;
                     }
                     row[(x - area.x0) as usize] = match &levels {
-                        Some(l) => l.at((x as f32 + 0.5 - fx) / fw, v),
+                        Some(l) => l.at(u0 + du * (x as f32 + 0.5 - fx) / fw, v),
                         None => back,
                     };
                 }
@@ -424,6 +440,7 @@ pub fn draw_panels(placed: &[(Placed, Option<&Pyramid>)], band: &mut [u32], area
             let (nu0, snu) = ((pu * den0 + k * dax0) / aa, (pu * sden + k * sdax) / aa);
             let (nv0, snv) = ((pv * den0 + k * day0) / bb, (pv * sden + k * sday) / bb);
             let sample = pyramid.filter(|_| p.front);
+            let [u0, v0, du, dv] = p.window.map(|v| v as f64);
             let cover = |x: i32| -> u32 {
                 if x >= fs && x <= fe {
                     return 256;
@@ -450,7 +467,7 @@ pub fn draw_panels(placed: &[(Placed, Option<&Pyramid>)], band: &mut [u32], area
                                     continue;
                                 }
                                 let r = 1.0 / den;
-                                l.at(((nu0 + snu * t) * r) as f32, ((nv0 + snv * t) * r) as f32)
+                                l.at((u0 + du * (nu0 + snu * t) * r) as f32, (v0 + dv * (nv0 + snv * t) * r) as f32)
                             }
                             None => back,
                         };

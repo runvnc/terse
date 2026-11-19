@@ -1,0 +1,524 @@
+ HOLO  1 WIREFRAMES  2 RINGS  3 STARFIELD  4 ORRERY  5 CITY  6 COCKPIT
+ COCKPIT  bank +000  pitch +000  target GAMMA   the consoles show the terminal
+
+
+  INSTRUMENTS        T+00:01   LOG                          TARGETS
+  HEADING   117.0                                           ALPHA    0.4 AU
+  SPEED     0.330 c            T+0000 nav fix               BETA     1.1 AU
+  THRUST [#############...]    T+0000 comms ping           >GAMMA    2.7 AU
+  BANK +000    PITCH +000      T+0001 hull temp ok          DELTA    3.0 AU
+  TARGET  GAMMA    2.7 AU      T+0002 course trim           EPSILON  5.2 AU
+  FUEL      98.9 %             T+0002 beacon heard          ZETA     9.5 AU
+                               T+0003 sensor sweep          click a row
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Space next  1-6 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid
+-- 3d vectors: 2316 list bytes --
+width 36
+colour dce6ffff
+move 12832 9216 30016
+point
+move 8288 -2640 9600
+point
+move 15152 -704 31872
+point
+move -6896 9808 12704
+point
+move 15504 10624 29440
+point
+move -6640 528 -608
+point
+move -3360 -5296 3440
+point
+move -1504 5792 -2880
+point
+move 10240 13424 23328
+point
+move -5584 -1920 15008
+point
+move -7184 480 17440
+point
+move 15200 8352 17888
+point
+move -6176 -6368 1456
+point
+move -7936 464 5952
+point
+move -8672 -5856 4944
+point
+move 9872 -16 31168
+point
+move 1632 -3664 29824
+point
+move -3520 5680 24512
+point
+move -1216 -3920 19232
+point
+move -8032 -496 24208
+point
+move -2400 -2032 29952
+point
+move 3360 11632 30848
+point
+move 6880 9440 -688
+point
+move 11888 8064 27904
+point
+move -6672 -896 11056
+point
+move -2064 -64 7472
+point
+move -4432 -3696 28032
+point
+move 12608 -880 -816
+point
+move 11392 4416 23424
+point
+move -4000 3936 27968
+point
+move -6064 2800 22864
+point
+move 4656 9712 10192
+point
+move 2864 -6400 10448
+point
+move 12784 13072 8496
+point
+move 4496 4496 22672
+point
+move 11520 -1728 -3744
+point
+move 13824 8720 -1264
+point
+move 7888 11312 18336
+point
+move 13760 4496 3520
+point
+move 4928 -4368 14448
+point
+move -7296 -5456 5440
+point
+move 5648 -4832 28544
+point
+move 8736 -224 28224
+point
+move 14048 -5520 192
+point
+move 10752 -2576 10208
+point
+move -1488 -2048 16240
+point
+move -1808 -5072 6608
+point
+move 5664 3408 -992
+point
+move 3840 11792 26432
+point
+move 17920 -896 9632
+point
+move 13808 9056 31936
+point
+move -2272 -4512 22368
+point
+move 9376 -144 22784
+point
+move 5248 4800 -1488
+point
+move 416 -5664 27072
+point
+move -5696 7616 0
+point
+move -128 2560 15312
+point
+move -3168 -2432 -3312
+point
+move 14080 -3696 -3120
+point
+move 6464 8560 13600
+point
+move -3536 -7680 12352
+point
+move -16 7584 3840
+point
+move 4144 8768 17920
+point
+move 16944 12016 25856
+point
+move 14800 -2608 15264
+point
+move 704 6672 18656
+point
+move -3280 12576 10128
+point
+move -8704 12608 16864
+point
+move 2368 -3776 25152
+point
+move 944 -5872 14064
+point
+move -7456 -4272 13376
+point
+move -3872 12800 -64
+point
+move 11904 -4400 18816
+point
+move 18032 -816 20976
+point
+move 2976 -1296 24784
+point
+move -3200 -5600 27968
+point
+move 11456 10752 16976
+point
+move 10352 11088 5280
+point
+move 8928 4000 31488
+point
+move 3664 13312 1216
+point
+move -3184 8832 22304
+point
+move 5312 13328 720
+point
+move 128 12656 26944
+point
+move -8720 -672 28224
+point
+move -8288 7280 1648
+point
+move 3536 5344 1184
+point
+move 880 7232 6288
+point
+move 1648 12864 2064
+point
+move 17712 6928 17632
+point
+move 8992 8176 4576
+point
+move -6592 10128 7984
+point
+move 18944 9328 9264
+point
+move -4288 -4400 22400
+point
+move 16064 -7248 30016
+point
+move -5264 3888 22880
+point
+move -4512 5696 23984
+point
+move 5104 -7280 16912
+point
+move 15952 -5200 7984
+point
+move 14560 -5712 24000
+point
+move -1632 -176 -560
+point
+move 4944 -3232 -3824
+point
+move 8784 3648 28224
+point
+move 8096 10512 22944
+point
+move -5504 -688 12608
+point
+move -2464 11712 24704
+point
+move 48 1648 6304
+point
+move 4656 1728 32000
+point
+move 16960 -4000 19856
+point
+move -2176 -7072 22912
+point
+move -7888 -560 6480
+point
+move -8256 8160 21168
+point
+move 18528 8672 23072
+point
+move 14720 2560 1280
+point
+move 4096 1168 13776
+point
+move 16944 5536 1344
+point
+move 9264 6368 8640
+point
+move 3088 -7296 5584
+point
+move -1392 11776 12848
+point
+move -96 5568 -1408
+point
+move 15072 4672 1936
+point
+move -8032 9008 20208
+point
+move 6672 10144 23568
+point
+move 8400 -6080 28736
+point
+move 14416 2896 29824
+point
+move -2768 544 11728
+point
+move 4704 8576 3584
+point
+move 14192 5040 17376
+point
+move 2608 12032 9328
+point
+move 16144 10960 -2944
+point
+move 10272 9312 18048
+point
+move 18448 -3872 7104
+point
+move 3904 -1680 2944
+point
+move 14800 6784 26688
+point
+move 5136 13376 7088
+point
+move 10128 2768 26176
+point
+move 18336 7264 4960
+point
+move 3744 5120 -336
+point
+move 288 4752 13824
+point
+move -5440 5424 8928
+point
+move -4320 9600 24672
+point
+move 14224 12416 28160
+point
+move 5648 3584 18416
+point
+move -4944 7296 7680
+point
+move 4560 12384 11984
+point
+move 6464 -1584 10544
+point
+move 816 224 22816
+point
+move 13216 -2080 320
+point
+move 3008 1312 20576
+point
+move 13168 9408 -3200
+point
+move -1104 -7072 30080
+point
+move 10176 -1648 24576
+point
+move -4912 10192 30976
+point
+move 18720 10992 12896
+point
+move 11728 1920 17472
+point
+move -3152 -5216 5952
+point
+move -8288 9632 24704
+point
+move 12144 2672 17296
+point
+move -1648 -1776 19472
+point
+move 17856 -6832 17936
+point
+move 17072 -6416 27584
+point
+width 16
+push
+translate 3200 2400 6720
+rotate y 27000
+rotate x 15300
+colour ffa078ff
+move 640 0 0
+line 0 640 0
+move 640 0 0
+line 0 -640 0
+move 640 0 0
+line 0 0 640
+move 640 0 0
+line 0 0 -640
+move -640 0 0
+line 0 640 0
+move -640 0 0
+line 0 -640 0
+move -640 0 0
+line 0 0 640
+move -640 0 0
+line 0 0 -640
+move 0 640 0
+line 0 0 640
+move 0 640 0
+line 0 0 -640
+move 0 -640 0
+line 0 0 640
+move 0 -640 0
+line 0 0 -640
+pop
+push
+translate 5120 3040 16320
+rotate y 47480
+rotate x 15300
+colour 78ff78ff
+move 640 0 0
+line 0 640 0
+move 640 0 0
+line 0 -640 0
+move 640 0 0
+line 0 0 640
+move 640 0 0
+line 0 0 -640
+move -640 0 0
+line 0 640 0
+move -640 0 0
+line 0 -640 0
+move -640 0 0
+line 0 0 640
+move -640 0 0
+line 0 0 -640
+move 0 640 0
+line 0 0 640
+move 0 640 0
+line 0 0 -640
+move 0 -640 0
+line 0 0 640
+move 0 -640 0
+line 0 0 -640
+pop
+push
+translate 7040 2400 25920
+rotate y 2424
+rotate x 15300
+colour 78a0ffff
+move 640 0 0
+line 0 640 0
+move 640 0 0
+line 0 -640 0
+move 640 0 0
+line 0 0 640
+move 640 0 0
+line 0 0 -640
+move -640 0 0
+line 0 640 0
+move -640 0 0
+line 0 -640 0
+move -640 0 0
+line 0 0 640
+move -640 0 0
+line 0 0 -640
+move 0 640 0
+line 0 0 640
+move 0 640 0
+line 0 0 -640
+move 0 -640 0
+line 0 0 640
+move 0 -640 0
+line 0 0 -640
+pop
+push
+translate 5120 5280 0
+rotate z 0
+rotate x 0
+face 4 -4960 -192 1120 4960 -192 1120 4960 2400 1120 -4960 2400 1120
+colour 5a6e8cff
+width 24
+move -4960 -192 1120
+line 4960 -192 1120
+colour 96c8ffff
+width 28
+move -3840 -4000 4160
+line 3840 -4000 4160
+move -5280 -5280 -2560
+line -3840 -4000 4160
+move 3840 -4000 4160
+line 4160 -192 4160
+move 5280 -5280 -2560
+line 3840 -4000 4160
+move 4160 -192 4160
+line -4160 -192 4160
+move 5280 -192 -2560
+line 4160 -192 4160
+move -4160 -192 4160
+line -3840 -4000 4160
+move -5280 -192 -2560
+line -4160 -192 4160
+move 0 -5280 -2560
+line 0 -4000 4160
+move -5280 -5280 -2560
+line -3200 2400 -1760
+move 5280 -5280 -2560
+line 3200 2400 -1760
+colour ffa050ff
+width 16
+move 0 -2720 1920
+circle 288
+push
+translate 0 800 0
+rotate x 59164
+surface 8 64 224 128 3520
+colour 788caaff
+width 20
+move -1808 -1053 -16
+line 1808 -1053 -16
+line 1808 1053 -16
+line -1808 1053 -16
+line -1808 -1053 -16
+pop
+push
+translate -3120 880 160
+rotate y 61531
+rotate x 59164
+surface 240 64 224 128 2720
+colour 788caaff
+width 20
+move -1408 -825 -16
+line 1408 -825 -16
+line 1408 825 -16
+line -1408 825 -16
+line -1408 -825 -16
+pop
+push
+translate 3040 880 160
+rotate y 4005
+rotate x 59164
+surface 472 64 160 128 2240
+colour 788caaff
+width 20
+move -1168 -944 -16
+line 1168 -944 -16
+line 1168 944 -16
+line -1168 944 -16
+line -1168 -944 -16
+pop
+pop
+-- 3d: 193 segments, length 5673.1 units, 4 faces --
+-- surface 8 64 224 128 (214.0, 325.3) (426.0, 325.3) (434.3, 439.0) (205.7, 439.0) front --
+-- surface 240 64 224 128 (36.9, 344.8) (201.7, 338.3) (216.0, 421.8) (42.9, 434.4) front --
+-- surface 472 64 160 128 (448.3, 332.8) (583.2, 337.7) (575.1, 440.5) (432.3, 429.6) front --

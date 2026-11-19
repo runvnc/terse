@@ -1,4 +1,4 @@
- HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY   5 CITY
+ HOLO  1 WIREFRAMES  2 RINGS  3 STARFIELD  4 ORRERY  5 CITY  6 COCKPIT
 
 
 
@@ -27,7 +27,7 @@
 
                                       wire
 
- Space next  1-5 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid
+ Space next  1-6 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid
 -- 3d vectors: 712 list bytes --
 colour 28466eff
 width 12

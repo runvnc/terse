@@ -58,7 +58,13 @@ pub mod op {
     pub const SCALE: u8 = 0x0B;
     pub const FACE: u8 = 0x0C;
     pub const SCREEN: u8 = 0x0D;
+    pub const SURFACE: u8 = 0x0E;
 }
+
+/// Surfaces that take effect in one list (SPEC 13.3 Surface). Provisional.
+pub const MAX_SURFACES: usize = 4;
+/// The whole screen as a source rectangle (a Screen's panel shows it all).
+pub const WHOLE_SCREEN: [u16; 4] = [0, 0, 640, 480];
 
 /// Bit of [`Primitive::Beam`]'s `butt`: the end continues into the next
 /// chord of a circle, so it has no round cap and no vertex dwell.
@@ -134,6 +140,22 @@ impl Vector3 {
         let p = project(&self.list, (0.0, 0.0), &mut segments);
         let faces = if p.faces > 0 { format!(", {} faces", p.faces) } else { String::new() };
         out.push_str(&format!("-- 3d: {} segments, length {:.1} units{faces}{} --\n", p.segments, p.length, if p.capped { ", capped" } else { "" }));
+        // The Surfaces in effect: what they show, and where the reference
+        // eye sees their corners on the glass.
+        let (panels, _) = surfaces(&self.list, (0.0, 0.0));
+        for r in p.surface_rects() {
+            out.push_str(&format!("-- surface {} {} {} {}", r[0], r[1], r[2], r[3]));
+            match panels.iter().find(|q| q.source == *r) {
+                Some(q) => {
+                    for c in q.corners {
+                        let (x, y) = to_glass(c, (EYE_X, EYE_Y));
+                        out.push_str(&format!(" ({x:.1}, {y:.1})"));
+                    }
+                    out.push_str(if q.front { " front --\n" } else { " back --\n" });
+                }
+                None => out.push_str(" no area --\n"),
+            }
+        }
         out
     }
 }
@@ -162,6 +184,10 @@ pub enum Command {
     /// A machine's screen as a panel: the handle (1-8) and the width in
     /// sixteenths (SPEC 13.3).
     Screen(u8, u16),
+    /// A rectangle of the machine's own 2D layers as a panel: x, y, width,
+    /// height (screen units, as given) and the panel's width in sixteenths
+    /// (SPEC 13.3).
+    Surface([u16; 4], u16),
 }
 
 impl Command {
@@ -180,6 +206,7 @@ impl Command {
             Command::Scale(_) => op::SCALE,
             Command::Face(..) => op::FACE,
             Command::Screen(..) => op::SCREEN,
+            Command::Surface(..) => op::SURFACE,
         }
     }
 }
@@ -205,6 +232,7 @@ impl fmt::Display for Command {
                 corners[..*n as usize].iter().try_for_each(|p| write!(f, " {}", xyz(p)))
             }
             Command::Screen(h, w) => write!(f, "screen {h} {w}"),
+            Command::Surface(r, w) => write!(f, "surface {} {} {} {} {w}", r[0], r[1], r[2], r[3]),
         }
     }
 }
@@ -222,6 +250,7 @@ fn operand_len(opcode: u8, first: Option<u8>) -> Option<usize> {
         op::MOVE | op::LINE | op::TRANSLATE => 6,
         op::POINT | op::PUSH | op::POP => 0,
         op::ROTATE | op::SCREEN => 3,
+        op::SURFACE => 10,
         _ => return None,
     })
 }
@@ -290,6 +319,7 @@ impl Iterator for Decoder<'_> {
                 }
                 Command::Screen(o[0], u16::from_le_bytes([o[1], o[2]]))
             }
+            op::SURFACE => Command::Surface([u16_at(0), u16_at(2), u16_at(4), u16_at(6)], u16_at(8)),
             op::FACE => {
                 let at = |i: usize| [0, 2, 4].map(|k| u16::from_le_bytes([o[1 + 6 * i + k], o[2 + 6 * i + k]]) as i16);
                 let mut corners = [[0; 3]; 4];
@@ -415,6 +445,9 @@ pub enum Figure {
     /// A machine's screen: the handle and the panel's corners (top left,
     /// top right, bottom right, bottom left, as on the glass).
     Screen(u8, [[f64; 3]; 4]),
+    /// A Surface: its source rectangle clamped to the screen, the panel
+    /// width (sixteenths) and its corners as a Screen's.
+    Surface([u16; 4], u16, [[f64; 3]; 4]),
 }
 
 impl State {
@@ -453,9 +486,26 @@ impl State {
                 let corners = [[-x, -y, 0.0], [x, -y, 0.0], [x, y, 0.0], [-x, y, 0.0]].map(|p| self.transform.apply(p));
                 return Some(Figure::Screen(h, corners));
             }
+            Command::Surface(r, w) => {
+                let src = clamp_rect(r);
+                // w/16 units wide, as high as the source's shape says.
+                let x = w as f64 / 32.0;
+                let y = if src[2] == 0 { 0.0 } else { x * src[3] as f64 / src[2] as f64 };
+                let corners = [[-x, -y, 0.0], [x, -y, 0.0], [x, y, 0.0], [-x, y, 0.0]].map(|p| self.transform.apply(p));
+                return Some(Figure::Surface(src, w, corners));
+            }
         }
         None
     }
+}
+
+/// A rectangle (x, y, width, height in screen units) clamped so it lies on
+/// the screen, as the page's rectangle is (SPEC 11.2): x to at most 640, y
+/// to at most 480, the width to at most 640 − x, the height to at most 480 − y.
+pub fn clamp_rect(r: [u16; 4]) -> [u16; 4] {
+    let x = r[0].min(640);
+    let y = r[1].min(480);
+    [x, y, r[2].min(640 - x), r[3].min(480 - y)]
 }
 
 /// (sin, cos) of k/64 of a turn, k = 0 to 63: a circle's points.
@@ -556,6 +606,17 @@ pub struct Projection {
     /// A command was stopped by a cap (or a segment by the cap on what is
     /// drawn after cutting).
     pub capped: bool,
+    /// Surfaces in effect (SPEC 13.3), and their source rectangles (clamped)
+    /// in list order: what is not drawn on the glass.
+    pub surfaces: usize,
+    pub rects: [[u16; 4]; MAX_SURFACES],
+}
+
+impl Projection {
+    /// The source rectangles of the Surfaces in effect.
+    pub fn surface_rects(&self) -> &[[u16; 4]] {
+        &self.rects[..self.surfaces]
+    }
 }
 
 /// The segments a host draws for `list` (SPEC 13.4, 13.5), with the eye
@@ -576,7 +637,9 @@ pub fn project(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>) -> Projec
 /// number of segments each line, point and circle gave, as 2 bytes
 /// (little-endian) each: two projections with the same opcodes and the
 /// same `pieces` give segments that line up one for one. Screens are
-/// ignored (the list of a machine that is not the shell, SPEC 13.3).
+/// ignored (the list of a machine that is not the shell, SPEC 13.3);
+/// Surfaces in effect hide as faces do (their panels are not returned: see
+/// [`project_scene`]).
 pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pieces: &mut Vec<u8>) -> Projection {
     project_scene(list, eye, &SceneView::LISTED, out, pieces, &mut Vec::new())
 }
@@ -602,39 +665,46 @@ impl SceneView {
     pub const LISTED: SceneView = SceneView { screens: 0, view: Transform::IDENTITY };
 }
 
-/// A Screen in effect as the eye sees it: the machine's panel, its corners
-/// (top left, top right, bottom right, bottom left of the machine's
-/// picture) in screen units after the view, whether its front is towards
-/// the eye, and the distance from the eye to its centre.
+/// A Screen or a Surface in effect as the eye sees it: the machine whose
+/// screen it shows (its handle; 0 for a Surface, which shows the list's own
+/// machine), the rectangle of that screen it shows (screen units: the whole
+/// screen for a Screen), its corners (top left, top right, bottom right,
+/// bottom left of that rectangle) in screen units after the view, whether
+/// its front is towards the eye, and the distance from the eye to its
+/// centre.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Panel {
     pub handle: u8,
+    pub source: [u16; 4],
     pub corners: [[f64; 3]; 4],
     pub front: bool,
     pub distance: f64,
 }
 
-/// [`project_pieces`] for the shell's list (SPEC 13.3 Screen): the Screens
-/// of the handles in `scene.screens` (the first of each handle) count as
-/// faces and hide what is behind them, and go into `panels` (cleared), far
-/// to near; everything is moved by `scene.view` before it is seen from the
-/// eye. What the caps count is measured on the list as given.
-pub fn project_scene(
-    list: &[u8],
-    eye: (f32, f32),
-    scene: &SceneView,
-    out: &mut Vec<Primitive>,
-    pieces: &mut Vec<u8>,
-    panels: &mut Vec<Panel>,
-) -> Projection {
-    let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
-    let eye = (EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1));
-    let start = out.len();
-    pieces.clear();
+impl Panel {
+    /// Whether it is a Surface (the list's own machine's 2D layers).
+    pub fn is_surface(&self) -> bool {
+        self.handle == 0
+    }
+}
+
+/// What a list gives once its caps are applied (SPEC 13.4): the figures
+/// that are drawn (with their width and colour), the faces (the Screens and
+/// Surfaces in effect among them) and the counts.
+struct Walk {
+    drawn: Vec<(Figure, u8, Rgba)>,
+    faces: Vec<Vec<[f64; 3]>>,
+    projection: Projection,
+}
+
+/// Walks `list` as [`project_scene`] does, without cutting any segment:
+/// what the caps let through, and the panels into `panels` (cleared), far
+/// to near.
+fn walk(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>) -> Walk {
     panels.clear();
     let mut state = State::default();
     let (mut length, mut count) = (0.0f64, 0usize);
-    let mut capped = false;
+    let mut projection = Projection::default();
     let mut drawn = Vec::new();
     let mut faces = Vec::new();
     let mut seen = 0u8;
@@ -642,23 +712,28 @@ pub fn project_scene(
     let moved = *v != Transform::IDENTITY;
     for c in decode(list) {
         let Some(figure) = state.step(&c) else { continue };
-        if let Figure::Screen(h, _) = figure {
-            // Only the first Screen of a handle, and only in effect.
-            let first = seen & 1 << (h - 1) == 0;
-            seen |= 1 << (h - 1);
-            if !first || scene.screens & 1 << (h - 1) == 0 {
-                continue;
+        match figure {
+            Figure::Screen(h, _) => {
+                // Only the first Screen of a handle, and only in effect.
+                let first = seen & 1 << (h - 1) == 0;
+                seen |= 1 << (h - 1);
+                if !first || scene.screens & 1 << (h - 1) == 0 {
+                    continue;
+                }
             }
+            // The first four with a source rectangle and a width.
+            Figure::Surface(src, w, _) if src[2] == 0 || src[3] == 0 || w == 0 || projection.surfaces == MAX_SURFACES => continue,
+            _ => {}
         }
         let (n, len, f) = match &figure {
             Figure::Line(a, b) => (1, counted_length(*a, *b), 0),
             Figure::Point(_) => (1, 0.0, 0),
             Figure::Circle(ring) => (CIRCLE_CHORDS, (0..ring.len()).map(|k| counted_length(ring[k], ring[(k + 1) % ring.len()])).sum(), 0),
-            Figure::Face(_) | Figure::Screen(..) => (0, 0.0, 1),
+            Figure::Face(_) | Figure::Screen(..) | Figure::Surface(..) => (0, 0.0, 1),
         };
         let nf = faces.len() + f;
         if length + len > LENGTH_CAP || count + n > SEGMENT_CAP || nf > FACE_CAP || nf * (count + n) > FACE_WORK_CAP {
-            capped = true;
+            projection.capped = true;
             break;
         }
         length += len;
@@ -668,15 +743,83 @@ pub fn project_scene(
             Figure::Face(corners) => faces.push(corners),
             Figure::Screen(h, corners) => {
                 faces.push(corners.to_vec());
-                if let Some(p) = Panel::seen(h, corners, eye) {
+                if let Some(p) = Panel::seen(h, WHOLE_SCREEN, corners, eye) {
+                    panels.push(p);
+                }
+            }
+            Figure::Surface(src, _, corners) => {
+                faces.push(corners.to_vec());
+                projection.rects[projection.surfaces] = src;
+                projection.surfaces += 1;
+                if let Some(p) = Panel::seen(0, src, corners, eye) {
                     panels.push(p);
                 }
             }
             figure => drawn.push((figure, state.width.clamp(1, MAX_WIDTH) as u8, state.rgba)),
         }
     }
-    // Far to near; the lower handle first where they are as far.
+    // Far to near; the lower handle first where they are as far (a
+    // Surface, handle 0, before a Screen), then in list order.
     panels.sort_by(|a, b| b.distance.total_cmp(&a.distance).then(a.handle.cmp(&b.handle)));
+    projection.length = length;
+    projection.faces = faces.len();
+    Walk { drawn, faces, projection }
+}
+
+/// The Surfaces in effect in a machine's own `list` (SPEC 13.3), as the
+/// eye moved `eye` from the reference eye sees them, far to near, and what
+/// the caps let through (no segments are cut: `segments` is 0).
+pub fn surfaces(list: &[u8], eye: (f32, f32)) -> (Vec<Panel>, Projection) {
+    let mut panels = Vec::new();
+    let w = walk(list, eye_at(eye), &SceneView::LISTED, &mut panels);
+    (panels, w.projection)
+}
+
+/// Whether `list` has a Surface command (in effect or not).
+pub fn has_surface(list: &[u8]) -> bool {
+    decode(list).any(|c| matches!(c, Command::Surface(..)))
+}
+
+/// Where a pointer at (x, y) on the glass goes on the machine whose list is
+/// `list` (SPEC 13.3 Surface): over the front of a Surface in effect (the
+/// nearest one the ray from the eye meets), the point of its source
+/// rectangle; otherwise (x, y) itself.
+pub fn surface_pointer(list: &[u8], eye: (f32, f32), x: u16, y: u16) -> (u16, u16) {
+    if !has_surface(list) {
+        return (x, y);
+    }
+    let (panels, _) = surfaces(list, eye);
+    match panel_hit(&panels, eye, x as f64 + 0.5, y as f64 + 0.5) {
+        Some((_, Some(at))) => at,
+        _ => (x, y),
+    }
+}
+
+/// The eye moved `eye` (each at most [`MAX_EYE_OFFSET`]) from the reference
+/// eye, in screen units.
+fn eye_at(eye: (f32, f32)) -> (f64, f64) {
+    let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
+    (EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1))
+}
+
+/// [`project_pieces`] for a list with panels (SPEC 13.3 Screen, Surface):
+/// the Screens of the handles in `scene.screens` (the first of each handle;
+/// only the shell's list has any in effect) and the first four Surfaces
+/// count as faces and hide what is behind them, and go into `panels`
+/// (cleared), far to near; everything is moved by `scene.view` before it is
+/// seen from the eye. What the caps count is measured on the list as given.
+pub fn project_scene(
+    list: &[u8],
+    eye: (f32, f32),
+    scene: &SceneView,
+    out: &mut Vec<Primitive>,
+    pieces: &mut Vec<u8>,
+    panels: &mut Vec<Panel>,
+) -> Projection {
+    let eye = eye_at(eye);
+    let start = out.len();
+    pieces.clear();
+    let Walk { drawn, faces, mut projection } = walk(list, eye, scene, panels);
     let mut hider = Hider::new(&faces, eye);
     let mut s = Segments { eye, hider: &mut hider, out, room: start + SEGMENT_CAP, capped: false };
     for (figure, width, rgba) in drawn {
@@ -689,14 +832,15 @@ pub fn project_scene(
                     s.segment(ring[k], ring[(k + 1) % ring.len()], BUTT_START | BUTT_END, width, rgba);
                 }
             }
-            Figure::Face(_) | Figure::Screen(..) => unreachable!(),
+            Figure::Face(_) | Figure::Screen(..) | Figure::Surface(..) => unreachable!(),
         }
         if !faces.is_empty() {
             pieces.extend_from_slice(&((s.out.len() - before).min(u16::MAX as usize) as u16).to_le_bytes());
         }
     }
-    capped |= s.capped;
-    Projection { segments: out.len() - start, length, faces: faces.len(), capped }
+    projection.capped |= s.capped;
+    projection.segments = out.len() - start;
+    projection
 }
 
 impl Figure {
@@ -708,14 +852,16 @@ impl Figure {
             Figure::Circle(ring) => Figure::Circle(ring.into_iter().map(|p| t.apply(p)).collect()),
             Figure::Face(c) => Figure::Face(c.into_iter().map(|p| t.apply(p)).collect()),
             Figure::Screen(h, c) => Figure::Screen(h, c.map(|p| t.apply(p))),
+            Figure::Surface(r, w, c) => Figure::Surface(r, w, c.map(|p| t.apply(p))),
         }
     }
 }
 
 impl Panel {
-    /// The panel of handle `h` with these corners, seen from the eye at
-    /// (ex, ey, −960); `None` if it has no area.
-    fn seen(handle: u8, corners: [[f64; 3]; 4], eye: (f64, f64)) -> Option<Panel> {
+    /// The panel of handle `h` (0: a Surface) showing `source`, with these
+    /// corners, seen from the eye at (ex, ey, −960); `None` if it has no
+    /// area.
+    fn seen(handle: u8, source: [u16; 4], corners: [[f64; 3]; 4], eye: (f64, f64)) -> Option<Panel> {
         let e = [eye.0, eye.1, -EYE_DISTANCE];
         let n = cross(sub(corners[1], corners[0]), sub(corners[3], corners[0]));
         if dot(n, n) < 1e-18 {
@@ -723,7 +869,7 @@ impl Panel {
         }
         let c = centre(&corners);
         let to_eye = sub(e, c);
-        Some(Panel { handle, corners, front: dot(n, to_eye) < 0.0, distance: dot(to_eye, to_eye).sqrt() })
+        Some(Panel { handle, source, corners, front: dot(n, to_eye) < 0.0, distance: dot(to_eye, to_eye).sqrt() })
     }
 }
 
@@ -754,12 +900,14 @@ pub fn screen_corners(list: &[u8], h: u8) -> Option<[[f64; 3]; 4]> {
 
 /// The pointer at (x, y) on the glass (screen units) seen from the eye at
 /// `eye` (moved from the reference eye, as for [`project`]) against the
-/// panels (SPEC 12.4): the nearest panel the ray from the eye through the
-/// point meets in front of the near plane, and where on its machine's
-/// screen (0-639, 0-479), or `None` there if it is seen from behind.
+/// panels (SPEC 12.4, 13.3 Surface): the nearest panel the ray from the eye
+/// through the point meets in front of the near plane, its handle (0 for a
+/// Surface), and where on its machine's screen it is (in its source
+/// rectangle; 0-639, 0-479 for a Screen), or `None` there if it is seen
+/// from behind.
 pub fn panel_hit(panels: &[Panel], eye: (f32, f32), x: f64, y: f64) -> Option<(u8, Option<(u16, u16)>)> {
-    let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
-    let e = [EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1), -EYE_DISTANCE];
+    let eye = eye_at(eye);
+    let e = [eye.0, eye.1, -EYE_DISTANCE];
     let d = sub([x, y, 0.0], e);
     let mut best: Option<(f64, u8, Option<(u16, u16)>)> = None;
     for p in panels {
@@ -780,7 +928,8 @@ pub fn panel_hit(panels: &[Panel], eye: (f32, f32), x: f64, y: f64) -> Option<(u
         if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
             continue;
         }
-        let at = p.front.then(|| (((u * 640.0) as u16).min(639), ((v * 480.0) as u16).min(479)));
+        let [sx, sy, sw, sh] = p.source;
+        let at = p.front.then(|| (sx + ((u * sw as f64) as u16).min(sw - 1), sy + ((v * sh as f64) as u16).min(sh - 1)));
         best = Some((t, p.handle, at));
     }
     best.map(|(_, h, at)| (h, at))
@@ -1941,5 +2090,162 @@ mod tests {
         let w = (0..3).map(|i| (m[1][i] - m[0][i]).powi(2)).sum::<f64>().sqrt();
         assert!((w - (320.0f64 * 605.0).sqrt()).abs() < 1e-6, "{w}");
         assert_eq!((ease(0), ease(2048), ease(4096), ease(5000)), (0.0, 0.5, 1.0, 1.0));
+    }
+
+    /// A Surface command: the source rectangle (screen units) and the
+    /// panel's width in screen units.
+    fn surface(r: [u16; 4], w: f64) -> Vec<u8> {
+        let mut v = vec![op::SURFACE];
+        r.iter().for_each(|x| v.extend(x.to_le_bytes()));
+        v.extend(((w * 16.0) as u16).to_le_bytes());
+        v
+    }
+
+    /// The Surfaces of a list as `surfaces` gives them, and its segments.
+    fn surfaced(list: &[u8], eye: (f32, f32)) -> (Vec<Panel>, Vec<Primitive>, Projection) {
+        let (mut out, mut panels) = (Vec::new(), Vec::new());
+        let p = project_scene(list, eye, &SceneView::LISTED, &mut out, &mut Vec::new(), &mut panels);
+        let (again, q) = surfaces(list, eye);
+        assert_eq!(again, panels);
+        assert_eq!((q.surfaces, q.rects, q.faces, q.capped), (p.surfaces, p.rects, p.faces, p.capped));
+        (panels, out, p)
+    }
+
+    /// Decoding, the text form, where a cut-off Surface ends the list, the
+    /// clamped source and the corners worked out by hand.
+    #[test]
+    fn surface_command() {
+        let list = [surface([1, 2, 3, 4], 10.0), surface([700, 500, 5, 5], 0.0)].concat();
+        assert_eq!(all(&list), [Command::Surface([1, 2, 3, 4], 160), Command::Surface([700, 500, 5, 5], 0)]);
+        assert_eq!(all(&list)[0].to_string(), "surface 1 2 3 4 160");
+        assert_eq!(opcodes(&list), [op::SURFACE, op::SURFACE]);
+        assert_eq!(all(&surface([1, 2, 3, 4], 1.0)[..10]), [], "cut off");
+        assert!(has_surface(&list) && !has_surface(&cmd(op::POINT, &[])));
+        // Clamped as the page's rectangle is.
+        assert_eq!(clamp_rect([600, 470, 100, 100]), [600, 470, 40, 10]);
+        assert_eq!(clamp_rect([700, 500, 5, 5]), [640, 480, 0, 0]);
+        assert_eq!(clamp_rect([0, 0, 640, 480]), WHOLE_SCREEN);
+        // 160 wide about (320, 240), the source's shape: 60 high.
+        let mut s = State::default();
+        s.step(&Command::Move([16, 32, 48]));
+        s.step(&Command::Translate([320 * 16, 240 * 16, 0]));
+        let Some(Figure::Surface(src, 2560, c)) = s.step(&Command::Surface([0, 0, 320, 120], 2560)) else { panic!() };
+        assert_eq!(src, [0, 0, 320, 120]);
+        assert_eq!(c, [[240.0, 210.0, 0.0], [400.0, 210.0, 0.0], [400.0, 270.0, 0.0], [240.0, 270.0, 0.0]]);
+        assert_eq!(s.point, [1.0, 2.0, 3.0], "the current point stays");
+        // A quarter turn about y, 480 deep: the left edge 100 deeper, the
+        // right 100 nearer; clamped source 40 × 10, so 50 high.
+        let list = [translate(320.0, 240.0, 480.0), cmd(op::ROTATE, &[1, 0x00, 0x40]), surface([600, 470, 100, 100], 200.0)].concat();
+        let (p, _, proj) = surfaced(&list, (0.0, 0.0));
+        assert_eq!(proj.surface_rects(), [[600, 470, 40, 10]]);
+        assert!(close(p[0].corners[0], [320.0, 215.0, 580.0]) && close(p[0].corners[1], [320.0, 215.0, 380.0]), "{:?}", p[0].corners);
+        assert!(close(p[0].corners[2], [320.0, 265.0, 380.0]) && close(p[0].corners[3], [320.0, 265.0, 580.0]), "{:?}", p[0].corners);
+        assert_eq!((p[0].handle, p[0].source), (0, [600, 470, 40, 10]));
+        assert!(p[0].is_surface());
+        // The dump names it and where its corners are.
+        let mut v = Vector3::default();
+        v.submit(&[translate(320.0, 240.0, 0.0), surface([0, 0, 320, 120], 160.0)].concat());
+        assert!(v.dump().contains("surface 0 0 320 120 2560\n"), "{}", v.dump());
+        assert!(v.dump().contains("-- surface 0 0 320 120 (240.0, 210.0) (400.0, 210.0) (400.0, 270.0) (240.0, 270.0) front --\n"), "{}", v.dump());
+    }
+
+    /// Only the first four Surfaces with a source and a width take effect;
+    /// the others draw nothing, hide nothing and are not counted.
+    #[test]
+    fn surface_cap() {
+        let behind = line([0.0, 240.0, 100.0], [640.0, 240.0, 100.0]);
+        let small = |x: f64| [cmd(op::PUSH, &[]), translate(x, 240.0, 0.0), surface([0, 0, 64, 48], 40.0), cmd(op::POP, &[])].concat();
+        let empty = [surface([10, 10, 0, 5], 40.0), surface([10, 10, 5, 0], 40.0), surface([10, 10, 5, 5], 0.0), surface([640, 0, 9, 9], 9.0)].concat();
+        let list = [empty, small(50.0), small(150.0), small(250.0), small(350.0), small(450.0), behind.clone()].concat();
+        let (p, out, proj) = surfaced(&list, (0.0, 0.0));
+        assert_eq!((proj.surfaces, proj.faces, p.len()), (4, 4, 4));
+        assert!(p.iter().all(|p| p.source == [0, 0, 64, 48]));
+        // The line is cut where the first four are, not at the fifth (430
+        // to 470).
+        let covered = |x: f64| {
+            out.iter().all(|b| {
+                let Primitive::Beam { x0, x1, .. } = *b else { panic!() };
+                let (a, b) = (x0.min(x1) as f64 / 16.0, x0.max(x1) as f64 / 16.0);
+                !(a < x && x < b)
+            })
+        };
+        assert!(covered(50.0) && covered(150.0) && covered(350.0), "{out:?}");
+        assert!(!covered(450.0), "the fifth hides nothing: {out:?}");
+        // The face caps: 256 faces, then a Surface is not drawn.
+        let mut many: Vec<u8> = std::iter::repeat_n(face(&TRIANGLE), 256).flatten().collect();
+        many.extend(small(320.0));
+        let (p, _, proj) = surfaced(&many, (0.0, 0.0));
+        assert_eq!((p.len(), proj.faces, proj.surfaces, proj.capped), (0, 256, 0, true));
+        // 255 faces: the Surface is the 256th.
+        let mut fits: Vec<u8> = std::iter::repeat_n(face(&TRIANGLE), 255).flatten().collect();
+        fits.extend(small(320.0));
+        let (_, _, proj) = surfaced(&fits, (0.0, 0.0));
+        assert_eq!((proj.faces, proj.surfaces, proj.capped), (256, 1, false));
+    }
+
+    /// A Surface hides exactly as a Face of its four corners, from any eye,
+    /// and lines in front of it are drawn; a list without Surfaces gives no
+    /// panels and no rectangles.
+    #[test]
+    fn surfaces_hide_as_faces() {
+        let lines = [
+            line([0.0, 240.0, 100.0], [640.0, 240.0, 100.0]),
+            line([0.0, 200.0, -100.0], [640.0, 260.0, -100.0]),
+            line([300.0, 0.0, 300.0], [340.0, 480.0, -300.0]),
+            cmd(op::MOVE, &xyz(320 * 16, 250 * 16, 50 * 16)),
+            cmd(op::POINT, &[]),
+        ]
+        .concat();
+        let place = [translate(320.0, 240.0, 40.0), cmd(op::ROTATE, &[1, 0x00, 0x10]), cmd(op::ROTATE, &[0, 0x00, 0x08])].concat();
+        let with = [cmd(op::PUSH, &[]), place.clone(), surface([100, 100, 300, 150], 400.0), cmd(op::POP, &[]), lines.clone()].concat();
+        let local = [[-200.0, -100.0, 0.0], [200.0, -100.0, 0.0], [200.0, 100.0, 0.0], [-200.0, 100.0, 0.0]];
+        let as_face = [cmd(op::PUSH, &[]), place.clone(), face(&local), cmd(op::POP, &[]), lines.clone()].concat();
+        for eye in [(0.0, 0.0), (-160.0, 0.0), (160.0, 120.0), (37.5, -100.0)] {
+            let (_, out, proj) = surfaced(&with, eye);
+            assert_eq!(out, beams(&as_face, eye), "eye {eye:?}");
+            assert_eq!((proj.faces, proj.surfaces), (1, 1));
+            assert!(out.len() > 3, "something is cut: {out:?}");
+        }
+        // Without: nothing of the Surfaces.
+        let (p, out, proj) = surfaced(&lines, (0.0, 0.0));
+        assert_eq!((p.len(), proj.surfaces, proj.surface_rects().len()), (0, 0, 0));
+        assert_eq!(out, beams(&lines, (0.0, 0.0)));
+    }
+
+    /// The pointer over a Surface goes to the point of its source rectangle
+    /// (SPEC 13.3): the centre, the corners, from a moved eye, from behind,
+    /// two overlapping, over none.
+    #[test]
+    fn surface_pointer_mapping() {
+        // (120, 140) to (520, 340) on the glass, showing (100, 50) 200 × 100.
+        let flat = [translate(320.0, 240.0, 0.0), surface([100, 50, 200, 100], 400.0)].concat();
+        assert_eq!(surface_pointer(&flat, (0.0, 0.0), 320, 240), (200, 100));
+        assert_eq!(surface_pointer(&flat, (0.0, 0.0), 120, 140), (100, 50));
+        assert_eq!(surface_pointer(&flat, (0.0, 0.0), 519, 339), (299, 149));
+        assert_eq!(surface_pointer(&flat, (160.0, -160.0), 519, 339), (299, 149), "on the glass: any eye");
+        assert_eq!(surface_pointer(&flat, (0.0, 0.0), 520, 240), (520, 240), "over none");
+        assert_eq!(surface_pointer(&flat, (0.0, 0.0), 119, 140), (119, 140));
+        // 960 behind the glass, the whole screen 640 wide: half size about
+        // the eye's point.
+        let far = [translate(320.0, 240.0, 960.0), surface(WHOLE_SCREEN, 640.0)].concat();
+        assert_eq!(surface_pointer(&far, (0.0, 0.0), 320, 240), (321, 241));
+        assert_eq!(surface_pointer(&far, (160.0, 0.0), 320, 240), (161, 241));
+        assert_eq!(surface_pointer(&far, (0.0, 0.0), 100, 240), (100, 240), "outside it");
+        // Seen from behind (half a turn about y): the glass position.
+        let back = [translate(320.0, 240.0, 100.0), cmd(op::ROTATE, &[1, 0x00, 0x80]), surface([0, 0, 64, 48], 320.0)].concat();
+        let (p, ..) = surfaced(&back, (0.0, 0.0));
+        assert!(!p[0].front);
+        assert_eq!(panel_hit(&p, (0.0, 0.0), 320.5, 240.5), Some((0, None)));
+        assert_eq!(surface_pointer(&back, (0.0, 0.0), 320, 240), (320, 240));
+        // Two overlapping: the nearer wins, wherever it is in the list.
+        let near = [cmd(op::PUSH, &[]), translate(320.0, 240.0, -100.0), surface([0, 0, 100, 100], 100.0), cmd(op::POP, &[])].concat();
+        let list = [near.clone(), far.clone()].concat();
+        let (p, ..) = surfaced(&list, (0.0, 0.0));
+        assert_eq!(p.iter().map(|p| p.source[2]).collect::<Vec<_>>(), [640, 100], "far to near");
+        // The near one: 100 wide at z = −100, so 960/860 as wide on the glass.
+        let at = surface_pointer(&list, (0.0, 0.0), 320, 240);
+        assert_eq!(at, (50, 50));
+        assert_eq!(surface_pointer(&[cmd(op::PUSH, &[]), far, cmd(op::POP, &[]), near].concat(), (0.0, 0.0), 320, 240), at);
+        assert_eq!(surface_pointer(&list, (0.0, 0.0), 200, 240), (81, 241), "only the far one there");
     }
 }

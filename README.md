@@ -1156,6 +1156,30 @@ with 256); the caps count as if nothing were hidden, so the same commands are dr
 from every eye, and at most 16,384 pieces are drawn after cutting. A list without
 faces draws exactly as before.
 
+**Surfaces** (Surface, opcode `0Eh`: a source rectangle x, y, w, h of the program's
+own screen, clamped as the page's rectangle is, and a panel width) let any program
+with device 9 put parts of its own 2D layers (terminal, page, 2D shapes; never its 3D
+list) on flat panels in its scene: a panel as wide as given and as high as the
+source's shape, centred on the transform's origin like a Screen. At most 4 take
+effect in a list; each counts as a face and hides the lines behind it as a Face of
+its corners does. The machine is then drawn as its glass (its 2D layers with the
+sources black: what a Surface shows is not also on the glass), the Surfaces far to
+near in perspective, then its 3D lines over them; with no Surface nothing changes
+by a pixel. Wherever the machine is shown (alone, in a tile, as a panel in the
+shell's gallery) it is this complete picture; the shell's own Surfaces join its
+panels. A pointer over a Surface's front (the nearest one the ray from the eye
+meets) is delivered as a pointer at the matching point of its source
+(`vector3::surface_pointer`, applied by `System`'s routing to every machine), so text
+and page anchors on a console can be clicked; anywhere else, as on the glass. The
+GPU draws the machine's 2D layers a second time into a texture as large as the glass
+(larger, up to twice, if a Surface magnifies its source) when they change, and maps
+it like a panel; the software renderer samples a pyramid of the part of the screen's
+own image the sources cover. In the phosphor style the sources give no light on the
+glass (nothing of them blooms there), the 2D layers on a Surface glow with their
+afterglow (it belongs to the screen, so it moves with the panel), and the 3D lines
+over the Surfaces are drawn as over the shell's panels, as clean beams with the
+depth cue. `v3_surface(x, y, w, h, width)` builds one.
+
 `terse_core::vector3::project` turns a list and an eye into the segments to draw (on
 the glass, in sixteenths, with the depth cue at each end and, where a circle's
 chords join or a face cut a line, butt ends instead of round caps and vertex dwell),
@@ -1192,12 +1216,19 @@ its faces).
 
 ## Holo
 
-`programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–5
+`programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–6
 choose one: a turning cube and icosahedron labelled on the glass, six nested rings
 each turning in the one outside it, 384 points receding from the glass, an orrery
-of four planets on tilted orbits (two with moons), and a city: ten solid blocks
+of four planets on tilted orbits (two with moons), a city: ten solid blocks
 round a tower (eleven in all) on a ground grid, turning, so that blocks pass in front of one another
-and hide each other and the ground (55 faces). H makes the cube and icosahedron
+and hide each other and the ground (55 faces), and a cockpit: stars streaming past
+and three wire octahedra receding through a wire-frame canopy, over a solid
+dashboard with three angled consoles, each a Surface showing a region of holo's
+terminal (instruments that change every frame, a log that scrolls, a list of
+targets). A click on a row of the list on its tilted console selects it (holo gets
+an ordinary pointer event inside the list's region); a status line stays on the
+glass, and in the cockpit the arrows bank and pitch the craft, consoles and canopy
+together. H makes the cube and icosahedron
 solid (6 and 20 faces) and wire again. The arrows turn the model, A stops and
 starts the turning, R resets the view, P switches between the clean and the
 phosphor style. All the rotation is the host's (Rotate); the program only
@@ -1208,9 +1239,12 @@ frame on the glass stay put.
     cargo run --release -p terse-host -- programs/holo/holo.terse
     cargo run --release -p terse-host -- programs/holo/holo.terse --frames 90 --eye 160,0 --screenshot /tmp/holo.png
 
-ROM 5,460 bytes, 2 RAM pages; devices 2 and 9. Tests: `crates/terse-cli/tests/holo.rs`
+ROM 10,284 bytes, 2 RAM pages; devices 2 and 9; the busiest frame of every scene
+uses at most 23% of the budget (the city in the phosphor style; the cockpit's 23.1%,
+its typical frame 15.7%). Tests: `crates/terse-cli/tests/holo.rs`
 (golden screens of each scene in `programs/holo/expected/`, the keys, the solids,
-the first four scenes' segments unchanged by faces, the frame budget).
+the first four scenes' segments unchanged by faces, the frame budget, the cockpit's
+Surfaces and a click through its tilted console from three eyes).
 
 ## Page
 

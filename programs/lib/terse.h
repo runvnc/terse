@@ -417,6 +417,8 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define V3_OP_SCALE 0x0B
 #define V3_OP_FACE 0x0C
 #define V3_OP_SCREEN 0x0D
+#define V3_OP_SURFACE 0x0E
+#define V3_MAX_SURFACES 4
 
 /* Builder, as the device 3 builder: appends at v3_ptr, never past
  * v3_limit (the end of the `cap` bytes given to v3_begin); a command that
@@ -448,6 +450,14 @@ void v3_face4(const int16_t *a, const int16_t *b, const int16_t *c, const int16_
  * plane, facing -z (as the glass faces the viewer). Opaque: it hides lines
  * behind it. The current point stays. */
 void v3_screen(uint8_t handle, uint16_t width);
+/* The rectangle x, y, w, h (screen units) of this machine's own 2D layers
+ * (terminal, page, 2D shapes) as a flat panel `width` sixteenths wide and
+ * as high as the rectangle's shape, centred on the transform's origin in
+ * its xy plane, facing -z. Opaque: it hides lines behind it; the
+ * rectangle is then not drawn on the glass, and a pointer over the panel
+ * arrives as a pointer inside the rectangle. At most 4 take effect in a
+ * list. The current point stays. */
+void v3_surface(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t width);
 
 /* Submits `len` bytes at `list` (in RAM); returns VEC_DONE or VEC_REJECTED.
  * Costs 1 unit per 4 bytes. */
