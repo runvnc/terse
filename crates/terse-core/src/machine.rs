@@ -235,9 +235,7 @@ impl Machine {
     /// if the image lists it; `builtins` are the IDs `builtin` returns.
     pub fn new_shell(image: &Image, builtins: Vec<[u8; 32]>) -> Self {
         let mut m = Machine::new(image);
-        if m.listed[crate::machines::SLOT as usize] {
-            m.machines = Some(Machines::new(builtins));
-        }
+        m.grant_machines(builtins);
         m
     }
 
@@ -352,6 +350,24 @@ impl<D: Devices> Machine<D> {
             open_request: None,
             argument: None,
         }
+    }
+
+    /// Grants device 8 (SPEC 12.1) if the image lists it: the machine is
+    /// a shell; `builtins` are the IDs `builtin` returns.
+    pub fn grant_machines(&mut self, builtins: Vec<[u8; 32]>) {
+        if self.listed[crate::machines::SLOT as usize] {
+            self.machines = Some(Machines::new(builtins));
+        }
+    }
+
+    /// Device 9's list (empty without device 9).
+    pub fn list3(&self) -> std::borrow::Cow<'_, [u8]> {
+        self.devices.list3()
+    }
+
+    /// Whether the image lists device `slot`.
+    pub fn lists(&self, slot: u8) -> bool {
+        self.listed[slot as usize]
     }
 
     /// The devices.
@@ -611,7 +627,8 @@ impl<D: Devices> Machine<D> {
             match &mut self.machines {
                 Some(machines) => {
                     let (rom, ram) = self.memory.split();
-                    let ctx = crate::machines::CallContext { frame: self.system.frame(), list: self.devices.list3() };
+                    let list = self.devices.list3();
+                    let ctx = crate::machines::CallContext { frame: self.system.frame(), list: &list };
                     let (r, extra) = machines.call(n, args, rom, ram, ctx);
                     units += extra;
                     r
@@ -742,6 +759,11 @@ impl<D: Devices> Machine<D> {
         self.machines.as_mut()
     }
 
+    /// Device 8 to change, and the devices to look at.
+    pub fn machines_and_devices(&mut self) -> (Option<&mut Machines>, &D) {
+        (self.machines.as_mut(), &self.devices)
+    }
+
     pub fn system(&self) -> &System {
         &self.system
     }
@@ -794,23 +816,34 @@ impl Machine {
     /// first frame (SPEC 9.2). The identity and whether it is in a system
     /// are the caller's to set.
     pub fn restore(image: &Image, state: &[u8]) -> Result<Machine, crate::snapshot::RestoreError> {
+        let mut m = Machine::new(image);
+        m.load_state(state)?;
+        Ok(m)
+    }
+}
+
+impl<D: Devices> Machine<D> {
+    /// Makes this machine, at reset, the machine whose state serialization
+    /// is `state` (STATE.md 4; [`Machine::restore`]): the core's sections
+    /// here, each device's by its devices. Afterwards `try_state()` is
+    /// `state`, byte for byte.
+    pub fn load_state(&mut self, state: &[u8]) -> Result<(), crate::snapshot::RestoreError> {
         use crate::snapshot::{RestoreError, Reader, bad};
         let mut r = Reader::new(state);
         if r.take(STATE_DOMAIN.len())? != STATE_DOMAIN {
             return Err(bad("not a terse-state-1 serialization"));
         }
-        if r.array::<32>()? != image.id {
+        if r.array::<32>()? != self.image_id {
             return Err(RestoreError::WrongImage);
         }
-        let mut m = Machine::new(image);
-        m.cpu.pc = r.u32()?;
+        self.cpu.pc = r.u32()?;
         for i in 1..32 {
-            m.cpu.x[i] = r.u32()?;
+            self.cpu.x[i] = r.u32()?;
         }
-        m.cpu.min_sp = m.cpu.x[2];
+        self.cpu.min_sp = self.cpu.x[2];
         let frame = r.u32()?;
         let (stopped, code, kind, detail, pc, addr) = (r.u8()?, r.u8()?, r.u8()?, r.u32()?, r.u32()?, r.u32()?);
-        m.stopped = match stopped {
+        self.stopped = match stopped {
             0 => None,
             1 => Some(Stopped::Exit(code)),
             2 => {
@@ -831,56 +864,44 @@ impl Machine {
         if budget > 0 {
             return Err(bad("a positive budget carried"));
         }
-        m.budget = budget as i64;
-        let ram_len = m.memory.ram().len();
+        self.budget = budget as i64;
+        let ram_len = self.memory.ram().len();
         if r.u32()? as usize != ram_len {
             return Err(bad("RAM size"));
         }
-        m.memory.split().1.copy_from_slice(r.take(ram_len)?);
-        m.system.restore(frame, &mut r)?;
-        if r.flag()? != m.devices.terminal.is_some() {
-            return Err(bad("terminal present"));
-        }
-        if let Some(t) = &mut m.devices.terminal {
-            t.restore(&mut r)?;
-        }
-        if r.flag()? != m.devices.vector.is_some() {
-            return Err(bad("vector display present"));
-        }
-        if let Some(v) = &mut m.devices.vector {
-            v.restore(&mut r)?;
-            // Without device 3 the fill mode and the 2D list cannot be set.
-            if !m.listed[3] && (!v.fill() || !v.list().is_empty()) {
-                return Err(bad("a fill mode or 2D list without device 3"));
+        self.memory.split().1.copy_from_slice(r.take(ram_len)?);
+        self.system.restore(frame, &mut r)?;
+        for slot in [2u8, 3, 4, 7] {
+            let present = self.listed[slot as usize] || (slot == 3 && self.listed[crate::vector3::SLOT as usize]);
+            if r.flag()? != present {
+                return Err(bad(match slot {
+                    2 => "terminal present",
+                    3 => "vector display present",
+                    4 => "content present",
+                    _ => "page present",
+                }));
+            }
+            if present {
+                let n = self.devices.restore_state(slot, r.rest(), ram_len)?;
+                r.take(n)?;
             }
         }
-        if r.flag()? != m.devices.content.is_some() {
-            return Err(bad("content present"));
-        }
-        if let Some(c) = &mut m.devices.content {
-            c.restore(&mut r, ram_len)?;
-        }
-        if r.flag()? != m.devices.page.is_some() {
-            return Err(bad("page present"));
-        }
-        if let Some(p) = &mut m.devices.page {
-            p.restore(&mut r)?;
-        }
-        if m.listed[crate::machines::SLOT as usize] && r.u8()? != 0 {
+        if self.listed[crate::machines::SLOT as usize] && r.u8()? != 0 {
             return Err(bad("the state of a shell cannot be restored"));
         }
-        if let Some(v) = &mut m.devices.vector3 {
-            v.restore(&mut r)?;
+        if self.listed[crate::vector3::SLOT as usize] {
+            let n = self.devices.restore_state(crate::vector3::SLOT, r.rest(), ram_len)?;
+            r.take(n)?;
         }
-        m.argument = match r.remaining() {
+        self.argument = match r.remaining() {
             0 => None,
             32 => Some(r.array()?),
             _ => return Err(bad("length")),
         };
         // Every field as `state` writes it, so nothing was out of range.
-        if m.state() != state {
+        if self.try_state().ok().as_deref() != Some(state) {
             return Err(bad("not as this machine would write it"));
         }
-        Ok(m)
+        Ok(())
     }
 }

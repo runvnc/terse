@@ -8,6 +8,7 @@
 //! the system is a single machine: every event goes to it unchanged and the
 //! home key is dropped.
 
+use crate::devices::{Devices, InProcess};
 use crate::image::Image;
 use crate::machine::{FrameResult, Machine, Stopped};
 use crate::machines::{Command, MAX_MACHINES, ProgramId, StartFailure, failure, map_into, picture, state};
@@ -22,12 +23,12 @@ pub struct Who {
     pub serial: u32,
 }
 
-/// What a host does for the machines of a system.
-pub trait Driver {
+/// What a host does for the machines of a system (with devices `D`).
+pub trait Driver<D: Devices = InProcess> {
     /// Runs one frame of `machine` with the input `events` the system
     /// routed to it (the driver adds the device events it produces itself:
     /// content completions, page events, feeds updated) and `controllers`.
-    fn frame(&mut self, who: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS])
+    fn frame(&mut self, who: Who, machine: &mut Machine<D>, events: Vec<Event>, controllers: [Controller; CONTROLLERS])
     -> FrameResult;
     /// The shell started machine `serial`: fetch the image with this ID
     /// and hand it to [`System::deliver_image`].
@@ -43,25 +44,25 @@ pub trait Driver {
     /// 12.7), durably. Returns the result if it is known at once; else the
     /// host reports it later with [`System::snapshot_done`]. The default
     /// keeps no snapshots.
-    fn save_snapshot(&mut self, shell: &Machine, slot: u8, snapshot: Snapshot) -> Option<bool> {
+    fn save_snapshot(&mut self, shell: &Machine<D>, slot: u8, snapshot: Snapshot) -> Option<bool> {
         let _ = (shell, slot, snapshot);
         Some(false)
     }
     /// The shell asked to restore the snapshot in `slot` as machine
     /// `serial`: read it, get its image (store, else network) and hand both
     /// to [`System::deliver_snapshot`], or return them at once.
-    fn want_snapshot(&mut self, serial: u32, shell: &Machine, slot: u8) -> Option<Result<(Image, Snapshot), StartFailure>> {
+    fn want_snapshot(&mut self, serial: u32, shell: &Machine<D>, slot: u8) -> Option<Result<(Image, Snapshot), StartFailure>> {
         let _ = (serial, shell);
         Some(Err(StartFailure { reason: failure::SNAPSHOT, image: None, message: format!("no snapshot in slot {slot}") }))
     }
     /// Remove the snapshot in `slot` of `shell`'s snapshots.
-    fn delete_snapshot(&mut self, shell: &Machine, slot: u8) {
+    fn delete_snapshot(&mut self, shell: &Machine<D>, slot: u8) {
         let _ = (shell, slot);
     }
 }
 
 /// A machine the shell started.
-pub struct Child {
+pub struct Child<D: Devices = InProcess> {
     pub serial: u32,
     /// The image ID given to `start`; for `start_program`, that of the
     /// version the host delivered (zero until then).
@@ -69,7 +70,7 @@ pub struct Child {
     /// The identity it was started with (`start_program`).
     pub identity: Option<ProgramId>,
     /// The machine, once its image has been loaded.
-    pub machine: Option<Machine>,
+    pub machine: Option<Machine<D>>,
     /// The image's title, once loaded.
     pub title: String,
     /// Why the start failed, if it did.
@@ -95,9 +96,9 @@ pub struct SystemFrame {
     pub children: Vec<(u8, FrameResult)>,
 }
 
-pub struct System {
-    shell: Machine,
-    children: [Option<Child>; MAX_MACHINES],
+pub struct System<D: Devices = InProcess> {
+    shell: Machine<D>,
+    children: [Option<Child<D>>; MAX_MACHINES],
     next_serial: u32,
     /// Buttons of the last pointer event (to tell presses).
     buttons: u8,
@@ -134,13 +135,24 @@ impl System {
     /// the host's built-in programs. Without, it is a single machine.
     pub fn new(image: &Image, shell: bool, builtins: Vec<[u8; 32]>) -> Self {
         let shell = if shell { Machine::new_shell(image, builtins) } else { Machine::new(image) };
-        System { shell, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new(), eye: (0.0, 0.0) }
+        System::with_machine(shell)
     }
+}
 
-    /// A single machine that already exists (a restored one, `terse run
-    /// --load-state`).
-    pub fn with_machine(machine: Machine) -> Self {
-        System { shell: machine, children: Default::default(), next_serial: 1, buttons: 0, saving: Vec::new(), saved: Vec::new(), eye: (0.0, 0.0) }
+impl<D: Devices> System<D> {
+    /// A system whose shell (or single machine) already exists: a restored
+    /// one (`terse run --load-state`), or one with devices elsewhere (a
+    /// shell is one granted device 8, [`Machine::grant_machines`]).
+    pub fn with_machine(machine: Machine<D>) -> Self {
+        System {
+            shell: machine,
+            children: Default::default(),
+            next_serial: 1,
+            buttons: 0,
+            saving: Vec::new(),
+            saved: Vec::new(),
+            eye: (0.0, 0.0),
+        }
     }
 
     /// The shell's snapshot slots as the host has them when the system
@@ -170,11 +182,11 @@ impl System {
         }
     }
 
-    pub fn shell(&self) -> &Machine {
+    pub fn shell(&self) -> &Machine<D> {
         &self.shell
     }
 
-    pub fn shell_mut(&mut self) -> &mut Machine {
+    pub fn shell_mut(&mut self) -> &mut Machine<D> {
         &mut self.shell
     }
 
@@ -190,22 +202,27 @@ impl System {
     }
 
     /// The machine with handle `h` (1-8), if the shell started one.
-    pub fn child(&self, h: u8) -> Option<&Child> {
+    pub fn child(&self, h: u8) -> Option<&Child<D>> {
         self.children.get(h.wrapping_sub(1) as usize)?.as_ref()
     }
 
     /// The machine with handle `h` (1-8), to change (tests and tools).
-    pub fn child_mut(&mut self, h: u8) -> Option<&mut Child> {
+    pub fn child_mut(&mut self, h: u8) -> Option<&mut Child<D>> {
         self.children.get_mut(h.wrapping_sub(1) as usize)?.as_mut()
     }
 
     /// The children, with their handles, in increasing handle order.
-    pub fn children(&self) -> impl Iterator<Item = (u8, &Child)> {
+    pub fn children(&self) -> impl Iterator<Item = (u8, &Child<D>)> {
         self.children.iter().enumerate().filter_map(|(i, c)| Some((i as u8 + 1, c.as_ref()?)))
     }
 
+    /// The children, to change (a host's presentation of them).
+    pub fn children_mut(&mut self) -> impl Iterator<Item = (u8, &mut Child<D>)> {
+        self.children.iter_mut().enumerate().filter_map(|(i, c)| Some((i as u8 + 1, c.as_mut()?)))
+    }
+
     /// The machine with this serial (0: the shell).
-    pub fn machine_by_serial(&self, serial: u32) -> Option<(u8, &Machine)> {
+    pub fn machine_by_serial(&self, serial: u32) -> Option<(u8, &Machine<D>)> {
         if serial == 0 {
             return Some((0, &self.shell));
         }
@@ -264,8 +281,8 @@ impl System {
     /// The handles whose Screens in the shell's 3D list are in effect (SPEC
     /// 13.3): bit h − 1 for handle h.
     pub fn panel_mask(&self) -> u8 {
-        let (Some(dev), Some(v3)) = (self.shell.machines(), self.shell.vector3()) else { return 0 };
-        dev.panel_mask(v3.list(), |h| self.child(h).is_some_and(|c| c.machine.is_some()))
+        let Some(dev) = self.shell.machines() else { return 0 };
+        dev.panel_mask(&self.shell.list3(), |h| self.child(h).is_some_and(|c| c.machine.is_some()))
     }
 
     /// The shell's 3D scene as the host shows it now, seen from `eye`
@@ -277,7 +294,8 @@ impl System {
             return None;
         }
         let dev = self.shell.machines()?;
-        let list = self.shell.vector3()?.list();
+        let list = self.shell.list3();
+        let list = &list[..];
         let v = dev.view();
         let frame = self.shell_frame();
         let mut scene = Scene::default();
@@ -318,7 +336,7 @@ impl System {
     /// the shell, carries out its starts and stops, then runs each running
     /// child in increasing handle order. `controllers` go to the machine
     /// with the focus.
-    pub fn frame(&mut self, events: &[Event], controllers: [Controller; CONTROLLERS], driver: &mut dyn Driver) -> SystemFrame {
+    pub fn frame(&mut self, events: &[Event], controllers: [Controller; CONTROLLERS], driver: &mut dyn Driver<D>) -> SystemFrame {
         let mut out = SystemFrame::default();
         if self.shell.stopped().is_some() {
             return out;
@@ -340,7 +358,7 @@ impl System {
         let mut at_end = Vec::new();
         // A view whose machine is no longer a panel returns at once (SPEC
         // 12.2 `face`).
-        let list = self.shell.vector3().map_or(Vec::new(), |v| v.list().to_vec());
+        let list = self.shell.list3().into_owned();
         if let Some(dev) = self.shell.machines_mut() {
             dev.check_view(&list);
         }
@@ -432,11 +450,10 @@ impl System {
         for command in at_end {
             match command {
                 Command::Snapshot { handle, slot } => {
-                    let Some(machine) = self.children[handle as usize - 1].as_ref().and_then(|c| c.machine.as_ref()) else {
+                    let Some(Ok(snapshot)) = self.children[handle as usize - 1].as_mut().and_then(|c| c.machine.as_mut()).map(Snapshot::try_of) else {
                         self.saved.push((slot, false));
                         continue;
                     };
-                    let snapshot = Snapshot::of(machine);
                     self.saving.push((slot, snapshot.info()));
                     if let Some(stored) = driver.save_snapshot(&self.shell, slot, snapshot) {
                         self.saved.push((slot, stored));
@@ -457,7 +474,7 @@ impl System {
     /// latest numbers. Returns the machine-changed events for the shell.
     fn latch(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
-        let Some(dev) = self.shell.machines_mut() else { return events };
+        let (Some(dev), like) = self.shell.machines_and_devices() else { return events };
         for (i, slot) in self.children.iter_mut().enumerate() {
             let h = i as u8 + 1;
             let Some(child) = slot.as_mut() else { continue };
@@ -472,7 +489,7 @@ impl System {
                         child.image = image.id;
                         let s = dev.slot_mut(h);
                         s.image = image.id;
-                        match snapshot.restore(&image) {
+                        match snapshot.restore_with(like, child.serial, &image) {
                             Ok(mut machine) => {
                                 machine.set_in_system(true);
                                 child.identity = snapshot.identity.clone();
@@ -490,13 +507,21 @@ impl System {
                     Some(Ok(image)) => {
                         child.title = image.title_lossy();
                         child.image = image.id;
-                        let mut machine = Machine::new(&image);
-                        machine.set_identity(child.identity.clone());
-                        machine.set_in_system(true);
-                        machine.set_argument(child.argument);
-                        child.machine = Some(machine);
                         dev.slot_mut(h).image = image.id;
-                        new = Some(if run { state::RUNNING } else { state::PAUSED });
+                        match like.new_machine(child.serial, &image, child.identity.as_ref()) {
+                            Ok(mut machine) => {
+                                machine.set_identity(child.identity.clone());
+                                machine.set_in_system(true);
+                                machine.set_argument(child.argument);
+                                child.machine = Some(machine);
+                                new = Some(if run { state::RUNNING } else { state::PAUSED });
+                            }
+                            Err(f) => {
+                                child.error = Some(f.message);
+                                dev.slot_mut(h).failure = f.reason;
+                                new = Some(state::FAILED);
+                            }
+                        }
                     }
                     Some(Err(f)) => {
                         child.error = Some(f.message);
@@ -512,7 +537,7 @@ impl System {
                 },
                 state::RUNNING => {
                     let s = dev.slot_mut(h);
-                    match child.machine.as_ref().and_then(Machine::stopped) {
+                    match child.machine.as_ref().and_then(|m| m.stopped()) {
                         Some(Stopped::Exit(code)) => {
                             s.exit_code = code;
                             new = Some(state::EXITED);
@@ -566,9 +591,9 @@ impl System {
         let eye = self.eye;
         // A pointer over a machine's own Surface goes to the point of its
         // source rectangle (SPEC 13.3 Surface), the list as shown now.
-        let own = |m: &Machine, x: u16, y: u16| match m.vector3() {
-            Some(v) => crate::vector3::surface_pointer(v.list(), eye, x, y),
-            None => (x, y),
+        let own = |m: &Machine<D>, x: u16, y: u16| {
+            let list = m.list3();
+            if list.is_empty() { (x, y) } else { crate::vector3::surface_pointer(&list, eye, x, y) }
         };
         if !self.is_system() {
             for e in events.iter().filter(|e| e.kind != Event::HOME) {

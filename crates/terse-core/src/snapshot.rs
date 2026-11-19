@@ -102,6 +102,16 @@ impl<'a> Reader<'a> {
     pub fn remaining(&self) -> usize {
         self.bytes.len() - self.at
     }
+
+    /// Bytes read so far.
+    pub fn position(&self) -> usize {
+        self.at
+    }
+
+    /// The bytes not read yet.
+    pub fn rest(&self) -> &'a [u8] {
+        &self.bytes[self.at..]
+    }
 }
 
 /// A program identity from the 81-byte record `identity` writes; a name
@@ -178,6 +188,12 @@ impl Snapshot {
         Snapshot { state: machine.state(), identity: machine.identity().cloned(), time: machine.system().time() }
     }
 
+    /// The snapshot of a machine with devices of any kind (its devices
+    /// asked for their sections); an error is the devices'.
+    pub fn try_of<D: crate::devices::Devices>(machine: &mut Machine<D>) -> Result<Snapshot, String> {
+        Ok(Snapshot { state: machine.try_state()?, identity: machine.identity().cloned(), time: machine.system().time() })
+    }
+
     pub fn image_id(&self) -> [u8; 32] {
         self.state[IMAGE_AT..IMAGE_AT + 32].try_into().unwrap()
     }
@@ -199,6 +215,18 @@ impl Snapshot {
     /// The machine it was taken of, with its identity: same state hash.
     pub fn restore(&self, image: &crate::Image) -> Result<Machine, RestoreError> {
         let mut m = Machine::restore(image, &self.state)?;
+        m.set_identity(self.identity.clone());
+        Ok(m)
+    }
+
+    /// The same with devices like `like`'s (a sibling of the machine whose
+    /// devices they are: a shell's), as machine `serial`.
+    pub fn restore_with<D: crate::devices::Devices>(&self, like: &D, serial: u32, image: &crate::Image) -> Result<Machine<D>, RestoreError> {
+        if self.image_id() != image.id {
+            return Err(RestoreError::WrongImage);
+        }
+        let mut m = like.new_machine(serial, image, self.identity.as_ref()).map_err(|_| bad("the devices could not be started"))?;
+        m.load_state(&self.state)?;
         m.set_identity(self.identity.clone());
         Ok(m)
     }
