@@ -99,7 +99,7 @@ fn malformed_requests() {
     assert_eq!(ask(&mut ws, protocol::encode_get(7, &[0; 32])), [GET_REPLY, 7, 0, 0, 0, status::NOT_FOUND]);
     // Find: a bad scope, an empty or long query, a cut message: refused.
     let refused = |req: u8| vec![protocol::FIND_REPLY, req, 0, 0, 0, status::REFUSED, 0];
-    assert_eq!(ask(&mut ws, protocol::encode_find(1, 3, b"a")), refused(1));
+    assert_eq!(ask(&mut ws, protocol::encode_find(1, 4, b"a")), refused(1));
     assert_eq!(ask(&mut ws, protocol::encode_find(2, 1, b"")), refused(2));
     assert_eq!(ask(&mut ws, protocol::encode_find(3, 2, &[b'a'; 49])), refused(3));
     assert_eq!(ask(&mut ws, protocol::encode_find(4, 1, &[0xFF])), refused(4), "not UTF-8");

@@ -1,4 +1,4 @@
-  SPARKS                      demo - Enter or Start to play
+  SPARKS    HIGH 0000         demo - Enter or Start to play
 
 
 

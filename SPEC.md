@@ -9,7 +9,9 @@ Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
 of at most 128 KiB, at most 1 MiB of RAM, a fixed budget of work per frame,
 and a set of host-side devices reached through system calls. One program runs
 in one machine. Programs are identified by the hash of their image and have
-no dependencies. A host may run several machines as one system, in which one
+no dependencies; a program published in a feed also has an identity, its
+publisher and name, that stays the same from one version to the next
+(section 12.1). A host may run several machines as one system, in which one
 machine, the shell, starts the others and lays out their screens (section 12).
 
 Design rules that every part of this spec follows:
@@ -188,7 +190,9 @@ by the ROM contents.
 - The **image ID** is the BLAKE3-256 hash of the whole file.
 - A device slot may be listed at most once.
 - A host must refuse an image whose profile or required device versions it
-  does not implement. A device not listed in the header behaves as absent.
+  does not implement. This holds for an image a shell starts too: the start
+  fails (section 12.2, reason 3) and the machine never runs. A device not
+  listed in the header behaves as absent.
 - Device 1 (system) is always present and need not be listed.
 
 | Slot | Device | Version | Status in v0 |
@@ -270,6 +274,8 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
 | `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1–8 |
 | `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
+| `807h` | `start_program` | `a0` = address of a program record (read) | a handle 1–8, or 0 if none is free |
+| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
 
 Sections 4 to 12 define each call.
 
@@ -348,7 +354,9 @@ full is dropped.
   entries since the previous frame (section 9.5). At most one is queued per
   frame; a second in the same frame's input is dropped. It is sent after the
   automatic download of those entries' articles has finished or failed, so
-  the timeline's "local" flags are already correct.
+  the timeline's "local" flags are already correct. The download of a
+  program's image (`NETWORK.md` 4.4), which starts once its feed is caught
+  up, is announced by a feeds-updated event of its own when it ends.
 - **Page laid out**, **page anchor**, **page located** and **page located
   y** come from the page device (section 11.5).
 - **Machine changed**, **home** and **machine pressed** are sent only to the
@@ -521,14 +529,14 @@ any alignment.
 
 | Offset | Size | Field | Written by |
 |---|---|---|---|
-| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`0Ch`: section 9.5) | program |
+| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`0Dh`: section 9.5; `0Eh`–`11h`: section 9.6) | program |
 | 1 | 1 | `status` (section 9.3) | device |
 | 2 | 2 | Reserved; ignored | — |
-| 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key. Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
-| 36 | 4 | `offset`: get: byte offset into the blob; records (subscriptions, timeline, names): index of the first record; find: the scope, 1 or 2; set profile: bit 0 = listed, other bits ignored | program |
-| 40 | 4 | `length`: get, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; read at submit. | both |
-| 44 | 4 | `addr`: address of the data. Get, records and find: the `length` bytes there must lie in RAM. Put: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. | program |
-| 48 | 4 | `size`: get: blob size, written on completion. Put: 1 to 1,048,576, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
+| 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key; save, load and delete: the record's name (section 9.6). Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
+| 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored | program |
+| 40 | 4 | `length`: get, load, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; read at submit. | both |
+| 44 | 4 | `addr`: address of the data. Get, load, records and find: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. | program |
+| 48 | 4 | `size`: get: blob size, written on completion; load: the record's size, written on completion. Put: 1 to 1,048,576, read at submit; save: 0 to 65,536, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
 
 ### 9.2 Submit and completion
 
@@ -539,13 +547,14 @@ any alignment.
 2. If the request is invalid (unknown `op`, a length, size or scope out of
    range, a data range not wholly where section 9.1 requires, a publish
    title or find query that is not valid UTF-8, a name that is not a valid
-   display name, section 9.5), the device writes status `04h` to the block
-   and rejects the submit.
+   display name, section 9.5, a record name that is not valid, section 9.6),
+   the device writes status `04h` to the block and rejects the submit.
 3. If eight requests are already pending, the submit is rejected and the
    block is not changed.
 4. Otherwise the device writes status `00h`, assigns the lowest free handle
-   (1–8), which the call returns, and the request becomes pending. For put,
-   the device copies the `size` bytes at `addr` at this moment; for publish,
+   (1–8), which the call returns, and the request becomes pending. For put
+   and save, the device copies the `size` bytes at `addr` at this moment;
+   for publish,
    the title; for find, the query; for set profile and set nickname, the
    name.
 
@@ -553,12 +562,14 @@ At the start of a later frame (never the frame of the submit), in step 1 of
 section 1.4, the host may complete any pending requests. Completing a
 request:
 
-- get, on success: copies the delivered bytes to `addr`, writes `length`
-  and `size`;
-- subscriptions, timeline, names and find, on success: copies the records
-  to `addr`, writes `length` and `size` (section 9.5);
+- get and load, on success: copies the delivered bytes to `addr`, writes
+  `length` and `size`;
+- subscriptions, timeline, names, programs, records and find, on success:
+  copies the records to `addr`, writes `length` and `size` (sections 9.5,
+  9.6);
 - put, on success: writes `id`;
-- subscribe, unsubscribe and set nickname, on success: nothing more;
+- subscribe, unsubscribe, set nickname, save and delete, on success: nothing
+  more;
 - publish and set profile, on success: writes `size`;
 - identity, on success: writes `id`;
 - in every case writes `status`, frees the handle, and queues a content-done
@@ -568,7 +579,8 @@ request:
 The device writes to the block at the address given at submit, whatever the
 program has since done with that memory. Completions in one frame are
 applied in increasing handle order. A get whose `offset` is at or beyond the
-end of the blob completes with status `01h` and `length` 0.
+end of the blob completes with status `01h` and `length` 0; so does a load
+at or beyond the end of its record.
 
 ### 9.3 Status values
 
@@ -580,6 +592,7 @@ end of the blob completes with status `01h` and `length` 0.
 | `03h` | Failed (network error or timeout; the host decides when to give up) |
 | `04h` | Bad request |
 | `05h` | Refused: the user said no, the host does not permit it, or the relays refused a find (section 9.5) |
+| `06h` | No room: a save would exceed the owner's limits (section 9.6) |
 
 ### 9.4 Determinism
 
@@ -590,9 +603,9 @@ reaches the machine only as its completion.
 
 ### 9.5 Feeds, names and search
 
-Ten further operations use the feeds of `NETWORK.md` section 4, with the
+Eleven further operations use the feeds of `NETWORK.md` section 4, with the
 same request block, call, handles and completion rules as get and put.
-Three read what the host holds about the feeds it has subscribed to (and,
+Four read what the host holds about the feeds it has subscribed to (and,
 for names, about the feeds the user gave a nickname); one
 searches the relays; five change the user's subscriptions, feed, profile or
 nicknames, with the user's consent; one tells the program the host's own
@@ -610,8 +623,10 @@ feed key.
 | `0Ah` | Find |
 | `0Bh` | Set profile |
 | `0Ch` | Set nickname |
+| `0Dh` | Programs |
 
-**Reading.** For subscriptions, timeline and names, `id` is not used;
+**Reading.** For subscriptions, timeline, names and programs, `id` is not
+used;
 `length` is the size of the buffer at `addr` (1 to 16,384) and `offset` is
 the index of the first record wanted. The device delivers as many whole
 records as fit, writes the number of bytes delivered to `length` and the
@@ -626,8 +641,8 @@ increasing order of feed key:
 | 32 | 4 | Highest `seq` held for that feed, or 0 |
 
 **Timeline** delivers the article entries (kind 1) of all subscribed feeds,
-newest first by the order in which the host received them; profile entries
-(kind 2) are not included. Index 0 is the most recently received entry
+newest first by the order in which the host received them; profile and
+program entries (kinds 2 and 3) are not included. Index 0 is the most recently received entry
 (`NETWORK.md` section 4.4 defines the order). Entries of a feed the host
 has unsubscribed from are not included. Each record is:
 
@@ -640,6 +655,13 @@ has unsubscribed from are not included. Each record is:
 The host has already verified every entry it delivers. When new entries
 arrive, the program is told by a feeds-updated event (section 5) and can
 read the timeline again.
+
+**Programs** (`0Dh`) delivers the current version of each program
+(`NETWORK.md` section 4.2) of the subscribed feeds, in increasing order of
+feed key, then of name (byte order), one record per program in the
+timeline's record format; flag bit 0 is set when the image is in the host's
+store. The name is the entry's title. A program is started by its identity
+with device 8's `start_program` (section 12.2).
 
 **Subscribe** (`05h`) adds the feed whose key is `id` to the host's
 subscriptions, and **unsubscribe** (`06h`) removes it (`NETWORK.md` section
@@ -688,13 +710,14 @@ unique: a program that shows a name should show the short key beside it.
 
 **Find** (`0Ah`) searches the relays (`NETWORK.md` section 4.7). `id` is not
 used. `offset` is the scope: 1 searches feeds by their profiles, 2 searches
-articles by their titles; any other value is invalid. The query is the
+articles by their titles, 3 searches programs by their names (current
+versions only); any other value is invalid. The query is the
 `size` bytes at `addr`, 1 to 48 bytes of valid UTF-8, which must lie in RAM
 and are copied at submit. `length` is the size of the buffer at `addr` for
 the results (1 to 16,384, in RAM), so the results overwrite the query. On
 completion the buffer holds the results as timeline records (only flag bit
 0 may be set): profile entries (kind 2) for scope 1, article entries (kind
-1) for scope 2. As many whole results as fit are delivered, in order;
+1) for scope 2, program entries (kind 3) for scope 3. As many whole results as fit are delivered, in order;
 `length` is the number of bytes delivered and `size` the number of results
 the host has, at most 16. The host asks all its relays, verifies every
 entry they return and discards invalid ones and duplicates, and orders and
@@ -738,8 +761,50 @@ program; Y allows, N or Escape refuses, and other keys (Enter included) do
 nothing. One request is asked about at a time; others wait, in increasing
 handle order. A refusal completes the request with status `05h`. A host
 where nobody can answer (a headless run) completes such requests as its
-user configured it to (by default with `05h`). Identity, names and find
-need no consent.
+user configured it to (by default with `05h`). Identity, names, programs
+and find need no consent.
+
+### 9.6 Named records
+
+Four operations keep small data on this host for the program: its **named
+records**. They use the same request block, call, handles and completion
+rules as get and put.
+
+| `op` | Operation |
+|---|---|
+| `0Eh` | Save |
+| `0Fh` | Load |
+| `10h` | Delete |
+| `11h` | Records |
+
+**Names.** For save, load and delete, `id` holds the record's name: 1 to 32
+bytes of UTF-8 with no control characters (U+0000–U+001F, U+007F–U+009F),
+then `00h` to the end of the 32 bytes. Any other `id` makes the request
+invalid (section 9.2). For records, `id` is not used.
+
+**Owner.** A machine's records belong to its program's identity (section
+12.1): a machine started with `start_program`, or a shell the host started
+as its built-in shell, reads and writes those of that identity, whichever
+version of the program it runs. A machine with no identity (started with
+`start`, or from a file) has the records of its exact image ID. A program
+cannot reach another owner's records. Records are kept on this host only:
+the host never sends them to a relay or to any other program.
+
+| Operation | Fields | Completion |
+|---|---|---|
+| Save | `addr` and `size`: the data, 0 to 65,536 bytes, wholly in ROM or wholly in RAM, copied at submit | `01h` once the record is replaced and durably stored (written to a temporary file, synced, renamed into place); `06h` if it would exceed the limits, and nothing changes |
+| Load | `offset`, `length` (1 to 16,384) and `addr` (in RAM) as for get | as a get: the bytes from `offset` to `addr`, `length` = bytes delivered, `size` = the record's size; `02h` if there is no such record |
+| Delete | — | `01h`, whether or not the record existed |
+| Records | `offset`, `length` and `addr` as for subscriptions | records of 36 bytes, in increasing order of name (byte order): the name, padded with `00h` to 32 bytes, and the size (4) |
+
+**Limits** per owner: 256 records and 1,048,576 bytes of data in all. A
+save that would exceed either (counting the record it replaces as gone)
+completes with `06h`. A host that cannot keep records (no data directory,
+an I/O error) completes the request with `03h`. No consent is asked.
+
+Records are inputs like any completion (section 9.4): what a load delivers
+and the status of a save are recorded, so a run replays without the
+records directory.
 
 ---
 
@@ -1213,11 +1278,20 @@ and is then in one of these states:
 | 3 | paused | runs no frames and receives no input |
 | 4 | exited | stopped by `exit` (section 1.5) |
 | 5 | faulted | stopped by a fault (section 1.5) |
-| 6 | failed | the image could not be had, is not an image the host can run, or the host has no room for another machine |
+| 6 | failed | the image could not be had, is not an image the host can run, or the host has no room for another machine; `info` gives the reason |
 
-Each handle also has a **run flag** and a **rectangle** (x, y, width,
-height in the shell's screen units). The system has a **focus**: a handle,
-or 0 for the shell; it is 0 at reset.
+Each handle also has a **run flag**, a **rectangle** (x, y, width,
+height in the shell's screen units) and possibly an **identity**. The
+system has a **focus**: a handle, or 0 for the shell; it is 0 at reset.
+
+A program's **identity** is its publisher's feed key and its name: the
+(feed key, title) of a program entry (`NETWORK.md` section 4.2). The
+host's built-in programs have the identity (32 zero bytes, image title). A
+machine started with `start_program` has that identity for its whole life,
+whatever version of the program it runs; one started with `start` (by blob
+ID), and an image a host runs from a file, have none. A shell the host
+starts as its own built-in shell has the identity of a built-in. Section
+9.6 says what the identity is for.
 
 ### 12.2 Calls
 
@@ -1231,6 +1305,25 @@ or 0 for the shell; it is 0 at reset.
   the handle becomes running (paused if the run flag is clear) with a
   machine reset with that image (section 1.3), or failed. The host may take
   any number of frames to get the image.
+- **`start_program`** reads a program record at `a0`: the publisher's feed
+  key (32 bytes; all zero for a built-in program), the name's length n (1
+  byte) and the name (n bytes, a valid display name, section 9.5). The 33 +
+  n bytes must lie wholly in ROM or wholly in RAM and the name must be
+  valid, else the call returns `FFFF_FFFEh` and does nothing else. If every
+  handle is in use it returns 0. Otherwise the lowest handle not in use
+  becomes loading, with the run flag set, the rectangle (0, 0, 0, 0), image
+  ID zero and that identity, and the call returns it. The host then finds
+  the current version of the program that it holds (`NETWORK.md` section
+  4.2; for the zero key, the first built-in program whose image title is
+  the name), gets its image as for `start` and checks it; a later frame
+  takes the result into account: the handle becomes running or paused,
+  with the record's image ID that of the version started, or failed, with
+  reason 1 if the host holds no such program or cannot get its image. The
+  host may take any number of frames.
+- **`identity`** writes the identity of handle `a0` to the buffer, 81
+  bytes wholly in RAM (else `FFFF_FFFEh`): the feed key (32), the name's
+  length (1) and the name, padded with `00h` to 48 bytes; it returns 1. For
+  a handle not in use or with no identity it writes nothing and returns 0.
 - **`stop`** with a handle in use: the machine ceases to exist and the
   handle is not in use (state none, run flag clear, rectangle and record
   zero); if it had the focus, the focus becomes 0. Its pending content
@@ -1255,11 +1348,11 @@ or 0 for the shell; it is 0 at reset.
   | 0 | 1 | State |
   | 1 | 1 | Exit code if exited, else 0 |
   | 2 | 1 | Fault kind if faulted, numbered as in `STATE.md` 1.3 (1 illegal instruction … 6 misaligned), else 0 |
-  | 3 | 1 | Reserved, 0 |
+  | 3 | 1 | Why the start failed, if failed: 1 not found, 2 not a valid image, 3 the image needs a device (slot, version) the host does not provide, 4 no room for another machine; else 0 |
   | 4 | 4 | Units the machine used in its last frame (section 1.4, delivered content included), 0 before its first |
   | 8 | 4 | The machine's frame counter |
   | 12 | 4 | Fault `pc` if faulted, else 0 |
-  | 16 | 32 | The image ID given to `start`; zeros for a handle not in use |
+  | 16 | 32 | The image ID given to `start`; for `start_program`, zeros while loading, then the ID of the version the host got (also when it failed as not an image the host can run); zeros for a handle not in use |
 
   The record is as the host latched it at the start of the frame (section
   12.5), with the changes the shell's own calls made since.
@@ -1364,8 +1457,9 @@ system stops: no machine runs any more frames.
 Each machine is deterministic given its own inputs (sections 4 and 9.4). For
 the shell they include the machine changed, home and machine pressed events
 and what device 8 returns that the shell did not set itself: the latched
-records (states, exit codes, faults, units, frame counters) and the
-built-in programs. Device 8's state is part of the shell's state (`STATE.md`
+records (states, exit codes, faults, failure reasons, the image IDs of
+programs started by identity, units, frame counters) and the built-in
+programs. The identities the shell gave are its own state. Device 8's state is part of the shell's state (`STATE.md`
 1.10); a started machine's state is its own and holds nothing of the
 system.
 
@@ -1382,8 +1476,8 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `info` (48, when written) and `builtin` (32, when written) | 1 per 4 bytes, rounded up, per call |
-| Content delivered at completion: the bytes a get, records (subscriptions, timeline, names) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written) and `identity` (81, when written) | 1 per 4 bytes, rounded up, per call |
+| Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
 fields a completion writes to a request block are free, and so is laying out
@@ -1449,3 +1543,8 @@ These numbers are placeholders until weak hosts have been measured:
   machine per frame; giving a machine less than the whole screen; sound for
   several machines; what a host shows for a machine with no picture.
 - Snapshots.
+- Named records (section 9.6): moving records from one owner to another
+  (for example when a program run from a file is later published), keeping
+  them in step between a user's machines, and sharing a record with
+  another program. Starting a version of a program other than the current
+  one.

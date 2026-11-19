@@ -12,6 +12,12 @@ pub const KIND_ARTICLE: u8 = 1;
 /// A profile (NETWORK 4.6): the title is the feed's display name and the
 /// blob its profile document.
 pub const KIND_PROFILE: u8 = 2;
+/// A program (NETWORK 4.2): the title is the program's name (a display
+/// name) and the blob a Terse image.
+pub const KIND_PROGRAM: u8 = 3;
+/// The largest Terse image (SPEC 2): a header, 16 device pairs and 128 KiB
+/// of ROM. Programs are downloaded automatically up to this size.
+pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 131_072;
 pub const MAX_TITLE: usize = 120;
 /// Bytes before the title.
 const HEAD: usize = 109;
@@ -103,6 +109,11 @@ impl Entry {
         Entry { kind: KIND_PROFILE, ..Self::article(feed, seq, time, data, None, name) }
     }
 
+    /// A program entry (NETWORK 4.2): `image` under the name `name`.
+    pub fn program(feed: FeedKey, seq: u32, time: u32, image: &[u8], name: &str) -> Self {
+        Entry { kind: KIND_PROGRAM, ..Self::article(feed, seq, time, image, None, name) }
+    }
+
     /// The validity rules that do not involve the signature.
     fn check(&self) -> Result<(), Invalid> {
         if self.title.len() > MAX_TITLE {
@@ -112,14 +123,14 @@ impl Entry {
             return Err(Invalid::Seq);
         }
         let max = match self.kind {
-            KIND_ARTICLE => MAX_BLOB,
+            KIND_ARTICLE | KIND_PROGRAM => MAX_BLOB,
             KIND_PROFILE => crate::profile::MAX_DOCUMENT,
             _ => return Err(Invalid::Kind),
         };
         if !(1..=max as u32).contains(&self.size) {
             return Err(Invalid::Size);
         }
-        if self.kind == KIND_PROFILE && !crate::profile::valid_name(&self.title) {
+        if (self.kind == KIND_PROFILE || self.kind == KIND_PROGRAM) && !crate::profile::valid_name(&self.title) {
             return Err(Invalid::Name);
         }
         Ok(())
@@ -271,7 +282,7 @@ mod tests {
         assert_eq!(decode(&good[..HEAD + SIG - 1]), Err(Invalid::Length));
         assert_eq!(decode(&edited(HEAD - 1, 6)), Err(Invalid::Length), "n says 6, title is 5");
         assert_eq!(decode(&edited(32, 0)), Err(Invalid::Seq));
-        assert_eq!(decode(&edited(40, 3)), Err(Invalid::Kind));
+        assert_eq!(decode(&edited(40, 4)), Err(Invalid::Kind));
         assert_eq!(decode(&edited(40, 0)), Err(Invalid::Kind));
         let mut zero_size = good.clone();
         zero_size[41..44].fill(0);
@@ -338,6 +349,33 @@ mod tests {
         assert!(key.verify_strict(&signed.bytes[..109 + n], &sig).is_err(), "domain prefix is required");
     }
 
+    /// NETWORK 4.2: a program entry's title is a display name; its blob
+    /// may be any size a blob may be (whether it is an image is found out
+    /// when it is started).
+    #[test]
+    fn program_entries() {
+        let id = test_identity();
+        let program = |title: &str, size: u32| {
+            let mut e = sample(&id);
+            e.kind = KIND_PROGRAM;
+            e.size = size;
+            e.title = title.into();
+            let mut b = e.unsigned_bytes();
+            b.extend_from_slice(&[0; SIG]);
+            decode(&resign(&id, b))
+        };
+        assert!(program("sparks", 5000).is_ok());
+        assert!(program(&"é".repeat(24), MAX_BLOB as u32).is_ok());
+        assert_eq!(program("", 10), Err(Invalid::Name));
+        assert_eq!(program(" sparks", 10), Err(Invalid::Name));
+        assert_eq!(program("spa\u{7}rks", 10), Err(Invalid::Name));
+        assert_eq!(program(&"x".repeat(49), 10), Err(Invalid::Name));
+        assert_eq!(program("sparks", MAX_BLOB as u32 + 1), Err(Invalid::Size));
+        let e = Entry::program(id.feed_key(), 1, 0, b"not an image", "tool");
+        assert_eq!((e.kind, e.size, e.title.as_str()), (KIND_PROGRAM, 12, "tool"));
+        assert!(e.sign(&id).is_ok());
+    }
+
     #[test]
     fn signing_checks_fields() {
         let id = test_identity();
@@ -348,7 +386,7 @@ mod tests {
         };
         assert_eq!(with(|e| e.seq = 0), Err(Invalid::Seq));
         assert_eq!(with(|e| e.size = 0), Err(Invalid::Size));
-        assert_eq!(with(|e| e.kind = 3), Err(Invalid::Kind));
+        assert_eq!(with(|e| e.kind = 4), Err(Invalid::Kind));
         assert_eq!(with(|e| e.title = "x".repeat(121)), Err(Invalid::TitleLength));
         assert_eq!(sample(&id).sign(&Identity::from_seed([1; 32])), Err(Invalid::WrongIdentity));
     }

@@ -10,7 +10,7 @@
 
 use crate::image::Image;
 use crate::machine::{FrameResult, Machine, Stopped};
-use crate::machines::{MAX_MACHINES, map_into, picture, state};
+use crate::machines::{MAX_MACHINES, ProgramId, StartFailure, map_into, picture, state};
 use crate::system::{CONTROLLERS, Controller, Event};
 
 /// Which machine a driver is asked to run: handle 0 is the shell; `serial`
@@ -31,6 +31,11 @@ pub trait Driver {
     /// The shell started machine `serial`: fetch the image with this ID
     /// and hand it to [`System::deliver_image`].
     fn want_image(&mut self, serial: u32, image: [u8; 32]);
+    /// The shell started machine `serial` as a program (`start_program`):
+    /// find the current version the host holds (a built-in by its title,
+    /// among `builtins`, for the all-zero key), fetch it and hand it to
+    /// [`System::deliver_image`].
+    fn want_program(&mut self, serial: u32, program: &ProgramId, builtins: &[[u8; 32]]);
     /// Machine `serial` ceased to exist (the shell stopped it).
     fn removed(&mut self, serial: u32);
 }
@@ -38,7 +43,11 @@ pub trait Driver {
 /// A machine the shell started.
 pub struct Child {
     pub serial: u32,
+    /// The image ID given to `start`; for `start_program`, that of the
+    /// version the host delivered (zero until then).
     pub image: [u8; 32],
+    /// The identity it was started with (`start_program`).
+    pub identity: Option<ProgramId>,
     /// The machine, once its image has been loaded.
     pub machine: Option<Machine>,
     /// The image's title, once loaded.
@@ -46,7 +55,7 @@ pub struct Child {
     /// Why the start failed, if it did.
     pub error: Option<String>,
     /// The image, delivered but not yet latched (SPEC 12.5).
-    delivered: Option<Result<Image, String>>,
+    delivered: Option<Result<Image, StartFailure>>,
     /// Units used in its last frame.
     last_used: u32,
 }
@@ -85,6 +94,12 @@ impl System {
 
     pub fn shell_mut(&mut self) -> &mut Machine {
         &mut self.shell
+    }
+
+    /// The shell's identity (a built-in shell's, SPEC 12.2), whose named
+    /// records it reads (SPEC 9.6).
+    pub fn set_shell_identity(&mut self, identity: Option<ProgramId>) {
+        self.shell.set_identity(identity);
     }
 
     /// Whether the shell has device 8: this is a system, not a single machine.
@@ -132,7 +147,7 @@ impl System {
 
     /// The image for machine `serial` arrived, or could not be had; it is
     /// taken into account at the start of the next frame (SPEC 12.5).
-    pub fn deliver_image(&mut self, serial: u32, image: Result<Image, String>) {
+    pub fn deliver_image(&mut self, serial: u32, image: Result<Image, StartFailure>) {
         if let Some(c) = self.children.iter_mut().flatten().find(|c| c.serial == serial && c.machine.is_none()) {
             c.delivered = Some(image);
         }
@@ -164,25 +179,35 @@ impl System {
 
         // Its starts and stops, in order.
         if let Some(dev) = self.shell.machines_mut() {
+            let builtins = dev.builtins().to_vec();
             for command in dev.take_commands() {
                 match command {
-                    crate::machines::Command::Start { handle, image } => {
+                    crate::machines::Command::Start { handle, .. } | crate::machines::Command::StartProgram { handle, .. } => {
                         let serial = self.next_serial;
                         self.next_serial += 1;
                         let i = handle as usize - 1;
                         if let Some(old) = self.children[i].take() {
                             driver.removed(old.serial);
                         }
+                        let (image, identity) = match &command {
+                            crate::machines::Command::Start { image, .. } => (*image, None),
+                            crate::machines::Command::StartProgram { program, .. } => ([0; 32], Some(program.clone())),
+                            _ => unreachable!(),
+                        };
                         self.children[i] = Some(Child {
                             serial,
                             image,
+                            identity: identity.clone(),
                             machine: None,
                             title: String::new(),
                             error: None,
                             delivered: None,
                             last_used: 0,
                         });
-                        driver.want_image(serial, image);
+                        match &identity {
+                            None => driver.want_image(serial, image),
+                            Some(program) => driver.want_program(serial, program, &builtins),
+                        }
                     }
                     crate::machines::Command::Stop { handle } => {
                         if let Some(old) = self.children[handle as usize - 1].take() {
@@ -220,17 +245,27 @@ impl System {
         for (i, slot) in self.children.iter_mut().enumerate() {
             let h = i as u8 + 1;
             let Some(child) = slot.as_mut() else { continue };
-            let record = *dev.slot(h);
+            let (record_state, run) = (dev.slot(h).state, dev.slot(h).run);
             let mut new = None;
-            match record.state {
+            match record_state {
                 state::LOADING => match child.delivered.take() {
                     Some(Ok(image)) => {
                         child.title = image.title_lossy();
-                        child.machine = Some(Machine::new(&image));
-                        new = Some(if record.run { state::RUNNING } else { state::PAUSED });
+                        child.image = image.id;
+                        let mut machine = Machine::new(&image);
+                        machine.set_identity(child.identity.clone());
+                        child.machine = Some(machine);
+                        dev.slot_mut(h).image = image.id;
+                        new = Some(if run { state::RUNNING } else { state::PAUSED });
                     }
-                    Some(Err(e)) => {
-                        child.error = Some(e);
+                    Some(Err(f)) => {
+                        child.error = Some(f.message);
+                        let s = dev.slot_mut(h);
+                        s.failure = f.reason;
+                        if let Some(id) = f.image {
+                            child.image = id;
+                            s.image = id;
+                        }
                         new = Some(state::FAILED);
                     }
                     None => {}

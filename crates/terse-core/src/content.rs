@@ -28,6 +28,18 @@ pub const OP_NAMES: u8 = 0x09;
 pub const OP_FIND: u8 = 0x0A;
 pub const OP_SET_PROFILE: u8 = 0x0B;
 pub const OP_SET_NICKNAME: u8 = 0x0C;
+pub const OP_PROGRAMS: u8 = 0x0D;
+pub const OP_SAVE: u8 = 0x0E;
+pub const OP_LOAD: u8 = 0x0F;
+pub const OP_DELETE: u8 = 0x10;
+pub const OP_RECORDS: u8 = 0x11;
+
+/// Largest named record (SPEC 9.6).
+pub const MAX_RECORD: usize = 65_536;
+/// Longest record name, in bytes (SPEC 9.6).
+pub const MAX_RECORD_NAME: usize = 32;
+/// A records record: the name, zero padded, and the size (SPEC 9.6).
+pub const RECORDS_RECORD: usize = 36;
 
 /// A subscriptions record: feed key and highest `seq` (SPEC 9.5).
 pub const SUBSCRIPTION_RECORD: usize = 36;
@@ -55,6 +67,7 @@ pub const NAME_UNSUBSCRIBED: u8 = 0x04;
 /// Find scopes (`offset` of a find request).
 pub const FIND_FEEDS: u8 = 1;
 pub const FIND_ENTRIES: u8 = 2;
+pub const FIND_PROGRAMS: u8 = 3;
 /// Most results a find completes with.
 pub const MAX_FIND_RESULTS: u32 = 16;
 
@@ -66,6 +79,7 @@ pub mod status {
     pub const FAILED: u8 = 0x03;
     pub const BAD_REQUEST: u8 = 0x04;
     pub const REFUSED: u8 = 0x05;
+    pub const NO_ROOM: u8 = 0x06;
 }
 
 // Request block field offsets (SPEC 9.1).
@@ -100,6 +114,14 @@ pub fn valid_display_name(b: &[u8]) -> bool {
         && !s.chars().any(char::is_control)
         && !s.starts_with(char::is_whitespace)
         && !s.ends_with(char::is_whitespace)
+}
+
+/// The length of the record name in `id` (SPEC 9.6), if it is one: 1 to 32
+/// bytes of UTF-8 without control characters, then zeros to the end.
+pub fn record_name_len(id: &[u8; 32]) -> Option<usize> {
+    let len = id.iter().position(|&b| b == 0).unwrap_or(MAX_RECORD_NAME);
+    let name = std::str::from_utf8(&id[..len]).ok()?;
+    (len > 0 && id[len..].iter().all(|&b| b == 0) && !name.chars().any(char::is_control)).then_some(len)
 }
 
 fn u32_at(b: &[u8], at: usize) -> u32 {
@@ -145,6 +167,19 @@ pub enum RequestKind {
     /// Set (or, with an empty name, remove) the local nickname of `feed`;
     /// needs the user's consent.
     SetNickname { feed: [u8; 32], name: Vec<u8> },
+    /// The current programs of the subscribed feeds: records from index
+    /// `offset`, at most `length` bytes (SPEC 9.5).
+    Programs { offset: u32, length: u16 },
+    /// Save the named record `name` (1 to 32 bytes) with `data` (copied at
+    /// submit), replacing it (SPEC 9.6).
+    Save { name: Vec<u8>, data: Vec<u8> },
+    /// Up to `length` bytes of the named record from `offset`.
+    Load { name: Vec<u8>, offset: u32, length: u16 },
+    /// Delete the named record.
+    Delete { name: Vec<u8> },
+    /// The list of named records: records from index `offset`, at most
+    /// `length` bytes.
+    Records { offset: u32, length: u16 },
 }
 
 /// The host's answer to a pending request (SPEC 9.2), an input to the machine
@@ -159,7 +194,8 @@ pub struct Completion {
 pub enum Outcome {
     /// A get succeeded: the blob's total size and the bytes delivered from the
     /// requested offset, which must be exactly `min(length, size - offset)`
-    /// bytes (none if the offset is at or beyond the end).
+    /// bytes (none if the offset is at or beyond the end). A load: the same,
+    /// with the record's size (0 to 65,536).
     Got { size: u32, data: Vec<u8> },
     /// A put succeeded; `id` must be the BLAKE3-256 hash of the submitted bytes.
     Put { id: [u8; 32] },
@@ -168,7 +204,7 @@ pub enum Outcome {
     /// index, as many as fit in `length` (SPEC 9.5). A find: the number of
     /// results (at most 16) and as many whole records as fit.
     Records { total: u32, data: Vec<u8> },
-    /// A subscribe, unsubscribe or set nickname succeeded.
+    /// A subscribe, unsubscribe, set nickname, save or delete succeeded.
     Done,
     /// A publish or set profile succeeded: the new entry's `seq`, written to
     /// `size`.
@@ -180,6 +216,8 @@ pub enum Outcome {
     /// The user (or the host) did not allow a subscribe, unsubscribe,
     /// publish, set profile or set nickname (SPEC 9.5).
     Refused,
+    /// A save would exceed the owner's limits (SPEC 9.6).
+    NoRoom,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,8 +225,11 @@ enum Pending {
     /// `addr` is the guest address of the data.
     Get { id: [u8; 32], offset: u32, length: u16, addr: u32 },
     Put { id: [u8; 32], size: u32 },
-    /// Subscriptions, timeline and names.
+    /// Subscriptions, timeline, names, programs and records.
     Records { op: u8, offset: u32, length: u16, addr: u32 },
+    /// Save, load and delete: the name as read at submit (zero padded), a
+    /// save's size, a load's range and address.
+    Named { op: u8, name: [u8; 32], offset: u32, length: u16, addr: u32, size: u32 },
     /// The query's length is kept for the state record only.
     Find { scope: u8, length: u16, addr: u32, query_len: u8 },
     /// Subscribe, unsubscribe, publish, identity, set profile and set
@@ -224,7 +265,7 @@ pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) ->
     if data.len() > length || (op == OP_FIND && total > MAX_FIND_RESULTS) {
         return false;
     }
-    if op == OP_SUBSCRIPTIONS {
+    if op == OP_SUBSCRIPTIONS || op == OP_RECORDS {
         return data.len() == remaining.min(length / SUBSCRIPTION_RECORD) * SUBSCRIPTION_RECORD;
     }
     let (mut at, mut count) = (0, 0);
@@ -264,7 +305,7 @@ impl Content {
 
         // Step 2.
         let request = match b[OP] {
-            OP_GET | OP_SUBSCRIPTIONS | OP_TIMELINE | OP_NAMES => {
+            OP_GET | OP_SUBSCRIPTIONS | OP_TIMELINE | OP_NAMES | OP_PROGRAMS | OP_RECORDS => {
                 ((1..=MAX_GET_LENGTH as u32).contains(&length) && in_ram(length as usize)).then(|| {
                     let length = length as u16;
                     match b[OP] {
@@ -276,6 +317,8 @@ impl Content {
                             let kind = match op {
                                 OP_SUBSCRIPTIONS => RequestKind::Subscriptions { offset, length },
                                 OP_TIMELINE => RequestKind::Timeline { offset, length },
+                                OP_PROGRAMS => RequestKind::Programs { offset, length },
+                                OP_RECORDS => RequestKind::Records { offset, length },
                                 _ => RequestKind::Names { offset, length },
                             };
                             (Pending::Records { op, offset, length, addr }, kind)
@@ -306,7 +349,24 @@ impl Content {
             }),
             // The query and the names are copied (and charged) after step 3,
             // like a publish title. A find's query and results share `addr`.
-            OP_FIND => ((offset == FIND_FEEDS as u32 || offset == FIND_ENTRIES as u32)
+            // SPEC 9.6: the name is checked first; the data (a save's, in ROM
+            // or RAM; a load's buffer, in RAM) is copied after step 3.
+            OP_SAVE | OP_LOAD | OP_DELETE => {
+                let name: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
+                record_name_len(&name).and_then(|n| {
+                    let named = |offset, length: u32, addr, size| Pending::Named { op: b[OP], name, offset, length: length as u16, addr, size };
+                    let text = name[..n].to_vec();
+                    match b[OP] {
+                        OP_SAVE => (size as usize <= MAX_RECORD && readable(rom, ram, addr, size as usize).is_some())
+                            .then(|| (named(0, 0, 0, size), RequestKind::Save { name: text, data: Vec::new() })),
+                        OP_LOAD => ((1..=MAX_GET_LENGTH as u32).contains(&length) && in_ram(length as usize)).then(|| {
+                            (named(offset, length, addr, 0), RequestKind::Load { name: text, offset, length: length as u16 })
+                        }),
+                        _ => Some((named(0, 0, 0, 0), RequestKind::Delete { name: text })),
+                    }
+                })
+            }
+            OP_FIND => ((FIND_FEEDS as u32..=FIND_PROGRAMS as u32).contains(&offset)
                 && (1..=MAX_NAME as u32).contains(&size)
                 && (1..=MAX_GET_LENGTH as u32).contains(&length)
                 && in_ram(length as usize)
@@ -343,6 +403,7 @@ impl Content {
                 *bytes = readable(rom, ram, addr, length as usize).unwrap().to_vec();
             }
             RequestKind::Find { query, .. } => *query = readable(rom, ram, addr, size as usize).unwrap().to_vec(),
+            RequestKind::Save { data, .. } => *data = readable(rom, ram, addr, size as usize).unwrap().to_vec(),
             _ => {}
         }
 
@@ -351,7 +412,7 @@ impl Content {
         let handle = index as u8 + 1;
         self.slots[index] = Some(Slot { block: block_addr, pending });
         let taken = match &kind {
-            RequestKind::Put { data } => data.len(),
+            RequestKind::Put { data } | RequestKind::Save { data, .. } => data.len(),
             RequestKind::Publish { title: bytes, .. }
             | RequestKind::SetProfile { name: bytes, .. }
             | RequestKind::SetNickname { name: bytes, .. }
@@ -431,6 +492,21 @@ impl Content {
                 delivered = data.len();
                 status::DONE
             }
+            (&Pending::Named { op: OP_LOAD, offset, length, addr, .. }, Outcome::Got { size, data }) => {
+                let (size, offset) = (*size as usize, offset as usize);
+                let expected = (length as usize).min(size.saturating_sub(offset));
+                if size > MAX_RECORD || data.len() != expected {
+                    return None;
+                }
+                let at = ram_range(ram.len(), addr, data.len())?;
+                ram[at..at + data.len()].copy_from_slice(data);
+                put32(ram, LENGTH, data.len() as u32);
+                put32(ram, SIZE, size as u32);
+                delivered = data.len();
+                status::DONE
+            }
+            (&Pending::Named { op: OP_SAVE | OP_DELETE, .. }, Outcome::Done) => status::DONE,
+            (&Pending::Named { op: OP_SAVE, .. }, Outcome::NoRoom) => status::NO_ROOM,
             (Pending::Put { id: want, .. }, Outcome::Put { id }) => {
                 if id != want {
                     return None;
@@ -477,6 +553,9 @@ impl Content {
                         (OP_FIND, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
                     }
                     Pending::Feed { op, id, listed, len } => (op, *block, id, listed as u32, len as u32, 0, 0),
+                    Pending::Named { op, name, offset, length, addr, size } => {
+                        (op, *block, name, offset, length as u32, addr, size)
+                    }
                 },
             };
             out.push(op);
@@ -631,7 +710,7 @@ mod tests {
         let ram_end = RAM_BASE + RAM_LEN as u32;
         let bad = [
             block(0, [0; 32], 0, 1, 0x1000, 1),
-            block(0x0D, [0; 32], 0, 1, 0x1000, 1),
+            block(0x12, [0; 32], 0, 1, 0x1000, 1),
             block(0xFF, [0; 32], 0, 1, 0x1000, 1),
             get(0, 0),
             feed(OP_SUBSCRIPTIONS, 0, 0),
@@ -1193,8 +1272,8 @@ mod tests {
         rig.write(ram_end - 4, b"tail");
         for b in [
             find(0, 4, 100, DATA),                    // no scope
-            find(3, 4, 100, DATA),                    // unknown scope
-            find(0x101, 4, 100, DATA),                // only scope 1 or 2, not low bits
+            find(4, 4, 100, DATA),                    // unknown scope
+            find(0x101, 4, 100, DATA),                // only scope 1, 2 or 3, not low bits
             find(1, 0, 100, DATA),                    // empty query
             find(1, 49, 100, DATA),                   // query over 48 bytes
             find(1, 2, 100, DATA + 100),              // not UTF-8
@@ -1401,5 +1480,170 @@ mod tests {
         assert_eq!(rec(3), want(OP_SET_PROFILE, BLOCK + 192, [0; 32], [0, 3, 0, 0]));
         assert_eq!(rec(4), want(OP_SET_NICKNAME, BLOCK + 256, [9; 32], [0, 3, 0, 0]));
         assert!(rec(5).iter().all(|&b| b == 0));
+    }
+
+    fn named(op: u8, name: &str, offset: u32, length: u32, addr: u32, size: u32) -> [u8; BLOCK_LEN] {
+        let mut id = [0u8; 32];
+        id[..name.len()].copy_from_slice(name.as_bytes());
+        block(op, id, offset, length, addr, size)
+    }
+
+    #[test]
+    fn record_names() {
+        let id = |b: &[u8]| {
+            let mut id = [0u8; 32];
+            id[..b.len()].copy_from_slice(b);
+            id
+        };
+        assert_eq!(record_name_len(&id(b"high-score")), Some(10));
+        assert_eq!(record_name_len(&id("ünï code/x".as_bytes())), Some(12));
+        assert_eq!(record_name_len(&[b'a'; 32]), Some(32));
+        assert_eq!(record_name_len(&id(b"")), None, "empty");
+        assert_eq!(record_name_len(&id(b"a\nb")), None, "a control character");
+        assert_eq!(record_name_len(&id(&[0xC3, 0x28])), None, "not UTF-8");
+        let mut gap = id(b"ab");
+        gap[5] = b'c';
+        assert_eq!(record_name_len(&gap), None, "not zero padded");
+    }
+
+    /// SPEC 9.6: save copies its data at submit (ROM or RAM, 0 to 65,536
+    /// bytes); load, delete and records are submitted like get; bad names
+    /// and ranges are bad requests.
+    #[test]
+    fn named_records_are_submitted() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        rig.write(DATA, b"0042");
+        assert_eq!(rig.submit(BLOCK, Some(&named(OP_SAVE, "high-score", 0, 0, DATA, 4))), (1, 4));
+        rig.write(DATA, b"XXXX");
+        assert_eq!(rig.submit(BLOCK + 64, Some(&named(OP_SAVE, "empty", 0, 0, ram_end, 0))), (2, 0));
+        assert_eq!(rig.submit(BLOCK + 128, Some(&named(OP_SAVE, "rom", 0, 0, ROM_BASE, 3))), (3, 3));
+        assert_eq!(rig.submit(BLOCK + 192, Some(&named(OP_LOAD, "high-score", 2, 100, DATA + 16, 0))), (4, 0));
+        assert_eq!(rig.submit(BLOCK + 256, Some(&named(OP_DELETE, "x", 9, 9, 9, 9))), (5, 0));
+        assert_eq!(rig.submit(BLOCK + 320, Some(&named(OP_RECORDS, "", 1, 72, DATA + 200, 0))), (6, 0));
+        assert_eq!(rig.submit(BLOCK + 384, Some(&named(OP_PROGRAMS, "", 0, 500, DATA + 300, 0))), (7, 0));
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::Save { name: b"high-score".to_vec(), data: b"0042".to_vec() } },
+                Request { handle: 2, kind: RequestKind::Save { name: b"empty".to_vec(), data: Vec::new() } },
+                Request { handle: 3, kind: RequestKind::Save { name: b"rom".to_vec(), data: b"rom".to_vec() } },
+                Request { handle: 4, kind: RequestKind::Load { name: b"high-score".to_vec(), offset: 2, length: 100 } },
+                Request { handle: 5, kind: RequestKind::Delete { name: b"x".to_vec() } },
+                Request { handle: 6, kind: RequestKind::Records { offset: 1, length: 72 } },
+                Request { handle: 7, kind: RequestKind::Programs { offset: 0, length: 500 } },
+            ]
+        );
+        let mut rig = Rig::new();
+        rig.write(DATA, &[0xC3, 0x28]);
+        let mut bad_name = named(OP_LOAD, "ok", 0, 1, DATA, 0);
+        bad_name[ID + 1] = 0x07;
+        let mut gap = named(OP_DELETE, "ok", 0, 0, 0, 0);
+        gap[ID + 5] = b'x';
+        for b in [
+            named(OP_SAVE, "", 0, 0, DATA, 1),
+            named(OP_LOAD, "", 0, 1, DATA, 0),
+            named(OP_DELETE, "", 0, 0, 0, 0),
+            bad_name,
+            gap,
+            named(OP_SAVE, "k", 0, 0, DATA, MAX_RECORD as u32 + 1),
+            named(OP_SAVE, "k", 0, 0, ram_end - 1, 2),
+            named(OP_SAVE, "k", 0, 0, 0, 0),
+            named(OP_LOAD, "k", 0, 0, DATA, 0),
+            named(OP_LOAD, "k", 0, MAX_GET_LENGTH as u32 + 1, DATA, 0),
+            named(OP_LOAD, "k", 0, 4, ROM_BASE, 0),
+            named(OP_LOAD, "k", 0, 2, ram_end - 1, 0),
+            named(OP_RECORDS, "", 0, 0, DATA, 0),
+            named(OP_PROGRAMS, "", 0, 1, ROM_BASE, 0),
+        ] {
+            assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+            assert_eq!(rig.read(BLOCK + 2, 50), b[2..], "only the status is written");
+        }
+        // The longest record, a name of 32 bytes.
+        let mut long = named(OP_SAVE, "k", 0, 0, RAM_BASE, MAX_RECORD as u32);
+        long[ID..ID + 32].fill(b'n');
+        let mut rig = Rig { ram: vec![0; MAX_RECORD + 64], ..Rig::new() };
+        assert_eq!(rig.submit(RAM_BASE + MAX_RECORD as u32, Some(&long)), (1, MAX_RECORD));
+    }
+
+    #[test]
+    fn named_records_complete() {
+        let mut rig = Rig::new();
+        rig.write(DATA, &[0xEE; 16]);
+        rig.submit(BLOCK, Some(&named(OP_LOAD, "k", 2, 4, DATA, 0)));
+        rig.submit(BLOCK + 64, Some(&named(OP_SAVE, "k", 0, 0, DATA, 1)));
+        rig.submit(BLOCK + 128, Some(&named(OP_DELETE, "k", 0, 0, 0, 0)));
+        rig.submit(BLOCK + 192, Some(&named(OP_RECORDS, "", 0, 72, DATA + 100, 0)));
+        rig.submit(BLOCK + 256, Some(&named(OP_LOAD, "gone", 0, 4, DATA, 0)));
+        rig.submit(BLOCK + 320, Some(&named(OP_SAVE, "big", 0, 0, DATA, 1)));
+        // Answers that do not fit are ignored.
+        for c in [
+            got(1, 10, b"abc"),                    // 4 bytes from offset 2 of 10
+            got(1, MAX_RECORD as u32 + 1, b"abcd"), // over the largest record
+            done(1, Outcome::Done),
+            done(2, Outcome::Got { size: 1, data: vec![1] }),
+            done(3, Outcome::NoRoom),
+            records(4, 3, &[0; 36]),                // two fit
+            done(4, Outcome::Done),
+        ] {
+            assert_eq!(rig.complete(&[c.clone()]), (1, 0), "{c:?}");
+        }
+        let two = [[b'a'; 36], [b'b'; 36]].concat();
+        let (ignored, _, delivered) = rig.content.complete(
+            &[
+                got(1, 4, b"cd"),
+                done(2, Outcome::Done),
+                done(3, Outcome::Done),
+                records(4, 3, &two),
+                done(5, Outcome::NotFound),
+                done(6, Outcome::NoRoom),
+            ],
+            &mut rig.ram,
+            &mut rig.system,
+        );
+        assert_eq!((ignored, delivered), (0, 2 + 72));
+        assert_eq!(rig.events(), [(5, 1, 1, 0), (5, 2, 1, 0), (5, 3, 1, 0), (5, 4, 1, 0), (5, 5, 2, 0), (5, 6, 6, 0)]);
+        assert_eq!(rig.read(DATA, 3), [b'c', b'd', 0xEE]);
+        assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), [2, 0, 0, 0]);
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [4, 0, 0, 0], "the record's size");
+        assert_eq!(rig.read(DATA + 100, 72), two);
+        assert_eq!(status(&rig, BLOCK + 320), status::NO_ROOM);
+        // An empty record; a load at its end.
+        rig.submit(BLOCK, Some(&named(OP_LOAD, "k", 0, 4, DATA, 0)));
+        assert_eq!(rig.complete(&[got(1, 0, b"")]), (0, 0));
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [0, 0, 0, 0]);
+    }
+
+    /// STATE.md 1.8: the pending records of save, load, delete, records
+    /// and programs.
+    #[test]
+    fn state_records_of_named_records() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"0042");
+        rig.submit(BLOCK, Some(&named(OP_SAVE, "high-score", 7, 7, DATA, 4)));
+        rig.submit(BLOCK + 64, Some(&named(OP_LOAD, "k", 2, 100, DATA, 9)));
+        rig.submit(BLOCK + 128, Some(&named(OP_DELETE, "k", 1, 2, 3, 4)));
+        rig.submit(BLOCK + 192, Some(&named(OP_RECORDS, "zz", 1, 72, DATA, 5)));
+        rig.submit(BLOCK + 256, Some(&named(OP_PROGRAMS, "zz", 2, 300, DATA, 5)));
+        let mut out = Vec::new();
+        rig.content.write_state(&mut out);
+        let rec = |i: usize| &out[i * 53..(i + 1) * 53];
+        let want = |op: u8, block: u32, name: &str, fields: [u32; 4]| {
+            let mut id = [0u8; 32];
+            id[..name.len()].copy_from_slice(name.as_bytes());
+            let mut r = vec![op];
+            r.extend_from_slice(&block.to_le_bytes());
+            r.extend_from_slice(&id);
+            for v in fields {
+                r.extend_from_slice(&v.to_le_bytes());
+            }
+            r
+        };
+        assert_eq!(rec(0), want(OP_SAVE, BLOCK, "high-score", [0, 0, 0, 4]));
+        assert_eq!(rec(1), want(OP_LOAD, BLOCK + 64, "k", [2, 100, DATA, 0]));
+        assert_eq!(rec(2), want(OP_DELETE, BLOCK + 128, "k", [0, 0, 0, 0]));
+        assert_eq!(rec(3), want(OP_RECORDS, BLOCK + 192, "", [1, 72, DATA, 0]));
+        assert_eq!(rec(4), want(OP_PROGRAMS, BLOCK + 256, "", [2, 300, DATA, 0]));
     }
 }

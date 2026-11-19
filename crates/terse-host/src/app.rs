@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terse_core::system::{CONTROLLERS, QUEUE_CAPACITY};
 use terse_core::{
-    COLS, Completion, Controller, Driver, Event, FrameInput, FrameResult, Image, MAX_RANDOM_PER_FRAME, Machine, Outcome,
+    COLS, Completion, Controller, Driver, Event, FrameInput, FrameResult, Image, MAX_RANDOM_PER_FRAME, Machine,
     ROWS, System, Who, buttons,
 };
 use terse_net::ContentService;
@@ -71,6 +71,8 @@ pub struct Program {
     pub image: Image,
     pub shell: bool,
     pub builtins: Vec<[u8; 32]>,
+    /// The built-in shell's identity (SPEC 12.2), for its named records.
+    pub identity: Option<terse_core::ProgramId>,
 }
 
 /// Runs `program` in a window. With `selftest`, input comes only from its
@@ -83,8 +85,10 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let title = if program.shell { "Terse".to_string() } else { format!("{} — Terse", program.image.title_lossy()) };
+    let mut system = System::new(&program.image, program.shell, program.builtins);
+    system.set_shell_identity(program.identity);
     let mut app = App {
-        system: System::new(&program.image, program.shell, program.builtins),
+        system,
         io: HashMap::new(),
         content,
         fetching: Vec::new(),
@@ -317,7 +321,7 @@ impl Driver for FrameDriver<'_> {
             io.random[..result.random_used].fill(0);
         }
         if let Some(content) = self.content.as_mut() {
-            content.submit_tagged(who.serial, machine.take_content_requests());
+            content.submit_machine(who.serial, machine);
         }
         self.ran.push(who.serial);
         result
@@ -326,6 +330,13 @@ impl Driver for FrameDriver<'_> {
     fn want_image(&mut self, serial: u32, image: [u8; 32]) {
         if let Some(content) = self.content.as_mut() {
             content.fetch(serial, image);
+            self.fetching.push(serial);
+        }
+    }
+
+    fn want_program(&mut self, serial: u32, program: &terse_core::ProgramId, builtins: &[[u8; 32]]) {
+        if let Some(content) = self.content.as_mut() {
+            content.fetch_program(serial, program, builtins);
             self.fetching.push(serial);
         }
     }
@@ -379,14 +390,7 @@ struct App {
     fault_shown: bool,
 }
 
-/// The image a fetch delivered (SPEC 12.2).
-fn image_from(outcome: Outcome) -> Result<Image, String> {
-    match outcome {
-        Outcome::Got { data, .. } => Image::parse(&data).map_err(|e| e.to_string()),
-        Outcome::NotFound => Err("image not found".into()),
-        _ => Err("image fetch failed".into()),
-    }
-}
+use terse_net::service::image_from;
 
 impl App {
     /// Whether the system is a shell with machines (the home key is the

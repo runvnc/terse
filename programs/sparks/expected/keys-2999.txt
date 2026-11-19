@@ -1,4 +1,4 @@
-  SPARKS                      SCORE 0030                      LIVES
+  SPARKS    HIGH 0030         SCORE 0030                      LIVES
 
 
 
@@ -13,7 +13,7 @@
                                    G A M E   O V E R
 
                                     Score 0030
-
+                                 New high score!
                      Enter or Start: play again.  Esc: quit.
 
 

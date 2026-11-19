@@ -1,4 +1,4 @@
-  SPARKS                      SCORE 0020                      LIVES ♥ ♥ ♥
+  SPARKS    HIGH 0000         SCORE 0020                      LIVES ♥ ♥ ♥
 
 
 

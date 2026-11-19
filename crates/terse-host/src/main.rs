@@ -44,15 +44,16 @@ const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
   terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
-             [--no-feed-relays] [--no-prefetch] [--consent ask|allow|deny] [--store <dir>] [--config <dir>]
-             [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
+             [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
+             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
   terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>]
              [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
-             [--config <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--builtin <image|id>]...
+             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
+             [--builtin <image|id>]...
   terse-host --selftest <image|id> | --selftest --shell [<image|id>] [--frames <N>] [--events <file>] [--csv <file>]
              [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>]
-             [--store <dir>] [--config <dir>] [--builtin <image|id>]...
+             [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   With no image, runs the shell built into terse-host (programs/shell, SPEC 12): it starts the
   built-in programs (reader, sparks, fetch, hello, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
@@ -69,7 +70,10 @@ const USAGE: &str = "usage:
   (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
   --no-feed-relays. --screenshot and --selftest use relays only with --relay.
   --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
-  terse: links in it (NETWORK 4.4).
+  terse: links in it (NETWORK 4.4). --no-program-download: do not download the current version of
+  each program of the subscribed feeds as it arrives (NETWORK 4.4).
+  --data: where programs' named records are kept, in records/ (SPEC 9.6; default
+  $XDG_DATA_HOME/terse, else ~/.local/share/terse). They never leave this machine.
   --consent: how requests by a program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
   answered: ask shows the host's prompt at the bottom of the window, naming the program (Y allows,
   N or Esc refuses); default ask in the window, deny for --screenshot and --selftest (where nobody
@@ -110,7 +114,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut font = None;
     let mut page_fonts = page::PageFonts::default();
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
-    let (mut feed_relays, mut prefetch) = (true, true);
+    let (mut feed_relays, mut prefetch, mut program_download, mut data) = (true, true, true, None);
     let (mut consent, mut demo) = (None, false);
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let mut it = args.into_iter();
@@ -135,6 +139,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--relay" => relays.push(it.next().ok_or(USAGE)?),
             "--no-feed-relays" => feed_relays = false,
             "--no-prefetch" => prefetch = false,
+            "--no-program-download" => program_download = false,
+            "--data" => data = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--store" => store = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--config" => config = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--events" => events = Some(it.next().ok_or(USAGE)?),
@@ -169,6 +175,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
     let store = store.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
+    let data = data.or_else(default_data_dir).ok_or("no data directory (use --data)")?;
     // The relay: in a window, found or started as README "Getting started"
     // says; otherwise only --relay.
     let relays = if windowed {
@@ -188,6 +195,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         let mut node = Node::open(Some(store.clone()), &relays, DEFAULT_TIMEOUT)?;
         node.set_feed_relays(feed_relays);
         node.set_prefetch(prefetch);
+        node.set_program_download(program_download);
+        node.set_records(terse_net::Records::in_data_dir(&data));
         Ok::<Node, String>(node)
     };
     let mut node = None;
@@ -236,7 +245,9 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Some(ContentService::start_with_consent(node, consent))
         }
     };
-    let program = app::Program { image, shell, builtins };
+    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
+    let program = app::Program { image, shell, builtins, identity };
 
     if selftest {
         if screenshot.is_some() {
@@ -383,6 +394,7 @@ fn take_screenshot(
 
     let image = &program.image;
     let mut system = System::new(image, program.shell, program.builtins);
+    system.set_shell_identity(program.identity);
     let mut headless = HeadlessSystem::new(content, script);
     // Each machine's page has its own layouter; the fonts are shared.
     type Latest = Arc<Mutex<Option<Arc<page::HostLayout>>>>;

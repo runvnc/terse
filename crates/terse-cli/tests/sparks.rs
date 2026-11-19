@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use terse_core::{FrameResult, Image, Machine, RAM_BASE, Script};
 use terse_net::service::Headless;
+use terse_net::{BlobStore, ContentService, Node, Records};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/sparks/sparks.terse");
 
@@ -36,10 +37,25 @@ struct Session {
     min_sp: u32,
 }
 
+/// The headless run `terse run` makes: a content service on a new, empty
+/// store, and named records in `data` (a new directory if `None`; the
+/// directories live as long as the returned one).
+fn headless_in(script: &str, data: Option<&Path>) -> (Headless, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = Node::new(BlobStore::open(dir.path().join("store"), None).unwrap(), None);
+    node.set_records(Records::in_data_dir(data.unwrap_or(&dir.path().join("data"))));
+    let content = ContentService::start(node);
+    (Headless::new(Some(content), Script::parse(script).unwrap()), dir)
+}
+
+fn headless(script: &str) -> (Headless, tempfile::TempDir) {
+    headless_in(script, None)
+}
+
 /// Runs `frames` frames exactly as `terse run` does.
 fn session(script: &str, frames: u32, keep: &[u32]) -> Session {
     let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
-    let mut h = Headless::new(None, Script::parse(script).unwrap());
+    let (mut h, _dir) = headless(script);
     let mut s = Session { results: Vec::new(), screens: Vec::new(), list_bytes: Vec::new(), min_sp: 0 };
     for f in 1..=frames {
         let r = h.frame(&mut m);
@@ -78,7 +94,7 @@ fn recorded(name: &str) -> String {
 /// The number of frames run when the screen first shows `what`.
 fn first_frame_showing(script: &str, what: &str, frames: u32) -> u32 {
     let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
-    let mut h = Headless::new(None, Script::parse(script).unwrap());
+    let (mut h, _dir) = headless(script);
     for f in 1..=frames {
         h.frame(&mut m);
         if m.terminal().unwrap().text().contains(what) {
@@ -120,7 +136,7 @@ fn controller_session() {
 fn phosphor_session() {
     let script = std::fs::read_to_string(sessions_dir().join("phosphor.txt")).unwrap();
     let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
-    let mut h = Headless::new(None, Script::parse(&script).unwrap());
+    let (mut h, _dir) = headless(&script);
     let mut styles = Vec::new();
     for f in 1..=900 {
         h.frame(&mut m);
@@ -139,7 +155,7 @@ fn phosphor_session() {
     // arena border and the craft's four lines are drawn twice (overdraw is
     // brighter there, SPEC 10.6).
     let mut k = Machine::new(&Image::parse(IMAGE).unwrap());
-    let mut h = Headless::new(None, Script::parse(&recorded("keys.txt")).unwrap());
+    let (mut h, _dir) = headless(&recorded("keys.txt"));
     for _ in 0..900 {
         h.frame(&mut k);
     }
@@ -160,9 +176,14 @@ fn phosphor_session() {
 fn cli_dump_matches() {
     let events = sessions_dir().join("keys.txt");
     let image = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/sparks.terse");
+    let dir = tempfile::tempdir().unwrap();
     let out = common::terse_command()
         .args(["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "900"])
         .args(["--dump", "--dump-vectors"])
+        .arg("--store")
+        .arg(dir.path().join("store"))
+        .arg("--data")
+        .arg(dir.path().join("data"))
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -176,7 +197,7 @@ fn cli_dump_matches() {
 fn state_hashes() {
     let frames = [30, 900, 1800, 3000];
     let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
-    let mut h = Headless::new(None, Script::parse(&recorded("keys.txt")).unwrap());
+    let (mut h, _dir) = headless(&recorded("keys.txt"));
     let mut got = String::new();
     for f in 1..=3000 {
         h.frame(&mut m);
@@ -189,9 +210,14 @@ fn state_hashes() {
 
     let events = sessions_dir().join("keys.txt");
     let image = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/sparks/sparks.terse");
+    let dir = tempfile::tempdir().unwrap();
     let out = common::terse_command()
         .args(["run", image.to_str().unwrap(), "--events", events.to_str().unwrap(), "--frames", "1800"])
         .args(["--hash-every", "900", "--hash"])
+        .arg("--store")
+        .arg(dir.path().join("store"))
+        .arg("--data")
+        .arg(dir.path().join("data"))
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -216,7 +242,7 @@ fn same_script_same_run() {
 fn fill_toggle() {
     let run = |script: &str| {
         let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
-        let mut h = Headless::new(None, Script::parse(script).unwrap());
+        let (mut h, _dir) = headless(script);
         let mut fills = Vec::new();
         for _ in 0..60 {
             h.frame(&mut m);
@@ -278,9 +304,52 @@ fn budget() {
     }
 }
 
+/// SPEC 9.6: the high score is the named record "high-score", saved when a
+/// game beats it and loaded at start, without delaying the first frame. A
+/// second run with the same data directory shows the first run's score.
+#[test]
+fn high_score_persists() {
+    let data = tempfile::tempdir().unwrap();
+    let script = recorded("keys.txt");
+    let over = first_frame_showing(&script, "G A M E", 3600);
+    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let (mut h, _dir) = headless_in(&script, Some(data.path()));
+    let first = h.frame(&mut m);
+    assert!(first.waited, "frame 0 ends in wait_frame: the load does not hold it up");
+    for _ in 1..over + 2 {
+        h.frame(&mut m);
+    }
+    let text = m.terminal().unwrap().text();
+    assert!(text.contains("New high score!"), "{text}");
+    let score = text.split("Score ").nth(1).unwrap()[..4].to_string();
+    assert_ne!(score, "0000");
+    let owner = terse_net::Owner::Image(Image::parse(IMAGE).unwrap().id);
+    let saved = Records::in_data_dir(data.path()).load(&owner, b"high-score").unwrap().unwrap();
+    assert_eq!(u32::from_le_bytes(saved[..].try_into().unwrap()), score.parse::<u32>().unwrap());
+
+    // The second run: no input; the high score arrives in frame 1.
+    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let (mut h, _dir) = headless_in("", Some(data.path()));
+    h.frame(&mut m);
+    assert!(m.terminal().unwrap().text().contains("HIGH 0000"));
+    for _ in 0..29 {
+        h.frame(&mut m);
+    }
+    let text = m.terminal().unwrap().text();
+    assert!(text.contains(&format!("HIGH {score}")), "{text}");
+    golden("high-30.txt", &screen(&m));
+    // Without the record (another data directory) it is 0000.
+    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let (mut h, _dir) = headless("");
+    for _ in 0..30 {
+        h.frame(&mut m);
+    }
+    assert!(m.terminal().unwrap().text().contains("HIGH 0000"));
+}
+
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0)]);
+    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0), (4, 0)]);
 }
 
 /// Records programs/sparks/sessions/{keys,pad}.txt: a player that reads only

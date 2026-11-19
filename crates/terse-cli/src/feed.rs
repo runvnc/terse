@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use terse_net::entry::{self, MAX_TITLE};
 use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Nicknames};
-use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS};
+use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use terse_net::{
     Article, ContentService, Done, Draft, Entry, FeedEvent, FeedKey, Identity, Node, Subscriptions,
     default_config_dir, parse_hex, to_hex,
@@ -67,6 +67,7 @@ fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
         node.set_auto_download_limit(n.parse().map_err(|_| format!("bad byte count {n}"))?);
     }
     node.set_prefetch(!args.has("--no-prefetch"));
+    node.set_program_download(!args.has("--no-program-download"));
     Ok(node)
 }
 
@@ -103,6 +104,7 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
         "subscriptions" => subscriptions(rest),
         "sync" => sync(rest),
         "list" => list(rest),
+        "programs" => programs(rest),
         "read" => read_article(rest),
         "nickname" => nickname(rest),
         _ => Err(USAGE.into()),
@@ -173,7 +175,10 @@ fn now() -> u32 {
 
 fn publish(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    known(&args, &["--title", "--reply-to"])?;
+    known(&args, &["--title", "--reply-to", "--program", "--name"])?;
+    if args.has("--program") {
+        return publish_program(&args);
+    }
     let data = read(args.one_positional()?)?;
     if !terse_net::blob::valid_size(data.len()) {
         return Err(format!("an article is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
@@ -201,6 +206,59 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
+}
+
+/// `terse feed publish --program <image> [--name <n>]`: a program entry
+/// (NETWORK 4.2) for a valid image, named by default by its title.
+fn publish_program(args: &Args) -> Result<ExitCode, String> {
+    if !args.positional.is_empty() || args.has("--title") || args.has("--reply-to") {
+        return Err(USAGE.into());
+    }
+    let path = args.require("--program")?;
+    let image = read(path)?;
+    let parsed = terse_core::Image::parse(&image).map_err(|e| format!("{path}: not a Terse image: {e}"))?;
+    let name = match args.get("--name") {
+        Some(n) => n.to_string(),
+        None => String::from_utf8(parsed.title.clone()).map_err(|_| format!("{path}: the title is not UTF-8; give --name"))?,
+    };
+    if !profile::valid_name(&name) {
+        return Err(format!("\"{}\" {BAD_NAME}", printable(&name, false)));
+    }
+    let identity = load_identity(args)?;
+    let relays = relay_urls(args, true)?;
+    let mut node = open_node(args, &relays)?;
+    node.set_identity(identity);
+    match node.publish_program(&image, &name, now()) {
+        Done::Published { seq, blob } => {
+            if relays.is_empty() {
+                eprintln!("terse: no relay: stored locally only");
+            }
+            println!("seq {seq} program {name} image {}", to_hex(&blob));
+            Ok(ExitCode::SUCCESS)
+        }
+        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        _ => Err("publish failed (store error, or no relay accepted it)".into()),
+    }
+}
+
+/// `terse feed programs [<key>]`: the current version of each program held
+/// (NETWORK 4.2), of one feed or of every feed held.
+fn programs(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    known(&args, &[])?;
+    let node = open_node(&args, &[])?;
+    let feeds = match args.positional.as_slice() {
+        [] => node.feed_store().feeds().map_err(|e| e.to_string())?,
+        [key] => vec![parse_feed_key(key)?],
+        _ => return Err(USAGE.into()),
+    };
+    for feed in &feeds {
+        let name = name_of(&node, feed);
+        for s in node.current_programs(feed) {
+            println!("{}", entry_line(&s.entry, node.held_article(&s.entry), name.as_deref()));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn subscribe(args: &[String], add: bool) -> Result<ExitCode, String> {
@@ -281,13 +339,17 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
         entry.seq,
         entry.size,
         article_label(article),
-        if entry.kind == terse_net::entry::KIND_PROFILE { format!("[profile: {title}]") } else { title }
+        match entry.kind {
+            terse_net::entry::KIND_PROFILE => format!("[profile: {title}]"),
+            terse_net::entry::KIND_PROGRAM => format!("[program: {title}]"),
+            _ => title,
+        }
     )
 }
 
 fn sync(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--watch", "--no-prefetch"])?;
-    known(&args, &["--watch", "--auto-download", "--no-prefetch"])?;
+    let args = Args::parse(args, &["--watch", "--no-prefetch", "--no-program-download"])?;
+    known(&args, &["--watch", "--auto-download", "--no-prefetch", "--no-program-download"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.into());
     }
@@ -314,6 +376,9 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
         };
         match event {
             FeedEvent::Entry { entry, article } => println!("{}", entry_line(&entry, Some(article), None)),
+            FeedEvent::ProgramDownloaded { entry, article } => {
+                println!("{}  (downloaded)", entry_line(&entry, Some(article), None));
+            }
             // Every feed caught up and every download done.
             FeedEvent::Settled if !watch => return Ok(ExitCode::SUCCESS),
             FeedEvent::Settled | FeedEvent::Busy => {}
@@ -493,10 +558,14 @@ fn profile_show(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `terse find [--entries] <text>`: asks every relay (NETWORK 4.7).
+/// `terse find [--entries|--programs] <text>`: asks every relay (NETWORK
+/// 4.7).
 pub fn find(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--entries"])?;
-    known(&args, &["--entries"])?;
+    let args = Args::parse(args, &["--entries", "--programs"])?;
+    known(&args, &["--entries", "--programs"])?;
+    if args.has("--entries") && args.has("--programs") {
+        return Err(USAGE.into());
+    }
     let text = args.one_positional()?;
     if !(1..=profile::MAX_NAME).contains(&text.len()) {
         return Err("the text to find is 1 to 48 bytes".into());
@@ -506,7 +575,11 @@ pub fn find(args: &[String]) -> Result<ExitCode, String> {
         return Err("no relay to ask: give --relay, or add one with `terse relay add <url>`".into());
     }
     let mut node = open_node(&args, &relays)?;
-    let scope = if args.has("--entries") { SCOPE_ENTRIES } else { SCOPE_FEEDS };
+    let scope = match (args.has("--entries"), args.has("--programs")) {
+        (true, _) => SCOPE_ENTRIES,
+        (_, true) => SCOPE_PROGRAMS,
+        _ => SCOPE_FEEDS,
+    };
     let Done::Found(found) = node.find(scope, text.as_bytes()) else {
         return Err("no relay answered".into());
     };

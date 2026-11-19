@@ -34,11 +34,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use terse_net::blob::{BlobId, blob_id, valid_size};
-use terse_net::entry::{self, KIND_ARTICLE, KIND_PROFILE};
+use terse_net::entry::{self, KIND_ARTICLE, KIND_PROFILE, KIND_PROGRAM};
 use terse_net::feeds::Insert;
 use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Document};
-use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, status};
+use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS, status};
 use terse_net::relay::websocket_config;
 use terse_net::timeline::Arrivals;
 use terse_net::{BlobStore, FeedKey, FeedStore};
@@ -507,6 +507,7 @@ impl Relay {
             Ok(o) => o.iter().rev().filter(|(f, _)| listed.contains(f)).copied().collect(),
             Err(_) => Vec::new(),
         };
+        let want = if scope == SCOPE_ENTRIES { KIND_ARTICLE } else { KIND_PROGRAM };
         let mut hits = Vec::new();
         for (feed, seq) in order {
             if hits.len() == MAX_FIND_RESULTS {
@@ -514,19 +515,36 @@ impl Relay {
             }
             // Stored entries were verified when they arrived.
             let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
-            let (Some(&kind), Some(&n)) = (bytes.get(40), bytes.get(108)) else { continue };
-            let Some(title) = bytes.get(109..109 + n as usize) else { continue };
-            if kind == KIND_ARTICLE && profile::matches(title, query) {
-                hits.push(bytes);
+            let Some((kind, title)) = kind_and_title(&bytes) else { continue };
+            if kind != want || !profile::matches(title, query) {
+                continue;
             }
+            // Programs: current versions only (no entry of the same name
+            // with a higher seq is held).
+            if want == KIND_PROGRAM {
+                let newer = self.feeds.seqs(&feed).unwrap_or_default().into_iter().filter(|&s| s > seq).any(|s| {
+                    let Ok(Some(b)) = self.feeds.get(&feed, s) else { return false };
+                    kind_and_title(&b) == Some((KIND_PROGRAM, title))
+                });
+                if newer {
+                    continue;
+                }
+            }
+            hits.push(bytes.clone());
         }
         Some(hits)
     }
 }
 
+/// A stored entry's kind and title.
+fn kind_and_title(bytes: &[u8]) -> Option<(u8, &[u8])> {
+    let (&kind, &n) = (bytes.get(40)?, bytes.get(108)?);
+    Some((kind, bytes.get(109..109 + n as usize)?))
+}
+
 /// Whether a find's scope and query are well formed (NETWORK 4.7).
 fn valid_find(scope: u8, query: &[u8]) -> bool {
-    (scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES)
+    (SCOPE_FEEDS..=SCOPE_PROGRAMS).contains(&scope)
         && (1..=profile::MAX_NAME).contains(&query.len())
         && std::str::from_utf8(query).is_ok()
 }

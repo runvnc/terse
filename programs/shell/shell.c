@@ -10,21 +10,29 @@
  * the vector display in the gap around its picture.
  *
  * The host's home key gives the focus back to the shell: command mode. A
- * launcher on the page lists the built-in programs and the machines, and
- * the tiles move right to make room for it. Keys in command mode: Up and
- * Down move the cursor, Enter starts the program under it (and focuses
- * it) or focuses the machine under it, Tab or Right and Shift+Tab or Left
+ * launcher on the page lists the built-in programs, then the programs of
+ * the feeds the user follows (content op 0Dh: each name with its
+ * publisher's name and short key, and a mark while its image is not yet
+ * downloaded), then the machines; the tiles move right to make room for
+ * it. Programs are started by their identity (start_program: a built-in
+ * by the zero key and its title), so their named records follow them from
+ * one version to the next. Keys in command mode: Up and Down move the
+ * cursor, Enter starts the program under it (and focuses it) or focuses
+ * the machine under it, Tab or Right and Shift+Tab or Left
  * select the next or previous machine, Esc returns the focus to the
  * selected machine, X stops it, P pauses or resumes it, Z zooms it (or
  * goes back to the layout before), L cycles the layouts, 1-8 select a
  * machine by handle. A press on a machine's picture or its bar segment
- * focuses it; one on the home segment enters command mode. */
+ * focuses it; one on the home segment enters command mode. The layout
+ * chosen with L and Z is kept in the named record "layout" (SPEC 9.6). */
 
 #include <stdint.h>
 #include "terse.h"
 
 #define BUDGET 125000u
 #define MAX_PROGS 16
+#define MAX_FEED_PROGS 16 /* programs of the followed feeds shown */
+#define MAX_NAMES 16
 #define AREA_Y 20 /* the tiles' area: below the bar and a gap */
 #define AREA_H (480 - AREA_Y)
 #define GAP 6     /* between tiles; the focus frame is drawn in it */
@@ -58,11 +66,46 @@ static uint8_t prog_n, prog_known[MAX_PROGS], prog_asked[MAX_PROGS];
 static content_req prog_req[MAX_PROGS];
 static uint8_t prog_hdr[MAX_PROGS][32];
 
+/* The programs of the followed feeds (op 0Dh), by feed key then name. */
+typedef struct {
+    uint8_t key[32];
+    uint8_t len, local;
+    uint8_t name[48];
+} feed_prog;
+static feed_prog fprog[MAX_FEED_PROGS];
+static uint8_t fprog_n;
+static uint8_t progs_buf[MAX_FEED_PROGS * 160];
+static content_req progs_req;
+static uint8_t progs_handle, progs_again = 1;
+
+/* The publishers' names (op 09h). */
+typedef struct {
+    uint8_t key[32];
+    uint8_t len;
+    uint8_t name[48];
+} feed_name;
+static feed_name names[MAX_NAMES];
+static uint8_t names_n;
+static uint8_t names_buf[MAX_NAMES * 83];
+static content_req names_req;
+static uint8_t names_handle, names_again = 1;
+
+/* The layout, kept in the record "layout": layout, before_zoom. */
+static content_req layout_req, layout_save_req;
+static uint8_t layout_buf[2], layout_handle;
+
+/* Each machine's title (from its image's header, for a machine that is not
+ * a built-in) and the name it was started under. */
+static uint8_t mtitle[MACH_MAX + 1][17], mtitle_state[MACH_MAX + 1], mtitle_handle[MACH_MAX + 1];
+static uint8_t mtitle_hdr[MACH_MAX + 1][32];
+static content_req mtitle_req[MACH_MAX + 1];
+static uint8_t mname[MACH_MAX + 1][17];
+
 static mach_record info[MACH_MAX + 1]; /* by handle; [0] unused */
 static rect tile[MACH_MAX + 1], pic[MACH_MAX + 1];
 static uint8_t focus;        /* 0: the shell (command mode) */
 static uint8_t sel;          /* the selected machine, 0 if none */
-static uint8_t cursor;       /* command mode: 0..prog_n-1 programs, then machines */
+static uint8_t cursor;       /* command mode: built-ins, feed programs, then machines */
 static uint8_t layout = MASTER, before_zoom = MASTER;
 static uint8_t dirty = 1;    /* the layout, labels, frames and launcher must be redone */
 static uint8_t doc_dirty = 1;
@@ -110,11 +153,20 @@ static uint8_t prog_of(const uint8_t *id)
 
 static uint8_t prog_ix[MACH_MAX + 1]; /* each machine's program, MAX_PROGS if none */
 
+/* The programs the launcher lists before the machines. */
+static uint8_t nprogs(void) { return prog_n + fprog_n; }
+
+/* A machine's title: a built-in's, else its image's, else the name it was
+ * started under. */
 static const uint8_t *title_of(uint8_t h)
 {
     static const uint8_t unknown[] = "?";
     uint8_t p = prog_ix[h];
-    return p < MAX_PROGS && prog_known[p] ? prog_title[p] : unknown;
+    if (p < MAX_PROGS && prog_known[p])
+        return prog_title[p];
+    if (mtitle_state[h] == 2 && mtitle[h][0])
+        return mtitle[h];
+    return mname[h][0] ? mname[h] : unknown;
 }
 
 static uint32_t title_len(const uint8_t *t)
@@ -319,6 +371,14 @@ static void draw_bar(void)
     term_cells_write(0, bar, TERM_COLS);
 }
 
+/* Why a start failed (SPEC 12.2), in words. */
+static const char *failure_name(uint8_t f)
+{
+    static const char *const names[] = { "could not start", "not found", "not a valid image",
+                                         "needs a device this host does not have", "no room for another machine" };
+    return f < 5 ? names[f] : names[0];
+}
+
 /* Labels in the shell's own cells where a machine has no picture yet (or
  * never will): loading, failed. */
 static void draw_labels(void)
@@ -328,14 +388,19 @@ static void draw_labels(void)
         uint8_t s = info[h].state;
         if ((s != MACH_LOADING && s != MACH_FAILED) || !tile[h].w || !tile[h].h)
             continue;
+        /* Two lines, each cut to the tile's width: the handle and title,
+         * then what is happening. */
         uint8_t row = (tile[h].y + tile[h].h / 2) / 16, col = tile[h].x / 8 + 1;
+        uint8_t room = (tile[h].x + tile[h].w) / 8 > col + 1 ? (tile[h].x + tile[h].w) / 8 - col - 1 : 1;
         term_goto(col, row);
         term_color(s == MACH_FAILED ? 9 : 244, 0);
         term_putc('0' + h);
-        term_putc(' ');
-        const uint8_t *t = title_of(h);
-        term_put_ascii(16, t);
-        term_puts(s == MACH_FAILED ? ": could not start" : ": loading");
+        if (room > 2) {
+            term_putc(' ');
+            term_put_ascii(room - 2 < 16 ? room - 2 : 16, title_of(h));
+        }
+        term_goto(col, row + 1);
+        term_put_ascii(room, (const uint8_t *)(s == MACH_FAILED ? failure_name(info[h].failure) : "loading"));
     }
     term_color(7, 0);
 }
@@ -401,6 +466,32 @@ static const char *fault_name(uint8_t k)
     return k < 7 ? names[k] : "?";
 }
 
+/* The first and last six hex digits of a key, with an ellipsis between. */
+static void doc_short_key(const uint8_t *key)
+{
+    static const char hex[] = "0123456789abcdef";
+    char s[15];
+    for (uint8_t i = 0; i < 3; i++) {
+        s[2 * i] = hex[key[i] >> 4];
+        s[2 * i + 1] = hex[key[i] & 15];
+        s[9 + 2 * i] = hex[key[29 + i] >> 4];
+        s[10 + 2 * i] = hex[key[29 + i] & 15];
+    }
+    s[6] = (char)0xE2; /* … */
+    s[7] = (char)0x80;
+    s[8] = (char)0xA6;
+    doc_text(s, 15);
+}
+
+/* The publisher's name, if the names records give one. */
+static const feed_name *name_of(const uint8_t *key)
+{
+    for (uint8_t i = 0; i < names_n; i++)
+        if (!memcmp(names[i].key, key, 32))
+            return &names[i];
+    return 0;
+}
+
 /* One line of the launcher: highlighted when the cursor is on it. */
 static void line(uint8_t item, uint16_t anchor)
 {
@@ -430,6 +521,35 @@ static void build_launcher(void)
         else
             doc_str("\xE2\x80\xA6");
     }
+    if (fprog_n) {
+        doc_anchor(0);
+        doc_font(DOC_SANS, DOC_BOLD);
+        doc_size(13);
+        doc_colour(150, 160, 180);
+        doc_paragraph(DOC_START, 6, 14, 0);
+        doc_str("FROM YOUR FEEDS");
+        doc_font(DOC_SANS, 0);
+        for (uint8_t i = 0; i < fprog_n; i++) {
+            feed_prog *f = &fprog[i];
+            doc_size(15);
+            line(prog_n + i, 200 + i);
+            doc_text(f->name, f->len);
+            if (!f->local) {
+                doc_colour(150, 160, 180);
+                doc_str(" \xE2\x86\x93"); /* ↓: not downloaded yet */
+            }
+            /* The publisher: its name and short key. */
+            doc_paragraph(DOC_START, 18, 0, DOC_NOWRAP | DOC_ELLIPSIS);
+            doc_size(11);
+            doc_colour(130, 138, 155);
+            const feed_name *n = name_of(f->key);
+            if (n && n->len) {
+                doc_text(n->name, n->len);
+                doc_str(" ");
+            }
+            doc_short_key(f->key);
+        }
+    }
     if (n) {
         doc_anchor(0);
         doc_font(DOC_SANS, DOC_BOLD);
@@ -442,7 +562,7 @@ static void build_launcher(void)
             uint8_t h = nth_machine(i);
             mach_record *r = &info[h];
             doc_size(15);
-            line(prog_n + i, h);
+            line(nprogs() + i, h);
             doc_num(h, 0);
             doc_str("  ");
             doc_text(title_of(h), title_len(title_of(h)));
@@ -465,6 +585,11 @@ static void build_launcher(void)
                 doc_str(fault_name(r->fault_kind));
                 doc_str(" at pc ");
                 doc_num(r->fault_pc, 1);
+            }
+            if (r->state == MACH_FAILED) {
+                doc_paragraph(DOC_START, 24, 0, 0);
+                doc_colour(255, 120, 110);
+                doc_str(failure_name(r->failure));
             }
         }
     }
@@ -507,7 +632,7 @@ static void select_machine(uint8_t h)
     sel = h;
     for (uint8_t i = 0; i < machine_count(); i++)
         if (nth_machine(i) == h)
-            cursor = prog_n + i;
+            cursor = nprogs() + i;
     dirty = doc_dirty = 1;
 }
 
@@ -534,21 +659,66 @@ static void enter_command_mode(void)
     dirty = doc_dirty = 1;
 }
 
+static void set_note(const char *m)
+{
+    uint8_t i = 0;
+    while ((note[i] = m[i]))
+        i++;
+    doc_dirty = 1;
+}
+
+/* Starts program `name` of feed `key` (all zero: a built-in, by title) by
+ * its identity. */
+static void start_named(const uint8_t *key, const uint8_t *name, uint8_t len)
+{
+    uint32_t h = mach_start_named(key, name, len);
+    note[0] = 0;
+    if (!h || h > MACH_MAX) {
+        set_note(h ? "Not a program name." : "No free handle: stop a machine first (X).");
+        return;
+    }
+    info[h].state = MACH_LOADING;
+    memset(info[h].image, 0, 32);
+    uint8_t n = len < 16 ? len : 16;
+    memcpy(mname[h], name, n);
+    mname[h][n] = 0;
+    mtitle_state[h] = 0;
+    focus_machine(h);
+}
+
+/* A built-in by its identity (the zero key and its title); while its
+ * title is not known (or could not be had), by its image ID. */
 static void start_program(uint8_t p)
 {
+    static const uint8_t zero[32];
+    if (prog_known[p] && prog_title[p][0] != '?') {
+        start_named(zero, prog_title[p], title_len(prog_title[p]));
+        return;
+    }
     uint8_t h = mach_start(prog_id[p]);
     note[0] = 0;
     if (!h) {
-        const char *m = "No free handle: stop a machine first (X).";
-        uint8_t i = 0;
-        while ((note[i] = m[i]))
-            i++;
-        doc_dirty = 1;
+        set_note("No free handle: stop a machine first (X).");
         return;
     }
     info[h].state = MACH_LOADING;
     memcpy(info[h].image, prog_id[p], 32);
+    mname[h][0] = 0;
+    mtitle_state[h] = 0;
     focus_machine(h);
+}
+
+static void start_feed_program(uint8_t i)
+{
+    start_named(fprog[i].key, fprog[i].name, fprog[i].len);
+}
+
+/* Keeps the layout for the next run. */
+static void save_layout(void)
+{
+    layout_buf[0] = layout;
+    layout_buf[1] = before_zoom;
+    record_save(&layout_save_req, "layout", layout_buf, 2);
 }
 
 static void step_machine(int8_t d)
@@ -565,7 +735,7 @@ static void step_machine(int8_t d)
 
 static void command_key(uint8_t key, uint8_t mods)
 {
-    uint8_t items = prog_n + machine_count();
+    uint8_t items = nprogs() + machine_count();
     switch (key) {
     case KEY_UP:
         if (cursor)
@@ -587,8 +757,10 @@ static void command_key(uint8_t key, uint8_t mods)
     case KEY_ENTER:
         if (cursor < prog_n)
             start_program(cursor);
+        else if (cursor < nprogs())
+            start_feed_program(cursor - prog_n);
         else
-            focus_machine(nth_machine(cursor - prog_n));
+            focus_machine(nth_machine(cursor - nprogs()));
         return;
     case KEY_ESCAPE:
         if (sel && live(sel))
@@ -599,8 +771,8 @@ static void command_key(uint8_t key, uint8_t mods)
             mach_stop(sel);
             info[sel].state = MACH_NONE;
             sel = nth_machine(0);
-            if (cursor >= prog_n + machine_count())
-                cursor = prog_n + machine_count() - 1;
+            if (cursor >= nprogs() + machine_count())
+                cursor = nprogs() + machine_count() - 1;
             if (sel)
                 select_machine(sel);
             dirty = doc_dirty = 1;
@@ -619,12 +791,14 @@ static void command_key(uint8_t key, uint8_t mods)
             before_zoom = layout;
             layout = ZOOM;
         }
+        save_layout();
         dirty = 1;
         return;
     case KEY_L:
         layout = (layout + 1) % LAYOUTS;
         if (layout != ZOOM)
             before_zoom = layout;
+        save_layout();
         dirty = 1;
         return;
     default:
@@ -633,8 +807,8 @@ static void command_key(uint8_t key, uint8_t mods)
         return;
     }
     /* The cursor moved: a machine under it is the selected one. */
-    if (cursor >= prog_n)
-        sel = nth_machine(cursor - prog_n);
+    if (cursor >= nprogs())
+        sel = nth_machine(cursor - nprogs());
     dirty = doc_dirty = 1;
 }
 
@@ -654,6 +828,41 @@ static void press(uint16_t x, uint16_t y)
         width = 20;
     if (col >= 4 && width && (col - 4) / width < n)
         focus_machine(nth_machine((col - 4) / width));
+}
+
+/* The programs records (timeline records, SPEC 9.5) into fprog. */
+static void take_programs(void)
+{
+    uint32_t at = 0, len = progs_req.length;
+    fprog_n = 0;
+    while (at + 2 + 109 <= len && fprog_n < MAX_FEED_PROGS) {
+        const uint8_t *r = progs_buf + at;
+        const uint8_t *e = r + 2;
+        uint8_t n = e[108];
+        feed_prog *f = &fprog[fprog_n++];
+        memcpy(f->key, e, 32);
+        f->len = n > 48 ? 48 : n;
+        memcpy(f->name, e + 109, f->len);
+        f->local = r[1] & TIMELINE_LOCAL;
+        at += 1 + r[0];
+    }
+    if (cursor >= nprogs() + machine_count() && cursor)
+        cursor = nprogs() + machine_count() - 1;
+}
+
+/* The names records into names. */
+static void take_names(void)
+{
+    uint32_t at = 0, len = names_req.length;
+    names_n = 0;
+    while (at + 2 + 32 <= len && names_n < MAX_NAMES) {
+        const uint8_t *r = names_buf + at;
+        feed_name *n = &names[names_n++];
+        memcpy(n->key, r + 2, 32);
+        n->len = r[0] - 33 > 48 ? 48 : r[0] - 33;
+        memcpy(n->name, r + 34, n->len);
+        at += 1 + r[0];
+    }
 }
 
 static void handle(void)
@@ -691,11 +900,46 @@ static void handle(void)
         uint16_t id = EV_ANCHOR_ID(ev);
         if (id >= 100 && id < 100 + prog_n)
             start_program(id - 100);
+        else if (id >= 200 && id < 200 + fprog_n)
+            start_feed_program(id - 200);
         else if (id >= 1 && id <= MACH_MAX)
             focus_machine(id);
         break;
     }
+    case EV_FEEDS_UPDATED:
+        progs_again = names_again = 1;
+        break;
     case EV_CONTENT_DONE:
+        if (ev.a == progs_handle) {
+            progs_handle = 0;
+            if (progs_req.status == STATUS_DONE)
+                take_programs();
+            dirty = doc_dirty = 1;
+        } else if (ev.a == names_handle) {
+            names_handle = 0;
+            if (names_req.status == STATUS_DONE)
+                take_names();
+            doc_dirty = 1;
+        } else if (ev.a == layout_handle) {
+            layout_handle = 0;
+            if (layout_req.status == STATUS_DONE && layout_req.length == 2 && layout_buf[0] < LAYOUTS
+                && layout_buf[1] < LAYOUTS && layout_buf[1] != ZOOM) {
+                layout = layout_buf[0];
+                before_zoom = layout_buf[1];
+                dirty = 1;
+            }
+        }
+        for (uint8_t h = 1; h <= MACH_MAX; h++) {
+            if (mtitle_state[h] == 1 && mtitle_handle[h] == ev.a) {
+                mtitle_state[h] = 2;
+                mtitle[h][0] = 0;
+                if (mtitle_req[h].status == STATUS_DONE && mtitle_req[h].length == 32) {
+                    memcpy(mtitle[h], mtitle_hdr[h] + 16, 16);
+                    mtitle[h][16] = 0;
+                }
+                dirty = doc_dirty = 1;
+            }
+        }
         for (uint8_t i = 0; i < prog_n; i++) {
             if (prog_asked[i] == ev.a && !prog_known[i]) {
                 prog_asked[i] = 0;
@@ -719,8 +963,24 @@ int main(void)
     page_background(22, 25, 34, 255);
     while (prog_n < MAX_PROGS && mach_builtin(prog_n, prog_id[prog_n]))
         prog_n++;
+    /* The layout kept from the last run, applied when it arrives. */
+    layout_handle = record_load(&layout_req, "layout", 0, 2, layout_buf);
     uint8_t last_state[MACH_MAX + 1] = { 0 };
     for (;;) {
+        /* The programs of the followed feeds and their publishers' names,
+         * again after every feeds-updated event. */
+        if (progs_again && !progs_handle && (progs_handle = content_programs(&progs_req, 0, sizeof progs_buf, progs_buf)))
+            progs_again = 0;
+        if (names_again && !names_handle && (names_handle = content_names(&names_req, 0, sizeof names_buf, names_buf)))
+            names_again = 0;
+        /* The title of each machine that is not a built-in, from its
+         * image's header. */
+        for (uint8_t h = 1; h <= MACH_MAX; h++) {
+            if (mtitle_state[h] == 0 && info[h].state >= MACH_RUNNING && info[h].state <= MACH_FAULTED
+                && prog_ix[h] == MAX_PROGS
+                && (mtitle_handle[h] = content_get(&mtitle_req[h], info[h].image, 0, 32, mtitle_hdr[h])))
+                mtitle_state[h] = 1;
+        }
         /* Ask for the titles (as many requests at once as the device takes). */
         for (uint8_t i = 0; i < prog_n; i++)
             if (!prog_known[i] && !prog_asked[i])
@@ -730,6 +990,8 @@ int main(void)
         for (uint8_t h = 1; h <= MACH_MAX; h++) {
             mach_info(h, &info[h]);
             if (info[h].state != last_state[h]) {
+                if (info[h].state == MACH_NONE)
+                    mtitle_state[h] = 0;
                 last_state[h] = info[h].state;
                 prog_ix[h] = prog_of(info[h].image);
                 dirty = doc_dirty = 1;

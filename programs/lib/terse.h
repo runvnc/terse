@@ -49,6 +49,8 @@
 #define CALL_MACH_FOCUS 0x804
 #define CALL_MACH_INFO 0x805
 #define CALL_MACH_BUILTIN 0x806
+#define CALL_MACH_START_PROGRAM 0x807
+#define CALL_MACH_IDENTITY 0x808
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -309,6 +311,7 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define STATUS_FAILED 0x03
 #define STATUS_BAD_REQUEST 0x04
 #define STATUS_REFUSED 0x05
+#define STATUS_NO_ROOM 0x06
 
 /* The 52-byte request block; it must lie in RAM. */
 typedef struct {
@@ -360,6 +363,7 @@ uint8_t content_identity(content_req *r);
 /* Find scopes. */
 #define FIND_FEEDS 1
 #define FIND_ENTRIES 2
+#define FIND_PROGRAMS 3
 
 /* Names records from index `first`, as many as fit in `length` bytes at
  * `buf`: L, flags, feed key (32), name (L - 33 bytes, 0 to 48). Names are
@@ -380,6 +384,33 @@ uint8_t content_set_profile(content_req *r, const void *name, uint32_t len, uint
 /* Sets the local nickname of feed `key` (32 bytes) to `len` bytes at
  * `name`, or removes it if `len` is 0. The host asks the user. */
 uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len);
+
+/* Content: programs and named records (SPEC 9.5, 9.6). */
+#define CONTENT_PROGRAMS 0x0D
+#define CONTENT_SAVE 0x0E
+#define CONTENT_LOAD 0x0F
+#define CONTENT_DELETE 0x10
+#define CONTENT_RECORDS 0x11
+
+/* The current version of each program of the subscribed feeds, from
+ * index `first`, as many as fit in `length` bytes: timeline records (L,
+ * flags with TIMELINE_LOCAL if the image is in the host's store, the entry
+ * without its signature: the name is the title). By feed key, then name. */
+uint8_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf);
+/* Named records: data this program keeps on this machine, under its
+ * identity (SPEC 9.6). `name` is 1 to 32 bytes up to its 0 (no control
+ * characters). A save copies `size` bytes (0 to 65,536, ROM or RAM) at
+ * submit and replaces the record; STATUS_NO_ROOM if the program would keep
+ * more than 256 records or 1,048,576 bytes. A load delivers up to `length`
+ * bytes (1 to 16,384) from `offset` to `buf`: r->length is the bytes
+ * delivered, r->size the record's size; STATUS_NOT_FOUND if there is no
+ * such record. A delete is done whether or not the record existed. */
+uint8_t record_save(content_req *r, const char *name, const void *data, uint32_t size);
+uint8_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf);
+uint8_t record_delete(content_req *r, const char *name);
+/* The records, from index `first`, as many as fit in `length` bytes: 36
+ * bytes each, the name (zero padded to 32) and the size (4), by name. */
+uint8_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf);
 
 /* Device 7, page (SPEC 11): typeset text in a rectangle. */
 #define PAGE_DONE 0x00
@@ -521,9 +552,15 @@ void path_points(uint8_t op, uint32_t n, const int16_t *xy);
 #define MACH_FAULTED 5
 #define MACH_FAILED 6
 
+/* Why a start failed (mach_record.failure, when the state is failed). */
+#define MACH_FAIL_NOT_FOUND 1
+#define MACH_FAIL_INVALID 2
+#define MACH_FAIL_NEEDS_DEVICE 3
+#define MACH_FAIL_NO_ROOM 4
+
 /* The 48-byte record of mach_info. */
 typedef struct {
-    uint8_t state, exit_code, fault_kind, reserved;
+    uint8_t state, exit_code, fault_kind, failure;
     uint32_t units;    /* units used in the machine's last frame */
     uint32_t frames;   /* its frame counter */
     uint32_t fault_pc;
@@ -546,6 +583,18 @@ static inline uint32_t mach_focus(uint32_t h) { return terse_call(CALL_MACH_FOCU
 static inline uint32_t mach_info(uint32_t h, mach_record *r) { return terse_call(CALL_MACH_INFO, h, (uint32_t)r, 0); }
 /* The blob ID of the host's nth built-in program: 1, or 0 past the end. */
 static inline uint32_t mach_builtin(uint32_t n, uint8_t *id) { return terse_call(CALL_MACH_BUILTIN, n, (uint32_t)id, 0); }
+/* Starts the current version of a program by its identity: `record` is the
+ * publisher's feed key (32 bytes; all zero: a built-in, by title), the
+ * name's length (1) and the name (1 to 48 bytes). Its handle, 0 if none is
+ * free; TERSE_ERR_BUFFER if the name is not a valid name. Loading until the
+ * host has the image; failed (MACH_FAIL_NOT_FOUND) if it holds no such
+ * program. */
+static inline uint32_t mach_start_program(const uint8_t *record) { return terse_call(CALL_MACH_START_PROGRAM, (uint32_t)record, 0, 0); }
+/* The same, with the key and the name given apart. */
+uint32_t mach_start_named(const uint8_t *key, const void *name, uint32_t len);
+/* Machine h's identity into 81 bytes at `out`: feed key (32), name length
+ * (1), name (48, zero padded); 1, or 0 if it has none. */
+static inline uint32_t mach_identity(uint32_t h, uint8_t *out) { return terse_call(CALL_MACH_IDENTITY, h, (uint32_t)out, 0); }
 
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);

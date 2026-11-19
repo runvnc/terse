@@ -337,3 +337,76 @@ fn page_locate() {
     assert_eq!(m.system().queue().nth(61).unwrap().c, 20);
     assert_eq!(r.events_dropped, 2);
 }
+
+/// SPEC 9.6: save, load and records requests are inputs like any other
+/// completion: the same answers replay to the same hashes, the pending
+/// records (with the names) are in the state, a save's data is not, and a
+/// different loaded record gives a different state.
+#[test]
+fn named_records_replay() {
+    if !common::have_tools() {
+        return;
+    }
+    let base = "    li a7, 0x100\n    ecall\n";
+    let submit = "    mv a0, t0\n    li a7, 0x400\n    ecall\n";
+    // Data "abcd" (or `data`) at 100100h. Save (op 0Eh, name "k", 4 bytes)
+    // at 100000h; load (op 0Fh, name "k", 16 bytes to 100200h) at 100040h;
+    // records (op 11h, 72 bytes to 100300h) at 100080h.
+    let src = |data: u32, name: u8| {
+        format!(
+            "    li t2, 0x100100\n    li t1, {data}\n    sw t1, 0(t2)\n\
+             li t0, 0x100000\n    li t1, 14\n    sb t1, 0(t0)\n    li t1, {name}\n    sb t1, 4(t0)\n    sw t2, 44(t0)\n    \
+             li t1, 4\n    sw t1, 48(t0)\n{submit}\
+             li t0, 0x100040\n    li t1, 15\n    sb t1, 0(t0)\n    li t1, {name}\n    sb t1, 4(t0)\n    li t1, 16\n    \
+             sw t1, 40(t0)\n    li t1, 0x100200\n    sw t1, 44(t0)\n{submit}\
+             li t0, 0x100080\n    li t1, 17\n    sb t1, 0(t0)\n    li t1, 72\n    sw t1, 40(t0)\n    li t1, 0x100300\n    \
+             sw t1, 44(t0)\n{submit}\
+             1:  {base}    j 1b\n"
+        )
+    };
+    let mut listed = vec![0u8; 36];
+    listed[0] = b'k';
+    listed[32] = 4;
+    let answers = |loaded: &[u8]| {
+        vec![
+            Completion { handle: 1, outcome: Outcome::Done },
+            Completion { handle: 2, outcome: Outcome::Got { size: 4, data: loaded.to_vec() } },
+            Completion { handle: 3, outcome: Outcome::Records { total: 1, data: listed.clone() } },
+        ]
+    };
+    let run = |data: u32, name: u8, loaded: &[u8]| -> (u64, Vec<[u8; 32]>) {
+        let mut m = Machine::new(&common::program(&assemble(&src(data, name)), 2, &ALL));
+        let used = m.run_frame(&FrameInput::default()).used;
+        let kinds: Vec<RequestKind> = m.take_content_requests().into_iter().map(|r| r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                RequestKind::Save { name: vec![name], data: data.to_le_bytes().to_vec() },
+                RequestKind::Load { name: vec![name], offset: 0, length: 16 },
+                RequestKind::Records { offset: 0, length: 72 },
+            ]
+        );
+        let mut hashes = vec![m.state_hash()];
+        let r = m.run_frame(&FrameInput { completions: &answers(loaded), ..Default::default() });
+        assert_eq!(r.completions_ignored, 0);
+        hashes.push(m.state_hash());
+        let ram = m.ram();
+        assert_eq!((ram[1], ram[0x41], ram[0x81]), (1, 1, 1), "statuses");
+        assert_eq!(&ram[0x200..0x204], loaded);
+        assert_eq!(&ram[0x40 + 40..0x40 + 52], &[4, 0, 0, 0, 0, 0x02, 0x10, 0, 4, 0, 0, 0], "length, addr, size");
+        assert_eq!(&ram[0x300..0x324], &listed[..]);
+        (used, hashes)
+    };
+    let (used, a) = run(0x6463_6261, b'k', b"abcd");
+    assert_eq!(a, run(0x6463_6261, b'k', b"abcd").1, "the same inputs replay exactly");
+    let other_data = run(0x7a7a_7a7a, b'k', b"abcd").1;
+    assert_ne!(a[0], other_data[0], "the data is in RAM");
+    let other_name = run(0x6463_6261, b'j', b"abcd").1;
+    assert_ne!(a[0], other_name[0], "the pending names are state");
+    let other_load = run(0x6463_6261, b'k', b"wxyz").1;
+    assert_eq!(a[0], other_load[0]);
+    assert_ne!(a[1], other_load[1], "what a load delivers is an input");
+    // The save's 4 bytes cost 1 unit at submit (SPEC 13).
+    let mut empty = Machine::new(&common::program(&assemble(&src(0x6463_6261, b'k').replace("li t1, 4\n    sw t1, 48(t0)", "li t1, 0\n    sw t1, 48(t0)")), 2, &ALL));
+    assert_eq!(used - empty.run_frame(&FrameInput::default()).used, 1);
+}

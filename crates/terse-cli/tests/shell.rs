@@ -9,7 +9,7 @@ mod common;
 use common::FrameStats;
 use terse_core::machines::{picture, state};
 use terse_core::page::reference_layout;
-use terse_core::{Event, Image, Machine, Script, System};
+use terse_core::{Event, Image, Machine, ProgramId, Script, System};
 use terse_net::{BlobStore, Consent, ContentService, Draft, HeadlessSystem, Identity, Node, Subscriptions, builtin, to_hex};
 
 const SHELL: &[u8] = include_bytes!("../../../programs/shell/shell.terse");
@@ -42,38 +42,64 @@ struct Sys {
     system: System,
     headless: HeadlessSystem,
     _store: tempfile::TempDir,
+    /// The data directory (named records), unless the setup gave one.
+    _data: Option<tempfile::TempDir>,
     /// Units the shell used in each frame.
     shell_units: Vec<u64>,
 }
 
 /// What a run has: extra built-in images after the four, an ID in no
 /// store after them, an article for the reader.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Setup {
     crash: bool,
     unknown: bool,
     article: bool,
+    /// Programs published in a followed feed: (name, image, downloaded).
+    programs: Vec<(String, Vec<u8>, bool)>,
+    /// The data directory for named records (default: a new one).
+    data: Option<std::path::PathBuf>,
 }
 
 impl Sys {
     fn new(script: &str, setup: Setup) -> Self {
         let store = tempfile::tempdir().unwrap();
         let mut node = Node::new(BlobStore::open(store.path(), None).unwrap(), None);
-        if setup.article {
+        if setup.article || !setup.programs.is_empty() {
             node.set_identity(alice());
-            let draft = Draft { data: b"Tiles are machines.\n".to_vec(), title: "On tiles".into(), reply_to: None, time: 1_800_000_000 };
-            assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { .. }));
             node.set_subscriptions(Subscriptions::in_memory([alice().feed_key()]));
         }
+        if setup.article {
+            let draft = Draft { data: b"Tiles are machines.\n".to_vec(), title: "On tiles".into(), reply_to: None, time: 1_800_000_000 };
+            assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { .. }));
+        }
+        if !setup.programs.is_empty() {
+            assert!(matches!(node.publish_profile("Alice", false, Some(String::new()), 1_800_000_000), terse_net::Done::Published { .. }));
+        }
+        for (name, image, downloaded) in &setup.programs {
+            assert!(matches!(node.publish_program(image, name, 1_800_000_000), terse_net::Done::Published { .. }));
+            if !downloaded {
+                node.store().remove(&terse_net::blob_id(image)).unwrap();
+            }
+        }
+        let data = match &setup.data {
+            Some(_) => None,
+            None => Some(tempfile::tempdir().unwrap()),
+        };
+        let data_dir = setup.data.clone().unwrap_or_else(|| data.as_ref().unwrap().path().to_path_buf());
+        node.set_records(terse_net::Records::in_data_dir(&data_dir));
         let extra: Vec<Vec<u8>> = if setup.crash { vec![crash_image()] } else { Vec::new() };
         let mut ids = builtin::install(node.store(), &extra).unwrap();
         if setup.unknown {
             ids.push(UNKNOWN);
         }
         let content = ContentService::start_with_consent(node, Consent::Deny);
-        let system = System::new(&Image::parse(SHELL).unwrap(), true, ids);
+        let shell = Image::parse(SHELL).unwrap();
+        let mut system = System::new(&shell, true, ids);
+        // The built-in shell's identity, as the hosts give it.
+        system.set_shell_identity(Some(ProgramId { publisher: [0; 32], name: shell.title.clone() }));
         let headless = HeadlessSystem::new(Some(content), Script::parse(script).unwrap());
-        Sys { system, headless, _store: store, shell_units: Vec::new() }
+        Sys { system, headless, _store: store, _data: data, shell_units: Vec::new() }
     }
 
     fn run(&mut self, frames: u32) {
@@ -316,7 +342,7 @@ fn a_click_in_a_tile_reaches_the_reader_mapped() {
     let x = 17 + rx * 605 / 640;
     let y = 23 + ry * 453 / 480 + 1;
     let script = format!("2 press enter\n40 click {x} {y}\n");
-    let mut s = Sys::new(&script, Setup { article: true, ..Setup::default() });
+    let mut s = Sys::new(&script, Setup { article: true, ..Default::default() });
     s.run(30);
     let list = page_text(s.machine(1));
     assert!(list.contains("[On tiles]{1}"), "{list}");
@@ -386,7 +412,7 @@ fn exit_and_fault_are_reported() {
     assert!(s.launcher().contains("exited 0"), "{}", s.launcher());
     s.run(10);
     assert_eq!(s.state(2), state::FAULTED);
-    let slot = *s.system.shell().machines().unwrap().slot(2);
+    let slot = s.system.shell().machines().unwrap().slot(2).clone();
     assert_eq!((slot.fault_kind, slot.fault_pc), (4, 0x0001_0014));
     assert!(s.bar().contains("2!crash"), "{}", s.bar());
     assert!(s.launcher().contains("load at pc 00010014"), "{}", s.launcher());
@@ -405,7 +431,8 @@ fn a_start_that_fails() {
     assert_eq!(s.state(1), state::FAILED);
     assert!(s.system.child(1).unwrap().machine.is_none());
     assert_eq!(s.system.focus(), 0);
-    assert!(Sys::screen(s.system.shell()).contains("1 ?: could not start"), "{}", s.dump());
+    assert!(Sys::screen(s.system.shell()).contains("1 ?\n"), "{}", s.dump());
+    assert!(Sys::screen(s.system.shell()).contains("not found\n"), "{}", s.dump());
     assert!(s.bar().contains("1✗?"), "{}", s.bar());
 }
 
@@ -437,6 +464,8 @@ fn cli_dump_matches() {
         .arg(dir.path().join("store"))
         .arg("--config")
         .arg(dir.path().join("config"))
+        .arg("--data")
+        .arg(dir.path().join("data"))
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -459,8 +488,101 @@ fn budget() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 2, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0)]);
+    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0)]);
     assert_eq!(SHELL, builtin::SHELL, "the shell built into the hosts");
     assert!(Image::parse(SHELL).unwrap().rom.len() < 131_072 / 8);
 }
 
+
+/// Programs of a followed feed: "Broken" needs a device no host provides,
+/// "Greeter" is hello under another title (downloaded), "Racer" is sparks,
+/// whose image the store does not hold (and there is no relay).
+fn feed_programs() -> Vec<(String, Vec<u8>, bool)> {
+    let hello = Image::parse(builtin::PROGRAMS[3]).unwrap();
+    let greeter = Image::build("greeter", hello.ram_pages, &hello.devices, &hello.rom);
+    let mut broken = Image::build("broken", 1, &[terse_core::DeviceReq { slot: 2, version: 0 }], &[0x6F, 0, 0, 0]);
+    broken[32] = 5;
+    let sparks = Image::parse(builtin::PROGRAMS[1]).unwrap();
+    let racer = Image::build("racer", sparks.ram_pages, &sparks.devices, &sparks.rom);
+    vec![
+        ("Greeter".into(), greeter, true),
+        ("Racer".into(), racer, false),
+        ("Broken".into(), broken, true),
+    ]
+}
+
+/// The launcher lists the built-ins, then the programs of the followed
+/// feeds (op 0Dh) with the publisher's name and short key and a mark when
+/// the image is not downloaded; Enter starts one by its identity; failed
+/// starts say why.
+#[test]
+fn programs_from_feeds() {
+    let script = "\
+3 press down
+4 press down
+5 press down
+6 press down
+7 press down
+8 press enter
+15 home
+16 press up
+17 press up
+18 press up
+19 press enter
+25 press up
+26 press up
+27 press enter
+";
+    let mut s = Sys::new(script, Setup { programs: feed_programs(), ..Default::default() });
+    s.run(5);
+    let launcher = s.launcher();
+    let key = to_hex(&alice().feed_key());
+    let short = format!("{}…{}", &key[..6], &key[58..]);
+    assert!(
+        launcher.contains(&format!(
+            "FROM YOUR FEEDS\n[Broken]{{200}}\n[Alice {short}]{{200}}\n[Greeter]{{201}}\n[Alice {short}]{{201}}\n[Racer]{{202}}[ ↓]{{202}}\n"
+        )),
+        "{launcher}"
+    );
+    golden("feed-programs", &format!("{}-- launcher --\n{launcher}", s.dump()));
+    // Greeter: started by identity; its title is its image's.
+    s.run(12);
+    assert_eq!(s.state(1), state::RUNNING);
+    let child = s.system.child(1).unwrap();
+    assert_eq!(child.identity, Some(ProgramId { publisher: alice().feed_key(), name: b"Greeter".to_vec() }));
+    assert_eq!(child.title, "greeter");
+    assert!(s.bar().contains("1 greeter"), "{}", s.bar());
+    // Broken: the image lists device 5, which no host provides: failed, 3.
+    s.run(8);
+    assert_eq!(s.state(2), state::FAILED);
+    assert_eq!(s.system.shell().machines().unwrap().slot(2).failure, 3);
+    assert!(s.system.child(2).unwrap().machine.is_none(), "it never starts");
+    // Racer: the entry is held, its image is not, and no relay has it.
+    s.run(5);
+    assert_eq!(s.state(3), state::FAILED);
+    assert_eq!(s.system.shell().machines().unwrap().slot(3).failure, 1);
+    let launcher = s.launcher();
+    assert!(launcher.contains("[2  Broken]{2}[  failed]{2}\n[needs a device this host]{2}\n[does not have]{2}"), "{launcher}");
+    assert!(launcher.contains("[3  Racer]{3}[  failed]{3}\n[not found]{3}"), "{launcher}");
+    let screen = Sys::screen(s.system.shell());
+    assert!(screen.contains("2 Broken\n") && screen.contains("needs a device this host"), "{screen}");
+    assert!(screen.contains("3 Racer\n") && screen.contains("not found\n"), "{screen}");
+    golden("feed-programs-started", &format!("{}-- launcher --\n{launcher}", s.dump()));
+}
+
+/// The shell keeps its layout in the named record "layout" (SPEC 9.6): L
+/// in one run, and the next run tiles four machines as a grid.
+#[test]
+fn the_layout_is_remembered() {
+    let data = tempfile::tempdir().unwrap();
+    let mut s = Sys::new("2 press l\n", Setup { data: Some(data.path().to_path_buf()), ..Default::default() });
+    s.run(5);
+    let owner = terse_net::Owner::Program { publisher: [0; 32], name: b"shell".to_vec() };
+    assert_eq!(terse_net::Records::in_data_dir(data.path()).load(&owner, b"layout").unwrap(), Some(vec![2, 2]));
+    let mut s = Sys::new(FOUR, Setup { data: Some(data.path().to_path_buf()), ..Default::default() });
+    s.run(45);
+    assert_eq!(s.rect(3).0, s.rect(1).0, "a grid: machine 3 under machine 1");
+    let mut fresh = Sys::new(FOUR, Setup::default());
+    fresh.run(45);
+    assert_ne!(fresh.rect(3).0, fresh.rect(1).0, "master and stack without the record");
+}

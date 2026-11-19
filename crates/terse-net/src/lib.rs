@@ -15,6 +15,7 @@
 //!   blocking WebSocket transport.
 //! - [`node`]: host behaviour (NETWORK 2, 4.4): store first, then the relay,
 //!   with verification; following and publishing feeds.
+//! - [`records`]: named records, the data programs keep on this host (SPEC 9.6).
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
@@ -28,6 +29,7 @@ pub mod local;
 pub mod node;
 pub mod profile;
 pub mod protocol;
+pub mod records;
 pub mod relay;
 pub mod service;
 pub mod store;
@@ -38,5 +40,6 @@ pub use entry::{Entry, SignedEntry};
 pub use feeds::{FeedStore, Subscriptions};
 pub use identity::{FeedKey, Identity};
 pub use node::{Article, Done, Draft, FeedEvent, Node};
+pub use records::{Owner, Records};
 pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt};
 pub use store::{BlobStore, default_config_dir, default_data_dir, default_store_dir};

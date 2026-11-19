@@ -15,7 +15,7 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
-            [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
+            [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
@@ -24,15 +24,18 @@ const USAGE: &str = "usage:
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>]
+  terse feed publish --program <image.terse> [--name <n>]
+  terse feed programs [<key>]
   terse feed subscribe|unsubscribe <key>
   terse feed subscriptions
-  terse feed sync [--watch] [--auto-download <bytes>] [--no-prefetch]
+  terse feed sync [--watch] [--auto-download <bytes>] [--no-prefetch] [--no-program-download]
   terse feed list [<key>]
   terse feed read <key> <seq>
   terse feed nickname <key> [<name>]
   terse profile set --name <n> [--listed|--unlisted] [--description <file>]
   terse profile show [<key>]
-  terse find [--entries] <text>
+  terse find [--entries|--programs] <text>
+  terse records list [<owner>] | show <owner> <name> | delete <owner> <name>   [--data <dir>]
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
@@ -58,6 +61,15 @@ find it (default: as in your current profile, else unlisted), the description fr
 --relay options, else your relay list). Names are not unique: listings show the key too.
 --auto-download: articles up to this size are fetched as entries arrive (default 16384).
 --no-prefetch: do not also fetch the terse: links of those articles (NETWORK 4.4).
+--no-program-download: do not fetch the current version of each program of the subscribed feeds
+(NETWORK 4.4; by default they are fetched whatever their size, up to the largest image).
+feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
+image's title); feed programs lists the current version of each program held (of one feed, or of
+all the feeds held), find --programs searches programs by name.
+Named records (SPEC 9.6), the data programs keep on this machine, are in <data>/records; --data
+defaults to $XDG_DATA_HOME/terse (or ~/.local/share/terse). `run` keeps them there too. `records`
+shows them for inspection: an <owner> is builtin:<title>, program:<feed key>:<name> or
+image:<image id>; without one, `records list` lists every owner.
 --events: scripted input, one event per line (see README).
 --hash prints the state hash (STATE.md) after the last frame; --hash-every N prints
 `<frame> <hash>` after every Nth frame (the frame counter, so after frames N, 2N, ...);
@@ -94,6 +106,7 @@ fn main() -> ExitCode {
         Some("relay") => feed::relay(&args[1..]),
         Some("profile") => feed::profile(&args[1..]),
         Some("find") => feed::find(&args[1..]),
+        Some("records") => records(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {
@@ -115,7 +128,8 @@ impl Args {
         let mut it = args.iter();
         while let Some(a) = it.next() {
             if a.starts_with('-') {
-                let value = if switches.contains(&a.as_str()) || a == "--no-feed-relays" || a == "--no-prefetch" {
+                let value = if switches.contains(&a.as_str()) || a == "--no-feed-relays" || a == "--no-prefetch" || a == "--no-program-download"
+                {
                     None
                 } else {
                     Some(it.next().ok_or(format!("{a} needs a value"))?.clone())
@@ -157,6 +171,53 @@ impl Args {
             _ => Err(USAGE.to_string()),
         }
     }
+}
+
+/// `--data`, else the default data directory (SPEC 9.6).
+pub(crate) fn data_dir(args: &Args) -> Result<PathBuf, String> {
+    args.get("--data").map(PathBuf::from).or_else(terse_net::default_data_dir).ok_or("no data directory (use --data)".into())
+}
+
+/// `terse records list [<owner>]`, `show <owner> <name>`, `delete <owner>
+/// <name>`: the named records programs keep on this machine (SPEC 9.6).
+fn records(args: &[String]) -> Result<ExitCode, String> {
+    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    let args = Args::parse(rest, &[])?;
+    args.check_known(&["--data"])?;
+    let records = terse_net::Records::in_data_dir(&data_dir(&args)?);
+    let owner = |s: &str| {
+        terse_net::Owner::parse(s).ok_or(format!("{s}: not an owner (builtin:<title>, program:<key>:<name> or image:<id>)"))
+    };
+    let shown = |name: &[u8]| String::from_utf8_lossy(name).chars().map(|c| if c.is_control() { '\u{FFFD}' } else { c }).collect::<String>();
+    let io = |e: std::io::Error| format!("{}: {e}", records.root().display());
+    match (command.as_str(), args.positional.as_slice()) {
+        ("list", []) => {
+            for o in records.owners().map_err(io)? {
+                let list = records.list(&o).map_err(io)?;
+                let bytes: u64 = list.iter().map(|(_, s)| *s as u64).sum();
+                println!("{}  {} records, {bytes} bytes", o.describe(), list.len());
+            }
+        }
+        ("list", [o]) => {
+            for (name, size) in records.list(&owner(o)?).map_err(io)? {
+                println!("{size:>8} B  {}", shown(&name));
+            }
+        }
+        ("show", [o, name]) => {
+            let data = records.load(&owner(o)?, name.as_bytes()).map_err(io)?.ok_or(format!("no record {name}"))?;
+            std::io::stdout().write_all(&data).map_err(|e| e.to_string())?;
+        }
+        ("delete", [o, name]) => {
+            let o = owner(o)?;
+            if records.load(&o, name.as_bytes()).map_err(io)?.is_none() {
+                return Err(format!("no record {name}"));
+            }
+            records.delete(&o, name.as_bytes()).map_err(io)?;
+            eprintln!("terse: deleted {name}");
+        }
+        _ => return Err(USAGE.into()),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn read(path: &str) -> Result<Vec<u8>, String> {
@@ -255,6 +316,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--bench",
         "--shell",
         "--builtin",
+        "--data",
+        "--no-program-download",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
@@ -296,6 +359,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         node.set_subscriptions(feed::load_subscriptions(&args)?);
         node.set_identity_path(feed::identity_path(&args)?)?;
         node.set_nicknames(feed::load_nicknames(&args)?);
+        node.set_records(terse_net::Records::in_data_dir(&data_dir(&args)?));
+        node.set_program_download(!args.has("--no-program-download"));
         let mut content = ContentService::start_with_consent(node, consent);
         // Start from a caught-up store, so that a run sees what the relay
         // holds when it starts; later entries arrive while it runs.
@@ -309,6 +374,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         None
     };
     let mut system = System::new(&image, shell, builtins);
+    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    if shell && args.positional.is_empty() {
+        system.set_shell_identity(Some(terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() }));
+    }
     // Headless runs are reproducible (see `HeadlessSystem`).
     let mut headless = HeadlessSystem::new(content, script);
     let mut stopped = None;

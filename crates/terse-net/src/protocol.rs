@@ -45,6 +45,8 @@ pub enum Request<'a> {
 /// Find scopes (NETWORK 4.7).
 pub const SCOPE_FEEDS: u8 = 1;
 pub const SCOPE_ENTRIES: u8 = 2;
+/// Find programs by name (NETWORK 4.7).
+pub const SCOPE_PROGRAMS: u8 = 3;
 /// Most results in a find reply.
 pub const MAX_FIND_RESULTS: usize = 16;
 

@@ -1,0 +1,87 @@
+ ⌂  1 greeter        0% 2✗Broken         0% 3✗Racer          0%            00:00
+
+
+
+
+
+                                                     2 Broken
+                                                     needs a device this host
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     3 Racer
+                                                     not found
+
+
+
+
+
+
+
+
+-- machine 1 running 203 23 214 160 greeter --
+ Terse · hello
+
+  héllo, wörld — 你好
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 00000014
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 2 failed 423 23 214 160  --
+-- machine 3 failed 423 253 214 160  --
+-- launcher --
+PROGRAMS
+[reader]{100}
+[sparks]{101}
+[fetch]{102}
+[hello]{103}
+FROM YOUR FEEDS
+[Broken]{200}
+[Alice 66be7e…0c473a]{200}
+[Greeter]{201}
+[Alice 66be7e…0c473a]{201}
+[Racer]{202}[ ↓]{202}
+[Alice 66be7e…0c473a]{202}
+MACHINES
+[1  greeter]{1}[  running  0%]{1}
+[2  Broken]{2}[  failed]{2}
+[needs a device this host]{2}
+[does not have]{2}
+[3  Racer]{3}[  failed]{3}
+[not found]{3}
+Enter start or focus · Esc back ·
+Tab next machine · X stop · P
+pause · Z zoom · L layout · 1-8
+select

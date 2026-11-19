@@ -236,6 +236,65 @@ uint8_t content_set_nickname(content_req *r, const uint8_t *key, const void *nam
     return content_submit(r);
 }
 
+/* Content: programs and named records (SPEC 9.5, 9.6). */
+uint8_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf)
+{
+    return content_feed(r, CONTENT_PROGRAMS, first, length, buf);
+}
+
+/* The record name: up to 32 bytes of `name` (to its 0), zero padded. */
+static void record_name(content_req *r, const char *name)
+{
+    uint8_t i = 0;
+    for (; i < 32 && name[i]; i++)
+        r->id[i] = name[i];
+    for (; i < 32; i++)
+        r->id[i] = 0;
+}
+
+uint8_t record_save(content_req *r, const char *name, const void *data, uint32_t size)
+{
+    record_name(r, name);
+    r->op = CONTENT_SAVE;
+    r->addr = (uint32_t)data;
+    r->size = size;
+    return content_submit(r);
+}
+
+uint8_t record_load(content_req *r, const char *name, uint32_t offset, uint32_t length, void *buf)
+{
+    record_name(r, name);
+    r->op = CONTENT_LOAD;
+    r->offset = offset;
+    r->length = length;
+    r->addr = (uint32_t)buf;
+    return content_submit(r);
+}
+
+uint8_t record_delete(content_req *r, const char *name)
+{
+    record_name(r, name);
+    r->op = CONTENT_DELETE;
+    return content_submit(r);
+}
+
+uint8_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf)
+{
+    return content_feed(r, CONTENT_RECORDS, first, length, buf);
+}
+
+/* Device 8: start_program with a record built here. */
+uint32_t mach_start_named(const uint8_t *key, const void *name, uint32_t len)
+{
+    uint8_t rec[33 + 48];
+    if (len > 48)
+        return TERSE_ERR_BUFFER;
+    memcpy(rec, key, 32);
+    rec[32] = (uint8_t)len;
+    memcpy(rec + 33, name, len);
+    return mach_start_program(rec);
+}
+
 /* Device 3 display-list builder. The list is packed: coordinates are
  * little-endian 16-bit values at any alignment. */
 uint8_t *vec_ptr;

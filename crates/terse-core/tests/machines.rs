@@ -11,7 +11,8 @@ use common::{assemble, program};
 use terse_core::machines::state;
 use terse_core::system::CONTROLLERS;
 use terse_core::{
-    Controller, DeviceReq, Driver, Event, FrameInput, FrameResult, Image, Machine, RAM_BASE, System, Who, buttons,
+    Controller, DeviceReq, Driver, Event, FrameInput, FrameResult, Image, Machine, ProgramId, RAM_BASE, StartFailure,
+    System, Who, buttons,
 };
 
 const SHELL: &[u8] = include_bytes!("../../../programs/shell/shell.terse");
@@ -47,7 +48,10 @@ fn crash() -> Image {
 /// Records what the system gives each machine.
 #[derive(Default)]
 struct Rec {
+    /// The images that can be had, by ID.
     images: HashMap<[u8; 32], Image>,
+    /// The built-in programs and published ones, for `want_program`.
+    programs: Vec<(ProgramId, Image)>,
     wanted: Vec<(u32, [u8; 32])>,
     removed: Vec<u32>,
     /// (system frame, who, events) of every machine frame run.
@@ -63,6 +67,17 @@ impl Driver for Rec {
 
     fn want_image(&mut self, serial: u32, image: [u8; 32]) {
         self.wanted.push((serial, image));
+    }
+
+    /// The program's image ID, if it is one this host knows (a built-in
+    /// by title among `builtins`), else an ID that cannot be had.
+    fn want_program(&mut self, serial: u32, program: &ProgramId, builtins: &[[u8; 32]]) {
+        let id = self
+            .programs
+            .iter()
+            .find(|(p, i)| p == program && (!p.is_builtin() || builtins.contains(&i.id)))
+            .map_or([0xEE; 32], |(_, i)| i.id);
+        self.wanted.push((serial, id));
     }
 
     fn removed(&mut self, serial: u32) {
@@ -81,6 +96,7 @@ impl Run {
         let mut rec = Rec::default();
         for p in programs {
             rec.images.insert(p.id, p.clone());
+            rec.programs.push((ProgramId { publisher: [0; 32], name: p.title.clone() }, p.clone()));
         }
         let ids = programs.iter().map(|p| p.id).collect();
         Run { system: System::new(&Image::parse(SHELL).unwrap(), true, ids), rec }
@@ -90,7 +106,7 @@ impl Run {
     /// are delivered first (an unknown ID fails).
     fn frame(&mut self, events: &[Event]) {
         for (serial, id) in std::mem::take(&mut self.rec.wanted) {
-            let image = self.rec.images.get(&id).cloned().ok_or("not found".to_string());
+            let image = self.rec.images.get(&id).cloned().ok_or(StartFailure::not_found("not found"));
             self.system.deliver_image(serial, image);
         }
         self.rec.frame = self.system.shell().frame();
@@ -202,7 +218,7 @@ fn fault_and_failure_are_latched() {
     r.frame(&[]);
     assert_eq!(r.system.state(1), state::FAULTED);
     assert_eq!(r.got(0).unwrap()[0], Event::machine_changed(1, state::FAULTED));
-    let slot = *r.system.shell().machines().unwrap().slot(1);
+    let slot = r.system.shell().machines().unwrap().slot(1).clone();
     assert_eq!((slot.fault_kind, slot.fault_pc, slot.frames), (4, 0x0001_0000, 1));
     assert_eq!(r.system.child(1).unwrap().serial, 2, "a new machine under the same handle");
 }
@@ -306,9 +322,9 @@ fn calls() {
     li a1, 0
     ecall
     sw a0, 96(s0)       # info into address 0: FFFFFFFE
-    li a7, 0x807
+    li a7, 0x809
     ecall
-    sw a0, 100(s0)      # 807h: FFFFFFFF
+    sw a0, 100(s0)      # 809h: FFFFFFFF
 2:  li a7, 0x100
     ecall
     j 2b
@@ -356,7 +372,7 @@ fn calls() {
     // lists device 8, and differs with the grant.
     let granted = Machine::new_shell(&image, builtins).state();
     let absent = Machine::new(&image).state();
-    assert_eq!(granted.len(), absent.len() + 1 + 8 * 57 + 1 + 2 * 32);
+    assert_eq!(granted.len(), absent.len() + 1 + 8 * (57 + 81) + 1 + 2 * 32);
     assert_eq!(absent.last(), Some(&0));
 }
 
@@ -378,4 +394,153 @@ fn charges() {
     assert_eq!(used(0x806, "addi a1, s0, 0") - base, 8, "builtin copies 32");
     assert_eq!(used(0x803, "addi a1, s0, 0") - base, 0, "run copies nothing");
     let _ = RAM_BASE;
+}
+
+/// Records the programs the system asks for, delivers nothing by itself.
+#[derive(Default)]
+struct Programs {
+    asked: Vec<(u32, ProgramId, Vec<[u8; 32]>)>,
+}
+
+impl Driver for Programs {
+    fn frame(&mut self, _: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS]) -> FrameResult {
+        machine.run_frame(&FrameInput { events: &events, controllers, ..Default::default() })
+    }
+
+    fn want_image(&mut self, _: u32, _: [u8; 32]) {
+        panic!("only programs are started here");
+    }
+
+    fn want_program(&mut self, serial: u32, program: &ProgramId, builtins: &[[u8; 32]]) {
+        self.asked.push((serial, program.clone(), builtins.to_vec()));
+    }
+
+    fn removed(&mut self, _: u32) {}
+}
+
+/// `start_program` (807h) and `identity` (808h) (SPEC 12.2): the host is
+/// asked for the program by its identity (a built-in with the zero key);
+/// the handle loads until the image arrives, possibly frames later; a
+/// start fails with its reason (1 not found, 3 needs a device the host
+/// does not provide, never running); the started machine has the identity
+/// for its life, and `identity` reports it.
+#[test]
+fn start_program_and_identity() {
+    if !common::have_tools() {
+        return;
+    }
+    let src = "
+    li s0, 0x100000
+    li a7, 0x807
+    la a0, tool
+    ecall
+    sw a0, 0(s0)        # tool of feed 22..: 1
+    la a0, hello
+    ecall
+    sw a0, 4(s0)        # the built-in hello: 2
+    la a0, needs
+    ecall
+    sw a0, 8(s0)        # needs: 3
+    la a0, absent
+    ecall
+    sw a0, 12(s0)       # absent: 4
+    la a0, empty
+    ecall
+    sw a0, 16(s0)       # an empty name: FFFFFFFE
+    la a0, long
+    ecall
+    sw a0, 20(s0)       # 49 bytes: FFFFFFFE
+    li a0, 0
+    ecall
+    sw a0, 24(s0)       # nowhere: FFFFFFFE
+    li a7, 0x808
+    li a0, 1
+    addi a1, s0, 128
+    ecall
+    sw a0, 28(s0)       # identity 1: 1
+    li a0, 5
+    addi a1, s0, 256
+    ecall
+    sw a0, 32(s0)       # identity 5 (not in use): 0
+    li a0, 1
+    li a1, 0
+    ecall
+    sw a0, 36(s0)       # identity into address 0: FFFFFFFE
+1:  li a7, 0x100
+    ecall
+    j 1b
+tool:   .fill 32, 1, 0x22
+        .byte 4
+        .ascii \"tool\"
+hello:  .fill 32, 1, 0
+        .byte 5
+        .ascii \"hello\"
+needs:  .fill 32, 1, 0x22
+        .byte 5
+        .ascii \"needs\"
+absent: .fill 32, 1, 0x22
+        .byte 6
+        .ascii \"absent\"
+empty:  .fill 32, 1, 0x22
+        .byte 0
+long:   .fill 32, 1, 0x22
+        .byte 49
+        .fill 49, 1, 0x61
+";
+    let shell = program(&assemble(src), 1, &[MACHINES]);
+    let hello = Image::parse(HELLO).unwrap();
+    let mut system = System::new(&shell, true, vec![hello.id]);
+    let mut d = Programs::default();
+    let frame = |system: &mut System, d: &mut Programs| system.frame(&[], [Controller::default(); CONTROLLERS], d);
+    frame(&mut system, &mut d);
+    let ram = system.shell().ram().to_vec();
+    let word = |at: usize| u32::from_le_bytes(ram[at..at + 4].try_into().unwrap());
+    assert_eq!((0..10).map(|i| word(4 * i)).collect::<Vec<_>>(), [1, 2, 3, 4, 0xFFFF_FFFE, 0xFFFF_FFFE, 0xFFFF_FFFE, 1, 0, 0xFFFF_FFFE]);
+    let tool = ProgramId { publisher: [0x22; 32], name: b"tool".to_vec() };
+    let mut record = vec![0x22; 32];
+    record.push(4);
+    record.extend(b"tool");
+    record.resize(81, 0);
+    assert_eq!(&ram[128..209], &record[..], "the identity record");
+    assert_eq!(&ram[256..260], &[0; 4], "nothing written for a handle not in use");
+    let asked: Vec<(u32, Vec<u8>, bool)> = d.asked.iter().map(|(s, p, b)| (*s, p.name.clone(), b == &[hello.id])).collect();
+    assert_eq!(asked, [(1, b"tool".to_vec(), true), (2, b"hello".to_vec(), true), (3, b"needs".to_vec(), true), (4, b"absent".to_vec(), true)]);
+    assert!(d.asked[1].1.is_builtin());
+    for h in 1..=4 {
+        assert_eq!(system.state(h), state::LOADING);
+        assert_eq!(system.shell().machines().unwrap().slot(h).image, [0; 32], "no image ID while loading");
+    }
+
+    // The built-in arrives at once; the device check fails one image; the
+    // host holds no "absent". The tool's image arrives three frames later.
+    system.deliver_image(2, Ok(hello.clone()));
+    let mut bytes = Image::build("needs", 1, &[DeviceReq { slot: 2, version: 0 }], &[0x6F, 0, 0, 0]);
+    bytes[32] = 5; // device 5 (messages): not one this host provides
+    system.deliver_image(3, terse_core::load_image(&bytes));
+    system.deliver_image(4, Err(StartFailure::not_found("no such program")));
+    frame(&mut system, &mut d);
+    let dev = system.shell().machines().unwrap();
+    assert_eq!((system.state(1), system.state(2), system.state(3), system.state(4)), (state::LOADING, state::RUNNING, state::FAILED, state::FAILED));
+    assert_eq!(dev.slot(2).image, hello.id);
+    assert_eq!(&dev.slot(3).info()[..4], &[state::FAILED, 0, 0, 3], "needs a device the host does not have");
+    assert_eq!(dev.slot(3).image, *blake3::hash(&bytes).as_bytes());
+    assert_eq!(&dev.slot(4).info()[..4], &[state::FAILED, 0, 0, 1], "not found");
+    assert_eq!(dev.slot(4).image, [0; 32]);
+    assert!(system.child(3).unwrap().machine.is_none(), "a failed start runs nothing");
+    assert_eq!(system.child(2).unwrap().machine.as_ref().unwrap().identity().unwrap().publisher, [0; 32]);
+    for _ in 0..3 {
+        frame(&mut system, &mut d);
+        assert_eq!(system.state(1), state::LOADING);
+    }
+    let tool_image = Image::parse(&Image::build("tool", 1, &[], &[0x6F, 0, 0, 0])).unwrap();
+    system.deliver_image(1, Ok(tool_image.clone()));
+    frame(&mut system, &mut d);
+    assert_eq!(system.state(1), state::RUNNING);
+    let child = system.child(1).unwrap();
+    assert_eq!((child.image, child.identity.as_ref()), (tool_image.id, Some(&tool)));
+    assert_eq!(child.machine.as_ref().unwrap().identity(), Some(&tool));
+    assert_eq!(system.shell().machines().unwrap().slot(1).image, tool_image.id);
+    // The identity is the shell's state (STATE.md 1.10).
+    let state = system.shell().state();
+    assert!(state.windows(81).any(|w| w == &record[..]));
 }

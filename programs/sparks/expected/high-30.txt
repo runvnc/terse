@@ -1,0 +1,71 @@
+  SPARKS    HIGH 0030         demo - Enter or Start to play
+
+
+
+
+
+
+
+
+
+
+
+                                   S P A R K S
+
+                     Collect the sparks, avoid the sweepers.
+                     Arrows or stick: turn. Up or A: thrust.
+                     Enter or Start: play.        Esc: quit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- vectors: 410 list bytes --
+line 64 64 10176 64 w 32 c 466ebeff
+line 10176 64 10176 7616 w 32 c 466ebeff
+line 10176 7616 64 7616 w 32 c 466ebeff
+line 64 7616 64 64 w 32 c 466ebeff
+disc 3778 5273 r 52 c ffe15aff
+circle 3778 5273 r 124 w 20 c ffbe3c62
+disc 1366 1721 r 52 c ffe15aff
+circle 1366 1721 r 116 w 20 c ffbe3c7a
+disc 6771 1520 r 52 c ffe15aff
+circle 6771 1520 r 94 w 20 c ffbe3cbc
+disc 7332 2837 r 52 c ffe15aff
+circle 7332 2837 r 128 w 20 c ffbe3c56
+disc 1290 3682 r 52 c ffe15aff
+circle 1290 3682 r 80 w 20 c ffbe3ce6
+disc 9928 4073 r 52 c ffe15aff
+circle 9928 4073 r 134 w 20 c ffbe3c44
+disc 872 5470 r 52 c ffe15aff
+circle 872 5470 r 124 w 20 c ffbe3c62
+disc 3814 7267 r 52 c ffe15aff
+circle 3814 7267 r 94 w 20 c ffbe3cbc
+line 8325 4163 9605 3165 w 48 c ff5032ff
+line 531 5897 1865 6693 w 48 c ff5032ff
+line 9453 5799 8177 7133 w 48 c ff5032ff
+line 4339 6511 2959 6127 w 48 c ff5032ff
+line 6549 6881 6071 5547 w 48 c ff5032ff
+line 2055 2158 821 730 w 48 c ff5032ff
+disc 8965 3664 r 56 c ffaa82ff
+disc 1198 6295 r 56 c ffaa82ff
+disc 8815 6466 r 56 c ffaa82ff
+disc 3649 6319 r 56 c ffaa82ff
+disc 6310 6214 r 56 c ffaa82ff
+disc 1438 1444 r 56 c ffaa82ff
+line 5099 3826 5174 3735 w 40 c ff9628dc
+triangle 4897 4071 5068 3677 5099 3826 c 3cc8ff7f
+triangle 4897 4071 5099 3826 5251 3827 c 3cc8ff7f
+line 4897 4071 5068 3677 w 20 c c8f5ffff
+line 5068 3677 5099 3826 w 20 c c8f5ffff
+line 5099 3826 5251 3827 w 20 c c8f5ffff
+line 5251 3827 4897 4071 w 20 c c8f5ffff
+rect 2304 2816 7936 4608 c 303030e6

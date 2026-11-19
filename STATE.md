@@ -120,13 +120,13 @@ Each request record is 53 bytes:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | `op` of the pending request (`01h`–`0Ch`), or `00h` if the handle is free (then every other field is zero) |
+| 0 | 1 | `op` of the pending request (`01h`–`11h`), or `00h` if the handle is free (then every other field is zero) |
 | 1 | 4 | Address of its request block (u32) |
-| 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit. Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
-| 37 | 4 | `offset` read at submit (get, subscriptions, timeline, names, find); set profile: the listed bit, 0 or 1; else zero |
-| 41 | 4 | `length` read at submit (get, subscriptions, timeline, names, find, publish, set profile, set nickname), else zero |
-| 45 | 4 | `addr` read at submit (get, subscriptions, timeline, names, find), else zero |
-| 49 | 4 | `size` read at submit (put; find: the query's length), else zero |
+| 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit; save, load, delete: the record's name as read at submit (`id`, zero padded). Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
+| 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find); set profile: the listed bit, 0 or 1; else zero |
+| 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, publish, set profile, set nickname), else zero |
+| 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find), else zero |
+| 49 | 4 | `size` read at submit (put, save; find: the query's length), else zero |
 
 Let `P` be the offset after this section.
 
@@ -150,7 +150,7 @@ which are in the queue and RAM like any other input.
 
 Let `M` be the offset after this section.
 
-### 1.10 Machines (0, 1 or 523 + 32b bytes)
+### 1.10 Machines (0, 1 or 1,107 + 32b bytes)
 
 This section is there only if the image lists device 8; for any other image
 the serialization ends at `M`, so the hashes of images without device 8 are
@@ -160,11 +160,11 @@ as they were before device 8 existed.
 |---|---|---|
 | M | 1 | Present (flag): the machine has device 8 (it is the shell of a system, SPEC 12.1). If `00h`, the section ends here. |
 | M + 1 | 1 | Focus: a handle 1–8, or 0 for the shell |
-| M + 2 | 8 × 57 | Handle 1, then 2, …, 8 |
-| M + 458 | 1 | b: the number of built-in programs, 0–255 |
-| M + 459 | 32 × b | Their image IDs, in `builtin` order |
+| M + 2 | 8 × 138 | Handle 1, then 2, …, 8 |
+| M + 1,106 | 1 | b: the number of built-in programs, 0–255 |
+| M + 1,107 | 32 × b | Their image IDs, in `builtin` order |
 
-Each handle's record is 57 bytes:
+Each handle's record is 138 bytes:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -174,7 +174,8 @@ Each handle's record is 57 bytes:
 | 4 | 2 | Rectangle y (u16) |
 | 6 | 2 | Rectangle width (u16) |
 | 8 | 2 | Rectangle height (u16) |
-| 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC 12.2): exit code, fault kind, reserved, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
+| 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC 12.2): exit code, fault kind, failure reason, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
+| 57 | 81 | The identity given to `start_program`, as `identity` writes it (SPEC 12.2), or all zero if the handle has none |
 
 A handle not in use is all zero. The machines a shell starts are not part of
 its state: each has a state of its own, serialized as for any machine (it
@@ -183,7 +184,7 @@ and absent otherwise).
 
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector), 1 or 425 (content), 1 or 21 + d (page) and 0, 1 or 523 + 32b
+(vector), 1 or 425 (content), 1 or 21 + d (page) and 0, 1 or 1,107 + 32b
 (machines).
 
 ## 2. What is left out, and why
@@ -192,13 +193,16 @@ That is the end of the serialization. Its length is
 - **This frame's random bytes**: an input consumed within the frame (SPEC 4);
   a new set is latched at step 1 of every frame, so nothing of them outlives
   the frame.
-- **Requests not yet handed to the host**, the bytes a put copied, the
-  title a publish copied, the query a find copied and the name a set
-  profile or set nickname copied: the pending request records hold
+- **Requests not yet handed to the host**, the bytes a put or a save
+  copied, the title a publish copied, the query a find copied and the name
+  a set profile or set nickname copied: the pending request records hold
   everything about them that can affect the machine (a put's bytes only
-  matter through their ID, which the completion writes; a title, query or
-  name only through what the host does with it, which reaches the machine
-  as later inputs). Whether a
+  matter through their ID, which the completion writes; a save's data, a
+  title, query or name only through what the host does with it, which
+  reaches the machine as later inputs).
+- **Named records** (SPEC 9.6) and a machine's identity: the records are
+  the host's; what a load delivers is an input. A started machine's
+  identity is in the shell's handle record (1.10), not in its own state. Whether a
   request waits for the user's consent (SPEC 9.5) is host state; to the
   machine it is pending.
 - **Host bookkeeping**: counters that tell a host the display list changed,

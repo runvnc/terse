@@ -6,7 +6,7 @@ use std::fmt;
 use crate::content::{Completion, Content, Request, ram_range, readable};
 use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
 use crate::image::Image;
-use crate::machines::Machines;
+use crate::machines::{Machines, ProgramId};
 use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
@@ -185,6 +185,9 @@ pub struct Machine {
     instructions: u64,
     /// Device calls made since reset (not machine state).
     calls: u64,
+    /// The program's identity (SPEC 12.2), if it was started as one; whose
+    /// named records it reads (SPEC 9.6). Not machine state.
+    identity: Option<ProgramId>,
 }
 
 impl Machine {
@@ -209,7 +212,17 @@ impl Machine {
             image_id: image.id,
             instructions: 0,
             calls: 0,
+            identity: None,
         }
+    }
+
+    /// The identity the host started the machine with (SPEC 12.2).
+    pub fn set_identity(&mut self, identity: Option<ProgramId>) {
+        self.identity = identity;
+    }
+
+    pub fn identity(&self) -> Option<&ProgramId> {
+        self.identity.as_ref()
     }
 
     /// The machine at reset as the shell (SPEC 12.1): device 8 is granted

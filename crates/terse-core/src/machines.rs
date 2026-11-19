@@ -16,6 +16,75 @@ pub const VERSION: u8 = 0;
 pub const MAX_MACHINES: usize = 8;
 /// The record `info` writes.
 pub const INFO_BYTES: usize = 48;
+/// The record `identity` writes: feed key, name length, name (48, zero
+/// padded).
+pub const IDENTITY_BYTES: usize = 81;
+/// Longest program name (SPEC 12.2), as a display name.
+pub const MAX_PROGRAM_NAME: usize = 48;
+
+/// Why a start failed: byte 3 of the `info` record of a failed handle
+/// (SPEC 12.2).
+pub mod failure {
+    pub const NOT_FOUND: u8 = 1;
+    pub const INVALID: u8 = 2;
+    pub const NEEDS_DEVICE: u8 = 3;
+    pub const NO_ROOM: u8 = 4;
+}
+
+/// A program's identity (SPEC 12.2): the feed that publishes it and its
+/// name. Built-in programs have the all-zero key and their image title.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProgramId {
+    pub publisher: [u8; 32],
+    pub name: Vec<u8>,
+}
+
+impl ProgramId {
+    /// The 81-byte record of `identity`.
+    pub fn record(&self) -> [u8; IDENTITY_BYTES] {
+        let mut out = [0; IDENTITY_BYTES];
+        out[..32].copy_from_slice(&self.publisher);
+        out[32] = self.name.len() as u8;
+        out[33..33 + self.name.len()].copy_from_slice(&self.name);
+        out
+    }
+
+    /// Whether this is a built-in program (the all-zero key).
+    pub fn is_builtin(&self) -> bool {
+        self.publisher == [0; 32]
+    }
+}
+
+/// Why the image for a handle could not be had (SPEC 12.2): the reason
+/// `info` reports, the image ID if the host got as far as a blob, and a
+/// message for people.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartFailure {
+    pub reason: u8,
+    pub image: Option<[u8; 32]>,
+    pub message: String,
+}
+
+impl StartFailure {
+    pub fn not_found(message: impl Into<String>) -> Self {
+        StartFailure { reason: failure::NOT_FOUND, image: None, message: message.into() }
+    }
+}
+
+/// Checks `bytes` as an image a machine can start (SPEC 2): not an image is
+/// reason 2, an image that needs a device (slot, version) this host does
+/// not provide reason 3.
+pub fn load_image(bytes: &[u8]) -> Result<crate::image::Image, StartFailure> {
+    crate::image::Image::parse(bytes).map_err(|e| StartFailure {
+        reason: if matches!(e, crate::image::ImageError::UnsupportedDevice(_)) {
+            failure::NEEDS_DEVICE
+        } else {
+            failure::INVALID
+        },
+        image: Some(*blake3::hash(bytes).as_bytes()),
+        message: e.to_string(),
+    })
+}
 
 /// Machine states (SPEC 12.2).
 pub mod state {
@@ -51,10 +120,12 @@ pub mod call {
     pub const FOCUS: u32 = 0x804;
     pub const INFO: u32 = 0x805;
     pub const BUILTIN: u32 = 0x806;
+    pub const START_PROGRAM: u32 = 0x807;
+    pub const IDENTITY: u32 = 0x808;
 }
 
 /// One handle's record.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Slot {
     pub state: u8,
     /// The run flag: set by `start` and `run`.
@@ -69,14 +140,18 @@ pub struct Slot {
     /// The machine's frame counter.
     pub frames: u32,
     pub fault_pc: u32,
+    /// Why the start failed, if the state is failed (`failure`), else 0.
+    pub failure: u8,
     pub image: [u8; 32],
+    /// The identity the machine was started with (`start_program`).
+    pub identity: Option<ProgramId>,
 }
 
 impl Slot {
     /// The 48-byte record of `info` (SPEC 12.2).
     pub fn info(&self) -> [u8; INFO_BYTES] {
         let mut out = [0; INFO_BYTES];
-        out[..4].copy_from_slice(&[self.state, self.exit_code, self.fault_kind, 0]);
+        out[..4].copy_from_slice(&[self.state, self.exit_code, self.fault_kind, self.failure]);
         out[4..8].copy_from_slice(&self.units.to_le_bytes());
         out[8..12].copy_from_slice(&self.frames.to_le_bytes());
         out[12..16].copy_from_slice(&self.fault_pc.to_le_bytes());
@@ -119,9 +194,12 @@ pub fn map_into(picture: Region, x: u16, y: u16) -> Option<(u16, u16)> {
 }
 
 /// What the shell asked for that the host carries out after its frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Start { handle: u8, image: [u8; 32] },
+    /// `start_program`: the current version of a published (or built-in)
+    /// program.
+    StartProgram { handle: u8, program: ProgramId },
     Stop { handle: u8 },
 }
 
@@ -156,6 +234,33 @@ impl Machines {
                 let handle = i as u8 + 1;
                 self.commands.push(Command::Start { handle, image: id });
                 (handle as u32, copy_charge(32))
+            }
+            call::START_PROGRAM => {
+                // Key and length first, then the name; a name that is not
+                // a program name is a bad buffer (SPEC 12.2).
+                let Some(head) = readable(rom, ram, a0, 33) else { return (ERR_BUFFER, 0) };
+                let n = head[32] as usize;
+                let Some(record) = readable(rom, ram, a0, 33 + n) else { return (ERR_BUFFER, 0) };
+                if n > MAX_PROGRAM_NAME || !crate::content::valid_display_name(&record[33..]) {
+                    return (ERR_BUFFER, 0);
+                }
+                let program = ProgramId { publisher: record[..32].try_into().unwrap(), name: record[33..].to_vec() };
+                let charge = copy_charge(33 + n);
+                let Some(i) = self.slots.iter().position(|s| s.state == state::NONE) else { return (0, charge) };
+                self.slots[i] = Slot { state: state::LOADING, run: true, identity: Some(program.clone()), ..Slot::default() };
+                let handle = i as u8 + 1;
+                self.commands.push(Command::StartProgram { handle, program });
+                (handle as u32, charge)
+            }
+            call::IDENTITY => {
+                let Some(at) = ram_range(ram.len(), a1, IDENTITY_BYTES) else { return (ERR_BUFFER, 0) };
+                match slot(a0).and_then(|i| self.slots[i].identity.as_ref()) {
+                    None => (0, 0),
+                    Some(id) => {
+                        ram[at..at + IDENTITY_BYTES].copy_from_slice(&id.record());
+                        (1, copy_charge(IDENTITY_BYTES))
+                    }
+                }
             }
             call::STOP => match slot(a0).filter(|&i| self.slots[i].state != state::NONE) {
                 None => (0, 0),
@@ -277,6 +382,7 @@ impl Machines {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&s.info()[1..]);
+            out.extend_from_slice(&s.identity.as_ref().map_or([0; IDENTITY_BYTES], ProgramId::record));
         }
         out.push(self.builtins.len() as u8);
         for id in &self.builtins {

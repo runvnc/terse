@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 use terse_core::page::{Layouter, PageInput};
 use terse_core::system::CONTROLLERS;
 use terse_core::{
-    Completion, Controller, Driver, Event, FrameInput, FrameResult, Machine, Outcome, Request, RequestKind, Script, System,
-    SystemFrame, Who,
+    Completion, Controller, Driver, Event, FrameInput, FrameResult, Machine, Outcome, ProgramId, Request, RequestKind,
+    Script, StartFailure, System, SystemFrame, Who,
 };
 
 use crate::identity::{FeedKey, valid_feed_key};
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
+use crate::records::{Owner, Saved};
 
 /// How long the worker sleeps between reconnection checks while following
 /// feeds without a connection.
@@ -34,13 +35,18 @@ pub enum FeedCommand {
 /// Requests carry a tag that their completions carry back: the machine
 /// they came from, for a host that runs several (SPEC 12). 0 for one.
 enum Work {
-    Content(u32, Request),
+    /// With the owner of the machine's named records (SPEC 9.6), if known.
+    Content(u32, Request, Option<Owner>),
     /// A request the user has allowed (SPEC 9.5).
     Consented(u32, Request),
     Feed(FeedCommand),
     /// A whole blob (an image a shell starts, SPEC 12.2), completed as a
     /// get with handle 0.
     Fetch(u32, [u8; 32]),
+    /// The current version of a program (`start_program`, SPEC 12.2),
+    /// completed like `Fetch`: not found if the host holds no such program.
+    /// A built-in (the all-zero key) is looked for among these images.
+    Program(u32, ProgramId, Vec<[u8; 32]>),
 }
 
 /// How the host answers the requests that need the user's consent
@@ -203,7 +209,7 @@ impl ContentService {
     /// feeds-updated event, SPEC 5); never blocks. Consumes the feed
     /// events so far, like `take_feed_events`.
     pub fn feeds_updated(&mut self) -> bool {
-        self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. }))
+        self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. }))
     }
 
     /// Waits until every feed is caught up (NETWORK 4.3) and its automatic
@@ -230,8 +236,26 @@ impl ContentService {
         for r in requests {
             self.outstanding += 1;
             // The worker only stops when this service is dropped.
-            let _ = self.jobs.send(Work::Content(tag, r));
+            let _ = self.jobs.send(Work::Content(tag, r, None));
         }
+    }
+
+    /// Submits the requests `machine` made, with `tag`; its named records
+    /// (SPEC 9.6) are those of its identity, else of its image.
+    pub fn submit_machine(&mut self, tag: u32, machine: &mut Machine) {
+        let owner = Owner::of(machine);
+        for r in machine.take_content_requests() {
+            self.outstanding += 1;
+            let _ = self.jobs.send(Work::Content(tag, r, Some(owner.clone())));
+        }
+    }
+
+    /// Fetches the image of the current version of `program` the host
+    /// holds (a built-in among `builtins` for the all-zero key); completed
+    /// as [`Self::fetch`] is.
+    pub fn fetch_program(&mut self, tag: u32, program: &ProgramId, builtins: &[[u8; 32]]) {
+        self.outstanding += 1;
+        let _ = self.jobs.send(Work::Program(tag, program.clone(), builtins.to_vec()));
     }
 
     /// Fetches the whole blob `id` (from the store, else the relays);
@@ -347,12 +371,18 @@ impl Headless {
         // The height of a changed page is reported at the next frame.
         self.page.after_frame(machine.page());
         if let Some(content) = &mut self.content {
-            content.submit(machine.take_content_requests());
+            content.submit_machine(0, machine);
             self.completions = content.wait_finished();
             self.feeds_updated = content.feeds_updated();
         }
         result
     }
+}
+
+/// An image a shell started: by ID, or a program and the built-ins.
+enum Wanted {
+    Image([u8; 32]),
+    Program(ProgramId, Vec<[u8; 32]>),
 }
 
 /// One machine's part of a [`HeadlessSystem`].
@@ -373,10 +403,10 @@ pub struct HeadlessSystem {
     content: Option<ContentService>,
     script: Script,
     machines: HashMap<u32, HeadlessMachine>,
-    /// Images wanted in the frame just run: (serial, ID).
-    wanted: Vec<(u32, [u8; 32])>,
+    /// Images wanted in the frame just run: by ID, or as a program.
+    wanted: Vec<(u32, Wanted)>,
     /// Images to deliver at the start of the next frame.
-    images: Vec<(u32, Result<terse_core::Image, String>)>,
+    images: Vec<(u32, Result<terse_core::Image, StartFailure>)>,
     /// Makes the layouter of each machine's page (default: the reference
     /// layout).
     layouter: Box<dyn Fn(u32) -> Box<dyn Layouter + Send>>,
@@ -423,12 +453,15 @@ impl HeadlessSystem {
         let result = system.frame(&events, controllers, self);
         let wanted = std::mem::take(&mut self.wanted);
         match &mut self.content {
-            None => {
-                self.images.extend(wanted.into_iter().map(|(serial, _)| (serial, Err("no content device".to_string()))))
-            }
+            None => self
+                .images
+                .extend(wanted.into_iter().map(|(serial, _)| (serial, Err(StartFailure::not_found("no content device"))))),
             Some(content) => {
-                for &(serial, id) in &wanted {
-                    content.fetch(serial, id);
+                for (serial, want) in &wanted {
+                    match want {
+                        Wanted::Image(id) => content.fetch(*serial, *id),
+                        Wanted::Program(program, builtins) => content.fetch_program(*serial, program, builtins),
+                    }
                 }
                 for (tag, c) in content.wait_finished_tagged() {
                     if c.handle == 0 && wanted.iter().any(|w| w.0 == tag) {
@@ -450,13 +483,13 @@ impl HeadlessSystem {
     }
 }
 
-/// The image a fetch delivered (SPEC 12.2: a missing blob or an invalid
-/// image fails the start).
-fn image_from(outcome: Outcome) -> Result<terse_core::Image, String> {
+/// The image a fetch delivered (SPEC 12.2: a missing blob, or one that is
+/// not an image this host can run, fails the start, with its reason).
+pub fn image_from(outcome: Outcome) -> Result<terse_core::Image, StartFailure> {
     match outcome {
-        Outcome::Got { data, .. } => terse_core::Image::parse(&data).map_err(|e| e.to_string()),
-        Outcome::NotFound => Err("image not found".into()),
-        _ => Err("image fetch failed".into()),
+        Outcome::Got { data, .. } => terse_core::load_image(&data),
+        Outcome::NotFound => Err(StartFailure::not_found("image not found")),
+        _ => Err(StartFailure::not_found("image fetch failed")),
     }
 }
 
@@ -477,13 +510,17 @@ impl Driver for HeadlessSystem {
         let result = machine.run_frame(&input);
         m.page.after_frame(machine.page());
         if let Some(content) = &mut self.content {
-            content.submit_tagged(who.serial, machine.take_content_requests());
+            content.submit_machine(who.serial, machine);
         }
         result
     }
 
     fn want_image(&mut self, serial: u32, image: [u8; 32]) {
-        self.wanted.push((serial, image));
+        self.wanted.push((serial, Wanted::Image(image)));
+    }
+
+    fn want_program(&mut self, serial: u32, program: &ProgramId, builtins: &[[u8; 32]]) {
+        self.wanted.push((serial, Wanted::Program(program.clone(), builtins.to_vec())));
     }
 
     fn removed(&mut self, serial: u32) {
@@ -600,6 +637,47 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
     }
 }
 
+/// The blob ID of the current version of `program` the host holds: for
+/// the all-zero key, the first of `builtins` whose image title is the name
+/// (SPEC 12.2).
+fn find_program(node: &Node, program: &ProgramId, builtins: &[[u8; 32]]) -> Option<[u8; 32]> {
+    if program.is_builtin() {
+        return builtins.iter().copied().find(|id| {
+            let Ok(Some(bytes)) = node.store().read(id) else { return false };
+            let title = bytes.get(16..32).unwrap_or_default();
+            let len = title.iter().position(|&b| b == 0).unwrap_or(title.len());
+            title[..len] == program.name[..]
+        });
+    }
+    node.current_program(&program.publisher, &program.name).map(|e| e.blob)
+}
+
+/// Carries out a save, load, delete or records request for `owner` (SPEC
+/// 9.6). A storage error fails it.
+fn records_request(records: &crate::records::Records, owner: &Owner, kind: RequestKind) -> Outcome {
+    let result = match kind {
+        RequestKind::Save { name, data } => records.save(owner, &name, &data).map(|saved| match saved {
+            Saved::Done => Outcome::Done,
+            Saved::NoRoom => Outcome::NoRoom,
+        }),
+        RequestKind::Load { name, offset, length } => records.load(owner, &name).map(|data| match data {
+            None => Outcome::NotFound,
+            Some(data) => {
+                let start = (offset as usize).min(data.len());
+                let end = (start + length as usize).min(data.len());
+                Outcome::Got { size: data.len() as u32, data: data[start..end].to_vec() }
+            }
+        }),
+        RequestKind::Delete { name } => records.delete(owner, &name).map(|()| Outcome::Done),
+        RequestKind::Records { offset, length } => records.list(owner).map(|list| {
+            let (total, data) = crate::records::list_records(&list, offset, length);
+            Outcome::Records { total, data }
+        }),
+        _ => unreachable!("only records requests"),
+    };
+    result.unwrap_or(Outcome::Failed)
+}
+
 /// Carries out (or asks about) a subscribe, unsubscribe or publish; false
 /// if the service is gone.
 #[allow(clippy::too_many_arguments)]
@@ -650,7 +728,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         };
         next += 1;
         match work {
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Identity })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Identity }, _)) => {
                 let outcome = match node.identity_key() {
                     Some(key) => Outcome::Identity { key },
                     None => Outcome::NotFound,
@@ -663,6 +741,47 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 pending.insert(next, (tag, Job::Fetch));
                 node.start_get(next, id);
             }
+            Some(Work::Program(tag, program, builtins)) => match find_program(&node, &program, &builtins) {
+                Some(id) => {
+                    pending.insert(next, (tag, Job::Fetch));
+                    node.start_get(next, id);
+                }
+                None => {
+                    let c = Completion { handle: 0, outcome: Outcome::NotFound };
+                    if finished.send(Finished::Done(tag, c)).is_err() {
+                        return;
+                    }
+                }
+            },
+            // SPEC 9.6: named records, answered at once from this host's
+            // records directory.
+            Some(Work::Content(
+                tag,
+                Request {
+                    handle,
+                    kind:
+                        kind @ (RequestKind::Save { .. }
+                        | RequestKind::Load { .. }
+                        | RequestKind::Delete { .. }
+                        | RequestKind::Records { .. }),
+                },
+                owner,
+            )) => {
+                let outcome = match (node.records(), owner) {
+                    (Some(records), Some(owner)) => records_request(records, &owner, kind),
+                    _ => Outcome::Failed,
+                };
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
+                    return;
+                }
+            }
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Programs { offset, length } }, _)) => {
+                let (total, data) = node.program_records(offset, length);
+                let outcome = Outcome::Records { total, data };
+                if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
+                    return;
+                }
+            }
             Some(Work::Content(
                 tag,
                 r @ Request {
@@ -674,6 +793,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                         | RequestKind::SetNickname { .. },
                     ..
                 },
+                _,
             )) => {
                 if !feed_request(&mut node, consent, false, tag, r, next, &mut pending, &finished) {
                     return;
@@ -684,37 +804,37 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     return;
                 }
             }
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Get { id, offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Get { id, offset, length } }, _)) => {
                 pending.insert(next, (tag, Job::Get { handle, offset, length }));
                 node.start_get(next, id);
             }
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Put { data } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Put { data } }, _)) => {
                 pending.insert(next, (tag, Job::Put { handle }));
                 node.start_put(next, &data);
             }
             // SPEC 9.5: answered at once from the node's own state.
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Subscriptions { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Subscriptions { offset, length } }, _)) => {
                 let (total, data) = node.subscription_records(offset, length);
                 let outcome = Outcome::Records { total, data };
                 if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Timeline { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Timeline { offset, length } }, _)) => {
                 let (total, data) = node.timeline_records(offset, length);
                 let outcome = Outcome::Records { total, data };
                 if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Names { offset, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Names { offset, length } }, _)) => {
                 let (total, data) = node.name_records(offset, length);
                 let outcome = Outcome::Records { total, data };
                 if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
                     return;
                 }
             }
-            Some(Work::Content(tag, Request { handle, kind: RequestKind::Find { scope, query, length } })) => {
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::Find { scope, query, length } }, _)) => {
                 pending.insert(next, (tag, Job::Find { handle, length }));
                 node.start_find(next, scope, &query);
             }
@@ -985,6 +1105,160 @@ mod tests {
         let mut done = service.wait_finished();
         done.sort_by_key(|c| c.handle);
         assert_eq!(outcomes(&done), [Outcome::Published { seq: 2 }, Outcome::Refused]);
+    }
+
+    fn owner_service(dir: &std::path::Path, data: &std::path::Path) -> ContentService {
+        let mut node = Node::new(BlobStore::open(dir, None).unwrap(), None);
+        node.set_records(crate::Records::in_data_dir(data));
+        ContentService::start(node)
+    }
+
+    /// Runs `kinds` as the requests of a machine with `identity` (else
+    /// with no identity) of image `image`; the outcomes in handle order.
+    fn as_machine(service: &mut ContentService, image: &terse_core::Image, identity: Option<ProgramId>, kinds: Vec<RequestKind>) -> Vec<Outcome> {
+        let owner = match identity {
+            Some(id) => Owner::Program { publisher: id.publisher, name: id.name },
+            None => Owner::Image(image.id),
+        };
+        for (i, kind) in kinds.into_iter().enumerate() {
+            service.outstanding += 1;
+            let _ = service.jobs.send(Work::Content(1, Request { handle: i as u8 + 1, kind }, Some(owner.clone())));
+        }
+        let mut done = service.wait_finished();
+        done.sort_by_key(|c| c.handle);
+        outcomes(&done)
+    }
+
+    fn image(title: &str, rom: u8) -> terse_core::Image {
+        terse_core::Image::parse(&terse_core::Image::build(title, 1, &[], &[rom, 0, 0, 0])).unwrap()
+    }
+
+    /// SPEC 9.6: save, load (ranges), replace, delete and the records list,
+    /// for the owner of the requests; owners do not see each other's
+    /// records; a new version of a program (same feed and name) reads the
+    /// old version's; records outlive the service; a machine started from
+    /// a file has the records of its exact image.
+    #[test]
+    fn named_records() {
+        let (dir, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let mut service = owner_service(dir.path(), data.path());
+        let sparks = |publisher: u8| Some(ProgramId { publisher: [publisher; 32], name: b"sparks".to_vec() });
+        let (v1, v2) = (image("sparks", 1), image("sparks", 2));
+        let save = |name: &str, data: &[u8]| RequestKind::Save { name: name.into(), data: data.to_vec() };
+        let load = |name: &str, offset, length| RequestKind::Load { name: name.into(), offset, length };
+        let list = |offset, length| RequestKind::Records { offset, length };
+        assert_eq!(
+            as_machine(&mut service, &v1, sparks(3), vec![
+                load("high-score", 0, 4),
+                save("high-score", b"\x2a\0\0\0"),
+                save("notes", b"0123456789"),
+                load("notes", 3, 4),
+                load("notes", 8, 100),
+                load("notes", 10, 100),
+                list(0, 100),
+                list(1, 36),
+            ]),
+            [
+                Outcome::NotFound,
+                Outcome::Done,
+                Outcome::Done,
+                Outcome::Got { size: 10, data: b"3456".to_vec() },
+                Outcome::Got { size: 10, data: b"89".to_vec() },
+                Outcome::Got { size: 10, data: Vec::new() },
+                Outcome::Records { total: 2, data: [&b"high-score"[..], &[0; 22], &4u32.to_le_bytes(), b"notes", &[0; 27], &10u32.to_le_bytes()].concat() },
+                Outcome::Records { total: 2, data: [&b"notes"[..], &[0; 27], &10u32.to_le_bytes()].concat() },
+            ]
+        );
+        // The next version of the program reads them; replace and delete.
+        assert_eq!(
+            as_machine(&mut service, &v2, sparks(3), vec![
+                load("high-score", 0, 16),
+                save("high-score", b"\x2b\0\0\0"),
+                RequestKind::Delete { name: b"notes".to_vec() },
+                RequestKind::Delete { name: b"never".to_vec() },
+                list(0, 100),
+            ]),
+            [
+                Outcome::Got { size: 4, data: b"\x2a\0\0\0".to_vec() },
+                Outcome::Done,
+                Outcome::Done,
+                Outcome::Done,
+                Outcome::Records { total: 1, data: [&b"high-score"[..], &[0; 22], &4u32.to_le_bytes()].concat() },
+            ]
+        );
+        // Another publisher's program of the same name, the built-in of
+        // that title, and the image run from a file see none of them.
+        for (img, id) in [(&v1, sparks(4)), (&v1, sparks(0)), (&v1, None), (&v2, None)] {
+            assert_eq!(as_machine(&mut service, img, id.clone(), vec![load("high-score", 0, 4), list(0, 100)]), [
+                Outcome::NotFound,
+                Outcome::Records { total: 0, data: Vec::new() }
+            ], "{id:?}");
+        }
+        // A file-run image has records of its own, by its exact ID.
+        assert_eq!(as_machine(&mut service, &v1, None, vec![save("k", b"v1")]), [Outcome::Done]);
+        assert_eq!(as_machine(&mut service, &v2, None, vec![load("k", 0, 4)]), [Outcome::NotFound]);
+        assert_eq!(as_machine(&mut service, &v1, None, vec![load("k", 0, 4)]), [Outcome::Got { size: 2, data: b"v1".to_vec() }]);
+        // Kept across services (runs).
+        drop(service);
+        let mut service = owner_service(dir.path(), data.path());
+        assert_eq!(as_machine(&mut service, &v1, sparks(3), vec![load("high-score", 0, 4)]), [Outcome::Got {
+            size: 4,
+            data: b"\x2b\0\0\0".to_vec()
+        }]);
+        // The limits: no room, and nothing changed.
+        let big = vec![1u8; 65_536];
+        let mut kinds: Vec<RequestKind> = (0..8).map(|i| save(&format!("big{i}"), &big)).collect();
+        kinds.truncate(8);
+        assert!(as_machine(&mut service, &v1, sparks(5), kinds).iter().all(|o| *o == Outcome::Done));
+        let kinds: Vec<RequestKind> = (8..16).map(|i| save(&format!("big{i}"), &big)).collect();
+        assert!(as_machine(&mut service, &v1, sparks(5), kinds).iter().all(|o| *o == Outcome::Done));
+        assert_eq!(as_machine(&mut service, &v1, sparks(5), vec![save("one", b"x"), load("one", 0, 1)]), [Outcome::NoRoom, Outcome::NotFound]);
+        // A host that keeps no records fails them; so do requests whose
+        // owner is not known.
+        let mut plain = ContentService::start(Node::new(BlobStore::open(dir.path(), None).unwrap(), None));
+        assert_eq!(as_machine(&mut plain, &v1, None, vec![save("k", b"")]), [Outcome::Failed]);
+        plain.submit(vec![Request { handle: 1, kind: save("k", b"") }]);
+        assert_eq!(outcomes(&plain.wait_finished()), [Outcome::Failed]);
+    }
+
+    /// SPEC 12.2 `start_program`: the current version the host holds, a
+    /// built-in by title for the zero key, not found otherwise; op 0Dh.
+    #[test]
+    fn programs_and_their_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let author = crate::Identity::from_seed([6; 32]);
+        node.set_identity(author.clone());
+        let (v1, v2) = (image("tool", 1), image("tool", 2));
+        let bytes = |i: &terse_core::Image| terse_core::Image::build(&i.title_lossy(), 1, &[], &i.rom);
+        assert!(matches!(node.publish_program(&bytes(&v1), "tool", 1), Done::Published { seq: 1, .. }));
+        assert!(matches!(node.publish_program(&bytes(&v2), "tool", 2), Done::Published { seq: 2, .. }));
+        assert!(matches!(node.publish_program(b"not an image", "junk", 3), Done::Published { seq: 3, .. }));
+        node.set_subscriptions(crate::Subscriptions::in_memory([author.feed_key()]));
+        let hello = node.store().put(crate::builtin::PROGRAMS[3]).unwrap();
+        let mut service = ContentService::start(node);
+        let key = author.feed_key();
+        let fetch = |service: &mut ContentService, publisher: [u8; 32], name: &str, builtins: &[[u8; 32]]| {
+            service.fetch_program(9, &ProgramId { publisher, name: name.into() }, builtins);
+            let done = service.wait_finished_tagged();
+            assert_eq!(done.len(), 1);
+            assert_eq!((done[0].0, done[0].1.handle), (9, 0));
+            image_from(done[0].1.outcome.clone())
+        };
+        assert_eq!(fetch(&mut service, key, "tool", &[]).unwrap().id, v2.id, "the current version");
+        assert_eq!(fetch(&mut service, key, "nope", &[]).unwrap_err().reason, terse_core::machines::failure::NOT_FOUND);
+        let junk = fetch(&mut service, key, "junk", &[]).unwrap_err();
+        assert_eq!((junk.reason, junk.image), (terse_core::machines::failure::INVALID, Some(crate::blob_id(b"not an image"))));
+        assert_eq!(fetch(&mut service, [0; 32], "hello", &[[1; 32], hello]).unwrap().id, hello);
+        assert!(fetch(&mut service, [0; 32], "hello", &[]).is_err(), "not among the built-ins");
+        assert!(fetch(&mut service, [0; 32], "tool", &[hello]).is_err());
+        // Op 0Dh: the current versions, by name.
+        service.submit(vec![Request { handle: 1, kind: RequestKind::Programs { offset: 0, length: 1000 } }]);
+        let Outcome::Records { total, data } = &service.wait_finished()[0].outcome else { panic!() };
+        assert_eq!(*total, 2);
+        assert_eq!((data[0] as usize, data[1], &data[2 + 32..2 + 36]), (1 + 109 + 4, 1, &3u32.to_le_bytes()[..]));
+        assert_eq!(&data[2 + 109..2 + 113], b"junk");
+        assert_eq!(&data[2 + 113 + 2 + 32..2 + 113 + 2 + 36], &2u32.to_le_bytes(), "tool, version 2");
     }
 
     /// Asked: one prompt at a time, in handle order; a yes carries the

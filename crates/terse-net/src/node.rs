@@ -43,11 +43,11 @@ use std::time::{Duration, Instant};
 
 use crate::article;
 use crate::blob::{BlobId, blob_id, to_hex, valid_size};
-use crate::entry::{self, Entry, KIND_ARTICLE, KIND_PROFILE, MAX_TITLE, SignedEntry};
+use crate::entry::{self, Entry, KIND_ARTICLE, KIND_PROFILE, KIND_PROGRAM, MAX_IMAGE, MAX_TITLE, SignedEntry};
 use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
 use crate::profile::{self, Document, Nicknames};
-use crate::protocol::{MAX_FIND_RESULTS, SCOPE_ENTRIES, SCOPE_FEEDS};
+use crate::protocol::{MAX_FIND_RESULTS, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use crate::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use crate::store::{BlobStore, default_store_dir};
 use crate::timeline::{self, Arrivals};
@@ -121,8 +121,12 @@ pub enum Article {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedEvent {
     /// A new valid entry for a subscribed feed is stored. Reported once any
-    /// automatic download has finished.
+    /// automatic download has finished (a program entry's at once: its image
+    /// is downloaded once the feed is caught up, see `ProgramDownloaded`).
     Entry { entry: Entry, article: Article },
+    /// The automatic download of the current version of a program
+    /// (NETWORK 4.4) finished or failed.
+    ProgramDownloaded { entry: Entry, article: Article },
     /// A relay accepted a subscription; entries it holds follow.
     Subscribed(FeedKey),
     SubscribeRefused(FeedKey),
@@ -159,6 +163,8 @@ enum GetFor {
     Auto(Entry),
     /// A blob linked from an automatically downloaded article.
     Prefetch,
+    /// The image of a program's current version (NETWORK 4.4).
+    Program(Entry),
 }
 
 /// An operation that may involve several relays.
@@ -254,6 +260,11 @@ pub struct Node {
     blob_sizes: HashMap<BlobId, u32>,
     blob_sizes_loaded: bool,
     prefetch: bool,
+    /// Download the current version of each program of the subscribed
+    /// feeds (NETWORK 4.4).
+    program_download: bool,
+    /// Named records (SPEC 9.6), if the host keeps them.
+    records: Option<crate::records::Records>,
     /// Operations waiting for a relay to be connected, and since when.
     deferred: Vec<Deferred>,
     deferred_since: Option<Instant>,
@@ -295,6 +306,8 @@ impl Node {
             blob_sizes: HashMap::new(),
             blob_sizes_loaded: false,
             prefetch: true,
+            program_download: true,
+            records: None,
             deferred: Vec::new(),
             deferred_since: None,
             feed_relays: true,
@@ -433,6 +446,39 @@ impl Node {
         self.prefetch = on;
     }
 
+    /// Whether to download the current versions of programs automatically
+    /// (NETWORK 4.4); on by default.
+    pub fn set_program_download(&mut self, on: bool) {
+        self.program_download = on;
+    }
+
+    /// Keeps named records (SPEC 9.6) in `records`.
+    pub fn set_records(&mut self, records: crate::records::Records) {
+        self.records = Some(records);
+    }
+
+    pub fn records(&self) -> Option<&crate::records::Records> {
+        self.records.as_ref()
+    }
+
+    /// The current version of each program of a feed (NETWORK 4.2: its
+    /// valid kind-3 entry with that name and the highest `seq`), in
+    /// increasing order of name (byte order).
+    pub fn current_programs(&self, feed: &FeedKey) -> Vec<SignedEntry> {
+        let mut current: BTreeMap<Vec<u8>, SignedEntry> = BTreeMap::new();
+        for s in self.feeds.entries(feed).unwrap_or_default().into_iter().filter(|s| s.entry.kind == KIND_PROGRAM) {
+            // Entries come in increasing seq order.
+            current.insert(s.entry.title.as_bytes().to_vec(), s);
+        }
+        current.into_values().collect()
+    }
+
+    /// The current version of the program `name` of `feed`, if the host
+    /// holds one (SPEC 12.2 `start_program`).
+    pub fn current_program(&self, feed: &FeedKey, name: &[u8]) -> Option<Entry> {
+        self.current_programs(feed).into_iter().find(|s| s.entry.title.as_bytes() == name).map(|s| s.entry)
+    }
+
     /// The profile in force for a feed (NETWORK 4.6) and its document, if
     /// the document is in the store and parses.
     pub fn profile(&self, feed: &FeedKey) -> Option<(Entry, Option<Document>)> {
@@ -535,6 +581,7 @@ impl Node {
             match purpose {
                 GetFor::Token(token) => self.ready.push((token, if not_found { Done::NotFound } else { Done::Failed })),
                 GetFor::Auto(entry) => self.downloaded(entry, None),
+                GetFor::Program(entry) => self.events.push(FeedEvent::ProgramDownloaded { entry, article: Article::Failed }),
                 GetFor::Prefetch => {}
             }
         }
@@ -613,6 +660,18 @@ impl Node {
         let data = Document { listed, relays, description }.build();
         let entry = Entry::profile(identity.feed_key(), 0, time, &data, name);
         self.start_publish(token, &data, entry);
+    }
+
+    /// Starts publishing a program (NETWORK 4.2): `image` under the name
+    /// `name` (a display name), as the next entry of the identity's feed.
+    /// Whether the blob is a valid image is the caller's business.
+    pub fn start_publish_program(&mut self, token: Token, image: &[u8], name: &str, time: u32) {
+        let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
+        if !profile::valid_name(name) || !valid_size(image.len()) {
+            return self.ready.push((token, Done::Failed));
+        }
+        let entry = Entry::program(identity.feed_key(), 0, time, image, name);
+        self.start_publish(token, image, entry);
     }
 
     /// Puts `data` and then publishes `entry` (its `seq` still to assign).
@@ -700,7 +759,7 @@ impl Node {
     /// Starts a search (NETWORK 4.7) on every connected relay: `scope` 1
     /// (feeds) or 2 (entries). Fails if no relay could be asked.
     pub fn start_find(&mut self, token: Token, scope: u8, query: &[u8]) {
-        if !(scope == SCOPE_FEEDS || scope == SCOPE_ENTRIES) || !(1..=profile::MAX_NAME).contains(&query.len()) {
+        if !(SCOPE_FEEDS..=SCOPE_PROGRAMS).contains(&scope) || !(1..=profile::MAX_NAME).contains(&query.len()) {
             return self.ready.push((token, Done::Failed));
         }
         self.maintain();
@@ -876,6 +935,18 @@ impl Node {
         (list.len() as u32, records.concat())
     }
 
+    /// The programs records from index `offset` that fit in `length`
+    /// bytes, and how many exist (SPEC 9.5): the current version of each
+    /// program of the subscribed feeds, by feed key, then name.
+    pub fn program_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
+        let list: Vec<SignedEntry> = self.subscriptions.feeds().flat_map(|f| self.current_programs(f)).collect();
+        let records = list.iter().skip(offset as usize).map(|s| {
+            let unsigned = &s.bytes[..s.bytes.len() - entry::SIGNATURE_LEN];
+            timeline::timeline_record(unsigned, self.held_article(&s.entry) == Some(Article::Local))
+        });
+        (list.len() as u32, timeline::fill(records, length as usize))
+    }
+
     /// Search results as records (SPEC 9.5): the timeline record of each,
     /// as many as fit in `length` bytes, and how many there are.
     pub fn find_records(&self, found: &[SignedEntry], length: u16) -> (u32, Vec<u8>) {
@@ -1018,6 +1089,7 @@ impl Node {
     fn receive(&mut self, lid: u64, bytes: &[u8]) {
         // Caught up when the relay's last entry for the feed arrives, whether
         // or not it turns out to be valid (NETWORK 4.3).
+        let mut caught_up = None;
         if bytes.len() >= 36
             && let Some(link) = self.links.get_mut(&lid)
         {
@@ -1025,8 +1097,45 @@ impl Node {
             let seq = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
             if link.catching_up.get(&feed).is_some_and(|&highest| seq >= highest) {
                 link.catching_up.remove(&feed);
+                caught_up = Some(feed);
             }
         }
+        self.receive_entry(bytes);
+        // NETWORK 4.4: programs are downloaded once the feed is caught up, so
+        // that only current versions are.
+        if let Some(feed) = caught_up {
+            self.program_downloads(&feed);
+        }
+    }
+
+    /// Whether some connection is still catching up with `feed`.
+    fn catching_up(&self, feed: &FeedKey) -> bool {
+        self.links.values().any(|l| l.catching_up.contains_key(feed))
+    }
+
+    /// Starts the automatic download of the current version of each
+    /// program of `feed` whose image the store does not hold and that is
+    /// not being fetched, up to the largest image (NETWORK 4.4); not while
+    /// a connection is catching up with the feed.
+    fn program_downloads(&mut self, feed: &FeedKey) {
+        if !self.program_download || !self.subscriptions.contains(feed) || self.catching_up(feed) {
+            return;
+        }
+        let fetching: BTreeSet<BlobId> =
+            self.ops.values().filter_map(|o| if let Op::Get { id, .. } = o { Some(*id) } else { None }).collect();
+        for s in self.current_programs(feed) {
+            let e = s.entry;
+            if e.size > MAX_IMAGE || fetching.contains(&e.blob) || self.held_article(&e).is_some() {
+                continue;
+            }
+            if self.connected_links().is_empty() {
+                return;
+            }
+            self.fetch_from_relays(GetFor::Program(e.clone()), e.blob);
+        }
+    }
+
+    fn receive_entry(&mut self, bytes: &[u8]) {
         // Invalid entries, entries for feeds not subscribed and entries
         // already received (from this relay or another) are discarded.
         let Ok(signed) = entry::decode(bytes) else { return };
@@ -1034,6 +1143,11 @@ impl Node {
             return;
         }
         let entry = signed.entry;
+        if entry.kind == KIND_PROGRAM {
+            let (feed, article) = (entry.feed, self.held_article(&entry).unwrap_or(Article::NotFetched));
+            self.events.push(FeedEvent::Entry { entry, article });
+            return self.program_downloads(&feed);
+        }
         let article = match self.held_article(&entry) {
             Some(held) => held,
             None if entry.size <= self.auto_limit => {
@@ -1110,6 +1224,7 @@ impl Node {
                     link.catching_up.insert(feed, highest);
                 }
                 self.events.push(FeedEvent::Subscribed(feed));
+                self.program_downloads(&feed);
             }
             (Waiting::Subscribe(feed, _), RelayReply::Refused) => self.events.push(FeedEvent::SubscribeRefused(feed)),
             // No answer: subscribe again on the next poll.
@@ -1140,6 +1255,16 @@ impl Node {
                                 self.ready.push((token, Done::Got(bytes)));
                             }
                             GetFor::Auto(entry) => self.downloaded(entry, Some(bytes)),
+                            GetFor::Program(entry) => {
+                                let article = if bytes.len() != entry.size as usize {
+                                    Article::SizeMismatch
+                                } else if self.store.put(&bytes).is_ok() {
+                                    Article::Local
+                                } else {
+                                    Article::Failed
+                                };
+                                self.events.push(FeedEvent::ProgramDownloaded { entry, article });
+                            }
                             // Not scanned; discarded if over the limit.
                             GetFor::Prefetch => {
                                 if bytes.len() <= self.auto_limit as usize {
@@ -1193,7 +1318,11 @@ impl Node {
                 *in_flight -= 1;
                 *refused |= reply == RelayReply::Refused;
                 if let RelayReply::Found(entries) = reply {
-                    let kind = if *scope == SCOPE_FEEDS { KIND_PROFILE } else { KIND_ARTICLE };
+                    let kind = match *scope {
+                        SCOPE_FEEDS => KIND_PROFILE,
+                        SCOPE_ENTRIES => KIND_ARTICLE,
+                        _ => KIND_PROGRAM,
+                    };
                     // NETWORK 4.7: every result is verified; forged ones and
                     // ones that do not answer the query are dropped.
                     found.entry(lid).or_default().extend(
@@ -1224,7 +1353,7 @@ impl Node {
     fn check_settled(&mut self) {
         let pending = self.links.values().any(|l| !l.catching_up.is_empty())
             || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
-            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch, .. }));
+            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch | GetFor::Program(_), .. }));
         let connected: Vec<&Link> = self.links.values().filter(|l| l.client.connected()).collect();
         let current = !connected.is_empty() && connected.iter().all(|l| l.ready());
         if pending {
@@ -1313,6 +1442,12 @@ impl Node {
         self.wait_for(0)
     }
 
+    /// Publishes a program, blocking.
+    pub fn publish_program(&mut self, image: &[u8], name: &str, time: u32) -> Done {
+        self.start_publish_program(0, image, name, time);
+        self.wait_for(0)
+    }
+
     /// Searches, blocking.
     pub fn find(&mut self, scope: u8, query: &[u8]) -> Done {
         self.start_find(0, scope, query);
@@ -1354,6 +1489,16 @@ pub fn merge_found(scope: u8, query: &[u8], found: Vec<Vec<SignedEntry>>) -> Vec
                     list.push(s.clone());
                 }
             }
+        }
+        if scope == SCOPE_PROGRAMS {
+            // Current versions only: a program is dropped if another result
+            // has the same feed and name and a higher seq.
+            let highest: BTreeMap<(FeedKey, String), u32> = list.iter().fold(BTreeMap::new(), |mut m, s| {
+                let h = m.entry((s.entry.feed, s.entry.title.clone())).or_insert(0);
+                *h = (*h).max(s.entry.seq);
+                m
+            });
+            list.retain(|s| highest[&(s.entry.feed, s.entry.title.clone())] == s.entry.seq);
         }
         list
     };
@@ -1576,6 +1721,111 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// NETWORK 4.2, 4.4: a feed's current version of a program is its
+    /// program entry with that name and the highest seq; the host downloads
+    /// the current versions (not older ones), whatever the article limit,
+    /// once the feed is caught up, up to the largest image; programs are not
+    /// in the timeline; the programs records (SPEC 9.5).
+    #[test]
+    fn programs_current_versions_and_their_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, script) = node_with_fake(dir.path());
+        let author = Identity::from_seed([2; 32]);
+        let feed = author.feed_key();
+        let program = |seq: u32, data: &[u8], name: &str| Entry::program(feed, seq, 100, data, name).sign(&author).unwrap().bytes;
+        let big = vec![9u8; MAX_IMAGE as usize + 1];
+        let (v1, v2, tool, other) = (vec![1u8; 40_000], vec![2u8; 50_000], b"tool image".to_vec(), b"other".to_vec());
+        {
+            let mut s = script.lock().unwrap();
+            for data in [&v1, &v2, &tool, &big, &other] {
+                s.blobs.insert(blob_id(data), data.clone());
+            }
+            s.held = vec![
+                program(1, &v1, "sparks"),
+                program(2, &tool, "tool"),
+                signed(&author, 3, b"an article", "Post"),
+                program(4, &v2, "sparks"),
+                program(5, &big, "huge"),
+            ];
+        }
+        node.set_auto_download_limit(16);
+        node.set_subscriptions(Subscriptions::in_memory([feed]));
+        let events = settle(&mut node);
+        let downloaded: Vec<(u32, Article)> = events
+            .iter()
+            .filter_map(|e| match e {
+                FeedEvent::ProgramDownloaded { entry, article } => Some((entry.seq, *article)),
+                _ => None,
+            })
+            .collect();
+        let mut downloaded = downloaded;
+        downloaded.sort_by_key(|d| d.0);
+        assert_eq!(downloaded, [(2, Article::Local), (4, Article::Local)]);
+        assert!(node.store().read(&blob_id(&v2)).unwrap().is_some());
+        assert!(node.store().read(&blob_id(&v1)).unwrap().is_none(), "an older version is not downloaded");
+        assert!(node.store().read(&blob_id(&big)).unwrap().is_none(), "larger than any image");
+        assert!(!script.lock().unwrap().asked.contains(&blob_id(&v1)));
+        // Every entry is reported; program entries at once, as not fetched.
+        let mut got = entries(&events);
+        got.sort_by_key(|e| e.0);
+        assert_eq!(got.iter().map(|e| e.0).collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
+
+        // The current versions, by name; the records, by feed then name,
+        // with the local flag.
+        let names: Vec<(String, u32)> = node.current_programs(&feed).into_iter().map(|s| (s.entry.title, s.entry.seq)).collect();
+        assert_eq!(names, [("huge".into(), 5), ("sparks".into(), 4), ("tool".into(), 2)]);
+        assert_eq!(node.current_program(&feed, b"sparks").map(|e| e.blob), Some(blob_id(&v2)));
+        assert_eq!(node.current_program(&feed, b"nope"), None);
+        assert_eq!(node.timeline(), [(feed, 3)], "programs are not in the timeline");
+        let (total, data) = node.program_records(0, 10_000);
+        assert_eq!(total, 3);
+        let mut at = 0;
+        let mut seen = Vec::new();
+        while at < data.len() {
+            let (l, flags) = (data[at] as usize, data[at + 1]);
+            let e = &data[at + 2..at + 1 + l];
+            seen.push((String::from_utf8(e[109..].to_vec()).unwrap(), e[40], flags));
+            at += 1 + l;
+        }
+        assert_eq!(seen, [("huge".into(), KIND_PROGRAM, 0), ("sparks".into(), KIND_PROGRAM, 1), ("tool".into(), KIND_PROGRAM, 1)]);
+        assert_eq!(node.program_records(1, 10_000).1.len(), data.len() - (2 + 109 + 4));
+
+        // A new version arriving live is downloaded at once; with the
+        // download turned off, the next is not.
+        let v3 = vec![3u8; 30_000];
+        script.lock().unwrap().blobs.insert(blob_id(&v3), v3.clone());
+        let live = protocol::encode_entry(&program(6, &v3, "sparks"));
+        script.lock().unwrap().live.push(live);
+        let events = settle(&mut node);
+        assert!(events.contains(&FeedEvent::ProgramDownloaded {
+            entry: entry::decode(&program(6, &v3, "sparks")).unwrap().entry,
+            article: Article::Local
+        }));
+        node.set_program_download(false);
+        let v4 = vec![4u8; 30_000];
+        script.lock().unwrap().blobs.insert(blob_id(&v4), v4.clone());
+        let live = protocol::encode_entry(&program(7, &v4, "sparks"));
+        script.lock().unwrap().live.push(live);
+        for _ in 0..20 {
+            node.poll();
+        }
+        assert!(node.store().read(&blob_id(&v4)).unwrap().is_none());
+        assert_eq!(node.current_program(&feed, b"sparks").map(|e| e.seq), Some(7));
+        // Unsubscribed: no programs.
+        node.set_subscriptions(Subscriptions::in_memory([]));
+        assert_eq!(node.program_records(0, 10_000), (0, Vec::new()));
+    }
+
+    /// NETWORK 4.7: programs found are kept only in their current versions.
+    #[test]
+    fn find_programs_keeps_current_versions() {
+        let author = Identity::from_seed([2; 32]);
+        let p = |seq: u32, name: &str| entry::decode(&Entry::program(author.feed_key(), seq, 0, b"img", name).sign(&author).unwrap().bytes).unwrap();
+        let merged = merge_found(SCOPE_PROGRAMS, b"s", vec![vec![p(1, "sparks"), p(2, "stars")], vec![p(3, "sparks")]]);
+        let got: Vec<(u32, &str)> = merged.iter().map(|s| (s.entry.seq, s.entry.title.as_str())).collect();
+        assert_eq!(got, [(3, "sparks"), (2, "stars")], "by rank: the first of each relay, then the second");
     }
 
     #[test]

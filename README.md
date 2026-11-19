@@ -132,7 +132,7 @@ images were built with clang and LLD 23.1.4.
   `--hash-all` also `<handle> <hash>` per machine started (`-` while loading or
   failed). The exit status is the shell's. Without `--shell`, an image runs alone,
   as follows.
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -189,7 +189,7 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--store <dir>] [--config <dir>]`
+`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
 which starts the built-in programs (reader, sparks, fetch and hello, also built in, and
@@ -199,7 +199,10 @@ machine, with every key (F12 included) going to it. With `--demo` it first sets 
 sample articles ([Getting started](#getting-started)). `--size` is the window's size
 in pixels.
 The relays are found or started as Getting started says. `--no-prefetch` turns off
-fetching the `terse:` links of automatically downloaded articles (NETWORK 4.4). `--consent` answers the
+fetching the `terse:` links of automatically downloaded articles (NETWORK 4.4),
+`--no-program-download` the download of the current versions of the programs of
+followed feeds; `--data` is where named records are kept
+([Named records](#named-records)). `--consent` answers the
 program's requests to subscribe, unsubscribe, publish, set its profile and set a
 nickname: `ask` (the default) shows the
 host's prompt, `allow` and `deny` answer every one without asking. Keys go to the
@@ -288,6 +291,13 @@ Commands:
   `key show` prints it again.
 - `feed publish <file> --title <t> [--reply-to <blob id>]` puts the article and
   publishes the next entry of your feed; prints `seq N blob <id>`.
+- `feed publish --program <image.terse> [--name <n>]` checks the image and publishes
+  it as a program (NETWORK.md 4.2) named `<n>` (default: the image's title; the rules of
+  a display name); prints `seq N program <name> image <id>`. Publishing another image
+  under the same name makes it the current version; programs keep their named records
+  from one version to the next (see [Named records](#named-records)).
+- `feed programs [<key>]` lists the current version of each program held, of one feed
+  or of all.
 - `feed subscribe <key>`, `feed unsubscribe <key>`, `feed subscriptions` (each feed's
   key, then its name if known: your nickname, else the name its profile declares).
 - `feed nickname <key> [<name>]` sets your own name for a feed, kept only in
@@ -303,11 +313,15 @@ Commands:
   beside the name.
 - `find <text>` asks your relays for listed feeds whose name contains the text
   (ASCII letters match either case; names starting with it first) and prints key
-  and name; `find --entries <text>` finds articles of listed feeds by title.
-- `feed sync [--watch] [--auto-download <bytes>] [--no-prefetch]` connects to the relay, receives
+  and name; `find --entries <text>` finds articles of listed feeds by title,
+  `find --programs <text>` programs by name (current versions only).
+- `feed sync [--watch] [--auto-download <bytes>] [--no-prefetch] [--no-program-download]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
   articles up to 16,384 bytes (or `--auto-download`), and with them the first
-  eight `terse:` links in each (not with `--no-prefetch`; NETWORK 4.4). One line per new entry:
+  eight `terse:` links in each (not with `--no-prefetch`; NETWORK 4.4). Once a feed
+  is caught up it also downloads the current version of each of its programs, whatever
+  their size (up to the largest image), not older versions (not with
+  `--no-program-download`); a line ending `(downloaded)` reports each. One line per new entry:
   time (UTC, as claimed by the author), feed key prefix, seq, size, article
   state, title. The state is `local` (in the store), `remote` (over the limit;
   `feed read` fetches it), `failed` or `size-mismatch` (the blob is not the size
@@ -318,7 +332,8 @@ Commands:
   With `--watch` it stays connected and prints entries as the relay pushes them,
   reconnecting (1 s backoff, doubling to 30 s) if the connection drops.
 - `feed list [<key>]` lists entries held locally, newest first, with the feed's name
-  after the key prefix when known; a profile entry shows as `[profile: <name>]`.
+  after the key prefix when known; a profile entry shows as `[profile: <name>]`, a
+  program entry as `[program: <name>]`.
 - `feed read <key> <seq>` prints the article, fetching it from `--relay` if it
   is not in the store. Control characters are replaced on output.
 
@@ -518,10 +533,28 @@ panel:
 chart, a badge and a diagram. A reader that does not draw figures shows their text,
 so an article still reads as plain text.
 
+## Named records
+
+A program can keep small data on the machine it runs on: named records (SPEC 9.6),
+each up to 64 KiB, at most 256 records and 1 MiB per program. They belong to the
+program's identity: the feed and name it was published under (or, for a built-in, its
+title), so a new version of a program reads the old version's records; a program run
+from a file or started by image ID has the records of that exact image. They never
+leave the machine and no other program can read them. Hosts keep them in
+`<data>/records` (`--data`, default `$XDG_DATA_HOME/terse`, else
+`~/.local/share/terse`); `terse run` and `terse-host` take `--data`. Sparks keeps its
+high score there, the shell its layout.
+
+- `records list [<owner>] [--data <dir>]`: every owner with its count and bytes, or one
+  owner's records (size, name). An owner is `builtin:<title>`,
+  `program:<feed key>:<name>` or `image:<image id>`.
+- `records show <owner> <name>` writes the record's bytes to stdout; `records delete
+  <owner> <name>` deletes it.
+
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (8 KB of ROM, 2 RAM pages) with device 8 (SPEC 12), which starts the host's
+program (11 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
@@ -538,14 +571,20 @@ each one's screen where the shell placed it, and routes input.
   default), grid, and zoom (one machine over the whole area, the others hidden but
   still running).
 - **The launcher** (on the page, while the shell has the keyboard: at start, and after
-  F12, the home key): the built-in programs by title, then the machines with their
-  state (a faulted one with the fault kind and `pc`). The tiles move to the right of
+  F12, the home key): the built-in programs by title, then "From your feeds": the
+  current version of each program of the feeds you follow, with its publisher's name
+  and short key and `↓` while its image is not yet downloaded (read again on every
+  feeds-updated event), then the machines with their state (a faulted one with the
+  fault kind and `pc`, a failed one with the reason: not found, not a valid image,
+  needs a device this host does not have, no room). Programs are started by their
+  identity (SPEC 12.2), built-ins too, so their named records follow them. The tiles move to the right of
   it. Up/Down move the cursor; Enter starts the program under it (the new machine gets
   the keyboard) or gives the keyboard to the machine under it; Esc gives it back to
   the selected machine; Tab or Right / Shift+Tab or Left select the next / previous
   machine; X stops the selected machine; P pauses or resumes it; Z zooms it (Z again
   goes back); L cycles the layouts; 1–8 select a machine by handle. A click on a
-  program starts it, one on a machine selects and focuses it.
+  program starts it, one on a machine selects and focuses it. The layout chosen with
+  L and Z is kept in the shell's named record `layout` for the next run.
 - A click on a machine's picture gives it the keyboard (the click also reaches the
   machine). A machine that exits or faults keeps its tile, with its last picture (a
   fault shown on its bottom row), until X stops it; the keyboard then goes back to the
@@ -961,6 +1000,9 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
 - Controller 0: d-pad left/right or the left stick turns, A, d-pad up or the stick
   pushed up thrusts, A or Start starts, Y switches the display style, X switches
   fill.
+- The high score (`HIGH` in the HUD) is the named record `high-score`, four bytes
+  little-endian: asked for in frame 0 and shown when it arrives (the first frame does
+  not wait), saved when a game beats it ("New high score!").
 
 In the phosphor style Sparks draws the arena border and the craft twice, so they
 shine brighter than the sparks (overdraw adds light, SPEC 10.6); the list is
@@ -988,9 +1030,9 @@ recording headless:
     target/debug/terse-host programs/sparks/sparks.terse --events programs/sparks/sessions/keys.txt --frames 3060 --screenshot /tmp/sparks.png
 
 Measured with `cargo test --release -p terse-cli --test sparks budget -- --nocapture`:
-the busiest frame is frame 0 (setting up, 8,641 units, 6.9% of the budget); after
-that at most 5,249 (4.2%), a typical frame 2,078 (1.7%), about 11 µs of host time
-(p99 17 µs). ROM 5,876 bytes, 1 RAM page.
+the busiest frame is frame 0 (setting up, 8,953 units, 7.2% of the budget); after
+that at most 5,400 (4.3%), a typical frame 2,077 (1.7%), about 12 µs of host time.
+ROM 6,464 bytes, 1 RAM page; devices 2, 3 and 4.
 
 ## Conformance image
 
@@ -1111,9 +1153,9 @@ recorded sessions.
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
 | reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
-| sparks | 5,876 bytes | 1 page | 8,641 (6.9%, frame 0); 5,249 (4.2%) after | 2,078 (1.7%) | 11 µs (p99 17 µs) |
+| sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
-| shell | 8,380 bytes | 2 pages | 11,251 (9.0%, the launcher rebuilt with 4 machines) | 388 (0.3%) | — |
+| shell | 10,832 bytes | 3 pages | 11,384 (9.1%, the launcher rebuilt with 4 machines) | 498 (0.4%) | — |
 
 A system in a 1320 × 990 window (`terse-host --selftest --shell --size 1320x990`,
 1,200 frames, RTX 2060; the machines started by script in the first 300 frames;

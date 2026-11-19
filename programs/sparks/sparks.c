@@ -12,7 +12,11 @@
  * between the clean and the phosphor display style (SPEC 10.6), F turns the
  * fill of filled shapes off and on (outlines; SPEC 10.2). Controller 0:
  * d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
- * starts, Y switches the style, X the fill. */
+ * starts, Y switches the style, X the fill.
+ *
+ * The high score is a named record, "high-score" (SPEC 9.6): four bytes,
+ * little-endian. It is asked for in the first frame and shown once it
+ * arrives; a game that beats it saves the new one. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -103,6 +107,11 @@ static int nsweepers;
 static uint8_t state, lives, inv, flash, wait, tick, hud_dirty, until_next;
 static uint8_t digits[4];
 
+/* The high score and its record requests. */
+static uint32_t high;
+static uint8_t high_buf[4], load_handle, new_high;
+static content_req load_req, save_req;
+
 static terse_pad pad;
 static uint8_t key_left, key_right, key_up, key_start, pad_prev, xy_prev, phosphor, fill_off;
 #define KEY_F 0x09
@@ -174,6 +183,22 @@ static void put_at(uint8_t col, uint8_t row, uint8_t fg, uint8_t bg, const char 
     term_puts(text);
 }
 
+static uint32_t score_value(void)
+{
+    return digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3];
+}
+
+/* Four decimal digits of v. */
+static void put_4(uint32_t v)
+{
+    char s[4];
+    for (int i = 3; i >= 0; i--) {
+        s[i] = '0' + v % 10;
+        v /= 10;
+    }
+    term_write(s, 4);
+}
+
 #define HUD_BG 17
 #define BOX_BG 236
 
@@ -184,6 +209,8 @@ static void hud(void)
     hud_dirty = 0;
     term_fill(0, 0, TERM_COLS, ' ', 7, HUD_BG);
     put_at(2, 0, 226, HUD_BG, "SPARKS");
+    put_at(12, 0, 250, HUD_BG, "HIGH ");
+    put_4(high);
     if (state == TITLE) {
         put_at(30, 0, 250, HUD_BG, "demo - Enter or Start to play");
         return;
@@ -258,6 +285,16 @@ static void game_over(void)
     for (int i = 0; i < 4; i++)
         score[i] = '0' + digits[i];
     term_write(score, 4);
+    /* A new high score is kept on this machine. */
+    if (score_value() > high) {
+        high = score_value();
+        for (int i = 0; i < 4; i++)
+            high_buf[i] = (uint8_t)(high >> (8 * i));
+        record_save(&save_req, "high-score", high_buf, 4);
+        new_high = 1;
+        hud_dirty = 1;
+        put_at(33, 15, 226, BOX_BG, "New high score!");
+    }
     put_at(21, 16, 250, BOX_BG, "Enter or Start: play again.  Esc: quit.");
 }
 
@@ -286,6 +323,18 @@ static void input(void)
     uint8_t down, b, edge;
     key_start = 0;
     while (terse_event_pop(&ev)) {
+        /* The saved high score arrived (a save's completion needs nothing).
+         * A higher score made meanwhile wins. */
+        if (ev.type == EV_CONTENT_DONE && ev.a == load_handle) {
+            load_handle = 0;
+            if (load_req.status == STATUS_DONE && load_req.length == 4) {
+                uint32_t v = high_buf[0] | high_buf[1] << 8 | (uint32_t)high_buf[2] << 16 | (uint32_t)high_buf[3] << 24;
+                if (v > high && !new_high)
+                    high = v > 9999 ? 9999 : v;
+                hud_dirty = 1;
+            }
+            continue;
+        }
         if (ev.type != EV_KEY_DOWN && ev.type != EV_KEY_UP)
             continue;
         down = ev.type == EV_KEY_DOWN;
@@ -576,6 +625,8 @@ int main(void)
 {
     seed = 0xACE1;
     term_cmd(TERM_CURSOR_OFF);
+    /* Asked for now, shown when it arrives: the first frame does not wait. */
+    load_handle = record_load(&load_req, "high-score", 0, 4, high_buf);
     start_title();
     /* Setting up is frame 0; the game's frames start at frame 1. */
     terse_wait_frame();
