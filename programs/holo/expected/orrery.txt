@@ -1,4 +1,4 @@
- HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY   5 CITY
 
 
 
@@ -27,7 +27,7 @@
 
                an orrery: four planets on tilted orbits, two moons
 
- Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+ Space next  1-5 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid
 -- 3d vectors: 483 list bytes --
 colour 28466eff
 width 12

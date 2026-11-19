@@ -1,6 +1,7 @@
 /* holo: a few scenes on the 3D vector display (device 9, SPEC 13): a
  * rotating cube and icosahedron labelled on the glass, nested rotating
- * rings, a starfield receding in depth and a small orrery. The host does
+ * rings, a starfield receding in depth, a small orrery and a turning city
+ * of solid blocks on a ground grid. The host does
  * every rotation and the projection (it chooses the eye: move the pointer
  * to look around the models); the program only changes angles, so it does
  * no trigonometry and stays tiny. The terminal (device 2) has the labels
@@ -9,9 +10,14 @@
  * Coordinates are sixteenths of a screen unit: x right, y down, z away
  * from the viewer, 0 at the glass. Angles are 1/65,536 of a turn.
  *
- * Keys: Space (or Tab) next scene, 1-4 a scene, arrows turn the model, A
+ * Keys: Space (or Tab) next scene, 1-5 a scene, arrows turn the model, A
  * stops and starts the turning, R resets the view, P switches between the
- * clean and the phosphor display style. */
+ * clean and the phosphor display style, H makes the wireframes solid (their
+ * faces hide what is behind them) and wire again.
+ *
+ * Solids: faces (v3_face3, v3_face4) give no light but hide the lines
+ * behind them, as the host's eye sees them; a solid is its edges and its
+ * faces, given with the same corners. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -19,16 +25,17 @@
 #define U 16 /* sixteenths per screen unit */
 
 #define KEY_A 0x04
+#define KEY_H 0x0B
 #define KEY_P 0x13
 #define KEY_R 0x15
 #define KEY_1 0x1E
 
-enum { WIREFRAMES, RINGS, STARFIELD, ORRERY, SCENES };
+enum { WIREFRAMES, RINGS, STARFIELD, ORRERY, CITY, SCENES };
 
-static const char *const names[SCENES] = { "WIREFRAMES", "RINGS", "STARFIELD", "ORRERY" };
+static const char *const names[SCENES] = { "WIREFRAMES", "RINGS", "STARFIELD", "ORRERY", "CITY" };
 
 static uint8_t list[8192];
-static uint8_t scene, phosphor, still, dirty = 1;
+static uint8_t scene, phosphor, still, solid, dirty = 1;
 static uint8_t key_left, key_right, key_up, key_down;
 static uint32_t t;       /* frames the models have turned */
 static uint16_t yaw, pitch; /* the user's turn of the model */
@@ -68,7 +75,7 @@ static void text(void)
         put_at(col + 2, 0, i == scene ? 15 : 8, names[i]);
         col += 5 + len(names[i]);
     }
-    put_at(1, 29, 8, "Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor");
+    put_at(1, 29, 8, "Space next  1-5 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid");
     if (phosphor)
         put_at(71, 0, 10, "PHOSPHOR");
     if (scene == WIREFRAMES) {
@@ -76,12 +83,15 @@ static void text(void)
         label(190, 25, 8, "8 corners, 12 edges");
         label(450, 24, 11, "ICOSAHEDRON");
         label(450, 25, 8, "12 corners, 30 edges");
+        label(320, 27, solid ? 10 : 8, solid ? "solid: the faces hide what is behind them" : "wire");
     } else if (scene == RINGS) {
         label(320, 27, 13, "six rings, each turning in the one outside it");
     } else if (scene == STARFIELD) {
         label(320, 26, 12, "384 points receding from the glass");
-    } else {
+    } else if (scene == ORRERY) {
         label(320, 27, 14, "an orrery: four planets on tilted orbits, two moons");
+    } else {
+        label(320, 27, 10, "solid blocks hiding one another and the ground");
     }
 }
 
@@ -99,22 +109,55 @@ static void glass(void)
     v3_line(12 * U, 24 * U, 0);
 }
 
-/* A cube 150 units wide about the origin: the top, the bottom, the sides. */
-static void cube(void)
+/* A cube 150 units wide about the origin: the top, the bottom, the sides;
+ * solid, its six faces first. Corner i is at x = ±h (bit 0), y (bit 1), z
+ * (bit 2). */
+static const uint8_t cube_faces[6][4] = {
+    { 0, 1, 3, 2 }, { 4, 5, 7, 6 }, { 0, 1, 5, 4 }, { 0, 2, 6, 4 }, { 1, 3, 7, 5 }, { 2, 3, 7, 6 },
+};
+
+/* The first `faces` faces of a box from `lo` to `hi` (x, y, z), its corners
+ * numbered as the cube's: z = lo, z = hi, y = lo (the top), x = lo, x = hi,
+ * y = hi (the bottom). */
+static void box_faces(const int16_t *lo, const int16_t *hi, uint8_t faces)
 {
-    const int16_t h = 75 * U;
-    for (int16_t y = -h; y <= h; y += 2 * h) {
-        v3_move(-h, y, -h);
-        v3_line(h, y, -h);
-        v3_line(h, y, h);
-        v3_line(-h, y, h);
-        v3_line(-h, y, -h);
+    int16_t c[8][3];
+    for (uint8_t i = 0; i < 8; i++) {
+        c[i][0] = i & 1 ? hi[0] : lo[0];
+        c[i][1] = i & 2 ? hi[1] : lo[1];
+        c[i][2] = i & 4 ? hi[2] : lo[2];
+    }
+    for (uint8_t f = 0; f < faces; f++) {
+        const uint8_t *k = cube_faces[f];
+        v3_face4(c[k[0]], c[k[1]], c[k[2]], c[k[3]]);
+    }
+}
+
+/* The edges of a box from `lo` to `hi`: the y = lo and y = hi squares and
+ * the four edges between. */
+static void box_edges(const int16_t *lo, const int16_t *hi)
+{
+    for (uint8_t k = 0; k < 2; k++) {
+        int16_t y = k ? hi[1] : lo[1];
+        v3_move(lo[0], y, lo[2]);
+        v3_line(hi[0], y, lo[2]);
+        v3_line(hi[0], y, hi[2]);
+        v3_line(lo[0], y, hi[2]);
+        v3_line(lo[0], y, lo[2]);
     }
     for (uint8_t i = 0; i < 4; i++) {
-        int16_t x = i & 1 ? h : -h, z = i & 2 ? h : -h;
-        v3_move(x, -h, z);
-        v3_line(x, h, z);
+        int16_t x = i & 1 ? hi[0] : lo[0], z = i & 2 ? hi[2] : lo[2];
+        v3_move(x, lo[1], z);
+        v3_line(x, hi[1], z);
     }
+}
+
+static void cube(void)
+{
+    static const int16_t lo[3] = { -75 * U, -75 * U, -75 * U }, hi[3] = { 75 * U, 75 * U, 75 * U };
+    if (solid)
+        box_faces(lo, hi, 6);
+    box_edges(lo, hi);
 }
 
 /* An icosahedron with corners 95 units from the origin: (0, ±1, ±φ) and
@@ -126,6 +169,11 @@ static const int16_t ico[12][3] = {
     { IA, IB, 0 }, { IA, -IB, 0 }, { -IA, IB, 0 }, { -IA, -IB, 0 },
     { IB, 0, IA }, { IB, 0, -IA }, { -IB, 0, IA }, { -IB, 0, -IA },
 };
+static const uint8_t ico_faces[20][3] = {
+    { 0, 2, 8 }, { 0, 2, 10 }, { 0, 4, 6 }, { 0, 4, 8 }, { 0, 6, 10 }, { 1, 3, 9 }, { 1, 3, 11 },
+    { 1, 4, 6 }, { 1, 4, 9 }, { 1, 6, 11 }, { 2, 5, 7 }, { 2, 5, 8 }, { 2, 7, 10 }, { 3, 5, 7 },
+    { 3, 5, 9 }, { 3, 7, 11 }, { 4, 8, 9 }, { 5, 8, 9 }, { 6, 10, 11 }, { 7, 10, 11 },
+};
 static const uint8_t ico_edges[30][2] = {
     { 0, 2 }, { 0, 4 }, { 0, 6 }, { 0, 8 }, { 0, 10 }, { 1, 3 }, { 1, 4 }, { 1, 6 }, { 1, 9 }, { 1, 11 },
     { 2, 5 }, { 2, 7 }, { 2, 8 }, { 2, 10 }, { 3, 5 }, { 3, 7 }, { 3, 9 }, { 3, 11 }, { 4, 6 }, { 4, 8 },
@@ -134,6 +182,9 @@ static const uint8_t ico_edges[30][2] = {
 
 static void icosahedron(void)
 {
+    if (solid)
+        for (uint8_t i = 0; i < 20; i++)
+            v3_face3(ico[ico_faces[i][0]], ico[ico_faces[i][1]], ico[ico_faces[i][2]]);
     for (uint8_t i = 0; i < 30; i++) {
         const int16_t *a = ico[ico_edges[i][0]], *b = ico[ico_edges[i][1]];
         v3_move(a[0], a[1], a[2]);
@@ -329,6 +380,50 @@ static void orrery(void)
     v3_pop();
 }
 
+/* --- The city ---------------------------------------------------------------- */
+
+/* Blocks on a ground 400 units square: x0, z0, x1, z1 and the height, in 2
+ * units about the centre; the ground is 90 units below it. */
+#define GROUND 90
+static const int8_t blocks[][5] = {
+    { -10, -10, 10, 10, 85 }, { -75, -75, -50, -45, 20 }, { -30, -80, -5, -60, 15 }, { 30, -80, 70, -60, 13 },
+    { 50, -40, 75, -10, 30 }, { -80, -20, -55, 15, 28 }, { -40, 30, -15, 60, 18 }, { 15, 35, 45, 55, 23 },
+    { 55, 30, 80, 75, 10 }, { -75, 55, -50, 80, 15 }, { 15, -40, 30, -25, 25 },
+};
+#define BLOCKS (sizeof blocks / sizeof blocks[0])
+
+static void city(void)
+{
+    v3_push();
+    v3_translate(320 * U, 250 * U, 200 * U);
+    v3_rotate(V3_AXIS_X, pitch + 0x0900);
+    v3_rotate(V3_AXIS_Y, yaw + t * 70);
+    /* The ground: a grid of 9 by 9 lines, 50 units apart. */
+    v3_colour(40, 150, 80, 255);
+    v3_width(12);
+    for (int16_t v = -200 * U; v <= 200 * U; v += 50 * U) {
+        v3_move(v, GROUND * U, -200 * U);
+        v3_line(v, GROUND * U, 200 * U);
+        v3_move(-200 * U, GROUND * U, v);
+        v3_line(200 * U, GROUND * U, v);
+    }
+    /* The blocks: five faces each (the bottom lies on the ground), then
+     * their edges, the tower in the middle gold. */
+    v3_width(18);
+    for (uint8_t i = 0; i < BLOCKS; i++) {
+        const int8_t *b = blocks[i];
+        int16_t lo[3] = { b[0] * 2 * U, (GROUND - 2 * b[4]) * U, b[1] * 2 * U };
+        int16_t hi[3] = { b[2] * 2 * U, GROUND * U, b[3] * 2 * U };
+        box_faces(lo, hi, 5);
+        if (i == 0)
+            v3_colour(255, 200, 90, 255);
+        else
+            v3_colour(80, 200 - 8 * i, 255, 255);
+        box_edges(lo, hi);
+    }
+    v3_pop();
+}
+
 /* --- The frame ---------------------------------------------------------------- */
 
 static void input(void)
@@ -358,6 +453,9 @@ static void input(void)
             dirty = 1;
         } else if (ev.a == KEY_A) {
             still ^= 1;
+        } else if (ev.a == KEY_H) {
+            solid ^= 1;
+            dirty = 1;
         } else if (ev.a == KEY_R) {
             yaw = pitch = 0;
             t = 0;
@@ -375,7 +473,8 @@ static void draw(void)
     case WIREFRAMES: wireframes(); break;
     case RINGS: rings(); break;
     case STARFIELD: starfield(); break;
-    default: orrery(); break;
+    case ORRERY: orrery(); break;
+    default: city(); break;
     }
     v3_end();
     v3_submit_list(list);

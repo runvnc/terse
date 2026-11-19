@@ -1666,7 +1666,8 @@ the restore.
 ## 13. Device 9 — 3D vector display (version 0)
 
 Draws lines, points and circles placed in a box around the screen, from a
-display list like device 3's (section 10). The program gives geometry, not
+display list like device 3's (section 10); faces, which draw nothing, hide
+what is behind them. The program gives geometry, not
 a picture: the host projects it onto the screen from an eye it chooses
 (section 13.1), so it may let the viewer look around the models, and the
 program cannot observe that choice. As with device 3, nothing drawn can be
@@ -1733,6 +1734,7 @@ saved transforms, current point (0, 0, 0).
 | `09h` | Translate | x, y, z | Moves the transform's origin to (x, y, z) |
 | `0Ah` | Rotate | axis (1 byte: 0 x, 1 y, 2 z), angle (2 bytes, unsigned, in 1/65,536 of a turn) | Turns the transform about its axis |
 | `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly |
+| `0Ch` | Face | n (1 byte: 3 or 4), then n corners x, y, z | Hides what is behind it (below); draws nothing |
 
 - **The transform.** A point p given to Move or Line is drawn at M(p),
   where M is the transform in force, with p and every translation in
@@ -1764,12 +1766,40 @@ saved transforms, current point (0, 0, 0).
   and a Pop with none saved, end the list.
 - The list ends at an End command, at the end of the submitted bytes, at
   an unknown opcode, at a command whose operands are cut off by the end of
-  the list, at a Rotate whose axis is above 2, or as the stack rule says.
-  Commands before that point are drawn.
+  the list, at a Rotate whose axis is above 2, at a Face whose n is not 3
+  or 4, or as the stack rule says. Commands before that point are drawn.
 - Lines, points and circles are drawn in list order, each over the earlier
-  ones, blended by opacity as in section 10.3. Nothing hides what is
-  behind it: a near line does not cover a far one any more than a later
-  one covers an earlier one.
+  ones, blended by opacity as in section 10.3. Only faces hide: a near line
+  does not cover a far one any more than a later one covers an earlier one.
+- **A face** is a flat polygon that gives off no light but hides the
+  lines, points and circles behind it. Its corners are transformed as
+  Move's point is (M applied); the current point is not changed. A face of
+  3 corners is the triangle they make; one of 4 corners is the two
+  triangles of corners 0, 1, 2 and 0, 2, 3 (so it need not be flat or
+  convex). Both sides of a face hide alike. A list without faces draws
+  exactly as it would if faces did not exist.
+- **What a face hides.** Seen from the eye in use (section 13.1), a point
+  of a line, point or circle is hidden if the straight segment from the eye
+  to it passes through one of a face's triangles and the point lies more
+  than **2 sixteenths** (1/8 screen unit) beyond the triangle's plane,
+  measured perpendicular to the plane, on the side away from the eye. So a
+  line in a face's plane, along its edge or ending on it is not hidden by
+  that face, and a solid's edges given with the same corners as its faces
+  are drawn. Only a face's part with z > −800 hides (a face is cut at that
+  plane as lines are). A face hides whatever is behind it wherever the
+  face is in the list, before or after it. A triangle with no area, or
+  seen edge on, hides nothing.
+- **What is drawn of a hidden line.** A line, and each chord of a circle,
+  is drawn as its pieces that are not hidden. Each piece has, along it,
+  the depth cue that part of the whole line has (section 13.5). An end
+  where a piece was cut is a butt end without vertex dwell, as where a
+  circle's chords join; the line's own ends keep their own. A piece with a
+  cut end that is shorter than 1/2 screen unit on the glass is not drawn,
+  unless the whole line is that short. A point is drawn or hidden whole.
+- **Faces that cross** need no rule of their own: each point of a line is
+  hidden or not by each face. Faces do not hide one another and draw
+  nothing, so no line is drawn where two faces cross unless the list draws
+  one.
 
 ### 13.4 Clipping and caps
 
@@ -1780,17 +1810,31 @@ projected (section 13.1) and clipped to the screen.
 The amount one list draws is limited. In list order, each Line, Point and
 Circle counts a **length** and a number of **segments**:
 
-| Command | Length (screen units) | Segments |
-|---|---|---|
-| Line | its length on the glass, seen from the reference eye, of its part with z > −800 that lies on the screen (0 to 640 by 0 to 480) | 1 |
-| Point | 0 | 1 |
-| Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 |
+| Command | Length (screen units) | Segments | Faces |
+|---|---|---|---|
+| Line | its length on the glass, seen from the reference eye, of its part with z > −800 that lies on the screen (0 to 640 by 0 to 480) | 1 | 0 |
+| Point | 0 | 1 | 0 |
+| Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 | 0 |
+| Face | 0 | 0 | 1 |
 
-A command that would take the list's total length above 65,536 or its
-number of segments above 16,384 is not drawn, and neither is any command
-after it. A command that is not drawn does not count. The caps are counted
-from the reference eye whatever eye the host draws from, so the same
-commands are drawn from every eye.
+A command that would take the list's total length above 65,536, its
+number of segments above 16,384, its number of faces above 256, or its
+number of faces times its number of segments above 131,072 is not drawn,
+and neither is any command after it; a face not drawn hides nothing. A
+command that is not drawn does not count. The caps are counted from the
+reference eye whatever eye the host draws from, and as if faces hid
+nothing, so the same commands are drawn from every eye.
+
+| Faces | Segments at most |
+|---|---|
+| 0 to 8 | 16,384 |
+| 16 | 8,192 |
+| 64 | 2,048 |
+| 256 | 512 |
+
+After the hidden parts are cut out (section 13.3), at most 16,384 pieces
+are drawn, in list order; pieces beyond that are not drawn. Which pieces
+those are depends on the eye.
 
 ### 13.5 Presentation
 
@@ -1807,7 +1851,7 @@ commands are drawn from every eye.
 - **Phosphor.** In the phosphor style (section 10.6) lines, points and
   circles are beam light like the 2D display's lines: core, halo, bloom,
   afterglow and smear, with the vertex dwell at line ends and points but
-  not where a circle's chords join.
+  not where a circle's chords join or where a face cut a line.
 - The trigonometry and the projection are the host's, and hosts may differ
   in the last pixel. Smoothing, the exact colour of blended pixels and how
   the eye moves are up to the host.
@@ -1816,7 +1860,8 @@ commands are drawn from every eye.
 
 The device's state is the copy of the list (STATE.md 1.11); the style and
 the persistence are device 3's (section 10.7, STATE.md 1.7), held once for
-both devices. It takes no input from the host: the eye is presentation.
+both devices. It takes no input from the host: the eye is presentation,
+and so is what faces hide from it.
 
 ---
 
@@ -1892,8 +1937,9 @@ These numbers are placeholders until weak hosts have been measured:
   documents and profiles (programs are published by the host, not by
   programs).
 - Devices 5 and 6.
-- On the 3D display (section 13): filled faces and hiding what is behind
-  them; a stereo picture or another display of the same geometry (the eye
+- On the 3D display (section 13): filled or shaded faces; the exact
+  intersection of faces (a line drawn where two faces cross); a stereo
+  picture or another display of the same geometry (the eye
   rule allows one; how a host shows it is not specified); a limit on the
   area its lines cover (as for the 2D display's lines below).
 - On the page: bitmap images, arcs and gradients in figures, links the host

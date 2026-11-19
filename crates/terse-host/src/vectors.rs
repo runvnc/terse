@@ -228,11 +228,15 @@ fn dwell(in: Out, q: vec2<f32>, hw: f32) -> f32 {
     let r = max(DWELL_SIZE * hw, DWELL_MIN_PX * in.shape.z);
     let p0 = in.ends.xy;
     let p1 = in.ends.zw;
-    let n0 = f32(max(in.dwell & 15u, 1u));
-    let n1 = f32(max((in.dwell >> 4u) & 15u, 1u));
-    var w = 1.0 + ((1.0 + DWELL) / n0 - 1.0) * exp(-dot(q - p0, q - p0) / (r * r));
-    if any(p0 != p1) {
-        w += ((1.0 + DWELL) / n1 - 1.0) * exp(-dot(q - p1, q - p1) / (r * r));
+    // An end whose count is 0 (a butt end) has none.
+    let n0 = in.dwell & 15u;
+    let n1 = (in.dwell >> 4u) & 15u;
+    var w = 1.0;
+    if n0 != 0u {
+        w += ((1.0 + DWELL) / f32(n0) - 1.0) * exp(-dot(q - p0, q - p0) / (r * r));
+    }
+    if n1 != 0u && any(p0 != p1) {
+        w += ((1.0 + DWELL) / f32(n1) - 1.0) * exp(-dot(q - p1, q - p1) / (r * r));
     }
     return max(w, 0.0);
 }

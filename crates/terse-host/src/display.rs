@@ -144,9 +144,13 @@ impl VectorScene<'_> {
         decode_shapes(list, outlines, out);
         *opcodes = crate::phosphor::opcodes(list);
         if let Some(v) = self.vector3.filter(|v| !v.list().is_empty()) {
-            terse_core::vector3::project(v.list(), self.eye, out);
+            // With faces, how many segments each figure gave is part of the
+            // signature: what is hidden changes as the models turn.
+            let mut pieces = Vec::new();
+            terse_core::vector3::project_pieces(v.list(), self.eye, out, &mut pieces);
             opcodes.push(0xFF);
             opcodes.extend(terse_core::vector3::opcodes(v.list()));
+            opcodes.extend(pieces);
         }
     }
 }
@@ -281,6 +285,15 @@ mod tests {
         assert_eq!(shapes, want);
         assert_eq!(shapes.len(), 3);
         assert_eq!(opcodes, [0x04, 0x05, 0xFF, 0x03, 0x04, 0x05]);
+        // With a face, the number of segments each figure gave follows (2
+        // bytes each): a point, hidden by nothing.
+        let mut v3f = Vector3::default();
+        let mut list = vec![0x0C, 3];
+        list.extend([0u8; 18]);
+        list.push(0x05);
+        v3f.submit(&list);
+        VectorScene { vector: None, vector3: Some(&v3f), eye: (0.0, 0.0) }.shapes(false, &mut shapes, &mut opcodes);
+        assert_eq!(opcodes, [0xFF, 0x0C, 0x05, 1, 0]);
         assert_ne!(scene((40.0, 0.0)).key(false), scene((0.0, 0.0)).key(false));
         let flat = |eye| VectorScene { vector: Some(&v), vector3: None, eye };
         assert_eq!(flat((40.0, 0.0)).key(false), flat((0.0, 0.0)).key(false));

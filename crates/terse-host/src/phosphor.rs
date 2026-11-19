@@ -307,28 +307,35 @@ pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, slow_decay: 
 /// its end (bits 4-7), itself included, at most 15; 0 for anything else.
 /// Lines with the same two end points count once, whatever their colour or
 /// width; a line of length 0 is one end. A segment's butt end (where a
-/// circle's chords join) has no dwell, so a segment both of whose ends are
-/// butt ends is not counted (and gets 0).
+/// circle's chords join, or where a face cut it) has no dwell: it is not
+/// counted and its 4 bits are 0, and a segment both of whose ends are butt
+/// ends gets 0.
 pub fn dwell_ends(shapes: &[Primitive], out: &mut Vec<u32>) {
     use std::collections::{HashMap, HashSet};
+    use terse_core::vector3::{BUTT_END, BUTT_START};
     out.clear();
+    // The two ends and whether each has dwell.
     let ends = |p: &Primitive| match *p {
-        Primitive::Line { x0, y0, x1, y1, .. } => Some(((x0, y0), (x1, y1))),
-        Primitive::Beam { x0, y0, x1, y1, butt: 0, .. } => Some(((x0, y0), (x1, y1))),
+        Primitive::Line { x0, y0, x1, y1, .. } => Some(((x0, y0), (x1, y1), true, true)),
+        Primitive::Beam { x0, y0, x1, y1, butt, .. } if butt & (BUTT_START | BUTT_END) != BUTT_START | BUTT_END => {
+            Some(((x0, y0), (x1, y1), butt & BUTT_START == 0, butt & BUTT_END == 0))
+        }
         _ => None,
     };
     let mut lines = HashSet::new();
     let mut at: HashMap<(i16, i16), u32> = HashMap::new();
-    for (a, b) in shapes.iter().filter_map(ends) {
-        if lines.insert(if a <= b { (a, b) } else { (b, a) }) {
-            *at.entry(a).or_default() += 1;
-            if b != a {
+    for (a, b, da, db) in shapes.iter().filter_map(ends) {
+        if lines.insert(if a <= b { (a, b, da, db) } else { (b, a, db, da) }) {
+            if da {
+                *at.entry(a).or_default() += 1;
+            }
+            if db && (b != a || !da) {
                 *at.entry(b).or_default() += 1;
             }
         }
     }
     out.extend(shapes.iter().map(|p| match ends(p) {
-        Some((a, b)) => at[&a].min(15) | at[&b].min(15) << 4,
+        Some((a, b, da, db)) => (if da { at[&a].min(15) } else { 0 }) | (if db { at[&b].min(15) } else { 0 }) << 4,
         None => 0,
     }));
 }
@@ -410,6 +417,13 @@ mod tests {
         assert_eq!(out[7], 1 | 1 << 4);
         assert_eq!(out[8], 0);
         assert_eq!(out[9], 2 | 3 << 4);
+        // 3D segments: an end where a face cut the segment (a butt end) is
+        // not counted and has no dwell; the other end keeps its own. A
+        // circle's chords (both ends butt) get none.
+        let b = |x0, y0, x1, y1, butt| Primitive::Beam { x0, y0, x1, y1, width: 16, rgba: C, fade: [255, 255], butt };
+        let shapes = [b(0, 0, 100, 0, 0), b(0, 0, 0, 100, 2), b(100, 0, 50, 50, 1), b(0, 0, 9, 9, 3)];
+        dwell_ends(&shapes, &mut out);
+        assert_eq!(out, [2 | 1 << 4, 2, 1 << 4, 0]);
     }
 
     #[test]

@@ -5,7 +5,8 @@
 //! displays. [`decode`] turns a stored list into its commands (SPEC 13.3
 //! termination rules, the transform stack's limits), and [`project`] turns
 //! a list and an eye into the line segments a host draws on the glass, with
-//! the caps of SPEC 13.4 and the depth cue of SPEC 13.5. Every renderer
+//! the caps of SPEC 13.4, the depth cue of SPEC 13.5 and what faces hide
+//! cut away (SPEC 13.3). Every renderer
 //! draws from [`project`], so they all draw the same segments.
 
 use std::fmt;
@@ -55,6 +56,7 @@ pub mod op {
     pub const TRANSLATE: u8 = 0x09;
     pub const ROTATE: u8 = 0x0A;
     pub const SCALE: u8 = 0x0B;
+    pub const FACE: u8 = 0x0C;
 }
 
 /// Bit of [`Primitive::Beam`]'s `butt`: the end continues into the next
@@ -129,7 +131,8 @@ impl Vector3 {
         }
         let mut segments = Vec::new();
         let p = project(&self.list, (0.0, 0.0), &mut segments);
-        out.push_str(&format!("-- 3d: {} segments, length {:.1} units{} --\n", p.segments, p.length, if p.capped { ", capped" } else { "" }));
+        let faces = if p.faces > 0 { format!(", {} faces", p.faces) } else { String::new() };
+        out.push_str(&format!("-- 3d: {} segments, length {:.1} units{faces}{} --\n", p.segments, p.length, if p.capped { ", capped" } else { "" }));
         out
     }
 }
@@ -153,6 +156,8 @@ pub enum Command {
     Rotate(u8, u16),
     /// 8.8 fixed point.
     Scale(u16),
+    /// A face: its corners (3 or 4; the fourth is unused for 3).
+    Face(u8, [Xyz; 4]),
 }
 
 impl Command {
@@ -169,6 +174,7 @@ impl Command {
             Command::Translate(_) => op::TRANSLATE,
             Command::Rotate(..) => op::ROTATE,
             Command::Scale(_) => op::SCALE,
+            Command::Face(..) => op::FACE,
         }
     }
 }
@@ -189,13 +195,22 @@ impl fmt::Display for Command {
             Command::Translate(p) => write!(f, "translate {}", xyz(p)),
             Command::Rotate(axis, a) => write!(f, "rotate {} {a}", ["x", "y", "z"][*axis as usize]),
             Command::Scale(s) => write!(f, "scale {s}"),
+            Command::Face(n, corners) => {
+                write!(f, "face {n}")?;
+                corners[..*n as usize].iter().try_for_each(|p| write!(f, " {}", xyz(p)))
+            }
         }
     }
 }
 
-/// Operand bytes of each opcode, or `None` for End and unknown opcodes.
-fn operand_len(opcode: u8) -> Option<usize> {
+/// Operand bytes of each opcode (of a Face, from its corner count), or
+/// `None` for End, unknown opcodes and a Face whose count is not 3 or 4.
+fn operand_len(opcode: u8, first: Option<u8>) -> Option<usize> {
     Some(match opcode {
+        op::FACE => match first? {
+            n @ (3 | 4) => 1 + 6 * n as usize,
+            _ => return None,
+        },
         op::COLOUR => 4,
         op::WIDTH | op::CIRCLE | op::SCALE => 2,
         op::MOVE | op::LINE | op::TRANSLATE => 6,
@@ -229,7 +244,7 @@ impl Iterator for Decoder<'_> {
             d.at = d.list.len();
             None
         };
-        let Some(n) = operand_len(opcode) else { return end(self) };
+        let Some(n) = operand_len(opcode, self.list.get(self.at + 1).copied()) else { return end(self) };
         let Some(o) = self.list.get(self.at + 1..self.at + 1 + n) else { return end(self) };
         let u16_at = |i: usize| u16::from_le_bytes([o[i], o[i + 1]]);
         let xyz = || [u16_at(0) as i16, u16_at(2) as i16, u16_at(4) as i16];
@@ -262,6 +277,14 @@ impl Iterator for Decoder<'_> {
                 Command::Rotate(o[0], u16::from_le_bytes([o[1], o[2]]))
             }
             op::SCALE => Command::Scale(u16_at(0)),
+            op::FACE => {
+                let at = |i: usize| [0, 2, 4].map(|k| u16::from_le_bytes([o[1 + 6 * i + k], o[2 + 6 * i + k]]) as i16);
+                let mut corners = [[0; 3]; 4];
+                for (i, c) in corners.iter_mut().enumerate().take(o[0] as usize) {
+                    *c = at(i);
+                }
+                Command::Face(o[0], corners)
+            }
             _ => unreachable!(),
         };
         self.at += 1 + n;
@@ -368,12 +391,14 @@ impl Default for State {
 }
 
 /// What a list draws, in screen units: a line between two points, a point,
-/// or a circle as its chord polygon (the points at k/64 of a turn).
+/// or a circle as its chord polygon (the points at k/64 of a turn); or a
+/// face, which hides (its 3 or 4 corners).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Figure {
     Line([f64; 3], [f64; 3]),
     Point([f64; 3]),
     Circle(Vec<[f64; 3]>),
+    Face(Vec<[f64; 3]>),
 }
 
 impl State {
@@ -406,6 +431,7 @@ impl State {
             Command::Translate(p) => self.transform.translate(units(p)),
             Command::Rotate(axis, a) => self.transform.rotate(axis, a as f64 / 65_536.0),
             Command::Scale(s) => self.transform.scale(s as f64 / 256.0),
+            Command::Face(n, corners) => return Some(Figure::Face(corners[..n as usize].iter().map(|&p| self.transform.apply(units(p))).collect())),
         }
         None
     }
@@ -482,14 +508,32 @@ pub fn counted_length(a: [f64; 3], b: [f64; 3]) -> f64 {
     }
 }
 
-/// What a list drew, seen from the reference eye.
+/// Faces one list may give (SPEC 13.4).
+pub const FACE_CAP: usize = 256;
+/// The most faces × segments one list may give (SPEC 13.4): it bounds the
+/// work of cutting the segments against the faces.
+pub const FACE_WORK_CAP: usize = 131_072;
+/// How far beyond a face's plane (screen units, measured perpendicular to
+/// it, away from the eye) a point must lie for the face to hide it: 2
+/// sixteenths. A line in a face's plane or along its edge is not hidden by it.
+pub const HIDE_TOLERANCE: f64 = 0.125;
+/// A visible piece with an end where it was cut is not drawn if it is
+/// shorter than this on the glass (screen units) and the segment it is a
+/// piece of is not.
+pub const MIN_PIECE: f64 = 0.5;
+
+/// What a list drew.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Projection {
-    /// Segments drawn (`out`'s length).
+    /// Segments drawn (`out`'s length): after cutting, from the eye used.
     pub segments: usize,
-    /// Their counted length (SPEC 13.4), in screen units.
+    /// Their counted length (SPEC 13.4), in screen units, as if there were
+    /// no faces.
     pub length: f64,
-    /// A command was stopped by a cap.
+    /// Faces in effect.
+    pub faces: usize,
+    /// A command was stopped by a cap (or a segment by the cap on what is
+    /// drawn after cutting).
     pub capped: bool,
 }
 
@@ -497,62 +541,310 @@ pub struct Projection {
 /// moved `eye` (screen units, each at most [`MAX_EYE_OFFSET`]) from the
 /// reference eye, as [`Primitive::Beam`]s in sixteenths on the glass, in
 /// list order, appended to `out`. Lines and points have round ends; a
-/// circle's chords join with butt ends (`butt`). Each end carries its depth
-/// cue (`fade`, 255 = 1). Segments are clipped to the near plane and to
-/// the screen grown by a margin. What the caps count is measured with the
-/// reference eye, whatever `eye` is.
+/// circle's chords join with butt ends (`butt`), and so do the ends where
+/// a face cut a segment. Each end carries its depth cue (`fade`, 255 = 1).
+/// Segments are clipped to the near plane and to the screen grown by a
+/// margin, and what the list's faces hide from this eye is cut away. What
+/// the caps count is measured with the reference eye and without faces,
+/// whatever `eye` is.
 pub fn project(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>) -> Projection {
+    project_pieces(list, eye, out, &mut Vec::new())
+}
+
+/// [`project`], and into `pieces` (cleared), when the list has faces, the
+/// number of segments each line, point and circle gave, as 2 bytes
+/// (little-endian) each: two projections with the same opcodes and the
+/// same `pieces` give segments that line up one for one.
+pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pieces: &mut Vec<u8>) -> Projection {
     let clamp = |v: f32| v.clamp(-MAX_EYE_OFFSET, MAX_EYE_OFFSET) as f64;
     let eye = (EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1));
     let start = out.len();
+    pieces.clear();
     let mut state = State::default();
     let (mut length, mut count) = (0.0f64, 0usize);
     let mut capped = false;
+    let mut drawn = Vec::new();
+    let mut faces = Vec::new();
     for c in decode(list) {
         let Some(figure) = state.step(&c) else { continue };
-        let (n, len) = match &figure {
-            Figure::Line(a, b) => (1, counted_length(*a, *b)),
-            Figure::Point(_) => (1, 0.0),
-            Figure::Circle(ring) => (CIRCLE_CHORDS, (0..ring.len()).map(|k| counted_length(ring[k], ring[(k + 1) % ring.len()])).sum()),
+        let (n, len, f) = match &figure {
+            Figure::Line(a, b) => (1, counted_length(*a, *b), 0),
+            Figure::Point(_) => (1, 0.0, 0),
+            Figure::Circle(ring) => (CIRCLE_CHORDS, (0..ring.len()).map(|k| counted_length(ring[k], ring[(k + 1) % ring.len()])).sum(), 0),
+            Figure::Face(_) => (0, 0.0, 1),
         };
-        if length + len > LENGTH_CAP || count + n > SEGMENT_CAP {
+        let nf = faces.len() + f;
+        if length + len > LENGTH_CAP || count + n > SEGMENT_CAP || nf > FACE_CAP || nf * (count + n) > FACE_WORK_CAP {
             capped = true;
             break;
         }
         length += len;
         count += n;
-        let width = state.width.clamp(1, MAX_WIDTH) as u8;
-        let rgba = state.rgba;
         match figure {
-            Figure::Line(a, b) => segment(a, b, 0, width, rgba, eye, out),
-            Figure::Point(p) => segment(p, p, 0, width, rgba, eye, out),
+            Figure::Face(corners) => faces.push(corners),
+            figure => drawn.push((figure, state.width.clamp(1, MAX_WIDTH) as u8, state.rgba)),
+        }
+    }
+    let mut hider = Hider::new(&faces, eye);
+    let mut s = Segments { eye, hider: &mut hider, out, room: start + SEGMENT_CAP, capped: false };
+    for (figure, width, rgba) in drawn {
+        let before = s.out.len();
+        match figure {
+            Figure::Line(a, b) => s.segment(a, b, 0, width, rgba),
+            Figure::Point(p) => s.segment(p, p, 0, width, rgba),
             Figure::Circle(ring) => {
                 for k in 0..ring.len() {
-                    segment(ring[k], ring[(k + 1) % ring.len()], BUTT_START | BUTT_END, width, rgba, eye, out);
+                    s.segment(ring[k], ring[(k + 1) % ring.len()], BUTT_START | BUTT_END, width, rgba);
+                }
+            }
+            Figure::Face(_) => unreachable!(),
+        }
+        if !faces.is_empty() {
+            pieces.extend_from_slice(&((s.out.len() - before).min(u16::MAX as usize) as u16).to_le_bytes());
+        }
+    }
+    capped |= s.capped;
+    Projection { segments: out.len() - start, length, faces: faces.len(), capped }
+}
+
+/// Where segments go: the eye, the faces, the output and how far it may
+/// grow.
+struct Segments<'a> {
+    eye: (f64, f64),
+    hider: &'a mut Hider,
+    out: &'a mut Vec<Primitive>,
+    room: usize,
+    capped: bool,
+}
+
+impl Segments<'_> {
+    /// The segment a–b (screen units) seen from the eye: the pieces of it
+    /// that are drawn, if any.
+    fn segment(&mut self, a: [f64; 3], b: [f64; 3], butt: u8, width: u8, rgba: Rgba) {
+        let Some((a, b)) = near_clip(a, b) else { return };
+        let (p, q) = (to_glass(a, self.eye), to_glass(b, self.eye));
+        let m = DRAW_MARGIN;
+        let Some((t0, t1)) = clip_rect(p, q, (-m, -m, 640.0 + m, 480.0 + m)) else { return };
+        // The cue is linear on the glass along a projected line (it is the
+        // projection's own scale).
+        let (f0, f1) = (depth_cue(a[2]), depth_cue(b[2]));
+        let at = |t: f64| {
+            let x = (p.0 + (q.0 - p.0) * t) * 16.0;
+            let y = (p.1 + (q.1 - p.1) * t) * 16.0;
+            let f = f0 + (f1 - f0) * t;
+            (x.round() as i16, y.round() as i16, (f * 255.0).round() as u8)
+        };
+        let glass = ((q.0 - p.0).powi(2) + (q.1 - p.1).powi(2)).sqrt();
+        let Segments { hider, out, room, capped, .. } = self;
+        let hidden = hider.cut(a, b, p, q, (t0, t1));
+        // The visible pieces: between the hidden parts; an end where a
+        // piece was cut is a butt end.
+        let mut piece = |u0: f64, u1: f64, cut0: bool, cut1: bool| {
+            if (cut0 || cut1) && glass >= MIN_PIECE && (u1 - u0) * glass < MIN_PIECE {
+                return;
+            }
+            if out.len() >= *room {
+                *capped = true;
+                return;
+            }
+            let ((x0, y0, g0), (x1, y1, g1)) = (at(u0), at(u1));
+            let butt = butt | if cut0 { BUTT_START } else { 0 } | if cut1 { BUTT_END } else { 0 };
+            out.push(Primitive::Beam { x0, y0, x1, y1, width, rgba, fade: [g0, g1], butt });
+        };
+        if hidden.is_empty() {
+            piece(t0, t1, false, false);
+            return;
+        }
+        let (mut from, mut cut) = (t0, false);
+        for &(h0, h1) in hidden {
+            if h0 > from {
+                piece(from, h0, cut, true);
+            }
+            (from, cut) = (h1, true);
+        }
+        if t1 > from {
+            piece(from, t1, true, false);
+        }
+    }
+}
+
+/// A face's triangle as seen from the eye: its edges on the glass, its
+/// plane, how near it comes.
+#[derive(Clone, Copy, Debug)]
+struct Tri {
+    /// (a, b, c): a x + b y + c ≥ 0 inside the triangle on the glass.
+    edges: [[f64; 3]; 3],
+    /// x0, y0, x1, y1 on the glass.
+    bbox: [f64; 4],
+    /// Unit normal and offset: n·X − offset is the distance from the
+    /// plane, positive on the eye's side.
+    normal: [f64; 3],
+    offset: f64,
+    /// The least z of its corners (in front of the near plane).
+    near: f64,
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+/// The faces of a list as triangles seen from one eye, nearest first, and
+/// the hidden parts of a segment.
+struct Hider {
+    tris: Vec<Tri>,
+    hidden: Vec<(f64, f64)>,
+}
+
+impl Hider {
+    fn new(faces: &[Vec<[f64; 3]>], eye: (f64, f64)) -> Hider {
+        let e = [eye.0, eye.1, -EYE_DISTANCE];
+        let m = DRAW_MARGIN;
+        let area = [-m, -m, 640.0 + m, 480.0 + m];
+        let mut tris = Vec::new();
+        for f in faces {
+            let halves: &[[usize; 3]] = if f.len() == 4 { &[[0, 1, 2], [0, 2, 3]] } else { &[[0, 1, 2]] };
+            for h in halves {
+                let c = h.map(|i| f[i]);
+                let n = cross(sub(c[1], c[0]), sub(c[2], c[0]));
+                let l = dot(n, n).sqrt();
+                if l < 1e-9 {
+                    continue; // no area: hides nothing
+                }
+                let mut normal = n.map(|v| v / l);
+                let mut offset = dot(normal, c[0]);
+                let de = dot(normal, e) - offset;
+                if de.abs() < 1e-9 {
+                    continue; // seen edge on
+                }
+                if de < 0.0 {
+                    normal = normal.map(|v| -v);
+                    offset = -offset;
+                }
+                // The part in front of the near plane, as a fan.
+                let mut poly: Vec<[f64; 3]> = Vec::with_capacity(4);
+                for k in 0..3 {
+                    let (p, q) = (c[k], c[(k + 1) % 3]);
+                    if p[2] > NEAR_Z {
+                        poly.push(p);
+                    }
+                    if (p[2] > NEAR_Z) != (q[2] > NEAR_Z) {
+                        let t = (NEAR_Z - p[2]) / (q[2] - p[2]);
+                        poly.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, NEAR_Z]);
+                    }
+                }
+                for k in 1..poly.len().saturating_sub(1) {
+                    let corners = [poly[0], poly[k], poly[k + 1]];
+                    let g = corners.map(|p| to_glass(p, eye));
+                    let a = (g[1].0 - g[0].0) * (g[2].1 - g[0].1) - (g[1].1 - g[0].1) * (g[2].0 - g[0].0);
+                    if a.abs() < 1e-9 {
+                        continue;
+                    }
+                    let sign = a.signum();
+                    let edges = std::array::from_fn(|i| {
+                        let (p, q) = (g[i], g[(i + 1) % 3]);
+                        let (ea, eb) = (-sign * (q.1 - p.1), sign * (q.0 - p.0));
+                        [ea, eb, -(ea * p.0 + eb * p.1)]
+                    });
+                    let bbox = [
+                        g.iter().map(|p| p.0).fold(f64::INFINITY, f64::min),
+                        g.iter().map(|p| p.1).fold(f64::INFINITY, f64::min),
+                        g.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max),
+                        g.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max),
+                    ];
+                    if bbox[0] > area[2] || bbox[2] < area[0] || bbox[1] > area[3] || bbox[3] < area[1] {
+                        continue;
+                    }
+                    let near = corners.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
+                    tris.push(Tri { edges, bbox, normal, offset, near });
                 }
             }
         }
+        tris.sort_by(|a, b| a.near.total_cmp(&b.near));
+        Hider { tris, hidden: Vec::new() }
     }
-    Projection { segments: out.len() - start, length, capped }
-}
 
-/// The segment a–b (screen units) seen from `eye`, if any of it is drawn.
-fn segment(a: [f64; 3], b: [f64; 3], butt: u8, width: u8, rgba: Rgba, eye: (f64, f64), out: &mut Vec<Primitive>) {
-    let Some((a, b)) = near_clip(a, b) else { return };
-    let (p, q) = (to_glass(a, eye), to_glass(b, eye));
-    let m = DRAW_MARGIN;
-    let Some((t0, t1)) = clip_rect(p, q, (-m, -m, 640.0 + m, 480.0 + m)) else { return };
-    // The cue is linear on the glass along a projected line (it is the
-    // projection's own scale).
-    let (f0, f1) = (depth_cue(a[2]), depth_cue(b[2]));
-    let at = |t: f64| {
-        let x = (p.0 + (q.0 - p.0) * t) * 16.0;
-        let y = (p.1 + (q.1 - p.1) * t) * 16.0;
-        let f = f0 + (f1 - f0) * t;
-        (x.round() as i16, y.round() as i16, (f * 255.0).round() as u8)
-    };
-    let ((x0, y0, g0), (x1, y1, g1)) = (at(t0), at(t1));
-    out.push(Primitive::Beam { x0, y0, x1, y1, width, rgba, fade: [g0, g1], butt });
+    /// The hidden parts of the segment a–b (in front of the near plane),
+    /// seen on the glass from p to q, within the parameters `range` along
+    /// p–q: sorted, disjoint parameter intervals.
+    fn cut(&mut self, a: [f64; 3], b: [f64; 3], p: (f64, f64), q: (f64, f64), range: (f64, f64)) -> &[(f64, f64)] {
+        let hidden = &mut self.hidden;
+        hidden.clear();
+        // Only a face nearer than the segment's far end can hide any of it.
+        let far = a[2].max(b[2]);
+        let n = self.tris.partition_point(|t| t.near < far);
+        if n == 0 {
+            return hidden;
+        }
+        let (t0, t1) = range;
+        let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+        let (s0, s1) = ((p.0 + dx * t0, p.1 + dy * t0), (p.0 + dx * t1, p.1 + dy * t1));
+        let bbox = [s0.0.min(s1.0), s0.1.min(s1.1), s0.0.max(s1.0), s0.1.max(s1.1)];
+        let (wa, wb) = (EYE_DISTANCE + a[2], EYE_DISTANCE + b[2]);
+        for t in &self.tris[..n] {
+            if t.bbox[0] > bbox[2] || t.bbox[2] < bbox[0] || t.bbox[1] > bbox[3] || t.bbox[3] < bbox[1] {
+                continue;
+            }
+            // Where p–q is inside the triangle on the glass: nowhere if both
+            // ends are outside one edge; else cut at the edges it crosses.
+            let f = t.edges.map(|e| (e[0] * p.0 + e[1] * p.1 + e[2], e[0] * q.0 + e[1] * q.1 + e[2]));
+            if f.iter().any(|&(fp, fq)| fp < 0.0 && fq < 0.0) {
+                continue;
+            }
+            let (mut lo, mut hi) = (t0, t1);
+            for (fp, fq) in f {
+                if fp < 0.0 {
+                    lo = lo.max(fp / (fp - fq));
+                } else if fq < 0.0 {
+                    hi = hi.min(fp / (fp - fq));
+                }
+            }
+            if lo >= hi {
+                continue;
+            }
+            // Where the segment lies beyond the plane by more than the
+            // tolerance: h / w is linear on the glass, and w > 0.
+            let ha = (t.offset - dot(t.normal, a) - HIDE_TOLERANCE) / wa;
+            let hb = (t.offset - dot(t.normal, b) - HIDE_TOLERANCE) / wb;
+            if ha <= 0.0 && hb <= 0.0 {
+                continue;
+            }
+            if ha <= 0.0 {
+                lo = lo.max(ha / (ha - hb));
+            } else if hb <= 0.0 {
+                hi = hi.min(ha / (ha - hb));
+            }
+            if lo >= hi {
+                continue;
+            }
+            if lo <= t0 && hi >= t1 {
+                hidden.clear();
+                hidden.push((t0, t1));
+                return hidden;
+            }
+            hidden.push((lo, hi));
+        }
+        hidden.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut merged = 0;
+        for i in 0..hidden.len() {
+            let h = hidden[i];
+            if merged > 0 && h.0 <= hidden[merged - 1].1 {
+                hidden[merged - 1].1 = hidden[merged - 1].1.max(h.1);
+            } else {
+                hidden[merged] = h;
+                merged += 1;
+            }
+        }
+        hidden.truncate(merged);
+        hidden
+    }
 }
 
 #[cfg(test)]
@@ -629,7 +921,7 @@ mod tests {
         let one = [Command::Point];
         assert_eq!(all(&point), one);
         assert_eq!(all(&[point.clone(), vec![op::END], point.clone()].concat()), one);
-        for unknown in [0x0C, 0x80, 0xFF] {
+        for unknown in [0x0D, 0x80, 0xFF] {
             assert_eq!(all(&[point.clone(), vec![unknown], point.clone()].concat()), one);
         }
         // Operands cut off.
@@ -796,5 +1088,408 @@ mod tests {
         v.clear();
         assert!(v.list().is_empty() && v.generation() != g);
         assert!(v.dump().contains("-- 3d: 0 segments, length 0.0 units --"));
+    }
+
+    /// A Face command: its corners in screen units.
+    fn face(corners: &[[f64; 3]]) -> Vec<u8> {
+        let mut v = vec![op::FACE, corners.len() as u8];
+        for c in corners {
+            v.extend(xyz((c[0] * 16.0) as i16, (c[1] * 16.0) as i16, (c[2] * 16.0) as i16));
+        }
+        v
+    }
+
+    /// A line in screen units.
+    fn line(a: [f64; 3], b: [f64; 3]) -> Vec<u8> {
+        let s = |p: [f64; 3]| xyz((p[0] * 16.0) as i16, (p[1] * 16.0) as i16, (p[2] * 16.0) as i16);
+        [cmd(op::MOVE, &s(a)), cmd(op::LINE, &s(b))].concat()
+    }
+
+    fn beam(x0: i16, y0: i16, x1: i16, y1: i16, fade: [u8; 2], butt: u8) -> Primitive {
+        Primitive::Beam { x0, y0, x1, y1, width: 16, rgba: [255; 4], fade, butt }
+    }
+
+    /// A triangle on the glass: (300, 200), (400, 200), (300, 300). At
+    /// y = 240 it covers x from 300 to 360.
+    const TRIANGLE: [[f64; 3]; 3] = [[300.0, 200.0, 0.0], [400.0, 200.0, 0.0], [300.0, 300.0, 0.0]];
+
+    #[test]
+    fn face_command() {
+        let f = face(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
+        assert_eq!(f.len(), 2 + 18);
+        assert_eq!(all(&f), [Command::Face(3, [[16, 32, 48], [64, 80, 96], [112, 128, 144], [0; 3]])]);
+        assert_eq!(all(&f)[0].to_string(), "face 3 16 32 48 64 80 96 112 128 144");
+        let q = face(&[[0.0; 3], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]);
+        assert_eq!(all(&q).len(), 1);
+        // Any other count, or corners cut off, ends the list.
+        let point = cmd(op::POINT, &[]);
+        for n in [0u8, 1, 2, 5, 255] {
+            assert_eq!(all(&[point.clone(), vec![op::FACE, n], vec![0; 30], point.clone()].concat()), [Command::Point], "n = {n}");
+        }
+        for cut in 1..q.len() {
+            assert_eq!(all(&[point.clone(), q[..cut].to_vec()].concat()), [Command::Point]);
+        }
+        // A face draws nothing and leaves the current point; it is transformed.
+        let mut s = State::default();
+        s.step(&Command::Move([16, 16, 16]));
+        s.step(&Command::Translate([160, 0, 0]));
+        let Some(Figure::Face(c)) = s.step(&all(&f)[0]) else { panic!() };
+        assert!(close(c[0], [11.0, 2.0, 3.0]) && close(s.point, [1.0, 1.0, 1.0]));
+        assert_eq!(opcodes(&[f, point].concat()), [op::FACE, op::POINT]);
+    }
+
+    #[test]
+    fn a_line_behind_a_triangle() {
+        let tri = face(&TRIANGLE);
+        // At z = 960, half way: x' = 320 + (x − 320) / 2, y' = 240. The line
+        // from x = 0 to 640 is seen from 160 to 480; 300 to 360 is hidden.
+        let behind = line([0.0, 240.0, 960.0], [640.0, 240.0, 960.0]);
+        let want = [beam(2560, 3840, 4800, 3840, [128, 128], BUTT_END), beam(5760, 3840, 7680, 3840, [128, 128], BUTT_START)];
+        assert_eq!(beams(&[tri.clone(), behind.clone()].concat(), (0.0, 0.0)), want);
+        // Faces hide wherever they are in the list.
+        assert_eq!(beams(&[behind.clone(), tri.clone()].concat(), (0.0, 0.0)), want);
+        // From the eye 160 to the right the same line is seen from 240 to
+        // 560: the triangle, on the glass, hides another part of it.
+        assert_eq!(
+            beams(&[tri.clone(), behind.clone()].concat(), (160.0, 0.0)),
+            [beam(3840, 3840, 4800, 3840, [128, 128], BUTT_END), beam(5760, 3840, 8960, 3840, [128, 128], BUTT_START)]
+        );
+        // Wholly hidden: seen from 305 to 355.
+        assert!(beams(&[tri.clone(), line([290.0, 240.0, 960.0], [390.0, 240.0, 960.0])].concat(), (0.0, 0.0)).is_empty());
+        // In front of the triangle, or in its plane (z = 0), or along its
+        // edge: never hidden, from any eye.
+        for eye in [(0.0, 0.0), (-160.0, 0.0), (160.0, 160.0)] {
+            for l in [line([0.0, 240.0, -100.0], [640.0, 240.0, -100.0]), line([0.0, 240.0, 0.0], [640.0, 240.0, 0.0]), line([300.0, 200.0, 0.0], [400.0, 200.0, 0.0])] {
+                assert_eq!(beams(&[tri.clone(), l.clone()].concat(), eye), beams(&l, eye));
+            }
+        }
+        // A line on the glass passing in front of a face behind it.
+        let deep = face(&TRIANGLE.map(|c| [c[0], c[1], 100.0]));
+        let glass = line([0.0, 240.0, 0.0], [640.0, 240.0, 0.0]);
+        for eye in [(0.0, 0.0), (-160.0, 0.0), (160.0, 160.0)] {
+            assert_eq!(beams(&[deep.clone(), glass.clone()].concat(), eye), [beam(0, 3840, 10240, 3840, [255, 255], 0)]);
+        }
+    }
+
+    /// A line through the triangle's plane: the part beyond it by more
+    /// than the tolerance is hidden.
+    #[test]
+    fn a_line_through_the_plane() {
+        // From (340, 240, −480), seen at x' = 360, to (340, 240, 960), seen
+        // at 330: all of it inside the triangle on the glass.
+        let list = [face(&TRIANGLE), line([340.0, 240.0, -480.0], [340.0, 240.0, 960.0])].concat();
+        let got = beams(&list, (0.0, 0.0));
+        // Hidden from z = 0.125 on: seen at 320 + 20 × 960 / 960.125.
+        let cut = 320.0 + 20.0 * 960.0 / 960.125;
+        assert_eq!(cut, 339.99739617237336);
+        // The cue along the glass from 1 (clamped) to 0.5, at the cut.
+        let s = (360.0 - cut) / 30.0;
+        let fade = ((1.0 - 0.5 * s) * 255.0f64).round() as u8;
+        assert_eq!(fade, 170);
+        assert_eq!(got, [beam(5760, 3840, 5440, 3840, [255, fade], BUTT_END)]);
+        // The other way round: the cut is the piece's start.
+        let list = [face(&TRIANGLE), line([340.0, 240.0, 960.0], [340.0, 240.0, -480.0])].concat();
+        assert_eq!(beams(&list, (0.0, 0.0)), [beam(5440, 3840, 5760, 3840, [fade, 255], BUTT_START)]);
+    }
+
+    /// A 4-corner face is two triangles, 0-1-2 and 0-2-3: a bent quad
+    /// hides as its two halves; a flat one has no seam.
+    #[test]
+    fn quads() {
+        let quad = face(&[[300.0, 200.0, 0.0], [360.0, 200.0, 0.0], [360.0, 280.0, 0.0], [300.0, 280.0, 0.0]]);
+        let halves = [face(&[[300.0, 200.0, 0.0], [360.0, 200.0, 0.0], [360.0, 280.0, 0.0]]), face(&[[300.0, 200.0, 0.0], [360.0, 280.0, 0.0], [300.0, 280.0, 0.0]])].concat();
+        // Lines behind it, across the diagonal at many places.
+        let mut lines = Vec::new();
+        for i in 0..40 {
+            let y = 190.0 + 2.5 * i as f64;
+            lines.extend(line([0.0, 2.0 * y - 240.0, 960.0], [640.0, 2.0 * y - 240.0, 960.0]));
+        }
+        let got = beams(&[quad.clone(), lines.clone()].concat(), (0.0, 0.0));
+        assert_eq!(got, beams(&[halves, lines.clone()].concat(), (0.0, 0.0)));
+        // Each line crossing the quad (y' from 200 to 280) is cut once, at
+        // x' = 300 and 360, with no sliver at the diagonal.
+        let cut: Vec<_> = got.iter().filter(|b| matches!(b, Primitive::Beam { butt, .. } if *butt != 0)).collect();
+        assert_eq!(cut.len(), 2 * 33, "{got:?}");
+        assert!(cut.iter().all(|b| matches!(b, Primitive::Beam { x0, x1, .. } if *x1 == 4800 || *x0 == 5760)));
+        // Bent: corner 3 pushed back hides lines between the halves' planes
+        // only where the second half is in front of them.
+        let bent = face(&[[300.0, 200.0, 0.0], [360.0, 200.0, 0.0], [360.0, 280.0, 0.0], [300.0, 280.0, 400.0]]);
+        let l = line([200.0, 270.0, 100.0], [440.0, 210.0, 100.0]);
+        let first = face(&[[300.0, 200.0, 0.0], [360.0, 200.0, 0.0], [360.0, 280.0, 0.0]]);
+        let second = face(&[[300.0, 200.0, 0.0], [360.0, 280.0, 0.0], [300.0, 280.0, 400.0]]);
+        assert_eq!(beams(&[bent, l.clone()].concat(), (0.0, 0.0)), beams(&[first, second, l].concat(), (0.0, 0.0)));
+    }
+
+    /// The faces of a solid cube and its 12 edges: from every eye, each
+    /// edge of a face turned towards the eye is drawn whole, as without
+    /// faces, and the edges between two faces turned away are not drawn.
+    #[test]
+    fn a_solid_cube() {
+        let c = [320.0, 240.0, 300.0];
+        let h = 100.0;
+        let corner = |i: usize| [c[0] + if i & 1 != 0 { h } else { -h }, c[1] + if i & 2 != 0 { h } else { -h }, c[2] + if i & 4 != 0 { h } else { -h }];
+        // Faces: the corner indices, the outward normal.
+        let faces: [([usize; 4], [f64; 3]); 6] = [
+            ([0, 1, 3, 2], [0.0, 0.0, -1.0]),
+            ([4, 5, 7, 6], [0.0, 0.0, 1.0]),
+            ([0, 1, 5, 4], [0.0, -1.0, 0.0]),
+            ([2, 3, 7, 6], [0.0, 1.0, 0.0]),
+            ([0, 2, 6, 4], [-1.0, 0.0, 0.0]),
+            ([1, 3, 7, 5], [1.0, 0.0, 0.0]),
+        ];
+        let edges: Vec<(usize, usize)> = (0..8).flat_map(|a| [1, 2, 4].map(|bit| (a, a | bit))).filter(|&(a, b)| a != b).collect();
+        assert_eq!(edges.len(), 12);
+        let face_list: Vec<u8> = faces.iter().flat_map(|(f, _)| face(&f.map(corner))).collect();
+        for eye in [(0.0f32, 0.0f32), (-160.0, 0.0), (160.0, 160.0), (-100.0, 50.0), (0.0, -160.0)] {
+            let e = [EYE_X + eye.0 as f64, EYE_Y + eye.1 as f64, -EYE_DISTANCE];
+            let toward = |n: [f64; 3], f: &[usize; 4]| dot(n, sub(e, corner(f[0]))) > 0.0;
+            let mut want = Vec::new();
+            let mut list = face_list.clone();
+            for &(a, b) in &edges {
+                let shown = faces.iter().any(|(f, n)| f.contains(&a) && f.contains(&b) && toward(*n, f));
+                let l = line(corner(a), corner(b));
+                if shown {
+                    want.extend(beams(&l, eye));
+                }
+                list.extend(l);
+            }
+            assert!(want.len() >= 4);
+            assert_eq!(beams(&list, eye), want, "eye {eye:?}");
+            // The faces anywhere in the list, in any order.
+            let edges_only = list[face_list.len()..].to_vec();
+            let reversed: Vec<u8> = faces.iter().rev().flat_map(|(f, _)| face(&f.map(corner))).collect();
+            assert_eq!(beams(&[edges_only.clone(), reversed].concat(), eye), want);
+            let (a, b) = face_list.split_at(face_list.len() / 2);
+            assert_eq!(beams(&[b, &edges_only[..], a].concat(), eye), want);
+        }
+    }
+
+    /// A turning solid cube, from many eyes: exactly the edges of the faces
+    /// turned towards the eye are drawn, each whole, with no stray pieces
+    /// of the others.
+    #[test]
+    fn a_turning_cube() {
+        let mut seed = 12345u32;
+        let mut rnd = |n: u32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) % n
+        };
+        let corner = |i: usize| [if i & 1 != 0 { 1600i16 } else { -1600 }, if i & 2 != 0 { 1600 } else { -1600 }, if i & 4 != 0 { 1600 } else { -1600 }];
+        let quads: [[usize; 4]; 6] = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]];
+        let edges: Vec<(usize, usize)> = (0..8).flat_map(|a| [1, 2, 4].map(|bit| (a, a | bit))).filter(|&(a, b)| a != b).collect();
+        for _ in 0..300 {
+            let mut prefix = [cmd(op::TRANSLATE, &xyz(320 * 16, 240 * 16, (rnd(600) as i16 - 100) * 16))].concat();
+            for axis in 0..3 {
+                prefix.extend(cmd(op::ROTATE, &[axis, rnd(256) as u8, rnd(256) as u8]));
+            }
+            let eye = (rnd(321) as f32 - 160.0, rnd(321) as f32 - 160.0);
+            let e = [EYE_X + eye.0 as f64, EYE_Y + eye.1 as f64, -EYE_DISTANCE];
+            let mut state = State::default();
+            for c in decode(&prefix) {
+                state.step(&c);
+            }
+            let world = |i: usize| state.transform.apply(units(corner(i)));
+            let centre = state.transform.apply([0.0; 3]);
+            let toward = |q: &[usize; 4]| {
+                let n = cross(sub(world(q[1]), world(q[0])), sub(world(q[2]), world(q[0])));
+                let out = if dot(n, sub(world(q[0]), centre)) > 0.0 { n } else { n.map(|v| -v) };
+                dot(out, sub(e, world(q[0]))) > 0.0
+            };
+            let mut list = prefix.clone();
+            for q in &quads {
+                list.push(op::FACE);
+                list.push(4);
+                q.iter().for_each(|&i| list.extend(corner(i).iter().flat_map(|v| v.to_le_bytes())));
+            }
+            let mut shown = prefix.clone();
+            for &(a, b) in &edges {
+                let l = [cmd(op::MOVE, &xyz(corner(a)[0], corner(a)[1], corner(a)[2])), cmd(op::LINE, &xyz(corner(b)[0], corner(b)[1], corner(b)[2]))].concat();
+                if quads.iter().any(|q| q.contains(&a) && q.contains(&b) && toward(q)) {
+                    shown.extend(&l);
+                }
+                list.extend(l);
+            }
+            assert_eq!(beams(&list, eye), beams(&shown, eye), "eye {eye:?}, list {prefix:?}");
+        }
+    }
+
+    /// Random triangles and lines from random eyes, against a brute-force
+    /// ray test of points along each line: away from where what is hidden
+    /// changes, a point is drawn exactly when the rule says it is visible.
+    #[test]
+    fn against_brute_force() {
+        let mut seed = 777u32;
+        let mut rnd = |lo: f64, hi: f64| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            lo + (hi - lo) * (seed >> 8) as f64 / (1u32 << 24) as f64
+        };
+        let mut checked = 0;
+        for _ in 0..20 {
+            let mut list = Vec::new();
+            let mut tris = Vec::new();
+            for _ in 0..12 {
+                let c = [rnd(80.0, 560.0), rnd(60.0, 420.0), rnd(-300.0, 600.0)];
+                let corner = |r: &mut dyn FnMut(f64, f64) -> f64| [(c[0] + r(-120.0, 120.0)).round(), (c[1] + r(-120.0, 120.0)).round(), (c[2] + r(-200.0, 200.0)).round()];
+                let t = [corner(&mut rnd), corner(&mut rnd), corner(&mut rnd)];
+                list.extend(face(&t));
+                tris.push(t);
+            }
+            let mut lines = Vec::new();
+            for _ in 0..30 {
+                let a = [rnd(0.0, 640.0).round(), rnd(0.0, 480.0).round(), rnd(-500.0, 900.0).round()];
+                let b = [rnd(0.0, 640.0).round(), rnd(0.0, 480.0).round(), rnd(-500.0, 900.0).round()];
+                list.extend(line(a, b));
+                lines.push((a, b));
+            }
+            let eye = (rnd(-160.0, 160.0) as f32, rnd(-160.0, 160.0) as f32);
+            let e = [EYE_X + eye.0 as f64, EYE_Y + eye.1 as f64, -EYE_DISTANCE];
+            // The rule, point by point.
+            let hidden = |p: [f64; 3]| {
+                tris.iter().any(|t| {
+                    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                    let l = dot(n, n).sqrt();
+                    let (de, dp) = (dot(n, sub(e, t[0])) / l, dot(n, sub(p, t[0])) / l);
+                    if de == 0.0 || dp * de.signum() > -HIDE_TOLERANCE {
+                        return false;
+                    }
+                    // Where the ray from the eye meets the plane; inside?
+                    let k = de / (de - dp);
+                    let x = [e[0] + (p[0] - e[0]) * k, e[1] + (p[1] - e[1]) * k, e[2] + (p[2] - e[2]) * k];
+                    let side = |i: usize| dot(cross(sub(t[(i + 1) % 3], t[i]), sub(x, t[i])), n);
+                    x[2] > NEAR_Z && (0..3).all(|i| side(i) >= 0.0) || (0..3).all(|i| side(i) <= 0.0) && x[2] > NEAR_Z
+                })
+            };
+            let mut out = Vec::new();
+            let mut pieces = Vec::new();
+            project_pieces(&list, eye, &mut out, &mut pieces);
+            let mut at = 0;
+            for (i, &(a, b)) in lines.iter().enumerate() {
+                let n = u16::from_le_bytes([pieces[2 * i], pieces[2 * i + 1]]) as usize;
+                let mine = &out[at..at + n];
+                at += n;
+                let Some((a, b)) = near_clip(a, b) else { continue };
+                let (p, q) = (to_glass(a, (e[0], e[1])), to_glass(b, (e[0], e[1])));
+                let glass = ((q.0 - p.0).powi(2) + (q.1 - p.1).powi(2)).sqrt();
+                let (wa, wb) = (EYE_DISTANCE + a[2], EYE_DISTANCE + b[2]);
+                let point = |s: f64| {
+                    let u = s * wa / ((1.0 - s) * wb + s * wa);
+                    [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]
+                };
+                for k in 1..100 {
+                    let s = k as f64 / 100.0;
+                    let g = (p.0 + (q.0 - p.0) * s, p.1 + (q.1 - p.1) * s);
+                    if g.0 < 0.0 || g.0 > 640.0 || g.1 < 0.0 || g.1 > 480.0 {
+                        continue;
+                    }
+                    // Skip where the answer changes within 0.6 units.
+                    let d = 0.6 / glass.max(1e-9);
+                    let h = hidden(point(s));
+                    if [s - d, s + d].iter().any(|&t| (0.0..=1.0).contains(&t) && hidden(point(t)) != h) {
+                        continue;
+                    }
+                    let drawn = mine.iter().any(|b| {
+                        let Primitive::Beam { x0, y0, x1, y1, .. } = *b else { return false };
+                        let (x0, y0, x1, y1) = (x0 as f64 / 16.0, y0 as f64 / 16.0, x1 as f64 / 16.0, y1 as f64 / 16.0);
+                        let (dx, dy) = (x1 - x0, y1 - y0);
+                        let l2 = dx * dx + dy * dy;
+                        let t = if l2 > 0.0 { (((g.0 - x0) * dx + (g.1 - y0) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                        (g.0 - x0 - dx * t).hypot(g.1 - y0 - dy * t) < 0.1
+                    });
+                    assert_eq!(drawn, !h, "line {i} at {s}, eye {eye:?}");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20_000, "{checked}");
+    }
+
+    /// Only the part of a face in front of the near plane hides; a face
+    /// off the screen hides nothing there is to draw.
+    #[test]
+    fn faces_at_the_near_plane_and_off_the_screen() {
+        let l = line([0.0, 240.0, 0.0], [640.0, 240.0, 0.0]);
+        // Wholly nearer than the plane: nothing is hidden.
+        let near = face(&[[-500.0, -500.0, -850.0], [1100.0, -500.0, -850.0], [1100.0, 900.0, -850.0], [-500.0, 900.0, -850.0]]);
+        assert_eq!(beams(&[near, l.clone()].concat(), (0.0, 0.0)), beams(&l, (0.0, 0.0)));
+        // Across it: from z = −900 at x = 200 to −700 at x = 440, so cut at
+        // x = 320 (z = −800), which is seen at 320: only what is to the
+        // right of that is hidden.
+        let across = face(&[[200.0, 0.0, -900.0], [440.0, 0.0, -700.0], [440.0, 480.0, -700.0], [200.0, 480.0, -900.0]]);
+        assert_eq!(beams(&[across, l.clone()].concat(), (0.0, 0.0)), [beam(0, 3840, 5120, 3840, [255, 255], BUTT_END)]);
+        // Off the screen.
+        let off = face(&[[1000.0, 0.0, 0.0], [2000.0, 0.0, 0.0], [2000.0, 480.0, 0.0]]);
+        let far = line([-640.0, 240.0, 960.0], [1280.0, 240.0, 960.0]);
+        assert_eq!(beams(&[off, far.clone()].concat(), (0.0, 0.0)), beams(&far, (0.0, 0.0)));
+    }
+
+    /// Points are hidden whole; a circle chord by chord, its cut chords
+    /// keeping butt ends.
+    #[test]
+    fn points_and_circles() {
+        let point = |x: i16, z: i16| [cmd(op::MOVE, &xyz(x * 16, 240 * 16, z * 16)), cmd(op::POINT, &[])].concat();
+        let tri = face(&TRIANGLE);
+        assert!(beams(&[tri.clone(), point(330, 0), point(340, 960)].concat(), (0.0, 0.0)).len() == 1);
+        // A circle of radius 100 at z = 480 (seen at radius 66.7) about the
+        // centre, behind a face hiding x' < 330.
+        let wall = face(&[[-100.0, -100.0, 0.0], [330.0, -100.0, 0.0], [330.0, 600.0, 0.0], [-100.0, 600.0, 0.0]]);
+        let circle = [cmd(op::MOVE, &xyz(5120, 3840, 480 * 16)), cmd(op::CIRCLE, &1600u16.to_le_bytes())].concat();
+        let got = beams(&[wall, circle].concat(), (0.0, 0.0));
+        // Chords k = −14 to 13 whole, 14 and −15 cut at x' = 330.
+        assert_eq!(got.len(), 30);
+        assert!(got.iter().all(|b| matches!(b, Primitive::Beam { butt: 3, x0, x1, fade: [170, 170], .. } if *x0 >= 5280 && *x1 >= 5280)));
+        let at_cut = got.iter().filter(|b| matches!(b, Primitive::Beam { x0, x1, .. } if *x0 == 5280 || *x1 == 5280)).count();
+        assert_eq!(at_cut, 2);
+    }
+
+    #[test]
+    fn face_caps() {
+        let tiny = face(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        let point = [cmd(op::MOVE, &xyz(5120, 3840, 0)), cmd(op::POINT, &[])].concat();
+        // 256 faces, then a point: drawn; a 257th face is not, nor what follows.
+        let faces = |n: usize| -> Vec<u8> { std::iter::repeat_n(tiny.clone(), n).flatten().collect() };
+        let p = project(&[faces(256), point.clone()].concat(), (0.0, 0.0), &mut Vec::new());
+        assert_eq!((p.faces, p.segments, p.capped), (256, 1, false));
+        let p = project(&[faces(257), point.clone()].concat(), (0.0, 0.0), &mut Vec::new());
+        assert_eq!((p.faces, p.segments, p.capped), (256, 0, true));
+        // Faces × segments at most 131,072: 64 faces and 2,048 points; one
+        // point or face more is not drawn.
+        let points = |n: usize| -> Vec<u8> { std::iter::repeat_n(point.clone(), n).flatten().collect() };
+        let p = project(&[faces(64), points(2049)].concat(), (0.0, 0.0), &mut Vec::new());
+        assert_eq!((p.faces, p.segments, p.capped), (64, 2048, true));
+        let p = project(&[points(2048), faces(65), points(1)].concat(), (0.0, 0.0), &mut Vec::new());
+        assert_eq!((p.faces, p.segments, p.capped), (64, 2048, true));
+        // Without faces the segment cap alone.
+        assert_eq!(project(&points(16_384), (0.0, 0.0), &mut Vec::new()).segments, 16_384);
+        // The length is counted as if there were no faces: a line hidden
+        // whole still counts.
+        let l = line([0.0, 240.0, 960.0], [640.0, 240.0, 960.0]);
+        let wall = face(&[[-100.0, -100.0, 0.0], [800.0, -100.0, 0.0], [800.0, 600.0, 0.0]]);
+        let p = project(&[wall.clone(), l.clone(), wall].concat(), (0.0, 0.0), &mut Vec::new());
+        assert_eq!((p.segments, p.length, p.faces), (1, 320.0, 2));
+        // At most 16,384 segments after cutting: 256 strips in front of 512
+        // lines would cut them into 131,000 pieces.
+        let mut list = Vec::new();
+        for i in 0..256 {
+            let y = 1.0 + i as f64 * 1.875;
+            list.extend(face(&[[-100.0, y, 0.0], [740.0, y, 0.0], [740.0, y + 0.9375, 0.0], [-100.0, y + 0.9375, 0.0]]));
+        }
+        for i in 0..512 {
+            let x = i as f64 * 1.25;
+            list.extend(line([x, 0.0, 100.0], [x, 480.0, 100.0]));
+        }
+        let mut out = Vec::new();
+        let p = project(&list, (0.0, 0.0), &mut out);
+        assert_eq!((p.segments, out.len(), p.faces, p.capped), (16_384, 16_384, 256, true));
+    }
+
+    /// The pieces of each figure, for a list with faces.
+    #[test]
+    fn pieces_per_figure() {
+        let list = [face(&TRIANGLE), line([0.0, 240.0, 960.0], [640.0, 240.0, 960.0]), cmd(op::POINT, &[])].concat();
+        let mut pieces = Vec::new();
+        project_pieces(&list, (0.0, 0.0), &mut Vec::new(), &mut pieces);
+        assert_eq!(pieces, [2, 0, 1, 0]);
+        project_pieces(&list[20..], (0.0, 0.0), &mut Vec::new(), &mut pieces);
+        assert!(pieces.is_empty());
     }
 }

@@ -410,6 +410,33 @@ void v3_rotate(uint8_t axis, uint16_t angle)
     v3_ptr = p + 4;
 }
 
+/* A face of `n` corners. */
+static void v3_face(uint8_t n, const int16_t *const *corners)
+{
+    uint8_t *p = v3_ptr;
+    *p++ = V3_OP_FACE;
+    *p++ = n;
+    for (uint8_t i = 0; i < n; i++)
+        for (uint8_t k = 0; k < 3; k++) {
+            int16_t v = corners[i][k];
+            *p++ = v;
+            *p++ = (uint16_t)v >> 8;
+        }
+    v3_ptr = p;
+}
+
+void v3_face3(const int16_t *a, const int16_t *b, const int16_t *c)
+{
+    const int16_t *corners[3] = { a, b, c };
+    v3_face(3, corners);
+}
+
+void v3_face4(const int16_t *a, const int16_t *b, const int16_t *c, const int16_t *d)
+{
+    const int16_t *corners[4] = { a, b, c, d };
+    v3_face(4, corners);
+}
+
 void v3_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     uint8_t *p = v3_ptr;

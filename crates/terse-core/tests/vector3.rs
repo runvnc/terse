@@ -135,3 +135,143 @@ fn state_and_snapshots() {
     let without = Machine::new(&common::program(&[0x01, 0x00], 1, &[]));
     assert_eq!(without.state().len(), 45 + 128 + 23 + 4 + l + 37 + 4);
 }
+
+/// Builds a display list (SPEC 13.3).
+#[derive(Default)]
+struct List(Vec<u8>);
+
+impl List {
+    fn xyz(&mut self, op: u8, p: [i32; 3]) -> &mut Self {
+        self.0.push(op);
+        for v in p {
+            self.0.extend_from_slice(&(v as i16).to_le_bytes());
+        }
+        self
+    }
+    fn mv(&mut self, p: [i32; 3]) -> &mut Self {
+        self.xyz(0x03, p)
+    }
+    fn line(&mut self, p: [i32; 3]) -> &mut Self {
+        self.xyz(0x04, p)
+    }
+    fn circle(&mut self, r: u16) -> &mut Self {
+        self.0.push(0x06);
+        self.0.extend_from_slice(&r.to_le_bytes());
+        self
+    }
+    fn face(&mut self, corners: &[[i32; 3]]) -> &mut Self {
+        self.0.extend([0x0C, corners.len() as u8]);
+        for c in corners {
+            for v in c {
+                self.0.extend_from_slice(&(*v as i16).to_le_bytes());
+            }
+        }
+        self
+    }
+}
+
+/// The cost of cutting segments against faces (run with `--release
+/// --ignored --nocapture`): the worst lists the caps allow and a typical
+/// scene, from an eye that moves every time.
+#[test]
+#[ignore]
+fn face_cost() {
+    use terse_core::vector3::project;
+    let time = |name: &str, list: &[u8]| {
+        let mut out = Vec::new();
+        let p = project(list, (0.0, 0.0), &mut out);
+        let n = 200;
+        let start = std::time::Instant::now();
+        for i in 0..n {
+            out.clear();
+            let x = -160.0 + 320.0 * i as f32 / n as f32;
+            std::hint::black_box(project(list, (x, x / 2.0), &mut out));
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        eprintln!("{name}: {} bytes, {} faces, {} segments drawn (reference eye){}: {ms:.3} ms", list.len(), p.faces, p.segments, if p.capped { ", capped" } else { "" });
+    };
+    let u = 16;
+    // 256 circles of radius 39 (16,384 chords) behind 256 faces whose boxes
+    // cover the screen but which are thin slivers: nothing is hidden, so
+    // every chord is tested against every triangle.
+    let circles = |l: &mut List, z: i32| {
+        for i in 0..256 {
+            l.mv([(40 + (i % 16) * 37) * u, (40 + (i / 16) * 26) * u, z * u]).circle(39 * u as u16);
+        }
+    };
+    let mut l = List::default();
+    circles(&mut l, 200);
+    time("16,384 chords, no faces", &l.0);
+    for faces in [256, 128, 64, 16, 1] {
+        let mut l = List::default();
+        for i in 0..faces {
+            let d = i - 128;
+            l.face(&[[0, 0, 0], [640 * u, 480 * u, 0], [640 * u + d, 480 * u - d, 0], [d, -d, 0]]);
+        }
+        circles(&mut l, 200);
+        time(&format!("{faces} slivers over chords"), &l.0);
+        // Quads across the near plane: 4 triangles each after the cut.
+        let mut l = List::default();
+        for i in 0..faces {
+            let d = i - 128;
+            l.face(&[[0, 0, -900 * u], [640 * u, 480 * u, 500 * u], [640 * u + d, 480 * u - d, -900 * u], [d, -d, 500 * u]]);
+        }
+        circles(&mut l, 600);
+        time(&format!("{faces} slivers across the near plane over chords"), &l.0);
+        // Large quads leaning back: nearer than the chords off the screen's
+        // left, behind them on it, so every triangle is tested in full and
+        // hides nothing.
+        let mut l = List::default();
+        for i in 0..faces {
+            let z = 300 + i;
+            l.face(&[[-1900 * u, -100 * u, -700 * u], [700 * u, -100 * u, z * u], [700 * u, 600 * u, z * u], [-1900 * u, 600 * u, -700 * u]]);
+        }
+        circles(&mut l, 0);
+        time(&format!("{faces} large leaning quads behind chords"), &l.0);
+    }
+    // The same behind 256 large overlapping quads in staggered depths, each
+    // with a hole-free cover of part of the screen: much is hidden.
+    let mut l = List::default();
+    for i in 0..256 {
+        let (x, y) = ((i % 16) * 30 * u, (i / 16) * 22 * u);
+        l.face(&[[x - 200 * u, y - 150 * u, i * u], [x + 300 * u, y - 150 * u, i * u], [x + 300 * u, y + 200 * u, i * u], [x - 200 * u, y + 200 * u, i * u]]);
+    }
+    circles(&mut l, 400);
+    time("large quads over 16,384 chords", &l.0);
+    // Strips: 256 thin horizontal quads in front of vertical lines, each
+    // hiding a short part of every line (many cuts).
+    let mut l = List::default();
+    for i in 0..256 {
+        let y = (2 + i * 2) * u * 15 / 16;
+        l.face(&[[-100 * u, y, 0], [740 * u, y, 0], [740 * u, y + u, 0], [-100 * u, y + u, 0]]);
+    }
+    let mut x = 0;
+    while l.0.len() + 14 <= 16_384 {
+        l.mv([x * u / 4, 0, 100 * u]).line([x * u / 4, 480 * u, 100 * u]);
+        x += 1;
+    }
+    time("strips over vertical lines", &l.0);
+    // A typical scene: 20 boxes (5 faces, 12 edges each) on a grid of 42 lines.
+    let mut l = List::default();
+    for i in 0..21 {
+        l.mv([(120 + i * 20) * u, 300 * u, 0]).line([(120 + i * 20) * u, 300 * u, 400 * u]);
+        l.mv([120 * u, 300 * u, i * 20 * u]).line([520 * u, 300 * u, i * 20 * u]);
+    }
+    for i in 0..20 {
+        let (x0, z0, h) = (140 + (i % 5) * 80, 20 + (i / 5) * 90, 40 + (i * 37) % 100);
+        let (x1, z1, y0, y1) = (x0 + 40, z0 + 40, 300 - h, 300);
+        let c = |x: i32, y: i32, z: i32| [x * u, y * u, z * u];
+        l.face(&[c(x0, y0, z0), c(x1, y0, z0), c(x1, y1, z0), c(x0, y1, z0)]);
+        l.face(&[c(x0, y0, z1), c(x1, y0, z1), c(x1, y1, z1), c(x0, y1, z1)]);
+        l.face(&[c(x0, y0, z0), c(x0, y0, z1), c(x0, y1, z1), c(x0, y1, z0)]);
+        l.face(&[c(x1, y0, z0), c(x1, y0, z1), c(x1, y1, z1), c(x1, y1, z0)]);
+        l.face(&[c(x0, y0, z0), c(x1, y0, z0), c(x1, y0, z1), c(x0, y0, z1)]);
+        for y in [y0, y1] {
+            l.mv(c(x0, y, z0)).line(c(x1, y, z0)).line(c(x1, y, z1)).line(c(x0, y, z1)).line(c(x0, y, z0));
+        }
+        for (x, z) in [(x0, z0), (x1, z0), (x1, z1), (x0, z1)] {
+            l.mv(c(x, y0, z)).line(c(x, y1, z));
+        }
+    }
+    time("typical: 20 boxes on a grid", &l.0);
+}

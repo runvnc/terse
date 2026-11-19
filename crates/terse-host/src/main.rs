@@ -71,7 +71,7 @@ const USAGE: &str = "usage:
              [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>]
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
-             [--events <file>] [--renderer gpu|software] [--threads <n>] [--consent allow|deny] [...]
+             [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
   3D vector display (device 9, SPEC 13): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
@@ -122,7 +122,9 @@ const USAGE: &str = "usage:
   animated as in a window, and draws every frame offscreen with the chosen renderer, timing only the
   drawing (taking the machines' screens and drawing the picture; a GPU frame is timed until the GPU
   has finished it): it prints p50, p99 and max per frame over the N frames after --warmup frames
-  (default 60), and how many took over 16.7 ms. No window is opened.
+  (default 60), and how many took over 16.7 ms. No window is opened. --sweep-eye moves the eye every
+  frame (round an ellipse 160 units to either side and 80 up and down, once every 120 frames), as a
+  pointer moving over the window would, so 3D lists are projected again each frame.
   Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the focused program as typed text.";
 
 fn main() -> ExitCode {
@@ -147,7 +149,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut feed_relays, mut prefetch, mut program_download, mut data) = (true, true, true, None);
     let (mut consent, mut demo) = (None, false);
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
-    let (mut renderer, mut threads, mut bench, mut warmup) = (RendererChoice::Auto, 0usize, false, None);
+    let (mut renderer, mut threads, mut bench, mut warmup, mut sweep) = (RendererChoice::Auto, 0usize, false, None, false);
     let mut bloom = soft::BloomRes::Auto;
     let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
     let mut it = args.into_iter();
@@ -156,6 +158,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
             "--bench-render" => bench = true,
+            "--sweep-eye" => sweep = true,
             "--renderer" => {
                 let v = it.next().ok_or(USAGE)?;
                 renderer = RendererChoice::parse(&v).ok_or(format!("bad --renderer {v} (gpu, software or auto)"))?;
@@ -226,7 +229,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ => return Err(USAGE.into()),
         }
     }
-    if bench && (selftest || screenshot.is_some() || frames.is_none()) {
+    if (bench && (selftest || screenshot.is_some() || frames.is_none())) || (sweep && !bench) {
         return Err(USAGE.into());
     }
     let windowed = !selftest && !bench && screenshot.is_none();
@@ -362,7 +365,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     if bench {
         let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax };
-        let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0) };
+        let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -494,8 +497,9 @@ async fn request_device(
 enum Headless {
     /// Returns the last frame's picture.
     Screenshot { frames: u64 },
-    /// Draws every frame offscreen and prints how long that took.
-    Bench { warmup: u64, frames: u64 },
+    /// Draws every frame offscreen and prints how long that took; with
+    /// `sweep` the eye moves every frame.
+    Bench { warmup: u64, frames: u64, sweep: bool },
 }
 
 /// The renderer `--renderer` asks for, offscreen.
@@ -599,7 +603,7 @@ fn run_headless(
     let shown = |serial: u32| latest.lock().unwrap().get(&serial).and_then(|l| l.lock().unwrap().clone());
     let total = match mode {
         Headless::Screenshot { frames, .. } => frames,
-        Headless::Bench { warmup, frames } => warmup + frames,
+        Headless::Bench { warmup, frames, .. } => warmup + frames,
     };
     let mut times = Vec::new();
     for f in 0..total {
@@ -613,7 +617,11 @@ fn run_headless(
                     display.update(&system, viewport, &ran, &shown, None);
                 }
             }
-            Headless::Bench { warmup, .. } => {
+            Headless::Bench { warmup, sweep, .. } => {
+                if *sweep {
+                    let a = f as f32 / 120.0 * std::f32::consts::TAU;
+                    display.set_eye((160.0 * a.cos(), 80.0 * a.sin()));
+                }
                 let start = std::time::Instant::now();
                 display.update(&system, viewport, &ran, &shown, None);
                 display.render_offscreen(viewport)?;

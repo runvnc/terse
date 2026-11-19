@@ -178,6 +178,13 @@ fn holo_phosphor() {
     check("holo-phosphor", Some(HOLO), "2 press p\n", 90, Consent::Deny);
 }
 
+/// Faces on the 3D display (device 9): solid blocks hiding one another and
+/// the ground, the hidden parts of their edges cut away.
+#[test]
+fn holo_city() {
+    check("holo-city", Some(HOLO), "2 press 5\n", 90, Consent::Deny);
+}
+
 /// The shell with four machines tiled (one in the phosphor style), each
 /// scaled into its picture with glyphs for its size.
 #[test]

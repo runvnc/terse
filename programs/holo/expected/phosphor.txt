@@ -1,4 +1,4 @@
- HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY                PHOSPHOR
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY   5 CITY       PHOSPHOR
 
 
 
@@ -25,9 +25,9 @@
                      CUBE                          ICOSAHEDRON
               8 corners, 12 edges             12 corners, 30 edges
 
+                                      wire
 
-
- Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+ Space next  1-5 scene  arrows turn  A stop/turn  R reset  P phosphor  H solid
 -- vector style: phosphor, persistence 200 --
 -- 3d vectors: 712 list bytes --
 colour 28466eff

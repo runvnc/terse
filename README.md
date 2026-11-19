@@ -261,11 +261,14 @@ afterglow is built up over the last 600 frames, as in the window.
 (default 200) in the window with vsync, with only the scripted input (default: the
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
 ignored), and prints timings: see [Conformance image](#conformance-image).
-`--bench-render [<image|id> | --shell [<image>]] --frames N [--warmup N] [--size <W>x<H>] [--events <file>] [--renderer gpu|software] [--threads n]`
+`--bench-render [<image|id> | --shell [<image>]] --frames N [--warmup N] [--size <W>x<H>] [--events <file>] [--renderer gpu|software] [--threads n] [--sweep-eye]`
 runs headless like `--screenshot` but with the page's scroll animated as in a window,
 draws every frame offscreen and prints the drawing time per frame (p50, p99, max,
 mean, frames over 16.7 ms) over the N frames after the warm-up (default 60); a GPU
-frame is timed until the GPU has finished it. It opens no window.
+frame is timed until the GPU has finished it. It opens no window. `--sweep-eye` moves
+the eye every frame (round an ellipse 160 units to either side and 80 up and down,
+once every 120 frames), as a pointer moving over a window would, so 3D lists are
+projected again each frame.
 
 `terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws://host:port>]...`
 serves a blob store and feeds over WebSocket (NETWORK.md sections 3, 4.3 and 4.7), one
@@ -964,9 +967,32 @@ segments; a circle is 64 chords. The style and persistence are device 3's (calls
 the phosphor style. Device 9 is drawn after device 3's shapes, under the terminal's
 characters, so text on the glass labels the models.
 
+**Faces** (Face, opcode `0Ch`: 3 or 4 corners) draw nothing but hide the lines,
+points and circles behind them, as the eye in use sees them: a point is hidden when
+the straight line from the eye to it passes through a face's triangle (a 4-corner
+face is triangles 0-1-2 and 0-2-3) and the point lies more than 2 sixteenths beyond
+the triangle's plane, so a solid's own edges, given with the same corners as its
+faces, are never hidden by those faces. Faces hide wherever they are in the list,
+have two sides, and are cut at z = −800 like lines. A hidden stretch is cut out of
+the line: the pieces keep the depth cue of the whole line, and the cut ends are
+butt ends without the phosphor's vertex dwell (pieces shorter than half a unit with
+a cut end are dropped, so no specks show at silhouettes). A list has at most 256
+faces, and faces × segments at most 131,072 (16,384 segments with up to 8 faces, 512
+with 256); the caps count as if nothing were hidden, so the same commands are drawn
+from every eye, and at most 16,384 pieces are drawn after cutting. A list without
+faces draws exactly as before.
+
 `terse_core::vector3::project` turns a list and an eye into the segments to draw (on
 the glass, in sixteenths, with the depth cue at each end and, where a circle's
-chords join, butt ends instead of round caps and vertex dwell); both renderers draw
+chords join or a face cut a line, butt ends instead of round caps and vertex dwell),
+with what the faces hide already cut away. It cuts each segment against the faces'
+triangles nearest first: the triangles are sorted by their nearest z, so only those
+nearer than a segment's far end are tried, each first by its box on the glass and
+by whether both ends of the segment lie outside one of its edges, and a segment
+stops being tried once one triangle hides all of it. A typical scene (20 boxes, 100
+faces, 300 lines) projects in about 0.2 ms on an i7-10750H; the worst lists the caps
+allow (16 large faces that hide nothing in front of 8,192 chords, or 256 slivers
+over 512) in about 2.2 ms, against 1.3 ms for 16,384 chords without faces. Both renderers draw
 them through the 2D display's line path, in the same instanced quads and the same
 software spans, so the clean style, the phosphor beam, afterglow and smear all apply.
 They project again only when the list or the eye changes. From C:
@@ -986,16 +1012,21 @@ They project again only when the list or the eye changes. From C:
     v3_submit_list(list);                            /* VEC_DONE or VEC_REJECTED */
 
 `v3_point`, `v3_scale`, `v3_clear()`, `v3_style()` and `v3_persistence()` are the rest
-(`programs/lib/terse.h`).
+(`programs/lib/terse.h`), with `v3_face3(a, b, c)` and `v3_face4(a, b, c, d)`, whose
+arguments point at x, y, z triples (a solid's corner table serves its edges and
+its faces).
 
 ## Holo
 
-`programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–4
+`programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–5
 choose one: a turning cube and icosahedron labelled on the glass, six nested rings
-each turning in the one outside it, 384 points receding from the glass, and an
-orrery of four planets on tilted orbits (two with moons). The arrows turn the model,
-A stops and starts the turning, R resets the view, P switches between the clean and
-the phosphor style. All the rotation is the host's (Rotate); the program only
+each turning in the one outside it, 384 points receding from the glass, an orrery
+of four planets on tilted orbits (two with moons), and a city: eleven solid blocks
+round a tower on a ground grid, turning, so that blocks pass in front of one another
+and hide each other and the ground (55 faces). H makes the cube and icosahedron
+solid (6 and 20 faces) and wire again. The arrows turn the model, A stops and
+starts the turning, R resets the view, P switches between the clean and the
+phosphor style. All the rotation is the host's (Rotate); the program only
 changes angles, so it does no trigonometry. Move the pointer over the window to look
 around the models: near parts move against far ones, while the labels and the dim
 frame on the glass stay put.
@@ -1003,9 +1034,9 @@ frame on the glass stay put.
     cargo run --release -p terse-host -- programs/holo/holo.terse
     cargo run --release -p terse-host -- programs/holo/holo.terse --frames 90 --eye 160,0 --screenshot /tmp/holo.png
 
-ROM 4,140 bytes, 2 RAM pages; devices 2 and 9. Tests: `crates/terse-cli/tests/holo.rs`
-(golden screens of each scene in `programs/holo/expected/`, the keys, the frame
-budget).
+ROM 5,460 bytes, 2 RAM pages; devices 2 and 9. Tests: `crates/terse-cli/tests/holo.rs`
+(golden screens of each scene in `programs/holo/expected/`, the keys, the solids,
+the first four scenes' segments unchanged by faces, the frame budget).
 
 ## Page
 
@@ -1348,7 +1379,7 @@ consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind th
 - **Tests.** `cargo test -p terse-host` checks that a screen drawn bit by bit
   equals one drawn from scratch, that the phosphor afterglow fades to black, the
   shapes' row spans against brute force, butt-ended segments against a whole line,
-  and seven scripted scenes against pictures in
+  and eight scripted scenes against pictures in
   `crates/terse-host/tests/reference/` (400 × 300, made with the DejaVu fonts; at
   most 0.5% of pixels may differ by more than 8/255).
 
@@ -1369,6 +1400,8 @@ native 880 × 660 grid, so at 1320 × 990 it is drawn at 880 × 660 and at
 | holo, rings (six circles of 64 chords turning; its busiest scene) | 1.12 / 0.36 / 0.26 | 1.09 / 0.35 / 0.25 | — |
 | holo, rings, phosphor (the turning rings' smear: about 5,000 deposits a frame) | 19.6 / 3.95 / 0.99 | 19.9 / 4.35 / 0.98 | — |
 | holo standing still (A): nothing to draw again | 0.00 / — / 0.22 | — | — |
+| holo, city (55 faces cut out of 160 lines each frame; `--sweep-eye`) | 1.02 / 0.49 / 0.41 | — | — |
+| holo, city, phosphor (`--sweep-eye`) | 16.3 / 3.62 / 1.05 | — | — |
 
 ## Measurements
 
@@ -1381,7 +1414,7 @@ recorded sessions.
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
 | reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
-| holo | 4,140 bytes | 2 pages | 20,836 (16.7%, frame 0); 20,566 (16.5%) in the starfield | 5,600 (4.5%) | — |
+| holo | 5,460 bytes | 2 pages | 24,898 (19.9%) in the city (11 solid blocks: 55 faces, 3,195 list bytes); 20,753 (16.6%) in the starfield | 10,698 (8.6%) | the city's projection 0.14 ms |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 | shell | 16,344 bytes | 3 pages | 12,353 (9.9%, the launcher rebuilt with 4 machines); saving a session of 3 machines 7,373 (5.9%), restoring it 5,730 (4.6%) | 515 (0.4%) | — |

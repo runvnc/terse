@@ -349,6 +349,7 @@ static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f,
 #define V3_OP_TRANSLATE 0x09
 #define V3_OP_ROTATE 0x0A
 #define V3_OP_SCALE 0x0B
+#define V3_OP_FACE 0x0C
 
 /* Builder: appends commands at v3_ptr; the caller owns the buffer. */
 extern uint8_t *v3_ptr;
@@ -366,6 +367,12 @@ void v3_translate(int16_t x, int16_t y, int16_t z);
 void v3_rotate(uint8_t axis, uint16_t angle);
 void v3_scale(uint16_t s);
 void v3_end(void);
+/* A face: a flat polygon that gives no light but hides what is behind it
+ * (lines, points, circles), as the eye sees it. Each corner is an x, y, z
+ * triple (transformed like Move's point; the current point stays). A
+ * 4-corner face is the triangles a-b-c and a-c-d. */
+void v3_face3(const int16_t *a, const int16_t *b, const int16_t *c);
+void v3_face4(const int16_t *a, const int16_t *b, const int16_t *c, const int16_t *d);
 
 /* Submits `len` bytes at `list` (in RAM); returns VEC_DONE or VEC_REJECTED.
  * Costs 1 unit per 4 bytes. */

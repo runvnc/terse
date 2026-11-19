@@ -419,10 +419,10 @@ impl Dwell {
         if dwell == 0 {
             return Dwell { a, b, k: (0.0, 0.0), inv_r2: 0.0, far: 0.0 };
         }
-        let n0 = (dwell & 15).max(1) as f32;
-        let n1 = ((dwell >> 4) & 15).max(1) as f32;
-        let k1 = if a != b { (1.0 + DWELL) / n1 - 1.0 } else { 0.0 };
-        Dwell { a, b, k: ((1.0 + DWELL) / n0 - 1.0, k1), inv_r2: 1.0 / (r * r), far: 16.0 * r * r }
+        // An end whose count is 0 (a butt end) has none.
+        let k = |n: u32| if n == 0 { 0.0 } else { (1.0 + DWELL) / n as f32 - 1.0 };
+        let k1 = if a != b { k((dwell >> 4) & 15) } else { 0.0 };
+        Dwell { a, b, k: (k(dwell & 15), k1), inv_r2: 1.0 / (r * r), far: 16.0 * r * r }
     }
 
     #[inline]
