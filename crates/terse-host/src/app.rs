@@ -104,6 +104,7 @@ pub fn run(
         wheel: (0.0, 0.0),
         gamepads: Gamepads::new(),
         next_frame: Instant::now(),
+        occluded: false,
         selftest,
         refresh_hz: None,
         trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
@@ -238,12 +239,24 @@ impl Gfx {
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
+        // Never wait for the display inside a present: a compositor stops
+        // asking a hidden window (another workspace) for frames, and a
+        // vsync-blocking present then stalls the whole host. The host paces
+        // itself at 60 Hz; Mailbox shows the latest frame without tearing.
+        // TERSE_VSYNC=1 asks for the blocking mode.
+        let vsync = std::env::var_os("TERSE_VSYNC").is_some_and(|v| v == "1");
+        let present_mode = if !vsync && caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            wgpu::PresentMode::AutoVsync
+        };
+        eprintln!("terse-host: present mode {present_mode:?}");
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             width: size.0,
             height: size.1,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -565,6 +578,8 @@ struct App {
     wheel: (f64, f64),
     gamepads: Gamepads,
     next_frame: Instant,
+    /// The window is hidden (another workspace, minimised): nothing is drawn.
+    occluded: bool,
     selftest: Option<SelfTest>,
     refresh_hz: Option<f64>,
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
@@ -893,7 +908,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(gfx) = &mut self.gfx
+                if !self.occluded
+                    && let Some(gfx) = &mut self.gfx
                     && let Some((acquire, render)) = gfx.draw()
                 {
                     if self.trace {
@@ -904,6 +920,12 @@ impl ApplicationHandler for App {
                     if let Some(t) = &mut self.selftest {
                         t.presented(acquire, render, Instant::now());
                     }
+                }
+            }
+            WindowEvent::Occluded(hidden) => {
+                self.occluded = hidden;
+                if !hidden && let Some(gfx) = &self.gfx {
+                    gfx.window.request_redraw();
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
