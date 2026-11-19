@@ -865,7 +865,66 @@ session directory.
 
 ## 11. Measurements
 
-Section to be filled in (`terse-bus --bench`, `--selftest`).
+i7-10750H (12 threads), release build, the Rust drivers, while other builds
+ran on the machine (figures vary by some tens of percent between runs).
+
+**Calls** (`programs/hostile`, every frame's budget spent on the cheapest
+calls of one kind; `terse-bus --bench --frame-times`, ms per frame, median
+/ worst of each 60-frame phase):
+
+| Phase (calls per frame) | Shared memory | Socket |
+|---|---|---|
+| terminal `get_cursor`, answered (1,923) | 1.44 / 1.47 | 12.9 / 16.4 |
+| vector `clear`, deferred (25,000) | 3.80 / 3.84 | 3.80 / 4.80 |
+| page `locate`, answered (1,923) | 1.40 / 1.44 | 9.41 / 12.6 |
+| terminal `write` of 1 byte, deferred (12,500) | 2.35 / 2.42 | 2.36 / 2.49 |
+| terminal `cells_read` of 2,400 cells, answered (51) | 0.07 / 0.16 | 0.50 / 0.71 |
+| vector `submit` of 16,384 bytes, deferred (30) | 0.14 / 0.15 | 0.14 / 0.15 |
+| terminal `write` of 4,096 line feeds, deferred (15) | 0.41 / 0.45 | 0.38 / 0.44 |
+
+Every phase fits a 16.7 ms frame on shared memory; on the socket an
+answered call costs about 6 µs, so a program that does nothing but answered
+calls comes close to the frame. (Version 0 measured about half these
+figures for answered calls on an idle machine; the address and the
+per-instance lookups add a little to each message.)
+
+**A shell** (`terse-bus --shell --present-every-frame --size 1280x960
+--bench`, 900 frames; the children are holo's city, sparks, sketch with a
+stroke, the reader paging up and down, then fetch, hello, holo's rings and
+sparks again): emulation of the whole system per frame (the bus included),
+then composition (PRESENT to every driver of every machine shown, and the
+core's composition), p50 / p99 / max in ms; against terse-host's software
+renderer (`--bench-render --renderer software`, 12 threads, drawing only)
+and `terse run --shell --bench` (emulation, the devices compiled in):
+
+| Scene | Bus emulation | Bus composition | terse-host drawing | Built-in emulation |
+|---|---|---|---|---|
+| Shell idle (launcher) | 0.008 / 0.037 / 0.29 | 0.029 / 0.045 / 36 | 0.00 / 0.00 / 0.01 | 0.003 / 0.005 / 0.47 |
+| One child | 0.010 / 0.029 / 1.5 | 0.050 / 0.077 / 42 | 0.01 / 0.01 / 0.01 | 0.004 / 0.010 / 1.0 |
+| Four children busy | 0.26 / 0.58 / 1.5 | 3.3 / 11.2 / 41 | 0.80 / 1.19 / 2.0 | 0.15 / 0.25 / 1.2 |
+| Eight children busy | 0.29 / 0.87 / 1.6 | 3.4 / 17.1 / 592 | 1.18 / 2.09 / 590 | 0.20 / 0.34 / 1.3 |
+
+The worst frames are the first of a machine (its layer files, fonts loaded
+in the page and terminal drivers). The processes are the core and four
+drivers whatever the number of machines. Running in real time (60 frames
+a second, presenting every frame), over 10 s:
+
+| Scene | Processes | CPU (adaptive spin) | CPU (fixed 2 ms spin) | Memory (PSS / RSS, MiB) |
+|---|---|---|---|---|
+| Shell idle | 5 | 3.0 % | 50 % | 87 / 122 |
+| One child | 5 | 4.2 % | 51 % | 106 / 153 |
+| Four children busy | 5 | 64 % | 124 % | 102 / 144 |
+| Eight children busy | 5 | 77 % | 126 % | 412 / 451 |
+
+(terse-host, one process: 48 MiB with four children, 359 MiB with eight:
+both load the CJK fallback font when a machine shows CJK text, there in the
+terminal driver.) Start-up to the first frame: 80–90 ms (drivers started
+and connected), 130–150 ms to the first picture in a window.
+
+**In a window** (`terse-bus --window --selftest`, 1280 × 960, in a headless
+Wayland compositor): present interval p50 16.6–16.7 ms in every run; p99
+20–46 ms (the frames in which a machine starts); the scripted input reached
+the same machines as headless (the same state hashes).
 
 ## 12. Open questions
 

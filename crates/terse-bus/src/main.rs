@@ -393,7 +393,8 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
                 bs.system.shell_mut().devices_mut().replay = Some(f.drivers.clone());
                 (f.events.clone(), f.controllers())
             }
-            None => (script.events(frame).to_vec(), script.controllers(frame)),
+            // SPEC 9.5: while a question is asked the keyboard is the host's.
+            None => (bs.input(script.events(frame).to_vec())?, script.controllers(frame)),
         };
         let start = Instant::now();
         bs.frame(&events, controllers)?;

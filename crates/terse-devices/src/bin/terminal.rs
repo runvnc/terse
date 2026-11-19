@@ -22,8 +22,11 @@ const SLOT: u8 = 2;
 const BG: u8 = 0;
 const FG: u8 = 1;
 const OUTSIDE: u32 = u32::MAX;
-/// Glyph slots an atlas holds before it starts again.
-const ATLAS_SLOTS: u32 = 4096;
+/// Glyph slots an atlas holds before it starts again: room for a whole
+/// screen of new wide glyphs after the ones it has (terse-host's software
+/// renderer starts again whenever the grid changes, which costs the same
+/// pixels but rasterises every glyph again).
+const ATLAS_SLOTS: u32 = 16384;
 
 /// The call table (DEVICES.md 5.1).
 fn table() -> Vec<CallEntry> {

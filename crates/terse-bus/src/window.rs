@@ -73,6 +73,8 @@ struct App {
     log: Vec<FrameLog>,
     presents: Vec<Instant>,
     first_frame: Option<Duration>,
+    /// When the window side began (the drivers had started).
+    created: Instant,
 }
 
 impl App {
@@ -142,7 +144,7 @@ impl App {
         let present = start.elapsed().as_secs_f64() * 1000.0;
         self.presents.push(Instant::now());
         if self.first_frame.is_none() {
-            self.first_frame = Some(self.opts.startup + self.presents[0].elapsed().max(Duration::ZERO));
+            self.first_frame = Some(self.opts.startup + self.created.elapsed());
         }
         self.log.push(FrameLog { emulate, bus, compose, present });
         self.frames += 1;
@@ -277,7 +279,7 @@ impl App {
         let (i50, i99, imax) = spread(&mut intervals);
         println!("selftest: {} frames, {}x{}", self.log.len(), self.viewport.0, self.viewport.1);
         println!("selftest: emulation incl. bus p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms");
-        println!("selftest: bus round trips p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms");
+        println!("selftest: bus waits (summed over drivers) p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms");
         println!("selftest: composition p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms");
         println!("selftest: present (copy) p50 {p50:.3} ms, p99 {p99:.3} ms, max {pmax:.3} ms");
         println!("selftest: present interval p50 {i50:.3} ms, p99 {i99:.3} ms, max {imax:.3} ms");
@@ -394,6 +396,7 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         log: Vec::new(),
         presents: Vec::new(),
         first_frame: None,
+        created: Instant::now(),
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if app.opts.selftest.is_some() {
