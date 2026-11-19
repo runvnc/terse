@@ -117,7 +117,10 @@
  *   - Links (only terse: forms: a web address is ordinary text, also as
  *     the target of "[text](target)", which is then shown as written):
  *     terse:<blob ID> (an article),
- *     terse:feed/<key> (a feed) and terse:program/<key>/<name> (a
+ *     terse:feed/<key> (a feed; with "@" and one or two relay hints if
+ *     they follow and are valid, NETWORK 4.9: the run of letters, digits,
+ *     ".-:," and brackets after the "@", less ".,:" at its end, else the
+ *     link is the key alone) and terse:program/<key>/<name> (a
  *     program: the name percent-encoded, the bytes other than A-Z a-z 0-9
  *     - . _ ~ as %XX, either case; the name is the run of those characters
  *     and %XX triples, less any "." at its end, and must decode to a
@@ -125,7 +128,9 @@
  *     shortened to its first and last six digits, "terse:360793…dec189",
  *     a program link with its name decoded after them,
  *     "terse:program/360793…dec189/Sketch pad") or with text
- *     ("[text](target)", shown as the text). A link with text is found at
+ *     ("[text](target)", shown as the text; a feed link's hints are
+ *     shown after the short key, "terse:feed/360793…dec189@relay.example").
+ *     A link with text is found at
  *     the colon of its target, by looking back for "](" and its "["; so
  *     that a frame's share of building never ends inside one, it ends
  *     before a "[" on the current line. The first 512 links get anchors 1,
@@ -154,7 +159,8 @@
  *     request at a time, before the document is built), else the ID's
  *     short form; one larger than
  *     ART_CAP is not shown. A feed link opens the feed's page (name, keys,
- *     subscribed or not; S, U), from which Esc returns to the article.
+ *     the relays its hints name, subscribed or not; S, which passes the
+ *     hints on, U), from which Esc returns to the article.
  *     A program link asks the shell for the program.
  *   - Prefetch: the first 8 distinct article links of the article shown
  *     are got with one-byte gets as they are met while building (the host
@@ -192,8 +198,11 @@
  * Feeds: the subscriptions (op 03h: key and highest seq) with their
  * names, how many timeline entries each has (counted by reading the whole
  * timeline, one request a frame) and a "you" mark on the host's own feed
- * (op 08h). S opens the entry row for a feed key (typed or pasted;
- * whitespace is ignored; Enter subscribes, op 05h), U unsubscribes from
+ * (op 08h), and a mark on feeds the host follows through a relay their
+ * address's hints name (names flag 08h). S opens the entry row for a feed
+ * key or address (typed or pasted: "terse:feed/" optional, the key, then
+ * optionally "@" and hints; whitespace is ignored; Enter subscribes, op
+ * 05h with the hints), U unsubscribes from
  * the selected feed (op 06h), Enter opens its page. N types a nickname
  * for the selected feed (op 0Ch; empty removes it), P the user's public
  * name, then asks on the status row whether search may find it (Y/N; op
@@ -201,6 +210,9 @@
  * every view but the article) publishes a test article: put (02h),
  * publish (07h), identity again (08h) and, if the own feed is not
  * subscribed, subscribe to it, so that the article shows in the timeline.
+ * The help page shows the own feed address: the key, then the hints of
+ * op 08h (with a buffer), or says that without public relays only people
+ * on the same relay find the feed.
  * The host asks the user about each subscribe, unsubscribe, publish,
  * profile and nickname; the status row says what came of it.
  *
@@ -456,7 +468,7 @@ static uint16_t nm_at[NM_MAX], nm_n;
  * public name or a search (UTF-8; entry_n counts the bytes, also those
  * past ENTRY_CAP). The character of the key that opened the entry is
  * not typed if its text arrives by the next frame (entry_eat). */
-#define ENTRY_CAP 200
+#define ENTRY_CAP 240 /* a feed link with two hints is 237 */
 enum { E_OFF, E_KEY, E_NICK, E_NAME, E_SEARCH };
 static uint8_t entry, entry_buf[ENTRY_CAP];
 static uint16_t entry_n;
@@ -567,6 +579,12 @@ static const uint8_t rgb_match[3] = {100, 220, 220};
 
 /* The feed page: its key and the view it goes back to. */
 static uint8_t fp_key[32], fp_back;
+/* The hints of the feed page's address (from a link), and the own
+ * address's (op 08h). */
+static uint8_t fp_hints[CONTENT_MAX_HINTS], fp_hlen;
+static uint8_t own_hints[CONTENT_MAX_HINTS], own_hlen;
+/* The hints given with the subscribe in hand. */
+static uint8_t op_hints[CONTENT_MAX_HINTS], op_hlen;
 
 /* --- Lists ------------------------------------------------------------- */
 
@@ -881,17 +899,20 @@ static void tb_name(const uint8_t *p, uint8_t n)
  * the subscribed feeds, op 09h), else the name of its profile among the
  * search results; its length, 0 if none is known. *nick is set if it is
  * the user's nickname. */
+static uint8_t name_flags; /* the names record's flags of the last name_of, 0 if none */
 static const uint8_t *name_of(const uint8_t *key, uint8_t *len, uint8_t *nick)
 {
     int32_t lo = 0, hi = (int32_t)nm_n - 1, mid, c;
     uint8_t k, *r;
     *nick = 0;
+    name_flags = 0;
     while (lo <= hi) {
         mid = (lo + hi) >> 1;
         r = nm_buf + nm_at[mid];
         c = memcmp(r + 2, key, 32);
         if (!c) {
             *len = r[0] - 33;
+            name_flags = r[1];
             *nick = r[1] & NAME_NICKNAME;
             return r + 34;
         }
@@ -1294,8 +1315,143 @@ static uint8_t unreserved(uint8_t c)
     return is_alnum(c) || c == '-' || c == '.' || c == '_' || c == '~';
 }
 
+/* --- Feed addresses (NETWORK 4.9) ----------------------------------------- */
+
+static uint8_t is_digit(uint8_t c);
+
+/* Whether the n bytes at p are a decimal number up to hi, without leading
+ * zeros ("0" itself is one). */
+static uint8_t dec_ok(const uint8_t *p, uint32_t n, uint32_t hi)
+{
+    uint32_t v = 0, k;
+    if (!n || n > 5 || (n > 1 && p[0] == '0'))
+        return 0;
+    for (k = 0; k < n; k++) {
+        if (!is_digit(p[k]))
+            return 0;
+        v = v * 10 + p[k] - '0';
+    }
+    return v <= hi;
+}
+
+/* A host name (labels of 1-63 letters, digits and "-", not starting or
+ * ending with "-", the last holding a letter) or an IPv4 address. */
+static uint8_t host_ok(const uint8_t *p, uint32_t n)
+{
+    uint32_t k, s = 0, labels = 0;
+    uint8_t letter = 0, ip = 1;
+    for (k = 0; k <= n; k++) {
+        if (k < n && p[k] != '.') {
+            if (!is_alnum(p[k]) && p[k] != '-')
+                return 0;
+            letter |= !is_digit(p[k]) && p[k] != '-';
+            continue;
+        }
+        if (k == s || k - s > 63 || p[s] == '-' || p[k - 1] == '-')
+            return 0;
+        ip &= dec_ok(p + s, k - s, 255);
+        labels++;
+        if (k < n)
+            letter = 0;
+        s = k + 1;
+    }
+    return letter || (ip && labels == 4);
+}
+
+/* The groups (1-4 hex digits, separated by ":") in the n bytes at p, -1 if
+ * malformed. */
+static int32_t v6_groups(const uint8_t *p, uint32_t n)
+{
+    uint32_t k, s = 0, g = 0;
+    if (!n)
+        return 0;
+    for (k = 0; k <= n; k++) {
+        if (k < n && p[k] != ':') {
+            if (hex_value(p[k]) > 15)
+                return -1;
+            continue;
+        }
+        if (k == s || k - s > 4)
+            return -1;
+        g++;
+        s = k + 1;
+    }
+    return g;
+}
+
+/* An IPv6 address: 8 groups, or fewer and one "::" for the rest. */
+static uint8_t v6_ok(const uint8_t *p, uint32_t n)
+{
+    uint32_t at = 0;
+    int32_t a, b;
+    while (at + 1 < n && (p[at] != ':' || p[at + 1] != ':'))
+        at++;
+    if (at + 1 >= n)
+        return v6_groups(p, n) == 8;
+    a = v6_groups(p, at);
+    b = v6_groups(p + at + 2, n - at - 2);
+    return a >= 0 && b >= 0 && a + b <= 7;
+}
+
+/* A hint: host[:port] or [IPv6][:port], at most 80 bytes; the port 1-65535. */
+static uint8_t hint_ok(const uint8_t *p, uint32_t n)
+{
+    uint32_t k = 0;
+    if (!n || n > 80)
+        return 0;
+    if (p[0] == '[') {
+        for (k = 1; k < n && p[k] != ']'; k++)
+            ;
+        if (k == n || !v6_ok(p + 1, k - 1))
+            return 0;
+        k++;
+    } else {
+        while (k < n && p[k] != ':')
+            k++;
+        if (!host_ok(p, k))
+            return 0;
+    }
+    return k == n || (p[k] == ':' && k + 1 < n && p[k + 1] != '0' && dec_ok(p + k + 1, n - k - 1, 65535));
+}
+
+/* A hint list: one or two hints separated by ",". */
+static uint8_t hints_ok(const uint8_t *p, uint32_t n)
+{
+    uint32_t k = 0;
+    if (n > CONTENT_MAX_HINTS)
+        return 0;
+    while (k < n && p[k] != ',')
+        k++;
+    return hint_ok(p, k) && (k == n || hint_ok(p + k + 1, n - k - 1));
+}
+
+/* The hints of a feed link, after its "@" at art[i - 1] (ARTICLE.md 4.1):
+ * the run of letters, digits, ".", "-", ":", "," and brackets (a "]" only
+ * after a "["), less every ".", "," and ":" at its end, if that is a hint
+ * list; its length, 0 if not (the link is then the key alone). */
+static uint32_t art_hints(uint32_t i, uint32_t end)
+{
+    uint32_t k = i;
+    uint8_t open = 0, c;
+    while (k < end) {
+        c = art[k];
+        if (c == '[')
+            open = 1;
+        else if (c == ']' && open)
+            open = 0;
+        else if (!is_alnum(c) && c != '.' && c != '-' && c != ':' && c != ',')
+            break;
+        k++;
+    }
+    spend((k - i) * W_EMIT);
+    while (k > i && (art[k - 1] == '.' || art[k - 1] == ',' || art[k - 1] == ':'))
+        k--;
+    return hints_ok(art + i, k - i) ? k - i : 0;
+}
+
 /* The length of the terse: link at art[i] (a 't'), 0 if none, and its
- * kind; the block ends at `end`. */
+ * kind; the block ends at `end`. A feed link takes the hints of its
+ * address, if valid. */
 static uint32_t terse_length(uint32_t i, uint32_t end, uint8_t *kind)
 {
     uint32_t s, k;
@@ -1309,6 +1465,8 @@ static uint32_t terse_length(uint32_t i, uint32_t end, uint8_t *kind)
     }
     if (end - i >= 75 && !memcmp(art + i + 6, "feed/", 5) && hex64_at(i + 11, end)) {
         *kind = LK_FEED;
+        if (end - i > 76 && art[i + 75] == '@' && (s = art_hints(i + 76, end)))
+            return 76 + s;
         return 75;
     }
     /* A program: the name is the run of unreserved characters and %XX
@@ -1353,7 +1511,8 @@ static void prefetch_add(const uint8_t *id);
  * link is also queued for prefetching. */
 static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show, uint32_t n, uint32_t next)
 {
-    uint8_t sb[11 + 6 + 3 + 6], anchored = links < MAX_LINKS, name[48];
+    uint8_t sb[11 + 6 + 3 + 6 + 1 + CONTENT_MAX_HINTS], anchored = links < MAX_LINKS, name[48];
+    uint32_t key_end = kind == LK_FEED ? 75 : 70;
     b_text = next;
     spend(W_LINK + (next - i) * W_EMIT);
     if (doc_overflow)
@@ -1377,13 +1536,15 @@ static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show
             show = (const uint8_t *)tb;
             n = tb_n;
         } else {
-            /* "terse:" or "terse:feed/", six digits, "…", six digits. */
-            n = len - 58;
+            /* "terse:" or "terse:feed/", six digits, "…", six digits, and
+             * a feed address's "@" and hints. */
+            n = key_end - 58;
             memcpy(sb, art + i, n);
             memcpy(sb + n, "\xE2\x80\xA6", 3);
-            memcpy(sb + n + 3, art + i + len - 6, 6);
+            memcpy(sb + n + 3, art + i + key_end - 6, 6);
+            memcpy(sb + n + 9, art + i + key_end, len - key_end);
             show = sb;
-            n += 9;
+            n += 9 + len - key_end;
         }
     }
     if (anchored) {
@@ -3141,7 +3302,7 @@ static void feeds_doc(void)
         slot_begin(rgb_entry, 0, 0);
         doc_s("No subscriptions yet");
         slot_meta(rgb_meta);
-        doc_s("Press S to subscribe to a feed by its key, or T to publish a test article");
+        doc_s("Press S to subscribe to a feed by its key or address, or T to publish a test article");
         slots++;
     }
     end = fdp.top + vis() + 1;
@@ -3170,6 +3331,8 @@ static void feeds_doc(void)
         tb_n = 0;
         if (nick)
             tb_s("your nickname  \xC2\xB7  ");
+        if (name_flags & NAME_HINTED)
+            tb_s("@ through a relay its address names  \xC2\xB7  ");
         seq = get32(r + 32);
         if (seq) {
             tb_s("highest #");
@@ -4050,6 +4213,32 @@ static void feed_doc(void)
         tb_s(g == 3 ? "\n" : g == 7 ? "" : " ");
     }
     doc_text(tb, tb_n);
+    if (fp_hlen) {
+        /* The relays the link's address names, one a line. */
+        doc_paragraph(DOC_START, 0, 10, 0);
+        doc_font(DOC_SANS, 0);
+        doc_rgb(rgb_body);
+        doc_s("Relays its address names:");
+        doc_paragraph(DOC_START, 12, 6, DOC_NOWRAP);
+        doc_font(DOC_MONO, 0);
+        doc_rgb(rgb_key);
+        tb_n = 0;
+        for (g = 0; g < fp_hlen; g++)
+            if (fp_hints[g] == ',')
+                tb_s("\n");
+            else
+                tb_bytes(fp_hints + g, 1);
+        doc_text(tb, tb_n);
+        doc_paragraph(DOC_START, 0, 6, 0);
+        doc_font(DOC_SANS, 0);
+        doc_size(13);
+        doc_rgb(rgb_meta);
+        doc_s(k >= 0 ? "Subscribing from here passes these on: your host looks for the feed there if your relays do not "
+                       "hold it."
+                     : "If you subscribe and your relays do not hold this feed, your host connects to these relays to get "
+                       "it (the host asks you first). Nothing is fetched from them before that.");
+        doc_size(BODY_SIZE);
+    }
     doc_paragraph(DOC_START, 0, 14, 0);
     doc_font(DOC_SANS, DOC_BOLD);
     if (own_known && !memcmp(fp_key, own_key, 32)) {
@@ -4076,6 +4265,7 @@ static void feed_page(const uint8_t *key, uint8_t back)
 {
     memcpy(fp_key, key, 32);
     fp_back = back;
+    fp_hlen = 0;
     show(FEED);
     page_dirty = 1;
 }
@@ -4123,7 +4313,8 @@ static const char *const help_keys[] = {
     0, "Feeds",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel, click", "select a feed",
     "Enter", "the feed's page",
-    "S", "subscribe: type or paste a feed key, then Enter (Esc cancels)",
+    "S", "subscribe: type or paste a feed key or address (key@relay, or a terse:feed/ link), then Enter (Esc "
+         "cancels)",
     "U", "unsubscribe from the selected feed",
     "N", "a nickname for the selected feed, which only you see (empty removes it)",
     "P", "your public name, shown beside your key; you choose whether search may find it",
@@ -4155,13 +4346,14 @@ static void help_doc(void)
     doc_size(24);
     doc_rgb(rgb_title);
     doc_s("Help");
-    help_head("Your feed key");
+    help_head("Your feed address");
     doc_font(DOC_SANS, 0);
     doc_size(BODY_SIZE);
     doc_rgb(rgb_body);
     if (own_known) {
-        /* Two lines of four groups of eight hex digits; a key pasted into
-         * the subscribe entry may hold spaces and line breaks. */
+        /* Two lines of four groups of eight hex digits, then "@" and the
+         * hints, one a line (NETWORK 4.9); an address pasted into the
+         * subscribe entry may hold spaces and line breaks. */
         doc_paragraph(DOC_START, 12, 8, DOC_NOWRAP);
         doc_font(DOC_MONO, 0);
         doc_rgb(rgb_key);
@@ -4170,12 +4362,25 @@ static void help_doc(void)
             tb_hex(own_key + g * 4, 4);
             tb_s(g == 3 ? "\n" : g == 7 ? "" : " ");
         }
+        for (g = 0; g < own_hlen; g++) {
+            if (!g || own_hints[g] == ',')
+                tb_s(g ? ",\n" : "\n@");
+            if (own_hints[g] != ',')
+                tb_bytes(own_hints + g, 1);
+        }
         doc_text(tb, tb_n);
         doc_paragraph(DOC_START, 0, 8, 0);
         doc_font(DOC_SANS, 0);
         doc_size(13);
         doc_rgb(rgb_meta);
-        doc_s("Others subscribe to your feed with this key: in this reader, F, then S, then paste it.");
+        if (own_hlen)
+            doc_s("Others subscribe to your feed with this address: in this reader, F, then S, then type or paste "
+                  "it. The part after the @ names your public relays, so that readers who use other relays find "
+                  "your feed too.");
+        else
+            doc_s("Others subscribe to your feed with this key: in this reader, F, then S, then type or paste it. "
+                  "None of your relays is public, so your address has no relay after an @: only people who use the "
+                  "same relay as you will find your feed.");
     } else {
         doc_paragraph(DOC_START, 0, 6, 0);
         doc_s("This host has no feed key yet. Press T to publish a test article: that creates one.");
@@ -4746,6 +4951,11 @@ static void follow(uint16_t id)
     case LK_FEED:
         unhex(t + 11, target);
         feed_page(target, ARTICLE);
+        /* The address's hints, after the "@". */
+        if (link_len[id - 1] > 76) {
+            fp_hlen = link_len[id - 1] - 76;
+            memcpy(fp_hints, t + 76, fp_hlen);
+        }
         break;
     case LK_PROGRAM:
         open_req[0] = OPEN_PROGRAM;
@@ -4906,6 +5116,14 @@ static uint8_t op_busy(void)
     return 1;
 }
 
+/* Subscribes to (with the hints in op_hints) or unsubscribes from op_key. */
+static uint32_t content_subscribe_op(uint8_t op)
+{
+    if (op == CONTENT_SUBSCRIBE)
+        return content_subscribe(&op_req, op_key, op_hints, op_hlen);
+    return content_follow(&op_req, op, op_key);
+}
+
 static void say_key(const char *before, const uint8_t *key, const char *after, uint8_t fg)
 {
     tb_n = 0;
@@ -5015,11 +5233,12 @@ static void op_done(uint8_t st)
         published();
         say(C_OK);
         /* Publishing creates the identity if there was none. */
-        op_start(OP_IDENT, content_identity(&op_req));
+        op_start(OP_IDENT, content_identity_hints(&op_req, own_hints, sizeof own_hints));
         break;
     case OP_IDENT:
         if (st == STATUS_DONE) {
             memcpy(own_key, op_req.id, 32);
+            own_hlen = op_req.length;
             own_known = 1;
             page_dirty = 1;
             if (subs_loaded && find_sub(own_key) < 0) {
@@ -5070,7 +5289,7 @@ static void op_done(uint8_t st)
             say(C_OK);
             /* Setting a profile creates the identity if there was none. */
             if (!id_handle)
-                id_handle = content_identity(&id_req);
+                id_handle = content_identity_hints(&id_req, own_hints, sizeof own_hints);
             reload();
         } else {
             tb_s(st == STATUS_REFUSED ? "Setting your public name was refused" : "Setting your public name failed");
@@ -5191,33 +5410,48 @@ static void entry_back(void)
     dirty[ENTRY_ROW] = 1;
 }
 
+/* Enter on a feed key or address (NETWORK 4.9), typed or pasted, blanks
+ * left out: "terse:feed/" optional, 64 hex digits (either case), then
+ * optionally "@" and a hint list. */
 static void entry_submit_key(void)
 {
-    uint8_t key[32];
-    uint16_t i, n = entry_n < ENTRY_CAP ? entry_n : ENTRY_CAP;
+    uint8_t key[32], *p = entry_buf;
+    uint16_t i, n = entry_n < ENTRY_CAP ? entry_n : ENTRY_CAP, at, hn = 0;
     tb_n = 0;
     if (!entry_n) {
-        tb_s("Type or paste a feed key (64 hex digits), or Esc to cancel");
+        tb_s("Type or paste a feed key or address (key@relay), or Esc to cancel");
         say(C_ERROR);
         return;
     }
-    for (i = 0; i < n; i++)
-        if (hex_value(entry_buf[i]) > 15)
+    if (n >= 11 && !memcmp(p, "terse:feed/", 11))
+        p += 11, n -= 11;
+    for (at = 0; at < n && p[at] != '@'; at++)
+        ;
+    for (i = 0; i < at; i++)
+        if (hex_value(p[i]) > 15)
             break;
-    if (i < n) {
+    if (i < at) {
         tb_s("Not a feed key: a key has only the hex digits 0-9 and a-f");
         say(C_ERROR);
         return;
     }
-    if (entry_n != 64) {
+    if (at != 64) {
         tb_s("Not a feed key: ");
-        tb_u(entry_n);
+        tb_u(at);
         tb_s(" hex digits, but a key has 64");
         say(C_ERROR);
         return;
     }
+    if (at < n) {
+        hn = n - at - 1;
+        if (entry_n > ENTRY_CAP || !hints_ok(p + at + 1, hn)) {
+            tb_s("Not a feed address: after @ give one or two relays, host or host:port");
+            say(C_ERROR);
+            return;
+        }
+    }
     for (i = 0; i < 32; i++)
-        key[i] = hex_value(entry_buf[2 * i]) << 4 | hex_value(entry_buf[2 * i + 1]);
+        key[i] = hex_value(p[2 * i]) << 4 | hex_value(p[2 * i + 1]);
     if (find_sub(key) >= 0) {
         entry_show(0);
         say_key("Already subscribed to ", key, "", C_INFO);
@@ -5227,8 +5461,12 @@ static void entry_submit_key(void)
         return;
     entry_show(0);
     memcpy(op_key, key, 32);
-    op_start(OP_SUB, content_follow(&op_req, CONTENT_SUBSCRIBE, op_key));
-    say_key("Subscribing to ", key, "\xE2\x80\xA6 (the host asks you)", C_INFO);
+    op_hlen = hn;
+    memcpy(op_hints, p + 65, hn);
+    op_start(OP_SUB, content_subscribe_op(CONTENT_SUBSCRIBE));
+    say_key("Subscribing to ", key, hn ? "\xE2\x80\xA6 with the relays its address names (the host asks you)"
+                                       : "\xE2\x80\xA6 (the host asks you)",
+            C_INFO);
 }
 
 /* The code point of the UTF-8 sequence at p (valid: typed text). */
@@ -5460,9 +5698,9 @@ static void draw_entry_row(void)
     }
     row_start(ENTRY_ROW, C_TEXT, C_ENTRY_BG);
     if (entry == E_KEY) {
-        puts_(" Feed key: ");
-        if (n > COLS - 13) {
-            from = n - (COLS - 14);
+        puts_(" Address: ");
+        if (n > COLS - 12) {
+            from = n - (COLS - 13);
             ink(C_DIM);
             put1(0x2026);
             ink(C_TEXT);
@@ -5506,6 +5744,7 @@ static void link_status(void)
         tb_n = 0;
         tb_s("terse:feed/");
         tb_key(key);
+        tb_bytes(t + 75, n - 75); /* "@" and the hints, if any */
         tb_s("  (a feed)   Enter: open");
     } else if (link_kind[id - 1] == LK_PROGRAM) {
         uint8_t key[32], name[48];
@@ -5541,7 +5780,7 @@ static void draw_status(void)
         ink(msg_fg);
         put_title((const uint8_t *)msg, msg_n, COLS - 2);
     } else if (entry == E_KEY) {
-        puts_(" Type or paste a feed key   Enter: subscribe   Esc: cancel");
+        puts_(" Type or paste it (a key, or key@relay)   Enter: subscribe   Esc: cancel");
     } else if (entry == E_NICK) {
         puts_(" Type a nickname (only you see it; empty removes it)   Enter: set   Esc: cancel");
     } else if (entry == E_NAME) {
@@ -5668,7 +5907,9 @@ static void feed_follow(uint8_t op)
     if (op_busy())
         return;
     memcpy(op_key, fp_key, 32);
-    op_start(op == CONTENT_SUBSCRIBE ? OP_SUB : OP_UNSUB, content_follow(&op_req, op, op_key));
+    op_hlen = op == CONTENT_SUBSCRIBE ? fp_hlen : 0;
+    memcpy(op_hints, fp_hints, op_hlen);
+    op_start(op == CONTENT_SUBSCRIBE ? OP_SUB : OP_UNSUB, content_subscribe_op(op));
     say_key(op == CONTENT_SUBSCRIBE ? "Subscribing to " : "Unsubscribing from ", op_key, "\xE2\x80\xA6 (the host asks you)",
             C_INFO);
 }
@@ -5912,6 +6153,7 @@ static uint8_t handle_events(void)
                 id_handle = 0;
                 if (ev.b == STATUS_DONE) {
                     memcpy(own_key, id_req.id, 32);
+                    own_hlen = id_req.length;
                     own_known = 1;
                     page_dirty = 1;
                 }
@@ -5974,7 +6216,7 @@ int main(void)
     load_subscriptions();
     load_names();
     load_timeline(0);
-    id_handle = content_identity(&id_req);
+    id_handle = content_identity_hints(&id_req, own_hints, sizeof own_hints);
     dirty[STATUS_ROW] = 1;
     /* Started with a blob (by the shell): it is shown as an article, and
      * Esc goes to the timeline. */

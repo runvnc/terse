@@ -1,0 +1,50 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
+-- page: height 1369, scroll 0 (stored 0), region 64 0 512 464 --
+   16  30     0   sans24b |Help
+   62  22     0   sans17b |Your feed address
+   92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
+  111  19    12   mono15 |afc8ad82 c8839b76 44359b9e ba9a4b3a
+  130  19    12   mono15 |@relay.example,
+  149  19    12   mono15 |[2001:db8::7]:9000
+  176  17     0   sans13 |Others subscribe to your feed with this address: in this reader, F, then S,
+  193  17     0   sans13 |then type or paste it. The part after the @ names your public relays, so that
+  210  17     0   sans13 |readers who use other relays find your feed too.
+  243  22     0   sans17b |Timeline
+  269  18    12   sans14b |↑ ↓  PgUp PgDn  Home End  wheel   move the selection
+  291  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell
+  309  18    12   sans14 |to open
+  331  18    12   sans14b |/   search
+  353  18    12   sans14b |F   feeds
+  375  18    12   sans14b |? or F1   this help
+  397  18    12   sans14b |T   publish a test article
+  419  18    12   sans14b |M   the Terse manual
+  441  18    12   sans14b |Esc   quit

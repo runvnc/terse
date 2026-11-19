@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terse_net::entry::{self, MAX_TITLE};
 use terse_net::identity::valid_feed_key;
+use terse_net::address::parse_address;
 use terse_net::profile::{self, Nicknames};
 use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use terse_net::{
@@ -102,6 +103,7 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
         "publish" => publish(rest),
         "subscribe" | "unsubscribe" => subscribe(rest, command == "subscribe"),
         "subscriptions" => subscriptions(rest),
+        "address" => address(rest),
         "sync" => sync(rest),
         "list" => list(rest),
         "programs" => programs(rest),
@@ -326,17 +328,66 @@ fn programs(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `terse feed subscribe|unsubscribe <address>`: a feed key, or an address
+/// with hints (NETWORK 4.9), also as a `terse:feed/` link. The hints are
+/// remembered with the subscription (replacing earlier ones).
 fn subscribe(args: &[String], add: bool) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     known(&args, &[])?;
-    let key = parse_feed_key(args.one_positional()?)?;
+    let text = args.one_positional()?;
+    let address = parse_address(text).map_err(|e| format!("{}: {e}", printable(text.trim(), false)))?;
+    let key = address.key;
     let mut subs = load_subscriptions(&args)?;
     let changed = if add { subs.add(key) } else { subs.remove(&key) }.map_err(|e| e.to_string())?;
+    let hinted = add && !address.hints.is_empty();
+    let new_hints = hinted && subs.set_hints(&key, Some(&address.hints)).map_err(|e| e.to_string())?;
     match (add, changed) {
         (true, true) => println!("subscribed to {}", to_hex(&key)),
+        (true, false) if new_hints => println!("already subscribed to {}; its hints are now {}", to_hex(&key), address.hints),
         (true, false) => println!("already subscribed to {}", to_hex(&key)),
         (false, true) => println!("unsubscribed from {}", to_hex(&key)),
         (false, false) => return Err(format!("not subscribed to {}", to_hex(&key))),
+    }
+    if hinted {
+        let hints = address.hint_list();
+        let shown: Vec<String> = hints.iter().map(|h| h.to_string()).collect();
+        println!("if your relays do not hold it, it is looked for on {}", shown.join(" and "));
+        for h in &hints {
+            if !profile::usable_profile_relay(&h.url()) {
+                eprintln!("terse: {h} is a loopback, private or link-local address: that hint will not be used (NETWORK 5.1)");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `terse feed address`: the user's own feed address (NETWORK 4.9), with
+/// hints from the profile's relay lines, then the relays in use (the
+/// --relay options, else the relay list), public ones only.
+fn address(args: &[String]) -> Result<ExitCode, String> {
+    let args = Args::parse(args, &[])?;
+    known(&args, &[])?;
+    if !args.positional.is_empty() {
+        return Err(USAGE.into());
+    }
+    let identity = load_identity(&args)?;
+    let relays = relay_urls(&args, false)?;
+    let relays = if relays.is_empty() {
+        terse_net::local::read_relays(&config_dir(&args)?)?.map(|(l, _)| l).unwrap_or_default()
+    } else {
+        relays
+    };
+    let mut node = open_node(&args, &relays)?;
+    node.set_identity(identity);
+    let hints = terse_net::address::hint_text(&node.own_hints());
+    let key = to_hex(&node.identity_key().unwrap());
+    if hints.is_empty() {
+        println!("{key}");
+        eprintln!(
+            "terse: no public relay in your profile or relay list, so your address has no hints: only people who use the same relay as you will find your feed"
+        );
+    } else {
+        println!("{key}@{hints}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -352,7 +403,15 @@ fn subscriptions(args: &[String]) -> Result<ExitCode, String> {
         let seqs = node.feed_store().seqs(key).map_err(|e| e.to_string())?;
         let latest = seqs.last().map_or("-".into(), |s| format!("#{s}"));
         let name = name_of(&node, key).map_or(String::new(), |n| format!("{n}  "));
-        println!("{}  {name}{} entries held, latest {latest}", to_hex(key), seqs.len());
+        // NETWORK 4.9: the hints, unless the profile's relay lines replace them.
+        let hints = match node.subscriptions().hints(key) {
+            None => String::new(),
+            Some(h) if node.profile(key).and_then(|(_, d)| d).is_some_and(|d| !d.relays.is_empty()) => {
+                format!("  hints {h} (not used: the profile names relays)")
+            }
+            Some(h) => format!("  hints {h}"),
+        };
+        println!("{}  {name}{} entries held, latest {latest}{hints}", to_hex(key), seqs.len());
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -433,7 +492,30 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
     if node.subscriptions().is_empty() {
         return Err("no subscriptions (add one with `terse feed subscribe <key>`)".into());
     }
+    let subscribed: Vec<FeedKey> = node.subscriptions().feeds().copied().collect();
+    let hinted: Vec<FeedKey> = node.subscriptions().hinted().map(|(k, _)| *k).collect();
+    let feed_relays = !args.has("--no-feed-relays");
+    let store_dir = node.store().dir().to_path_buf();
     let mut service = ContentService::start(node);
+    // NETWORK 4.9: say which feeds no relay held, after a sync.
+    let report = || {
+        let feeds = terse_net::FeedStore::beside_blobs(&store_dir);
+        for key in &subscribed {
+            if feeds.highest(key).unwrap_or(0) > 0 {
+                continue;
+            }
+            if hinted.contains(key) && feed_relays {
+                eprintln!("terse: {}: not found on your relays nor on the relays its address names", to_hex(key));
+            } else if hinted.contains(key) {
+                eprintln!("terse: {}: not found on your relays (its hints are not used with --no-feed-relays)", to_hex(key));
+            } else {
+                eprintln!(
+                    "terse: {}: not found on your relays; if its author publishes elsewhere, subscribe with the feed's address (<key>@<relay>)",
+                    to_hex(key)
+                );
+            }
+        }
+    };
     let deadline = Instant::now() + SYNC_DEADLINE;
     let mut lost = false;
     loop {
@@ -450,7 +532,10 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
                 println!("{}  (downloaded)", entry_line(&entry, Some(article), None));
             }
             // Every feed caught up and every download done.
-            FeedEvent::Settled if !watch => return Ok(ExitCode::SUCCESS),
+            FeedEvent::Settled if !watch => {
+                report();
+                return Ok(ExitCode::SUCCESS);
+            }
             FeedEvent::Settled | FeedEvent::Busy => {}
             FeedEvent::Connected(url) => {
                 if lost {

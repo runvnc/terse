@@ -18,8 +18,9 @@ use std::fmt::Write as _;
 pub enum Target {
     /// An article, by blob ID.
     Article([u8; 32]),
-    /// A feed, by key.
-    Feed([u8; 32]),
+    /// A feed, by key, and the hint list of its address (NETWORK.md 4.9)
+    /// as written, or empty.
+    Feed([u8; 32], String),
     /// A program: the publisher's feed key and the decoded name (a display
     /// name, so valid UTF-8).
     Program([u8; 32], String),
@@ -213,7 +214,19 @@ fn bare_link(line: &[u8], at: usize) -> Option<(usize, Target)> {
     }
     if let Some(r) = s.strip_prefix(b"feed/") {
         let key = hex64(r)?;
-        return not_followed(&r[64..]).then_some((11 + 64, Target::Feed(key)));
+        if !not_followed(&r[64..]) {
+            return None;
+        }
+        // ARTICLE.md 4.1: the hints after an `@`, if they are a valid
+        // hint list once `.`, `,` and `:` at their end are left out; else
+        // the link is the key alone.
+        let n = match r[64..].strip_prefix(b"@") {
+            Some(after) => terse_core::hints::article_hints(after),
+            None => 0,
+        };
+        let hints = if n == 0 { String::new() } else { String::from_utf8(r[65..65 + n].to_vec()).unwrap() };
+        let len = if n == 0 { 11 + 64 } else { 11 + 64 + 1 + n };
+        return Some((len, Target::Feed(key, hints)));
     }
     let r = s.strip_prefix(b"program/")?;
     let key = hex64(r)?;
@@ -955,7 +968,8 @@ pub fn quote(s: &str) -> String {
 fn target(t: &Target) -> String {
     match t {
         Target::Article(id) => format!("article {}", hex(id)),
-        Target::Feed(k) => format!("feed {}", hex(k)),
+        Target::Feed(k, h) if h.is_empty() => format!("feed {}", hex(k)),
+        Target::Feed(k, h) => format!("feed {} @{h}", hex(k)),
         Target::Program(k, name) => format!("program {} {}", hex(k), quote(name)),
     }
 }

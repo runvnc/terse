@@ -85,6 +85,10 @@ pub const NAME_NICKNAME: u8 = 0x01;
 pub const NAME_PROFILE: u8 = 0x02;
 /// Names record flag: the feed is not subscribed (listed for its nickname).
 pub const NAME_UNSUBSCRIBED: u8 = 0x04;
+/// Names record flag: the host follows the feed through a relay named by
+/// a hint of its address (NETWORK.md 4.9), since none of its own relays
+/// holds it.
+pub const NAME_HINTED: u8 = 0x08;
 /// Find scopes (`offset` of a find request).
 pub const FIND_FEEDS: u8 = 1;
 pub const FIND_ENTRIES: u8 = 2;
@@ -174,7 +178,9 @@ pub enum RequestKind {
     /// Timeline records from index `offset`, at most `length` bytes (SPEC 9.5).
     Timeline { offset: u32, length: u16 },
     /// Subscribe to the feed `feed`; needs the user's consent (SPEC 9.5).
-    Subscribe { feed: [u8; 32] },
+    /// `hints`: the hint list of its address (NETWORK.md 4.9), copied at
+    /// submit and valid; empty if none was given.
+    Subscribe { feed: [u8; 32], hints: Vec<u8> },
     /// Unsubscribe from the feed `feed`; needs the user's consent.
     Unsubscribe { feed: [u8; 32] },
     /// Publish blob `blob` as the next entry of the host's own feed, with
@@ -242,7 +248,13 @@ pub enum Outcome {
     /// `size`.
     Published { seq: u32 },
     /// An identity request succeeded: the host's feed key, written to `id`.
+    /// The host has no hints for its own address (or gives none).
     Identity { key: [u8; 32] },
+    /// An identity request succeeded: the host's feed key and the hint
+    /// list of its own feed address (NETWORK.md 4.9; 1 to 161 bytes, valid),
+    /// of which the device writes the whole hints that fit in the
+    /// program's buffer, if it gave one (SPEC 9.5).
+    IdentityHints { key: [u8; 32], hints: Vec<u8> },
     NotFound,
     Failed,
     /// The user (or the host) did not allow a subscribe, unsubscribe,
@@ -267,12 +279,13 @@ enum Pending {
     Named { op: u8, name: [u8; 32], offset: u32, length: u16, addr: u32, size: u32 },
     /// The query's length is kept for the state record only.
     Find { scope: u8, length: u16, addr: u32, query_len: u8 },
-    /// Subscribe, unsubscribe, publish, identity, set profile and set
-    /// nickname: the `id` read at submit (zero for identity and set
-    /// profile), set profile's listed bit or a publish's kind as given
-    /// (`offset`) and the length of a publish's
-    /// title or the name.
+    /// Subscribe, unsubscribe, publish, set profile and set nickname: the
+    /// `id` read at submit (zero for set profile), set profile's listed bit
+    /// or a publish's kind as given (`offset`) and the length of a
+    /// publish's title, the name or a subscribe's hints.
     Feed { op: u8, id: [u8; 32], offset: u8, len: u8 },
+    /// Identity: the buffer for the own address's hints (`length` 0: none).
+    Identity { length: u16, addr: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,6 +302,18 @@ pub struct Content {
     /// Restored with pending requests that no host will answer: they fail
     /// in the next frame (not machine state).
     orphaned: bool,
+}
+
+/// How many bytes of a hint list are its whole hints that fit in `room`
+/// bytes (SPEC 9.5, identity): all of it, or the first hint, or none.
+pub fn hints_that_fit(hints: &[u8], room: usize) -> usize {
+    if hints.len() <= room {
+        return hints.len();
+    }
+    match hints.iter().position(|&b| b == b',') {
+        Some(first) if first <= room => first,
+        _ => 0,
+    }
 }
 
 /// Whether `data` can be the answer to a subscriptions, timeline, names or
@@ -313,7 +338,9 @@ pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) ->
         let Some(&flags) = data.get(at + 1) else { return false };
         if op == OP_NAMES {
             // L counts the flags byte, the key and the name.
-            if !(1 + NAMES_HEAD..=1 + NAMES_HEAD + MAX_NAME).contains(&l) || flags & !(NAME_NICKNAME | NAME_PROFILE | NAME_UNSUBSCRIBED) != 0 {
+            if !(1 + NAMES_HEAD..=1 + NAMES_HEAD + MAX_NAME).contains(&l)
+                || flags & !(NAME_NICKNAME | NAME_PROFILE | NAME_UNSUBSCRIBED | NAME_HINTED) != 0
+            {
                 return false;
             }
         } else {
@@ -369,15 +396,23 @@ impl Content {
             // accepted, after step 3.
             OP_PUT => ((1..=MAX_BLOB as u32).contains(&size) && readable(rom, ram, addr, size as usize).is_some())
                 .then(|| (Pending::Put { id: [0; 32], size }, RequestKind::Put { data: Vec::new() })),
-            OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_IDENTITY => {
-                let id: [u8; 32] = if b[OP] == OP_IDENTITY { [0; 32] } else { b[ID..ID + 32].try_into().unwrap() };
-                let kind = match b[OP] {
-                    OP_SUBSCRIBE => RequestKind::Subscribe { feed: id },
-                    OP_UNSUBSCRIBE => RequestKind::Unsubscribe { feed: id },
-                    _ => RequestKind::Identity,
-                };
-                Some((Pending::Feed { op: b[OP], id, offset: 0, len: 0 }, kind))
+            OP_UNSUBSCRIBE => {
+                let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
+                Some((Pending::Feed { op: OP_UNSUBSCRIBE, id, offset: 0, len: 0 }, RequestKind::Unsubscribe { feed: id }))
             }
+            // SPEC 9.5: the hints, if any, are a valid hint list of at most
+            // 161 bytes in ROM or RAM, copied after step 3.
+            OP_SUBSCRIBE => (length == 0
+                || (length as usize <= crate::hints::MAX_HINT_LIST
+                    && readable(rom, ram, addr, length as usize).is_some_and(|h| crate::hints::parse_hints(h).is_ok())))
+            .then(|| {
+                let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
+                (Pending::Feed { op: OP_SUBSCRIBE, id, offset: 0, len: length as u8 }, RequestKind::Subscribe { feed: id, hints: Vec::new() })
+            }),
+            // SPEC 9.5: a buffer for the own address's hints, if `length`
+            // is not 0.
+            OP_IDENTITY => (length == 0 || ((1..=MAX_GET_LENGTH as u32).contains(&length) && in_ram(length as usize)))
+                .then(|| (Pending::Identity { length: length as u16, addr: if length == 0 { 0 } else { addr } }, RequestKind::Identity)),
             // The title is copied (and charged) only once the request is
             // accepted, after step 3.
             // SPEC 9.5: the kind is 0 or 1 (article) or 4 (document).
@@ -443,7 +478,10 @@ impl Content {
             *id = *blake3::hash(data).as_bytes();
         }
         match &mut kind {
-            RequestKind::Publish { title: bytes, .. } | RequestKind::SetProfile { name: bytes, .. } | RequestKind::SetNickname { name: bytes, .. } => {
+            RequestKind::Publish { title: bytes, .. }
+            | RequestKind::SetProfile { name: bytes, .. }
+            | RequestKind::SetNickname { name: bytes, .. }
+            | RequestKind::Subscribe { hints: bytes, .. } => {
                 *bytes = readable(rom, ram, addr, length as usize).unwrap().to_vec();
             }
             RequestKind::Find { query, .. } => *query = readable(rom, ram, addr, size as usize).unwrap().to_vec(),
@@ -460,6 +498,7 @@ impl Content {
             RequestKind::Publish { title: bytes, .. }
             | RequestKind::SetProfile { name: bytes, .. }
             | RequestKind::SetNickname { name: bytes, .. }
+            | RequestKind::Subscribe { hints: bytes, .. }
             | RequestKind::Find { query: bytes, .. } => bytes.len(),
             _ => 0,
         };
@@ -564,8 +603,26 @@ impl Content {
                 put32(ram, SIZE, seq);
                 status::DONE
             }
-            (&Pending::Feed { op: OP_IDENTITY, .. }, Outcome::Identity { key }) => {
+            (&Pending::Identity { length, .. }, Outcome::Identity { key }) => {
                 ram[block + ID..block + ID + 32].copy_from_slice(key);
+                if length > 0 {
+                    put32(ram, LENGTH, 0);
+                }
+                status::DONE
+            }
+            // SPEC 9.5: the whole hints that fit in the buffer.
+            (&Pending::Identity { length, addr }, Outcome::IdentityHints { key, hints }) => {
+                if hints.len() > crate::hints::MAX_HINT_LIST || crate::hints::parse_hints(hints).is_err() {
+                    return None;
+                }
+                ram[block + ID..block + ID + 32].copy_from_slice(key);
+                if length > 0 {
+                    let fit = hints_that_fit(hints, length as usize);
+                    let at = ram_range(ram.len(), addr, fit)?;
+                    ram[at..at + fit].copy_from_slice(&hints[..fit]);
+                    put32(ram, LENGTH, fit as u32);
+                    delivered = fit;
+                }
                 status::DONE
             }
             (
@@ -603,6 +660,7 @@ impl Content {
                         (OP_FIND, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
                     }
                     Pending::Feed { op, id, offset, len } => (op, *block, id, offset as u32, len as u32, 0, 0),
+                    Pending::Identity { length, addr } => (OP_IDENTITY, *block, [0; 32], 0, length as u32, addr, 0),
                     Pending::Named { op, name, offset, length, addr, size } => {
                         (op, *block, name, offset, length as u32, addr, size)
                     }
@@ -643,8 +701,14 @@ impl Content {
                     Pending::Records { op, offset, length: length16, addr }
                 }
                 OP_FIND => Pending::Find { scope: small(offset)?, length: length16, addr, query_len: small(size)? },
-                OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_IDENTITY | OP_SET_PROFILE | OP_SET_NICKNAME => {
+                OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_SET_PROFILE | OP_SET_NICKNAME => {
                     Pending::Feed { op, id, offset: small(offset)?, len: small(length)? }
+                }
+                OP_IDENTITY => {
+                    if length > MAX_GET_LENGTH as u32 || ram_range(ram_len, addr, length as usize).is_none() {
+                        return Err(bad("identity buffer"));
+                    }
+                    Pending::Identity { length: length16, addr }
                 }
                 OP_SAVE | OP_LOAD | OP_DELETE => {
                     if record_name_len(&id).is_none() {
@@ -1199,7 +1263,7 @@ mod tests {
         assert_eq!(
             rig.content.take_requests(),
             [
-                Request { handle: 1, kind: RequestKind::Subscribe { feed: [3; 32] } },
+                Request { handle: 1, kind: RequestKind::Subscribe { feed: [3; 32], hints: Vec::new() } },
                 Request { handle: 2, kind: RequestKind::Unsubscribe { feed: [4; 32] } },
                 Request { handle: 3, kind: RequestKind::Publish { blob: [5; 32], title: "Hello, ünïcode".into(), kind: 1 } },
                 Request { handle: 4, kind: RequestKind::Identity },
@@ -1316,31 +1380,130 @@ mod tests {
         }
     }
 
+    /// SPEC 9.5: a subscribe may carry the hints of the feed's address, a
+    /// valid hint list of at most 161 bytes in ROM or RAM, copied at
+    /// submit; anything else makes the request invalid.
+    #[test]
+    fn subscribe_with_hints() {
+        let mut rig = Rig::new();
+        rig.write(DATA, b"relay.example:7000,[2001:db8::1]");
+        assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_SUBSCRIBE, [3; 32], 32, DATA))), (1, 32));
+        rig.write(DATA, b"XXXX");
+        assert_eq!(rig.submit(BLOCK + 64, Some(&feed_op(OP_SUBSCRIBE, [4; 32], 3, ROM_BASE))), (2, 3), "rom is a name");
+        assert_eq!(
+            rig.content.take_requests(),
+            [
+                Request { handle: 1, kind: RequestKind::Subscribe { feed: [3; 32], hints: b"relay.example:7000,[2001:db8::1]".to_vec() } },
+                Request { handle: 2, kind: RequestKind::Subscribe { feed: [4; 32], hints: b"rom".to_vec() } },
+            ]
+        );
+        let long = format!("{0}.{1}.e,{0}.{1}.e", "a".repeat(40), "b".repeat(37));
+        assert_eq!(long.len(), 161);
+        rig.write(DATA, long.as_bytes());
+        assert_eq!(rig.submit(BLOCK + 128, Some(&feed_op(OP_SUBSCRIBE, [5; 32], 161, DATA))).0, 3);
+        for (hints, len) in [
+            ("a.example,b.example,c.example", 0),
+            ("a.example:0", 0),
+            ("a.example,", 0),
+            ("a b", 0),
+            ("[::1", 0),
+            (long.as_str(), 162),
+            ("a.example", 300),
+        ] {
+            rig.write(DATA, &[0; 400]);
+            rig.write(DATA, hints.as_bytes());
+            let len = if len == 0 { hints.len() as u32 } else { len };
+            assert_eq!(rig.submit(BLOCK + 192, Some(&feed_op(OP_SUBSCRIBE, [6; 32], len, DATA))), (0, 0), "{hints}");
+            assert_eq!(status(&rig, BLOCK + 192), status::BAD_REQUEST, "{hints}");
+        }
+        // Not in ROM or RAM.
+        assert_eq!(rig.submit(BLOCK + 192, Some(&feed_op(OP_SUBSCRIBE, [6; 32], 5, 0x10))), (0, 0));
+        // Unsubscribe ignores length and addr, as before.
+        assert_eq!(rig.submit(BLOCK + 256, Some(&feed_op(OP_UNSUBSCRIBE, [6; 32], 999, 0x10))).0, 4);
+    }
+
+    /// SPEC 9.5: identity with a buffer (`length` > 0, in RAM) also gets
+    /// the whole hints of the host's own address that fit, and `length`
+    /// says how many bytes were written.
+    #[test]
+    fn identity_with_hints() {
+        let mut rig = Rig::new();
+        let hints = b"relay.example,203.0.113.9:7000".to_vec();
+        let key = Outcome::IdentityHints { key: [0xAB; 32], hints: hints.clone() };
+        for (length, written) in [(0u32, None), (100, Some(30usize)), (20, Some(13)), (13, Some(13)), (5, Some(0))] {
+            rig.write(DATA, &[0xEE; 100]);
+            let h = rig.submit(BLOCK, Some(&feed_op(OP_IDENTITY, [6; 32], length, DATA))).0 as u8;
+            assert!(h > 0);
+            assert_eq!(rig.complete(&[done(h, key.clone())]), (0, 0));
+            assert_eq!(rig.read(BLOCK + ID as u32, 32), [0xAB; 32]);
+            let got = u32::from_le_bytes(rig.read(BLOCK + LENGTH as u32, 4).try_into().unwrap());
+            match written {
+                None => {
+                    assert_eq!(got, 0);
+                    assert_eq!(rig.read(DATA, 1), [0xEE]);
+                }
+                Some(n) => {
+                    assert_eq!(got as usize, n, "length {length}");
+                    assert_eq!(rig.read(DATA, n), hints[..n]);
+                    assert_eq!(rig.read(DATA + n as u32, 1), [0xEE], "nothing past the hints");
+                }
+            }
+        }
+        // Without hints, a buffer gets length 0.
+        let h = rig.submit(BLOCK, Some(&feed_op(OP_IDENTITY, [6; 32], 50, DATA))).0 as u8;
+        assert_eq!(rig.complete(&[done(h, Outcome::Identity { key: [1; 32] })]), (0, 0));
+        assert_eq!(rig.read(BLOCK + LENGTH as u32, 4), [0; 4]);
+        // Malformed hints from a host are ignored (the request stays pending).
+        let h = rig.submit(BLOCK, Some(&feed_op(OP_IDENTITY, [6; 32], 50, DATA))).0 as u8;
+        assert_eq!(rig.complete(&[done(h, Outcome::IdentityHints { key: [1; 32], hints: b"a,b,c".to_vec() })]), (1, 0));
+        assert_eq!(rig.complete(&[done(h, Outcome::IdentityHints { key: [1; 32], hints: Vec::new() })]), (1, 0));
+        assert_eq!(rig.complete(&[done(h, Outcome::NotFound)]), (0, 0));
+        // A buffer out of RAM, or too long, makes the request invalid.
+        for (length, addr) in [(5, ROM_BASE), (16_385, DATA), (10, 0x10)] {
+            assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_IDENTITY, [6; 32], length, addr))), (0, 0));
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+        }
+        assert_eq!(hints_that_fit(b"a,b", 1), 1);
+        assert_eq!(hints_that_fit(b"ab,c", 1), 0);
+    }
+
     /// STATE.md 1.8: the pending records of the new operations.
     #[test]
     fn state_records_of_feed_operations() {
         let mut rig = Rig::new();
         rig.write(DATA, b"title");
-        rig.submit(BLOCK, Some(&feed_op(OP_SUBSCRIBE, [3; 32], 99, DATA)));
+        rig.write(DATA + 16, b"a.example");
+        rig.submit(BLOCK, Some(&feed_op(OP_SUBSCRIBE, [3; 32], 9, DATA + 16)));
         rig.submit(BLOCK + 64, Some(&feed_op(OP_PUBLISH, [5; 32], 5, DATA)));
         rig.submit(BLOCK + 128, Some(&feed_op(OP_IDENTITY, [6; 32], 0, DATA)));
+        rig.submit(BLOCK + 192, Some(&feed_op(OP_IDENTITY, [6; 32], 40, DATA)));
         let mut out = Vec::new();
         rig.content.write_state(&mut out);
         assert_eq!(out.len(), 8 * 53);
         let rec = |i: usize| &out[i * 53..(i + 1) * 53];
-        let want = |op: u8, block: u32, id: [u8; 32], length: u32| {
+        let want = |op: u8, block: u32, id: [u8; 32], length: u32, addr: u32| {
             let mut r = vec![op];
             r.extend_from_slice(&block.to_le_bytes());
             r.extend_from_slice(&id);
             r.extend_from_slice(&[0; 4]);
             r.extend_from_slice(&length.to_le_bytes());
-            r.extend_from_slice(&[0; 8]);
+            r.extend_from_slice(&addr.to_le_bytes());
+            r.extend_from_slice(&[0; 4]);
             r
         };
-        assert_eq!(rec(0), want(OP_SUBSCRIBE, BLOCK, [3; 32], 0));
-        assert_eq!(rec(1), want(OP_PUBLISH, BLOCK + 64, [5; 32], 5));
-        assert_eq!(rec(2), want(OP_IDENTITY, BLOCK + 128, [0; 32], 0));
-        assert!(rec(3).iter().all(|&b| b == 0));
+        // A subscribe keeps the length of its hints (copied at submit); an
+        // identity its buffer for the own hints, if it gave one.
+        assert_eq!(rec(0), want(OP_SUBSCRIBE, BLOCK, [3; 32], 9, 0));
+        assert_eq!(rec(1), want(OP_PUBLISH, BLOCK + 64, [5; 32], 5, 0));
+        assert_eq!(rec(2), want(OP_IDENTITY, BLOCK + 128, [0; 32], 0, 0));
+        assert_eq!(rec(3), want(OP_IDENTITY, BLOCK + 192, [0; 32], 40, DATA));
+        assert!(rec(4).iter().all(|&b| b == 0));
+        // They restore as they were.
+        let mut restored = Content::default();
+        restored.restore(&mut crate::snapshot::Reader::new(&out), RAM_LEN).unwrap();
+        let mut again = Vec::new();
+        restored.write_state(&mut again);
+        assert_eq!(again, out);
     }
 
     /// A names record (SPEC 9.5) with an `n`-byte name.
@@ -1408,7 +1571,7 @@ mod tests {
         let mut long_name = names_record(49, 0, 1);
         long_name[0] = 82;
         let mut bad_flags = abc.clone();
-        bad_flags[1] = 0x08;
+        bad_flags[1] = 0x10;
         for (data, why) in [
             (&short_l[..], "L under 33"),
             (&long_name, "name over 48 bytes"),

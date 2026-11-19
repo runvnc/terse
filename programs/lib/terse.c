@@ -181,11 +181,23 @@ uint32_t content_put(content_req *r, const void *data, uint32_t size)
     return content_submit(r);
 }
 
-uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
+static uint32_t follow_hints(content_req *r, uint8_t op, const uint8_t *key, const void *hints, uint32_t len)
 {
     r->op = op;
     memcpy(r->id, key, 32);
+    r->addr = (uint32_t)hints;
+    r->length = len;
     return content_submit(r);
+}
+
+uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key)
+{
+    return follow_hints(r, op, key, 0, 0);
+}
+
+uint32_t content_subscribe(content_req *r, const uint8_t *key, const void *hints, uint32_t len)
+{
+    return follow_hints(r, CONTENT_SUBSCRIBE, key, hints, len);
 }
 
 uint32_t content_publish(content_req *r, const uint8_t *blob, const void *title, uint32_t len)
@@ -205,7 +217,14 @@ uint32_t content_publish_kind(content_req *r, const uint8_t *blob, const void *t
 
 uint32_t content_identity(content_req *r)
 {
+    return content_identity_hints(r, 0, 0);
+}
+
+uint32_t content_identity_hints(content_req *r, void *buf, uint32_t len)
+{
     r->op = CONTENT_IDENTITY;
+    r->addr = (uint32_t)buf;
+    r->length = len;
     return content_submit(r);
 }
 

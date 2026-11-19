@@ -9,7 +9,7 @@ The short list is in NETWORK.md section 6:
 - keep blobs by their BLAKE3-256 ID and verify every blob it receives;
 - talk to at least one relay;
 - verify entries and drop invalid ones;
-- subscribe to feeds by key and keep the timeline in arrival order;
+- subscribe to feeds by key or feed address (a key, `@` and up to two relays that hold the feed: NETWORK.md 4.9) and keep the timeline in arrival order;
 - show articles by ARTICLE.md;
 - show every feed's name with its key.
 
@@ -49,7 +49,7 @@ ARTICLE.md is written as requirements on what the person sees, not as a layout a
 - Draw figures from their path strings, or show them as their text. A figure's units are 512ths of a column of the recommended width (about 68 characters of body text): scale figures by your column's width over that, down for a narrower column, and up only if you enlarge your text the same way.
 - Anything you do not recognise, or that is malformed, is ordinary text.
 
-Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key (a feed), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
+Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key, maybe with `@` and the hints of its address (a feed; a malformed hint list leaves the key alone), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
 
 ## Programs and documents
 
@@ -59,4 +59,4 @@ Feeds also carry programs (kind 3) and documents (kind 4) for the machine, and m
 
 Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with `terse manual publish`, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.
 
-The details of the network are in [the network](terse:a049258bc2f3575c5839bf0738553f78ed5493560e620d07f6a560f488d72f07); how the built-in reader lays articles out on the machine is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), which you do not need to follow.
+The details of the network are in [the network](terse:f11575d33ae9e1eccb62fa565632d5f74ca5a7da65f87f495b95296b2c4696b9); how the built-in reader lays articles out on the machine is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), which you do not need to follow.

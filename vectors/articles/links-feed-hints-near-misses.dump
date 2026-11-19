@@ -1,0 +1,24 @@
+paragraph
+  text "Three relays are too many: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@a.example,b.example,c.example is the key alone. A bad port: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@relay.example:0 and "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@relay.example:65536. Nothing after the @: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@ alone, "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@-x, "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@... at the end. An underscore ends the hint: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 @relay
+  text "_x. No letter in the last label: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text "@1.2.3 here. A blank: "
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  text " @relay.example. [Ends in a dot]("
+  link feed fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 @relay.example
+  text ".) is text and a link. An article link takes no hints: "
+  link article 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  text "@relay.example."

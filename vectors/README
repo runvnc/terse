@@ -66,6 +66,23 @@ takes (at most four, in order), and `description` (quoted; or
 `description-bytes <n>` for a long one): the text after the first empty
 line, empty if there is none.
 
+addresses.txt (NETWORK.md section 4.9)
+--------------------------------------
+Records `address <name>` with `text` (quoted: an address exactly as
+written, a key and maybe `@` and hints) and `valid`. A valid one gives
+its `key` and one line `hint <host> <port> <url>` per hint, in order:
+the host as a URL writes it (an IPv6 address in brackets, in its
+shortest form), the port (7878 if the hint names none) and the relay's
+URL. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1),
+`empty-hint`, `too-many-hints`, `hint-too-long`, `bad-name`, `bad-ipv4`
+(also a name whose last label holds no letter), `bad-ipv6` or
+`bad-port`. A client refuses every invalid address typed or given to it
+(as typing aids, a client may also take blanks around an address, the
+link form `terse:feed/<address>` and a key with capital digits). In an
+article a malformed hint list does not make the link invalid: the link
+is the key alone (ARTICLE.md 4.1; the corpus cases `links-feed-hints*`).
+
 relay-session.txt (NETWORK.md sections 3, 4.3, 4.7, 4.8, 5.2)
 -------------------------------------------------------------
 The messages of one session, in order, between a client and a relay
@@ -138,6 +155,9 @@ Inline content is one line per piece:
   code "..."          a code span: the bytes between the backquotes
   link article <id>    a bare link (shown as written, or shortened)
   link feed <key>
+  link feed <key> @<hints>
+                       a feed link with the hint list of its address
+                       (NETWORK.md 4.9), as written
   link program <key> "<name>"
                        the name decoded from its %XX escapes
   link ... as "..."   a link with text: the target as above, then `as`

@@ -23,6 +23,7 @@
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
 
+pub mod address;
 pub mod article;
 pub mod article_parse;
 pub mod blob;

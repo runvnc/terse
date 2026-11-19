@@ -28,7 +28,8 @@ const USAGE: &str = "usage:
   terse feed publish <file> --title <t> [--reply-to <id>]
   terse feed publish --program <image.terse> [--name <n>]
   terse feed programs [<key>]
-  terse feed subscribe|unsubscribe <key>
+  terse feed subscribe|unsubscribe <address>
+  terse feed address
   terse feed subscriptions
   terse feed sync [--watch] [--auto-download <bytes>] [--no-prefetch] [--no-program-download]
   terse feed list [<key>]
@@ -55,7 +56,12 @@ whose profile names relays are also followed there, unless --no-feed-relays. `ru
 relays only with --relay.
 
 <id> is a 64-hex-digit blob ID, looked up in the store, then the relay.
-<key> is a feed key (64 hex digits).
+<key> is a feed key (64 hex digits). An <address> is a feed key, optionally followed by `@` and
+one or two relay hints separated by `,` (host or host:port, port 7878 if left out; NETWORK 4.9),
+also written as the link terse:feed/<address>: if your relays do not hold the feed, sync looks
+for it on the hinted relays (public addresses only; not with --no-feed-relays) until the feed's
+profile names relays. `feed address` prints your own, with hints from your profile's relay
+lines, then your relays.
 --store defaults to $XDG_CACHE_HOME/terse/blobs (or ~/.cache/terse/blobs); feed
 entries are kept in <store>/feeds.
 --config holds the identity, subscriptions, nicknames and relay list; it defaults to

@@ -36,7 +36,7 @@ fn late_subscriber_gets_the_backlog_and_the_articles() {
     let mut node = Node::new(BlobStore::open(reader_dir.path(), None).unwrap(), Some(RelayClient::websocket(&url, DEFAULT_TIMEOUT)));
     node.set_subscriptions(Subscriptions::load(config.path().join("subscriptions")).unwrap());
     let mut service = ContentService::start_with_consent(node, Consent::Allow);
-    service.submit(vec![Request { handle: 1, kind: RequestKind::Subscribe { feed: author.feed_key() } }]);
+    service.submit(vec![Request { handle: 1, kind: RequestKind::Subscribe { feed: author.feed_key(), hints: Vec::new() } }]);
     assert_eq!(service.wait_finished(), [Completion { handle: 1, outcome: Outcome::Done }]);
 
     let deadline = Instant::now() + Duration::from_secs(20);

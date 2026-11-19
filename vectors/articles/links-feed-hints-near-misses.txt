@@ -1,0 +1,8 @@
+Three relays are too many: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@a.example,b.example,c.example is the key alone.
+A bad port: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example:0 and terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example:65536.
+Nothing after the @: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@ alone, terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@-x, terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@... at the end.
+An underscore ends the hint: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay_x.
+No letter in the last label: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@1.2.3 here.
+A blank: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 @relay.example.
+[Ends in a dot](terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example.) is text and a link.
+An article link takes no hints: terse:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@relay.example.

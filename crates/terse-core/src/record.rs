@@ -35,6 +35,7 @@ mod kind {
     pub const REFUSED: u8 = 0x09;
     pub const NO_ROOM: u8 = 0x0A;
     pub const BAD_REQUEST: u8 = 0x0B;
+    pub const IDENTITY_HINTS: u8 = 0x0C;
 }
 
 /// One frame's inputs, as the machine received them.
@@ -136,6 +137,12 @@ pub fn encode_completion(c: &Completion, out: &mut Vec<u8>) {
         Outcome::Identity { key } => {
             out.push(kind::IDENTITY);
             out.extend_from_slice(key);
+        }
+        Outcome::IdentityHints { key, hints } => {
+            out.push(kind::IDENTITY_HINTS);
+            out.extend_from_slice(key);
+            out.extend_from_slice(&(hints.len() as u32).to_le_bytes());
+            out.extend_from_slice(hints);
         }
         Outcome::Published { seq } => {
             out.push(kind::PUBLISHED);
@@ -270,6 +277,11 @@ impl<'a> Recording<'a> {
                 }
                 kind::PUT => Outcome::Put { id: self.id()? },
                 kind::IDENTITY => Outcome::Identity { key: self.id()? },
+                kind::IDENTITY_HINTS => {
+                    let key = self.id()?;
+                    let len = self.u32()? as usize;
+                    Outcome::IdentityHints { key, hints: self.take(len)?.to_vec() }
+                }
                 kind::PUBLISHED => Outcome::Published { seq: self.u32()? },
                 kind::DONE => Outcome::Done,
                 kind::NOT_FOUND => Outcome::NotFound,
@@ -305,6 +317,7 @@ mod tests {
                 Outcome::Done,
                 Outcome::Published { seq: 4 },
                 Outcome::Identity { key: [5; 32] },
+                Outcome::IdentityHints { key: [7; 32], hints: b"relay.example".to_vec() },
                 Outcome::NotFound,
                 Outcome::Failed,
                 Outcome::Refused,

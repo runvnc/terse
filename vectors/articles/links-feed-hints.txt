@@ -1,0 +1,6 @@
+A relay: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example, then text.
+Two: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example:7000,203.0.113.7.
+(terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example) in parentheses, terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example: before a colon.
+IPv6: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@[2001:db8::1]:7878; [in brackets terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example] too.
+[With text](terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example) and [two](terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@a.example,b.example:1).
+A path is not a hint's: terse:feed/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210@relay.example/x.

@@ -274,6 +274,27 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
             ),
         ),
         (
+            "links-feed-hints",
+            fill(
+                "A relay: terse:feed/{B}@relay.example, then text.\nTwo: terse:feed/{B}@relay.example:7000,203.0.113.7.\n\
+                 (terse:feed/{B}@relay.example) in parentheses, terse:feed/{B}@relay.example: before a colon.\n\
+                 IPv6: terse:feed/{B}@[2001:db8::1]:7878; [in brackets terse:feed/{B}@relay.example] too.\n\
+                 [With text](terse:feed/{B}@relay.example) and [two](terse:feed/{B}@a.example,b.example:1).\n\
+                 A path is not a hint's: terse:feed/{B}@relay.example/x.\n",
+            ),
+        ),
+        (
+            "links-feed-hints-near-misses",
+            fill(
+                "Three relays are too many: terse:feed/{B}@a.example,b.example,c.example is the key alone.\n\
+                 A bad port: terse:feed/{B}@relay.example:0 and terse:feed/{B}@relay.example:65536.\n\
+                 Nothing after the @: terse:feed/{B}@ alone, terse:feed/{B}@-x, terse:feed/{B}@... at the end.\n\
+                 An underscore ends the hint: terse:feed/{B}@relay_x.\nNo letter in the last label: terse:feed/{B}@1.2.3 here.\n\
+                 A blank: terse:feed/{B} @relay.example.\n[Ends in a dot](terse:feed/{B}@relay.example.) is text and a link.\n\
+                 An article link takes no hints: terse:{A}@relay.example.\n",
+            ),
+        ),
+        (
             "links-program-dots",
             fill(
                 "terse:program/{K}/Pad... ends a sentence.\nterse:program/{K}/a.b. keeps its inner dot.\n\
@@ -724,6 +745,80 @@ fn session_file() -> String {
 // --- Everything ----------------------------------------------------------------
 // --- Everything ----------------------------------------------------------------
 
+/// Feed addresses (NETWORK.md 4.9): valid ones and near misses.
+fn addresses_file() -> String {
+    use crate::address::{AddressError, parse_exact};
+    let mut out = String::from(
+        "# Terse test vectors: feed addresses, a key and its relay hints (NETWORK.md section 4.9).\n\
+         # Format: vectors/README.\n",
+    );
+    let key = blob::to_hex(&test_identity().feed_key());
+    let k = |rest: &str| format!("{key}{rest}");
+    let label80 = format!("{}.{}", "a".repeat(39), "b".repeat(40));
+    let cases: Vec<(&str, String)> = vec![
+        ("bare-key", k("")),
+        ("name", k("@relay.example")),
+        ("name-and-port", k("@relay.example:7000")),
+        ("two-hints", k("@relay.example,203.0.113.7:9000")),
+        ("ipv4", k("@203.0.113.7")),
+        ("ipv6", k("@[2001:db8::1]:7878")),
+        ("ipv6-every-group", k("@[2001:DB8:0:0:0:0:0:1]")),
+        ("ipv6-all-zero", k("@[::]")),
+        ("capitals-in-name", k("@Relay.Example")),
+        ("one-label", k("@relay")),
+        ("digit-first", k("@1relay.example")),
+        ("port-1", k("@a.example:1")),
+        ("port-65535", k("@a.example:65535")),
+        ("hint-80-bytes", k(&format!("@{label80}"))),
+        ("key-uppercase", key.to_uppercase()),
+        ("key-63-digits", key[..63].to_string()),
+        ("key-65-digits", k("0")),
+        ("key-not-hex", format!("{}g", &key[..63])),
+        ("key-not-valid", "0".repeat(64)),
+        ("at-only", k("@")),
+        ("empty-second-hint", k("@a.example,")),
+        ("empty-first-hint", k("@,a.example")),
+        ("three-hints", k("@a.example,b.example,c.example")),
+        ("hint-81-bytes", k(&format!("@{label80}c"))),
+        ("port-missing", k("@a.example:")),
+        ("port-0", k("@a.example:0")),
+        ("port-65536", k("@a.example:65536")),
+        ("port-leading-zero", k("@a.example:07878")),
+        ("ipv6-no-brackets", k("@2001:db8::1")),
+        ("ipv6-unclosed", k("@[2001:db8::1")),
+        ("ipv6-two-gaps", k("@[1::2::3]")),
+        ("ipv6-nine-groups", k("@[1:2:3:4:5:6:7:8:9]")),
+        ("ipv6-dotted-part", k("@[::ffff:1.2.3.4]")),
+        ("ipv6-zone", k("@[fe80::1%eth0]")),
+        ("ipv4-out-of-range", k("@1.2.3.256")),
+        ("ipv4-leading-zero", k("@1.2.3.04")),
+        ("no-letter-in-last-label", k("@1.2.3")),
+        ("label-starts-with-dash", k("@-a.example")),
+        ("label-64-bytes", k(&format!("@{}.example", "a".repeat(64)))),
+        ("final-dot", k("@a.example.")),
+        ("underscore", k("@a_b.example")),
+        ("scheme", k("@ws://a.example")),
+        ("path", k("@a.example/x")),
+        ("blank-before-at", k(" @a.example")),
+    ];
+    for (name, text) in cases {
+        write!(out, "\naddress {name}\n  text {}\n", article_parse::quote(&text)).unwrap();
+        let parsed = parse_exact(&text).and_then(|a| {
+            if crate::identity::valid_feed_key(&a.key) { Ok(a) } else { Err(AddressError::InvalidKey) }
+        });
+        match parsed {
+            Ok(a) => {
+                write!(out, "  valid yes\n  key {}\n", blob::to_hex(&a.key)).unwrap();
+                for h in a.hint_list() {
+                    writeln!(out, "  hint {} {} {}", h.host_text(), h.port, h.url()).unwrap();
+                }
+            }
+            Err(e) => writeln!(out, "  valid no\n  reason {}", e.code()).unwrap(),
+        }
+    }
+    out
+}
+
 /// Every file of the vectors directory, in a fixed order.
 pub fn generate() -> Vec<File> {
     let mut out = vec![
@@ -731,6 +826,7 @@ pub fn generate() -> Vec<File> {
         File { path: "blobs.txt".into(), bytes: blobs_file().into_bytes() },
         File { path: "entries.txt".into(), bytes: entries_file().into_bytes() },
         File { path: "profiles.txt".into(), bytes: profiles_file().into_bytes() },
+        File { path: "addresses.txt".into(), bytes: addresses_file().into_bytes() },
         File { path: "relay-session.txt".into(), bytes: session_file().into_bytes() },
     ];
     out.extend(article_files());
@@ -829,6 +925,23 @@ takes (at most four, in order), and `description` (quoted; or
 `description-bytes <n>` for a long one): the text after the first empty
 line, empty if there is none.
 
+addresses.txt (NETWORK.md section 4.9)
+--------------------------------------
+Records `address <name>` with `text` (quoted: an address exactly as
+written, a key and maybe `@` and hints) and `valid`. A valid one gives
+its `key` and one line `hint <host> <port> <url>` per hint, in order:
+the host as a URL writes it (an IPv6 address in brackets, in its
+shortest form), the port (7878 if the hint names none) and the relay's
+URL. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1),
+`empty-hint`, `too-many-hints`, `hint-too-long`, `bad-name`, `bad-ipv4`
+(also a name whose last label holds no letter), `bad-ipv6` or
+`bad-port`. A client refuses every invalid address typed or given to it
+(as typing aids, a client may also take blanks around an address, the
+link form `terse:feed/<address>` and a key with capital digits). In an
+article a malformed hint list does not make the link invalid: the link
+is the key alone (ARTICLE.md 4.1; the corpus cases `links-feed-hints*`).
+
 relay-session.txt (NETWORK.md sections 3, 4.3, 4.7, 4.8, 5.2)
 -------------------------------------------------------------
 The messages of one session, in order, between a client and a relay
@@ -901,6 +1014,9 @@ Inline content is one line per piece:
   code \"...\"          a code span: the bytes between the backquotes
   link article <id>    a bare link (shown as written, or shortened)
   link feed <key>
+  link feed <key> @<hints>
+                       a feed link with the hint list of its address
+                       (NETWORK.md 4.9), as written
   link program <key> \"<name>\"
                        the name decoded from its %XX escapes
   link ... as \"...\"   a link with text: the target as above, then `as`

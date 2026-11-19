@@ -19,6 +19,13 @@
 //! and is otherwise sent to the connected relays only, so a relay that does
 //! not answer never delays the others.
 //!
+//! Hint relays (NETWORK 4.9): a feed subscribed with the hints of its
+//! address, whose profile in force names no relays, is also followed on up
+//! to two hinted relays once none of the host's own relays holds an entry
+//! of it (every connected one answered its subscribe with `highest` 0, or
+//! there is none to ask). They are feed relays: the same address rule, the
+//! same switch, the same connection cap.
+//!
 //! Prefetch (NETWORK 4.4): when an automatic download stores a kind-1
 //! article, the first [`PREFETCH_LINKS`] distinct `terse:` article links in
 //! it whose blobs are not held or being fetched are fetched too, unless an
@@ -282,6 +289,15 @@ pub struct Node {
     /// Also take loopback and private addresses from profiles (tests).
     feed_relays_unrestricted: bool,
     connect_feed_relay: FeedConnector,
+    /// Feeds an own relay said it holds entries of (`highest` > 0).
+    held_on_own: BTreeSet<FeedKey>,
+    /// The own relays that said they hold no entry of a feed.
+    empty_on_own: HashMap<FeedKey, BTreeSet<u64>>,
+    /// Feeds subscribed with hints that none of the own relays holds: their
+    /// hint relays are used (unless the profile names relays).
+    hints_wanted: BTreeSet<FeedKey>,
+    /// Feeds followed through a hint relay now.
+    hinted: BTreeSet<FeedKey>,
 }
 
 impl Node {
@@ -322,6 +338,10 @@ impl Node {
             feed_relays_dirty: true,
             feed_relays_unrestricted: false,
             connect_feed_relay: Box::new(|url| RelayClient::websocket_checked(url, DEFAULT_TIMEOUT, true)),
+            held_on_own: BTreeSet::new(),
+            empty_on_own: HashMap::new(),
+            hints_wanted: BTreeSet::new(),
+            hinted: BTreeSet::new(),
         };
         if let Some(client) = relay {
             node.add_relay("relay", client);
@@ -856,7 +876,20 @@ impl Node {
     /// Adds a feed to the subscriptions (saved if they are backed by a file)
     /// and subscribes on the current connections.
     pub fn subscribe(&mut self, feed: FeedKey) -> std::io::Result<()> {
-        if self.subscriptions.add(feed)? {
+        self.subscribe_with_hints(feed, None)
+    }
+
+    /// Subscribes, remembering the hint list of the feed's address
+    /// (NETWORK 4.9; valid, else ignored). For a feed already subscribed,
+    /// hints given replace those remembered.
+    pub fn subscribe_with_hints(&mut self, feed: FeedKey, hints: Option<&str>) -> std::io::Result<()> {
+        let hints = hints.filter(|h| !h.is_empty() && h.len() <= crate::address::MAX_HINT_LIST && crate::address::parse_hints(h.as_bytes()).is_ok());
+        let added = self.subscriptions.add(feed)?;
+        if hints.is_some() && self.subscriptions.set_hints(&feed, hints)? {
+            self.feed_relays_dirty = true;
+            self.check_hints(&feed);
+        }
+        if added {
             let after = self.feeds.highest(&feed).unwrap_or(0);
             for (&lid, link) in self.links.iter_mut().filter(|(_, l)| l.ready() && l.serves(&feed)) {
                 let req = link.client.subscribe(&feed, after);
@@ -869,6 +902,9 @@ impl Node {
 
     pub fn unsubscribe(&mut self, feed: &FeedKey) -> std::io::Result<()> {
         if self.subscriptions.remove(feed)? {
+            self.held_on_own.remove(feed);
+            self.empty_on_own.remove(feed);
+            self.hints_wanted.remove(feed);
             for (&lid, link) in self.links.iter_mut() {
                 link.catching_up.remove(feed);
                 if link.client.connected() && link.serves(feed) {
@@ -879,6 +915,59 @@ impl Node {
             self.feed_relays_dirty = true;
         }
         Ok(())
+    }
+
+    /// Whether `feed` is followed through a relay named by a hint of its
+    /// address (NETWORK 4.9) now.
+    pub fn followed_by_hint(&self, feed: &FeedKey) -> bool {
+        self.hinted.contains(feed)
+    }
+
+    /// Whether an own relay said it holds entries of `feed`; `None` if
+    /// none has answered for it yet (or the feed is not subscribed).
+    pub fn held_on_own_relays(&self, feed: &FeedKey) -> Option<bool> {
+        if self.held_on_own.contains(feed) {
+            Some(true)
+        } else {
+            self.empty_on_own.get(feed).is_some_and(|s| !s.is_empty()).then_some(false)
+        }
+    }
+
+    /// The hints of the host's own feed address (NETWORK 4.9): from its
+    /// profile's relay lines, then its own relays, public ones only, at
+    /// most two.
+    pub fn own_hints(&self) -> Vec<crate::address::Hint> {
+        let profile_relays = self
+            .identity_key()
+            .and_then(|k| self.profile(&k))
+            .and_then(|(_, d)| d)
+            .map(|d| d.relays)
+            .unwrap_or_default();
+        crate::address::own_hints(&profile_relays, &self.relay_urls())
+    }
+
+    /// Works out whether the hint relays of `feed` are wanted: it was
+    /// subscribed with hints and none of the own relays holds it (each
+    /// connected one said so, or none is configured or reachable).
+    fn check_hints(&mut self, feed: &FeedKey) {
+        if self.subscriptions.hints(feed).is_none() || self.held_on_own.contains(feed) || self.hints_wanted.contains(feed) {
+            return;
+        }
+        let own: Vec<(u64, bool, bool)> = self
+            .links
+            .iter()
+            .filter(|(_, l)| l.feeds.is_none())
+            .map(|(&id, l)| (id, l.client.connected(), !l.client.connected() && !l.client.connecting() && l.retry_at.is_some()))
+            .collect();
+        let answered = self.empty_on_own.get(feed);
+        let connected: Vec<u64> = own.iter().filter(|o| o.1).map(|o| o.0).collect();
+        // Every own relay was tried and could not be reached.
+        let none_reachable = own.iter().all(|o| o.2);
+        let all_empty = !connected.is_empty() && connected.iter().all(|id| answered.is_some_and(|a| a.contains(id)));
+        if own.is_empty() || none_reachable || all_empty {
+            self.hints_wanted.insert(*feed);
+            self.feed_relays_dirty = true;
+        }
     }
 
     /// Whether any operation is waiting for a relay.
@@ -934,7 +1023,8 @@ impl Node {
             let nickname = self.nicknames.get(feed);
             let flags = nickname.is_some() as u8
                 | (declared.is_some() as u8) << 1
-                | (!subscribed.contains(feed) as u8) << 2;
+                | (!subscribed.contains(feed) as u8) << 2
+                | (self.hinted.contains(*feed) as u8) << 3;
             let name = nickname.map(str::to_string).or(declared).unwrap_or_default();
             timeline::name_record(feed, flags, name.as_bytes())
         });
@@ -1029,6 +1119,11 @@ impl Node {
     /// and works out the feed relays when a profile or the subscriptions
     /// changed (NETWORK 5).
     fn maintain(&mut self) {
+        let undecided: Vec<FeedKey> =
+            self.subscriptions.hinted().map(|(f, _)| *f).filter(|f| !self.hints_wanted.contains(f) && !self.held_on_own.contains(f)).collect();
+        for feed in undecided {
+            self.check_hints(&feed);
+        }
         if self.feed_relays_dirty {
             self.feed_relays_dirty = false;
             self.update_feed_relays();
@@ -1093,21 +1188,52 @@ impl Node {
     fn update_feed_relays(&mut self) {
         let own: BTreeSet<String> = self.relay_urls().into_iter().collect();
         let mut wanted: BTreeMap<String, BTreeSet<FeedKey>> = BTreeMap::new();
+        // Feeds whose relays come from hints, for `hinted`.
+        let mut by_hint: BTreeMap<String, BTreeSet<FeedKey>> = BTreeMap::new();
+        let feeds: Vec<FeedKey> = self.subscriptions.feeds().copied().collect();
+        // With no own relay at all, nothing could hold a hinted feed.
+        if self.links.values().all(|l| l.feeds.is_some()) {
+            for feed in &feeds {
+                if self.subscriptions.hints(feed).is_some() {
+                    self.hints_wanted.insert(*feed);
+                }
+            }
+        }
         if self.feed_relays {
-            for feed in self.subscriptions.feeds() {
-                let Some((_, Some(doc))) = self.profile(feed) else { continue };
-                doc.relays
+            for feed in &feeds {
+                let named = self.profile(feed).and_then(|(_, d)| d).map(|d| d.relays).unwrap_or_default();
+                // NETWORK 4.9: the profile's relay lines supersede the hints.
+                if !named.is_empty() {
+                    named
+                        .iter()
+                        .filter(|u| self.feed_relays_unrestricted || profile::usable_profile_relay(u))
+                        .filter(|u| !own.contains(*u))
+                        .take(FEED_RELAYS_PER_FEED)
+                        .for_each(|u| {
+                            wanted.entry(u.clone()).or_default().insert(*feed);
+                        });
+                    continue;
+                }
+                if !self.hints_wanted.contains(feed) {
+                    continue;
+                }
+                let Some(list) = self.subscriptions.hints(feed) else { continue };
+                crate::address::parse_hints(list.as_bytes())
+                    .unwrap_or_default()
                     .iter()
+                    .filter(|h| !own.iter().any(|u| crate::address::url_is_hint(u, h)))
+                    .map(crate::address::Hint::url)
                     .filter(|u| self.feed_relays_unrestricted || profile::usable_profile_relay(u))
-                    .filter(|u| !own.contains(*u))
                     .take(FEED_RELAYS_PER_FEED)
                     .for_each(|u| {
                         wanted.entry(u.clone()).or_default().insert(*feed);
+                        by_hint.entry(u).or_default().insert(*feed);
                     });
             }
         }
         let room = MAX_LINKS.saturating_sub(own.len());
         let wanted: BTreeMap<String, BTreeSet<FeedKey>> = wanted.into_iter().take(room).collect();
+        self.hinted = by_hint.iter().filter(|(u, _)| wanted.contains_key(*u)).flat_map(|(_, f)| f.iter().copied()).collect();
         // Remove or update the feed relays there are.
         let current: Vec<(u64, String)> =
             self.links.iter().filter(|(_, l)| l.feeds.is_some()).map(|(&id, l)| (id, l.url.clone())).collect();
@@ -1297,6 +1423,18 @@ impl Node {
                     && let Some(link) = self.links.get_mut(&lid)
                 {
                     link.catching_up.insert(feed, highest);
+                }
+                // NETWORK 4.9: what the own relays hold decides on hints.
+                if self.subscriptions.contains(&feed) && self.links.get(&lid).is_some_and(|l| l.feeds.is_none()) {
+                    if highest > 0 {
+                        self.empty_on_own.remove(&feed);
+                        if self.held_on_own.insert(feed) && self.hints_wanted.remove(&feed) {
+                            self.feed_relays_dirty = true;
+                        }
+                    } else if !self.held_on_own.contains(&feed) {
+                        self.empty_on_own.entry(feed).or_default().insert(lid);
+                        self.check_hints(&feed);
+                    }
                 }
                 self.events.push(FeedEvent::Subscribed(feed));
                 self.program_downloads(&feed);

@@ -1,0 +1,236 @@
+# Terse test vectors: feed addresses, a key and its relay hints (NETWORK.md section 4.9).
+# Format: vectors/README.
+
+address bare-key
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+
+address name
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 7878 ws://relay.example:7878
+
+address name-and-port
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:7000"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 7000 ws://relay.example:7000
+
+address two-hints
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example,203.0.113.7:9000"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 7878 ws://relay.example:7878
+  hint 203.0.113.7 9000 ws://203.0.113.7:9000
+
+address ipv4
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@203.0.113.7"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint 203.0.113.7 7878 ws://203.0.113.7:7878
+
+address ipv6
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[2001:db8::1]:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+
+address ipv6-every-group
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[2001:DB8:0:0:0:0:0:1]"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+
+address ipv6-all-zero
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[::]"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint [::] 7878 ws://[::]:7878
+
+address capitals-in-name
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@Relay.Example"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint Relay.Example 7878 ws://Relay.Example:7878
+
+address one-label
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay 7878 ws://relay:7878
+
+address digit-first
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@1relay.example"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint 1relay.example 7878 ws://1relay.example:7878
+
+address port-1
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:1"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint a.example 1 ws://a.example:1
+
+address port-65535
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:65535"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint a.example 65535 ws://a.example:65535
+
+address hint-80-bytes
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 7878 ws://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:7878
+
+address key-uppercase
+  text "03A107BFF3CE10BE1D70DD18E74BC09967E4D6309BA50D5F1DDC8664125531B8"
+  valid no
+  reason bad-key
+
+address key-63-digits
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b"
+  valid no
+  reason bad-key
+
+address key-65-digits
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80"
+  valid no
+  reason bad-key
+
+address key-not-hex
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531bg"
+  valid no
+  reason bad-key
+
+address key-not-valid
+  text "0000000000000000000000000000000000000000000000000000000000000000"
+  valid no
+  reason invalid-key
+
+address at-only
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@"
+  valid no
+  reason empty-hint
+
+address empty-second-hint
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example,"
+  valid no
+  reason empty-hint
+
+address empty-first-hint
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@,a.example"
+  valid no
+  reason empty-hint
+
+address three-hints
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example,b.example,c.example"
+  valid no
+  reason too-many-hints
+
+address hint-81-bytes
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc"
+  valid no
+  reason hint-too-long
+
+address port-missing
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:"
+  valid no
+  reason bad-port
+
+address port-0
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:0"
+  valid no
+  reason bad-port
+
+address port-65536
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:65536"
+  valid no
+  reason bad-port
+
+address port-leading-zero
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:07878"
+  valid no
+  reason bad-port
+
+address ipv6-no-brackets
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@2001:db8::1"
+  valid no
+  reason bad-ipv4
+
+address ipv6-unclosed
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[2001:db8::1"
+  valid no
+  reason bad-ipv6
+
+address ipv6-two-gaps
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[1::2::3]"
+  valid no
+  reason bad-ipv6
+
+address ipv6-nine-groups
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[1:2:3:4:5:6:7:8:9]"
+  valid no
+  reason bad-ipv6
+
+address ipv6-dotted-part
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[::ffff:1.2.3.4]"
+  valid no
+  reason bad-ipv6
+
+address ipv6-zone
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[fe80::1%eth0]"
+  valid no
+  reason bad-ipv6
+
+address ipv4-out-of-range
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@1.2.3.256"
+  valid no
+  reason bad-ipv4
+
+address ipv4-leading-zero
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@1.2.3.04"
+  valid no
+  reason bad-ipv4
+
+address no-letter-in-last-label
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@1.2.3"
+  valid no
+  reason bad-ipv4
+
+address label-starts-with-dash
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@-a.example"
+  valid no
+  reason bad-name
+
+address label-64-bytes
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+  valid no
+  reason bad-name
+
+address final-dot
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example."
+  valid no
+  reason bad-name
+
+address underscore
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a_b.example"
+  valid no
+  reason bad-name
+
+address scheme
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws://a.example"
+  valid no
+  reason bad-port
+
+address path
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example/x"
+  valid no
+  reason bad-name
+
+address blank-before-at
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8 @a.example"
+  valid no
+  reason bad-key

@@ -8,22 +8,22 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:c83f3bfac7e92685c41236ed7fb445b359e4e1d07d7fa8fe26f6288600cadb99): the overall picture in two pages:
+- [What Terse is](terse:44cc451cb735f64f734f9c6051dfc5d2af9d9e608dd4059f4e9d161837e13242): the overall picture in two pages:
   the machine and its frame budget, the devices, determinism, the
   network and the shell.
-- [Writing a program](terse:995ab8d25eab911daba3f7494a5bf27f83f1bacbf4cb8ad751a83a0e218b9837): the toolchain, the C
+- [Writing a program](terse:a9a2a9bc5f05d90fe2d5c0a2d2d064fc2c55142a1a3dfe81251c4e69ef9045b2): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:21b54cd0302199dbb8f5c007affd9a610cb356c6ebc51419ed3930c919f3d494): the keys of the
+- [Using the shell and the reader](terse:853f7eac4a2cb5619e48f97c6102c34d9a72f2a09cabc78d6f2b2bc375cba5b9): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
-- [Writing an article](terse:670eb93ad925d9fe583e0534f942ed778f0a7a591f0df0133f02d65bc497c357): the article format,
+- [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:16b903c46355575509fee0b333e4fb5be7301728dcc224f8b4f89116751ba071): what a machine's state
+- [State, replay and conformance](terse:641b20f6a22f0f439da6c411140fe2514067114d929083849946778b5db04a9b): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
 
-- [The machine](terse:c512234709e38814390267110ea016b3c40c625eed40cc865eefc192b2673509): the CPU, the memory map, reset, frames
+- [The machine](terse:0269754b7f5567fee22a7cdd02d4b917110a64a0c5a642d45610454959720808): the CPU, the memory map, reset, frames
   and the budget, faults, the image format, the call convention and the
   whole call table.
 - [Events and input](terse:30fb2cb8139131db4570b2d8f23d9a44f97c8996272365f2c27ad0d42a1d0b5a): every event, the queue, keys,
@@ -35,11 +35,11 @@ Each article below says what it covers.
 
 | Slot | Device | Article |
 |---|---|---|
-| 1 | System | [The system device](terse:3ec63f64ea30e370f7d0f8d59f35820f3212530b74dca4e4f5e06f83d7996859) |
+| 1 | System | [The system device](terse:b90f908341dc1bc21cebed98256c6751a21e2ab68a6a3e2dd0c802ba606391e9) |
 | 2 | Terminal | [The terminal](terse:169d0b10057f817f2030a724a7ba6ce8291217a02c9878a46ca18b971bca8134) |
 | 3 | 2D vector display | [The 2D vector display](terse:4ff0f43dbdab83085bddfee6e54af38b170276cab51b8d8e561a112ca3cba3b4) |
-| 4 | Content | [Blobs, requests and statuses](terse:6b2721c9a17a006a7dbc4e07db116ff7f2e87b8050f77765fb40a8d56a4a94d9) |
-| 4 | Content | [Feeds, names, search and publishing](terse:2bd9e9b2429fb2f8dc14cc852bc04b58eb3f5163148c877f7662e69922722a58) |
+| 4 | Content | [Blobs, requests and statuses](terse:555cb77fb400d5ce32c41ecd174cd2edd4ab3f60f445eb2bb3d1e41ef15d5d90) |
+| 4 | Content | [Feeds, names, search and publishing](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) |
 | 4 | Content | [Named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a) |
 | 7 | Page | [The page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) |
 | 7 | Page | [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04) |
@@ -63,9 +63,9 @@ Each article below says what it covers.
 
 ## The network
 
-- [The network](terse:a049258bc2f3575c5839bf0738553f78ed5493560e620d07f6a560f488d72f07): blobs and relays, feeds and entries,
+- [The network](terse:f11575d33ae9e1eccb62fa565632d5f74ca5a7da65f87f495b95296b2c4696b9): blobs and relays, feeds and entries,
   profiles, names and search, programs, and relays that mirror each
   other.
-- [Writing a reader without the machine](terse:41fcde3b24fde1b9b70aa4e6f2fda53512d4aab85285da1e1da7b74198274c98): what
+- [Writing a reader without the machine](terse:0e6d01c4e18a622fda3b7e372b6ebd35eaecfbea8853a6cb9507a7778ac1da3e): what
   a native reader must do to be a complete Terse client, with only the
   network and the article format.

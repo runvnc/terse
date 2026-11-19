@@ -186,7 +186,8 @@ fn short(h: &[u8]) -> String {
 fn target_key(t: &Target) -> String {
     match t {
         Target::Article(id) => format!("article {}", short(id)),
-        Target::Feed(k) => format!("feed {}", short(k)),
+        Target::Feed(k, h) if h.is_empty() => format!("feed {}", short(k)),
+        Target::Feed(k, h) => format!("feed {}@{h}", short(k)),
         Target::Program(k, name) => format!("program {} {name}", short(k)),
     }
 }
@@ -195,7 +196,8 @@ fn target_key(t: &Target) -> String {
 fn bare_text(t: &Target) -> String {
     match t {
         Target::Article(id) => format!("terse:{}", short(id)),
-        Target::Feed(k) => format!("terse:feed/{}", short(k)),
+        Target::Feed(k, h) if h.is_empty() => format!("terse:feed/{}", short(k)),
+        Target::Feed(k, h) => format!("terse:feed/{}@{h}", short(k)),
         Target::Program(k, name) => format!("terse:program/{}/{name}", short(k)),
     }
 }

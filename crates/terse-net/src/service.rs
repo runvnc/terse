@@ -81,7 +81,10 @@ impl Consent {
 /// What a program asks for, as the host's prompt describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asked {
-    Subscribe(FeedKey),
+    /// Subscribe to a feed; `hints`: the hint list of its address (NETWORK
+    /// 4.9), where the host will look for it if its own relays do not hold
+    /// it, or empty.
+    Subscribe { feed: FeedKey, hints: String },
     Unsubscribe(FeedKey),
     /// Publish an article, or with `document` a document (`size` bytes),
     /// with this title.
@@ -747,14 +750,15 @@ enum Step {
 fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Request, token: Token) -> Step {
     let decided = if consented { Consent::Allow } else { consent };
     let asked = match &request.kind {
-        RequestKind::Subscribe { feed } | RequestKind::Unsubscribe { feed } if !valid_feed_key(feed) => {
+        RequestKind::Subscribe { feed, .. } | RequestKind::Unsubscribe { feed } if !valid_feed_key(feed) => {
             return Step::Complete(Outcome::Refused);
         }
-        RequestKind::Subscribe { feed } if node.subscriptions().contains(feed) => return Step::Complete(Outcome::Done),
+        // Already subscribed: nothing changes, hints included.
+        RequestKind::Subscribe { feed, .. } if node.subscriptions().contains(feed) => return Step::Complete(Outcome::Done),
         RequestKind::Unsubscribe { feed } if !node.subscriptions().contains(feed) => {
             return Step::Complete(Outcome::Done);
         }
-        RequestKind::Subscribe { feed } => Asked::Subscribe(*feed),
+        RequestKind::Subscribe { feed, hints } => Asked::Subscribe { feed: *feed, hints: String::from_utf8_lossy(hints).into_owned() },
         RequestKind::Unsubscribe { feed } => Asked::Unsubscribe(*feed),
         RequestKind::SetNickname { feed, .. } if !valid_feed_key(feed) => return Step::Complete(Outcome::Refused),
         RequestKind::SetNickname { feed, name } if node.nicknames().get(feed).unwrap_or("").as_bytes() == &name[..] => {
@@ -791,8 +795,10 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
         Consent::Ask => Step::Ask(asked),
         Consent::Allow => match &request.kind {
             // A subscription list that cannot be saved fails.
-            RequestKind::Subscribe { feed } => {
-                Step::Complete(if node.subscribe(*feed).is_ok() { Outcome::Done } else { Outcome::Failed })
+            RequestKind::Subscribe { feed, hints } => {
+                // The device checked the hints (SPEC 9.5).
+                let hints = std::str::from_utf8(hints).ok().filter(|h| !h.is_empty());
+                Step::Complete(if node.subscribe_with_hints(*feed, hints).is_ok() { Outcome::Done } else { Outcome::Failed })
             }
             RequestKind::Unsubscribe { feed } => {
                 Step::Complete(if node.unsubscribe(feed).is_ok() { Outcome::Done } else { Outcome::Failed })
@@ -906,8 +912,11 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         next += 1;
         match work {
             Some(Work::Content(tag, Request { handle, kind: RequestKind::Identity }, _)) => {
+                // SPEC 9.5: with the hints of the host's own address, if any.
+                let hints = crate::address::hint_text(&node.own_hints());
                 let outcome = match node.identity_key() {
-                    Some(key) => Outcome::Identity { key },
+                    Some(key) if hints.is_empty() => Outcome::Identity { key },
+                    Some(key) => Outcome::IdentityHints { key, hints: hints.into_bytes() },
                     None => Outcome::NotFound,
                 };
                 if finished.send(Finished::Done(tag, Completion { handle, outcome })).is_err() {
@@ -1216,14 +1225,14 @@ mod tests {
             node,
             Consent::Deny,
             vec![
-                RequestKind::Subscribe { feed: b },
-                RequestKind::Subscribe { feed: a },
+                RequestKind::Subscribe { feed: b, hints: Vec::new() },
+                RequestKind::Subscribe { feed: a, hints: Vec::new() },
                 RequestKind::Unsubscribe { feed: b },
                 RequestKind::Unsubscribe { feed: a },
                 RequestKind::Publish { blob: article, title: b"t".to_vec(), kind: 1 },
                 RequestKind::Publish { blob: [9; 32], title: b"t".to_vec(), kind: 1 },
                 RequestKind::Identity,
-                RequestKind::Subscribe { feed: [0; 32] },
+                RequestKind::Subscribe { feed: [0; 32], hints: Vec::new() },
             ],
         );
         assert_eq!(
@@ -1255,7 +1264,7 @@ mod tests {
         let (mut service, done) = feed_requests(
             node,
             Consent::Allow,
-            vec![RequestKind::Subscribe { feed: b }, RequestKind::Publish { blob: article, title: "Tïtle".into(), kind: 1 }],
+            vec![RequestKind::Subscribe { feed: b, hints: Vec::new() }, RequestKind::Publish { blob: article, title: "Tïtle".into(), kind: 1 }],
         );
         assert_eq!(outcomes(&done), [Outcome::Done, Outcome::Published { seq: 1 }]);
         // The identity was created; the subscription saved.
@@ -1278,7 +1287,7 @@ mod tests {
         for consent in [Consent::Allow, Consent::Deny, Consent::Ask] {
             let node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
             let (service, done) =
-                feed_requests(node, consent, vec![RequestKind::Unsubscribe { feed: bad }, RequestKind::Subscribe { feed: bad }]);
+                feed_requests(node, consent, vec![RequestKind::Unsubscribe { feed: bad }, RequestKind::Subscribe { feed: bad, hints: Vec::new() }]);
             assert_eq!(outcomes(&done), [Outcome::Refused, Outcome::Refused], "{consent:?}");
             assert!(service.prompt().is_none(), "nothing is asked");
         }
@@ -1551,14 +1560,14 @@ mod tests {
             node,
             Consent::Ask,
             vec![
-                RequestKind::Subscribe { feed: b },
+                RequestKind::Subscribe { feed: b, hints: Vec::new() },
                 RequestKind::Publish { blob: article, title: b"T".to_vec(), kind: 1 },
                 RequestKind::Identity,
             ],
         );
         assert_eq!(done.len(), 1, "only the identity is answered: {done:?}");
         assert_eq!(service.prompts_waiting(), 2);
-        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 1, asked: Asked::Subscribe(b) }));
+        assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 1, asked: Asked::Subscribe { feed: b, hints: String::new() } }));
         service.answer(false);
         assert_eq!(service.prompt(), Some(&Prompt { tag: 0, handle: 2, asked: Asked::Publish { title: "T".into(), size: 5, document: false } }));
         service.answer(true);
@@ -1597,7 +1606,7 @@ mod tests {
             RequestKind::Timeline { offset: 0, length: 100 },
             RequestKind::Names { offset: 0, length: 100 },
             RequestKind::Identity,
-            RequestKind::Subscribe { feed: a },
+            RequestKind::Subscribe { feed: a, hints: Vec::new() },
             RequestKind::Unsubscribe { feed: a },
             RequestKind::Put { data: b"new".to_vec() },
             RequestKind::Publish { blob: held, title: b"t".to_vec(), kind: 1 },

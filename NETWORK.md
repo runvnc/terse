@@ -18,8 +18,8 @@ clients yet.
 
 Test vectors for this document (blob IDs, entries signed with a public
 test key and invalid ones with the rule each breaks, profile documents
-and names, and the messages of a relay session) are in `vectors/`,
-described in `vectors/README`.
+and names, feed addresses, and the messages of a relay session) are in
+`vectors/`, described in `vectors/README`.
 
 A **client** is a program that speaks this protocol to relays for a
 person: a native reader, a machine host (which speaks it for the
@@ -200,8 +200,9 @@ received first is kept.
   has received for them.
 - When connected to a relay it subscribes to each feed with `after` set to
   the highest `seq` it holds (with several relays, on each: section 5).
-- **Subscribing** (when the user asks; a machine host also lets programs
-  ask, section 7) adds the feed to the list and, when connected,
+- **Subscribing** (when the user asks, by key or by feed address, section
+  4.9; a machine host also lets programs ask, section 7) adds the feed to
+  the list and, when connected,
   subscribes to it at once the same way; for a feed the client holds
   nothing of, `after` is 0, so the relay sends every entry it holds (a
   relay keeps at least the 256 most recent of each feed, section 4.3).
@@ -362,6 +363,72 @@ declared name.
   holds no entry for (on a machine host, section 7), and then gets the
   image.
 
+### 4.9 Feed addresses
+
+A feed key alone says which feed, not where to find it: a client that
+asks only its own relays finds nothing of a feed whose author publishes
+elsewhere, and cannot read the author's profile (section 4.6), which
+names their relays, before it has found the feed. A **feed address** is a
+feed key with up to two **hints**, relays that should hold the feed:
+
+    address   = key [ "@" hint [ "," hint ] ]
+    key       = 64 lowercase hexadecimal digits
+    hint      = host [ ":" port ]                      at most 80 bytes
+    host      = name / IPv4 / "[" IPv6 "]"
+    name      = label *( "." label )                   the last label holds a letter
+    label     = 1 to 63 of A-Z a-z 0-9 "-", not starting or ending with "-"
+    IPv4      = four decimal numbers 0 to 255 separated by ".", without leading zeros
+    IPv6      = 8 groups of 1 to 4 hexadecimal digits (either case)
+                separated by ":", or fewer and one "::" standing for one
+                or more groups of zeros; no dotted IPv4 part, no zone
+    port      = 1 to 65535, decimal, without leading zeros; 7878 if left out
+
+For example `3fa9…c21e07@relay.example.org` or
+`3fa9…c21e07@relay.example.org:9000,[2001:db8::7]` (the key written in
+full). There are no blanks, no scheme and no path; a hint list is at
+most 161 bytes. A hint names the relay `ws://host:port` (plain
+WebSocket; a hint for `wss://` is not specified yet, section 8). Hint
+names compare without regard to case. The address of an article link is
+`terse:feed/<address>` (`ARTICLE.md` section 4.1).
+
+**A malformed address.** A client refuses an address that does not match
+this grammar when it is typed or given to it (the whole address is
+invalid, hints included: it does not subscribe to the key alone); it may
+ignore blanks around it and take the link form `terse:feed/<address>`.
+In an article a malformed hint list never makes the link invalid: the
+link is then the key alone and the rest is text (`ARTICLE.md` section
+4.1), so an article reads the same in a reader of this revision as in
+one that knows no hints.
+
+**What a client does with hints.** Hints only say where to look: every
+entry received through one is verified like any other (section 4.2).
+
+- Subscribing with an address, the client keeps the hints with the
+  subscription (a newer address for a feed already subscribed replaces
+  them) and subscribes on its own relays as section 4.4 says.
+- If none of its own relays holds an entry of the feed (every connected
+  one answers the subscribe with `highest` 0, section 4.3, or it has no
+  relay, or none can be reached), it also follows the feed on the hinted
+  relays, at most two: it connects to them as to feed relays (section
+  5.1: the same refusal of loopback, private and link-local addresses,
+  checked when connecting, a name resolved once; they count towards the
+  16 connections; turning feed relays off turns hints off too), and
+  subscribes to that feed there.
+- As soon as the feed's profile in force has `relay` lines (section 4.6),
+  the hints are not used (the client keeps them): the feed relays of
+  section 5.1 take their place.
+- A client tells its user which feeds it follows through a hinted relay
+  and, before subscribing with hints on someone's behalf (a link, a
+  program), that it will connect to the relays they name.
+
+**A client's own address.** A client shows its user their feed address
+with hints taken, in order, from the `relay` lines of their profile in
+force, then from its configured relays: those that can be written as a
+hint (`ws://`, no path but `/`) and whose host is not refused by section
+5.1, without repeats, at most two. If none is left, the address is the
+bare key, and the client says that only people who use one of the same
+relays will find the feed.
+
 ## 5. Several relays
 
 ### 5.1 Clients
@@ -369,8 +436,10 @@ declared name.
 A client's relays are those it is configured with (at most eight) and,
 for each subscribed feed whose profile in force has `relay` lines, up to
 two of those (the first two that are not already among the client's own
-relays); **feed relays** may be turned off. A client keeps at most 16
-relay connections. It ignores a `relay` line whose host is `localhost`, a name
+relays), or else, for a feed subscribed with a feed address that none of
+the client's own relays holds, up to two of its hints (section 4.9);
+**feed relays** may be turned off. A client keeps at most 16
+relay connections. It ignores a `relay` line or hint whose host is `localhost`, a name
 under `.localhost`, or an address that is loopback, unspecified, private
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or
 link-local (169.254.0.0/16, fe80::/10), and does not connect if a host
@@ -387,7 +456,8 @@ briefly for the others).
   published once a relay has accepted the blob.
 - **Subscribe** goes to every connected relay that serves the feed (all of
   the client's own relays, and the feed relays named in the feed's
-  profile), each with `after` set to the highest `seq` the client holds. An entry
+  profile or by its address's hints), each with `after` set to the
+  highest `seq` the client holds. An entry
   received from several relays is stored once (the first received of a
   `seq` wins, section 4.2).
 - **Get** asks the connected relays in turn: first the feed relays named in
@@ -448,6 +518,9 @@ A reading client **must**:
 - let the user subscribe to and unsubscribe from feeds by key (only valid
   keys, section 4.1), subscribe with `after` as section 4.4 says, and
   keep its timeline in arrival order (section 4.4);
+- accept a feed address (section 4.9) wherever it lets the user give a
+  key, subscribing to its key (it need not use the hints), and refuse a
+  malformed one;
 - show articles by `ARTICLE.md`;
 - show a feed's name only with its key or a short form of it beside it
   (section 4.6), and show the profile in force's display name, or the
@@ -458,7 +531,8 @@ A reading client **may**:
 - publish articles (and keep an identity, section 4.1), set its user's
   profile and nicknames (section 4.6);
 - search (section 4.7) and look programs up (section 4.8);
-- use several relays and feed relays (section 5);
+- use several relays and feed relays (section 5), and the hints of feed
+  addresses (section 4.9);
 - download automatically and prefetch (section 4.4), within the limits
   there;
 - keep a smaller automatic download limit, or none (fetching on
@@ -522,8 +596,12 @@ This section concerns only clients that run the Terse machine
   program of a busy feed. Lookups of kinds other than programs.
 - Sharding content among relays by hash, so that each relay holds only part
   of it.
-- Relay discovery beyond configuration, the local relay and the `relay`
-  lines of profiles.
+- Relay discovery beyond configuration, the local relay, the `relay`
+  lines of profiles and the hints of feed addresses (section 4.9).
+- A hint for a relay reached over a secure transport (`wss://`): a hint
+  means plain `ws://` in this revision. A later revision may mark such a
+  hint with a byte that is not a hint character (such as `+`); readers of
+  this one then see the key alone (`ARTICLE.md` section 4.1).
 - Direct connections between clients.
 - Abuse limits beyond blob size and the search rate: on publishing, on
   peers.

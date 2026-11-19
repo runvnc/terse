@@ -353,3 +353,63 @@ fn unknown_kind_entries() {
     ]);
     assert!(screen.contains("|1 article  ·  1 feed\n"), "{screen}");
 }
+
+/// Feed addresses (NETWORK 4.9) on the command line: `feed subscribe`
+/// takes a key, an address or a `terse:feed/` link and keeps the hints,
+/// `feed subscriptions` shows them, `feed address` prints the user's own,
+/// a loopback hint is refused, and `feed sync` says which feeds no relay
+/// held.
+#[test]
+fn feed_addresses() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let reader = User::new();
+    let config = reader.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    let other = to_hex(&Identity::from_seed([71; 32]).feed_key());
+    let third = to_hex(&Identity::from_seed([72; 32]).feed_key());
+
+    // Malformed addresses are refused whole.
+    for bad in [format!("{other}@"), format!("{other}@a,b,c"), format!("{other}@a.example:0"), other.to_uppercase()] {
+        let out = terse(&reader.feed_args(&["subscribe", &bad], None));
+        assert!(!out.status.success(), "{bad}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("not a feed address"), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    assert_eq!(reader.feed(&["subscriptions"], None), "");
+
+    let out = reader.feed(&["subscribe", &format!(" terse:feed/{other}@relay.example:9000,[2001:db8::7] ")], None);
+    assert!(out.starts_with(&format!("subscribed to {other}\n")), "{out}");
+    assert!(out.contains("looked for on relay.example:9000 and [2001:db8::7]"), "{out}");
+    assert_eq!(
+        reader.feed(&["subscriptions"], None),
+        format!("{other}  0 entries held, latest -  hints relay.example:9000,[2001:db8::7]\n")
+    );
+    // A loopback hint is accepted but will not be used; it replaces the old ones.
+    let out = terse(&reader.feed_args(&["subscribe", &format!("{other}@127.0.0.1:7")], None));
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("its hints are now 127.0.0.1:7"), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("127.0.0.1:7 is a loopback, private or link-local address"), "{out:?}");
+    assert!(reader.config.path().join("subscription-hints").exists());
+
+    // The own address: hints from public relays only.
+    let out = terse(&reader.feed_args(&["address"], Some(&url)));
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{key}\n"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("only people who use the same relay as you"), "{out:?}");
+    let out = reader.feed(&["address", "--relay", "ws://relay.example:7878", "--relay", "ws://10.0.0.1:7878", "--relay", "ws://b.example:9000"], None);
+    assert_eq!(out, format!("{key}@relay.example,b.example:9000\n"));
+
+    // Sync: a bare key no relay holds, and the hinted feed (its hint is
+    // loopback, so not used), are reported.
+    reader.feed(&["subscribe", &third], None);
+    let out = terse(&reader.feed_args(&["sync"], Some(&url)));
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("{third}: not found on your relays; if its author publishes elsewhere")), "{err}");
+    assert!(err.contains(&format!("{other}: not found on your relays nor on the relays its address names")), "{err}");
+    let out = terse(&reader.feed_args(&["sync", "--no-feed-relays"], Some(&url)));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("its hints are not used with --no-feed-relays"), "{out:?}");
+    // Unsubscribing by address forgets the hints.
+    assert!(reader.feed(&["unsubscribe", &format!("{other}@relay.example")], None).starts_with("unsubscribed"));
+    assert_eq!(std::fs::read_to_string(reader.config.path().join("subscription-hints")).unwrap(), "");
+}

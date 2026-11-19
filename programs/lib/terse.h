@@ -522,6 +522,13 @@ uint32_t content_put(content_req *r, const void *data, uint32_t size);
  * (CONTENT_UNSUBSCRIBE) the feed `key` (32 bytes). The host asks the user;
  * STATUS_REFUSED if the answer is no (SPEC 9.5). */
 uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
+/* Subscribes to the feed `key` with the hint list of its address (`len`
+ * bytes at `hints`, ROM or RAM, copied at submit; NETWORK 4.9), e.g.
+ * "relay.example:7000,b.example": where the host looks for the feed if its
+ * own relays do not hold it. STATUS_BAD_REQUEST if the hints are
+ * malformed or over CONTENT_MAX_HINTS bytes; len 0: no hints. */
+#define CONTENT_MAX_HINTS 161
+uint32_t content_subscribe(content_req *r, const uint8_t *key, const void *hints, uint32_t len);
 /* Publishes blob `blob` (already in the host's store: put it first) as the
  * next entry of the host's feed, with a title of `len` bytes of UTF-8 (at
  * most 120, copied at submit). The host asks the user; on completion
@@ -542,6 +549,11 @@ uint32_t content_publish_kind(content_req *r, const uint8_t *blob, const void *t
 /* The host's own feed key, in r->id on completion; STATUS_NOT_FOUND if the
  * host has no identity yet. */
 uint32_t content_identity(content_req *r);
+/* The same, and the hint list of the host's own feed address in the `len`
+ * bytes at `buf` (RAM): on completion r->length is the bytes written (the
+ * whole hints that fit; 0: the host has none, so its address is the bare
+ * key). */
+uint32_t content_identity_hints(content_req *r, void *buf, uint32_t len);
 
 /* Content: names, search, profile and nicknames (SPEC 9.5). */
 #define CONTENT_NAMES 0x09
@@ -554,6 +566,8 @@ uint32_t content_identity(content_req *r);
 #define NAME_NICKNAME 0x01
 #define NAME_PROFILE 0x02
 #define NAME_UNSUBSCRIBED 0x04
+/* The host follows the feed through a relay a hint of its address names. */
+#define NAME_HINTED 0x08
 
 /* Find scopes. */
 #define FIND_FEEDS 1
