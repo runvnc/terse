@@ -315,6 +315,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             // the node also follows on the relay (NETWORK 4.4); publishing
             // uses (and if need be creates) the identity in the config
             // directory.
+            if !shell {
+                // The manual, which every host carries.
+                builtin::install_manual(node.store())?;
+            }
             node.set_subscriptions(Subscriptions::load(config.join("subscriptions"))?);
             node.set_identity_path(config.join("identity.key"))?;
             node.set_nicknames(terse_net::profile::Nicknames::load_from_config(&config)?);

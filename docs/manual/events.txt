@@ -1,0 +1,253 @@
+# Events and input
+
+Input reaches a program as events: four-byte records in a queue that the
+host fills at the start of each frame and the program empties with the
+system device's `next_event` call. Keys, typed text, the pointer and the
+wheel come from the user; other events are answers from devices (content
+requests, page layout) and, for the shell of a system, news about its
+machines. Game controllers are not events: their state is read with the
+`controller` call. This article lists every event and the controller
+state byte by byte.
+
+## The queue
+
+- The queue holds at most 64 events. An event that arrives when it is
+  full is dropped; the program is not told.
+- At the start of each frame the host appends that frame's input events,
+  in the order they happened, then the content-done events of the
+  requests completed in that frame.
+- At most one feeds-updated event is queued per frame; a second one in
+  the same frame's input is dropped.
+- The two page located events (`0Dh`, `0Eh`) are queued together or not
+  at all: if the queue has room for only one, neither is queued.
+- Events stay in the queue across frames until the program reads them.
+  The queue is part of the machine's state.
+
+`next_event` (`101h`) takes `a0` = a 4-byte buffer in RAM. It removes the
+head event, writes type, `a`, `b`, `c` in that order, and returns 1; if
+the queue is empty it writes nothing and returns 0. In C:
+
+```c
+terse_event e;                 /* fields: type, a, b, c */
+while (terse_event_pop(&e) != EV_NONE)
+    handle(&e);                /* EV_NONE is 0: queue empty */
+```
+
+## Event types
+
+| Type | Name | `a` | `b` | `c` |
+|---|---|---|---|---|
+| `01h` | Key down | key code | modifiers | 0 |
+| `02h` | Key up | key code | modifiers | 0 |
+| `03h` | Text | code point bits 0-7 | bits 8-15 | bits 16-20 |
+| `04h` | Pointer | x bits 0-7 | y bits 0-7 | x bits 8-9, y bit 8, buttons |
+| `05h` | Content done | request handle | status | 0 |
+| `06h` | Wheel | vertical steps, signed | horizontal steps, signed | 0 |
+| `07h` | Feeds updated | 0 | 0 | 0 |
+| `08h` | Page laid out | height bits 0-7 | bits 8-15 | bits 16-23 |
+| `09h` | Page anchor | anchor id bits 0-7 | bits 8-15 | buttons |
+| `0Ah` | Machine changed | handle | new state | 0 |
+| `0Bh` | Home | 0 | 0 | 0 |
+| `0Ch` | Machine pressed | handle | buttons | 0 |
+| `0Dh` | Page located | anchor id bits 0-7 | bits 8-15 | line height |
+| `0Eh` | Page located y | y bits 0-7 | bits 8-15 | bits 16-23 |
+| `0Fh` | Open requested | handle | 0 | 0 |
+| `10h` | Snapshot done | slot | status | 0 |
+
+`terse.h` names them `EV_KEY_DOWN`, `EV_KEY_UP`, `EV_TEXT`, `EV_POINTER`,
+`EV_CONTENT_DONE`, `EV_WHEEL`, `EV_FEEDS_UPDATED`, `EV_PAGE_LAID_OUT`,
+`EV_PAGE_ANCHOR`, `EV_MACHINE_CHANGED`, `EV_HOME`, `EV_MACHINE_PRESSED`,
+`EV_PAGE_LOCATED`, `EV_PAGE_LOCATED_Y`, `EV_OPEN_REQUESTED` and
+`EV_SNAPSHOT_DONE`.
+
+## Keys
+
+Key down and key up carry the key's USB HID keyboard usage ID: the
+physical key, whatever the keyboard layout. Use text events for the
+characters a user types.
+
+| Key | Code | `terse.h` |
+|---|---|---|
+| A to Z | `04h` to `1Dh` | |
+| 1 to 9, 0 | `1Eh` to `26h`, `27h` | |
+| Enter | `28h` | `KEY_ENTER` |
+| Escape | `29h` | `KEY_ESCAPE` |
+| Backspace | `2Ah` | `KEY_BACKSPACE` |
+| Tab | `2Bh` | `KEY_TAB` |
+| Space | `2Ch` | `KEY_SPACE` |
+| F1 to F12 | `3Ah` to `45h` | |
+| Insert | `49h` | |
+| Home | `4Ah` | `KEY_HOME` |
+| Page Up | `4Bh` | `KEY_PAGE_UP` |
+| Delete | `4Ch` | |
+| End | `4Dh` | `KEY_END` |
+| Page Down | `4Eh` | `KEY_PAGE_DOWN` |
+| Right, Left, Down, Up | `4Fh`, `50h`, `51h`, `52h` | `KEY_RIGHT`, `KEY_LEFT`, `KEY_DOWN`, `KEY_UP` |
+
+The modifiers byte `b` has bit 0 Shift, bit 1 Control, bit 2 Alt and bit
+3 Meta (`MOD_SHIFT`, `MOD_CONTROL`, `MOD_ALT`, `MOD_META`); the other bits
+are zero.
+
+A host may keep some keys for itself. In a system the home key (F12 in
+`terse-host`) is never delivered to any machine. While the host shows a
+consent prompt the keyboard is the host's. `terse-host` also takes Ctrl+V
+and Shift+Insert for pasting.
+
+## Text
+
+A text event carries one Unicode scalar value (up to 21 bits) produced by
+the host's text input, after the keyboard layout and input-method
+composition: `a` is bits 0-7, `b` bits 8-15 and `c` bits 16-20. In
+`terse-host` a key that types a character gives a key down, then a text
+event; control characters typed (Enter, Tab, Backspace) give no text
+event, only their keys.
+
+```c
+uint32_t cp = e.a | (uint32_t)e.b << 8 | (uint32_t)e.c << 16;
+```
+
+Text the user pastes arrives the same way, one event per character, no
+faster than the queue has room for. A line break is U+000A; other control
+characters are dropped.
+
+## Pointer
+
+Positions are in screen units: x from 0 to 639, y from 0 to 479, (0, 0)
+at the top left. A pointer event is sent when the position or a button
+changes, at most once per frame for movement; a button change is sent at
+once, with the current position. Positions outside the screen are clamped
+to it, and nothing is sent when the pointer leaves the host's window.
+
+| Byte | Bits | Contents |
+|---|---|---|
+| `a` | 0-7 | x bits 0-7 |
+| `b` | 0-7 | y bits 0-7 |
+| `c` | 0-1 | x bits 8-9 |
+| `c` | 2 | y bit 8 |
+| `c` | 3 | primary button |
+| `c` | 4 | secondary button |
+| `c` | 5 | middle button |
+| `c` | 6-7 | zero |
+
+The macros of `terse.h` decode it:
+
+```c
+if (e.type == EV_POINTER) {
+    uint32_t x = EV_POINTER_X(e);       /* 0-639 */
+    uint32_t y = EV_POINTER_Y(e);       /* 0-479 */
+    uint8_t buttons = EV_POINTER_BUTTONS(e);
+    if (buttons & BUTTON_PRIMARY)
+        press(x, y);
+}
+```
+
+`EV_POINTER_BUTTONS` gives the three button bits shifted down to bits
+0-2, where `BUTTON_PRIMARY` (1), `BUTTON_SECONDARY` (2) and
+`BUTTON_MIDDLE` (4) test them. A button that was pressed is detected by
+comparing with the buttons of the previous pointer event. A terminal cell
+under the pointer is column x / 8, row y / 16.
+
+## Wheel
+
+`a` is the vertical steps and `b` the horizontal steps, each a signed
+byte from −127 to 127 (read them as `(int8_t)e.a`). A positive vertical
+step means scroll down, towards later content; a positive horizontal step
+means scroll right. At most one wheel event is sent per frame; the host
+adds up smaller movements until they make a whole step.
+
+## Answers from devices
+
+- Content done (`05h`): content request `a` (1 to 8) has completed with
+  status `b`. It is queued in the frame in which the host completes the
+  request; if the queue is full it is dropped, but the request block in
+  RAM is still updated, so a program can also look at the block.
+- Feeds updated (`07h`): the host stored new feed entries since the
+  previous frame. It is sent after the automatic download of those
+  entries' articles has finished or failed; the download of a program's
+  image is announced by a feeds-updated event of its own when it ends.
+- Page laid out (`08h`): the page document's laid-out height in screen
+  units, 24 bits (FFFFFFh if larger); `EV_PAGE_HEIGHT(e)` decodes it.
+- Page anchor (`09h`): a button was pressed over text or a figure with
+  anchor id `a` + 256 × `b` (`EV_ANCHOR_ID(e)`); `c` holds the buttons
+  with the pointer's bit order, from bit 0 (`EV_ANCHOR_BUTTONS(e)`). It
+  follows the pointer event of the same press.
+- Page located (`0Dh`) and page located y (`0Eh`): the answer to the
+  page's `locate`, always as this pair. `0Dh` gives the anchor id and the
+  height of its line (255 if larger); `0Eh` gives the line's y from the top
+  of the document in 24 bits. An anchor not found gives height 0 and y
+  FFFFFFh. `page_place_event` in `terse.h` collects the pair.
+
+The page device's article has the exact rules for its events.
+
+## Events only the shell gets
+
+These go only to the shell of a system, the machine with device 8:
+
+| Type | Name | Meaning |
+|---|---|---|
+| `0Ah` | Machine changed | machine `a` is now in state `b` (1 loading, 2 running, 3 paused, 4 exited, 5 faulted, 6 failed), a change the shell did not make with a call |
+| `0Bh` | Home | the user pressed the host's home key; the focus is now the shell |
+| `0Ch` | Machine pressed | a pointer button was pressed over machine `a`'s picture; `b` is the buttons |
+| `0Fh` | Open requested | machine `a` made an open request the shell can read with `request` |
+| `10h` | Snapshot done | the snapshot asked for slot `a`: `b` = 1 stored, 3 failed |
+
+## Input in a system
+
+In a system the host's input is in the shell's screen units, and each
+frame it is routed before the shell runs:
+
+| Input | Goes to |
+|---|---|
+| Key down, key up, text, wheel | the machine with the focus if it is running; the shell if the focus is 0; otherwise nobody |
+| Pointer over a machine's picture | that machine (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
+| Pointer over no picture | the shell, unchanged |
+| Controllers | the machine with the focus; every other machine reads all four as not connected |
+| Content done, feeds updated, page events | each machine its own |
+
+A position (x, y) over a picture at (px, py) of size pw × ph is mapped to
+x′ = ⌊(2(x − px) + 1) × 640 / (2pw)⌋ and y′ = ⌊(2(y − py) + 1) × 480 /
+(2ph)⌋. A pointer event that presses a button over a picture also gives
+the shell a machine pressed event.
+
+## Controllers
+
+Up to four game controllers, numbered 0 to 3. Their state is latched at
+the start of each frame, so it does not change within a frame. The
+`controller` call (`105h`, `a0` = number, `a1` = 8-byte buffer in RAM)
+writes eight bytes and returns byte 0; a number above 3 reads as not
+connected.
+
+| Byte | Contents |
+|---|---|
+| 0 | bit 0: connected; other bits zero |
+| 1 | bits 0-7: up, down, left, right, A (bottom), B (right), X (left), Y (top) |
+| 2 | bits 0-7: left shoulder, right shoulder, left trigger, right trigger, select, start, left stick press, right stick press |
+| 3 | left stick x, signed: −127 left to 127 right |
+| 4 | left stick y, signed: −127 up to 127 down |
+| 5 | right stick x |
+| 6 | right stick y |
+| 7 | zero |
+
+A controller that is not connected reads as all zeros. Axis values are
+never −128. In C, `terse_pad_read(n, &pad)` fills a `terse_pad` (fields
+`connected`, `buttons`, `buttons2`, `lx`, `ly`, `rx`, `ry`), and
+`PAD_UP` ... `PAD_Y` test `buttons`, `PAD_L1`, `PAD_R1`, `PAD_L2`,
+`PAD_R2`, `PAD_SELECT` and `PAD_START` test `buttons2`.
+
+```c
+terse_pad pad;
+terse_pad_read(0, &pad);
+if (pad.connected) {
+    x += pad.lx / 32;
+    if (pad.buttons & PAD_A)
+        jump();
+}
+```
+
+## Recording and replay
+
+Every event is an input. The events of each frame, with the Unix time,
+the random bytes, the controller states and the content completions, are
+what a host records to replay a run exactly; `terse run --events <file>`
+reads such input from a text file. Reading an event costs 4 units plus 1
+for the copied record; see [charges](terse:{charges}).

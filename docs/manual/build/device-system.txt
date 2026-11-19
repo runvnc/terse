@@ -1,0 +1,216 @@
+# The system device (device 1)
+
+The system device is the machine's link to time and input: it ends
+frames, hands out events, reads the clock, random bytes and game
+controllers, stops the machine, and lets a machine that a shell started
+ask the shell to open something and read the argument the shell gave it.
+It is slot 1, version 0. Every machine has it: an image need not list it
+(listing (1, 0) is allowed too), and it cannot be absent.
+
+## Reset state
+
+| Item | At reset |
+|---|---|
+| Frame counter | 0 |
+| Event queue | empty (it holds at most 64 events) |
+| Time latch | 0 until the first frame latches it |
+| Controllers | all four read as not connected until the first frame latches them |
+| Argument | the blob ID its shell gave it, or none |
+| Open request | none waiting |
+
+## Calls
+
+| `a7` | Call | Arguments | Result | Charge |
+|---|---|---|---|---|
+| `100h` | `wait_frame` | none | the frame counter in the frame it returns in | 4 |
+| `101h` | `next_event` | `a0` = buffer (4 bytes, written) | 1 and the event, or 0 if the queue is empty | 4, plus 1 when an event is written |
+| `102h` | `frame_count` | none | the frame counter | 4 |
+| `103h` | `unix_time` | none | the Unix time latched at the start of the frame | 4 |
+| `104h` | `random` | `a0` = buffer (written), `a1` = length, at most 256 | the length | 4, plus 1 per 4 bytes |
+| `105h` | `controller` | `a0` = controller number, `a1` = buffer (8 bytes, written) | byte 0 of the state | 4, plus 2 |
+| `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return | 4 |
+| `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | 4, plus 1 per 4 bytes read |
+| `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | 4, plus 8 when written |
+
+The charge is in budget units on top of the `ecall` instruction itself (1
+from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing.
+Every buffer a call writes must lie wholly in RAM; one it reads (only
+`open`'s) wholly in ROM or wholly in RAM. A bad buffer gives `FFFF_FFFEh`
+and nothing else happens. A call number from `109h` to `1FFh` is unknown
+and returns `FFFF_FFFFh`.
+
+## wait_frame
+
+`wait_frame` ends the machine's work for this frame: the rest of the
+budget is discarded, and the call returns at the start of the next frame
+with the frame counter as it reads in that frame, one more than before the
+call. Unused budget never carries over, but a negative one does: the call
+costs 5 units from ROM, so a `wait_frame` started with 2 units left leaves
+a debt of 3 for the next frame.
+
+In C, `terse_wait_frame()` makes the call and returns how many frames
+passed since its previous call (at most 255): 1 normally, more when the
+work in between ran out of budget and was paused.
+
+## next_event
+
+`next_event` removes the event at the head of the queue and writes its
+four bytes, type, `a`, `b`, `c`, to the buffer, and returns 1. If the queue
+is empty it writes nothing and returns 0. The buffer is checked first: a
+buffer not wholly in RAM gives `FFFF_FFFEh` and removes no event. Event
+types and their bytes are in [Events and input](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf). In C,
+`terse_event_pop(&e)` returns the event's type, or `EV_NONE` (0) when the
+queue is empty.
+
+## frame_count and unix_time
+
+`frame_count` returns the frame counter: N throughout frame N, frame 0
+being the first frame after reset. It increases at the end of every frame
+and wraps from `FFFF_FFFFh` to 0. In a system, a paused machine's counter
+does not advance.
+
+`unix_time` returns the low 32 bits of the Unix time in seconds that the
+host latched at the start of the frame; it does not change within a frame.
+A headless run (`terse run`) latches 0. In C: `terse_frame()` and
+`terse_time()`.
+
+## random
+
+`random` fills the buffer with the next bytes of the random bytes the host
+supplied for this frame, in order, and returns the length. A length above
+256 is a bad buffer (`FFFF_FFFEh`), whatever the address. A length of 0
+returns 0 and writes nothing.
+
+The host must supply enough bytes for any frame: 463,872 cover the worst
+case, every `random` call that can start in a frame taking 256 bytes. A
+host that supplies fewer gives zeros once its bytes are used up; a
+headless run supplies none, so `random` gives zeros there. The bytes are
+an input: a program that wants the same run twice must be replayed with
+the same bytes.
+
+In C, `terse_random(buf, len)` takes any length and makes one call per 256
+bytes; `terse_random_byte()` returns one byte.
+
+## controller
+
+`controller` writes the eight bytes of controller `a0`'s state, as latched
+at the start of the frame, and returns byte 0 (1 if connected, else 0).
+Controllers are numbered 0 to 3; a number above 3 reads as a controller
+that is not connected (eight zero bytes, result 0). The layout of the
+eight bytes is in [Events and input](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf). In a system only the
+machine with the keyboard focus sees the controllers; every other machine
+reads all four as not connected. In C: `terse_pad_read(n, &pad)` with a
+`terse_pad`.
+
+## exit
+
+`exit` stops the machine with exit code `a0 & FFh`. The machine stops at
+once: the rest of the frame's budget is dropped, the frame still counts,
+and nothing runs in later frames. An exit is never confused with a fault,
+which has no exit code. In C, returning from `main` exits with its value
+(the startup code calls `exit`); `terse_exit(code)` exits from anywhere.
+
+## open
+
+`open` asks the shell of a system to open a blob or a program. `a0` is the
+address of an open request, which must lie wholly in ROM or wholly in RAM:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Kind: 1 a blob, 2 a program |
+| 1 | 32 | Kind 1: the blob ID. Kind 2: the publisher's feed key, all zero for a built-in program |
+| 33 | 1 | Kind 2: the name's length n, 1 to 48 |
+| 34 | n | Kind 2: the name, a valid display name |
+
+A kind 1 request is 33 bytes; a kind 2 request is 34 + n bytes. A display
+name is 1 to 48 bytes of UTF-8 with no control characters and no
+whitespace as its first or last character. The call is decided in this
+order:
+
+| Case | Result |
+|---|---|
+| a kind other than 1 or 2, a request not wholly in ROM or wholly in RAM, or a kind 2 name that is not valid | `FFFF_FFFEh` |
+| the machine was not started by a shell (it runs on its own, or it is the shell) | 0, nothing else happens |
+| a request this machine made earlier still waits (the shell has not read it with `request`) | 0, nothing else happens |
+| otherwise | 1: the request waits for the shell |
+
+The shell is told of a waiting request at the start of the next system
+frame, by an open requested event, and reads it with the machines device's
+`request` call; then the machine may make another. What the shell does with
+the request is its own policy, and the machine is not told. The built-in
+shell, for example, takes requests only from the machine with the
+keyboard, asks the user before starting a program that is not built in,
+and opens a blob according to its first bytes. See [the machines
+device](terse:487b1e39b68c26829976d34ec7355d5f52eeb9ead216f21c462808ef9dbf8852).
+
+In C, `terse_open(request)` with the kinds `OPEN_BLOB` and `OPEN_PROGRAM`:
+
+```c
+#include "terse.h"
+
+/* Ask the shell to start the built-in program "sparks". */
+uint32_t open_sparks(void)
+{
+    uint8_t req[34 + 6];
+    memset(req, 0, sizeof req); /* zero key: a built-in */
+    req[0] = OPEN_PROGRAM;
+    req[33] = 6;
+    memcpy(req + 34, "sparks", 6);
+    return terse_open(req);     /* 1 passed, 0 not */
+}
+```
+
+## argument
+
+`argument` writes the machine's argument, the blob ID its shell gave it
+before its first frame (with the machines device's `argument` call), to
+the 32-byte buffer and returns 1. A machine that has none (the shell gave
+none, it runs on its own, or it is the shell) gets 0 and nothing is
+written. The argument never changes during the machine's life and is part
+of its state; a machine restored from a snapshot has the argument it had
+when the snapshot was taken. The built-in shell, for example, starts a
+document's program with the document's blob ID as the argument. In C:
+`terse_argument(id)`.
+
+## Determinism, replay and state
+
+Events, the latched Unix time, the random bytes and the controller state
+are the only inputs from this device. With the content completions (see
+[blobs](terse:0743375e667a90fd6d52220a6fddce636ea91b1204d1630053061753a31b3735)), they are what a host records per frame to
+replay a run exactly. For a machine a shell started, whether `open` passes
+a request on depends on whether the shell has read the previous one, and
+is an input like a completion.
+
+| In the machine's state | Not in it |
+|---|---|
+| the frame counter | this frame's random bytes (consumed within the frame) |
+| the time latch of the frame just run | whether an open request still waits |
+| the queued events, from the head | |
+| the eight bytes of each controller as latched | |
+| the argument, if the machine has one | |
+
+## Example
+
+```c
+#include "terse.h"
+
+int main(void)
+{
+    terse_event e;
+    terse_pad pad;
+    uint8_t seed[16];
+    terse_random(seed, sizeof seed);
+    for (;;) {
+        while (terse_event_pop(&e) != EV_NONE)
+            if (e.type == EV_KEY_DOWN && e.a == KEY_ESCAPE)
+                return 0;              /* exit code 0 */
+        terse_pad_read(0, &pad);
+        if (pad.connected && (pad.buttons & PAD_A))
+            seed[0]++;
+        terse_wait_frame();
+    }
+}
+```
+
+The charges of all devices are listed together in
+[charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).

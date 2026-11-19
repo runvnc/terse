@@ -113,6 +113,71 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
 
 /// `terse relay add|remove|set <url>`, `terse relay list|show`: the
 /// relay list in the config directory's `relays` file (NETWORK 5).
+/// `terse manual build|check [--dir <d>]`: resolves the manual's links and
+/// writes (or checks) `<d>/build`; `terse manual publish`: publishes the
+/// manual built into terse as article entries of the user's feed, the
+/// articles linked to before those that link to them, so the index last.
+pub fn manual(args: &[String]) -> Result<ExitCode, String> {
+    use terse_net::manual;
+    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    let args = Args::parse(rest, &[])?;
+    match command.as_str() {
+        "build" | "check" => {
+            args.check_known(&["--dir"])?;
+            if !args.positional.is_empty() {
+                return Err(USAGE.into());
+            }
+            let dir = PathBuf::from(args.get("--dir").unwrap_or("docs/manual"));
+            if command == "build" {
+                for b in manual::build_dir(&dir)? {
+                    println!("{} {:6} {}", to_hex(&b.id), b.text.len(), b.name);
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            let built = manual::build(&manual::read_sources(&dir)?)?;
+            let out = dir.join("build");
+            let mut stale = Vec::new();
+            for b in &built {
+                if std::fs::read(out.join(format!("{}.txt", b.name))).ok().as_deref() != Some(b.text.as_bytes()) {
+                    stale.push(b.name.clone());
+                }
+            }
+            if std::fs::read_to_string(out.join("manifest")).ok() != Some(manual::build_manifest(&built)) {
+                stale.push("manifest".into());
+            }
+            if stale.is_empty() {
+                println!("the built manual is up to date ({} articles)", built.len());
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Err(format!("out of date in {}: {} (run `terse manual build`)", out.display(), stale.join(", ")))
+            }
+        }
+        "publish" => {
+            known(&args, &[])?;
+            if !args.positional.is_empty() {
+                return Err(USAGE.into());
+            }
+            let identity = load_identity(&args)?;
+            let relays = relay_urls(&args, true)?;
+            let mut node = open_node(&args, &relays)?;
+            node.set_identity(identity);
+            if relays.is_empty() {
+                eprintln!("terse: no relay: stored locally only");
+            }
+            for (name, title, text) in terse_net::builtin::MANUAL.iter().rev() {
+                let draft = Draft { data: text.to_vec(), title: title.to_string(), reply_to: None, time: now() };
+                match node.publish_article(&draft) {
+                    Done::Published { seq, blob } => println!("seq {seq} blob {} {name}", to_hex(&blob)),
+                    Done::Refused => return Err(format!("{name}: the relays refused the entry")),
+                    _ => return Err(format!("{name}: publish failed (store error, or no relay accepted it)")),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        _ => Err(USAGE.into()),
+    }
+}
+
 pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;

@@ -1,0 +1,163 @@
+# The page (device 7)
+
+The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (`terse pack --device 7:0`). Without it, and for the unknown functions `706h`..`7FFh`, a call returns `FFFF_FFFFh`.
+
+Layout differs between hosts, because fonts differ. A program learns only two facts about it, both as input events: the document's height and, when it asks, where an anchor is. So a recorded run replays exactly whatever the fonts.
+
+## Rectangle and scrolling
+
+The page is drawn inside its rectangle (x, y, width, height in screen units) and nothing of it outside, above the terminal's cell backgrounds and below the vector shapes and terminal characters. The document is one column as wide as the rectangle. The scroll value is the distance from the top of the document to the top of the rectangle. A width or height of 0 hides the page.
+
+## Calls
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `700h` | `submit` | `a0` = document, `a1` = length | 0 done, 1 rejected |
+| `701h` | `clear` | none | 0 |
+| `702h` | `region` | `a0` x, `a1` y, `a2` width, `a3` height | 0 |
+| `703h` | `scroll` | `a0` = y | 0 |
+| `704h` | `background` | `a0` = colour | 0 |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
+
+- `submit` copies `a1` bytes from `a0`, replacing the document, sets the scroll value to 0 and returns 0. A length of 0 or above 65,536 returns 1 (checked first); bytes not wholly in ROM or wholly in RAM return `FFFF_FFFEh`; either changes nothing. The same bytes again are still a new document.
+- `clear` removes the document (the background stays); the scroll value is kept.
+- `region` sets the rectangle, clamped onto the screen: x to at most 640, y to at most 480, the width to at most 640 - x, the height to at most 480 - y.
+- `scroll` stores `a0` as given (32 bits). When presenting, the host reads it as signed and clamps it to 0 .. max(0, height - rectangle height); the stored value does not change.
+- `background` sets the colour behind the text: `a0` = r, g << 8, b << 16 and a << 24 ORed together, a the opacity (255 opaque; 0 lets the terminal's cell backgrounds show).
+- `locate` asks where anchor `a0` is laid out in the current document; the answer comes later as two events. It returns 1, asking nothing, if `a0` is 0 or above 65,535, if there is no document, or if the program already made 8 locates this frame.
+
+After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background `FF00_0000h` (opaque black).
+
+## The document
+
+A document is 1 to 65,536 bytes of commands, each an opcode byte and its operands, little-endian. It ends at End, at the end of the bytes, at an unknown opcode, at a command whose operands are cut off, or at a Table command whose column count is 0 or above 8. The commands before that are used.
+
+| Op | Command | Operands | Effect |
+|---|---|---|---|
+| `00h` | End | none | Ends the document |
+| `01h` | Text | n (2 bytes), n bytes of UTF-8 | Adds text to the current paragraph or cell in the current style |
+| `02h` | Font | face (0 sans, 1 serif, 2 mono), flags (bit 0 bold, bit 1 italic) | Font for later text; an unknown face is 0 |
+| `03h` | Size | size (1 byte) | Font size in screen units, clamped to 6..96 |
+| `04h` | Colour | r, g, b | Text colour |
+| `05h` | Paragraph | align, indent, space, flags (1 byte each) | Starts a paragraph |
+| `06h` | Rule | none | A paragraph that is a horizontal line |
+| `07h` | Anchor | id (2 bytes) | Later text and figures belong to `id`; 0 is none |
+| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:{device-page-figures}) |
+| `09h` | Table | columns (1, 1..8), flags (bit 0 header), one align byte per column | Starts a table block |
+| `0Ah` | Cell | none | Starts the table's next cell |
+| `0Bh` | End table | none | Ends the table |
+
+Align is 0 start, 1 centre, 2 end, anything else 0. Other flag bits are ignored.
+
+At the start of a document: sans, no flags, size 14, colour (229, 229, 229), anchor 0, and an implicit first paragraph: start-aligned, indent 0, space 0, wrapping. Font, size, colour and anchor carry on across paragraphs, tables and figures.
+
+## Text
+
+Each Text command is decoded on its own: malformed UTF-8 becomes U+FFFD as on the terminal (so a sequence split across two Text commands is malformed in both), but code points above U+FFFF are kept. U+000A breaks the line; U+0009 is a space; other control characters (U+0000..U+001F, U+007F..U+009F) are ignored. Consecutive spaces are kept.
+
+## Paragraphs and rules
+
+- Indent is in screen units from the start edge, for every line.
+- Space is the gap above the paragraph, also for the first one and also for a paragraph with no text, which takes no other room: an empty paragraph is a vertical gap.
+- Flag bit 0, no wrap: lines break only at U+000A, and a line wider than the rectangle is cut off at its edge. Flag bit 1, ellipsis, only with no wrap: a line wider than the rectangle less the indent ends in a wholly shown ellipsis (U+2026) where it is cut.
+- Start and end follow each paragraph's direction, from its first strong character: left for left-to-right text, right for right-to-left. Indent is measured from the start.
+- A line is as high as the host's natural line height for its largest text. A line break at the end of a paragraph gives an empty last line.
+- A Rule is a paragraph 8 units high with a line about one unit thick across the whole rectangle at its middle, in the current colour, with no space above (put an empty Paragraph before it for a gap). Text after a rule, a figure or a table starts a new paragraph with the properties of the latest Paragraph command (or of the implicit first one).
+- Anchors mark text and figures for presses and `locate`; anchored text looks like other text.
+
+## Tables
+
+A Table command ends the current paragraph and starts a block with the space of the latest Paragraph command above it; if the current paragraph has no text yet, the table takes its place and its space. Each Cell command starts the next cell in row order, rows of `columns` cells; missing cells of the last row are empty. Text before the first Cell is ignored. Text adds to the current cell (U+000A breaks a line in it); Font, Size, Colour and Anchor work as anywhere.
+
+A table ends at End table, and also at a Paragraph, Rule, Figure or Table command (which then does what it does) and at the end of the document. A table with no cells takes its space and nothing else. The colour at the Table command is the colour of its rules. With flag bit 0 the first row is a header: drawn bold whatever the font's flag, with a rule under it. Cell or End table outside a table does nothing.
+
+Limits: 1,024 cells per table and 4,096 per document. A Cell that would pass either limit, and the text after it up to the end of its table, are ignored (Font, Size, Colour and Anchor still change the state).
+
+Layout, in screen units:
+
+- 1. Padding: 6 units left and right of each cell, 3 above and below.
+- 2. Natural widths: a cell's widest line, broken only at U+000A, plus 12 (12 for an empty cell). A column's is the largest of its cells'.
+- 3. Column widths: if the natural widths add up to at most the rectangle's width W, each column gets its natural width. Otherwise each column is the smaller of its natural width and a cap C, the largest C for which the widths add up to at most W, but C is never less than 48 (the table may then be wider than W and is cut off at the right edge).
+- 4. Rows: each cell's text is laid out as a paragraph (wrapped, no indent, aligned as its column says) at the column width less 12, its first line 3 units below the row's top. A row is as high as its tallest cell text plus 6 (an empty cell counts 0). The table is as high as its rows.
+- 5. Placing: columns side by side from the rectangle's left edge, first column leftmost; rows one below another.
+- 6. Rules take no room: a line about one unit thick across the table, centred on a row boundary. The rule under a header row is in the rule colour (if the header is the only row, that rule is under the table's last row); between other rows it is faint, about a third of the colour's strength.
+
+A line of a cell counts as a line for presses and `locate`; a row's lines are taken left to right.
+
+## Layout and presentation
+
+The host chooses fonts for the three faces and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine's frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.
+
+## Events
+
+| Type | Name | `a` | `b` | `c` |
+|---|---|---|---|---|
+| `08h` | Page laid out | height bits 0..7 | 8..15 | 16..23 |
+| `09h` | Page anchor | id low | id high | buttons |
+| `0Dh` | Page located | id low | id high | line height |
+| `0Eh` | Page located y | y bits 0..7 | 8..15 | 16..23 |
+
+- `08h` gives the document's height at the rectangle's current width (FFFFFFh if larger), at the start of a frame after one with a submit, after a clear (height 0), and when a change of width changes the height. While the width is 0 it waits. A host may skip intermediate layouts but must eventually report the latest document and width once they stay unchanged. At most one per frame.
+- `09h` follows the pointer event of a button press over text whose anchor is not 0 (within the glyphs' extent along the line and the line's height) or over a figure whose anchor is not 0 (its box as shown), as the page was last shown. `c` holds the buttons in bits 0..2: primary, secondary, middle.
+- `0Dh` and `0Eh` answer a `locate`, always as a pair, in that order: the height of the first line or figure carrying the anchor (255 if larger) and its y from the top of the document (FFFFFFh if larger). If nothing carries it, the height is 0 and y FFFFFFh. Tops are rounded down, a bottom up. If the queue has room for only one, neither is queued.
+- A locate is answered from the layout of the document current at the call, the same layout as the latest height event: at the start of a later frame, after that document's height event if it is still due. Answers come in call order. A locate whose document is replaced (also later in the same frame) is dropped. While the width is 0 answers wait; a host keeps at least the 8 latest waiting locates.
+
+A height event describes an earlier frame's document and width; after a newer submit another follows. Use it for clamping and progress, never for anything that must be exact.
+
+## Reference layout
+
+A host without fonts, such as `terse run`, uses this pure function of document and width, a stand-in for tests.
+
+- Every character advances 0.5 x size; a wide character (every code point above U+FFFF counts) 1.0 x size. No shaping, kerning or reordering: start is left.
+- A line is ceil(1.25 x size) high for its largest size; an empty line uses the size at its break.
+- Greedy wrapping at U+0020 in the width less the indent; spaces at a break are dropped, those at a paragraph's start or after U+000A kept. A word wider than a line is split between characters, at least one per line.
+- Centre puts the leftover width, halved and rounded down, before a line; end puts all of it. A rule is 8 high; a figure is a line as high as the figure.
+- No wrap with ellipsis: characters are dropped from the end until the rest and an ellipsis (in the last dropped character's style) fit, or none is left.
+- Tables follow the steps above in half units (C the largest that fits); rules have height 0.
+- `locate` gives the first line with a character or figure of the anchor, table lines in order of y, then left to right. The height is the sum of the spaces and the heights of lines, rules, figures and tables.
+
+## State and charges
+
+State (for the hash and snapshots): a present flag, the clamped rectangle (four 2-byte values), the stored scroll value (4), the background (4), the document's length (4, 0 for none) and its bytes. Layout and pending locates are not state.
+
+Each call costs 4 units; an accepted `submit` 1 more per 4 bytes, rounded up. Layout is free.
+
+## Example
+
+A heading, a paragraph with an anchored word and a table. The library has no builder for the table commands, so `op` appends their bytes: 09h, 2 columns, flags 1 (header), aligns start and end; 0Ah before each cell; 0Bh.
+
+```
+#include "terse.h"
+#define T(s) doc_text(s, sizeof(s) - 1)
+static uint8_t doc[1024];
+static void op(const uint8_t *p, uint32_t n) {
+    if (doc_ptr + n <= doc_limit)
+        while (n--) *doc_ptr++ = *p++;
+}
+static const uint8_t table[] = {9, 2, 1, DOC_START, DOC_END};
+static const uint8_t cell = 0x0A, endt = 0x0B;
+int main(void) {
+    terse_event e;
+    doc_begin(doc, sizeof doc);
+    doc_size(21); doc_font(DOC_SANS, DOC_BOLD); T("Hello");
+    doc_size(15); doc_font(DOC_SANS, 0);
+    doc_paragraph(DOC_START, 0, 10, 0); T("Press ");
+    doc_anchor(1); doc_colour(120, 170, 255); T("here");
+    doc_anchor(0); doc_colour(229, 229, 229); T(" to quit.");
+    op(table, 5);
+    op(&cell, 1); T("Key");  op(&cell, 1); T("Does");
+    op(&cell, 1); T("Esc");  op(&cell, 1); T("nothing");
+    op(&endt, 1);
+    doc_end();
+    page_region(64, 0, 512, 480);
+    page_submit_doc(doc);
+    for (;;) {
+        while (terse_event_pop(&e) != EV_NONE)
+            if (e.type==EV_PAGE_ANCHOR && EV_ANCHOR_ID(e)==1)
+                return 0;
+        terse_wait_frame();
+    }
+}
+```
+
+The program never learns where "here" was drawn; a press on it arrives as event 09h with anchor 1.

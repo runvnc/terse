@@ -1,0 +1,162 @@
+# The 3D vector display (device 9)
+
+The 3D vector display draws lines, points and circles placed in a box around the screen, from a display list like the 2D display's. Faces, which draw nothing, hide what is behind them. The program gives geometry, not a picture: the host projects it onto the screen from an eye it chooses, so it may let the viewer look around the models, and the program cannot observe that choice. As with the 2D display, nothing drawn can be read back.
+
+## Getting the device
+
+The display is slot 9, version 0. An image gets it by listing (9, 0) in its header: `terse pack ... --device 9:0`. Without it every call from `900h` to `9FFh` returns `FFFF_FFFFh` and does nothing else; so does a number in that range other than the four below.
+
+## Space and the eye
+
+Coordinates are signed 16-bit numbers, little-endian, in sixteenths of a screen unit (`V3_UNIT` is 16). x and y are as on the screen (x right, y down, (0, 0) the top left, 640 by 480 units); z is depth in the same units: 0 is the glass (the plane of the screen), positive is away from the viewer. The axes are right-handed.
+
+The reference eye is at (320, 240, -960) in screen units. Seen from an eye at (ex, ey, -960), a point (x, y, z) with z > -800 is drawn on the glass at
+
+    x' = ex + (x - ex) * 960 / (960 + z)
+    y' = ey + (y - ey) * 960 / (960 + z)
+
+So a point on the glass (z = 0) is drawn exactly where the 2D layers would put it, from any eye; a point behind the glass moves with the eye, one in front of it against the eye. For example, from the reference eye the point (480, 240, 960) is drawn at (400, 240). A host may move the eye sideways and up or down by up to 160 units on each axis from the reference eye, at its own discretion (for example following the viewer's pointer or head); the eye's distance from the glass, and the glass, stay fixed. The program is not told where the eye is.
+
+## Calls
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `900h` | `submit` | `a0` list address, `a1` length | 0 done, 1 rejected |
+| `901h` | `clear` | none | 0 |
+| `902h` | `style` | `a0` style | 0 done, 1 rejected |
+| `903h` | `persistence` | `a0` persistence | 0 done, 1 rejected |
+
+- `submit` copies `a1` bytes from `a0` into the device, replacing the previous list, and returns 0. It is rejected, returning 1 and keeping the previous list, if the length is 0 or more than 16,384 (`V3_MAX_LIST`) or any part of the range is outside RAM (a list in ROM included).
+- `clear` empties the list.
+- `style` (0 clean, 1 phosphor) and `persistence` (0 to 255) set the display style and the afterglow persistence described for the 2D display, returning 1 and changing nothing for a value out of range. They are one setting with device 3's: whichever device sets them, both displays and the whole screen are shown that way. A machine whose image lists device 9 and not device 3 has the setting too (device 3's calls stay absent).
+
+After reset the list is empty, the style is clean and the persistence 160. The list the device holds at the end of a frame is the one the host shows for that frame. Nothing of device 9 is filled, so the 2D display's fill mode does not apply.
+
+## The display list
+
+A list is a sequence of commands, each one opcode byte followed by its operands. A point x, y, z is three signed 16-bit values (6 bytes). Drawing state at the start of a list: colour opaque white (255, 255, 255, 255), width 16, the identity transform, no saved transforms, current point (0, 0, 0).
+
+| Op | Command | Operands (bytes) | Effect |
+|---|---|---|---|
+| `00h` | End | none | Ends the list |
+| `01h` | Colour | r, g, b, a (4) | Sets the colour; a is opacity |
+| `02h` | Width | w (2, unsigned) | Line width in sixteenths |
+| `03h` | Move | x, y, z (6) | Sets the current point |
+| `04h` | Line | x, y, z (6) | Line to the point, the new current point |
+| `05h` | Point | none | A dot at the current point |
+| `06h` | Circle | radius (2, unsigned) | A circle about the current point |
+| `07h` | Push | none | Saves the transform |
+| `08h` | Pop | none | Restores the transform saved last |
+| `09h` | Translate | x, y, z (6) | Moves the transform's origin |
+| `0Ah` | Rotate | axis (1), angle (2) | Turns the transform about the axis |
+| `0Bh` | Scale | s (2, unsigned) | Scales the transform uniformly |
+| `0Ch` | Face | n (1), n corners (6 each) | Hides what is behind it |
+
+Details of the operands: the width is the same on the screen at any depth, 0 counts as 1 and more than 255 as 255. The axis is 0 x, 1 y, 2 z; the angle is unsigned, in 1/65,536 of a turn (`V3_TURN` is 65,536). The scale is 8.8 fixed point: 256 is 1 (`V3_SCALE_ONE`). A face's n is 3 or 4, so a Face is 20 or 26 bytes with its opcode. The C builders are `v3_end`, `v3_colour`, `v3_width`, `v3_move`, `v3_line`, `v3_point`, `v3_circle`, `v3_push`, `v3_pop`, `v3_translate`, `v3_rotate`, `v3_scale`, `v3_face3` and `v3_face4`, appending at the buffer given to `v3_begin`.
+
+## Transforms
+
+A point p given to Move, Line or Face is drawn at M(p), where M is the transform in force, with p and every translation in screen units (sixteenths divided by 16). Translate t, Rotate R and Scale s replace M by M o T(t), M o R and M o S(s): each applies to coordinates given after it, before the transforms given earlier, as in ordinary matrix-stack graphics. So "Translate (100, 0, 0), Rotate z a quarter turn, Move (10, 0, 0)" puts the current point at (100, 10, 0).
+
+A positive angle about x turns y towards z, about y turns z towards x, and about z turns x towards y (clockwise as seen on the screen):
+
+| Axis | (x, y, z) goes to |
+|---|---|
+| x | (x, y cos a - z sin a, y sin a + z cos a) |
+| y | (x cos a + z sin a, y, -x sin a + z cos a) |
+| z | (x cos a - y sin a, x sin a + y cos a, z) |
+
+The current point is kept as Move or Line placed it, with M applied, so a later transform does not move it. A Line after a Push, a Translate and a Pop starts where the Move put it. Circle, Point and the transform commands leave the current point unchanged.
+
+A circle of radius r (in sixteenths) about the current point c is the closed curve c + L(r cos f, r sin f, 0) / 16, where L is M without its translation: it lies in the plane of M's x and y axes and is scaled with it. It is drawn as the 64 chords between the points at f = k/64 of a turn, k = 0 to 63, joined without ends of their own. To draw a circle about a transform's origin, Move to (0, 0, 0) first.
+
+Lines and points use the current width and have round ends (a Point is the dot a line of length 0 draws). They are drawn in list order, each over the earlier ones, blended by opacity. A near line does not cover a far one: only faces hide.
+
+The stack holds up to 8 transforms. Push saves only the transform, not the colour, the width or the current point.
+
+The list ends at an End, at the end of the submitted bytes, at an unknown opcode (`0Dh` and up), at a command whose operands are cut off, at a Rotate whose axis is above 2, at a Face whose n is not 3 or 4, at a Push with 8 transforms saved, or at a Pop with none. Commands before that point are drawn.
+
+## Faces
+
+A face is a flat polygon that gives off no light but hides the lines, points and circles behind it. Its corners are transformed as Move's point is; the current point is not changed. A face of 3 corners is the triangle they make; one of 4 corners is the two triangles of corners 0, 1, 2 and 0, 2, 3 (so it need not be flat or convex). Both sides hide alike. A list without faces draws exactly as it would if faces did not exist.
+
+Seen from the eye in use, a point of a line, point or circle is hidden if the straight segment from the eye to it passes through one of a face's triangles and the point lies more than 2 sixteenths (1/8 unit) beyond the triangle's plane, measured perpendicular to the plane, on the side away from the eye. So a line in a face's plane, along its edge or ending on it is not hidden by that face, and a solid's edges given with the same corners as its faces are drawn. A face hides whatever is behind it wherever the face is in the list, before or after it. A triangle with no area, or seen edge on, hides nothing. Faces do not hide one another and draw nothing, so no line is drawn where two faces cross unless the list draws one.
+
+A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end without vertex dwell; the line's own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short. A point is drawn or hidden whole.
+
+## Clipping and caps
+
+A line is cut where it crosses the plane z = -800: only its part with z > -800 is drawn, and a point at z <= -800 is not drawn. Only a face's part with z > -800 hides. What is left is projected and clipped to the screen.
+
+The amount one list draws is limited. In list order each command counts:
+
+| Command | Length (units) | Segments | Faces |
+|---|---|---|---|
+| Line | its counted length (below) | 1 | 0 |
+| Point | 0 | 1 | 0 |
+| Circle | its 64 chords' lengths | 64 | 0 |
+| Face | 0 | 0 | 1 |
+
+A line's counted length is its length on the glass, seen from the reference eye, of its part with z > -800 that lies on the screen (0 to 640 by 0 to 480). A command that would take the list's total length above 65,536, its segments above 16,384, its faces above 256, or its faces times its segments above 131,072 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye. The last cap trades faces against segments:
+
+| Faces | Segments at most |
+|---|---|
+| 0 to 8 | 16,384 |
+| 16 | 8,192 |
+| 64 | 2,048 |
+| 256 | 512 |
+
+After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Which pieces those are depends on the eye.
+
+## Presentation
+
+- Depth cue: light dims with depth. Each end of a line (after the cut at z = -800) has the factor min(1, 960 / (960 + z)), and along the line on the glass the factor goes linearly from one end's to the other's. The opacity is multiplied by it: 0.5 at z = 960, never more than the colour's own in front of the glass. A point has its own factor, each chord of a circle those of its ends.
+- Layers: device 9 is drawn in the vector layer after device 3's shapes: over the page and the 2D shapes, under the terminal's characters, so text on the glass labels the models.
+- Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display's lines (core, halo, bloom, afterglow and smear), with the vertex dwell at line ends and points but not where a circle's chords join or where a face cut a line.
+- The trigonometry and the projection are the host's, and hosts may differ in the last pixel. Smoothing, blending and how the eye moves are up to the host.
+
+## Charges and state
+
+Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:{charges}).
+
+The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display's state section, which is present when the image lists device 3 or device 9.
+
+## Example
+
+A square that turns about its vertical axis, in front of a circle it partly hides:
+
+```
+#include "terse.h"
+
+#define U V3_UNIT
+static uint8_t list[256];
+static const int16_t sq[4][3] = {
+    {-60 * U, -60 * U, 0}, {60 * U, -60 * U, 0},
+    {60 * U, 60 * U, 0}, {-60 * U, 60 * U, 0},
+};
+
+int main(void)
+{
+    for (uint16_t a = 0;; a += 256) {
+        v3_begin(list);
+        v3_push();
+        v3_translate(320 * U, 240 * U, 0);
+        v3_move(0, 0, 200 * U);         /* behind the glass */
+        v3_colour(255, 120, 0, 255);
+        v3_circle(100 * U);
+        v3_rotate(V3_AXIS_Y, a);
+        v3_face4(sq[0], sq[1], sq[2], sq[3]);
+        v3_colour(80, 220, 255, 255);
+        v3_width(24);
+        v3_move(sq[3][0], sq[3][1], sq[3][2]);
+        for (int i = 0; i < 4; i++)
+            v3_line(sq[i][0], sq[i][1], sq[i][2]);
+        v3_pop();
+        v3_end();
+        v3_submit_list(list);           /* VEC_DONE */
+        terse_wait_frame();
+    }
+}
+```
+
+The list is 98 bytes, so a submit costs 4 + 25 units. It counts 68 segments and 1 face. The square's edges share its face's corners, so they are drawn; the circle is hidden where the square covers it, as the eye in use sees it. Build the image with `--device 9:0` (and `--device 2:0` for text).
