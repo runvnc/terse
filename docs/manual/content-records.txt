@@ -1,0 +1,137 @@
+# Content: named records
+
+Named records are small pieces of data a program keeps on the host it runs on: a high score, settings, a saved game, a shell's layout. Four operations of the content device (device 4) save, load, delete and list them. They use the same request block, `submit` call (`400h`), handles, completion rules and statuses as get and put, described in "Content: blobs, requests and statuses", which comes before this article. Records never leave the host: they are not sent to a relay, to another host or to another program.
+
+| `op` | Operation | C helper |
+|---|---|---|
+| `0Eh` | Save | `record_save(r, name, data, size)` |
+| `0Fh` | Load | `record_load(r, name, offset, length, buf)` |
+| `10h` | Delete | `record_delete(r, name)` |
+| `11h` | Records | `record_list(r, first, length, buf)` |
+
+## Names
+
+For save, load and delete, the block's `id` field (32 bytes at offset 4) holds the record's name: 1 to 32 bytes of UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), then `00h` to the end of the 32 bytes. Any other `id` (empty, not UTF-8, a control character, a non-zero byte after the first `00h`) makes the request a bad request: the submit returns 0 and writes status `04h`. For records (`11h`) `id` is not used.
+
+The C helpers take a zero-terminated string and copy at most 32 bytes of it, padding with zeros; a longer string is cut at 32 bytes without warning, which can also cut a UTF-8 character in half (then the submit fails with `04h`).
+
+## Owner
+
+The records a machine reaches belong to an owner, and a program cannot reach another owner's records.
+
+| How the machine was started | Owner |
+|---|---|
+| by a shell with `start_program` | the program's identity, (feed key, name); for a built-in, the all-zero key and its title. Every version shares the records |
+| by the host, as its built-in shell | the shell's identity, as above |
+| with `start` by image ID, or from a file | the exact image ID: a rebuilt image has new, empty records |
+
+So publishing a new version of a program under the same name keeps its records, while a program run from a file during development has records of its own. Moving records from one owner to another (for example when a program run from a file is later published) is not specified yet.
+
+## Operations
+
+| Operation | Fields | Completion |
+|---|---|---|
+| Save `0Eh` | `addr` and `size`: the data, 0 to 65,536 bytes, wholly in ROM or wholly in RAM, copied at submit | `01h` once the record is replaced and durably stored; `06h` if it would exceed the limits, and nothing changes |
+| Load `0Fh` | `offset`; `length` 1 to 16,384; `addr`, `length` bytes in RAM | as a get: the bytes from `offset` to `addr`, `length` = bytes delivered, `size` = the record's size; `02h` if there is no such record |
+| Delete `10h` | none besides `id` | `01h`, whether or not the record existed |
+| Records `11h` | `offset` (first index), `length` 1 to 16,384, `addr` in RAM | records of 36 bytes, in increasing order of name (byte order); `length` = bytes delivered, `size` = number of records |
+
+A save of 0 bytes is allowed and makes an empty record. A save always replaces the whole record; there is no append. A load whose `offset` is at or beyond the end of the record completes with `01h` and `length` 0.
+
+Each record of the records list:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 32 | the name, padded with `00h` |
+| 32 | 4 | the record's size in bytes |
+
+"Durably stored" means the host wrote the data to a temporary file, synced it, and renamed it into place, so a record is replaced as a whole or not at all.
+
+## Limits
+
+| Limit | Value |
+|---|---|
+| name | 1 to 32 bytes |
+| one record | 0 to 65,536 bytes |
+| records per owner | 256 |
+| data per owner | 1,048,576 bytes in all |
+| bytes per load or list request | 16,384 |
+
+A save that would exceed either per-owner limit, counting the record it replaces as gone, completes with `06h` (`STATUS_NO_ROOM`) and changes nothing. A record larger than 16,384 bytes is loaded in several requests with increasing `offset`.
+
+## Statuses
+
+| Status | When |
+|---|---|
+| `01h` | done |
+| `02h` | load: no such record |
+| `03h` | the host cannot keep records (no data directory, an I/O error); also any request pending when the machine was restored from a snapshot |
+| `04h` | at submit: a bad name, a size or length out of range, a buffer not where required |
+| `06h` | save: over the owner's limits |
+
+No consent is asked for any of the four, so status `05h` does not occur.
+
+## Charges
+
+Each `submit` costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to `addr` cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See [charges](terse:{charges}); completions are announced by a content-done event, see [events](terse:{events}).
+
+## Replay
+
+Record requests are inputs like every completion: what a load delivers and the status of a save are recorded with the run, so a run replays exactly without the records directory. The records themselves are not part of the machine's state; only the pending requests are.
+
+## Where hosts keep them
+
+Hosts keep records under `<data>/records`, where `<data>` is the `--data` option of `terse run` and `terse-host`, by default `$XDG_DATA_HOME/terse`, else `~/.local/share/terse`. Inside, each owner has a directory, `program/<feed key hex>/<name hex>/` (built-ins have the all-zero key) or `image/<image ID hex>/`, and each record is a file named by the hex of its name. The `terse` tool inspects them:
+
+| Command | Effect |
+|---|---|
+| `terse records list [<owner>] [--data <dir>]` | every owner with its count and bytes, or one owner's records (size, name) |
+| `terse records show <owner> <name>` | writes the record's bytes to standard output |
+| `terse records delete <owner> <name>` | deletes the record |
+
+An owner is written `builtin:<title>`, `program:<feed key>:<name>` or `image:<image id>`.
+
+## Example: a high score
+
+This is how the game Sparks (programs/sparks) keeps its high score in a 4-byte record named `high-score`. The load is asked for at start and handled when it arrives, so the first frame does not wait; a save is sent at game over and its completion is ignored.
+
+```
+#include "terse.h"
+
+static content_req load_req, save_req;
+static uint8_t buf[4], load_handle;
+static uint32_t high;
+
+void start(void)
+{
+    load_handle = record_load(&load_req, "high-score",
+                              0, 4, buf);
+}
+
+/* For each event in the main loop. */
+void on_event(const terse_event *ev)
+{
+    if (ev->type != EV_CONTENT_DONE || ev->a != load_handle)
+        return;
+    load_handle = 0;
+    if (load_req.status == STATUS_DONE
+        && load_req.length == 4) {
+        uint32_t v = buf[0] | buf[1] << 8 | buf[2] << 16
+                   | (uint32_t)buf[3] << 24;
+        if (v > high) /* a score made meanwhile wins */
+            high = v;
+    }
+}
+
+void game_over(uint32_t score)
+{
+    if (score <= high)
+        return;
+    high = score;
+    for (int i = 0; i < 4; i++)
+        buf[i] = (uint8_t)(high >> (8 * i));
+    record_save(&save_req, "high-score", buf, 4);
+}
+```
+
+The save copies its 4 bytes at submit, so `buf` may change at once. The first time the game runs there is no record and the load completes with `02h`; `high` stays 0. Use separate request blocks for requests that may be pending at the same time, as here: submitting a block again while it is pending makes two requests that both write their results into it.

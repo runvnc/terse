@@ -40,6 +40,9 @@ pub mod op {
     pub const RULE: u8 = 0x06;
     pub const ANCHOR: u8 = 0x07;
     pub const FIGURE: u8 = 0x08;
+    pub const TABLE: u8 = 0x09;
+    pub const CELL: u8 = 0x0A;
+    pub const END_TABLE: u8 = 0x0B;
 }
 
 /// Path opcodes inside a Figure (SPEC 11.3).
@@ -68,6 +71,19 @@ pub const DEFAULT_SIZE: u8 = 14;
 pub const DEFAULT_COLOUR: [u8; 3] = [229, 229, 229];
 /// Height of a rule paragraph in screen units (SPEC 11.3).
 pub const RULE_HEIGHT: u32 = 8;
+/// Tables (SPEC 11.3, 11.4): at most this many columns, cells in one
+/// table and cells in one document.
+pub const MAX_TABLE_COLUMNS: u8 = 8;
+pub const MAX_TABLE_CELLS: usize = 1_024;
+pub const MAX_DOCUMENT_CELLS: usize = 4_096;
+/// A cell's padding in screen units: left and right, top and bottom.
+pub const CELL_PAD_X: u32 = 6;
+pub const CELL_PAD_Y: u32 = 3;
+/// Columns of a table too wide for the rectangle are narrowed to a common
+/// cap, never below this many screen units.
+pub const MIN_COLUMN_CAP: u32 = 48;
+/// Faint rules (between the rows of a table) are drawn at this opacity.
+pub const FAINT_RULE_ALPHA: u8 = 85;
 
 /// The rectangle in screen units: x, y, width, height.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -294,6 +310,58 @@ pub struct Paragraph {
     pub rule: Option<[u8; 3]>,
     /// A figure paragraph (then `align` is the figure's alignment).
     pub figure: Option<Figure>,
+    /// A table paragraph.
+    pub table: Option<Table>,
+}
+
+/// A table as the document gives it (SPEC 11.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    /// 1 to 8.
+    pub columns: u8,
+    /// The first row is a header: its text is bold (already applied to the
+    /// runs) and a rule is drawn under it.
+    pub header: bool,
+    /// Each column's alignment.
+    pub align: Vec<Align>,
+    /// The colour of the rules: the text colour at the Table command.
+    pub rgb: [u8; 3],
+    /// The cells, row after row; the last row may be short (its missing
+    /// cells are empty). Each cell is its runs, without empty ones.
+    pub cells: Vec<Vec<Run>>,
+}
+
+impl Table {
+    /// The number of rows.
+    pub fn rows(&self) -> usize {
+        self.cells.len().div_ceil(self.columns as usize)
+    }
+
+    /// The cell at (row, column); empty if the last row has no such cell.
+    pub fn cell(&self, row: usize, column: usize) -> &[Run] {
+        self.cells.get(row * self.columns as usize + column).map_or(&[], Vec::as_slice)
+    }
+
+    /// The columns' widths from their natural widths (SPEC 11.4 step 3):
+    /// unchanged if they fit in `width`, else each narrowed to a common cap,
+    /// the largest that fits but at least `floor`. Any unit (the reference
+    /// layout uses half units).
+    pub fn column_widths(natural: &[u32], width: u32, floor: u32) -> Vec<u32> {
+        let total: u64 = natural.iter().map(|&w| w as u64).sum();
+        if total <= width as u64 {
+            return natural.to_vec();
+        }
+        let fits = |cap: u32| natural.iter().map(|&w| w.min(cap) as u64).sum::<u64>() <= width as u64;
+        // The largest cap that fits: the sum grows with the cap, and the
+        // whole natural width does not fit.
+        let (mut lo, mut hi) = (0u32, natural.iter().copied().max().unwrap_or(0));
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            if fits(mid) { lo = mid } else { hi = mid - 1 }
+        }
+        let cap = lo.max(floor);
+        natural.iter().map(|&w| w.min(cap)).collect()
+    }
 }
 
 impl Paragraph {
@@ -302,9 +370,9 @@ impl Paragraph {
         self.runs.iter().any(|r| !r.text.is_empty())
     }
 
-    /// Whether it is a text paragraph (not a rule or a figure).
+    /// Whether it is a text paragraph (not a rule, a figure or a table).
     fn is_text(&self) -> bool {
-        self.rule.is_none() && self.figure.is_none()
+        self.rule.is_none() && self.figure.is_none() && self.table.is_none()
     }
 }
 
@@ -564,14 +632,20 @@ fn clean(bytes: &[u8], out: &mut String) {
 }
 
 /// Decodes a document (SPEC 11.3) into paragraphs. It ends at End, at the
-/// end of the bytes, at an unknown opcode or at a command whose operands
-/// are cut off; the commands before that are used. There is always at least
-/// the implicit first paragraph.
+/// end of the bytes, at an unknown opcode, at a command whose operands are
+/// cut off or at a Table whose column count is not 1 to 8; the commands
+/// before that are used. There is always at least the implicit first
+/// paragraph.
 pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
     let mut paragraphs = vec![Paragraph::default()];
     // Properties of the latest Paragraph command, for text after a rule.
     let mut props = Paragraph::default();
     let mut style = Style::default();
+    // The table open (the last paragraph), whether it takes more cells, and
+    // the cells of all tables so far.
+    let mut table_open = false;
+    let mut taking = false;
+    let mut doc_cells = 0usize;
     let mut at = 0;
     while at < doc.len() {
         let operands = match doc[at] {
@@ -590,15 +664,38 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
                 Some(n) => 7 + u16::from_le_bytes([n[0], n[1]]) as usize,
                 None => break,
             },
+            op::TABLE => match doc.get(at + 1) {
+                Some(&n) if (1..=MAX_TABLE_COLUMNS).contains(&n) => 2 + n as usize,
+                _ => break,
+            },
+            op::CELL | op::END_TABLE => 0,
             _ => break,
         };
         let Some(args) = doc.get(at + 1..at + 1 + operands) else { break };
+        if table_open && matches!(doc[at], op::PARAGRAPH | op::RULE | op::FIGURE | op::TABLE | op::END_TABLE) {
+            table_open = false;
+        }
         match doc[at] {
+            op::TEXT if table_open => {
+                // Into the current cell; before the first Cell, or after the
+                // limits, the text is ignored.
+                let t = paragraphs.last_mut().unwrap().table.as_mut().unwrap();
+                if let Some(cell) = t.cells.last_mut().filter(|_| taking) {
+                    match cell.last_mut() {
+                        Some(run) if run.style == style => clean(&args[2..], &mut run.text),
+                        _ => {
+                            let mut text = String::new();
+                            clean(&args[2..], &mut text);
+                            cell.push(Run { text, style });
+                        }
+                    }
+                }
+            }
             op::TEXT => {
                 let last = paragraphs.last_mut().unwrap();
                 if !last.is_text() {
-                    // Text after a rule or figure starts a paragraph like
-                    // the latest one.
+                    // Text after a rule, figure or table starts a paragraph
+                    // like the latest one.
                     paragraphs.push(props.clone());
                 }
                 let p = paragraphs.last_mut().unwrap();
@@ -620,11 +717,7 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
             op::COLOUR => style.rgb = [args[0], args[1], args[2]],
             op::PARAGRAPH => {
                 props = Paragraph {
-                    align: match args[0] {
-                        1 => Align::Centre,
-                        2 => Align::End,
-                        _ => Align::Start,
-                    },
+                    align: align_of(args[0]),
                     indent: args[1],
                     space: args[2],
                     nowrap: args[3] & 1 != 0,
@@ -632,6 +725,7 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
                     runs: Vec::new(),
                     rule: None,
                     figure: None,
+                    table: None,
                 };
                 paragraphs.push(props.clone());
             }
@@ -646,32 +740,73 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
                     anchor: style.anchor,
                     path: args[7..].to_vec(),
                 };
-                let align = match args[4] {
-                    1 => Align::Centre,
-                    2 => Align::End,
-                    _ => Align::Start,
-                };
-                // A figure takes the place of a paragraph that has no text
-                // yet (and its space); else it follows the current one with
-                // the space of the latest Paragraph command.
-                let last = paragraphs.last_mut().unwrap();
-                let space = if last.is_text() && !last.has_text() {
-                    let space = last.space;
-                    paragraphs.pop();
-                    space
-                } else {
-                    props.space
-                };
-                paragraphs.push(Paragraph { align, space, figure: Some(figure), ..Paragraph::default() });
+                let space = block_space(&mut paragraphs, &props);
+                paragraphs.push(Paragraph { align: align_of(args[4]), space, figure: Some(figure), ..Paragraph::default() });
             }
+            op::TABLE => {
+                let table = Table {
+                    columns: args[0],
+                    header: args[1] & 1 != 0,
+                    align: args[2..].iter().map(|&a| align_of(a)).collect(),
+                    rgb: style.rgb,
+                    cells: Vec::new(),
+                };
+                let space = block_space(&mut paragraphs, &props);
+                paragraphs.push(Paragraph { space, table: Some(table), ..Paragraph::default() });
+                table_open = true;
+                taking = true;
+            }
+            op::CELL if table_open && taking => {
+                let t = paragraphs.last_mut().unwrap().table.as_mut().unwrap();
+                if t.cells.len() < MAX_TABLE_CELLS && doc_cells < MAX_DOCUMENT_CELLS {
+                    t.cells.push(Vec::new());
+                    doc_cells += 1;
+                } else {
+                    taking = false;
+                }
+            }
+            op::CELL | op::END_TABLE => {}
             _ => unreachable!(),
         }
         at += 1 + operands;
     }
     for p in &mut paragraphs {
         p.runs.retain(|r| !r.text.is_empty());
+        if let Some(t) = &mut p.table {
+            let header = if t.header { t.columns as usize } else { 0 };
+            for (i, cell) in t.cells.iter_mut().enumerate() {
+                cell.retain(|r| !r.text.is_empty());
+                if i < header {
+                    for run in cell.iter_mut() {
+                        run.style.bold = true;
+                    }
+                }
+            }
+        }
     }
     paragraphs
+}
+
+fn align_of(b: u8) -> Align {
+    match b {
+        1 => Align::Centre,
+        2 => Align::End,
+        _ => Align::Start,
+    }
+}
+
+/// The space above a figure or table, which takes the place of the
+/// current paragraph if that has no text yet (and its space), else follows
+/// it with the space of the latest Paragraph command.
+fn block_space(paragraphs: &mut Vec<Paragraph>, props: &Paragraph) -> u8 {
+    let last = paragraphs.last().unwrap();
+    if last.is_text() && !last.has_text() {
+        let space = last.space;
+        paragraphs.pop();
+        space
+    } else {
+        props.space
+    }
 }
 
 /// A span of one style on a laid-out line: its x range in half screen units
@@ -698,6 +833,18 @@ pub struct Line {
     pub nowrap: bool,
     /// A figure: its box on the line (the line is as high as the figure).
     pub figure: Option<FigureBox>,
+    /// A table's rule (then `rule` is its colour and the height is 0): it
+    /// spans only the table's width.
+    pub rule_span: Option<RuleSpan>,
+}
+
+/// Where a table's rule is drawn: x from `x0` to `x1` in half screen units
+/// from the rectangle's left edge, at the line's y; faint between rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuleSpan {
+    pub x0: u32,
+    pub x1: u32,
+    pub faint: bool,
 }
 
 /// Where a figure was laid out: x in screen units from the rectangle's left
@@ -752,7 +899,7 @@ pub fn line_height(size: u8) -> u32 {
 /// (a wide one its whole size), lines are ceil(1.25 × size) high (the
 /// largest size on the line), text wraps greedily at spaces and a word
 /// longer than the line is split; rules are 8 units high. Text is laid out
-/// left to right whatever its script.
+/// left to right whatever its script. Tables as SPEC 11.4 says.
 pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
     let mut layout = Layout::default();
     let full = 2 * width as u32;
@@ -760,74 +907,143 @@ pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
     for p in parse(doc) {
         y = y.saturating_add(p.space as u32);
         if let Some(rgb) = p.rule {
-            layout.lines.push(Line { y, height: RULE_HEIGHT, spans: Vec::new(), rule: Some(rgb), nowrap: false, figure: None });
+            layout.lines.push(Line { y, height: RULE_HEIGHT, spans: Vec::new(), rule: Some(rgb), nowrap: false, figure: None, rule_span: None });
             y = y.saturating_add(RULE_HEIGHT);
             continue;
         }
         if let Some(f) = &p.figure {
             let b = FigureBox::place(f, p.align, width as u32);
             let height = f.height as u32;
-            layout.lines.push(Line { y, height, spans: Vec::new(), rule: None, nowrap: false, figure: Some(b) });
+            layout.lines.push(Line { y, height, spans: Vec::new(), rule: None, nowrap: false, figure: Some(b), rule_span: None });
             y = y.saturating_add(height);
+            continue;
+        }
+        if let Some(t) = &p.table {
+            y = reference_table(t, full, y, &mut layout.lines);
             continue;
         }
         if !p.has_text() {
             continue;
         }
         let avail = full.saturating_sub(2 * p.indent as u32);
-        // Split into segments at line breaks; each segment remembers the
-        // style in effect at its end, for the height of an empty line.
-        let mut segments: Vec<(Vec<(char, Style)>, Style)> = vec![(Vec::new(), p.runs[0].style)];
-        for run in &p.runs {
-            for ch in run.text.chars() {
-                let seg = segments.last_mut().unwrap();
-                if ch == '\n' {
-                    seg.1 = run.style;
-                    segments.push((Vec::new(), run.style));
-                } else {
-                    seg.0.push((ch, run.style));
-                    seg.1 = run.style;
-                }
-            }
-        }
-        for (chars, end_style) in segments {
-            let mut lines: Vec<Vec<(char, Style)>> = Vec::new();
-            if p.nowrap || chars.is_empty() {
-                lines.push(chars);
-            } else {
-                wrap(&chars, avail, &mut lines);
-            }
-            for mut line in lines {
-                if p.ellipsis {
-                    ellipsize(&mut line, avail);
-                }
-                let height = line.iter().map(|(_, s)| line_height(s.size)).max().unwrap_or(line_height(end_style.size));
-                let w: u32 = line.iter().map(|&(c, s)| advance(c, s.size)).sum();
-                let offset = match p.align {
-                    Align::Start => 0,
-                    Align::Centre => avail.saturating_sub(w) / 2,
-                    Align::End => avail.saturating_sub(w),
-                };
-                let mut x = 2 * p.indent as u32 + offset;
-                let mut spans: Vec<Span> = Vec::new();
-                for (c, s) in line {
-                    let a = advance(c, s.size);
-                    match spans.last_mut() {
-                        Some(span) if span.style == s => {
-                            span.text.push(c);
-                            span.x1 += a;
-                        }
-                        _ => spans.push(Span { x0: x, x1: x + a, text: c.to_string(), style: s }),
-                    }
-                    x += a;
-                }
-                layout.lines.push(Line { y, height, spans, rule: None, nowrap: p.nowrap, figure: None });
-                y = y.saturating_add(height);
-            }
-        }
+        y = reference_text(&p.runs, avail, 2 * p.indent as u32, p.align, (p.nowrap, p.ellipsis), y, &mut layout.lines);
     }
     layout.height = y;
     layout
+}
+
+/// The width of a cell's text broken only at line breaks: its widest line,
+/// in half units.
+fn natural_width(runs: &[Run]) -> u32 {
+    let (mut widest, mut line) = (0, 0);
+    for run in runs {
+        for ch in run.text.chars() {
+            if ch == '\n' {
+                line = 0;
+            } else {
+                line += advance(ch, run.style.size);
+                widest = widest.max(line);
+            }
+        }
+    }
+    widest
+}
+
+/// A table in the reference layout (SPEC 11.4, 11.6), with its top at `y`
+/// in a rectangle `full` half units wide; returns its bottom.
+fn reference_table(t: &Table, full: u32, y: u32, lines: &mut Vec<Line>) -> u32 {
+    let n = t.columns as usize;
+    let (pad_x, pad_y) = (2 * CELL_PAD_X, CELL_PAD_Y);
+    let mut natural = vec![2 * pad_x; n];
+    for (i, cell) in t.cells.iter().enumerate() {
+        let w = &mut natural[i % n];
+        *w = (*w).max(natural_width(cell) + 2 * pad_x);
+    }
+    let widths = Table::column_widths(&natural, full, 2 * MIN_COLUMN_CAP);
+    let table_w: u32 = widths.iter().sum();
+    let mut top = y;
+    let rows = t.rows();
+    for row in 0..rows {
+        let mut row_lines = Vec::new();
+        let mut tallest = 0;
+        let mut x = 0;
+        for (c, &w) in widths.iter().enumerate() {
+            let runs = t.cell(row, c);
+            if !runs.is_empty() {
+                let align = t.align.get(c).copied().unwrap_or_default();
+                let bottom = reference_text(runs, w - 2 * pad_x, x + pad_x, align, (false, false), top + pad_y, &mut row_lines);
+                tallest = tallest.max(bottom - (top + pad_y));
+            }
+            x += w;
+        }
+        // The lines of a row in order of their tops, cells left to right.
+        row_lines.sort_by_key(|l: &Line| l.y);
+        lines.append(&mut row_lines);
+        top = top.saturating_add(tallest + 2 * pad_y);
+        let header_rule = t.header && row == 0;
+        if header_rule || row + 1 < rows {
+            let span = RuleSpan { x0: 0, x1: table_w, faint: !header_rule };
+            lines.push(Line { y: top, height: 0, spans: Vec::new(), rule: Some(t.rgb), nowrap: false, figure: None, rule_span: Some(span) });
+        }
+    }
+    top
+}
+
+/// Lays out `runs` as the lines of a paragraph `avail` half units wide
+/// starting `x0` half units from the rectangle's left edge, the first at
+/// `y`; returns the bottom of the last.
+fn reference_text(runs: &[Run], avail: u32, x0: u32, align: Align, (nowrap, ellipsis): (bool, bool), mut y: u32, out: &mut Vec<Line>) -> u32 {
+    // Split into segments at line breaks; each segment remembers the
+    // style in effect at its end, for the height of an empty line.
+    let mut segments: Vec<(Vec<(char, Style)>, Style)> = vec![(Vec::new(), runs[0].style)];
+    for run in runs {
+        for ch in run.text.chars() {
+            let seg = segments.last_mut().unwrap();
+            if ch == '\n' {
+                seg.1 = run.style;
+                segments.push((Vec::new(), run.style));
+            } else {
+                seg.0.push((ch, run.style));
+                seg.1 = run.style;
+            }
+        }
+    }
+    for (chars, end_style) in segments {
+        let mut lines: Vec<Vec<(char, Style)>> = Vec::new();
+        if nowrap || chars.is_empty() {
+            lines.push(chars);
+        } else {
+            wrap(&chars, avail, &mut lines);
+        }
+        for mut line in lines {
+            if ellipsis {
+                ellipsize(&mut line, avail);
+            }
+            let height = line.iter().map(|(_, s)| line_height(s.size)).max().unwrap_or(line_height(end_style.size));
+            let w: u32 = line.iter().map(|&(c, s)| advance(c, s.size)).sum();
+            let offset = match align {
+                Align::Start => 0,
+                Align::Centre => avail.saturating_sub(w) / 2,
+                Align::End => avail.saturating_sub(w),
+            };
+            let mut x = x0 + offset;
+            let mut spans: Vec<Span> = Vec::new();
+            for (c, s) in line {
+                let a = advance(c, s.size);
+                match spans.last_mut() {
+                    Some(span) if span.style == s => {
+                        span.text.push(c);
+                        span.x1 += a;
+                    }
+                    _ => spans.push(Span { x0: x, x1: x + a, text: c.to_string(), style: s }),
+                }
+                x += a;
+            }
+            out.push(Line { y, height, spans, rule: None, nowrap, figure: None, rule_span: None });
+            y = y.saturating_add(height);
+        }
+    }
+    y
 }
 
 /// A no-wrap line with an ellipsis (SPEC 11.6): if it is wider than
@@ -907,7 +1123,7 @@ impl Layout {
     /// (already clamped) with a rectangle `h` units high.
     pub fn visible(&self, scroll: u32, h: u16) -> impl Iterator<Item = &Line> {
         let bottom = scroll.saturating_add(h as u32);
-        self.lines.iter().filter(move |l| l.y < bottom && l.y.saturating_add(l.height) > scroll)
+        self.lines.iter().filter(move |l| l.y < bottom && l.y.saturating_add(l.height.max(1)) > scroll)
     }
 
     /// Where anchor `id` is (SPEC 11.5): the top and height of the first
@@ -959,6 +1175,11 @@ impl Layout {
         }
         for line in self.visible(scroll, r.h) {
             let _ = write!(out, "{:5} {:3} ", line.y, line.height);
+            if let Some(r) = line.rule_span {
+                let kind = if r.faint { "faint rule" } else { "rule" };
+                let _ = writeln!(out, "{:5}  -- {kind} to {} --", r.x0 / 2, r.x1.div_ceil(2));
+                continue;
+            }
             if line.rule.is_some() {
                 out.push_str("    0  -- rule --\n");
                 continue;
@@ -1616,5 +1837,209 @@ mod tests {
             out
         };
         assert_ne!(state(&pt(path_op::LINE, &[1, 2])), state(&pt(path_op::LINE, &[1, 3])));
+    }
+
+    /// A table of `columns` with `flags` and alignments, then `cells` (each
+    /// a Cell and its text), then End table.
+    fn table(columns: u8, flags: u8, align: &[u8], cells: &[&str]) -> Vec<u8> {
+        let mut v = vec![op::TABLE, columns, flags];
+        v.extend_from_slice(align);
+        for c in cells {
+            v.push(op::CELL);
+            if !c.is_empty() {
+                v.extend(text(c));
+            }
+        }
+        v.push(op::END_TABLE);
+        v
+    }
+
+    #[test]
+    fn table_parsing() {
+        let mut doc = vec![op::SIZE, 10];
+        doc.extend(text("before"));
+        doc.extend_from_slice(&[op::COLOUR, 1, 2, 3, op::TABLE, 3, 1, 0, 1, 7]);
+        doc.extend(text("ignored: before the first cell"));
+        doc.extend_from_slice(&[op::CELL]);
+        doc.extend(text("a"));
+        doc.extend_from_slice(&[op::FONT, 2, 0]);
+        doc.extend(text("b"));
+        doc.extend_from_slice(&[op::CELL, op::CELL, op::FONT, 0, 2]);
+        doc.extend(text("c"));
+        doc.extend_from_slice(&[op::CELL]);
+        doc.extend(text("d"));
+        doc.extend_from_slice(&[op::END_TABLE, op::CELL]); // a Cell outside a table does nothing
+        doc.extend(text("after"));
+        let ps = parse(&doc);
+        assert_eq!(ps.len(), 3);
+        let t = ps[1].table.as_ref().unwrap();
+        assert_eq!((t.columns, t.header, t.rgb, ps[1].space), (3, true, [1, 2, 3], 0));
+        assert_eq!(t.align, [Align::Start, Align::Centre, Align::Start], "unknown alignment is start");
+        assert_eq!(t.cells.len(), 4);
+        assert_eq!(t.rows(), 2);
+        // The header row is bold whatever its font says; other rows as given.
+        assert_eq!(t.cells[0].iter().map(|r| (r.text.as_str(), r.style.face, r.style.bold)).collect::<Vec<_>>(), [("a", 0, true), ("b", 2, true)]);
+        assert!(t.cells[1].is_empty());
+        assert_eq!((t.cells[2][0].style.bold, t.cells[2][0].style.italic), (true, true));
+        assert_eq!((t.cells[3][0].text.as_str(), t.cells[3][0].style.bold), ("d", false));
+        assert_eq!(t.cell(1, 1), &[] as &[Run], "missing cells are empty");
+        assert_eq!(ps[2].runs[0].text, "after", "text after a table starts a paragraph");
+        // A Paragraph (Rule, Figure, Table) ends a table too; the table takes
+        // the place of an empty paragraph and its space.
+        let mut doc = vec![op::PARAGRAPH, 0, 0, 9, 0];
+        doc.extend(&table(1, 0, &[0], &["x"])[..5 + 4]);
+        doc.extend_from_slice(&[op::PARAGRAPH, 0, 0, 3, 0]);
+        doc.extend(text("y"));
+        doc.extend_from_slice(&[op::CELL]);
+        doc.extend(text("z"));
+        let ps = parse(&doc);
+        assert_eq!(ps.len(), 3, "the implicit paragraph, the table, the paragraph");
+        assert_eq!((ps[1].space, ps[1].table.as_ref().unwrap().cells.len()), (9, 1));
+        assert_eq!(ps[2].runs[0].text, "yz");
+        // Column counts 0 and 9 end the document; so does a cut-off Table.
+        for (bad, more) in [(&[op::TABLE, 0, 0][..], true), (&[op::TABLE, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0], true), (&[op::TABLE, 2, 0, 0], false), (&[op::TABLE], false)] {
+            let mut doc = text("a");
+            doc.extend_from_slice(bad);
+            if more {
+                doc.extend(text("b"));
+            }
+            let ps = parse(&doc);
+            assert_eq!((ps.len(), ps[0].runs[0].text.as_str()), (1, "a"), "{bad:?}");
+        }
+        assert_eq!(parse(&table(8, 0, &[2; 8], &[])).last().unwrap().table.as_ref().unwrap().align, [Align::End; 8]);
+    }
+
+    #[test]
+    fn table_limits() {
+        // 1,024 cells per table: the 1,025th Cell and the text after it are
+        // dropped until the table ends.
+        let cells: Vec<String> = (0..1_100).map(|i| i.to_string()).collect();
+        let refs: Vec<&str> = cells.iter().map(String::as_str).collect();
+        let mut doc = table(8, 0, &[0; 8], &refs);
+        doc.extend(text("after"));
+        let ps = parse(&doc);
+        let t = ps[0].table.as_ref().unwrap();
+        assert_eq!(t.cells.len(), MAX_TABLE_CELLS);
+        assert_eq!(t.cells[1_023][0].text, "1023");
+        assert_eq!(ps[1].runs[0].text, "after");
+        // 4,096 per document: the fifth table of 1,000 cells gets 96.
+        let thousand: Vec<&str> = refs[..1_000].to_vec();
+        let mut doc = Vec::new();
+        for _ in 0..5 {
+            doc.extend(table(4, 0, &[0; 4], &thousand));
+        }
+        let counts: Vec<usize> = parse(&doc).iter().filter_map(|p| p.table.as_ref().map(|t| t.cells.len())).collect();
+        assert_eq!(counts, [1_000, 1_000, 1_000, 1_000, 96]);
+        assert!(doc.len() < MAX_DOCUMENT);
+    }
+
+    #[test]
+    fn column_widths_shrink_the_widest_first() {
+        // Fits: unchanged.
+        assert_eq!(Table::column_widths(&[50, 100, 30], 200, 48), [50, 100, 30]);
+        // 300 into 200: the cap is 85 (50 + 85 + 85 = 220 > 200; 30 + ...).
+        assert_eq!(Table::column_widths(&[30, 200, 150], 200, 48), [30, 85, 85]);
+        assert_eq!(Table::column_widths(&[30, 200, 100], 230, 48), [30, 100, 100]);
+        // The floor: eight columns into 100 units get 48 each and are cut.
+        assert_eq!(Table::column_widths(&[200; 8], 100, 48), [48; 8]);
+        assert_eq!(Table::column_widths(&[20, 200, 200], 100, 48), [20, 48, 48]);
+    }
+
+    #[test]
+    fn reference_table_layout() {
+        // Size 10: 5 units per character, lines 13 high. Two columns, header.
+        let mut doc = vec![op::SIZE, 10, op::COLOUR, 9, 9, 9];
+        doc.extend(table(2, 1, &[0, 2], &["Name", "Value", "a", "1", "bb", "22"]));
+        let l = reference_layout(&doc, 200);
+        // Natural widths: "Name" 20 + 12 = 32, "Value" 25 + 12 = 37 (units).
+        // Rows: 3 + 13 + 3 = 19 each; rules at 19 (header) and 38 (faint).
+        let summary: Vec<(u32, u32, u32, String)> =
+            l.lines.iter().map(|l| (l.y, l.height, l.spans.first().map_or(0, |s| s.x0), l.spans.iter().map(|s| s.text.clone()).collect())).collect();
+        assert_eq!(
+            summary,
+            [
+                (3, 13, 12, "Name".into()),
+                (3, 13, 64 + 12, "Value".into()),
+                (19, 0, 0, String::new()),
+                (22, 13, 12, "a".into()),
+                // End aligned: the column's text width is 25 units, "1" 5.
+                (22, 13, 64 + 12 + 40, "1".into()),
+                (38, 0, 0, String::new()),
+                (41, 13, 12, "bb".into()),
+                (41, 13, 64 + 12 + 30, "22".into()),
+            ]
+        );
+        assert_eq!(l.height, 57);
+        assert!(l.lines[0].spans[0].style.bold && !l.lines[3].spans[0].style.bold);
+        assert_eq!(l.lines[2].rule_span, Some(RuleSpan { x0: 0, x1: 2 * 69, faint: false }));
+        assert_eq!(l.lines[5].rule_span, Some(RuleSpan { x0: 0, x1: 2 * 69, faint: true }));
+        assert_eq!(l.lines[2].rule, Some([9, 9, 9]));
+        // Too wide: 100 units hold "a" (17) and a long column narrowed to 83
+        // (71 of text: 14 characters a line), wrapped.
+        let mut doc = vec![op::SIZE, 10];
+        doc.extend(table(2, 0, &[0, 0], &["a", "one two three four five six seven"]));
+        let l = reference_layout(&doc, 100);
+        let lines: Vec<(u32, u32, String)> = l.lines.iter().map(|l| (l.y, l.spans[0].x0, l.spans.iter().map(|s| s.text.clone()).collect())).collect();
+        assert_eq!(
+            lines,
+            [
+                (3, 12, "a".into()),
+                (3, 34 + 12, "one two three".into()),
+                (16, 34 + 12, "four five six".into()),
+                (29, 34 + 12, "seven".into()),
+            ]
+        );
+        assert_eq!(l.height, 3 + 39 + 3);
+        // No header, one row: no rule at all.
+        assert!(l.lines.iter().all(|l| l.rule.is_none()));
+        // Header with one row: a rule under it.
+        let l = reference_layout(&table(1, 1, &[0], &["h"]), 100);
+        assert_eq!(l.lines.last().unwrap().rule_span.map(|r| r.faint), Some(false));
+        // An empty table takes only its space; an empty row only its padding.
+        let mut doc = vec![op::PARAGRAPH, 0, 0, 7, 0];
+        doc.extend(table(2, 0, &[0, 0], &[]));
+        assert_eq!(reference_layout(&doc, 100).height, 7);
+        assert_eq!(reference_layout(&table(2, 0, &[0, 0], &["", ""]), 100).height, 6);
+    }
+
+    #[test]
+    fn table_anchors_are_hit_and_located() {
+        let mut doc = vec![op::SIZE, 10];
+        doc.extend(text("top"));
+        doc.extend_from_slice(&[op::TABLE, 2, 0, 0, 0, op::CELL]);
+        doc.extend(text("first line\nsecond "));
+        doc.extend_from_slice(&[op::ANCHOR, 4, 0]);
+        doc.extend(text("deep"));
+        doc.extend_from_slice(&[op::ANCHOR, 0, 0, op::CELL, op::ANCHOR, 6, 0]);
+        doc.extend(text("right"));
+        doc.extend_from_slice(&[op::ANCHOR, 4, 0]);
+        doc.extend(text(" also"));
+        let l = reference_layout(&doc, 300);
+        // The row starts at 13; its first lines at 16, the second at 29. The
+        // first column is "second deep" wide: 55 + 12 = 67 units.
+        assert_eq!(l.locate(6), Some((16, 13)));
+        assert_eq!(l.locate(4), Some((16, 13)), "anchor 4 is on the right cell's first line, above 'deep'");
+        assert_eq!(l.anchor_at(67 + 6 + 2, 20), 6);
+        assert_eq!(l.anchor_at(6 + 7 * 5 + 2, 33), 4);
+        assert_eq!(l.anchor_at(6 + 2, 33), 0);
+        let mut page = Page::default();
+        page.set_region(0, 0, 300, 100);
+        page.submit(&doc);
+        let dump = l.dump(&page);
+        assert!(dump.contains("   29  13     6   sans10 |second [deep]{4}\n"), "{dump}");
+    }
+
+    #[test]
+    fn state_and_snapshot_cover_tables() {
+        let state = |doc: &[u8]| {
+            let mut p = Page::default();
+            p.submit(doc);
+            let mut out = Vec::new();
+            p.write_state(&mut out);
+            out
+        };
+        let a = table(2, 1, &[0, 1], &["x", "y"]);
+        let b = table(2, 1, &[0, 2], &["x", "y"]);
+        assert_ne!(state(&a), state(&b));
     }
 }

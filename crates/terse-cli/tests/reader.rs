@@ -16,7 +16,7 @@ use terse_core::{Event, FrameInput, FrameResult, Image, Machine, PageInput, RAM_
 use terse_net::{BlobStore, Consent, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id, to_hex};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-const RAM_PAGES: u8 = 28;
+const RAM_PAGES: u8 = 29;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 /// The article's (and help's) rectangle (reader.c RECT_*).
@@ -2294,4 +2294,191 @@ fn documents_in_the_timeline() {
     let (worst, waited) = run.busiest();
     assert!(waited);
     eprintln!("reader: documents in the timeline, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}
+
+/// The runs of a cell or paragraph as (text, face, bold, anchor).
+fn runs(r: &[terse_core::page::Run]) -> Vec<(String, u8, bool, u16)> {
+    r.iter().map(|r| (r.text.clone(), r.style.face, r.style.bold, r.style.anchor)).collect()
+}
+
+const TABLES: &str = "\
+A paragraph with `code` and `two spans`. A split `code
+span` is none.
+Two together `` are none.
+But `x` is one.
+
+| Key | What | Notes |
+|:--|:-:|--:|
+| `M` | the manual | [the index](terse:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) |
+| a \\| b | `x \\| y` | extra | dropped |
+|short
+ | not a table: a paragraph
+
+|---|---|
+| no | header |\\|
+
+# A heading with `code`
+";
+
+/// Tables and code spans (NETWORK 4.5): cells, escapes, alignment rows,
+/// ragged rows, near misses.
+#[test]
+fn tables_and_code_spans() {
+    use terse_core::page::{Align, parse};
+    let run = open_only("Tables", TABLES, 10);
+    golden("article-tables", &run.view());
+    let doc = run.machine.page().unwrap().document().unwrap();
+    let ps = parse(doc);
+    let text: Vec<_> = ps.iter().filter(|p| p.has_text()).map(|p| runs(&p.runs)).collect();
+    // The title is the entry's; then the details line, then the paragraph.
+    let para = &text[2];
+    let mono: Vec<&str> = para.iter().filter(|r| r.1 == 2).map(|r| r.0.as_str()).collect();
+    assert_eq!(mono, ["code", "two spans", "x"], "{para:?}");
+    let plain: String = para.iter().filter(|r| r.1 == 0).map(|r| r.0.as_str()).collect();
+    assert!(plain.contains("A split `code span` is none. Two together `` are none. But "), "{plain}");
+    let tables: Vec<_> = ps.iter().filter_map(|p| p.table.as_ref()).collect();
+    assert_eq!(tables.len(), 2);
+    let t = tables[0];
+    assert_eq!((t.columns, t.header, t.align.clone()), (3, true, vec![Align::Start, Align::Centre, Align::End]));
+    let cells: Vec<_> = t.cells.iter().map(|c| runs(c)).collect();
+    assert_eq!(cells.len(), 12);
+    assert_eq!(cells[0], [("Key".to_string(), 0, true, 0)]);
+    assert_eq!(cells[3], [("M".to_string(), 2, false, 0)]);
+    assert_eq!(cells[5], [("the index".to_string(), 0, false, 1)], "a link in a cell");
+    assert_eq!(cells[6], [("a | b".to_string(), 0, false, 0)], "an escaped bar");
+    assert_eq!(cells[7], [("x | y".to_string(), 2, false, 0)], "an escaped bar in a code span");
+    assert_eq!(cells[8], [("extra".to_string(), 0, false, 0)], "the fourth cell is dropped");
+    assert_eq!(cells[9], [("short".to_string(), 0, false, 0)]);
+    assert!(cells[10].is_empty() && cells[11].is_empty(), "a short row has empty cells");
+    assert!(text.iter().any(|p| p.iter().map(|r| r.0.as_str()).collect::<String>() == "| not a table: a paragraph"));
+    // No alignment row: "|---|---|" is the first row; "\|" at the end is a
+    // cell's text, not its end.
+    let t = tables[1];
+    assert_eq!((t.columns, t.header), (2, false));
+    let cells: Vec<String> = t.cells.iter().map(|c| c.iter().map(|r| r.text.as_str()).collect()).collect();
+    assert_eq!(cells, ["---", "---", "no", "header"]);
+    let heading = text.last().unwrap();
+    assert_eq!(heading.iter().map(|r| (r.0.as_str(), r.1)).collect::<Vec<_>>(), [("A heading with ", 0), ("code", 2)]);
+}
+
+/// A table-heavy 48 KiB article: built over frames within the budget.
+#[test]
+fn table_frames() {
+    let row = "| `0Ah` | Cell | starts the next cell, in row order; see [the page](https://example.com/page) |\n";
+    let mut text = String::new();
+    let mut n = 0;
+    while text.len() < 48 * 1024 - 400 {
+        if n % 20 == 0 {
+            text.push_str("\n| Opcode | Command | Effect |\n|---|---|---|\n");
+        }
+        text.push_str(row);
+        n += 1;
+    }
+    let run = open_only("Tables", &text, 60);
+    let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+    let worst = *used.iter().max().unwrap();
+    let doc = run.machine.page().unwrap().document().unwrap();
+    let cells: usize = terse_core::page::parse(doc).iter().filter_map(|p| p.table.as_ref()).map(|t| t.cells.len()).sum();
+    eprintln!(
+        "reader: a {} byte article of tables ({cells} cells in the document, {} bytes): busiest frame {worst} units ({:.1}%)",
+        text.len(),
+        doc.len(),
+        common::pct(worst)
+    );
+    assert!(run.results.iter().all(|r| r.waited), "{used:?}");
+    assert!(worst < 90_000, "the estimate is honest: {used:?}");
+    assert!(cells > 1_000);
+    // Lines of only bars and cells of only blanks or escapes.
+    for unit in ["|\n", "||||||||||\n", "|   |   |   |\n", "| \\| | \\\\|\n", "| `a` | `b` |\n"] {
+        let run = open_only("Bars", &unit.repeat(40000 / unit.len()), 60);
+        let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+        assert!(run.results.iter().all(|r| r.waited), "{unit:?}: {used:?}");
+        assert!(*used.iter().max().unwrap() < 90_000, "{unit:?}: the estimate is honest: {used:?}");
+    }
+    // Code spans in prose.
+    let run = open_only("Code", &"some `code` and `more` text ".repeat(1500), 60);
+    let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+    assert!(*used.iter().max().unwrap() < 90_000, "code spans: {used:?}");
+}
+
+/// M on the timeline opens the manual's index, which every host puts in
+/// its store; the index's heading is its title, not shown twice.
+#[test]
+fn manual_key_opens_the_index() {
+    let mut f = Fixture::new();
+    f.feeds.clear();
+    terse_net::builtin::install_data(f.author.store()).unwrap();
+    let mut run = Run::new(&f, "12 press m\n");
+    run.frames(20);
+    let view = run.view();
+    golden("manual-index", &view);
+    assert!(view.contains("sans26b |The Terse manual\n"), "{view}");
+    assert!(!view.contains("sans21b |The Terse manual"), "the heading is the title: {view}");
+    assert!(view.contains("[What Terse is]{1}"), "{view}");
+    // Following the first link opens the overview; Esc comes back.
+    run.press("tab");
+    run.press("enter");
+    run.frames(6);
+    assert!(run.view().contains("sans26b |What Terse is\n"), "{}", run.view());
+    run.press("esc");
+    run.frames(4);
+    assert!(run.view().contains("sans26b |The Terse manual\n"));
+}
+
+/// The reader holds the ID of the manual's current index: a change of the
+/// manual without a rebuild of the reader fails here (no compiler needed).
+#[test]
+fn reader_knows_the_manual_index() {
+    let (name, _, text) = terse_net::builtin::MANUAL[0];
+    assert_eq!(name, "index");
+    let id = blob_id(text);
+    let rom = &Image::parse(IMAGE).unwrap().rom;
+    assert!(rom.windows(32).any(|w| w == id), "programs/reader/reader.terse is stale: run programs/reader/build.sh");
+    let header = include_str!("../../../programs/reader/manual_id.h");
+    let bytes: String = id.iter().map(|b| format!("0x{b:02x}")).collect::<Vec<_>>().join(", ");
+    assert!(header.contains(&bytes), "programs/reader/manual_id.h is stale: run programs/reader/build.sh");
+}
+
+/// Every article of the built manual is shown whole by the reader: each
+/// ```path fence is a figure drawn in full within the column, each table
+/// is a table (never preformatted or paragraph text), and nothing is cut.
+#[test]
+fn manual_articles_are_valid() {
+    for &(name, title, text) in terse_net::builtin::MANUAL {
+        let text = std::str::from_utf8(text).unwrap();
+        let run = open_only(title, text, 20);
+        let doc = run.machine.page().unwrap().document().unwrap();
+        let ps = terse_core::page::parse(doc);
+        let figs: Vec<_> = ps.iter().filter_map(|p| p.figure.as_ref()).collect();
+        let tables = ps.iter().filter(|p| p.table.is_some()).count();
+        let (mut want_figs, mut want_tables, mut in_fence, mut prev_bar) = (0, 0, false, false);
+        for line in text.lines() {
+            if line.starts_with("```") {
+                if !in_fence && line.starts_with("```path") {
+                    want_figs += 1;
+                }
+                in_fence = !in_fence;
+                prev_bar = false;
+                continue;
+            }
+            let bar = !in_fence && line.starts_with('|');
+            if bar && !prev_bar {
+                want_tables += 1;
+            }
+            prev_bar = bar;
+        }
+        assert_eq!(figs.len(), want_figs, "{name}: every figure is drawn");
+        assert_eq!(tables, want_tables, "{name}: every table is a table");
+        for fig in figs {
+            assert!(fig.width <= RECT.2, "{name}: {}", fig.width);
+            all_drawn(fig);
+        }
+        let page = run.page_text();
+        assert!(!page.lines().any(|l| l.starts_with("```")), "{name}: no fence shown as text: {page}");
+        assert!(!page.contains("the article continues"), "{name}: shown whole");
+        let flat = page.replace('\n', " ");
+        assert!(flat.starts_with(&format!("{title} ")), "{name}: titled {title:?}");
+        assert_eq!(flat.matches(title).count(), 1, "{name}: the heading is not repeated");
+        assert!(text.len() <= 16_384, "{name}: under the automatic download limit");
+    }
 }

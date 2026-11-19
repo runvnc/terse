@@ -218,11 +218,12 @@ below), which then starts the next block.
 | List item | starts with `-` or `*` and a space | the line after the marker, and the ordinary lines after it |
 | Preformatted | starts with four spaces or a tab (an indented line) | that line and the indented lines after it |
 | Fence | starts with three backquotes (`` ``` ``) | the lines after it up to a closing line |
+| Table | starts with `\|` | that line and the lines after it that start with `\|` |
 | Paragraph | is any other non-blank line | that line and the ordinary lines after it |
 
 - An ordinary line is a non-blank line that starts none of the other
-  blocks. After a heading, a preformatted block or a fence it starts a
-  paragraph; after a list item it continues the item.
+  blocks. After a heading, a preformatted block, a fence or a table it
+  starts a paragraph; after a list item it continues the item.
 - A paragraph's or list item's lines are joined into one: each line break
   becomes a space and the blanks at the start of each line are dropped,
   also on its first line. So are the blanks after a heading's marker. A
@@ -254,7 +255,8 @@ below), which then starts the next block.
   other bytes (a space, non-ASCII letters, a final dot) are written as
   `%XX`. Links count in every block that shows text.
 - A **link with text** is `[`, the text, `]`, `(`, the target, `)`, all
-  on one line: the text is 1 to 200 bytes holding no `[`, `]` or link,
+  on one line: the text is 1 to 200 bytes holding no `[`, `]`, backquote
+  or link,
   and the target is a link by the rules above that is the whole of what is
   between the parentheses (so it holds no blank and no `)`). A reader
   shows the text as the link and does not show the target. Links are found
@@ -262,8 +264,37 @@ below), which then starts the next block.
   first counts, and a link with text starts at its `[`. Brackets that are
   not all of a link with text are ordinary text, and the links in them
   count as bare links.
-- There is no inline markup: `*`, `_` and backquotes inside a line are
-  ordinary text.
+- A **code span** is a backquote, 1 to 200 bytes none of which is a
+  backquote or a line break, and a backquote, in a paragraph, a list
+  item, a heading or a table cell. A reader shows the bytes between the
+  backquotes as they are, in a monospaced face, and does not show the
+  backquotes; a link in a code span does not count. Code spans and links
+  are found from the start of the line: where a code span and a link
+  would overlap, the one that starts first counts. A backquote that
+  starts no code span is ordinary text (so is one in a preformatted block
+  or a fence). Code spans do not nest, and there is no other inline
+  markup: `*` and `_` are ordinary text.
+- A **table** is shown as a grid of cells. Its lines are its rows. A row
+  is cut into cells: the `|` that starts the line is dropped, then the
+  blanks at the end of the line, then a `|` at its end if there is one
+  that is not preceded by a backslash; what is left is cut at every `|`
+  that is not preceded by a backslash, and the blanks at the start and
+  end of each piece are dropped. Each piece is a cell (so a row has at
+  least one). In a cell, `\|` stands for `|`, also in a code span; any
+  other backslash is itself. The first row's number of cells, at most 8,
+  is the table's number of columns: the cells of any row beyond that
+  number are dropped (the first row's too), and a row with fewer has
+  empty cells at its end. If the table's second line is made only of
+  `|`, `-`, `:` and blanks and holds at least one `-`, it is an
+  **alignment row**: it is not shown, the first row is the table's
+  header, and its cells give the columns' alignment in order: a cell of
+  two or more bytes that starts and ends with `:` centres its column, one
+  that ends with `:` and does not start with one (or is only `:`) aligns
+  it to the end, any other to the start, which is also the alignment of
+  a column it gives none for and of every column of a table without an
+  alignment row. A cell is one line of ordinary text: links and code
+  spans count in it. A reader that does not lay tables out
+  shows their lines as a paragraph's, which reads well enough.
 
 **Figures.** A fence whose info string is the word `path` (after optional
 blanks, and followed by a blank or the end of the line) is a figure. Its

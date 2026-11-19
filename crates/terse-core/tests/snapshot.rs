@@ -247,3 +247,22 @@ fn snapshot_files() {
     assert_eq!(&info.record()[33..65], &[3; 32]);
     assert_eq!(back.restore(&image).unwrap().identity(), m.identity());
 }
+
+/// A page holding a document with a table survives the round trip, and
+/// the restored machine's document lays out as the original's.
+#[test]
+fn a_table_document_round_trips() {
+    use terse_core::page::{op, reference_layout};
+    let mut doc = vec![op::TABLE, 2, 1, 0, 2, op::CELL, op::TEXT, 3, 0, b'K', b'e', b'y', op::CELL, op::TEXT, 1, 0, b'v'];
+    doc.extend_from_slice(&[op::CELL, op::TEXT, 1, 0, b'a', op::CELL, op::TEXT, 1, 0, b'1', op::END_TABLE]);
+    // submit(the bytes after the code, their length), then loop.
+    let words = [0x0000_0517, addi(10, 10, 24), addi(11, 0, doc.len() as i32), addi(17, 0, 0x700), ECALL, LOOP];
+    let image = common::program(&rom(&words, &doc), 1, &[common::PAGE]);
+    let mut m = Machine::new(&image);
+    m.run_frame(&FrameInput::default());
+    assert_eq!(m.page().unwrap().document(), Some(&doc[..]));
+    let r = round_trip(&m, &image);
+    let (a, b) = (reference_layout(m.page().unwrap().document().unwrap(), 200), reference_layout(r.page().unwrap().document().unwrap(), 200));
+    assert_eq!(a, b);
+    assert!(a.lines.iter().any(|l| l.rule_span.is_some()), "a table, with its header rule");
+}

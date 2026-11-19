@@ -1,0 +1,203 @@
+# Content: blobs, requests and statuses (device 4)
+
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:f311d2fb4f8f0732e13a17cbb7fbfd341e2a4fbd23b6000703b596f11eb93dd2).
+
+An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
+
+## Blobs
+
+A blob is 1 to 1,048,576 bytes, named by its ID: the BLAKE3-256 hash of its bytes (32 bytes). A program image is a blob, so an image ID is a blob ID. A blob is immutable; a different content is a different blob.
+
+## The request block
+
+A request is a 52-byte block that must lie wholly in RAM, at any alignment. Multi-byte fields are little-endian. In C it is `content_req`. The op table below says which fields each op uses; "submit" means the device reads the field when the request is submitted, "completion" that it writes it when the request completes.
+
+| Offset | Size | Field | Written by |
+|---|---|---|---|
+| 0 | 1 | `op`: the operation, `01h` to `11h` | program |
+| 1 | 1 | `status` | device |
+| 2 | 2 | reserved, ignored | none |
+| 4 | 32 | `id` | both |
+| 36 | 4 | `offset` | program |
+| 40 | 4 | `length` | both |
+| 44 | 4 | `addr` | program |
+| 48 | 4 | `size` | both |
+
+What each field means, per op:
+
+| Field | Op | Meaning |
+|---|---|---|
+| `id` | get, publish | the blob ID |
+| `id` | put | the blob ID, written on completion |
+| `id` | subscribe, unsubscribe, set nickname | a feed key |
+| `id` | identity | the host's feed key, written on completion |
+| `id` | save, load, delete | the record's name |
+| `offset` | get, load | byte offset into the blob or record |
+| `offset` | subscriptions, timeline, names, programs, records | index of the first record wanted |
+| `offset` | find | the scope, 1 to 3 |
+| `offset` | publish | the entry's kind: 0 or 1 (article), 4 (document) |
+| `offset` | set profile | bit 0: listed; other bits ignored |
+| `length` | get, load, the five record lists, find | buffer size, 1 to 16,384; on completion, bytes delivered |
+| `length` | publish | the title's length, 0 to 120, read at submit |
+| `length` | set profile | the name's length, 1 to 48, read at submit |
+| `length` | set nickname | the name's length, 0 to 48, read at submit |
+| `addr` | get, load, record lists, find | the buffer, `length` bytes wholly in RAM |
+| `addr` | put, save | the data, `size` bytes wholly in ROM or wholly in RAM |
+| `addr` | publish | the title, UTF-8, wholly in ROM or wholly in RAM |
+| `addr` | find | also the query, `size` bytes in RAM |
+| `addr` | set profile, set nickname | the name, wholly in ROM or wholly in RAM |
+| `size` | get, load | the blob's or record's size, written on completion |
+| `size` | put | 1 to 1,048,576, read at submit |
+| `size` | save | 0 to 65,536, read at submit |
+| `size` | record lists | number of records that exist, written on completion |
+| `size` | find | query length 1 to 48 at submit; number of results on completion |
+| `size` | publish, set profile | the new entry's `seq`, written on completion |
+
+Fields an op does not use are ignored.
+
+## Operations
+
+| `op` | Operation | Details |
+|---|---|---|
+| `01h` | Get | below |
+| `02h` | Put | below |
+| `03h` | Subscriptions | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `04h` | Timeline | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `05h` | Subscribe | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `06h` | Unsubscribe | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `07h` | Publish | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `08h` | Identity | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `09h` | Names | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `0Ah` | Find | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `0Bh` | Set profile | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `0Ch` | Set nickname | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `0Dh` | Programs | [feeds](terse:de63e278d6838d48e601262905b9b8cd5fd78d0bdf9ed9900246fb6196a23f60) |
+| `0Eh` | Save | [named records](terse:fe45aafd7885760a55161fa926c864fa4bd7fa06ef624471b17412a12c2ec4a8) |
+| `0Fh` | Load | [named records](terse:fe45aafd7885760a55161fa926c864fa4bd7fa06ef624471b17412a12c2ec4a8) |
+| `10h` | Delete | [named records](terse:fe45aafd7885760a55161fa926c864fa4bd7fa06ef624471b17412a12c2ec4a8) |
+| `11h` | Records | [named records](terse:fe45aafd7885760a55161fa926c864fa4bd7fa06ef624471b17412a12c2ec4a8) |
+
+Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h` and `length` 0.
+
+Put (`02h`) stores the `size` bytes at `addr` as a blob, on this host and on its relays. The bytes are copied at submit, so the program may reuse the memory at once. On success `id` is the blob's ID.
+
+## Submit
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected |
+
+The device takes these steps in order:
+
+- 1. If the 52 bytes at `a0` do not lie wholly in RAM, the call returns 0 and nothing is written. (This is not the usual `FFFF_FFFEh` bad-buffer result.)
+- 2. If the request is invalid, the device writes status `04h` into the block and returns 0. Invalid means: an unknown `op`; a length, size, scope or publish kind out of range; a data range not where the field table requires; a publish title or find query that is not valid UTF-8; a name that is not a valid display name; a record name that is not valid.
+- 3. If eight requests are already pending, the call returns 0 and the block is not changed.
+- 4. Otherwise the device writes status `00h`, assigns the lowest free handle (1 to 8) and returns it; the request is pending. At this moment it copies the data of a put or save, the title of a publish, the query of a find and the name of a set profile or set nickname.
+
+So a 0 result with status `04h` means a bad request, and a 0 result with the block untouched means the block was not in RAM or all eight handles were in use. Check the block's own status before the submit if you need to tell them apart, for example by setting it to `FFh` first.
+
+## Completion
+
+A request never completes in the frame it was submitted in. At the start of a later frame, before the program runs, the host may complete any pending requests. Completing one:
+
+| Op | On success, also writes |
+|---|---|
+| get, load | the bytes to `addr`; `length` and `size` |
+| subscriptions, timeline, names, programs, records, find | the records to `addr`; `length` and `size` |
+| put | `id` |
+| publish, set profile | `size` (the entry's `seq`) |
+| identity | `id` |
+| subscribe, unsubscribe, set nickname, save, delete | nothing more |
+
+In every case, success or not, the device writes `status`, frees the handle and queues a content-done event (type `05h`: `a` = handle, `b` = status; see [events](terse:46f289191f0f23d852494cb99f1af3f98e45e735979c449037fb53aaa424d4cf)). If the event queue is full the event is dropped but the block is still updated, so a program that polls `status` never misses a completion. A failed request writes only `status`.
+
+The device writes to the block at the address given at submit, whatever the program has done with that memory since; keep the block (and any result buffer) alive and unused until the request completes. Completions in one frame are applied in increasing handle order.
+
+After a restore. A machine restored from a snapshot has the requests that were pending when the snapshot was taken, and no host will carry them out. Each completes with status `03h` in the machine's first frame after the restore, in increasing handle order, before any other completion of that frame; so does a request that was waiting for the user's consent. Nothing else of the block is written.
+
+## Status values
+
+| Value | C name | Meaning |
+|---|---|---|
+| `00h` | `STATUS_PENDING` | pending |
+| `01h` | `STATUS_DONE` | done |
+| `02h` | `STATUS_NOT_FOUND` | not found |
+| `03h` | `STATUS_FAILED` | failed: network error or timeout (the host decides when to give up), a host that cannot keep records, a restored request |
+| `04h` | `STATUS_BAD_REQUEST` | bad request |
+| `05h` | `STATUS_REFUSED` | refused: the user said no, the host does not permit it, or the relays refused a find |
+| `06h` | `STATUS_NO_ROOM` | no room: a save would exceed the owner's limits |
+
+## Determinism
+
+Completions (which handle, in which frame, with what status, size and bytes) are inputs to the machine, like events and the clock. A host that records them per frame can replay a run exactly, without the network or the records directory. A request waiting for the user's consent is simply pending; the answer reaches the machine only as its completion. The failed completions after a restore are inputs like any other.
+
+## Documents
+
+A document is a blob that says which program reads it. It starts with a header:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `54h 44h 4Fh 43h` (`TDOC`) |
+| 4 | 1 | version: 0 |
+| 5 | 32 | the format owner's feed key; all zero for a built-in program's format |
+| 37 | 1 | n: the format name's length, 1 to 48 |
+| 38 | n | the format name, a valid display name |
+| 38 + n | rest | the data, in the format's own layout (possibly empty) |
+
+The header is valid if all of it is present and every field is as above (`TDOC_HEAD` is 38). The format (owner key, name) is the identity of the program that defines it: a shell opens a document by starting that program with the document as its argument. A blob that starts with `TERS` is an image; a blob with neither is an article. A document is published as an entry of kind 4.
+
+## Charges
+
+| What | Charge |
+|---|---|
+| any `submit`, also a rejected one | 4, plus the `ecall` |
+| an accepted put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name) | 1 per 4 bytes, rounded up, at submit |
+| bytes a get, load, record list or find writes to `addr` | 1 per 4 bytes, rounded up, per frame |
+
+The delivery charge is taken from the budget of the frame the completions arrive in, before the program runs; the reference machine adds up the bytes of all that frame's completions and rounds once. A rejected submit copies nothing, and the fields a completion writes to the block are free. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).
+
+## State
+
+The machine's state (used for the state hash and snapshots) holds, if the image lists device 4, one 53-byte record per handle 1 to 8:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | `op` of the pending request, or `00h` if the handle is free (then all else is zero) |
+| 1 | 4 | address of its request block |
+| 5 | 32 | `id` as read at submit (get, subscribe, unsubscribe, publish, set nickname), the record name (save, load, delete), the put's blob ID; else zero |
+| 37 | 4 | `offset` as read (reads, find, publish kind); set profile's listed bit; else zero |
+| 41 | 4 | `length` as read (reads, find, publish, set profile, set nickname); else zero |
+| 45 | 4 | `addr` as read (get, load, record lists, find); else zero |
+| 49 | 4 | `size` as read (put, save, find's query length); else zero |
+
+The copied data itself (a put's bytes, a title) is not part of the state.
+
+## Example: a get
+
+Fetch the first 1,024 bytes of a blob and wait for them.
+
+```
+#include "terse.h"
+
+static content_req req;
+static uint8_t buf[1024];
+
+void fetch(const uint8_t *id)
+{
+    terse_event ev;
+    uint8_t h = content_get(&req, id, 0, sizeof buf, buf);
+    if (h == 0)
+        return; /* req.status 04h: bad request */
+    for (;;) {
+        while (terse_event_pop(&ev))
+            if (ev.type == EV_CONTENT_DONE && ev.a == h)
+                goto done;
+        terse_wait_frame();
+    }
+done:
+    if (req.status == STATUS_DONE)
+        term_write(buf, req.length); /* req.size: blob size */
+}
+```
+
+`content_get` fills the block and calls `content_submit`. A program with other work polls `req.status` or handles the event in its main loop instead of waiting. Note that `content_submit` returns `uint8_t`, so on an image without device 4 the `FFFF_FFFFh` result reads as 255, not 0.

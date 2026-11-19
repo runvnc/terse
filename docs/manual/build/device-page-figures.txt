@@ -1,0 +1,133 @@
+# Figures on the page
+
+A figure is a drawing between the paragraphs of a page document: a box of a given size, drawn from paths of straight lines and Bezier curves, filled and stroked. It is the Figure command (08h) of the page device, version 0 of device slot 7. Like the rest of the page it is drawn by the host, outside the machine's frames; three caps bound the work of each figure.
+
+```path 240 80
+fill #20304a stroke none M0 0 H240 V80 H0 Z
+fill #e06c75 stroke fg 2 M20 70 L60 10 100 70 Z
+fill none stroke #61afef 3 M120 60 C150 0 190 0 220 60
+```
+
+The box above is one filled path; the triangle is a path filled red and stroked in the text colour 2 units wide; the blue curve is a cubic segment, stroked only.
+
+## The Figure command
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Opcode `08h` |
+| 1 | 2 | Width in screen units, clamped to 1..1024 |
+| 3 | 2 | Height, clamped to 1..1024 |
+| 5 | 1 | Align: 0 start (left), 1 centre, 2 end (right); anything else 0 |
+| 6 | 2 | n, the length of the path commands |
+| 8 | n | The path commands |
+
+If the n bytes run past the end of the document, the command is cut off and the document ends before it.
+
+- Placement. A figure ends the current paragraph and is a block of its own, as high as its height. Above it is the space of the latest Paragraph command (or of the implicit first paragraph). If the current paragraph has no text yet, the figure takes its place and that paragraph's space is the space above the figure. Text after a figure starts a new paragraph with the properties of the latest Paragraph command.
+- Horizontal place. The figure is placed in the rectangle's whole width, without indent: start is the left edge, centre puts half the leftover width before it (the reference layout rounds down), end all of it. Align is left or right, not relative to text direction.
+- A figure wider than the rectangle starts at the left edge and is cut off at the right edge; it is not scaled. All drawing is clipped to the figure's box.
+- The text colour and the anchor in effect at the Figure command belong to the figure: the colour is its initial stroke colour, and a press anywhere in its box as shown (cut off at the rectangle's edge) reports the anchor with event 09h. `locate` finds a figure like a line of text.
+
+## Path commands
+
+Each command is an opcode byte and its operands. Coordinates are signed 16-bit numbers in sixteenths of a screen unit from the figure's top left corner (x right, y down); colours are r, g, b, a, one byte each, a the opacity.
+
+| Op | Command | Operands | Effect |
+|---|---|---|---|
+| `01h` | Fill | r, g, b, a | Ends the path; later paths are filled in this colour, not filled if a is 0 |
+| `02h` | Stroke | r, g, b, a, width (2 bytes, unsigned, sixteenths) | Ends the path; later paths are stroked so, not stroked if a or width is 0 |
+| `03h` | Move | x, y | Starts a subpath at (x, y) |
+| `04h` | Line | x, y | Straight segment to (x, y) |
+| `05h` | Quadratic | x1, y1, x, y | Quadratic Bezier to (x, y), control point (x1, y1) |
+| `06h` | Cubic | x1, y1, x2, y2, x, y | Cubic Bezier to (x, y), control points (x1, y1), (x2, y2) |
+| `07h` | Close | none | Straight segment back to the subpath's start, ending the subpath; nothing if none is open |
+
+Operand sizes: Fill 4 bytes, Stroke 6, Move and Line 4, Quadratic 8, Cubic 12, Close 0. The commands end at the end of the n bytes, at an unknown opcode or at a command whose operands are cut off; the ones before are used.
+
+At the start: no fill; stroke in the document's text colour at the Figure command, opaque, 16 sixteenths (one unit) wide; current point (0, 0); no subpath open.
+
+## Segments, subpaths and paths
+
+- Each segment starts at the current point and ends at its end point, which becomes the current point.
+- A segment with no subpath open (at the start, after a Close, a Fill or a Stroke) starts a subpath at the current point. After a Close the current point is the start of the subpath it closed.
+- A path is the subpaths between two Fill or Stroke commands, or the start or end of the commands. Fill and Stroke change how later paths are drawn, never the path they end.
+- Each path is filled with the non-zero winding rule, then stroked centred on its outline, with round joins and round ends. Later paths are drawn over earlier ones, blended by opacity.
+- A path with no segment, or with neither fill nor stroke, draws nothing.
+
+## Caps
+
+Paths are drawn in order and counted against three caps per figure. The first path that would take a total above its cap is not drawn, and neither is any path after it.
+
+| Cap | Limit |
+|---|---|
+| Paths | 256 |
+| Area | 8 x width x height of the figure, and at most 4 x 640 x 480 = 1,228,800 square units |
+| Length | 65,536 |
+
+- Area. A path's points (start, control and end points) give a box, clipped to the figure's box. The path counts that box once if it is filled, and the box grown by half the stroke width on every side, clipped, once more if it is stroked. A box's area is its width times its height in sixteenths, divided by 256 and rounded up.
+- Length. L is the sum, over the path's Line, Quadratic and Cubic segments, of |dx| + |dy| for each step from the segment's start through its control points to its end, in sixteenths. With s the number of segments, a filled path counts 2 x L + 4 x 16 x s, and a stroked one 2 x L + 4 x w x s with w its stroke width in sixteenths; the counts are divided by 16 and rounded up.
+
+Worked example: a figure 100 x 50 units, so the area cap is 8 x 100 x 50 = 40,000. One path, filled and stroked 2 units (32 sixteenths) wide: Move (160, 160), then Lines to (1440, 160), (1440, 640), (160, 640) and (160, 160), the rectangle from (10, 10) to (90, 40) in units.
+
+- Fill box: 1,280 x 480 sixteenths, 614,400 / 256 = 2,400.
+- Stroke box, grown by 16: 1,312 x 512, 671,744 / 256 = 2,624.
+- Area 5,024 of 40,000.
+- L = 1,280 + 480 + 1,280 + 480 = 3,520, s = 4.
+- Fill count 2 x 3,520 + 4 x 16 x 4 = 7,296; stroke count 7,040 + 4 x 32 x 4 = 7,552; together 14,848 / 16 = 928 of 65,536.
+
+So seven such paths fit this figure's area cap (35,168); an eighth would take the total to 40,192 and would not be drawn, nor anything after it. The length cap alone would allow 70.
+
+## Outlines
+
+When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the tube like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.
+
+## Building a figure in C
+
+While building a document (see The page (device 7)), the library's path builder writes these commands and `doc_figure` wraps them in a Figure command, whose head is `DOC_FIGURE_HEAD` (8) bytes. This is the red triangle above, in a box of 120 x 80 units:
+
+```
+static uint8_t path[64];
+path_begin(path, sizeof path);
+path_fill(224, 108, 117, 255);
+path_stroke(229, 229, 229, 255, 32);
+path_move(320, 1120);
+path_line(960, 160);
+path_line(1600, 1120);
+path_close();
+doc_figure(120, 80, DOC_CENTRE, path, path_length(path));
+```
+
+## Figures in articles
+
+The article format writes a figure as text: a fence whose opening line is three backquotes, `path`, the width W and the height H (1..1024 units each), holding a path string up to a closing line of three backquotes. The path string is SVG path data:
+
+| Command | Numbers | Meaning |
+|---|---|---|
+| `M` | 2 | Move; more pairs after it are lines |
+| `L` | 2 | Line |
+| `H`, `V` | 1 | Horizontal or vertical line |
+| `C` | 6 | Cubic curve |
+| `S` | 4 | Smooth cubic: first control point reflected |
+| `Q` | 4 | Quadratic curve |
+| `T` | 2 | Smooth quadratic: control point reflected |
+| `Z` | 0 | Close the subpath |
+
+- Lowercase commands are relative to the current point. More numbers after a command's last one repeat it. The first command is `M` or `m`. There are no arcs.
+- `fill <colour>` and `stroke <colour> [<width>]` may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke `fg` 1 unit wide. A word ends the path so far. Colours: `#rgb`, `#rrggbb`, `#rrggbbaa` (aa the opacity), `none`, `fg` (the text colour). A width is 0..2047 units; 0 draws no outline.
+- Numbers have an optional sign and decimal point, at most 32 characters, no exponent; separators are blanks, line breaks and commas, or nothing where unambiguous (`M10-5`). Every number is rounded to the nearest sixteenth (halves away from zero) and every point reached, control points included, must lie within plus or minus 2047 units.
+- Anything else makes the figure malformed, and it is shown as the text of its fence.
+
+The reader turns each figure into a Figure command this way:
+
+- Centred, W x H units; if W is over 512 (its column), 512 x round(H x 512 / W), at least 1, with every coordinate and width scaled by 512 / W after rounding to sixteenths (halves away from zero); a width that comes to 0 becomes 1, and the initial 1-unit stroke is scaled too.
+- Coordinates become absolute sixteenths: `M` is Move, `L`, `H` and `V` Line, `Q` and `T` Quadratic, `C` and `S` Cubic, `Z` Close, with the reflected control points of `S` and `T` worked out. A Move is put before the first segment after a `Z` or a word unless that is an `M`.
+- `fill` becomes Fill and `stroke` Stroke; colours become r, g, b, a, with `fg` the reader's body text colour (218, 218, 218) opaque and `none` alpha 0. A `stroke` without a width gets 1 unit. The document's text colour at the figure is the body colour, so the initial stroke is `fg`.
+- A figure that is malformed, has no closing fence line, or whose commands do not fit in the document (or in 65,535 bytes) is shown as the fence's text.
+
+The source of the figure at the top of this article:
+
+    ```path 240 80
+    fill #20304a stroke none M0 0 H240 V80 H0 Z
+    fill #e06c75 stroke fg 2 M20 70 L60 10 100 70 Z
+    fill none stroke #61afef 3 M120 60 C150 0 190 0 220 60
+    ```

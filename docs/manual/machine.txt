@@ -1,0 +1,271 @@
+# The machine
+
+This article describes machine profile 1, the only profile so far: the
+CPU, the memory map, how frames and the budget work, how a machine stops,
+the image file a program is shipped in, and how programs call devices,
+with the complete table of calls. Each device's calls are described in
+full in that device's article.
+
+## CPU
+
+The CPU executes exactly RV32I with the M (multiply and divide) and C
+(compressed) extensions, little-endian, in user mode. There is no A, F, D
+or B extension, no Zicsr or Zifencei, and no privileged architecture: no
+control and status registers, counters or traps are visible.
+
+| Instruction | Behaviour |
+|---|---|
+| `FENCE` (funct3 = 0, including `FENCE.TSO`, `PAUSE`, hint forms) | does nothing |
+| HINT encodings (`c.addi x0, 5`, `slli x0, x0, 3`, ...) | execute as written; writes to `x0` are discarded |
+| `div`, `divu` by zero | give all ones; no trap |
+| `rem`, `remu` by zero | give the dividend |
+| `div` of −2³¹ by −1 | gives −2³¹; `rem` gives 0 |
+| jumps and branches | targets need only be even; `jalr` clears bit 0 |
+| loads and stores | must be aligned to their size (2 or 4), else a misaligned fault |
+| `ecall` | a device call (see Calls below) |
+
+A jump to an address outside ROM and RAM faults when the instruction there
+is fetched, not at the jump. Everything else faults as an illegal
+instruction: `ebreak` and `c.ebreak` (a breakpoint fault); every reserved
+or illegal encoding, including the all-zero parcel `c.unimp`,
+`C.ADDI4SPN`, `C.ADDI16SP` and `C.LUI` with a zero immediate, `C.LWSP` and
+`C.JR` with register 0, compressed shifts with shamt[5] set, `C.SUBW`,
+`C.ADDW` and the reserved MISC-ALU codes, every compressed floating-point
+load or store, all 48-bit and longer encodings, CSR instructions,
+`FENCE.I`, `MRET`, `WFI` and the other privileged encodings.
+
+## Memory map
+
+| Address | Contents | Access |
+|---|---|---|
+| `0001_0000h` to `0001_0000h` + rom_len − 1 | ROM: the image's bytes | read, execute |
+| `0010_0000h` to `0010_0000h` + 8,192 × ram_pages − 1 | RAM | read, write, execute |
+| everything else | nothing | any access faults |
+
+So address 0 faults, a store to ROM faults, and so does fetching an
+instruction any part of which lies outside ROM and RAM (for example a
+32-bit instruction whose second half would be past the end of ROM). Code
+may run from RAM; an instruction fetched from RAM is decoded when it is
+executed, so code written to RAM takes effect at once, but each such
+instruction costs 4 units instead of 1.
+
+## Reset state
+
+- `pc` = `0001_0000h`, the first byte of ROM.
+- `sp` (`x2`) = `0010_0000h` + 8,192 × ram_pages, the end of RAM. Every
+  other register is zero.
+- All RAM is zero, every device is in its reset state, the budget is zero
+  and the frame counter is 0.
+
+## Frames and the budget
+
+Time advances in frames, nominally 60 a second. There are no interrupts.
+For each frame the host does, in order:
+
+| Step | What happens |
+|---|---|
+| 1 | appends the frame's input events to the event queue, latches the clock, the random bytes and the controllers, and applies the content completions it has for this frame |
+| 2 | adds 125,000 to the budget, subtracts the charge for the content delivered in step 1, and runs the CPU while the budget is greater than zero |
+| 3 | ends the frame: the frame counter increases by one, and the host presents the terminal, the vector displays and the page as they are now |
+
+| Rule | Detail |
+|---|---|
+| Instruction cost | 1 unit fetched from ROM, 4 fetched from RAM |
+| `ecall` cost | 1 (or 4 from RAM) plus the call's charge |
+| Overrun | an instruction that starts with a positive budget runs to completion, so the budget can end below zero |
+| Negative carry | a negative remainder carries into the next frame; if it exceeds a whole frame's budget, that frame runs nothing and the rest carries on |
+| No positive carry | unused budget never carries forward |
+| Running out | the machine pauses and continues with the next instruction in the next frame; the program is not told |
+| `wait_frame` | the rest of the budget is discarded and the call returns at the start of the next frame |
+| Stopping | `exit` or a fault stops the machine at once; the rest of the budget is dropped, the frame still counts, nothing runs later |
+
+A host that falls behind real time lets virtual time lag; it never runs
+extra frames to catch up. In a system of several machines each machine has
+its own budget, carry and frame counter.
+
+## Stopping and faults
+
+A machine is running, or stopped by an exit or a fault. A fault has no
+exit code, and a host must show a fault as a fault, with its kind and
+addresses. The faulting instruction is not executed and not charged, and
+`pc` is left pointing at it.
+
+| Stopped | Cause | Recorded |
+|---|---|---|
+| Exit | the `exit` call | the exit code, 0 to 255 |
+| Fault | one of the kinds below | the kind, `pc` and an address |
+
+| Number | Fault kind | Cause | Address recorded |
+|---|---|---|---|
+| 1 | Illegal instruction | a reserved, illegal or unsupported encoding; the 16- or 32-bit encoding is recorded too | `pc` |
+| 2 | Breakpoint | `ebreak`, `c.ebreak` | `pc` |
+| 3 | Fetch | an instruction, or its second half, is not in ROM or RAM | the address that could not be fetched |
+| 4 | Load | a load from outside ROM and RAM | the load address |
+| 5 | Store | a store outside RAM (ROM included) | the store address |
+| 6 | Misaligned | a load or store not aligned to its size | the access address |
+
+The numbers are those of the state serialization and of the shell's
+`info` record.
+
+## The image format
+
+A program is one file (suggested extension `.terse`): a 32-byte header,
+the device requirements, then the ROM. All numbers are little-endian.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic: `54h 45h 52h 53h` (`TERS`) |
+| 4 | 1 | Format version: 0 |
+| 5 | 1 | Machine profile: 1 |
+| 6 | 3 | `rom_len`: 1 to 131,072 |
+| 9 | 1 | `ram_pages`: 8 KiB pages of RAM, 1 to 128 |
+| 10 | 1 | `n_dev`: device requirements, 0 to 16 |
+| 11 | 5 | Reserved, zero |
+| 16 | 16 | Title, UTF-8, padded with `00h` |
+| 32 | 2 × `n_dev` | (device slot, device version) pairs |
+| 32 + 2 × `n_dev` | `rom_len` | ROM; byte 0 is at `0001_0000h` |
+
+- The file length must be exactly 32 + 2 × `n_dev` + `rom_len`.
+- The image ID is the BLAKE3-256 hash of the whole file. It names the
+  program everywhere: an image is a blob, and its ID is its blob ID.
+- A slot may be listed at most once. Device 1 is always present and need
+  not be listed.
+- A host refuses an image whose profile or listed device versions it does
+  not implement (also when a shell starts it). A device not listed behaves
+  as absent: its calls return `FFFF_FFFFh`.
+- `terse pack --rom <bin> --title <t> --ram-pages <n> --device 2:0 -o <out>`
+  builds an image; give `--device S:V` once per device.
+
+| Slot | Device | Version | Status |
+|---|---|---|---|
+| 1 | System | 0 | specified |
+| 2 | Terminal | 0 | specified |
+| 3 | 2D vector display | 0 | specified |
+| 4 | Content | 0 | specified |
+| 5 | Messages | none | reserved |
+| 6 | Sound | none | reserved |
+| 7 | Page | 0 | specified |
+| 8 | Machines | 0 | specified; only the shell of a system has it |
+| 9 | 3D vector display | 0 | specified |
+
+Slots 0 and 10 to 255 are not devices.
+
+## Calls
+
+A program reaches a device with `ecall`. Register `a7` holds the call
+number, (device slot << 8) | function; arguments are in `a0` to `a5`; the
+result is in `a0`, and a second result in `a1` where listed. A call
+changes no other register and no memory but the buffers it is said to
+write; `pc` continues after the `ecall`.
+
+- An unknown call, or a call to a device the image does not list, returns
+  `FFFF_FFFFh` (`TERSE_ERR_UNKNOWN`) and does nothing else.
+- A buffer is a pointer and a length. A buffer a device reads must lie
+  wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. An
+  empty buffer may also start just past the end of ROM or RAM. Otherwise
+  the call returns `FFFF_FFFEh` (`TERSE_ERR_BUFFER`) and does nothing
+  else. This is not a fault.
+- Exceptions: a vector display list not wholly in RAM is rejected (result
+  1), and a content request block not in RAM is rejected with handle 0.
+- Buffers need no alignment. Every call is charged, also when it fails:
+  see [charges](terse:{charges}).
+
+In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
+and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
+`terse_call2` (for two results).
+
+## Call table
+
+[The system device](terse:{device-system}), slot 1, always present:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `100h` | `wait_frame` | none | the frame counter in the frame it returns in |
+| `101h` | `next_event` | `a0` = buffer (4 bytes, written) | 1 and the event, or 0 if the queue is empty |
+| `102h` | `frame_count` | none | the frame counter |
+| `103h` | `unix_time` | none | the Unix time latched at the start of the frame |
+| `104h` | `random` | `a0` = buffer (written), `a1` = length, at most 256 | the length |
+| `105h` | `controller` | `a0` = controller number, `a1` = buffer (8 bytes, written) | byte 0 of the state |
+| `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return |
+| `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
+| `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
+
+[The terminal](terse:{device-terminal}), slot 2:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `200h` | `write` | `a0` = buffer (read), `a1` = length | bytes consumed |
+| `201h` | `command` | `a0` = command | 0 |
+| `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 |
+| `203h` | `get_cursor` | none | `a0` = column, `a1` = row |
+| `204h` | `set_colours` | `a0` = foreground, `a1` = background | 0 |
+| `205h` | `get_colours` | none | `a0` = foreground, `a1` = background |
+| `206h` | `cells_read` | `a0` = first cell, `a1` = buffer (written), `a2` = count | the count |
+| `207h` | `cells_write` | `a0` = first cell, `a1` = buffer (read), `a2` = count | the count |
+| `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count |
+| `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows |
+
+[The 2D vector display](terse:{device-vector}), slot 3:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `300h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
+| `301h` | `clear` | none | 0 |
+| `302h` | `style` | `a0` = style | 0 done, 1 rejected |
+| `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
+| `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected |
+
+The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{content-feeds}) and [named records](terse:{content-records})):
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected |
+
+[The page](terse:{device-page}), slot 7:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected |
+| `701h` | `clear` | none | 0 |
+| `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
+| `703h` | `scroll` | `a0` = y | 0 |
+| `704h` | `background` | `a0` = colour | 0 |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
+
+[Machines](terse:{device-machines}), slot 8, the shell only:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `800h` | `start` | `a0` = image ID address (32 bytes, read) | a handle 1 to 8, or 0 if none is free |
+| `801h` | `stop` | `a0` = handle | 1, or 0 if not in use |
+| `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if not in use |
+| `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused |
+| `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
+| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1 to 8 |
+| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
+| `807h` | `start_program` | `a0` = program record address (read) | a handle 1 to 8, or 0 if none is free |
+| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
+| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
+| `80Ah` | `argument` | `a0` = handle, `a1` = blob ID address (32 bytes, read) | 1, or 0 if not loading |
+| `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused |
+| `80Ch` | `restore` | `a0` = slot | a handle 1 to 8, or 0 if none is free or the slot is out of range |
+| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
+| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+
+[The 3D vector display](terse:{device-vector3}), slot 9:
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
+| `901h` | `clear` | none | 0 |
+| `902h` | `style` | `a0` = style | 0 done, 1 rejected |
+| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
+
+## Screen units
+
+Every device that draws, and the pointer, uses one coordinate system: the
+screen is 640 units wide and 480 high, (0, 0) at the top left, x to the
+right and y down. Units are square; the host shows the screen at a 4:3
+shape, so a circle is round. A terminal cell is 8 units wide and 16 high:
+the cell at (column, row) starts at x = column × 8, y = row × 16. The
+vector displays use sixteenths of a unit for finer positions.

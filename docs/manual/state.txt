@@ -1,0 +1,152 @@
+# State, replay and conformance
+
+A Terse machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.
+
+## The state serialization
+
+The serialization covers everything that can influence later frames or what is shown, and nothing else. It exists only between frames: after a frame ends and before the next begins (a machine just reset counts). Integers are little-endian, `u32` unsigned, `i32` two's complement; a flag is `00h` or `01h`. There is no padding. Sections follow in this order.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 13 | ASCII `terse-state-1` |
+| 13 | 32 | Image ID (BLAKE3-256 of the image file) |
+| 45 | 4 | `pc` (after a fault, the faulting instruction) |
+| 49 | 124 | `x1` to `x31`, u32 each |
+| 173 | 4 | Frame counter (what `frame_count` returns next frame) |
+| 177 | 1 | Stopped: 0 running, 1 exited, 2 faulted |
+| 178 | 1 | Exit code, else 0 |
+| 179 | 1 | Fault kind: 1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned; else 0 |
+| 180 | 4 | Illegal instruction's encoding (16-bit in the low half), else 0 |
+| 184 | 4 | Fault `pc`, else 0 |
+| 188 | 4 | Fault address, else 0 |
+| 192 | 4 | Budget carried into the next frame (i32, zero or negative) |
+| 196 | 4 | L: RAM size, `ram_pages` x 8,192 |
+| 200 | L | All of RAM from `0010_0000h` |
+
+The image ID stands for the ROM, the RAM size and the device list, which never change. From here offsets are relative to the start of each section.
+
+System, 37 + 4n bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Unix time latched for the frame just run |
+| 4 | 1 | n: events queued, 0-64 |
+| 5 | 4n | The events from the head: type, a, b, c |
+| 5 + 4n | 32 | Controllers 0-3, 8 bytes each, as `controller` returned them last frame (zero if not connected) |
+
+Terminal (device 2), 1 or 10,379 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Present: the image lists device 2 (if 0, the section ends) |
+| 1 | 9,600 | Cells 0-2,399, 4 bytes each |
+| 9,601 | 6 | Cursor column, row, foreground, background, cursor shown, pending wrap |
+| 9,607 | 768 | Palette 0-255: red, green, blue |
+| 10,375 | 1 | k: bytes of an incomplete UTF-8 sequence given to `write`, 0-3 |
+| 10,376 | 3 | Those bytes, then zeros |
+
+Vector display, 1 or 8 + m bytes: present (the image lists device 3 or 9), style (0 clean, 1 phosphor), persistence (160 at reset), fill mode (0 fill, 1 outlines), m (u32, 0-16,384), then the list last accepted. Style and persistence are shared with device 9; an image without device 3 has fill mode 0 and m = 0.
+
+Content (device 4), 1 or 425 bytes: present, then 8 request records of 53 bytes for handles 1-8:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | `op` pending (`01h`-`11h`), or 0 for a free handle (all zero) |
+| 1 | 4 | Address of the request block |
+| 5 | 32 | `id` read at submit (a record's name for save, load, delete; a put's blob ID) |
+| 37 | 4 | `offset` read at submit (publish: the kind; set profile: the listed bit) |
+| 41 | 4 | `length` read at submit |
+| 45 | 4 | `addr` read at submit |
+| 49 | 4 | `size` read at submit (put, save; find: query length) |
+
+Fields an op does not read at submit are zero.
+
+Page (device 7), 1 or 21 + d bytes: present, the rectangle x, y, width, height (u16 each, as clamped), the scroll value (u32, as stored), the background (u32, `FF00_0000h` at reset), d (u32: document length 1-65,536, or 0 for none) and the document.
+
+Machines (device 8): absent (0 bytes) if the image does not list device 8. Otherwise a present flag, 1 only for the shell of a system; if it is 0 the section ends. Then focus (1), 8 handle records of 138 bytes, b (1) and b built-in image IDs (32 each), r (1) and r unread open requests (each the handle, then the 82 bytes `request` writes), in handle order. Total 1,108 + 32b + 83r.
+
+| Offset | Size | Handle record |
+|---|---|---|
+| 0 | 1 | State |
+| 1 | 1 | Run flag |
+| 2 | 8 | Rectangle x, y, w, h (u16, as clamped) |
+| 10 | 47 | Bytes 1-47 of the `info` record |
+| 57 | 81 | Identity given to `start_program`, or zeros |
+
+3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.
+
+Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing.
+
+The sections that may be absent were added so that the hashes of older images did not change. The total is 45 + 128 + 23 + 4 + L + 37 + 4n plus the device sections.
+
+## What is left out
+
+- ROM, title, device list: covered by the image ID.
+- This frame's random bytes: they cannot outlive the frame.
+- Copied bytes of requests not yet handed to the host (a put's data, a save's data, a title, query or name): only their effect, later inputs, matters; a put is held by its ID.
+- Named records, a machine's identity, consent prompts, whether an open request still waits: host data, seen by the machine only as inputs. A started machine's identity is in the shell's handle record.
+- Host bookkeeping and presentation: caches, statistics, fonts, pixels, afterglow, the 3D eye, the page's layout and locate requests. Layout results reach the machine as events, which are in the queue.
+- A system's machines: each has its own state; the shell sees them only through device 8. The shell's snapshot slots are host data.
+
+## The hash
+
+The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as 64 lowercase hex digits. Test vectors from the reference implementation, with no input:
+
+`programs/hello/hello.terse` at reset (serialization 18,811 bytes), after 1 frame and after 30 frames:
+
+```
+0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be
+d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe
+066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83
+```
+
+"No input" means no events, Unix time 0, no random bytes (so `random` gives zeros), controllers disconnected and no completions. That is what `terse run` supplies, apart from its `--events` script.
+
+- `terse run <image> --hash` prints the hash after the last frame.
+- `--hash-every N` prints `<frame counter> <hash>` after each frame whose new counter is a multiple of N (after N frames, 2N, ...).
+- With `--shell` these are the shell's hashes; `--hash-all` prints, after the last frame, the shell's hash and then `<handle> <hash>` for each machine started, `-` for one that has no machine (loading or failed).
+
+## Replay
+
+A machine's only inputs are, per frame: its events (in order), the latched Unix time, the random bytes, the controller states, the content completions (which handle, in which frame, status, size and bytes) and, for a machine a shell started, what `open` returns. Supply the same inputs in the same frames and the run repeats exactly, hash for hash. Page layout reaches the machine only as events, so a run replays even where layouts differ. `terse run --events <file>` replays a scripted input file (one line per event: frame, command, arguments); time stays 0 and there are no random bytes, and content requests complete at the start of the next frame.
+
+## Snapshots
+
+A snapshot is the serialization plus the program's identity. A machine is restored from a serialization S and the image whose ID S names: S is read section by section, with the sections the image's devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image's RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).
+
+The restored machine has S's hash and is between frames; its next frame is numbered by S's counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, the afterglow is empty. Time and random bytes are what the host supplies from then on.
+
+The snapshot file:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `TSNP` (`54h 53h 4Eh 50h`) |
+| 4 | 1 | Version 0 |
+| 5 | 81 | Identity, as `identity` writes it; zeros for none |
+| 86 | 4 | Unix time latched for the machine's last frame |
+| 90 | 4 | N: length of S |
+| 94 | 200 | S bytes 0-199 (up to and including L) |
+| 294 | 16 | Page map: bit k (byte k/8, bit k mod 8) set if RAM page k is stored |
+| 310 | 8,192p | The p stored pages, in order; the others are zero |
+| ... | N - 200 - L | The rest of S |
+| ... | 32 | The state hash of S |
+
+A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. Bytes after the hash, or a hash that does not match, are refused.
+
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:{device-machines}).
+
+## The conformance image
+
+`programs/conform/conform.terse` is a test image for whoever writes a host. It needs devices 2, 3, 4, 7 and 9 and 16 RAM pages, and checks the CPU (every instruction class, M-extension corner cases, compressed forms, code in RAM and self-modifying code), the budget and the charges, events, queue overflow and controllers, every system call, bad and empty buffers, the terminal, the vector display and its fill cap, the content device without a network, and the page. Frames 49-108 are a worst-case stress phase for measuring frame rate.
+
+Run it headless for 200 frames with an empty store and no subscriptions, and compare with `programs/conform/expected-hashes.txt` (the hash every 10 frames). Create the two empty directories first:
+
+    terse run programs/conform/conform.terse \
+      --events programs/conform/conform.events \
+      --store /tmp/conform/store \
+      --config /tmp/conform/config \
+      --frames 200 --hash-every 10
+
+With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
+
+See [the machine](terse:{machine}) for frames and the budget, and [charges](terse:{charges}).

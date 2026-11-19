@@ -11,12 +11,12 @@ use std::sync::Arc;
 use cosmic_text::{CacheKey, Font, fontdb};
 use swash::scale::ScaleContext;
 use swash::scale::image::Content;
-use terse_core::page::{self as core_page, Page};
+use terse_core::page::Page;
 use terse_core::SCREEN_WIDTH;
 
 use super::base::{IRect, mix, over, pack};
 use crate::figures::{self, FigureKey, Rasterizer};
-use crate::page::{FIGURE_MARGIN, FIGURE_PIXELS, HostLayout, PageView, RULE_THICKNESS, next_scroll, render_glyph};
+use crate::page::{FIGURE_MARGIN, FIGURE_PIXELS, HostLayout, PageView, next_scroll, render_glyph};
 use crate::phosphor;
 
 /// Bytes of glyph images kept before the cache starts over.
@@ -263,13 +263,12 @@ impl SoftPage {
         };
         let scroll = self.shown_scroll.unwrap_or(0.0);
         let (top, bottom) = (scroll, scroll + r.h as f32);
-        let first = layout.lines.partition_point(|l| l.top + l.height <= top);
+        let first = layout.lines.partition_point(|l| l.reach <= top);
         for line in layout.lines[first..].iter().take_while(|l| l.top < bottom) {
             if let Some([cr, cg, cb]) = line.rule {
-                let y = (ry + (line.top + core_page::RULE_HEIGHT as f32 / 2.0 - scroll) * s).round();
-                let t = (RULE_THICKNESS * s).round().max(1.0);
-                let y = (y - (t / 2.0).floor()) as i32;
-                self.quads.quads.push(Quad { r: IRect::new(x0, y, x1, y + t as i32), paint: Paint::Solid([cr, cg, cb, 255]) });
+                let (y, t, l, r) = line.rule_pixels((rx, ry), scroll, s, (x0 as f32, x1 as f32));
+                let (y, t) = (y as i32, t as i32);
+                self.quads.quads.push(Quad { r: IRect::new(l as i32, y, r as i32, y + t), paint: Paint::Solid([cr, cg, cb, line.alpha]) });
                 continue;
             }
             let base = (ry + (line.baseline - scroll) * s).round();

@@ -1,0 +1,125 @@
+# Using the shell and the reader
+
+`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user's side: the keys, the screens, and the prompts the host shows.
+
+## Starting
+
+```
+cargo run --release -p terse-host -- --demo
+```
+
+builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (`~/.config/terse/identity.key`), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, `cargo run --release -p terse-host` with no image named opens the shell.
+
+Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed keys. How relays work is in [The network](terse:{network}).
+
+## The shell
+
+The screen has a bar on row 0 and the machines' tiles below it.
+
+- The bar starts with the home segment `⌂`, then one segment per machine: its handle, a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and its share of the frame budget in its last frame. The machine with the keyboard is blue, the one selected in the launcher amber; the clock (UTC) is at the right. A click on a segment gives that machine the keyboard; a click on `⌂` opens the launcher.
+- Each tile shows a machine's whole screen, scaled, with a blue frame round the one with the keyboard. Layouts: master and stack (the first machine on the left half, the others stacked on the right; the default), grid, and zoom (one machine over the whole area, the others hidden but still running).
+- A click on a machine's picture gives it the keyboard; the click also reaches the machine. A machine that exits or faults keeps its tile and last picture (a fault is shown on its bottom row) until you stop it; the keyboard then goes back to the shell.
+
+F12 is the home key: wherever the keyboard is, it brings you back to the launcher, and no program ever sees it. The launcher is shown while the shell has the keyboard (at start, and after F12), with the tiles moved to its right. It lists the built-in programs by title (reader, sparks, fetch, hello, sketch, holo), then "From your feeds": the current version of each program of the feeds you follow, with its publisher's name and short key, marked `↓` while its image is not yet downloaded. Then come the machines with their state (a faulted one with the fault kind and `pc`, a failed one with the reason: not found, not a valid image, needs a device this host does not have, no room).
+
+| Key | In the launcher |
+|---|---|
+| Up, Down | move the cursor |
+| Enter | start the program under the cursor (the new machine gets the keyboard), or give the keyboard to the machine under it |
+| Esc | give the keyboard back to the selected machine |
+| Tab or Right, Shift+Tab or Left | select the next or previous machine |
+| 1 to 8 | select the machine with that handle |
+| X | stop the selected machine |
+| P | pause or resume it |
+| Z | zoom it; Z again goes back |
+| L | the next layout |
+| S | save the session |
+| D | on the restore entry: discard the saved session |
+
+A click on a program starts it; a click on a machine selects it and gives it the keyboard. Programs are started by their identity, built-ins too, so their named records follow them from version to version. The layout chosen with L and Z is kept for the next run.
+
+## Sessions
+
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:{state}).
+
+## Open requests
+
+A machine may ask the shell to open a program (by its identity) or a blob (by its ID); the reader does this when you follow a link to a program, an image or a document. The shell takes these requests only from the machine with the keyboard, one at a time, at most one a second from each machine, and ignores a machine's requests for ten seconds after you say no.
+
+- A built-in program starts at once in a new tile.
+- Any other program is fetched first (the host looks it up on its relays if it holds no entry for it); then the bar asks, for example, `reader asks to start Tool by Alice 3fa9c2…c21e07. Y/N`. The keyboard goes to the shell until you answer: Y starts it in a new tile with the keyboard, N or Esc does not.
+- For a blob, the shell reads its first bytes. An image is asked about as an unpublished program, with its title and short ID. A document starts the program of its format with the document as its argument (a published format is asked about the first time in a run). Anything else opens in a new reader tile.
+- A failure (not found, no free handle) is a brief message in the bar.
+
+## Consent prompts
+
+A program may ask the host to subscribe to a feed, unsubscribe from one, publish an article or a document in your name, set your public name, or set a nickname. The host then shows its own prompt over the bottom four rows of the window, over every machine's picture. The program can neither see nor draw over it.
+
+| Request | The prompt shows |
+|---|---|
+| Subscribe, unsubscribe | the feed key, as its first and last six hex digits (`3fa9c2…c21e07`) |
+| Publish | whether it is an article or a document, its title and size |
+| Set profile | the display name, and whether search may find it |
+| Set nickname | the feed key and the nickname |
+
+Every prompt names the title of the program that asks. Y allows; N or Esc refuses; every other key, Enter included, does nothing. While the prompt is up the keyboard goes to the host, not to any program. Several requests are asked about one at a time. `terse-host --consent allow` or `deny` answers every request without asking; `ask` is the default.
+
+## The reader
+
+The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed key. The help page (? or F1) lists the keys of every view and shows your own feed key in full, in groups of eight hex digits.
+
+Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and `↳ reply` or `not downloaded` where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.
+
+| Key | In the timeline |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End, wheel | move the selection (the wheel 3 entries a step) |
+| Enter, click | open the article; a document (marked `◆`) is passed to the shell |
+| / | search |
+| F | feeds |
+| M | this manual's index |
+| ? or F1 | help |
+| T | publish a test article |
+| Esc | quit |
+
+T publishes "Test article N", a few paragraphs: the reader puts the article, publishes it and, if you do not yet follow your own feed, subscribes you to it so that it shows in the timeline. The host asks you first, and the status row says what came of each step. T works in the timeline, feeds and help views.
+
+Feeds (F): the feeds you follow, each with its name and short key (`you` marks your own, `your nickname` a name you gave it), the highest entry number and how many entries are held.
+
+| Key | In the feeds view |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End, wheel, click | select a feed |
+| Enter | the feed's page |
+| S | subscribe: type or paste a feed key on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes |
+| U | unsubscribe from the selected feed |
+| N | a nickname for the selected feed, which only you see; empty removes it |
+| P | your public name, then Y or N: whether search may find it |
+| /, T, ? or F1 | as in the timeline |
+| Esc, Backspace, Left | back to the timeline |
+
+Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.
+
+Search (/): type a feed's name or words of an article's title and press Enter. The reader asks the relays for listed feeds by name and for articles by title, and lists both under a heading each that says how many were found, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
+
+Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full and whether you follow it. S subscribes, U unsubscribes, Esc goes back.
+
+## Reading an article
+
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:{writing-articles}) describes. The status row shows how far you have scrolled, from 0% to 100%.
+
+| Key | In an article |
+|---|---|
+| Up, Down | scroll by 20 units |
+| PgUp, PgDn, Space | scroll by the view less one line |
+| Home, End | the top, the end |
+| wheel | 60 units a step |
+| Tab, Shift+Tab | the next or previous link |
+| Enter, click | follow the current link |
+| Esc, Backspace, Left | back |
+
+The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (`terse:` and a blob ID) or a feed's page (`terse:feed/`); a link to a program, a program image or a document is passed to the shell, as described above; a web link only shows its address, since there is no browser. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.
+
+The reader also gets the first 8 article links of an article as you open it, so they open at once when you follow them.
+
+## Where to go next
+
+How articles are written: [Writing an article](terse:{writing-articles}). How the shell's devices work: [The machines device](terse:{device-machines}). Feeds and consent from a program's side: [Feeds](terse:{content-feeds}).

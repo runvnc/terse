@@ -1,0 +1,186 @@
+# Content: feeds, names, search and publishing
+
+Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:{network}).
+
+| `op` | Operation | C helper | Consent |
+|---|---|---|---|
+| `03h` | Subscriptions | `content_feed(r, CONTENT_SUBSCRIPTIONS, ...)` | no |
+| `04h` | Timeline | `content_feed(r, CONTENT_TIMELINE, ...)` | no |
+| `05h` | Subscribe | `content_follow(r, CONTENT_SUBSCRIBE, key)` | yes |
+| `06h` | Unsubscribe | `content_follow(r, CONTENT_UNSUBSCRIBE, key)` | yes |
+| `07h` | Publish | `content_publish`, `content_publish_kind` | yes |
+| `08h` | Identity | `content_identity` | no |
+| `09h` | Names | `content_names` | no |
+| `0Ah` | Find | `content_find` | no |
+| `0Bh` | Set profile | `content_set_profile` | yes |
+| `0Ch` | Set nickname | `content_set_nickname` | yes |
+| `0Dh` | Programs | `content_programs` | no |
+
+## Reading lists
+
+Subscriptions, timeline, names and programs (and the records list of named records) read the same way. `id` is not used; `offset` is the index of the first record wanted; `length` is the size of the buffer at `addr`, 1 to 16,384 bytes, wholly in RAM. The device delivers as many whole records as fit, then writes the bytes delivered to `length` and the total number of records that exist to `size`. Read the next part by submitting again with `offset` advanced by the number of records you got. An `offset` past the end delivers nothing.
+
+## Subscriptions (03h)
+
+One 36-byte record per subscribed feed, in increasing order of feed key:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 32 | feed key |
+| 32 | 4 | highest `seq` held for that feed, or 0 |
+
+## Timeline (04h)
+
+The article and document entries (kinds 1 and 4) of all subscribed feeds, newest first by the order in which the host received them: index 0 is the most recently received. Profile and program entries are not included, nor entries of a feed the host has unsubscribed from. Each record:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | `L`: number of bytes that follow in this record |
+| 1 | 1 | flags; bit 0 (`TIMELINE_LOCAL`): the blob is in the host's store, so a get completes without the network; other bits zero |
+| 2 | `L` - 1 | the entry without its signature (below) |
+
+The entry, as it appears from record byte 2 on (offsets here are within the entry):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 32 | feed key |
+| 32 | 4 | `seq`: 1 for the first entry, then increasing |
+| 36 | 4 | time: Unix seconds, as claimed by the author |
+| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document |
+| 41 | 3 | size of the blob in bytes (read it with `get24`) |
+| 44 | 32 | blob ID |
+| 76 | 32 | reply-to blob ID, or all zero |
+| 108 | 1 | `n`: title length, 0 to 120 |
+| 109 | `n` | title, UTF-8 |
+
+So `L` is 110 + `n`, and a record is at most 231 bytes. A program tells articles from documents by the kind byte. The host has verified every entry it delivers. When new entries arrive the program gets a feeds-updated event (type `07h`, see [events](terse:{events})), sent after the automatic download of their blobs has finished or failed, so the local flags are already right; read the timeline again then.
+
+## Programs (0Dh)
+
+The current version of each program (kind 3 entry) of the subscribed feeds, in increasing order of feed key, then of name (byte order). The current version is the program entry of that feed and name with the highest `seq`. Records are in the timeline format; the name is the entry's title, and flag bit 0 is set when the image is in the host's store. A shell starts a program by its identity (feed key, name) with device 8's `start_program`.
+
+## Subscribe (05h) and unsubscribe (06h)
+
+`id` is a feed key; `offset`, `length`, `addr` and `size` are not used. Subscribe adds the feed to the host's subscriptions; unsubscribe removes it. With the user's consent the request completes with `01h` once the list has changed; the feed's entries arrive later, each batch announced by a feeds-updated event. Without asking, it completes with `01h` at once if the list already is as asked (subscribing to a feed already subscribed, unsubscribing from one that is not), and with `05h` if `id` is not a valid feed key (an Ed25519 public key). An unsubscribe from an invalid key meets both rules; the reference host completes it with `01h`, since such a feed cannot be subscribed.
+
+## Publish (07h)
+
+Publishes the blob `id` as the next entry of the host's own feed. `offset` is the kind: 0 or 1 for an article, 4 for a document; any other value is a bad request (`04h` at submit). The title is the `length` bytes (0 to 120, valid UTF-8, in ROM or RAM) at `addr`, copied at submit. The entry gets the blob's size, no reply-to, the title and the time from the host's clock.
+
+| Case | Status |
+|---|---|
+| the blob is not in the host's store (put it first with `02h`) | `02h`, without asking |
+| kind 4 and the blob does not start with a valid document header | `04h`, without asking, at completion |
+| the user refuses | `05h` |
+| published | `01h`; `size` = the new entry's `seq` |
+
+The document check happens at completion because the blob is not the program's to read at submit. The host signs the entry with its own key, creating its identity first if it has none.
+
+## Identity (08h)
+
+On completion `id` holds the host's own feed key, or the status is `02h` if the host has no identity yet. `offset`, `length`, `addr` and `size` are not used. No consent.
+
+## Display names
+
+A name given to set profile, and a non-empty name given to set nickname, must be a valid display name, else the request is a bad request (`04h` at submit):
+
+- valid UTF-8, 1 to 48 bytes;
+- no control characters (U+0000 to U+001F, U+007F to U+009F);
+- no whitespace (the Unicode White_Space property) as its first or last character.
+
+Names are declared by the feeds themselves or chosen by the user, and they are not unique: anyone can declare any name. A program that shows a name should show the short key beside it, for example the first and last six hex digits, `3fa9c2…c21e07`.
+
+## Names (09h)
+
+One record per feed that is subscribed or has a nickname, in increasing order of feed key:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | `L`: bytes that follow, 33 to 81 |
+| 1 | 1 | flags (below) |
+| 2 | 32 | feed key |
+| 34 | `L` - 33 | the name, 0 to 48 bytes of UTF-8 |
+
+| Bit | C name | Meaning |
+|---|---|---|
+| 0 | `NAME_NICKNAME` | the name is the user's local nickname for the feed |
+| 1 | `NAME_PROFILE` | the feed has a profile in force |
+| 2 | `NAME_UNSUBSCRIBED` | the feed is not subscribed; it is listed for its nickname |
+
+The other bits are zero. The name is the nickname if there is one, else the display name of the feed's profile in force, else empty. Bit 1 is set whenever a profile is in force, whichever name is given (for a feed that is not subscribed, a profile the host still holds).
+
+## Find (0Ah)
+
+Searches the relays. `id` is not used. `offset` is the scope; the query is the `size` bytes at `addr` (1 to 48, valid UTF-8, in RAM), copied at submit; `length` is the size of the result buffer at the same `addr` (1 to 16,384, in RAM), so the results overwrite the query.
+
+| Scope | C name | Searches | Results |
+|---|---|---|---|
+| 1 | `FIND_FEEDS` | listed feeds by display name | profile entries (kind 2) |
+| 2 | `FIND_ENTRIES` | articles and documents by title | kinds 1 and 4 |
+| 3 | `FIND_PROGRAMS` | programs by name, current versions only | kind 3 |
+
+Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:{network}).
+
+| Case | Status |
+|---|---|
+| results merged (possibly none) | `01h` |
+| no relay answered with results and at least one refused (too many searches) | `05h` |
+| otherwise, no relay could be asked or none answered | `03h` |
+
+`content_find` copies the query into the buffer itself; if the buffer is shorter than the query it sets `STATUS_BAD_REQUEST` and returns 0 without submitting.
+
+## Set profile (0Bh)
+
+Publishes a new profile for the host's own feed. `id` is not used. The display name is the `length` bytes at `addr` (1 to 48, valid, in ROM or RAM, copied at submit); bit 0 of `offset` set means listed: search may find the name. The host builds the profile document with that name and listing, keeping the description of the profile in force if any, with a `relay` line for each of its configured relays that is not a loopback address. It puts the document and publishes it as a profile entry (kind 2), creating its identity first if it has none. On success `size` is the new entry's `seq`.
+
+## Set nickname (0Ch)
+
+Sets the user's nickname for the feed `id` to the `length` bytes at `addr` (0 to 48, in ROM or RAM, copied at submit; a non-empty one must be a valid display name), or removes it if `length` is 0. `offset` and `size` are not used. A nickname is local to the host and never sent anywhere. Without asking, the request completes with `05h` if `id` is not a valid feed key, and with `01h` if the nickname already is as asked.
+
+## Consent
+
+Subscribe, unsubscribe, publish, set profile and set nickname change what the user follows, speak in the user's name or change what the user sees. The host asks the user before it carries one out; the request stays pending until the answer.
+
+- The host draws its own prompt over the bottom of the screen, on top of everything the program shows. The program cannot draw it, read it or answer it.
+- The prompt names the image's title (in a system of machines, that of the machine asking) and what is asked: the feed key, for example as `3fa9c2…c21e07`; for a publish, whether an article or a document, its title and size; for a profile, the display name and whether it will be searchable; for a nickname, the feed key and the nickname.
+- While it is shown the keyboard goes to the host. Y allows; N or Escape refuses; other keys, Enter included, do nothing.
+- One request is asked about at a time; others wait, in increasing handle order.
+- A refusal completes the request with `05h`.
+- Where nobody can answer (a headless run) the host answers as configured: `--consent allow` or `deny`, by default `deny`, so `05h`.
+
+Identity, names, programs, subscriptions, timeline and find need no consent. The program is not told that a request is waiting for the user.
+
+## Example: list the timeline's titles
+
+```
+#include "terse.h"
+
+static content_req req;
+static uint8_t buf[4096];
+
+/* Called after a content-done event for this request. */
+void show_titles(void)
+{
+    uint32_t at = 0;
+    if (req.status != STATUS_DONE)
+        return;
+    while (at < req.length) {
+        uint8_t L = buf[at];
+        const uint8_t *e = buf + at + 2; /* the entry */
+        if (e[40] == ENTRY_ARTICLE) {
+            term_write(e + 109, e[108]);
+            term_puts(buf[at + 1] & TIMELINE_LOCAL
+                          ? "\n" : " (remote)\n");
+        }
+        at += 1 + L;
+    }
+}
+
+uint8_t ask(void)
+{
+    return content_feed(&req, CONTENT_TIMELINE, 0,
+                        sizeof buf, buf);
+}
+```
+
+Call `ask` at start and again on each `EV_FEEDS_UPDATED`; `req.size` says how many entries exist in all.

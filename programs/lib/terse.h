@@ -765,6 +765,23 @@ static inline uint32_t mach_face(uint32_t h, uint32_t frames, uint32_t x, uint32
 }
 static inline uint32_t mach_unface(uint32_t frames) { return terse_call(CALL_MACH_UNFACE, frames, 0, 0); }
 
+/* --- Page tables (SPEC 11.3, 11.4) -------------------------------------
+ * A table is a block of cells laid out by the host: doc_table starts it
+ * (1-8 columns, DOC_TABLE_HEADER makes the first row a header, `align`
+ * gives each column's DOC_START, DOC_CENTRE or DOC_END, or 0 for all
+ * start), doc_cell starts each next cell in row order (the text, font,
+ * size, colour and anchor commands after it go into that cell), and
+ * doc_table_end ends it. A table holds at most 1,024 cells, a document
+ * 4,096. Like every doc_* command these write whole or set doc_overflow. */
+#define DOC_OP_TABLE 0x09
+#define DOC_OP_CELL 0x0A
+#define DOC_OP_END_TABLE 0x0B
+#define DOC_TABLE_HEADER 0x01
+#define DOC_TABLE_COLUMNS 8
+void doc_table(uint8_t columns, uint8_t flags, const uint8_t *align);
+void doc_cell(void);
+void doc_table_end(void);
+
 /* The C library the compiler may call. */
 void *memcpy(void *d, const void *s, size_t n);
 void *memset(void *d, int c, size_t n);

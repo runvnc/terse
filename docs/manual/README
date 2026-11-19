@@ -1,0 +1,35 @@
+The Terse manual
+================
+
+These are the sources of the Terse manual: documentation of the whole
+system written as Terse articles (NETWORK.md 4.5), read in the reader (M
+on its timeline opens the index) and published with `terse manual
+publish`.
+
+- `manifest` lists the articles in reading order, the index first; each is
+  `<name>.txt`, whose first line is `# <title>` (the reader shows it as the
+  article's title, and `terse manual publish` uses it as the entry's).
+- A link to another article of the manual is written `terse:{<name>}`,
+  usually as a link with text: `[the page device](terse:{device-page})`.
+- An article's ID is the hash of its text, which holds the IDs of the
+  articles it links to, so the links must form no cycle. The rule that
+  keeps them so: an article links only to articles that come after it in
+  `manifest`. Mention an earlier article by its title, without a link.
+- `terse manual build` (run from the repository's root; `--dir` names
+  another directory) resolves the links, in dependency order, and writes
+  `build/<name>.txt` and `build/manifest` (`<blob ID> <name> <title>` per
+  line). It fails on a link to an unknown name or a cycle. The build is
+  checked in: `terse-net` embeds it (every host puts the articles in its
+  store at start), and programs/reader/build.sh compiles the index's ID
+  into the reader, so after a change run, in order:
+
+      cargo run -p terse-cli --bin terse -- manual build
+      programs/reader/build.sh
+
+  `cargo test -p terse-cli --test manual` checks that the build is up to
+  date, that every link resolves, and that the manual names every call,
+  event, content operation and status of SPEC.md; `--test reader` that
+  the reader holds the current index's ID and shows every article whole.
+- Keep each article under about 14 KB (it must open at once), preformatted
+  and fenced lines to 64 characters (they are not wrapped in the reader's
+  512-unit column), and tables to a few short columns.

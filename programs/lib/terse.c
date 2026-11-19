@@ -775,3 +775,31 @@ void path_close(void)
 {
     path_room(1, PATH_CLOSE);
 }
+
+/* --- Page tables ------------------------------------------------------ */
+
+void doc_table(uint8_t columns, uint8_t flags, const uint8_t *align)
+{
+    uint8_t *p = doc_room(3 + (uint32_t)columns), k;
+    if (p) {
+        p[0] = DOC_OP_TABLE;
+        p[1] = columns;
+        p[2] = flags;
+        for (k = 0; k < columns; k++)
+            p[3 + k] = align ? align[k] : DOC_START;
+    }
+}
+
+void doc_cell(void)
+{
+    uint8_t *p = doc_room(1);
+    if (p)
+        p[0] = DOC_OP_CELL;
+}
+
+void doc_table_end(void)
+{
+    uint8_t *p = doc_room(1);
+    if (p)
+        p[0] = DOC_OP_END_TABLE;
+}

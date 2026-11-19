@@ -1,0 +1,178 @@
+# Writing a program
+
+A Terse program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.
+
+## Tools
+
+You need clang with the riscv32 target, ld.lld and llvm-objcopy, and the `terse` command of this repository (`cargo run -p terse-cli --bin terse --`, or `target/debug/terse` after `cargo build --workspace`). Below, `terse` stands for either.
+
+The compiler flags, the same in every `programs/*/build.sh`:
+
+| Flag | Why |
+|---|---|
+| `--target=riscv32-unknown-elf` | 32-bit RISC-V, no operating system |
+| `-march=rv32imc -mabi=ilp32` | exactly the machine's instruction set; no floating-point registers |
+| `-Os` | small code: ROM is at most 128 KiB and every instruction costs budget |
+| `-ffreestanding -nostdlib -fno-builtin` | no C library and no start files |
+| `-ffunction-sections -fdata-sections` | with `--gc-sections` at link time, unused functions are dropped |
+
+A C program's build, in fish as the README writes it (the `build.sh` scripts do the same in sh, and take `CLANG`, `LLD`, `OBJCOPY`, `TERSE` and `CARGO` from the environment):
+
+```
+set L programs/lib
+set F --target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
+set -a F -Os -ffreestanding -nostdlib -fno-builtin
+set -a F -ffunction-sections -fdata-sections
+clang $F -I $L -c $L/crt0.S -o 0.o
+clang $F -I $L -c prog.c -o 1.o
+clang $F -I $L -c $L/terse.c -o 2.o
+ld.lld -T $L/terse.ld --gc-sections 0.o 1.o 2.o -o prog.elf
+llvm-objcopy -O binary prog.elf prog.bin
+terse pack --rom prog.bin --title prog --ram-pages 4 \
+    --device 2:0 -o prog.terse
+```
+
+`crt0.S` must be linked first. The build is reproducible: the same sources and the same clang give the same image, and each program's test fails if its checked-in `.terse` is not what its sources build to.
+
+## The library
+
+- `crt0.S` is the entry point, `_start`, in the section `.text.start`, which the linker script puts at the first byte of ROM. It copies `.data` from its load address in ROM to RAM (`.bss` needs no clearing, since RAM is zero at reset), calls `main`, and calls `exit` with `main`'s return value.
+- `terse.ld` places code and constants in ROM from `0001_0000h` and `.data`, `.bss` and the stack in RAM from `0010_0000h`. The stack grows down from the end of RAM, whose size is set only by `terse pack --ram-pages`: nothing checks at link time that it leaves room above `.bss`. A stack that grows into `.bss` corrupts it silently.
+- `terse.h` and `terse.c` give every call as a C function or macro, with the call numbers (`CALL_WAIT_FRAME` ... `CALL_V3_PERSISTENCE`), event types (`EV_KEY_DOWN` ...), key codes (`KEY_ENTER` ...), and `TERSE_ERR_UNKNOWN` and `TERSE_ERR_BUFFER`. Generic calls: `terse_call` (three arguments), `terse_call4`, `terse_call5` and `terse_call2` (two results). Calls without a wrapper of their own, such as `palette_set` and `get_cursor`, go through these.
+
+What `terse.h` provides, by area:
+
+- System: `terse_event_pop`, `terse_wait_frame`, `terse_frame`, `terse_time`, `terse_random` (repeats the call 256 bytes at a time), `terse_random_byte`, `terse_exit`, `terse_open`, `terse_argument`, `terse_pad_read`. Note that `terse_wait_frame` returns how many frames passed since its last call (at most 255), not the frame counter that `wait_frame` returns.
+- Terminal: `term_write` (repeats `write` until every byte is taken, since a write stops when the budget runs out), `term_puts`, `term_putc`, `term_put_ascii`, `term_put_cp` (one code point up to `FFFFh` as UTF-8), `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_fill`, `term_cells_write`, `term_cells_read`, `term_is_wide`.
+- 2D vector display: a list builder (`vec_begin`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`, `vec_end`, `vec_length`), `vec_submit`, `vec_submit_list`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`. The builder does not check the buffer's size.
+- 3D vector display: the same with `v3_` names.
+- Content: the 52-byte `content_req` block, `content_submit`, a `content_` function for each operation (`content_get`, `content_put`, `content_find` ...), and named records: `record_save`, `record_load`, `record_delete`, `record_list`.
+- Page: `page_submit`, `page_submit_doc`, `page_clear`, `page_region`, `page_scroll`, `page_background`, `page_locate`, `page_place_event`, and a document builder (`doc_begin`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`, `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_figure`, `doc_end`) that never writes past its capacity and sets `doc_overflow` when full, and a path builder for figures (`path_begin`, `path_move`, `path_line` and so on).
+- Machines (the shell only): a `mach_` function for each call, such as `mach_start_program` and `mach_place`.
+- `memcpy`, `memset`, `memmove`, `memcmp`, which the compiler may call on its own.
+
+There is no other C library and no compiler runtime. Avoid floating point and 64-bit division, which need runtime routines that are not there (the link fails), or bring the routines yourself: `crates/terse-core/tests/softfloat/softfloat.c` is a tested IEEE double add, subtract, multiply and divide in integer C.
+
+## The hello program
+
+`programs/hello` is written in assembly, `hello.S`, without the library: it shows how bare the machine is. Its `build.sh` assembles it with the same flags, links it alone with `terse.ld`, and packs it with one RAM page and the terminal (`--device 2:0`). It does this:
+
+- Names the calls it uses with `.equ` (`WAIT_FRAME` = `100h`, `TERM_WRITE` = `200h`, `CELLS_WRITE` = `207h` and so on). Each call is `li a7, number`, arguments in `a0`-`a2`, `ecall`, result in `a0`.
+- At `_start` (in `.text.start`, so at `0001_0000h`) it sets the colours to 15 on 4, writes the title with `write` and sends command `04h` (clear to end of row), which paints row 0 blue.
+- Walks a table in `.rodata` of row, column, foreground, background and a zero-terminated UTF-8 string, ended by `FFh`: `set_cursor`, `set_colours`, then `write` for each. Its helper `print` calls `write` once, which is enough for short strings at the start of a frame; `term_write` in C repeats the call.
+- Builds 48 cells in `.bss` (4 bytes each: character, foreground, background) showing palette entries 0 to 15, and copies them to the grid with one `cells_write`.
+- Then loops: `wait_frame`, write the frame counter as eight hex digits with `cells_write`, and take events with `next_event` until it returns 0. A text event (`03h`) is encoded as UTF-8 and written; a key down (`01h`) of Enter writes a line break and a prompt, Backspace writes `08h`, space, `08h`, and Escape calls `exit` with 0.
+
+A test compares its screen after 30 frames with `expected-30-frames.txt`.
+
+## The same in C
+
+```
+#include "terse.h"
+
+int main(void)
+{
+    terse_event e;
+    term_color(15, 4);
+    term_puts(" hello");
+    term_cmd(TERM_CLEAR_EOL);
+    term_color(7, 0);
+    term_goto(0, 2);
+    term_puts("> ");
+    for (;;) {
+        terse_wait_frame();
+        while (terse_event_pop(&e)) {
+            if (e.type == EV_TEXT) {
+                uint32_t cp = e.a | e.b << 8
+                    | (uint32_t)(e.c & 0x1F) << 16;
+                term_put_cp(cp > 0xFFFF ? 0xFFFD : cp);
+            } else if (e.type == EV_KEY_DOWN) {
+                if (e.a == KEY_ENTER)
+                    term_puts("\n> ");
+                else if (e.a == KEY_ESCAPE)
+                    return 0;
+            }
+        }
+    }
+}
+```
+
+## Packing
+
+`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>` writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
+
+| Slot | Device | `--device` |
+|---|---|---|
+| 1 | System | always present, need not be listed |
+| 2 | Terminal | `2:0` |
+| 3 | 2D vector display | `3:0` |
+| 4 | Content | `4:0` |
+| 5, 6 | Messages, sound | reserved |
+| 7 | Page | `7:0` |
+| 8 | Machines | `8:0`; only the shell of a system gets it |
+| 9 | 3D vector display | `9:0` |
+
+A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that needs a device version it does not have.
+
+## Running it headless
+
+```
+terse run prog.terse --frames 30 --dump
+```
+
+runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (`random` gives zeros), and controllers exist only through the script. `--dump-vectors` and `--dump-page` add the vector display's list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, `terse run` exits with its code; after a fault it prints `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself with SIGTERM.
+
+`--events <file>` gives it input: one event per line, a frame number, a command and its arguments; blank lines and text after `#` are ignored (except in `text`). The events of a frame are delivered in the order written.
+
+| Command | Arguments | Gives |
+|---|---|---|
+| `down` | key, then any of `shift` `ctrl` `alt` `meta` | key down |
+| `up` | key, modifiers | key up |
+| `press` | key, modifiers | key down and key up in that frame |
+| `text` | the rest of the line | one text event per character |
+| `pointer` | x, y, buttons 0 to 7 (optional) | a pointer event, in screen units |
+| `click` | x, y | a press of the primary button there, then its release |
+| `wheel` | vertical, horizontal (optional) | wheel steps; positive is down and right |
+| `feeds-updated` | none | a feeds-updated event |
+| `home` | none | the home key (with `--shell` only) |
+| `pad` | n, buttons, lx, ly, rx, ry (rx, ry optional) | controller n's whole state from this frame on |
+| `pad` | n, `off` | controller n disconnected |
+
+A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`. Pad buttons are hexadecimal, the first button byte in bits 0-7 and the second in bits 8-15 (`1` up, `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start); sticks are -127 to 127. A cell (column, row) starts at screen unit (column times 8, row times 16).
+
+```
+# type, press Enter, then quit
+10 text hi
+12 press enter
+20 press esc
+```
+
+## The state hash
+
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:{state}).
+
+## Running it in a window
+
+```
+cargo run -p terse-host -- prog.terse
+```
+
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:{using}) shows the shell, where programs run side by side.
+
+## Costs to keep in mind
+
+An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write` costs 1 per byte, and a clear or scroll 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:{charges}).
+
+## Publishing it
+
+A program published in your feed has an identity, your feed key and its name, that stays the same from version to version:
+
+```
+terse feed publish --program prog.terse --name "Tiny tool"
+```
+
+checks the image and publishes it as a program entry; it prints `seq N program <name> image <id>`. The name defaults to the image's title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest `seq`). Named records belong to the identity, so a new version keeps the old one's records (see [Named records](terse:{content-records})). `terse key new` creates your feed key if you have none.
+
+Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:{content-feeds}) and [The machines device](terse:{device-machines}).
+
+Next: [The machine](terse:{machine}), then the devices, from [The system device](terse:{device-system}) and [The terminal](terse:{device-terminal}) to [Events](terse:{events}).

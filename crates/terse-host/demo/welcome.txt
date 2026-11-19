@@ -29,6 +29,16 @@ which is handy for tables, code and the occasional bit of ASCII art:
     ?            help, and your own feed key
     Esc          back, or quit from the timeline
 
+Lines that start with | make a real table, laid out by the host; a
+line of dashes under the first row makes it a header:
+
+| Key | What it does |
+|---|---|
+| M | open the Terse manual, which says all of this in detail |
+| T | publish a test article of your own |
+
+A word between backquotes, like `this`, is shown as code.
+
 Bare links such as https://en.wikipedia.org/wiki/RISC-V are marked in a
 link colour, and so is the text of a link written as [text](address),
 like [the RISC-V article](https://en.wikipedia.org/wiki/RISC-V). There is

@@ -1,0 +1,141 @@
+# The 2D vector display (device 3)
+
+The 2D vector display draws lines, circles and simple filled shapes from a display list: a short sequence of drawing commands that the program builds in RAM and hands to the device. The device keeps its own copy, and the host draws it every frame until the program submits another list or clears it. The device does no geometry for the program: it does not rotate, scale or clip against anything but the screen, and nothing it draws can be read back.
+
+## Getting the device
+
+The display is slot 3, version 0. An image gets it by listing (3, 0) in its header, which `terse pack ... --device 3:0` does. In an image that does not list it, every call from `300h` to `3FFh` returns `FFFF_FFFFh` and does nothing else, and nothing is drawn; so does a call number in that range other than the five below. An image that lists only the 3D display (device 9) still has the style and persistence settings, through device 9's own calls, but device 3's calls stay absent.
+
+## Coordinates
+
+Coordinates are signed 16-bit numbers, little-endian, in sixteenths of a screen unit. The screen is 640 by 480 units, so its top left is (0, 0) and its bottom right is (10240, 7680) (`VEC_SCREEN_W`, `VEC_SCREEN_H`; `VEC_UNIT` is 16). Anything outside the screen is not shown. Units are square and the screen is shown at a 4:3 shape, so a circle is round.
+
+## Calls
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `300h` | `submit` | `a0` list address, `a1` length | 0 done, 1 rejected |
+| `301h` | `clear` | none | 0 |
+| `302h` | `style` | `a0` style | 0 done, 1 rejected |
+| `303h` | `persistence` | `a0` persistence | 0 done, 1 rejected |
+| `304h` | `fill` | `a0` fill mode | 0 done, 1 rejected |
+
+- `submit` copies `a1` bytes from address `a0` into the device, replacing the previous list, and returns 0. It is rejected, returning 1 and keeping the previous list, if the length is 0 or more than 16,384 (`VEC_MAX_LIST`) or any part of the range is outside RAM. A list in ROM is rejected this way too: `submit` never returns `FFFF_FFFEh`.
+- `clear` empties the list, so nothing is drawn.
+- `style` sets the display style: 0 clean (`VEC_STYLE_CLEAN`), 1 phosphor (`VEC_STYLE_PHOSPHOR`).
+- `persistence` sets the persistence of the phosphor afterglow, 0 to 255.
+- `fill` sets the fill mode: 0 filled shapes are filled (`VEC_FILL_ON`), 1 they are drawn as outlines (`VEC_FILL_OFF`).
+
+`style`, `persistence` and `fill` return 1 and change nothing for a value out of range, else 0. The style and the persistence are one setting shared with the 3D display: whichever device sets them, both displays and the whole screen are shown that way.
+
+After reset the list is empty, the style is clean, the persistence is 160 and the fill mode is 0. The list the device holds at the end of a frame is the one the host shows for that frame.
+
+## The display list
+
+A list is a sequence of commands, each one opcode byte followed by its operands. A coordinate pair x, y is two signed 16-bit values (4 bytes); a radius is 2 bytes, unsigned. Drawing state at the start of a list: colour opaque white (255, 255, 255, 255), width 16 (one screen unit), origin (0, 0), current point (0, 0).
+
+| Op | Command | Operands | Effect |
+|---|---|---|---|
+| `00h` | End | none | Ends the list |
+| `01h` | Colour | r, g, b, a (1 byte each) | Sets the colour; a is opacity, 255 opaque |
+| `02h` | Width | w (1 byte) | Line width in sixteenths; 0 counts as 1 |
+| `03h` | Origin | x, y | Sets the origin (below) |
+| `04h` | Move | x, y | Sets the current point |
+| `05h` | Line | x, y | Line from the current point to (x, y), the new current point |
+| `06h` | Circle | radius | Circle outline about the current point |
+| `07h` | Disc | radius | Filled circle about the current point |
+| `08h` | Rectangle | x, y | Fills the rectangle with corners at the current point and (x, y) |
+| `09h` | Triangle | x1, y1, x2, y2 | Fills the triangle of the current point and the two points |
+
+The C builders in terse.h, in the same order: `vec_end`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`. They append to the buffer given to `vec_begin`; `vec_length` is the bytes written so far.
+
+Rules:
+
+- The origin is added to every later coordinate, but not to a later Origin. The sum wraps to 16 bits. The current point is stored after the origin has been added, so a later Origin does not move it.
+- Lines and circle outlines use the current width and have round ends, so a line to the current point draws a dot. A circle outline is centred on its radius: half the width falls inside and half outside.
+- Circle, Disc, Rectangle and Triangle leave the current point unchanged.
+- Shapes are drawn in list order, each over the earlier ones, blended by opacity.
+- The list ends at an End command, at the end of the submitted bytes, at an unknown opcode (`0Ah` and up), or at a command whose operands are cut off by the end of the list. Commands before that point are drawn; nothing after it is.
+
+## Outlines
+
+In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. The page's figures are outlined too. Outlines are not limited by the fill cap.
+
+## The fill cap
+
+When filled shapes are filled (the clean style with fill mode 0), the area they cover in one list is limited. Each disc, rectangle and triangle, in list order, counts the area of its bounding box:
+
+- a disc: the square from (x - r, y - r) to (x + r, y + r);
+- a rectangle: the rectangle itself;
+- a triangle: the smallest axis-aligned box holding its three points;
+
+with coordinates resolved as above (origin added). The box is clipped to the screen (0 to 10240 by 0 to 7680), and its area in square screen units is its width times its height in sixteenths, divided by 256 and rounded up.
+
+The running total starts at 0 for each list. A filled shape whose area would take the total above 4 x 640 x 480 = 1,228,800 is not drawn, and neither is any filled shape after it in the list. Lines and circle outlines are still drawn. A shape that is not drawn does not count.
+
+Worked numbers: a rectangle covering the whole screen counts 10240 x 7680 / 256 = 307,200, so four of them fill the cap exactly and a fifth filled shape, however small, is not drawn. A disc of radius 160 (10 units) centred at (0, 0) has the box (-160, -160) to (160, 160), clipped to 0..160 by 0..160: 25,600 / 256 = 100. A rectangle 17 by 17 sixteenths counts 289 / 256, rounded up to 2.
+
+## Layers
+
+In the clean style the host combines the displays in a fixed order, from the bottom:
+
+- 1. the terminal's cell backgrounds;
+- 2. [the page](terse:d8ddc8a4ca14bc8e8acf49633f65ccabb6f3d42d370cc0748a9bbf92eaa86b9a): its background, then its text;
+- 3. the vector displays: device 3's shapes, then device 9's;
+- 4. the terminal's characters and cursor.
+
+So terminal text is always drawn over vector shapes, and a cell's background colour is always behind them. Shapes are drawn over the page, and terminal characters over both (a program that shows the page usually leaves the terminal cells under its rectangle blank). To make a panel of text hide the shapes behind it, draw a filled rectangle at the end of the list; the text still appears above it. Smoothing of edges and the exact colour of blended pixels are up to the host and cannot be observed. In a system of several machines each machine's screen is combined in this order on its own, with its own style.
+
+## The phosphor style
+
+In the phosphor style the whole screen imitates a vector monitor or oscilloscope tube:
+
+- The screen is black: cell background colours are not drawn.
+- Shapes are drawn as outlines and add light to what is beneath them instead of covering it; where lines cross, the crossing is brighter. Opacity acts as brightness. Hosts should make overlapping and repeated lines add up to visibly brighter light, so drawing a line more than once brightens it. Something that stays put does not grow brighter than about its own light.
+- The terminal's characters and cursor are light on the same tube, in their foreground colour. So are the page's text and figures (as outlines); the page's background is not drawn.
+- The beam is a sharp line with a faint bloom: its core is narrower than the stated width, and the glow around it is dim and short.
+- Light lingers. What the current list and text show is drawn at full brightness each frame; an afterglow of what was shown before fades quickly at first, then with a dim tail multiplied by persistence / 256 each frame, down to black. With persistence 0 there is no tail. A shape that keeps its structure from one frame to the next and only moves leaves a continuous smear rather than separate copies.
+
+The exact brightness, core width, glow, fast decay, tone curve and where an outline sits on a shape's edge are up to the host. The afterglow is presentation, not machine state, and the program cannot observe it; a host should let the user turn it off. In the clean style the persistence has no effect.
+
+## Charges
+
+| What | Charge |
+|---|---|
+| Any call, also a rejected one | 4 |
+| An accepted `submit` | 1 per 4 bytes of the list, rounded up |
+
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:36f21f6726df4edf8c945ef326442c722c673f4d652d69231b292b45ea7a783a).
+
+## State
+
+The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the image lists device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
+
+## Example
+
+```
+#include "terse.h"
+
+static uint8_t list[256];
+
+int main(void)
+{
+    for (int16_t x = 0;; x = (x + 16) % VEC_SCREEN_W) {
+        vec_begin(list);
+        vec_colour(255, 200, 0, 255);
+        vec_width(32);                      /* two units */
+        vec_move(x, 120 * VEC_UNIT);
+        vec_line(x + 80 * VEC_UNIT, 360 * VEC_UNIT);
+        vec_disc(10 * VEC_UNIT);        /* at the line end */
+        vec_origin(320 * VEC_UNIT, 240 * VEC_UNIT);
+        vec_move(0, 0);                     /* screen centre */
+        vec_colour(0, 160, 255, 128);
+        vec_rect(40 * VEC_UNIT, 40 * VEC_UNIT);
+        vec_end();
+        vec_submit_list(list);              /* VEC_DONE */
+        terse_wait_frame();
+    }
+}
+```
+
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:6d9606da322805861d8aef0969aa6a270eea82a787eeb59de14a86e01716711f), shares this display's style and layers.

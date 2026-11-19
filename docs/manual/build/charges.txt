@@ -1,0 +1,184 @@
+# Charges and limits
+
+This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured; every other value is fixed for version 0.
+
+## The budget, in one line
+
+Each frame adds 125,000 units to the budget and the CPU runs while the budget is above zero; an overshoot carries into the next frame, unused budget never does, and `wait_frame` throws away the rest of the frame.
+
+## Charges
+
+A call's charge is subtracted as the call runs, on top of the `ecall` instruction itself, and may take the budget below zero.
+
+| What | Charge | When |
+|---|---|---|
+| An instruction fetched from ROM | 1 | as it runs (an `ecall` too) |
+| An instruction fetched from RAM | 4, provisional | as it runs (an `ecall` too) |
+| Any call, also an unknown or failing one | 4, provisional | every call |
+| `write`: each byte consumed | 1, provisional | as each byte is consumed; the call stops after the byte that takes the budget to zero or below |
+| A clear, scroll up or scroll down | 150, provisional | each one: commands `01h`, `02h`, `03h`, and those `write` causes (`0Ah` on the last row, `0Ch`, a wrap at the bottom) |
+| Bytes copied between memory and a device | 1 per 4 bytes, rounded up, per call; provisional | by the calls of the next table |
+| Content delivered at completion | 1 per 4 bytes, rounded up, per frame; provisional | subtracted from the frame's budget before the CPU runs |
+
+Bytes counted as copied:
+
+| Call | Bytes | When |
+|---|---|---|
+| `next_event` | 4 | only when an event is written |
+| `random` | the length | when the buffer is valid |
+| `controller` | 8 | when the buffer is valid |
+| `cells_read`, `cells_write` | 4 per cell | when the call is valid |
+| `palette_set` | 3 per entry | when the call is valid |
+| vector `submit` (`300h`, `900h`) | the list's length | only when accepted |
+| page `submit` (`700h`) | the document's length | when copied |
+| content `submit` (`400h`) | put or save: `size`; publish: the title; find: the query; set profile or set nickname: the name | only when accepted |
+| `open` (`107h`) | 33, or 34 + n for a program | when the request is read |
+| system `argument` (`108h`) | 32 | only when written |
+| `start` | 32 | when the ID is read |
+| `start_program` | 33 + n | when the record is read |
+| `info` | 48 | when written |
+| `builtin` | 32 | when written |
+| `identity` | 81 | when written |
+| `request` | 82 | when written |
+| machines `argument` (`80Ah`) | 32 | when the ID is read |
+| `snapshot_info` | 122 | when written |
+
+Content delivered at completion is what a get, load, find or records-style request (subscriptions, timeline, names, programs, records) writes to its buffer. Nothing else is charged: a rejected submit copies nothing, the fields a completion writes into a request block are free, and laying out the page is free (the host does it outside the frames).
+
+Two examples. A call that copies nothing costs 5 units from ROM (the `ecall` and 4). Writing a whole 80-column row costs 85 with one `write` of 80 bytes or one `cells_write` of 80 cells, against at least 480 for 80 one-byte writes.
+
+## Machine and image
+
+| Limit | Value | Note |
+|---|---|---|
+| ROM | 1 to 131,072 bytes, at `0001_0000h` | |
+| RAM | 1 to 128 pages of 8,192 bytes, at `0010_0000h` | 8 KiB to 1 MiB |
+| Exit code | 0 to 255 | |
+| Image header | 32 bytes, then 2 per device requirement | |
+| Format version, profile | 0, 1 | |
+| `rom_len` field | 3 bytes, 1 to 131,072 | |
+| `ram_pages` field | 1 to 128 | |
+| Device requirements | 0 to 16, each slot at most once | |
+| Reserved header bytes | 5, all zero | |
+| Title | 16 bytes of UTF-8, padded with `00h` | |
+| Largest image | 131,136 bytes | |
+
+## Frames
+
+| Limit | Value | Note |
+|---|---|---|
+| Budget per frame | 125,000 units | provisional |
+| Frame rate | 60 per second, nominal | |
+| Frame counter | 32 bits, wraps to 0 | |
+| `terse run` | stops after 36,000 frames | headless runner only |
+
+## Events, controllers and random bytes
+
+| Limit | Value |
+|---|---|
+| Event queue | 64 events; one that arrives when it is full is dropped |
+| Pointer position | x 0 to 639, y 0 to 479; movement at most once a frame |
+| Wheel | at most one event a frame, each value -127 to 127 |
+| Feeds updated, page laid out | at most one of each a frame |
+| Controllers | 4, numbered 0 to 3; axes -127 to 127 |
+| `random` | at most 256 bytes a call |
+| Random bytes a frame can take | at most 463,872 |
+
+## Terminal (device 2)
+
+| Limit | Value |
+|---|---|
+| Grid | 80 columns by 30 rows |
+| Cells | 2,400 of 4 bytes (9,600 bytes) |
+| Character codes | `0000h` to `FFFFh`; `FFFFh` marks a wide character's right half |
+| Palette | 256 entries of red, green, blue |
+| A cell on the screen | 8 by 16 screen units, on a screen of 640 by 480 |
+
+## 2D vector display (device 3)
+
+| Limit | Value | Note |
+|---|---|---|
+| Display list | 1 to 16,384 bytes, in RAM | |
+| Coordinates | signed 16 bits, in sixteenths of a unit; screen 10,240 by 7,680 | |
+| Line width | 1 byte, in sixteenths; 0 counts as 1 | |
+| Style, fill mode | 0 or 1 each | |
+| Persistence | 0 to 255, 160 after reset | |
+| Fill cap | 1,228,800 square units of filled shapes a list | provisional |
+
+## 3D vector display (device 9)
+
+| Limit | Value | Note |
+|---|---|---|
+| Display list | 1 to 16,384 bytes, in RAM | |
+| Transform stack | 8 | |
+| Line width | 1 to 255 sixteenths (0 counts as 1) | |
+| Length a list draws | 65,536 screen units | provisional |
+| Segments a list draws | 16,384 | provisional |
+| Faces | 256 a list | |
+| Faces times segments | 131,072 | |
+| Pieces drawn after hiding | 16,384 | |
+| Chords of a circle | 64 | provisional |
+| Eye distance from the glass | 960 units | provisional |
+| Eye movement | at most 160 units from the reference eye on each axis | provisional |
+| Near plane | z = -800 | provisional |
+
+## Content (device 4)
+
+| Limit | Value |
+|---|---|
+| Blob | 1 to 1,048,576 bytes |
+| Request block | 52 bytes, in RAM |
+| Pending requests | 8 (handles 1 to 8) |
+| `length` of get, load, records, find | 1 to 16,384 |
+| Publish title | 0 to 120 bytes |
+| Display name, nickname, find query | 1 to 48 bytes (a nickname may be 0: removes it) |
+| Find results | at most 16 |
+| Named records per owner | 256 records, 1,048,576 bytes in all |
+| One named record | 0 to 65,536 bytes |
+| Record name | 1 to 32 bytes |
+| Document format name | 1 to 48 bytes |
+
+## Page (device 7)
+
+| Limit | Value | Note |
+|---|---|---|
+| Document | 1 to 65,536 bytes | |
+| Text size | clamped to 6 to 96 units; 14 at the start | |
+| Figure | width and height clamped to 1 to 1,024 units | |
+| Paths a figure draws | 256 | provisional |
+| Figure area | 8 times the figure's area, at most 1,228,800 | provisional |
+| Figure path length | 65,536 | provisional |
+| Anchor ids | 1 to 65,535 (0 is no anchor) | |
+| `locate` | 8 a frame | |
+| Table columns | 1 to 8 | |
+| Cells | 1,024 a table, 4,096 a document | |
+| Cell padding | 6 units left and right, 3 top and bottom | |
+| Narrowest column | 48 units | |
+| Rule | 8 units high | |
+| Reported height or y | at most `FFFFFFh` | |
+
+## Machines (device 8)
+
+| Limit | Value | Note |
+|---|---|---|
+| Machine handles | 8 (1 to 8) | provisional |
+| Snapshot slots | 16 (0 to 15) | provisional |
+| Program name | 1 to 48 bytes | |
+| Records written | `info` 48, `identity` 81, `request` 82, `snapshot_info` 122 bytes | |
+
+## Network
+
+| Limit | Value |
+|---|---|
+| Feed entry | at most 293 bytes; title 0 to 120 bytes |
+| Automatic download | blobs up to 16,384 bytes (the user may change it) |
+| Program images downloaded | up to 131,136 bytes |
+| Prefetch | the first 8 article links of an article |
+| Configured relays | at most 8 |
+| Relays from a feed's profile | at most 2 a feed |
+| Relay connections | at most 16 |
+| Entries a relay keeps | at least the 256 newest of a feed, and its latest profile |
+| Search results | at most 16 |
+| Profile document | at most 4,096 bytes; 0 to 4 relay lines |
+| Reconnecting | after 1 s, doubling up to 30 s |
+| Peer get | not found after 3 s without an answer |

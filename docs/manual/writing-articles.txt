@@ -1,0 +1,186 @@
+# Writing an article
+
+An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
+
+## Lines and blocks
+
+Lines end at LF; a CR before the LF is ignored. Blanks are spaces, tabs and CRs, and a line of only blanks is a blank line. The text is a sequence of blocks separated by blank lines. Markers count only at the very start of a line, and a block also ends before a line it cannot hold, which then starts the next block.
+
+| Block | A line that starts with |
+|---|---|
+| Heading | `#` and a space |
+| Subheading | `##` and a space |
+| List item | `-` or `*` and a space |
+| Preformatted | four spaces or a tab |
+| Fence | three backquotes |
+| Table | a bar, `\|` |
+| Paragraph | anything else |
+
+## Paragraphs
+
+    A paragraph's lines are joined
+    with spaces and wrapped to the
+    reader's width.
+
+A paragraph's lines are joined
+with spaces and wrapped to the
+reader's width.
+
+The blanks at the start of each line are dropped. A line that starts no other block continues the paragraph, so a paragraph needs no blank line before a heading, a list or a table that follows it.
+
+## Headings
+
+    # A heading
+    ## A subheading
+
+# A heading
+
+## A subheading
+
+Each is one line; the blanks after the marker are dropped. The sections of this article are subheadings.
+
+## Lists
+
+    - First item.
+    - Second item, whose next line
+    continues it.
+    * A star works as well.
+
+- First item.
+- Second item, whose next line
+continues it.
+* A star works as well.
+
+Lists have one level. Ordinary lines after an item continue it, joined as in a paragraph.
+
+## Preformatted blocks and fences
+
+A line indented by four spaces or a tab starts a preformatted block, which holds it and the indented lines after it. They are shown as written, leading blanks included, in a monospaced face, and never wrapped: the reader's column holds about 64 monospaced characters, and longer lines are cut off.
+
+```
+    for (i = 0; i < 10; i++)
+        draw(i);
+```
+
+    for (i = 0; i < 10; i++)
+        draw(i);
+
+A blank line ends a preformatted block. A fence keeps blank lines: it opens with a line of three backquotes and ends at a line of three backquotes followed only by blanks. The opening and closing lines are not shown. Text after the opening backquotes (an info string) is ignored, except `path`, which makes a figure. A fence with no closing line runs to the end of the article.
+
+    ```text
+    Shown as written,
+
+    blank line included.
+    ```
+
+```text
+Shown as written,
+
+blank line included.
+```
+
+To show a fence's own source, as above, indent it: an indented line of backquotes is preformatted text, not a fence.
+
+## Code spans
+
+    Call `wait_frame` once a frame.
+
+Call `wait_frame` once a frame.
+
+A code span is a backquote, 1 to 200 bytes holding no backquote and no line break, and a backquote. It counts in paragraphs, list items, headings and table cells, and is shown in a monospaced face without the backquotes. A link inside a code span is not a link. A backquote that starts no code span is ordinary text, as is every backquote in a preformatted block or a fence. There is no other inline markup: `*` and `_` are ordinary text.
+
+## Links
+
+These are links wherever text is shown, also in preformatted blocks, fences and table cells:
+
+| Form | Target |
+|---|---|
+| `http://...`, `https://...` | A web page |
+| `terse:` and 64 hex digits | An article, by blob ID |
+| `terse:feed/` and 64 hex digits | A feed, by key |
+| `terse:program/` key `/` name | A program, by publisher and name |
+| `[text](target)` | Any of these, shown as the text |
+
+The hex digits are lowercase. A link must not follow a letter or digit, and the 64 digits must not be followed by one. A web link runs to the first byte that is not printable ASCII or is `<`, `>` or `"`; a trailing `.` `,` `;` `:` `!` `?` or `'` is not part of it, nor a trailing `)` or `]` when the link holds more of it than of `(` or `[`. So in (see https://example.com/a.) the link stops before the dot and the bracket.
+
+Written for real, a bare link to an article (the manual's page on figures), a feed, the built-in sketch program, and a link with text to another part of this manual:
+
+terse:{device-page-figures}
+
+terse:feed/0000000000000000000000000000000000000000000000000000000000000000
+
+terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
+
+Read [the page device](terse:{device-page}) next.
+
+The source of the last one is:
+
+    Read [the page device](terse:<64 hex digits>) next.
+
+The reader shortens a bare `terse:` link to its first and last six digits. A built-in program has the all-zero key and is named by its image's title.
+
+A program's name is the run of bytes `A`..`Z`, `a`..`z`, `0`..`9`, `-`, `.`, `_`, `~` and `%XX` (two hex digits, either case) after the slash, less any final dot. Each `%XX` stands for byte XX; write every other byte (a space, a non-ASCII letter, a final dot) that way. The decoded name must be a valid display name: 1 to 48 bytes, no control characters, no whitespace first or last. A program named Sketch pad is:
+
+    terse:program/<64 hex digits>/Sketch%20pad
+
+A link with text is `[`, the text, `]`, `(`, the target, `)`, all on one line. The text is 1 to 200 bytes holding no `[`, `]`, backquote or link; the target is exactly one link, with no blank. Brackets that do not make a whole link with text are ordinary text, and links inside them count as bare links. Where links and code spans would overlap, the one that starts first counts.
+
+## Tables
+
+    | Key | Does | Notes |
+    |---|:--:|--:|
+    | Esc | back | `\|` is a bar |
+    | Tab | next link |
+    | T | publish | a test | extra |
+
+| Key | Does | Notes |
+|---|:--:|--:|
+| Esc | back | `\|` is a bar |
+| Tab | next link |
+| T | publish | a test | extra |
+
+A table is consecutive lines that start with `|`. Each line is a row, cut into cells at every `|` not preceded by a backslash, after the leading `|`, the trailing blanks and a trailing unescaped `|` are dropped; blanks around each cell are dropped. In a cell `\|` stands for a bar, also in a code span; any other backslash is itself. Each cell is one line of text, in which links and code spans count.
+
+The first row's cell count, at most 8, is the number of columns. Later rows lose cells beyond it and get empty cells where they have fewer, as the last two rows above show.
+
+If the second line holds only `|`, `-`, `:` and blanks and at least one `-`, it is an alignment row: it is not shown, the first row becomes a header, and its cells align the columns: `:--:` centres, `--:` aligns to the end, anything else to the start. Without one, every column is aligned to the start and there is no header. Keep tables narrow (2 to 4 short columns): wide ones are squeezed and their text wrapped.
+
+## Figures
+
+A fence whose info string is `path`, followed by a width and a height in screen units (1 to 1024), is a figure drawn from SVG path data.
+
+    ```path 200 60
+    fill #2b3a55 stroke none M0 0 H200 V60 H0 Z
+    fill #98c379 stroke fg 2 M20 50 L60 10 L100 50 Z
+    fill none stroke #e5c07b 3 M120 50 Q150 0 180 50
+    ```
+
+```path 200 60
+fill #2b3a55 stroke none M0 0 H200 V60 H0 Z
+fill #98c379 stroke fg 2 M20 50 L60 10 L100 50 Z
+fill none stroke #e5c07b 3 M120 50 Q150 0 180 50
+```
+
+The panel, a green triangle with a light outline, and a yellow curve. In brief:
+
+- Commands `M L H V C S Q T Z`, lowercase relative, numbers as in SVG; the first is `M` or `m`; no arcs.
+- `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide.
+- Colours `#rgb`, `#rrggbb`, `#rrggbbaa`, `none`, `fg` (the text colour).
+- Coordinates in screen units from the top left, y down, every point within 2047 either way.
+- A figure has no text: explain it in the prose or a table after it.
+
+Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. A reader shrinks a figure wider than its column (512 units) to fit. The full rules are in [figures on the page](terse:{device-page-figures}).
+
+## Size and publishing
+
+Keep articles to a few kilobytes. A host downloads an entry's article without being asked when it is at most 16,384 bytes (the user may change this limit), so such articles open at once; larger ones are fetched when opened. The reader shows at most 48 KiB of an article (a longer one ends with a note saying how much is shown), and does not open a linked article larger than that.
+
+Publish a file in your own feed with the command line tool:
+
+    terse feed publish hello.txt --title "Hello"
+
+It puts the blob, publishes the next entry of your feed and prints `seq N blob <id>`; `--reply-to <blob id>` marks a reply. The entry's title is what timelines show. Like the other feed commands it takes `--relay`, `--store` and `--config`. In the reader, T publishes a test article of its own, not your text; a program that publishes asks the host, which asks you.
+
+## How the reader shows it
+
+In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:{device-page}).

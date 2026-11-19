@@ -1,0 +1,206 @@
+# The Machines device (device 8)
+
+A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell's.
+
+## Who has it
+
+The shell has device 8 if its image lists (8, 0) (`terse pack --device 8:0`) and the host starts it as the shell (`terse run --shell <image>`, `terse-host --shell <image>`). For every other machine, and an image run alone, every call returns `FFFF_FFFFh`. At reset no handle is in use and the focus is 0.
+
+## Handles and states
+
+The shell starts machines under handles 1 to 8. Each is a complete, separate machine with its own ROM, RAM, devices, events, content handles, budget, frame counter and 640 x 480 screen; machines share only the host's store, feeds and identity. A handle is in use from the call that returns it until a `stop`.
+
+| Value | State | Meaning |
+|---|---|---|
+| 0 | none | not in use |
+| 1 | loading | the host does not have the image yet |
+| 2 | running | runs a frame in every system frame |
+| 3 | paused | runs no frames, receives no input |
+| 4 | exited | stopped by `exit` |
+| 5 | faulted | stopped by a fault |
+| 6 | failed | could not start; `info` gives the reason |
+
+Each handle also has a run flag, a rectangle (x, y, width, height in the shell's screen units) and possibly an identity. The focus is a handle, or 0 for the shell.
+
+A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:{content-records})).
+
+## Calls
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `800h` | `start` | `a0` = image ID (32, read) | handle, 0 none free |
+| `801h` | `stop` | `a0` = handle | 1, 0 not in use |
+| `802h` | `place` | `a0` handle, `a1`-`a4` x y w h | 1, 0 not in use |
+| `803h` | `run` | `a0` handle, `a1` 1 run 0 pause | 1, 0 refused |
+| `804h` | `focus` | `a0` handle or 0 | 1, 0 refused |
+| `805h` | `info` | `a0` handle, `a1` buffer (48, written) | 1, 0 not 1-8 |
+| `806h` | `builtin` | `a0` index, `a1` buffer (32, written) | 1, 0 past last |
+| `807h` | `start_program` | `a0` program record (read) | handle, 0 none free |
+| `808h` | `identity` | `a0` handle, `a1` buffer (81, written) | 1, 0 none |
+| `809h` | `request` | `a0` handle, `a1` buffer (82, written) | 1, 0 none waits |
+| `80Ah` | `argument` | `a0` handle, `a1` blob ID (32, read) | 1, 0 not loading |
+| `80Bh` | `snapshot` | `a0` handle, `a1` slot | 1, 0 refused |
+| `80Ch` | `restore` | `a0` slot | handle, 0 |
+| `80Dh` | `snapshot_info` | `a0` slot, `a1` buffer (122, written) | 1 held, 0 |
+| `80Eh` | `snapshot_delete` | `a0` slot | 1, 0 out of range |
+
+A read buffer must lie wholly in ROM or wholly in RAM, a written one wholly in RAM, else the call returns `FFFF_FFFEh` and does nothing else. The reference host checks the buffer before the handle or slot.
+
+- `start`: if every handle is in use, returns 0. Otherwise the lowest free handle becomes loading, with run flag set, rectangle (0, 0, 0, 0) and that image ID. The host looks for the blob in its store, then fetches it as a content get does, and checks it as an image; at the start of a later frame the handle becomes running (paused if the run flag is clear) or failed. Loading may take any number of frames.
+- `start_program`: the record is the feed key (32; all zero for a built-in), the name's length n (1) and the name (n bytes, 1 to 48, a valid display name). A bad record or name returns `FFFF_FFFEh`. Then as `start`, with image ID zero and that identity; the host takes the current version it holds of that program (for the zero key, the first built-in whose image title is the name). Failure is reason 1 if it holds no such program or cannot get the image.
+- `identity`: writes the feed key (32), the name length (1) and the name padded with `00h` to 48 bytes. 0, nothing written, for a handle not in use or without identity.
+- `stop`: the machine ceases to exist; the handle's record becomes zero; a focus on it becomes 0. Its pending content requests never complete; its consent prompts are withdrawn.
+- `place`: sets the rectangle, clamped as the page's `region` is: x at most 640, y at most 480, width at most 640 - x, height at most 480 - y.
+- `run`: for loading, running or paused handles and `a1` 0 or 1. Sets or clears the run flag; running and paused switch at once; loading stays loading.
+- `focus`: 0, or a loading, running or paused handle.
+- `info`: writes the record below for any handle 1-8 (zeros if not in use).
+- `builtin`: the image ID of built-in program `a0` (order fixed for the run). Read its title from the image's first 32 bytes with a content get.
+- `request`: if machine `a0` has an open request waiting that the shell was told of (event `0Fh`), writes it and returns 1; it no longer waits, so the machine may make another. A `stop`, or a start that reuses the handle, drops it.
+- `argument`: if the handle is loading, the blob ID becomes the machine's argument (replacing an earlier one), given to it when it becomes running or paused; else 0. For a handle being restored it returns 1 but is ignored: the snapshot's argument stays.
+- `snapshot`: for a running or paused handle and slot 0-15, the host stores the machine's snapshot in the slot at the end of this system frame, replacing what was there. The result arrives as event `10h`.
+- `restore`: slot out of range, or no free handle: 0. Otherwise the lowest free handle becomes loading (run flag set, zero rectangle, image ID zero, no identity). Later it becomes running or paused as the machine was when the snapshot was taken, with the snapshot's image ID and identity, or failed: reason 5 for no, unreadable or unfitting snapshot, 1-3 if its image cannot be had or run.
+- `snapshot_info`: the slots as at the start of the frame, with this frame's deletes. An empty slot writes 122 zero bytes and returns 0; a slot out of range writes nothing.
+- `snapshot_delete`: the slot reads as empty at once; the file is removed at the end of the frame, in order with the snapshots asked for.
+
+## Records
+
+The `info` record (48 bytes, `mach_record` in terse.h), as latched at the start of the frame plus the shell's own calls since:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | State |
+| 1 | 1 | Exit code if exited, else 0 |
+| 2 | 1 | Fault kind if faulted (1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned), else 0 |
+| 3 | 1 | Failure reason if failed, else 0 |
+| 4 | 4 | Units used in the machine's last frame (delivered content included), 0 before its first |
+| 8 | 4 | The machine's frame counter |
+| 12 | 4 | Fault `pc` if faulted, else 0 |
+| 16 | 32 | Image ID (see below) |
+
+The image ID is the one given to `start`. For `start_program` and `restore` it is zero while loading, then the ID of the image the host got, also when that image failed to run or to fit the snapshot.
+
+| Reason | Why the start failed |
+|---|---|
+| 1 | not found (no such blob or program) |
+| 2 | not a valid image |
+| 3 | needs a device (slot, version) the host lacks |
+| 4 | no room for another machine |
+| 5 | `restore`: no snapshot in the slot, unreadable, or does not fit its image |
+
+The `request` record is 82 bytes: the kind (1), then for kind 1 (a blob) the blob ID (32) and zeros, for kind 2 (a program) the 81 bytes `identity` writes.
+
+The `snapshot_info` record (122 bytes, `mach_snapshot_record`):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Present: 1, or 0 for an empty slot |
+| 1 | 32 | Image ID |
+| 33 | 81 | Identity as `identity` writes it; zero for none |
+| 114 | 4 | The machine's frame counter when taken |
+| 118 | 4 | The Unix time latched for its last frame |
+
+## Events for the shell
+
+| Type | Name | `a` | `b` |
+|---|---|---|---|
+| `0Ah` | Machine changed | handle | new state |
+| `0Bh` | Home | 0 | 0 |
+| `0Ch` | Machine pressed | handle | buttons |
+| `0Fh` | Open requested | handle | 0 |
+| `10h` | Snapshot done | slot | 1 stored, 3 failed |
+
+`c` is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted `snapshot`, in call order; failed means the machine was stopped in the same frame or the host could not store it. See [events](terse:{events}).
+
+## Screens
+
+A machine's picture is its screen scaled uniformly into its rectangle (x, y, w, h) and centred:
+
+    if w*480 <= h*640: pw = w, ph = floor(w*480/640)
+    else:              pw = floor(h*640/480), ph = h
+    px = x + floor((w-pw)/2), py = y + floor((h-ph)/2)
+
+If pw or ph is 0 nothing is shown. Running, paused, exited and faulted machines have a picture (exited and faulted ones show their last frame); loading and failed ones have none. Example: (0, 20, 640, 460) gives the picture (13, 20, 613, 460). The host draws the shell's screen, then each picture in handle order, each covering what is below, then its own prompts.
+
+## Input
+
+Input arrives in the shell's screen units and is routed before the shell runs, by the focus and pictures at that moment:
+
+| Input | Goes to |
+|---|---|
+| Key down, key up, text, wheel | the focused machine if running; the shell if focus is 0; else nobody |
+| Pointer over a picture | that machine (highest handle on overlap), mapped, if running; else nobody |
+| Pointer over no picture | the shell, unchanged |
+| Controllers | the focused machine; others read them as not connected |
+| Content, feeds, page events | each machine its own |
+
+A position over picture (px, py, pw, ph) maps to
+
+    x' = floor((2(x-px)+1) * 640 / (2pw))
+    y' = floor((2(y-py)+1) * 480 / (2ph))
+
+A pointer event that sets a button bit clear in the previous pointer event (wherever that went) over a picture also gives the shell a machine pressed event, at the pointer event's place in the shell's input.
+
+The home key is one input the host reserves (F12 in `terse-host`, the `home` script line in `terse run`). It never reaches a machine as a key; it sets the focus to 0 and queues a home event for the shell.
+
+## The system frame
+
+1. Latch. In handle order: loading handles whose image arrived or failed become running, paused or failed (a new machine is reset with its argument, or is the restored one); running handles whose machine stopped become exited or faulted; each change queues machine changed; records take units and frame counters. Then open requested for each open request of the last frame, in handle order, then snapshot done events, all before the frame's input.
+2. Route the input.
+3. The shell runs its frame.
+4. Its starts and stops are carried out in call order. A machine started now runs first in the next system frame.
+5. Each running machine, in handle order, runs one frame with a full budget and its own carry. So `run`, `stop` and `place` take effect this frame; `focus` takes effect at the next routing.
+6. Snapshots and deletes, in call order.
+
+Other machines run no frames. When the shell stops, the system stops.
+
+## Snapshots
+
+A snapshot is a machine's state serialization (holding its image ID and argument) plus its identity. A restored machine has the state hash it had when taken and, given the same later inputs, runs as it would have; its frame counter continues.
+
+- Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. `terse` keeps them in `<data>/snapshots`. A snapshot may exceed 1 MiB.
+- A snapshot restores only its exact image, fetched by ID.
+- Named records are not in it.
+- Pending content requests fail in the restored machine's first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.
+- The shell itself cannot be snapshotted or restored.
+
+## Determinism and state
+
+Each machine is deterministic given its own inputs. The shell's include its device 8 events and what the device reports that the shell did not set (latched records, identities of restored or by-name programs, requests, built-ins, `snapshot_info`). For a started machine, what `open` returns is an input. Device 8's state is part of the shell's; a started machine's state holds nothing of the system.
+
+## Charges
+
+Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read) and `snapshot_info` 31, each when written. See [charges](terse:{charges}).
+
+## Example: a minimal shell
+
+```
+#include "terse.h"
+
+static uint8_t id[32], req[82];
+
+int main(void)
+{
+    terse_event ev;
+    uint32_t h = mach_builtin(0, id) ? mach_start(id) : 0;
+    if (h) {
+        mach_place(h, 0, 0, 640, 480);
+        mach_focus(h);
+    }
+    for (;;) {
+        while (terse_event_pop(&ev)) {
+            if (ev.type == EV_MACHINE_PRESSED)
+                mach_focus(ev.a);
+            else if (ev.type == EV_MACHINE_CHANGED
+                     && ev.b >= MACH_EXITED)
+                mach_stop(ev.a);
+            else if (ev.type == EV_OPEN_REQUESTED
+                     && mach_request(ev.a, req) && req[0] == 1
+                     && (h = mach_start(req + 1)) != 0)
+                mach_place(h, 0, 0, 640, 480);
+        }
+        terse_wait_frame();
+    }
+}
+```
+
+It starts the first built-in full screen with the keyboard, stops machines that end and opens requested blobs as new machines.

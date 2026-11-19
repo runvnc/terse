@@ -37,6 +37,8 @@ const USAGE: &str = "usage:
   terse profile show [<key>]
   terse find [--entries|--programs] <text>
   terse records list [<owner>] | show <owner> <name> | delete <owner> <name>   [--data <dir>]
+  terse manual build|check [--dir <docs/manual>]
+  terse manual publish   (the manual built into terse, as articles of your feed)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
@@ -114,6 +116,7 @@ fn main() -> ExitCode {
         Some("profile") => feed::profile(&args[1..]),
         Some("find") => feed::find(&args[1..]),
         Some("records") => records(&args[1..]),
+        Some("manual") => feed::manual(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {
@@ -373,6 +376,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         if shell {
             let extra = args.all("--builtin").map(|a| image_bytes(a, &mut node)).collect::<Result<Vec<_>, _>>()?;
             builtins = builtin::install(node.store(), &extra)?;
+        } else {
+            // The manual, which every host carries.
+            builtin::install_manual(node.store())?;
         }
         node.set_subscriptions(feed::load_subscriptions(&args)?);
         node.set_identity_path(feed::identity_path(&args)?)?;

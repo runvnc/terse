@@ -94,6 +94,18 @@
  *     figure is the body colour, so the initial stroke is fg. A figure
  *     that is malformed, has no closing line, or whose commands do not fit
  *     in the document (or in 65,535 bytes) is shown as its fence would be.
+ *   - A table (lines that start with "|"): a Table command (the first
+ *     row's cells, at most 8, are the columns; a second line of only
+ *     "|-:" and blanks with a "-" is the alignment row: header and
+ *     alignment), then a Cell command and the cell's text for each cell,
+ *     row by row (missing cells empty, extra ones dropped), then End
+ *     table; text 14 units, rules grey. B_FIND cuts each line into cells
+ *     as it looks for its LF and keeps them (tc_s, tc_e: at most TC_MAX,
+ *     the page's limit; later rows are not shown); "\|" is a "|". Links
+ *     and code spans count in cells.
+ *   - A code span (a backquote, 1-200 bytes with no backquote or LF, a
+ *     backquote) in a paragraph, item, heading or cell: mono, a unit
+ *     smaller, in the code colour.
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
  *   - Links: http(s) URLs, terse:<blob ID> (an article),
@@ -139,6 +151,10 @@
  *     fetches and keeps the whole blob), at most 2 at a time and only
  *     while fewer than 4 requests of any kind are pending (program links
  *     never).
+ * An article without an entry (or whose entry has the same title) whose
+ * first line is a heading is titled by it, and the heading is not shown
+ * again. M on the timeline opens the manual's index (manual_id.h, from
+ * docs/manual/build), which every host has in its store.
  * The document holds at most 65,536 bytes (48 KiB of article plus
  * formatting); if the article is longer, or the formatting does not fit,
  * it ends where the bytes end, between characters, with a note saying how
@@ -198,6 +214,7 @@
 
 #include <stdint.h>
 #include "terse.h"
+#include "manual_id.h"
 
 #define COLS TERM_COLS
 #define ENTRY_ROW 28
@@ -283,7 +300,7 @@
  * converted and per figure. */
 #define BUILD_UNITS 80000
 #define W_FIND 3
-#define W_EMIT 6
+#define W_EMIT 7
 #define W_LINE 200
 #define W_HIT 120
 #define W_BLOCK 400
@@ -294,6 +311,14 @@
 #define W_PTOKEN 100
 #define W_PSEG 360
 #define W_FIGURE 300
+#define W_CODE 700   /* a code span: its Font, Size, Colour and back */
+#define W_TSCAN 18   /* a byte of a table's line, cut into cells */
+#define W_TROW 500   /* the end of a table's row */
+#define W_CELL 450   /* a cell: its Cell command */
+#define W_TABLE 400  /* a table's Table and End table commands */
+#define TC_MAX 1024  /* a table's cells kept (the page device's limit) */
+#define TABLE_SIZE 14
+#define CODE_DOWN 1  /* a code span is this much smaller than its text */
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
@@ -304,6 +329,7 @@
 #define KEY_U 0x18
 #define KEY_Y 0x1C
 #define KEY_F1 0x3A
+#define KEY_M 0x10
 
 enum { TIMELINE, FEEDS, HELP, ARTICLE, SEARCH, FEED };
 enum { FETCHING, READY, NOT_FOUND, FAILED, TOO_LARGE };
@@ -479,10 +505,11 @@ static uint8_t dn_id[DN_N][32], dn_state[DN_N], dn_len[DN_N], dn_name[DN_N][48];
 static uint8_t doc[DOC_CAP];
 enum { B_START, B_FIND, B_EMIT, B_FINISH, B_DONE };
 /* Kinds of line (B_FIND) and of block. */
-enum { L_PLAIN, L_INDENT, L_ITEM, L_H1, L_H2, L_FENCE };
-enum { K_NONE, K_PARA, K_ITEM, K_H1, K_H2, K_PRE, K_FENCE, K_FIGURE };
+enum { L_PLAIN, L_INDENT, L_ITEM, L_H1, L_H2, L_FENCE, L_TABLE };
+/* (K_TABLE before K_PRE: its text is not preformatted.) */
+enum { K_NONE, K_PARA, K_ITEM, K_H1, K_H2, K_TABLE, K_PRE, K_FENCE, K_FIGURE };
 /* The text styles of blocks: face, flags, size, colour. */
-enum { S_BODY, S_PRE, S_H1, S_H2 };
+enum { S_BODY, S_PRE, S_H1, S_H2, S_TABLE };
 static uint8_t b_phase;
 static uint16_t b_line;    /* B_FIND: start of the next line to look at */
 static uint16_t b_scan;    /* B_FIND: where the search for its LF goes on */
@@ -509,6 +536,24 @@ static uint16_t link_doc[MAX_LINKS];
 /* The article builder's place in its document, kept while other
  * documents are built in ldoc. */
 static uint8_t *a_ptr, *a_limit, a_overflow;
+
+/* A table (K_TABLE): found in B_FIND, line by line, as cells (their
+ * first byte and the end of their last non-blank byte, in art), row
+ * after row of t_cols cells (empty cells start and end at 0); its
+ * header flag and columns' alignment. While a line is cut: where the
+ * current piece starts (0: not yet) and ends, whether only blanks
+ * followed the last bar (t_bar), whether the byte before was a
+ * backslash, whether the line can be an alignment row (t_al: only
+ * |-: and blanks; t_dash: a - seen) and the pieces so far (at most 8).
+ * B_EMIT: the next cell (t_at) and whether it is open. */
+static uint16_t tc_s[TC_MAX], tc_e[TC_MAX], t_n, t_at;
+static uint8_t t_cols, t_rows, t_head, t_align[8], t_in, t_full;
+static uint16_t t_ps, t_pe, rp_s[8], rp_e[8];
+static uint8_t t_bar, t_esc, t_al, t_dash, rp_n, t_pieces;
+/* The title taken from the article's first line, a heading (hd_len 0:
+ * none), at art[hd_at]. */
+static uint16_t hd_at;
+static uint8_t hd_len;
 
 /* A figure being converted (B_EMIT of a K_FIGURE block): its size, the
  * width it is scaled down from (0: not scaled), where its path commands
@@ -558,6 +603,8 @@ static const uint8_t rgb_you[3] = {120, 210, 140};
 static const uint8_t rgb_key[3] = {200, 215, 235};
 static const uint8_t rgb_error[3] = {255, 135, 120};
 static const uint8_t rgb_cur_link[3] = {255, 200, 95};
+static const uint8_t rgb_code[3] = {190, 205, 165};
+static const uint8_t rgb_table_rule[3] = {150, 150, 150};
 
 /* --- Text -------------------------------------------------------------- */
 
@@ -1215,7 +1262,8 @@ static uint32_t text_link(uint32_t at, uint32_t end, uint32_t *ts, uint8_t *kind
     }
     if (len != k - at)
         return 0;
-    while (t > b_text && t > b_ls && at - 2 - t < 200 && art[t - 1] != '[' && art[t - 1] != ']' && art[t - 1] != '\n')
+    while (t > b_text && t > b_ls && at - 2 - t < 200 && art[t - 1] != '[' && art[t - 1] != ']' && art[t - 1] != '\n'
+           && art[t - 1] != '`')
         t--;
     spend((at - t) * W_EMIT);
     if (t == at - 2 || t <= b_text || t <= b_ls || art[t - 1] != '[')
@@ -1244,6 +1292,47 @@ static inline __attribute__((always_inline)) uint8_t *find2(uint8_t *p, const ui
         p += 4;
     }
     while (p < e && *p != a && *p != b)
+        p++;
+    return p;
+}
+
+/* The first byte in [p, e) that is `a`, `b` or `c` (find3), or also `d`
+ * (find4), or e: as find2. */
+#define HIT(w, m) ((((w) ^ (m)) - ONES) & ~((w) ^ (m)))
+static inline __attribute__((always_inline)) uint8_t *find3(uint8_t *p, const uint8_t *e, uint8_t a, uint8_t b, uint8_t c)
+{
+    uint32_t ma = a * ONES, mb = b * ONES, mc = c * ONES;
+    while (p < e && ((uint32_t)p & 3)) {
+        if (*p == a || *p == b || *p == c)
+            return p;
+        p++;
+    }
+    while (e - p >= 4) {
+        uint32_t w = *(const uint32_t *)p;
+        if ((HIT(w, ma) | HIT(w, mb) | HIT(w, mc)) & HIGHS)
+            break;
+        p += 4;
+    }
+    while (p < e && *p != a && *p != b && *p != c)
+        p++;
+    return p;
+}
+
+static uint8_t *find4(uint8_t *p, const uint8_t *e, uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+{
+    uint32_t ma = a * ONES, mb = b * ONES, mc = c * ONES, md = d * ONES;
+    while (p < e && ((uint32_t)p & 3)) {
+        if (*p == a || *p == b || *p == c || *p == d)
+            return p;
+        p++;
+    }
+    while (e - p >= 4) {
+        uint32_t w = *(const uint32_t *)p;
+        if ((HIT(w, ma) | HIT(w, mb) | HIT(w, mc) | HIT(w, md)) & HIGHS)
+            break;
+        p += 4;
+    }
+    while (p < e && *p != a && *p != b && *p != c && *p != d)
         p++;
     return p;
 }
@@ -1335,7 +1424,94 @@ static void fence_info(uint32_t i, uint32_t end)
 }
 
 /* The kind of block a line starts. */
-static const uint8_t block_of[] = {K_PARA, K_PRE, K_ITEM, K_H1, K_H2, K_FENCE};
+static const uint8_t block_of[] = {K_PARA, K_PRE, K_ITEM, K_H1, K_H2, K_FENCE, K_TABLE};
+
+/* A table's line starts at art[i] (its '|'): its cutting starts after it. */
+static void table_line(uint32_t i)
+{
+    b_scan = i + 1;
+    t_ps = t_pe = 0;
+    t_bar = t_esc = t_dash = rp_n = t_pieces = 0;
+    t_al = b_lines == 1;
+}
+
+/* A piece of a table's line ends: kept if it is one of the first 8. */
+static void table_piece(void)
+{
+    if (rp_n < 8) {
+        rp_s[rp_n] = t_ps;
+        rp_e[rp_n] = t_ps ? t_pe : 0;
+        rp_n++;
+    }
+    t_pieces++;
+    t_ps = 0;
+}
+
+/* The end of a table's line: its last piece, then the row (the first
+ * row sets the number of columns; a second line that is an alignment row
+ * gives the alignment and the header instead). */
+static void table_row_end(void)
+{
+    uint8_t k, n;
+    spend(W_TROW);
+    if (!(t_bar && t_pieces))
+        table_piece();
+    if (b_lines == 0) {
+        t_cols = rp_n;
+        t_rows = t_head = t_n = 0;
+        memset(t_align, DOC_START, sizeof t_align);
+    }
+    if (b_lines == 1 && t_al && t_dash) {
+        t_head = DOC_TABLE_HEADER;
+        for (k = 0; k < t_cols && k < rp_n; k++) {
+            const uint8_t *c = art + rp_s[k];
+            n = rp_s[k] ? rp_e[k] - rp_s[k] : 0;
+            t_align[k] = n && c[n - 1] == ':' ? (n >= 2 && c[0] == ':' ? DOC_CENTRE : DOC_END) : DOC_START;
+        }
+        return;
+    }
+    if (t_n + t_cols > TC_MAX)
+        return; /* the page device would not show it */
+    for (k = 0; k < t_cols; k++) {
+        tc_s[t_n] = k < rp_n ? rp_s[k] : 0;
+        tc_e[t_n] = k < rp_n ? rp_e[k] : 0;
+        t_n++;
+    }
+    t_rows++;
+}
+
+/* B_FIND in a table's line: cuts it into pieces up to its LF (or `limit`,
+ * or as far as this frame's share goes), leaving b_scan where it got. */
+static void table_scan(uint32_t limit)
+{
+    uint32_t i = b_scan, e = limit;
+    uint8_t c;
+    if (e - i > b_work / W_TSCAN)
+        e = i + b_work / W_TSCAN;
+    for (; i < e; i++) {
+        c = art[i];
+        if (c == '\n')
+            break;
+        if (c != '|' && c != '-' && c != ':' && !is_blank(c))
+            t_al = 0;
+        if (c == '-')
+            t_dash = 1;
+        if (c == '|' && !t_esc) {
+            table_piece();
+            t_bar = 1;
+        } else if (!is_blank(c)) {
+            if (!t_ps)
+                t_ps = i;
+            t_pe = i + 1;
+            t_bar = 0;
+        }
+        t_esc = c == '\\';
+    }
+    spend((i - b_scan) * W_TSCAN);
+    if (i == e && e < limit)
+        b_work = 0; /* this frame's share is used */
+    b_scan = i;
+}
 
 /* B_FIND: gathers the next block from art[0 .. limit) (`final`: no more
  * bytes are coming). Returns 1 with b_kind, b_start, b_end, b_lines (and
@@ -1404,6 +1580,8 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
                     k = L_FENCE;
                 else if (fence)
                     k = L_PLAIN;
+                else if (c == '|')
+                    k = L_TABLE;
                 else if (c == '#' && c1 == ' ')
                     k = L_H1;
                 else if (c == '#' && c1 == '#' && c2 == ' ')
@@ -1415,7 +1593,8 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
             }
             b_lkind = k;
             if (!fence) {
-                if (b_kind && !(k == L_PLAIN && (b_kind == K_PARA || b_kind == K_ITEM)) && !(k == L_INDENT && b_kind == K_PRE)) {
+                if (b_kind && !(k == L_PLAIN && (b_kind == K_PARA || b_kind == K_ITEM)) && !(k == L_INDENT && b_kind == K_PRE)
+                    && !(k == L_TABLE && b_kind == K_TABLE)) {
                     b_in_line = 0; /* this line starts the next block */
                     return 1;
                 }
@@ -1425,8 +1604,23 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
                     b_open = b_line;
                     b_lines = b_closed = b_bad = 0;
                 }
+                if (k == L_TABLE)
+                    table_line(b_line);
             }
             b_in_line = 2;
+            continue;
+        }
+        if (b_kind == K_TABLE) {
+            table_scan(limit);
+            if (b_scan < limit && art[b_scan] != '\n')
+                return 0; /* this frame's share is used */
+            if (b_scan == limit && !final)
+                return 0;
+            table_row_end();
+            b_end = b_scan;
+            b_lines++;
+            b_line = b_scan < limit ? b_scan + 1 : b_scan;
+            b_in_line = 0;
             continue;
         }
         p = art + b_scan;
@@ -1466,10 +1660,10 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
     }
 }
 
-static const uint8_t style_face[] = {DOC_SANS, DOC_MONO, DOC_SANS, DOC_SANS};
-static const uint8_t style_flags[] = {0, 0, DOC_BOLD, DOC_BOLD};
-static const uint8_t style_size[] = {BODY_SIZE, PRE_SIZE, H1_SIZE, H2_SIZE};
-static const uint8_t *const style_rgb[] = {rgb_body, rgb_pre, rgb_title, rgb_title};
+static const uint8_t style_face[] = {DOC_SANS, DOC_MONO, DOC_SANS, DOC_SANS, DOC_SANS};
+static const uint8_t style_flags[] = {0, 0, DOC_BOLD, DOC_BOLD, 0};
+static const uint8_t style_size[] = {BODY_SIZE, PRE_SIZE, H1_SIZE, H2_SIZE, TABLE_SIZE};
+static const uint8_t *const style_rgb[] = {rgb_body, rgb_pre, rgb_title, rgb_title, rgb_body};
 
 static void set_style(uint8_t s)
 {
@@ -1517,6 +1711,16 @@ static void start_block(void)
         set_style(S_H2);
         doc_paragraph(DOC_START, 0, H2_SPACE, 0);
         break;
+    case K_TABLE:
+        spend(W_TABLE);
+        set_style(S_TABLE);
+        doc_paragraph(DOC_START, 0, PARA_SPACE, 0);
+        doc_rgb(rgb_table_rule);
+        doc_table(t_cols, t_head, t_align);
+        doc_rgb(b_colour);
+        t_at = t_in = 0;
+        b_skip = 0;
+        break;
     case K_ITEM:
         set_style(S_BODY);
         doc_paragraph(DOC_START, ITEM_INDENT, b_prev == K_ITEM ? ITEM_SPACE : PARA_SPACE, 0);
@@ -1528,6 +1732,66 @@ static void start_block(void)
     }
 }
 
+/* A code span at art[c] (a backquote), the block ending at `end`: 1 to
+ * 200 bytes that are neither a backquote nor a LF, then a backquote.
+ * Returns 0 if there is none; else puts the text before it and the span
+ * (in the mono face, a size smaller, in the code colour; in a table "\|"
+ * as "|") into the document, with b_text after it. */
+static uint8_t code_span(uint32_t c, uint32_t end)
+{
+    uint32_t q = c + 1, a, from;
+    uint8_t s = b_style;
+    while (q < end && q - c <= 200 && art[q] != '`' && art[q] != '\n')
+        q++;
+    spend((q - c) * W_EMIT + W_CODE);
+    if (q >= end || art[q] != '`' || q == c + 1)
+        return 0;
+    flush(c);
+    doc_font(DOC_MONO, style_flags[s]);
+    doc_size(style_size[s] - CODE_DOWN);
+    doc_rgb(rgb_code);
+    for (a = from = c + 1; b_kind == K_TABLE && a < q; a++)
+        if (art[a] == '\\' && a + 1 < q && art[a + 1] == '|') {
+            doc_text(art + from, a - from);
+            from = ++a;
+        }
+    doc_text(art + from, q - from);
+    doc_font(style_face[s], style_flags[s]);
+    doc_size(style_size[s]);
+    doc_rgb(b_colour);
+    if (!doc_overflow)
+        b_shown = q + 1;
+    b_text = q + 1;
+    return 1;
+}
+
+static uint8_t emit_block(void);
+
+/* B_EMIT of a table: its cells, each a Cell command and its text (links
+ * and code spans as in a paragraph), then End table. Returns 0 if this
+ * frame's share is used. */
+static uint8_t table_step(void)
+{
+    for (; t_at < t_n; t_at++) {
+        if (!t_in) {
+            spend(W_CELL);
+            if (!b_work)
+                return 0;
+            doc_cell();
+            b_emit = b_text = b_ls = tc_s[t_at];
+            b_end = tc_e[t_at];
+            t_in = 1;
+        }
+        if (b_end > b_emit && !emit_block())
+            return 0;
+        t_in = 0;
+    }
+    doc_table_end();
+    if (!doc_overflow)
+        b_shown = b_line;
+    return 1;
+}
+
 /* B_EMIT: the block's text, with LFs as spaces (and the blanks after them
  * dropped) unless it is preformatted, and links marked. Returns 1 when the
  * block is in the document, 0 if this frame's share is used (the text so
@@ -1536,7 +1800,7 @@ static uint8_t emit_block(void)
 {
     uint32_t end = b_end, i, k;
     uint8_t *p = art + b_emit, *e = art + end, *stop, *q;
-    uint8_t pre = b_kind >= K_PRE;
+    uint8_t pre = b_kind >= K_PRE, table = b_kind == K_TABLE;
     for (;;) {
         stop = (uint32_t)(e - p) > b_work / W_EMIT ? p + b_work / W_EMIT : e;
         if (b_skip) {
@@ -1550,12 +1814,30 @@ static uint8_t emit_block(void)
                 break;
             b_skip = 0;
         }
-        q = find2(p, stop, '\n', ':');
+        q = pre ? find2(p, stop, '\n', ':') : table ? find4(p, stop, '\n', ':', '`', '\\') : find3(p, stop, '\n', ':', '`');
         spend((q - p) * W_EMIT);
         p = q;
         if (p >= stop)
             break;
         spend(W_HIT);
+        if (*p == '`') {
+            if (!code_span(p - art, end))
+                p++;
+            else
+                p = art + b_text;
+            continue;
+        }
+        if (*p == '\\') {
+            /* In a table: "\|" is a "|". */
+            if (p + 1 < e && p[1] == '|') {
+                flush(p - art);
+                b_text = p + 1 - art;
+                p += 2;
+            } else {
+                p++;
+            }
+            continue;
+        }
         if (*p == '\n') {
             b_ls = p + 1 - art;
             if (!pre) {
@@ -1613,9 +1895,9 @@ static uint8_t emit_block(void)
     /* This frame's share is used: add the text so far, cut before a `[`
      * on this line (which may start a link with text), else after a space
      * (so that no link is cut), or else at least between characters. */
-    for (k = i; k > b_text && k > b_ls && i - k < 280 && art[k - 1] != '['; k--)
+    for (k = i; k > b_text && k > b_ls && i - k < 280 && art[k - 1] != '[' && art[k - 1] != '`'; k--)
         ;
-    if (k > b_text && k > b_ls && art[k - 1] == '[') {
+    if (k > b_text && k > b_ls && (art[k - 1] == '[' || art[k - 1] == '`')) {
         i = k - 1;
     } else {
         for (k = i; k > b_text && i - k < 64 && art[k - 1] > ' '; k--)
@@ -1961,6 +2243,32 @@ static void finish_doc(void)
 
 static void doc_head(void);
 
+/* An article whose first line is a heading ("# " and 1 to 120 bytes) is
+ * titled by it, and the heading is not shown again, if it has no entry or
+ * its entry has that title. */
+static void heading_title(void)
+{
+    uint32_t i = 2, e;
+    hd_len = 0;
+    if (art_have < 3 || art[0] != '#' || art[1] != ' ')
+        return;
+    for (e = 2; e < art_have && e < 2 + 160 && art[e] != '\n'; e++)
+        ;
+    if (e == art_have ? art_have < art_want : art[e] != '\n')
+        return;
+    b_line = e + 1 < art_have ? e + 1 : art_have;
+    while (i < e && is_blank(art[i]))
+        i++;
+    while (e > i && is_blank(art[e - 1]))
+        e--;
+    if (e == i || e - i > 120 || (art_entry && (art_tlen != e - i || memcmp(art_title, art + i, e - i)))) {
+        b_line = 0;
+        return;
+    }
+    hd_at = i;
+    hd_len = e - i;
+}
+
 /* A frame's share of building the document; the first frame of it submits
  * what there is. It starts (with the head) once the article's bytes are
  * coming and its entry, if it is looked for, is known. */
@@ -1971,6 +2279,7 @@ static void build(void)
     if (art_state != READY || b_phase == B_DONE || lk_handle)
         return;
     if (b_phase == B_START) {
+        heading_title();
         doc_begin(doc, DOC_CAP - DOC_RESERVE);
         doc_head();
         b_phase = B_FIND;
@@ -2003,7 +2312,7 @@ static void build(void)
             start_block();
             b_phase = B_EMIT;
         } else {
-            uint8_t r = b_kind == K_FIGURE ? figure_step() : emit_block();
+            uint8_t r = b_kind == K_FIGURE ? figure_step() : b_kind == K_TABLE ? table_step() : emit_block();
             if (!r)
                 break;
             if (r == 2) { /* a malformed path: shown as a fence */
@@ -2530,6 +2839,8 @@ static void empty_doc(void)
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press T to publish a test article of your own; it shows up here.");
     doc_paragraph(DOC_START, 0, 10, 0);
+    doc_s("Press M to read the Terse manual.");
+    doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press ? for help, Esc to quit.");
     column_submit();
 }
@@ -2917,6 +3228,7 @@ static const char *const help_keys[] = {
     "F", "feeds",
     "? or F1", "this help",
     "T", "publish a test article",
+    "M", "the Terse manual",
     "Esc", "quit",
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
@@ -3011,7 +3323,9 @@ static void doc_head(void)
     doc_size(TITLE_SIZE);
     doc_rgb(rgb_title);
     tb_n = 0;
-    if (!art_entry)
+    if (hd_len)
+        tb_bytes(art + hd_at, hd_len);
+    else if (!art_entry)
         tb_key(art_blob);
     else if (art_tlen)
         tb_bytes(art_title, art_tlen);
@@ -3192,6 +3506,7 @@ static void article_start(int32_t restore, uint8_t state)
     b_line = b_lines = b_in_line = 0;
     b_kind = b_prev = K_NONE;
     b_shown = links = 0;
+    hd_len = 0;
     doc_state = 0;
     page_h = page_h_known = 0;
     scroll = scroll_sent = 0;
@@ -3243,6 +3558,19 @@ static void open_record(const uint8_t *r, uint8_t from)
     art_return = from;
     bk_n = 0;
     article_start(-1, FETCHING);
+}
+
+static void open_blob(const uint8_t *id, uint8_t link, int32_t restore, uint8_t state);
+
+/* The manual's index (built into every host's store); Esc goes back to
+ * the timeline. */
+static void open_manual(void)
+{
+    if (art_handle)
+        return;
+    art_return = TIMELINE;
+    bk_n = 0;
+    open_blob(manual_index, 0, -1, FETCHING);
 }
 
 static void open_article(uint16_t i)
@@ -4516,6 +4844,10 @@ static uint8_t key(uint8_t code, uint8_t mods)
     if (view == TIMELINE) {
         if (code == KEY_ESCAPE)
             return 1;
+        if (plain && code == KEY_M) {
+            open_manual();
+            return 0;
+        }
         if (code == KEY_ENTER)
             open_article(tlp.sel);
         else
