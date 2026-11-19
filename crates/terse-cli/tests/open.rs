@@ -82,6 +82,8 @@ struct Sys {
     headless: HeadlessSystem,
     _dirs: Vec<tempfile::TempDir>,
     shell_units: Vec<u64>,
+    /// The same session on the device bus (common/twin.rs).
+    twin: Option<common::twin::Twin>,
 }
 
 struct Setup {
@@ -127,20 +129,44 @@ impl Sys {
         }
         node.set_records(terse_net::Records::in_data_dir(&data_dir));
         let ids = builtin::install(node.store(), &setup.extra).unwrap();
+        let shell = Image::parse(builtin::SHELL).unwrap();
+        let identity = ProgramId { publisher: [0; 32], name: shell.title.clone() };
+        // A session that publishes to a live relay hears its own entry
+        // back when the relay sends it, a moment that differs from run to
+        // run: no twin can follow it frame by frame.
+        let publishes = setup.consent == Consent::Allow && setup.relay.is_some();
+        let twin = common::twin::Twin::start(common::twin::Setup {
+            image: &shell,
+            shell: Some(ids.clone()),
+            identity: Some(identity.clone()),
+            store: Some(&store_dir),
+            data: Some(&data_dir),
+            subscriptions: vec![alice().feed_key()],
+            seed: Some([11; 32]),
+            consent: setup.consent,
+            relays: setup.relay.iter().cloned().collect(),
+            script,
+            content: true,
+            // (Catching up with a relay takes the feed events.)
+            announced: setup.content && setup.relay.is_none(),
+        })
+        .filter(|_| !publishes);
         let mut content = ContentService::start_with_consent(node, setup.consent);
         if setup.relay.is_some() {
             content.wait_caught_up(Duration::from_secs(10)).unwrap();
         }
-        let shell = Image::parse(builtin::SHELL).unwrap();
         let mut system = System::new(&shell, true, ids);
-        system.set_shell_identity(Some(ProgramId { publisher: [0; 32], name: shell.title.clone() }));
+        system.set_shell_identity(Some(identity));
         let headless = HeadlessSystem::new(Some(content), Script::parse(script).unwrap());
-        Sys { system, headless, _dirs: dirs, shell_units: Vec::new() }
+        Sys { system, headless, _dirs: dirs, shell_units: Vec::new(), twin }
     }
 
     fn run(&mut self, frames: u32) {
         for _ in 0..frames {
             let r = self.headless.frame(&mut self.system);
+            if let Some(t) = &mut self.twin {
+                t.follow(&self.system);
+            }
             self.shell_units.push(r.shell.expect("the shell runs").used);
             assert!(self.system.shell().stopped().is_none(), "{:?}", self.system.shell().stopped());
         }
@@ -406,7 +432,7 @@ fn sketch_round_trip_between_hosts() {
     let mut system = System::new(&shell, true, ids);
     system.set_shell_identity(Some(ProgramId { publisher: [0; 32], name: shell.title.clone() }));
     let headless = HeadlessSystem::new(Some(content), Script::parse("2 press enter\n20 press enter\n").unwrap());
-    let mut b = Sys { system, headless, _dirs: Vec::new(), shell_units: Vec::new() };
+    let mut b = Sys { system, headless, _dirs: Vec::new(), shell_units: Vec::new(), twin: None };
     b.run(40);
     assert_eq!((b.state(2), b.title(2)), (state::RUNNING, "sketch".to_string()));
     assert_eq!(b.system.child(2).unwrap().argument, Some(held[0].entry.blob));

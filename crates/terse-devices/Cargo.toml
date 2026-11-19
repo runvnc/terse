@@ -21,6 +21,11 @@ path = "src/bin/page.rs"
 name = "terse-dev-content"
 path = "src/bin/content.rs"
 
+# A terminal that fails on purpose, for the core's tests (DEVICES.md 10).
+[[bin]]
+name = "terse-dev-crash"
+path = "src/bin/crash.rs"
+
 [dependencies]
 terse-core.workspace = true
 terse-net.workspace = true

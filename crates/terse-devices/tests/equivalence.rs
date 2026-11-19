@@ -1,23 +1,24 @@
 //! The device bus keeps the machine's semantics (DEVICES.md): the
-//! checked-in conformance image and the built-in programs, run with their
+//! checked-in conformance images and the built-in programs, run with their
 //! devices as separate driver processes over both transports, with and
 //! without batching, with the C terminal driver and the Python vector
 //! driver substituted, give the expected state hashes (or those of the
 //! in-process reference, `terse run`'s way of running); a bus recording
-//! replays; the composed layers match the reference software renderer's
-//! picture.
+//! replays; sections and snapshots round-trip, also between `terse run`
+//! and `terse-bus`; a driver that crashes, hangs or is slow to start is
+//! handled as DEVICES.md 10 says; the composed picture matches the
+//! reference software renderer's. (terse-cli's scripted sessions run on
+//! the bus in `sessions.rs`.)
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use terse_bus::bus::{Bus, BusConfig, SharedMemory};
-use terse_bus::compose::{Compositor, screen_rect};
+use terse_bus::bus::BusConfig;
+use terse_bus::compose::{Compositor, write_png};
+use terse_bus::host::{self, BusSystem, Start};
 use terse_bus::inproc::ContentOptions;
-use terse_bus::proto::MEMORY_RAM_OFFSET;
-use terse_bus::transport::{self, Mapping};
-use terse_core::devices::Memory;
-use terse_core::{FrameInput, Image, Machine, Script, System};
+use terse_core::{Image, Script, System};
 use terse_net::{BlobStore, Draft, HeadlessSystem, Identity, Node, Subscriptions};
 
 fn workspace() -> PathBuf {
@@ -30,6 +31,11 @@ fn programs() -> PathBuf {
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The directory of the driver programs (and of terse and terse-bus).
+fn bin_dir() -> PathBuf {
+    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().to_path_buf()
 }
 
 /// A content store, config and data directory.
@@ -53,74 +59,52 @@ impl Dirs {
     fn options(&self) -> ContentOptions {
         ContentOptions { store: Some(self.store.clone()), config: Some(self.config.clone()), data: Some(self.data.clone()), ..Default::default() }
     }
+
+    fn args(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        for (k, p) in [("--store", &self.store), ("--config", &self.config), ("--data", &self.data)] {
+            v.extend([k.to_string(), p.display().to_string()]);
+        }
+        v
+    }
 }
 
 #[derive(Clone, Default)]
 struct Run {
-    /// slot → command line replacing the default driver.
-    drivers: Vec<(u8, Vec<String>)>,
+    /// Slots → command line replacing the default driver.
+    drivers: Vec<(Vec<u8>, Vec<String>)>,
     socket: bool,
     no_batch: bool,
 }
 
-fn default_driver(slot: u8, content: &ContentOptions) -> Vec<String> {
-    match slot {
-        2 => vec![env!("CARGO_BIN_EXE_terse-dev-terminal").to_string()],
-        3 => vec![env!("CARGO_BIN_EXE_terse-dev-vector").to_string()],
-        4 => {
-            let mut v = vec![env!("CARGO_BIN_EXE_terse-dev-content").to_string()];
-            v.extend(content.args());
-            v
-        }
-        7 => vec![env!("CARGO_BIN_EXE_terse-dev-page").to_string()],
-        s => panic!("no driver for slot {s}"),
-    }
-}
-
-/// A started bus core for `image`.
-fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, replay: bool) -> (Machine<Bus>, PathBuf) {
-    let session = transport::session_dir().unwrap();
-    let ram_len = image.ram_pages as usize * 8192;
-    let memory_path = session.join("memory");
-    let mut map = Mapping::create(&memory_path, MEMORY_RAM_OFFSET + ram_len).unwrap();
-    map.bytes_mut()[..image.rom.len()].copy_from_slice(&image.rom);
-    let mut wanted = Vec::new();
-    for d in image.devices.iter().filter(|d| d.slot != 1) {
-        let cmd = run.drivers.iter().find(|(s, _)| *s == d.slot).map(|(_, c)| c.clone()).unwrap_or_else(|| default_driver(d.slot, content));
-        wanted.push((d.slot, d.version, cmd));
-    }
-    wanted.sort_by_key(|w| w.0);
-    let config = BusConfig {
-        session: session.clone(),
-        shm: !run.socket,
-        presents,
-        replay,
-        batching: !run.no_batch,
-        spin: Duration::from_micros(100),
-        driver_cpus: Vec::new(),
-    };
-    let bus = Bus::start(&config, &wanted, image.id, &image.rom, ram_len as u32, Some(&memory_path)).unwrap();
-    let memory = Memory::Backed(Box::new(SharedMemory { map, rom_len: image.rom.len(), ram_len }));
-    (Machine::with_devices(image, memory, bus), session)
+/// A started bus system for `image` (a single machine).
+fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, replay: bool) -> BusSystem {
+    let slots = host::needed_slots(image, false);
+    let drivers = host::drivers(&bin_dir(), &slots, &content.args(), &run.drivers).unwrap();
+    let mut config = BusConfig::new(PathBuf::new());
+    config.shm = !run.socket;
+    config.presents = presents;
+    config.replay = replay;
+    config.batching = !run.no_batch;
+    Start { config, drivers, image, shell: None, identity: None, snapshot: None }.start().unwrap()
 }
 
 /// Runs `frames` frames with the script; the hash after every frame that
 /// leaves the counter at a multiple of `every`, as `--hash-every` prints.
 fn bus_hashes(image: &Image, script: &Script, frames: u32, every: u32, run: &Run, content: &ContentOptions) -> Vec<String> {
-    let (mut core, session) = start(image, run, content, false, false);
+    let mut bs = start(image, run, content, false, false);
     let mut out = Vec::new();
     for _ in 0..frames {
-        let f = core.frame();
-        core.try_run_frame(&input(script, f)).unwrap();
-        if core.frame() % every == 0 {
-            out.push(format!("{} {}", core.frame(), hex(&core.try_state_hash().unwrap())));
+        let f = bs.system.shell().frame();
+        bs.frame(script.events(f), script.controllers(f)).unwrap();
+        let m = bs.system.shell_mut();
+        if m.frame() % every == 0 {
+            out.push(format!("{} {}", m.frame(), hex(&m.try_state_hash().unwrap())));
         }
-        if core.stopped().is_some() {
+        if bs.system.stopped().is_some() {
             break;
         }
     }
-    core.devices_mut().shutdown();
-    let _ = std::fs::remove_dir_all(session);
     out
 }
 
@@ -141,11 +125,6 @@ fn reference_hashes(image: &Image, script: &Script, frames: u32, every: u32, con
         }
     }
     out
-}
-
-/// Frame `f`'s input from the script.
-fn input(s: &Script, f: u32) -> FrameInput<'_> {
-    FrameInput { events: s.events(f), controllers: s.controllers(f), ..Default::default() }
 }
 
 fn script(path: &Path) -> Script {
@@ -188,9 +167,34 @@ fn hello_matches_the_state_vectors() {
     }
 }
 
-/// programs/conform-reading with its script: the checked-in hashes, every
-/// 10 frames to 200, with the Rust drivers on both transports, without
-/// batching, and with the C terminal driver on both transports.
+/// The runs every conformance check makes: the Rust drivers on both
+/// transports, without batching, and the C terminal driver on both.
+fn conformance_runs(tmp: &Path) -> Vec<Run> {
+    let mut runs = vec![Run::default(), Run { socket: true, ..Default::default() }, Run { no_batch: true, ..Default::default() }];
+    if let Some(c) = c_terminal(tmp) {
+        runs.push(Run { drivers: vec![(vec![2], vec![c.clone()])], socket: true, ..Default::default() });
+        runs.push(Run { drivers: vec![(vec![2], vec!["env".into(), "TERSE_C_SHM=1".into(), c])], ..Default::default() });
+    }
+    runs
+}
+
+/// programs/conform, the full conformance image (devices 2, 3, 4, 7 and 9),
+/// with its script: the checked-in hashes every 10 frames to 200.
+#[test]
+fn conform_hashes() {
+    let dir = programs().join("conform");
+    let img = image(&dir.join("conform.terse"));
+    let s = script(&dir.join("conform.events"));
+    let want: Vec<String> = std::fs::read_to_string(dir.join("expected-hashes.txt")).unwrap().lines().map(str::to_string).collect();
+    let tmp = tempfile::tempdir().unwrap();
+    for run in conformance_runs(tmp.path()) {
+        let dirs = Dirs::new();
+        let got = bus_hashes(&img, &s, 200, 10, &run, &dirs.options());
+        assert_eq!(got, want, "drivers {:?}, socket {}, no batch {}", run.drivers, run.socket, run.no_batch);
+    }
+}
+
+/// programs/conform-reading with its script: the checked-in hashes.
 #[test]
 fn conform_reading_hashes() {
     let dir = programs().join("conform-reading");
@@ -198,12 +202,7 @@ fn conform_reading_hashes() {
     let s = script(&dir.join("conform-reading.events"));
     let want: Vec<String> = std::fs::read_to_string(dir.join("expected-hashes.txt")).unwrap().lines().map(str::to_string).collect();
     let tmp = tempfile::tempdir().unwrap();
-    let mut runs = vec![Run::default(), Run { socket: true, ..Default::default() }, Run { no_batch: true, ..Default::default() }];
-    if let Some(c) = c_terminal(tmp.path()) {
-        runs.push(Run { drivers: vec![(2, vec![c.clone()])], socket: true, ..Default::default() });
-        runs.push(Run { drivers: vec![(2, vec!["env".into(), "TERSE_C_SHM=1".into(), c])], ..Default::default() });
-    }
-    for run in runs {
+    for run in conformance_runs(tmp.path()) {
         let dirs = Dirs::new();
         let store = BlobStore::open(&dirs.store, None).unwrap();
         for blob in std::fs::read_dir(dir.join("blobs")).unwrap() {
@@ -226,10 +225,10 @@ fn sparks_hashes() {
     let mut runs = vec![Run::default()];
     let mut mixed = Run::default();
     if let Some(c) = c_terminal(tmp.path()) {
-        mixed.drivers.push((2, vec![c]));
+        mixed.drivers.push((vec![2], vec![c]));
     }
     if let Some(p) = python_vector() {
-        mixed.drivers.push((3, p));
+        mixed.drivers.push((vec![3], p));
     }
     if !mixed.drivers.is_empty() {
         runs.push(mixed);
@@ -282,50 +281,227 @@ fn record_and_replay() {
     let img = image(&programs().join("reader/reader.terse"));
     let s = Script::parse(READER_SCRIPT).unwrap();
     let dirs = reader_fixture();
-    let (mut core, session) = start(&img, &Run::default(), &dirs.options(), false, false);
+    let mut bs = start(&img, &Run::default(), &dirs.options(), false, false);
     let mut frames = Vec::new();
     for _ in 0..200 {
-        let f = core.frame();
-        core.try_run_frame(&input(&s, f)).unwrap();
-        let records = std::mem::take(&mut core.devices_mut().records);
-        frames.push((f, s.events(f).to_vec(), records, core.try_state_hash().unwrap()));
+        let f = bs.system.shell().frame();
+        bs.frame(s.events(f), s.controllers(f)).unwrap();
+        let m = bs.system.shell_mut();
+        let records = m.devices_mut().take_records();
+        frames.push((f, s.events(f).to_vec(), records, m.try_state_hash().unwrap()));
     }
-    core.devices_mut().shutdown();
-    let _ = std::fs::remove_dir_all(session);
+    drop(bs);
     assert!(frames.iter().any(|f| !f.2.is_empty()), "the content and page drivers recorded inputs");
     // Replay with no store at all: the content driver must not need one.
     let none = ContentOptions { store: Some("/nonexistent/terse-bus-test".into()), ..Default::default() };
-    let (mut core, session) = start(&img, &Run { socket: true, ..Default::default() }, &none, false, true);
+    let mut bs = start(&img, &Run { socket: true, ..Default::default() }, &none, false, true);
     for (f, events, records, hash) in &frames {
-        assert_eq!(core.frame(), *f);
-        core.devices_mut().replay = Some(records.clone());
-        core.try_run_frame(&FrameInput { events, ..Default::default() }).unwrap();
-        assert_eq!(core.try_state_hash().unwrap(), *hash, "frame {f}");
+        assert_eq!(bs.system.shell().frame(), *f);
+        bs.system.shell_mut().devices_mut().replay = Some(records.clone());
+        bs.frame(events, Default::default()).unwrap();
+        assert_eq!(bs.system.shell_mut().try_state_hash().unwrap(), *hash, "frame {f}");
     }
-    core.devices_mut().shutdown();
-    let _ = std::fs::remove_dir_all(session);
 }
 
-/// STATE then RESTORE round-trips every driver's section, and a malformed
-/// one is refused.
+/// STATE then RESTORE round-trips every driver's section, a cut one is
+/// refused, and a whole serialization loads into a fresh machine.
 #[test]
 fn state_restore() {
-    let img = image(&programs().join("conform-reading/conform-reading.terse"));
-    let s = script(&programs().join("conform-reading/conform-reading.events"));
+    let img = image(&programs().join("conform/conform.terse"));
+    let s = script(&programs().join("conform/conform.events"));
     let dirs = Dirs::new();
-    let (mut core, session) = start(&img, &Run::default(), &dirs.options(), false, false);
+    let mut bs = start(&img, &Run::default(), &dirs.options(), false, false);
     for _ in 0..60 {
-        let f = core.frame();
-        core.try_run_frame(&input(&s, f)).unwrap();
+        let f = bs.system.shell().frame();
+        bs.frame(s.events(f), s.controllers(f)).unwrap();
     }
-    for slot in [2u8, 4, 7] {
-        let section = core.devices_mut().state(slot).unwrap();
-        assert!(core.devices_mut().restore(slot, &section).unwrap(), "slot {slot}");
-        assert_eq!(core.devices_mut().state(slot).unwrap(), section);
-        assert!(!core.devices_mut().restore(slot, &section[..section.len() - 1]).unwrap(), "slot {slot} took a cut section");
+    let m = bs.system.shell_mut();
+    for slot in [2u8, 3, 4, 7, 9] {
+        let d = m.devices_mut();
+        let section = d.state(slot).unwrap();
+        let mut rest = section.clone();
+        rest.extend_from_slice(b"more");
+        assert_eq!(d.restore(slot, &rest).unwrap(), Some(section.len()), "slot {slot}");
+        assert_eq!(d.state(slot).unwrap(), section);
+        if slot != 9 {
+            assert_eq!(d.restore(slot, &section[..section.len() - 1]).unwrap(), None, "slot {slot} took a cut section");
+        }
     }
-    core.devices_mut().shutdown();
-    let _ = std::fs::remove_dir_all(session);
+    let state = m.try_state().unwrap();
+    let snapshot = terse_core::Snapshot::try_of(m).unwrap();
+    drop(bs);
+    let config = BusConfig::new(PathBuf::new());
+    let drivers = host::drivers(&bin_dir(), &host::needed_slots(&img, false), &dirs.options().args(), &[]).unwrap();
+    let mut again = Start { config, drivers, image: &img, shell: None, identity: None, snapshot: Some(&snapshot) }.start().unwrap();
+    assert_eq!(again.system.shell_mut().try_state().unwrap(), state);
+}
+
+fn terse() -> PathBuf {
+    bin_dir().join("terse")
+}
+
+fn terse_bus() -> PathBuf {
+    bin_dir().join("terse-bus")
+}
+
+fn stdout(cmd: &mut Command) -> String {
+    let out = cmd.output().unwrap();
+    assert!(out.status.success() || out.status.code() == Some(0), "{cmd:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// Snapshot files are the same in both hosts (STATE.md 4): one `terse run
+/// --save-state` writes restores in `terse-bus --load-state` and goes on
+/// with the hashes of the whole run, and the other way round; both write
+/// the same file for the same run.
+#[test]
+fn snapshots_cross_hosts() {
+    if !terse().exists() || !terse_bus().exists() {
+        eprintln!("skipped: terse and terse-bus are not built");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let p = |n: &str| tmp.path().join(n).display().to_string();
+    let dirs = Dirs::new();
+    let img = programs().join("conform/conform.terse").display().to_string();
+    let events = programs().join("conform/conform.events").display().to_string();
+    let run = |prog: &Path, extra: &[&str]| {
+        let mut c = Command::new(prog);
+        if prog == terse().as_path() {
+            c.arg("run");
+        }
+        c.args([&img, "--events", &events]).args(dirs.args()).args(extra);
+        stdout(&mut c)
+    };
+    let a = run(&terse(), &["--frames", "100", "--hash", "--save-state", &p("a.snap")]);
+    let b = run(&terse_bus(), &["--frames", "100", "--hash", "--save-state", &p("b.snap")]);
+    assert_eq!(a, b, "the same run, the same hash");
+    assert_eq!(std::fs::read(p("a.snap")).unwrap(), std::fs::read(p("b.snap")).unwrap(), "the same snapshot file");
+    let whole = run(&terse(), &["--frames", "200", "--hash-every", "50"]);
+    let later: String = whole.lines().filter(|l| l.starts_with("150 ") || l.starts_with("200 ")).map(|l| format!("{l}\n")).collect();
+    // Each host goes on from the other's snapshot as the whole run did
+    // (the script's later frames: --events is counted from frame 0).
+    let from_terse = run(&terse_bus(), &["--frames", "100", "--hash-every", "50", "--load-state", &p("a.snap")]);
+    let from_bus = run(&terse(), &["--frames", "100", "--hash-every", "50", "--load-state", &p("b.snap")]);
+    assert_eq!(from_terse, later, "terse-bus restored terse run's snapshot");
+    assert_eq!(from_bus, later, "terse run restored terse-bus's snapshot");
+}
+
+/// The processes whose command line names `needle`.
+fn processes_with(needle: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir("/proc").unwrap().flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
+        if let Ok(cmd) = std::fs::read(e.path().join("cmdline"))
+            && String::from_utf8_lossy(&cmd).contains(needle)
+        {
+            out.push(pid);
+        }
+    }
+    out
+}
+
+/// A copy of the crash test driver under a name of its own, so that its
+/// processes can be found.
+fn crash_driver(dir: &Path, name: &str) -> String {
+    let path = dir.join(name);
+    std::fs::copy(env!("CARGO_BIN_EXE_terse-dev-crash"), &path).unwrap();
+    path.display().to_string()
+}
+
+/// DEVICES.md 10: a driver that exits in the middle of a frame, one that
+/// hangs, and one that is slow to start. The run stops with status 3 and
+/// the driver named; nothing is left running and the session's files are
+/// gone; a slow driver is waited for, up to --start-timeout.
+#[test]
+fn driver_failures() {
+    if !terse_bus().exists() {
+        eprintln!("skipped: terse-bus is not built");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let hello = programs().join("hello/hello.terse").display().to_string();
+    let cases = [("crash-exit", "TERSE_CRASH=exit TERSE_CRASH_AT=40", "--driver-timeout", "5"), ("crash-hang", "TERSE_CRASH=hang TERSE_CRASH_AT=40", "--driver-timeout", "2")];
+    for (name, env, opt, v) in cases {
+        let exe = crash_driver(tmp.path(), name);
+        let cmd = format!("env {env} {exe}");
+        let start = Instant::now();
+        let out = bus_output([&hello, "--frames", "100", "--hash", "--driver", &format!("2={cmd}"), opt, v]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(3), "{name}: {err}");
+        assert!(err.contains("driver") && err.contains(name), "{name}: {err}");
+        assert!(start.elapsed() < Duration::from_secs(20), "{name}: took {:?}", start.elapsed());
+        assert!(processes_with(&exe).is_empty(), "{name}: a driver was left running");
+    }
+    // Slow to start: two seconds, within the default ten.
+    let exe = crash_driver(tmp.path(), "slow-start");
+    let cmd = format!("env TERSE_CRASH=slow TERSE_CRASH_THEN={} {exe}", env!("CARGO_BIN_EXE_terse-dev-terminal"));
+    let out = bus_output([&hello, "--frames", "30", "--hash", "--driver", &format!("2={cmd}")]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83");
+    // ... and too slow for a one-second limit.
+    let out = bus_output([&hello, "--frames", "30", "--driver", &format!("2={cmd}"), "--start-timeout", "1"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("did not connect"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(processes_with(&exe).is_empty(), "slow start: a driver was left running");
+}
+
+/// terse-bus's output; it must have left no session files behind.
+fn bus_output<const N: usize>(args: [&str; N]) -> std::process::Output {
+    let child = Command::new(terse_bus()).args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let pid = child.id();
+    let out = child.wait_with_output().unwrap();
+    let left = std::fs::read_dir("/dev/shm").map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(&format!("terse-bus-{pid}-"))).count()).unwrap_or(0);
+    assert_eq!(left, 0, "terse-bus {args:?} left its session files");
+    out
+}
+
+/// SIGTERM and SIGINT end a run cleanly: the drivers are shut down and
+/// the session's files removed.
+#[test]
+fn signals_end_a_run_cleanly() {
+    if !terse_bus().exists() {
+        eprintln!("skipped: terse-bus is not built");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let sparks = programs().join("sparks/sparks.terse").display().to_string();
+    for (sig, name) in [(libc_sigterm(), "term"), (libc_sigint(), "int")] {
+        // A copy of the terminal driver, to find its process.
+        let exe = tmp.path().join(format!("terse-dev-terminal-{name}"));
+        std::fs::copy(env!("CARGO_BIN_EXE_terse-dev-terminal"), &exe).unwrap();
+        let mut child = Command::new(terse_bus())
+            .args([&sparks, "--realtime", "--frames", "100000", "--driver", &format!("2={}", exe.display())])
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while processes_with(&exe.display().to_string()).is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let session: Vec<_> = std::fs::read_dir("/dev/shm").unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains(&format!("terse-bus-{}-", child.id()))).collect();
+        assert_eq!(session.len(), 1, "the run's session directory");
+        // SAFETY: a signal to our own child.
+        unsafe {
+            kill(child.id() as i32, sig);
+        }
+        let status = child.wait().unwrap();
+        assert!(status.success(), "{name}: {status}");
+        assert!(processes_with(&exe.display().to_string()).is_empty(), "{name}: the driver was left running");
+        assert!(!session[0].path().exists(), "{name}: the session directory was left");
+    }
+}
+
+unsafe extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+fn libc_sigterm() -> i32 {
+    15
+}
+
+fn libc_sigint() -> i32 {
+    2
 }
 
 // Pictures.
@@ -369,27 +545,22 @@ fn have_fonts() -> bool {
 
 /// The bus's composed picture after `frames` frames.
 fn bus_picture(img: &Image, s: &Script, frames: u32, size: (u32, u32), content: &ContentOptions, out: &Path) {
-    let (mut core, session) = start(img, &Run::default(), content, true, false);
+    let mut bs = start(img, &Run::default(), content, true, false);
     for _ in 0..frames {
-        let f = core.frame();
-        core.try_run_frame(&input(s, f)).unwrap();
+        let f = bs.system.shell().frame();
+        bs.frame(s.events(f), s.controllers(f)).unwrap();
     }
-    let native = core.devices_mut().native().unwrap();
-    let order = core.devices_mut().layers().into_iter().map(|(_, s, _, l)| (s, l.id)).collect();
-    let mut comp = Compositor::new(size, order);
-    let updates = core.devices_mut().present(size, screen_rect(native, size)).unwrap();
-    comp.update(&updates).unwrap();
-    terse_bus::compose::write_png(out, &comp.rgba(), size).unwrap();
-    core.devices_mut().shutdown();
-    let _ = std::fs::remove_dir_all(session);
+    let native = bs.bus.borrow().native().unwrap();
+    let mut comp = Compositor::new(bs.system.shell().devices(), native, 0);
+    let frame = comp.draw(&mut bs.system, size, None).unwrap();
+    write_png(out, &frame.to_rgba(), size).unwrap();
 }
 
 /// terse-host's software renderer's picture.
 fn host_picture(image: &Path, events: Option<&Path>, frames: u32, size: (u32, u32), dirs: &Dirs, out: &Path) {
     let mut args = vec![image.display().to_string(), "--screenshot".into(), out.display().to_string(), "--frames".into(), frames.to_string()];
     args.extend(["--size".into(), format!("{}x{}", size.0, size.1), "--renderer".into(), "software".into()]);
-    args.extend(["--store".into(), dirs.store.display().to_string(), "--config".into(), dirs.config.display().to_string()]);
-    args.extend(["--data".to_string(), dirs.data.display().to_string()]);
+    args.extend(dirs.args());
     if let Some(e) = events {
         args.extend(["--events".into(), e.display().to_string()]);
     }

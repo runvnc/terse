@@ -114,12 +114,12 @@ impl Vector3 {
     }
 
     /// The list's length and bytes (STATE.md 1.11).
-    pub(crate) fn write_state(&self, out: &mut Vec<u8>) {
+    pub fn write_state(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&(self.list.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.list);
     }
 
-    pub(crate) fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
+    pub fn restore(&mut self, r: &mut crate::snapshot::Reader) -> Result<(), crate::snapshot::RestoreError> {
         let m = r.u32()? as usize;
         if m > MAX_LIST {
             return Err(crate::snapshot::bad("3D display list length"));

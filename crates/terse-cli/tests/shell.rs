@@ -46,6 +46,8 @@ struct Sys {
     _data: Option<tempfile::TempDir>,
     /// Units the shell used in each frame.
     shell_units: Vec<u64>,
+    /// The same session on the device bus (common/twin.rs).
+    twin: Option<common::twin::Twin>,
 }
 
 /// What a run has: extra built-in images after the four, an ID in no
@@ -93,18 +95,37 @@ impl Sys {
         if setup.unknown {
             ids.push(UNKNOWN);
         }
-        let content = ContentService::start_with_consent(node, Consent::Deny);
         let shell = Image::parse(SHELL).unwrap();
+        let identity = ProgramId { publisher: [0; 32], name: shell.title.clone() };
+        let alice_node = setup.article || !setup.programs.is_empty();
+        let twin = common::twin::Twin::start(common::twin::Setup {
+            image: &shell,
+            shell: Some(ids.clone()),
+            identity: Some(identity.clone()),
+            store: Some(store.path()),
+            data: Some(&data_dir),
+            subscriptions: if alice_node { vec![alice().feed_key()] } else { Vec::new() },
+            seed: alice_node.then_some([11; 32]),
+            consent: Consent::Deny,
+            relays: Vec::new(),
+            script,
+            content: true,
+            announced: alice_node,
+        });
+        let content = ContentService::start_with_consent(node, Consent::Deny);
         let mut system = System::new(&shell, true, ids);
         // The built-in shell's identity, as the hosts give it.
-        system.set_shell_identity(Some(ProgramId { publisher: [0; 32], name: shell.title.clone() }));
+        system.set_shell_identity(Some(identity));
         let headless = HeadlessSystem::new(Some(content), Script::parse(script).unwrap());
-        Sys { system, headless, _store: store, _data: data, shell_units: Vec::new() }
+        Sys { system, headless, _store: store, _data: data, shell_units: Vec::new(), twin }
     }
 
     fn run(&mut self, frames: u32) {
         for _ in 0..frames {
             let r = self.headless.frame(&mut self.system);
+            if let Some(t) = &mut self.twin {
+                t.follow(&self.system);
+            }
             self.shell_units.push(r.shell.expect("the shell runs").used);
             assert!(self.system.shell().stopped().is_none(), "{:?}", self.system.shell().stopped());
         }

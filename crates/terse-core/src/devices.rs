@@ -5,7 +5,11 @@
 //! run`, terse-host and a system of machines use them; terse-bus implements
 //! the same trait over driver processes (DEVICES.md).
 
+use std::borrow::Cow;
+
 use crate::content::{Completion, Content, ram_range, readable};
+use crate::machines::{ProgramId, StartFailure};
+use crate::snapshot::{Reader, RestoreError, bad};
 use crate::machine::{ERR_BUFFER, ERR_UNKNOWN, FrameInput, call, charge, copy_charge};
 use crate::page::Page;
 use crate::system::{Event, System};
@@ -85,10 +89,21 @@ pub trait Devices {
     /// Slot 2, 3, 4, 7 or 9's section of the state serialization, without
     /// a present flag (STATE.md 1.6–1.9, 1.11).
     fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String>;
-    /// Device 9's list, which device 8's `face` looks at (SPEC 12.2).
-    fn list3(&self) -> &[u8] {
-        &[]
-    }
+    /// Restores slot 2, 3, 4, 7 or 9's section from the start of `bytes`
+    /// (the rest of a serialization, STATE.md 4); returns how many bytes
+    /// the section has. `ram_len`: the machine's RAM.
+    fn restore_state(&mut self, slot: u8, bytes: &[u8], ram_len: usize) -> Result<usize, RestoreError>;
+    /// Device 9's list (empty without device 9), which device 8 looks at
+    /// (SPEC 12.2 `face`) and which a host needs for the shell's scene and
+    /// the pointer over panels (SPEC 12.3, 12.4).
+    fn list3(&self) -> Cow<'_, [u8]>;
+    /// A new machine for `image`, at reset, with devices of the same kind
+    /// as these (a shell's child, SPEC 12.1): `serial` names it among the
+    /// system's machines; `identity` is the program's (SPEC 12.2), whose
+    /// named records it reads.
+    fn new_machine(&self, serial: u32, image: &crate::Image, identity: Option<&ProgramId>) -> Result<crate::Machine<Self>, StartFailure>
+    where
+        Self: Sized;
 }
 
 /// Guest memory that lives elsewhere (a file shared with device drivers).
@@ -140,11 +155,14 @@ pub struct InProcess {
     pub(crate) vector3: Option<Vector3>,
     pub(crate) content: Option<Content>,
     pub(crate) page: Option<Page>,
+    /// The image lists device 3 (not only device 9).
+    lists_vector: bool,
 }
 
 impl InProcess {
     pub fn new(image: &crate::Image) -> Self {
         InProcess {
+            lists_vector: image.has_device(3),
             terminal: image.has_device(2).then(Terminal::default),
             vector: (image.has_device(3) || image.has_device(crate::vector3::SLOT)).then(Vector::default),
             vector3: image.has_device(crate::vector3::SLOT).then(Vector3::default),
@@ -407,7 +425,33 @@ impl Devices for InProcess {
         Ok(())
     }
 
-    fn list3(&self) -> &[u8] {
-        self.vector3.as_ref().map_or(&[][..], Vector3::list)
+    fn list3(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.vector3.as_ref().map_or(&[][..], Vector3::list))
+    }
+
+    fn restore_state(&mut self, slot: u8, bytes: &[u8], ram_len: usize) -> Result<usize, RestoreError> {
+        let mut r = Reader::new(bytes);
+        match slot {
+            2 => self.terminal.as_mut().ok_or(bad("terminal present"))?.restore(&mut r)?,
+            3 => {
+                let v = self.vector.as_mut().ok_or(bad("vector display present"))?;
+                v.restore(&mut r)?;
+                // Without device 3 the fill mode and the 2D list cannot be set.
+                if !self.lists_vector && (!v.fill() || !v.list().is_empty()) {
+                    return Err(bad("a fill mode or 2D list without device 3"));
+                }
+            }
+            4 => self.content.as_mut().ok_or(bad("content present"))?.restore(&mut r, ram_len)?,
+            7 => self.page.as_mut().ok_or(bad("page present"))?.restore(&mut r)?,
+            crate::vector3::SLOT => self.vector3.as_mut().ok_or(bad("3D display present"))?.restore(&mut r)?,
+            _ => return Err(bad("no such device")),
+        }
+        Ok(r.position())
+    }
+
+    fn new_machine(&self, _serial: u32, image: &crate::Image, identity: Option<&ProgramId>) -> Result<crate::Machine, StartFailure> {
+        let mut m = crate::Machine::new(image);
+        m.set_identity(identity.cloned());
+        Ok(m)
     }
 }

@@ -19,7 +19,7 @@ publish = false
 terse-core = { path = "crates/terse-core" }
 terse-net = { path = "crates/terse-net" }
 terse-relay = { path = "crates/terse-relay" }
-terse-bus = { path = "crates/terse-bus" }
+terse-bus = { path = "crates/terse-bus", default-features = false }
 terse-host = { path = "crates/terse-host", default-features = false }
 
 [profile.dev.package.terse-core]

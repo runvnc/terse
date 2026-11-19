@@ -180,9 +180,10 @@ impl SceneLayers {
 
 /// The scene of `system`'s shell seen from `eye` when Screens are in
 /// effect (its own Surfaces among the panels).
-pub fn scene_layers(system: &System, eye: Eye) -> Option<SceneLayers> {
+pub fn scene_layers<D: terse_core::devices::Devices>(system: &System<D>, eye: Eye) -> Option<SceneLayers> {
     let scene = system.scene(eye)?;
-    let list = system.shell().vector3()?.list();
+    let list = system.shell().list3();
+    let list = &list[..];
     let (mut lines, mut panels) = (Vec::new(), Vec::new());
     let p = terse_core::vector3::project_scene(list, eye, &scene.view, &mut lines, &mut Vec::new(), &mut panels);
     panels.retain(|p| scene.faced == 0 || p.handle != scene.faced);
@@ -192,8 +193,12 @@ pub fn scene_layers(system: &System, eye: Eye) -> Option<SceneLayers> {
 /// A machine's own scene seen from `eye` when its 3D list has Surfaces in
 /// effect (SPEC 13.5): its Surfaces, its 3D segments and the rectangles
 /// left off its glass.
-pub fn surface_layers(machine: &terse_core::Machine, eye: Eye) -> Option<SceneLayers> {
-    let list = machine.vector3()?.list();
+pub fn surface_layers<D: terse_core::devices::Devices>(machine: &terse_core::Machine<D>, eye: Eye) -> Option<SceneLayers> {
+    surface_layers_of(&machine.list3(), eye)
+}
+
+/// [`surface_layers`] of a machine whose 3D list is `list`.
+pub fn surface_layers_of(list: &[u8], eye: Eye) -> Option<SceneLayers> {
     if !terse_core::vector3::has_surface(list) {
         return None;
     }

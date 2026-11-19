@@ -1,19 +1,26 @@
 //! The device bus seen from the core (DEVICES.md): driver processes
-//! started and connected, the call table's checks, batching, BEGIN and
-//! END, state, and presentation requests. Implements [`Devices`].
+//! started and connected ([`Bus`]), and each machine instance's devices on
+//! them ([`BusDevices`], terse-core's `Devices`): the call table's checks,
+//! batching, BEGIN and END, state, properties, services and presentation.
 
+use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use terse_core::content::{ram_range, readable};
-use terse_core::devices::{Backing, CallOutcome, Devices, FrameInputs, GuestMem};
-use terse_core::{ERR_UNKNOWN, Event, FrameInput};
+use terse_core::devices::{Backing, CallOutcome, Devices, FrameInputs, GuestMem, Memory};
+use terse_core::machines::{ProgramId, StartFailure, failure};
+use terse_core::snapshot::{RestoreError, bad};
+use terse_core::{ERR_UNKNOWN, Event, FrameInput, Image, Machine};
 
-use crate::proto::{self, CallEntry, DeviceInfo, Hello, LayerDecl, PosEvent, Reader, Writer, access, hello_flags, msg};
+use crate::proto::{self, Addr, CallEntry, DeviceInfo, Hello, LayerDecl, Open, PosEvent, Reader, Writer, access, hello_flags, msg, property};
 use crate::stats::Histogram;
-use crate::transport::{self, Mapping, ShmEnd, SocketEnd};
+use crate::transport::{self, Mapping, ShmEnd, SocketEnd, Spin};
 
 /// How the core reaches one driver.
 pub enum Link {
@@ -29,18 +36,25 @@ impl Link {
         }
     }
 
-    /// The reply's body into `buf`.
+    /// The reply (what follows its length) into `buf`.
     fn recv(&mut self, buf: &mut Vec<u8>) -> Result<(), String> {
         match self {
             Link::Socket(s) => s.recv(buf)?.ok_or_else(|| "the driver closed its socket".to_string()),
             Link::Shm(s) => {
-                let packet = s.recv().ok_or("the driver has gone")?;
-                let mut msgs = proto::messages(packet);
-                let body = msgs.next().ok_or("an empty reply")?.map_err(String::from)?;
+                let packet = s.recv()?;
+                let n = proto::u32_at(packet.get(..4).ok_or("an empty reply")?, 0) as usize;
+                let m = packet.get(4..4 + n).ok_or("a reply cut short")?;
                 buf.clear();
-                buf.extend_from_slice(body);
+                buf.extend_from_slice(m);
                 Ok(())
             }
+        }
+    }
+
+    fn socket(&self) -> &UnixStream {
+        match self {
+            Link::Socket(s) => &s.stream,
+            Link::Shm(s) => &s.socket,
         }
     }
 }
@@ -56,21 +70,28 @@ pub struct DriverStats {
     pub checked_out: u64,
     /// Time in BEGIN round trips.
     pub begin: Histogram,
-    /// Batches sent, and the calls in them.
+    /// Batches sent.
     pub batches: u64,
+    /// Time in PRESENT round trips.
+    pub present: Histogram,
+    /// GET round trips.
+    pub gets: u64,
 }
 
-pub struct Driver {
-    pub slot: u8,
+/// One driver process.
+pub struct Proc {
     pub info: DeviceInfo,
     pub transport: u8,
-    table: Vec<Option<CallEntry>>,
+    /// The slots it serves, in increasing order.
+    pub slots: Vec<u8>,
+    tables: HashMap<u8, Vec<Option<CallEntry>>>,
     link: Link,
     child: Option<Child>,
     /// The batch: CALL messages (framed), and their count.
     batch: Vec<u8>,
     batch_count: u32,
-    /// END held for shared memory until the next request.
+    /// Messages with no reply held for shared memory until the next
+    /// request.
     held: Vec<u8>,
     out: Vec<u8>,
     reply: Vec<u8>,
@@ -80,38 +101,71 @@ pub struct Driver {
 }
 
 /// How to start the bus.
+#[derive(Clone)]
 pub struct BusConfig {
     pub session: PathBuf,
-    /// Offer shared memory (the memory file exists).
+    /// Offer shared memory.
     pub shm: bool,
     pub presents: bool,
     pub replay: bool,
     /// Batch calls that allow it.
     pub batching: bool,
-    /// Spin time of the core's waits for replies on shared memory.
-    pub spin: Duration,
-    /// Pin each driver to a CPU (slot order), if given.
+    /// Spin of the core's waits for replies on shared memory.
+    pub spin: Spin,
+    /// Pin each driver to a CPU (in order), if given.
     pub driver_cpus: Vec<usize>,
+    /// How long a driver has to connect and answer HELLO.
+    pub start_timeout: Duration,
+    /// How long a driver has to answer any other request before the core
+    /// gives it up as hung (DEVICES.md 10).
+    pub reply_timeout: Duration,
 }
 
+impl BusConfig {
+    pub fn new(session: PathBuf) -> Self {
+        BusConfig {
+            session,
+            shm: true,
+            presents: false,
+            replay: false,
+            batching: true,
+            spin: Spin::fixed(Duration::from_micros(100)),
+            driver_cpus: Vec::new(),
+            start_timeout: Duration::from_secs(10),
+            reply_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+/// The driver processes of a run, shared by every machine of it.
 pub struct Bus {
-    pub drivers: Vec<Driver>,
+    pub procs: Vec<Proc>,
     by_slot: [Option<usize>; 256],
-    batching: bool,
-    scratch: Vec<u8>,
-    pub session: PathBuf,
-    /// The drivers' recorded inputs for the next frame (replay), per slot.
-    pub replay: Option<Vec<(u8, Vec<u8>)>>,
-    /// The drivers' input records of the last frame (for recording).
-    pub records: Vec<(u8, Vec<u8>)>,
+    pub config: BusConfig,
+    /// Why the bus failed, once a driver has (DEVICES.md 10): every
+    /// machine using it stops.
+    pub failed: Option<String>,
+    /// Instances open, for messages.
+    pub open: usize,
 }
 
-/// The machine's memory as the memory file (DEVICES.md 4.1): the guest's
-/// ROM and RAM, shared with the drivers.
+/// A machine's memory as its memory file (DEVICES.md 4.1): the guest's
+/// ROM and RAM, shared with the drivers; the file is removed with it.
 pub struct SharedMemory {
     pub map: Mapping,
     pub rom_len: usize,
     pub ram_len: usize,
+    pub path: PathBuf,
+}
+
+impl SharedMemory {
+    /// A new memory file at `path` holding `image`'s ROM and a zeroed RAM.
+    pub fn create(path: &Path, image: &Image) -> Result<Self, String> {
+        let ram_len = image.ram_pages as usize * 8192;
+        let mut map = Mapping::create(path, proto::MEMORY_RAM_OFFSET + ram_len)?;
+        map.bytes_mut()[..image.rom.len()].copy_from_slice(&image.rom);
+        Ok(SharedMemory { map, rom_len: image.rom.len(), ram_len, path: path.to_path_buf() })
+    }
 }
 
 impl Backing for SharedMemory {
@@ -127,253 +181,390 @@ impl Backing for SharedMemory {
     }
 }
 
+impl Drop for SharedMemory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Splits a command line at whitespace (no quoting: the prototype's
 /// commands are paths and options).
 pub fn split_command(cmd: &str) -> Vec<String> {
     cmd.split_whitespace().map(str::to_string).collect()
 }
 
+/// A driver to start: the slots it is asked for and its command line.
+#[derive(Clone, Debug)]
+pub struct Wanted {
+    pub slots: Vec<u8>,
+    pub command: Vec<String>,
+}
+
 impl Bus {
-    /// Starts and connects every driver (`(slot, version, command)`), in
-    /// slot order. `rom` and the RAM length go in HELLO.
-    pub fn start(
-        config: &BusConfig,
-        drivers: &[(u8, u8, Vec<String>)],
-        image_id: [u8; 32],
-        rom: &[u8],
-        ram_len: u32,
-        memory_path: Option<&Path>,
-    ) -> Result<Bus, String> {
-        let mut bus = Bus {
-            drivers: Vec::new(),
-            by_slot: [None; 256],
-            batching: config.batching,
-            scratch: Vec::new(),
-            session: config.session.clone(),
-            replay: None,
-            records: Vec::new(),
-        };
-        for (i, (slot, version, command)) in drivers.iter().enumerate() {
-            let sock = config.session.join(format!("slot{slot}.sock"));
-            let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
-            let (program, args) = command.split_first().ok_or(format!("slot {slot}: an empty command"))?;
-            let mut cmd = Command::new(program);
-            cmd.args(args).env("TERSE_BUS_SOCKET", &sock).env("TERSE_BUS_SLOT", slot.to_string()).stdin(Stdio::null());
-            if let Some(cpu) = config.driver_cpus.get(i) {
-                cmd.env("TERSE_BUS_CPU", cpu.to_string());
-            }
-            let child = cmd.spawn().map_err(|e| format!("slot {slot}: cannot start {program}: {e}"))?;
-            let mut driver_child = Some(child);
-            let stream = match accept(&listener, Duration::from_secs(10), driver_child.as_mut().unwrap()) {
-                Ok(s) => s,
-                Err(e) => {
-                    reap(&mut driver_child);
-                    return Err(format!("slot {slot} ({program}): {e}"));
+    /// Starts and connects every driver, in order (the order of their
+    /// lowest slots).
+    pub fn start(config: &BusConfig, drivers: &[Wanted]) -> Result<Bus, String> {
+        let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0 };
+        let mut drivers = drivers.to_vec();
+        drivers.sort_by_key(|w| w.slots.iter().copied().min());
+        for (i, want) in drivers.iter().enumerate() {
+            let p = bus.start_one(i, want)?;
+            for &s in &p.slots {
+                if bus.by_slot[s as usize].is_some() {
+                    return Err(format!("two drivers for slot {s}"));
                 }
-            };
-            let _ = std::fs::remove_file(&sock);
-            let bus_path = config.session.join(format!("slot{slot}.bus"));
-            if config.shm {
-                let m = Mapping::create(&bus_path, transport::BUS_FILE)?;
-                transport::init_bus(&m);
+                bus.by_slot[s as usize] = Some(bus.procs.len());
             }
-            let mut flags = 0;
-            if config.shm {
-                flags |= hello_flags::SHM;
-            }
-            if config.presents {
-                flags |= hello_flags::PRESENTS;
-            }
-            if config.replay {
-                flags |= hello_flags::REPLAY;
-            }
-            let hello = Hello {
-                slot: *slot,
-                version: *version,
-                flags,
-                image_id,
-                rom_len: rom.len() as u32,
-                ram_len,
-                memory_path: memory_path.map(|p| p.display().to_string()).unwrap_or_default(),
-                bus_path: if config.shm { bus_path.display().to_string() } else { String::new() },
-                session_dir: config.session.display().to_string(),
-                rom: rom.to_vec(),
-            };
-            let mut out = Vec::new();
-            hello.encode(&mut out);
-            let mut sock_end = SocketEnd::new(stream)?;
-            stream_timeout(&sock_end.stream, Some(Duration::from_secs(10)));
-            let mut reply = Vec::new();
-            let handshake = sock_end.send(&out).and_then(|_| sock_end.recv(&mut reply)?.ok_or_else(|| "closed before its HELLO reply".to_string()));
-            if let Err(e) = handshake {
-                reap(&mut driver_child);
-                return Err(format!("slot {slot} ({program}): {e}"));
-            }
-            stream_timeout(&sock_end.stream, None);
-            let (rslot, transport, info) = match DeviceInfo::decode(&reply) {
-                Ok(v) => v,
-                Err(e) => {
-                    reap(&mut driver_child);
-                    return Err(format!("slot {slot} ({program}): {e}"));
-                }
-            };
-            if rslot != *slot || info.version != *version || (transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
-                reap(&mut driver_child);
-                return Err(format!("slot {slot} ({program}): it answered for slot {rslot}, version {}, transport {transport}", info.version));
-            }
-            let link = if transport == proto::TRANSPORT_SHM {
-                let m = Mapping::open(&bus_path, true)?;
-                Link::Shm(ShmEnd::new(m, true, config.spin, sock_end.stream)?)
-            } else {
-                Link::Socket(sock_end)
-            };
-            let mut table = vec![None; 256];
-            for e in &info.table {
-                table[e.function as usize] = Some(*e);
-            }
-            bus.by_slot[*slot as usize] = Some(bus.drivers.len());
-            bus.drivers.push(Driver {
-                slot: *slot,
-                info,
-                transport,
-                table,
-                link,
-                child: driver_child,
-                batch: Vec::new(),
-                batch_count: 0,
-                held: Vec::new(),
-                out: Vec::new(),
-                reply: Vec::new(),
-                stats: DriverStats::default(),
-                command: command.join(" "),
-            });
+            bus.procs.push(p);
         }
         Ok(bus)
     }
 
-    pub fn driver(&mut self, slot: u8) -> Option<&mut Driver> {
-        self.by_slot[slot as usize].map(|i| &mut self.drivers[i])
+    fn start_one(&self, i: usize, want: &Wanted) -> Result<Proc, String> {
+        let config = &self.config;
+        let name = format!("driver{i}");
+        let sock = config.session.join(format!("{name}.sock"));
+        let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+        let (program, args) = want.command.split_first().ok_or(format!("slots {:?}: an empty command", want.slots))?;
+        let what = format!("slots {:?} ({program})", want.slots);
+        let mut cmd = Command::new(program);
+        cmd.args(args).env("TERSE_BUS_SOCKET", &sock).stdin(Stdio::null());
+        if let Some(cpu) = config.driver_cpus.get(i) {
+            cmd.env("TERSE_BUS_CPU", cpu.to_string());
+        }
+        let child = cmd.spawn().map_err(|e| format!("{what}: cannot start: {e}"))?;
+        let mut child = Some(child);
+        let fail = |child: &mut Option<Child>, e: String| {
+            reap(child);
+            format!("{what}: {e}")
+        };
+        let stream = match accept(&listener, config.start_timeout, child.as_mut().unwrap()) {
+            Ok(s) => s,
+            Err(e) => return Err(fail(&mut child, e)),
+        };
+        let _ = std::fs::remove_file(&sock);
+        let bus_path = config.session.join(format!("{name}.bus"));
+        if config.shm {
+            let m = Mapping::create(&bus_path, transport::BUS_FILE)?;
+            transport::init_bus(&m);
+        }
+        let mut flags = 0;
+        if config.shm {
+            flags |= hello_flags::SHM;
+        }
+        if config.presents {
+            flags |= hello_flags::PRESENTS;
+        }
+        if config.replay {
+            flags |= hello_flags::REPLAY;
+        }
+        let hello = Hello {
+            flags,
+            slots: want.slots.clone(),
+            session_dir: config.session.display().to_string(),
+            bus_path: if config.shm { bus_path.display().to_string() } else { String::new() },
+        };
+        let mut out = Vec::new();
+        hello.encode(&mut out);
+        let mut sock_end = SocketEnd::new(stream)?;
+        sock_end.set_deadline(Some(config.start_timeout));
+        let mut reply = Vec::new();
+        let handshake = sock_end.send(&out).and_then(|_| sock_end.recv(&mut reply)?.ok_or_else(|| "closed before its HELLO reply".to_string()));
+        if let Err(e) = handshake {
+            return Err(fail(&mut child, e));
+        }
+        let decoded = proto::split(&reply).map_err(String::from).and_then(|m| DeviceInfo::decode(m.body));
+        let (transport, info) = match decoded {
+            Ok(v) => v,
+            Err(e) => return Err(fail(&mut child, e)),
+        };
+        let mut slots: Vec<u8> = info.slots.iter().map(|s| s.slot).collect();
+        slots.sort_unstable();
+        let mut asked = want.slots.clone();
+        asked.sort_unstable();
+        if slots != asked || (transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
+            return Err(fail(&mut child, format!("it answered for slots {slots:?}, transport {transport}")));
+        }
+        let link = if transport == proto::TRANSPORT_SHM {
+            let m = Mapping::open(&bus_path, true)?;
+            let mut end = ShmEnd::new(m, true, config.spin, sock_end.stream)?;
+            end.deadline = Some(config.reply_timeout);
+            Link::Shm(end)
+        } else {
+            sock_end.set_deadline(Some(config.reply_timeout));
+            Link::Socket(sock_end)
+        };
+        let mut tables = HashMap::new();
+        for s in &info.slots {
+            let mut table = vec![None; 256];
+            for e in &s.table {
+                table[e.function as usize] = Some(*e);
+            }
+            tables.insert(s.slot, table);
+        }
+        Ok(Proc {
+            info,
+            transport,
+            slots,
+            tables,
+            link,
+            child,
+            batch: Vec::new(),
+            batch_count: 0,
+            held: Vec::new(),
+            out: Vec::new(),
+            reply: Vec::new(),
+            stats: DriverStats::default(),
+            command: want.command.join(" "),
+        })
     }
 
-    /// The layers of every driver: (z, slot, declaration order, layer).
-    pub fn layers(&self) -> Vec<(u8, u8, usize, LayerDecl)> {
-        let mut v: Vec<_> = self.drivers.iter().flat_map(|d| d.info.layers.iter().enumerate().map(|(i, l)| (l.z, d.slot, i, *l))).collect();
-        v.sort_by_key(|&(z, s, i, _)| (z, s, i));
-        v
+    /// The driver serving `slot`.
+    pub fn proc_for(&self, slot: u8) -> Option<usize> {
+        self.by_slot[slot as usize]
     }
 
     /// The first native size a driver proposed.
     pub fn native(&self) -> Option<(u32, u32)> {
-        self.drivers.iter().map(|d| d.info.native).find(|&(w, h)| w > 0 && h > 0).map(|(w, h)| (w as u32, h as u32))
+        self.procs.iter().map(|d| d.info.native).find(|&(w, h)| w > 0 && h > 0).map(|(w, h)| (w as u32, h as u32))
     }
 
-    /// Asks every driver to reset.
-    pub fn reset(&mut self) -> Result<(), String> {
-        for d in &mut self.drivers {
-            d.request(msg::RESET, |_| {}, None)?;
+    /// Records a driver's failure: the run ends (DEVICES.md 10).
+    fn fail(&mut self, p: usize, e: String) -> String {
+        let d = &mut self.procs[p];
+        let status = d.child.as_mut().and_then(|c| c.try_wait().ok().flatten());
+        let what = match status {
+            Some(s) => format!("driver {} ({}) exited ({s}): {e}", d.info.name, d.command),
+            None => format!("driver {} ({}): {e}", d.info.name, d.command),
+        };
+        if self.failed.is_none() {
+            self.failed = Some(what.clone());
         }
-        Ok(())
-    }
-
-    /// The slot's state section (STATE).
-    pub fn state(&mut self, slot: u8) -> Result<Vec<u8>, String> {
-        let d = self.driver(slot).ok_or(format!("no driver for slot {slot}"))?;
-        let reply = d.request(msg::STATE, |_| {}, None)?;
-        let mut r = Reader::new(&reply);
-        r.skip(4)?;
-        Ok(r.blob()?.to_vec())
-    }
-
-    /// Restores the slot's state section (RESTORE).
-    pub fn restore(&mut self, slot: u8, bytes: &[u8]) -> Result<bool, String> {
-        let d = self.driver(slot).ok_or("no such driver")?;
-        let reply = d.request(msg::RESTORE, |w| {
-            w.u8(0).u16(0).blob(bytes);
-        }, None)?;
-        Ok(reply.get(1) == Some(&1))
+        what
     }
 
     /// Ends the session: SHUTDOWN to each driver, then waits for it (and
     /// kills one that does not exit).
     pub fn shutdown(&mut self) {
-        for d in &mut self.drivers {
+        for d in &mut self.procs {
             d.out.clear();
+            d.out.append(&mut d.held);
             d.take_batch();
-            Writer::new(&mut d.out, msg::SHUTDOWN).finish();
+            Writer::new(&mut d.out, Addr::PROCESS, msg::SHUTDOWN).finish();
             let out = std::mem::take(&mut d.out);
             let _ = d.link.send(&out);
-            if let Link::Socket(s) = &d.link {
-                let _ = s.stream.shutdown(std::net::Shutdown::Both);
-            }
-            if let Link::Shm(s) = &d.link {
-                let _ = s.socket.shutdown(std::net::Shutdown::Both);
-            }
+            let _ = d.link.socket().shutdown(std::net::Shutdown::Both);
         }
-        for d in &mut self.drivers {
+        for d in &mut self.procs {
             reap(&mut d.child);
         }
     }
 
-    /// PRESENT to each visual driver in slot order (DEVICES.md 7). Returns
-    /// per layer (slot, id): a new file's path, and the damage.
-    pub fn present(&mut self, picture: (u32, u32), screen: (f32, f32, f32, f32)) -> Result<Vec<LayerUpdate>, String> {
-        let mut props: Vec<(u8, u8, u32)> = Vec::new();
-        let mut updates = Vec::new();
-        for d in &mut self.drivers {
-            let slot = d.slot;
-            let given = props.clone();
-            let reply = d.request(
-                msg::PRESENT,
-                |w| {
-                    w.u8(0).u16(0).u16(picture.0 as u16).u16(picture.1 as u16);
-                    w.f32(screen.0).f32(screen.1).f32(screen.2).f32(screen.3).u32(given.len() as u32);
-                    for &(s, k, v) in &given {
-                        w.u8(s).u8(k).u16(0).u32(v);
-                    }
-                },
-                None,
-            )?;
-            let mut r = Reader::new(&reply);
-            r.u8()?;
-            let k = r.u8()?;
-            r.skip(2)?;
-            for _ in 0..k {
-                let id = r.u8()?;
-                let flags = r.u8()?;
-                let path = if flags & 1 != 0 { Some(PathBuf::from(String::from_utf8_lossy(r.str()?).into_owned())) } else { None };
-                let n = r.u32()?;
-                let mut damage = Vec::with_capacity(n as usize);
-                for _ in 0..n {
-                    damage.push([r.i32()?, r.i32()?, r.i32()?, r.i32()?]);
-                }
-                updates.push(LayerUpdate { slot, id, path, damage });
+    /// Kills every driver at once (a signal, a failure).
+    pub fn kill(&mut self) {
+        for d in &mut self.procs {
+            if let Some(c) = &mut d.child {
+                let _ = c.kill();
+                let _ = c.wait();
             }
-            let p = r.u32()?;
-            for _ in 0..p {
-                let key = r.u8()?;
-                r.skip(3)?;
-                props.push((slot, key, r.u32()?));
-            }
+            d.child = None;
         }
-        Ok(updates)
     }
 
-    /// Sends what is batched for every driver (before something that
-    /// needs it).
+    /// A request to driver `p` (body written by `f` after the type byte),
+    /// with what is held and batched in front; waits for its reply,
+    /// serving READs from `mem`. Returns the reply's body.
+    fn request(&mut self, p: usize, to: Addr, kind: u8, f: impl FnOnce(&mut Writer), mem: ReadMem) -> Result<Vec<u8>, String> {
+        if let Some(e) = &self.failed {
+            return Err(e.clone());
+        }
+        let r = self.procs[p].request(to, kind, f, mem);
+        r.map_err(|e| self.fail(p, e))
+    }
+
+    /// Sends what is batched for every driver (on the socket; on shared
+    /// memory it goes with the next request).
     pub fn flush(&mut self) -> Result<(), String> {
-        for d in &mut self.drivers {
-            // On shared memory the batch goes with the next request.
-            if d.batch_count > 0 && matches!(d.link, Link::Socket(_)) {
+        for p in 0..self.procs.len() {
+            let d = &mut self.procs[p];
+            if (d.batch_count > 0 || !d.held.is_empty()) && matches!(d.link, Link::Socket(_)) {
                 d.out.clear();
+                d.out.append(&mut d.held);
                 d.take_batch();
                 let out = std::mem::take(&mut d.out);
-                d.link.send(&out)?;
+                let r = d.link.send(&out);
                 d.out = out;
+                r.map_err(|e| self.fail(p, e))?;
             }
         }
         Ok(())
     }
+
+    /// A message with no reply: at once on the socket, held for the next
+    /// request on shared memory (DEVICES.md 4.2).
+    fn post(&mut self, p: usize, to: Addr, kind: u8, f: impl FnOnce(&mut Writer)) -> Result<(), String> {
+        let d = &mut self.procs[p];
+        let mut m = Vec::new();
+        let mut w = Writer::new(&mut m, to, kind);
+        f(&mut w);
+        w.finish();
+        match d.link {
+            // In order after what is held and batched.
+            Link::Shm(_) => {
+                d.out.clear();
+                d.out.append(&mut d.held);
+                d.take_batch();
+                d.out.extend_from_slice(&m);
+                std::mem::swap(&mut d.out, &mut d.held);
+                Ok(())
+            }
+            Link::Socket(_) => {
+                d.out.clear();
+                d.out.append(&mut d.held);
+                d.take_batch();
+                d.out.extend_from_slice(&m);
+                let out = std::mem::take(&mut d.out);
+                let r = d.link.send(&out);
+                d.out = out;
+                r.map_err(|e| self.fail(p, e))
+            }
+        }
+    }
+
+    /// A host service (DEVICES.md 9) of whichever driver gives it, for
+    /// `instance`.
+    pub fn service(&mut self, instance: u32, name: &str, request: &[u8]) -> Result<Vec<u8>, String> {
+        let p = self.procs.iter().position(|d| d.info.services.iter().any(|s| s == name)).ok_or(format!("no driver gives the service {name}"))?;
+        let reply = self.request(p, Addr::of(instance), msg::SERVICE, |w| {
+            w.u8(0).str(name.as_bytes()).blob(request);
+        }, None)?;
+        let mut r = Reader::new(&reply);
+        r.skip(1)?;
+        let ok = r.u8()?;
+        let message = r.string()?;
+        let data = r.blob()?.to_vec();
+        if ok == 1 { Ok(data) } else { Err(message) }
+    }
+
+    /// Whether some driver gives `name`.
+    pub fn has_service(&self, name: &str) -> bool {
+        self.procs.iter().any(|d| d.info.services.iter().any(|s| s == name))
+    }
+
+    /// Whether any driver has exited, or its socket has closed (between
+    /// frames: a crash noticed before the next request).
+    pub fn check_alive(&mut self) -> Result<(), String> {
+        for p in 0..self.procs.len() {
+            let gone = transport::peer_gone(self.procs[p].link.socket())
+                || self.procs[p].child.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some());
+            if gone {
+                return Err(self.fail(p, "it has gone".into()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens a machine instance on the drivers (OPEN): `image` with its
+    /// memory file (`memory`) and identity. The image's devices other than
+    /// System and Machines must all have drivers (SPEC 2).
+    pub fn open_instance(
+        this: &Rc<RefCell<Bus>>,
+        instance: u32,
+        image: &Image,
+        identity: Option<&ProgramId>,
+    ) -> Result<Machine<BusDevices>, StartFailure> {
+        let mut bus = this.borrow_mut();
+        let mut slot_proc = [None; 256];
+        let mut procs: Vec<usize> = Vec::new();
+        for d in &image.devices {
+            if d.slot == 1 || d.slot == terse_core::machines::SLOT {
+                continue;
+            }
+            let Some(p) = bus.by_slot[d.slot as usize] else {
+                return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: format!("no driver for device {}", d.slot) });
+            };
+            let version = bus.procs[p].info.slots.iter().find(|s| s.slot == d.slot).map(|s| s.version);
+            if version != Some(d.version) {
+                return Err(StartFailure {
+                    reason: failure::NEEDS_DEVICE,
+                    image: Some(image.id),
+                    message: format!("the driver for device {} has version {version:?}, not {}", d.slot, d.version),
+                });
+            }
+            slot_proc[d.slot as usize] = Some(p);
+            if !procs.contains(&p) {
+                procs.push(p);
+            }
+        }
+        // Device 9's style lives with device 3 (SPEC 13.2).
+        if image.has_device(terse_core::vector3::SLOT) && slot_proc[3].is_none() {
+            let p = slot_proc[terse_core::vector3::SLOT as usize];
+            if bus.by_slot[3] != p {
+                return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: "devices 3 and 9 need one driver".into() });
+            }
+            slot_proc[3] = p;
+        }
+        procs.sort_unstable();
+        let path = bus.config.session.join(format!("memory-{instance}"));
+        let memory = SharedMemory::create(&path, image).map_err(|e| StartFailure { reason: failure::INVALID, image: Some(image.id), message: e })?;
+        for &p in &procs {
+            let shm = bus.procs[p].transport == proto::TRANSPORT_SHM;
+            let open = Open {
+                image_id: image.id,
+                rom_len: image.rom.len() as u32,
+                ram_len: memory.ram_len as u32,
+                memory_path: if shm { path.display().to_string() } else { String::new() },
+                listed: image.devices.iter().filter(|d| bus.procs[p].slots.contains(&d.slot)).map(|d| (d.slot, d.version)).collect(),
+                identity: identity.map(|i| (i.publisher, i.name.clone())),
+                rom: image.rom.clone(),
+            };
+            let mut m = Vec::new();
+            open.encode(instance, &mut m);
+            let to = Addr::of(instance);
+            let reply = bus.request(p, to, msg::OPEN, |w| {
+                // The message is already written: take its body.
+                w.bytes(&proto::split(&m[4..]).unwrap().body[1..]);
+            }, None);
+            let fail = |e: String| StartFailure { reason: failure::INVALID, image: Some(image.id), message: e };
+            let reply = reply.map_err(fail)?;
+            let mut r = Reader::new(&reply);
+            r.skip(1).map_err(|e| fail(e.into()))?;
+            if r.u8().map_err(|e| fail(e.into()))? != 1 {
+                r.skip(2).map_err(|e| fail(e.into()))?;
+                let why = r.string().unwrap_or_default();
+                return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: format!("{}: {why}", bus.procs[p].info.name) });
+            }
+        }
+        bus.open += 1;
+        let layers = procs
+            .iter()
+            .flat_map(|&p| {
+                let d = &bus.procs[p];
+                d.info.slots.iter().filter(move |s| slot_proc[s.slot as usize] == Some(p)).flat_map(move |s| s.layers.iter().enumerate().map(move |(i, l)| (l.z, s.slot, i, *l)))
+            })
+            .collect::<Vec<_>>();
+        let mut layers = layers;
+        layers.sort_by_key(|&(z, s, i, _)| (z, s, i));
+        drop(bus);
+        let devices = BusDevices {
+            bus: this.clone(),
+            instance,
+            procs,
+            slot_proc,
+            layers: layers.into_iter().map(|(_, s, _, l)| (s, l)).collect(),
+            list: RefCell::new(None),
+            dirty: Cell::new(u64::MAX),
+            got: RefCell::new(HashMap::new()),
+            sent: HashMap::new(),
+            replay: None,
+            records: Vec::new(),
+        };
+        Ok(Machine::with_devices(image, Memory::Backed(Box::new(memory)), devices))
+    }
 }
+
+/// Guest memory a READ may be served from: ROM and RAM.
+type ReadMem<'a> = Option<(&'a [u8], &'a [u8])>;
 
 /// A layer's news from PRESENT.
 pub struct LayerUpdate {
@@ -381,11 +572,6 @@ pub struct LayerUpdate {
     pub id: u8,
     pub path: Option<PathBuf>,
     pub damage: Vec<[i32; 4]>,
-}
-
-fn stream_timeout(s: &UnixStream, t: Option<Duration>) {
-    let _ = s.set_read_timeout(t);
-    let _ = s.set_write_timeout(t);
 }
 
 /// Accepts the driver's connection, giving up after `timeout` or if it
@@ -406,7 +592,7 @@ fn accept(listener: &UnixListener, timeout: Duration, child: &mut Child) -> Resu
             return Err(format!("exited ({status}) before it connected"));
         }
         if start.elapsed() > timeout {
-            return Err("did not connect".into());
+            return Err(format!("did not connect within {:.1} s", timeout.as_secs_f64()));
         }
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -435,67 +621,84 @@ impl Drop for Bus {
     }
 }
 
-impl Driver {
-    /// Puts the batch (if any) in front of `out`.
+impl Proc {
+    /// Puts the batch (if any) after `out`'s contents.
     fn take_batch(&mut self) {
-        // Messages with no reply held for shared memory go first.
-        self.out.append(&mut self.held);
         if self.batch_count == 0 {
             return;
         }
-        let mut w = Writer::new(&mut self.out, msg::BATCH);
-        w.u8(0).u16(0).u32(self.batch_count).bytes(&self.batch);
+        let mut w = Writer::new(&mut self.out, Addr::PROCESS, msg::BATCH);
+        w.u8(0).u16(0).u32(self.batch_count);
+        // Each call: u32 length, then the message (address and body).
+        let mut at = 0;
+        while at < self.batch.len() {
+            let n = proto::u32_at(&self.batch, at) as usize;
+            w.blob(&self.batch[at + 4..at + 4 + n]);
+            at += 4 + n;
+        }
         w.finish();
         self.stats.batches += 1;
         self.batch.clear();
         self.batch_count = 0;
     }
 
-    /// Sends a request of type `kind` (body written by `f` after the type
-    /// byte), with the batch in front, and waits for its reply, serving
-    /// READs from `mem`. Returns the reply's body.
-    fn request(&mut self, kind: u8, f: impl FnOnce(&mut Writer), mut mem: Option<&mut GuestMem>) -> Result<Vec<u8>, String> {
+    /// Serves a READ from `mem`.
+    fn data(&mut self, to: Addr, reply: &[u8], mem: ReadMem) -> Result<(), String> {
+        let mut r = Reader::new(&reply[1..]);
+        r.skip(3)?;
+        let (addr, len) = (r.u32()?, r.u32()? as usize);
         self.out.clear();
-        self.take_batch();
-        let mut w = Writer::new(&mut self.out, kind);
-        f(&mut w);
+        let mut w = Writer::new(&mut self.out, to, msg::DATA);
+        match mem.and_then(|(rom, ram)| readable(rom, ram, addr, len)) {
+            Some(b) => w.u8(1).u16(0).bytes(b),
+            None => w.u8(0).u16(0),
+        };
         w.finish();
         let out = std::mem::take(&mut self.out);
-        self.link.send(&out)?;
+        let r = self.link.send(&out);
         self.out = out;
+        r
+    }
+
+    /// Waits for the reply of type `kind | REPLY` for `to`, serving READs.
+    fn wait_reply(&mut self, to: Addr, kind: u8, mem: ReadMem) -> Result<Vec<u8>, String> {
         let mut reply = std::mem::take(&mut self.reply);
         loop {
             self.link.recv(&mut reply)?;
-            match reply.first() {
-                Some(&t) if t == kind | msg::REPLY => break,
-                Some(&msg::READ) => {
-                    let mut r = Reader::new(&reply[1..]);
-                    r.skip(3)?;
-                    let (addr, len) = (r.u32()?, r.u32()? as usize);
-                    self.out.clear();
-                    let mut w = Writer::new(&mut self.out, msg::DATA);
-                    let data = mem.as_mut().and_then(|m| readable(m.rom, m.ram, addr, len));
-                    match data {
-                        Some(b) => w.u8(1).u16(0).bytes(b),
-                        None => w.u8(0).u16(0),
-                    };
-                    w.finish();
-                    let out = std::mem::take(&mut self.out);
-                    self.link.send(&out)?;
-                    self.out = out;
+            let m = proto::split(&reply)?;
+            let body = m.body.to_vec();
+            match body.first() {
+                Some(&t) if t == kind | msg::REPLY => {
+                    if m.to.instance != to.instance {
+                        return Err(format!("a reply for instance {} where {} was asked", m.to.instance, to.instance));
+                    }
+                    self.reply = reply;
+                    return Ok(body);
                 }
-                Some(&msg::ERROR) => return Err(format!("slot {}: {}", self.slot, String::from_utf8_lossy(&reply[1..]))),
-                other => return Err(format!("slot {}: unexpected message {:02x?} for {kind:02x}", self.slot, other)),
+                Some(&msg::READ) => self.data(to, &body, mem)?,
+                Some(&msg::ERROR) => return Err(String::from_utf8_lossy(&body[1..]).into_owned()),
+                other => return Err(format!("unexpected message {other:02x?} for {kind:02x}")),
             }
         }
-        let body = reply.clone();
-        self.reply = reply;
-        Ok(body)
+    }
+
+    fn request(&mut self, to: Addr, kind: u8, f: impl FnOnce(&mut Writer), mem: ReadMem) -> Result<Vec<u8>, String> {
+        self.out.clear();
+        self.out.append(&mut self.held);
+        self.take_batch();
+        let mut w = Writer::new(&mut self.out, to, kind);
+        f(&mut w);
+        w.finish();
+        let out = std::mem::take(&mut self.out);
+        let sent = self.link.send(&out);
+        self.out = out;
+        sent?;
+        self.wait_reply(to, kind, mem)
     }
 }
 
 /// Copies writes (address, length, bytes) into RAM, each within `[lo, hi)`.
-fn apply_writes(r: &mut Reader, ram: &mut [u8], within: Option<(u32, u32)>, slot: u8) -> Result<(), String> {
+fn apply_writes(r: &mut Reader, ram: &mut [u8], within: Option<(u32, u32)>) -> Result<(), String> {
     let w = r.u32()?;
     for _ in 0..w {
         let addr = r.u32()?;
@@ -504,66 +707,257 @@ fn apply_writes(r: &mut Reader, ram: &mut [u8], within: Option<(u32, u32)>, slot
             Some((lo, hi)) => addr >= lo && (addr as u64 + bytes.len() as u64) <= hi as u64,
             None => true,
         };
-        let at = ram_range(ram.len(), addr, bytes.len()).filter(|_| ok).ok_or(format!("slot {slot}: a write outside its buffer"))?;
+        let at = ram_range(ram.len(), addr, bytes.len()).filter(|_| ok).ok_or("a write outside its buffer")?;
         ram[at..at + bytes.len()].copy_from_slice(bytes);
     }
     Ok(())
 }
 
-impl Devices for Bus {
-    fn begin_frame(&mut self, frame: u32, input: &FrameInput, mut mem: GuestMem) -> Result<FrameInputs, String> {
+/// One machine instance's devices on the bus (terse-core's `Devices`).
+pub struct BusDevices {
+    pub bus: Rc<RefCell<Bus>>,
+    pub instance: u32,
+    /// The drivers serving it, in order.
+    procs: Vec<usize>,
+    /// The driver of each slot it lists (3 also for an image with 9 only).
+    slot_proc: [Option<usize>; 256],
+    /// Its layers bottom to top: (slot, layer).
+    pub layers: Vec<(u8, LayerDecl)>,
+    /// Device 9's list as last read (`vector3.list`).
+    list: RefCell<Option<Vec<u8>>>,
+    /// Drivers (bit per index) that may have changed what they publish
+    /// since the core last asked.
+    dirty: Cell<u64>,
+    /// Published values last read, by driver and name.
+    got: RefCell<HashMap<(usize, String), Vec<u8>>>,
+    /// Values last given to each subscribing driver.
+    sent: HashMap<(usize, String), Vec<u8>>,
+    /// The drivers' recorded inputs for the next frame (replay), by the
+    /// driver's lowest slot.
+    pub replay: Option<Vec<(u8, Vec<u8>)>>,
+    /// The drivers' input records of the last frame (for recording).
+    pub records: Vec<(u8, Vec<u8>)>,
+}
+
+impl BusDevices {
+    fn touch(&self, p: usize) {
+        self.dirty.set(self.dirty.get() | 1 << p);
+        if self.slot_proc[terse_core::vector3::SLOT as usize] == Some(p) {
+            *self.list.borrow_mut() = None;
+        }
+    }
+
+    /// The drivers serving this instance.
+    pub fn procs(&self) -> &[usize] {
+        &self.procs
+    }
+
+    /// A property published by a driver of this instance, read again if the
+    /// driver may have changed it (DEVICES.md 7.2).
+    pub fn property(&self, name: &str) -> Result<Option<Vec<u8>>, String> {
+        let mut bus = self.bus.borrow_mut();
+        let Some(&p) = self.procs.iter().find(|&&p| bus.procs[p].info.publishes.iter().any(|n| n == name)) else { return Ok(None) };
+        let key = (p, name.to_string());
+        if self.dirty.get() & 1 << p == 0
+            && let Some(v) = self.got.borrow().get(&key)
+        {
+            return Ok(Some(v.clone()));
+        }
+        // Everything this driver publishes, at once.
+        let names = bus.procs[p].info.publishes.clone();
+        let reply = bus.request(p, Addr::of(self.instance), msg::GET, |w| {
+            w.u8(0).u8(names.len() as u8);
+            for n in &names {
+                w.str(n.as_bytes());
+            }
+        }, None)?;
+        bus.procs[p].stats.gets += 1;
+        let mut r = Reader::new(&reply);
+        r.skip(1)?;
+        let n = r.u8()?;
+        let mut got = self.got.borrow_mut();
+        for _ in 0..n {
+            let k = r.string()?;
+            got.insert((p, k), r.blob()?.to_vec());
+        }
+        self.dirty.set(self.dirty.get() & !(1 << p));
+        Ok(got.get(&key).cloned())
+    }
+
+    /// Gives every driver of this instance that subscribes to `name` its
+    /// new value (SET), if it changed.
+    pub fn set_property(&mut self, name: &str, value: &[u8]) -> Result<(), String> {
+        let mut bus = self.bus.borrow_mut();
+        for &p in &self.procs {
+            if !bus.procs[p].info.subscribes.iter().any(|n| n == name) {
+                continue;
+            }
+            let key = (p, name.to_string());
+            if self.sent.get(&key).is_some_and(|v| v == value) {
+                continue;
+            }
+            bus.post(p, Addr::of(self.instance), msg::SET, |w| {
+                w.u8(0).str(name.as_bytes()).blob(value);
+            })?;
+            self.sent.insert(key, value.to_vec());
+            self.dirty.set(self.dirty.get() | 1 << p);
+        }
+        Ok(())
+    }
+
+    /// The properties drivers of this instance publish and others
+    /// subscribe to, carried over (before PRESENT).
+    pub fn carry_properties(&mut self) -> Result<(), String> {
+        let wanted: Vec<String> = {
+            let bus = self.bus.borrow();
+            let mut v: Vec<String> = Vec::new();
+            for &p in &self.procs {
+                for n in &bus.procs[p].info.subscribes {
+                    let published = self.procs.iter().any(|&q| q != p && bus.procs[q].info.publishes.contains(n));
+                    if published && !v.contains(n) {
+                        v.push(n.clone());
+                    }
+                }
+            }
+            v
+        };
+        for name in wanted {
+            if let Some(value) = self.property(&name)? {
+                self.set_property(&name, &value)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// PRESENT to each driver of this instance with layers (DEVICES.md 7):
+    /// a picture of `picture` pixels showing the screen in `screen`, glyph
+    /// cells `cell` pixels wide (0: native). Returns each layer's news.
+    pub fn present(&mut self, picture: (u32, u32), screen: (f32, f32, f32, f32), cell: u32) -> Result<Vec<LayerUpdate>, String> {
+        self.carry_properties()?;
+        let mut bus = self.bus.borrow_mut();
+        bus.flush()?;
+        let mut updates = Vec::new();
+        for &p in &self.procs {
+            if !self.layers.iter().any(|(s, _)| self.slot_proc[*s as usize] == Some(p)) {
+                continue;
+            }
+            let start = Instant::now();
+            let reply = bus.request(p, Addr::of(self.instance), msg::PRESENT, |w| {
+                w.u8(0).u16(0).u16(picture.0 as u16).u16(picture.1 as u16);
+                w.f32(screen.0).f32(screen.1).f32(screen.2).f32(screen.3).u16(cell as u16).u16(0);
+            }, None)?;
+            bus.procs[p].stats.present.add(start.elapsed());
+            let mut r = Reader::new(&reply);
+            r.u8()?;
+            let k = r.u8()?;
+            r.skip(2)?;
+            for _ in 0..k {
+                let (slot, id, flags) = (r.u8()?, r.u8()?, r.u8()?);
+                let path = if flags & 1 != 0 { Some(PathBuf::from(r.string()?)) } else { None };
+                let n = r.u32()?;
+                let mut damage = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    damage.push([r.i32()?, r.i32()?, r.i32()?, r.i32()?]);
+                }
+                updates.push(LayerUpdate { slot, id, path, damage });
+            }
+        }
+        Ok(updates)
+    }
+
+    /// The slot's state section (STATE).
+    pub fn state(&mut self, slot: u8) -> Result<Vec<u8>, String> {
+        let p = self.slot_proc[slot as usize].ok_or(format!("no driver for slot {slot}"))?;
+        let reply = self.bus.borrow_mut().request(p, Addr::new(self.instance, slot), msg::STATE, |_| {}, None)?;
+        let mut r = Reader::new(&reply);
+        r.skip(4)?;
+        Ok(r.blob()?.to_vec())
+    }
+
+    /// Restores the slot's section from the start of `bytes` (RESTORE):
+    /// its length, or `None` if refused.
+    pub fn restore(&mut self, slot: u8, bytes: &[u8]) -> Result<Option<usize>, String> {
+        let p = self.slot_proc[slot as usize].ok_or("no such driver")?;
+        self.touch(p);
+        let reply = self.bus.borrow_mut().request(p, Addr::new(self.instance, slot), msg::RESTORE, |w| {
+            w.u8(0).u16(0).blob(bytes);
+        }, None)?;
+        let mut r = Reader::new(&reply);
+        r.skip(1)?;
+        let ok = r.u8()? == 1;
+        r.skip(2)?;
+        let n = r.u32()? as usize;
+        Ok(ok.then_some(n))
+    }
+
+    /// Asks every driver of this instance to reset (RESET).
+    pub fn reset(&mut self) -> Result<(), String> {
+        for &p in &self.procs {
+            self.touch(p);
+            self.bus.borrow_mut().request(p, Addr::of(self.instance), msg::RESET, |_| {}, None)?;
+        }
+        Ok(())
+    }
+
+    /// The driver records of the frame just run.
+    pub fn take_records(&mut self) -> Vec<(u8, Vec<u8>)> {
+        std::mem::take(&mut self.records)
+    }
+}
+
+impl Drop for BusDevices {
+    fn drop(&mut self) {
+        let Ok(mut bus) = self.bus.try_borrow_mut() else { return };
+        for &p in &self.procs {
+            let _ = bus.post(p, Addr::of(self.instance), msg::CLOSE, |_| {});
+        }
+        bus.open = bus.open.saturating_sub(1);
+    }
+}
+
+impl Devices for BusDevices {
+    fn begin_frame(&mut self, frame: u32, input: &FrameInput, mem: GuestMem) -> Result<FrameInputs, String> {
         let (time, host) = (input.unix_time, input.events);
         if !input.completions.is_empty() {
             return Err("the bus's content driver gives the completions".into());
         }
         let replay = self.replay.take();
-        let replay = replay.as_deref();
         self.records.clear();
+        let to = Addr::of(self.instance);
         let mut inputs = FrameInputs::default();
+        let mut bus = self.bus.borrow_mut();
+        if let Some(e) = &bus.failed {
+            return Err(e.clone());
+        }
         // Send BEGIN to all, then collect: the drivers work at once.
-        let mut msg_out = Vec::new();
-        for d in &mut self.drivers {
+        let mut sent = Vec::new();
+        for &p in &self.procs {
+            self.dirty.set(self.dirty.get() | 1 << p);
+            let d = &mut bus.procs[p];
+            let first = d.slots[0];
             d.out.clear();
+            d.out.append(&mut d.held);
             d.take_batch();
-            let mut w = Writer::new(&mut d.out, msg::BEGIN);
-            let record = replay.map(|r| r.iter().find(|(s, _)| *s == d.slot).map_or(&[][..], |(_, b)| &b[..]));
+            let mut w = Writer::new(&mut d.out, to, msg::BEGIN);
+            let record = replay.as_ref().map(|r| r.iter().find(|(s, _)| *s == first).map_or(&[][..], |(_, b)| &b[..]));
             w.u8(record.is_some() as u8).u16(0).u32(frame).u32(time).u32(host.len() as u32);
             for e in host {
                 w.bytes(&[e.kind, e.a, e.b, e.c]);
             }
             w.blob(record.unwrap_or(&[]));
             w.finish();
-            std::mem::swap(&mut d.out, &mut msg_out);
-            d.link.send(&msg_out)?;
-            std::mem::swap(&mut d.out, &mut msg_out);
+            let out = std::mem::take(&mut d.out);
+            let r = d.link.send(&out);
+            d.out = out;
+            r.map_err(|e| bus.fail(p, e))?;
+            sent.push((p, Instant::now()));
         }
-        for d in &mut self.drivers {
-            let start = Instant::now();
-            let mut reply = std::mem::take(&mut self.scratch);
-            loop {
-                d.link.recv(&mut reply)?;
-                match reply.first() {
-                    Some(&t) if t == msg::BEGIN | msg::REPLY => break,
-                    Some(&msg::READ) => {
-                        let mut r = Reader::new(&reply[1..]);
-                        r.skip(3)?;
-                        let (addr, len) = (r.u32()?, r.u32()? as usize);
-                        d.out.clear();
-                        let mut w = Writer::new(&mut d.out, msg::DATA);
-                        match readable(mem.rom, mem.ram, addr, len) {
-                            Some(b) => w.u8(1).u16(0).bytes(b),
-                            None => w.u8(0).u16(0),
-                        };
-                        w.finish();
-                        let out = std::mem::take(&mut d.out);
-                        d.link.send(&out)?;
-                        d.out = out;
-                    }
-                    Some(&msg::ERROR) => return Err(format!("slot {}: {}", d.slot, String::from_utf8_lossy(&reply[1..]))),
-                    other => return Err(format!("slot {}: unexpected message {other:02x?} for BEGIN", d.slot)),
-                }
-            }
+        *self.list.borrow_mut() = None;
+        for (p, start) in sent {
+            let reply = bus.procs[p].wait_reply(to, msg::BEGIN, Some((mem.rom, &*mem.ram))).map_err(|e| bus.fail(p, e))?;
+            let d = &mut bus.procs[p];
             d.stats.begin.add(start.elapsed());
+            let first = d.slots[0];
             let mut r = Reader::new(&reply);
             r.skip(4)?;
             inputs.charge += r.u32()?;
@@ -573,23 +967,24 @@ impl Devices for Bus {
                 let event = Event { kind: b[0], a: b[1], b: b[2], c: b[3] };
                 inputs.events.push(PosEvent { event, position: r.u8()?, flags: r.u8()?, index: r.u16()? });
             }
-            apply_writes(&mut r, mem.ram, None, d.slot)?;
+            apply_writes(&mut r, mem.ram, None).map_err(|e| bus.fail(p, e))?;
             let record = r.blob()?;
             if !record.is_empty() {
-                self.records.push((d.slot, record.to_vec()));
+                self.records.push((first, record.to_vec()));
             }
-            self.scratch = reply;
         }
-        // Drivers' events in slot order (they are: drivers are in slot
-        // order), each driver's in its order.
-        let _ = &mut mem;
         Ok(inputs)
     }
 
     fn call(&mut self, slot: u8, function: u8, args: [u32; 6], budget: i64, mem: GuestMem) -> Result<CallOutcome, String> {
-        let batching = self.batching;
-        let Some(d) = self.driver(slot) else { return Ok(CallOutcome { a0: ERR_UNKNOWN, a1: None, charge: 0 }) };
-        let Some(e) = d.table[function as usize] else { return Ok(CallOutcome { a0: ERR_UNKNOWN, a1: None, charge: 0 }) };
+        let unknown = Ok(CallOutcome { a0: ERR_UNKNOWN, a1: None, charge: 0 });
+        let Some(p) = self.slot_proc[slot as usize] else { return unknown };
+        self.touch(p);
+        let to = Addr::new(self.instance, slot);
+        let mut bus = self.bus.borrow_mut();
+        let batching = bus.config.batching;
+        let d = &mut bus.procs[p];
+        let Some(e) = d.tables.get(&slot).and_then(|t| t[function as usize]) else { return unknown };
         // An answered call's base charge, also when a check fails (SPEC 14).
         let base = e.base_extra();
         // DEVICES.md 5: the core's checks.
@@ -621,78 +1016,40 @@ impl Devices for Bus {
         };
         if batching && e.batchable() {
             let (a0, a1, charge) = e.batch_outcome(&args, buf.1);
-            proto::encode_call(&mut d.batch, function, &args, budget, bytes);
+            proto::encode_call(&mut d.batch, to, function, &args, budget, bytes);
             d.batch_count += 1;
             d.stats.batched += 1;
             return Ok(CallOutcome { a0, a1, charge: base + charge });
         }
-        // A real round trip. On the socket the read buffer goes inline.
+        // A round trip. On the socket the read buffer goes inline.
         let inline = match d.link {
             Link::Socket(_) => bytes,
             Link::Shm(_) => &[],
         };
         let start = Instant::now();
-        d.out.clear();
-        d.take_batch();
-        proto::encode_call(&mut d.out, function, &args, budget, inline);
-        let out = std::mem::take(&mut d.out);
-        d.link.send(&out)?;
-        d.out = out;
-        let mut reply = std::mem::take(&mut d.reply);
-        let mut gm = mem;
-        loop {
-            d.link.recv(&mut reply)?;
-            match reply.first() {
-                Some(&msg::RESULT) => break,
-                Some(&msg::READ) => {
-                    let mut r = Reader::new(&reply[1..]);
-                    r.skip(3)?;
-                    let (addr, len) = (r.u32()?, r.u32()? as usize);
-                    d.out.clear();
-                    let mut w = Writer::new(&mut d.out, msg::DATA);
-                    match readable(gm.rom, gm.ram, addr, len) {
-                        Some(b) => w.u8(1).u16(0).bytes(b),
-                        None => w.u8(0).u16(0),
-                    };
-                    w.finish();
-                    let out = std::mem::take(&mut d.out);
-                    d.link.send(&out)?;
-                    d.out = out;
-                }
-                Some(&msg::ERROR) => return Err(format!("slot {slot}: {}", String::from_utf8_lossy(&reply[1..]))),
-                other => return Err(format!("slot {slot}: unexpected message {other:02x?} for a call")),
-            }
-        }
+        let mut call = Vec::new();
+        proto::encode_call(&mut call, to, function, &args, budget, inline);
+        let reply = bus.request(p, to, msg::CALL, |w| {
+            w.bytes(&proto::split(&call[4..]).unwrap().body[1..]);
+        }, Some((mem.rom, &*mem.ram)))?;
         let mut r = Reader::new(&reply);
         r.skip(1)?;
         let flags = r.u8()?;
         r.skip(2)?;
         let (a0, a1, charge) = (r.u32()?, r.u32()?, r.u32()?);
         let within = (e.has_buffer() && e.access & access::WRITE != 0).then_some((buf.0, buf.0.wrapping_add(buf.1)));
-        apply_writes(&mut r, gm.ram, Some(within.unwrap_or((0, 0))), slot)?;
-        d.reply = reply;
-        d.stats.calls.add(start.elapsed());
-        let _ = &mut gm;
+        apply_writes(&mut r, mem.ram, Some(within.unwrap_or((0, 0)))).map_err(|e| bus.fail(p, e))?;
+        bus.procs[p].stats.calls.add(start.elapsed());
         Ok(CallOutcome { a0, a1: (flags & 1 != 0).then_some(a1), charge: base + charge })
     }
 
     fn end_frame(&mut self, frame: u32, stopped: bool, _mem: GuestMem) -> Result<(), String> {
-        for d in &mut self.drivers {
-            d.out.clear();
-            d.take_batch();
-            let mut w = Writer::new(&mut d.out, msg::END);
-            w.u8(stopped as u8).u16(0).u32(frame);
-            w.finish();
-            match d.link {
-                // One packet at a time in the request area: a message with
-                // no reply waits for the next request (DEVICES.md 4.2).
-                Link::Shm(_) => d.held.append(&mut d.out),
-                Link::Socket(_) => {
-                    let out = std::mem::take(&mut d.out);
-                    d.link.send(&out)?;
-                    d.out = out;
-                }
-            }
+        let mut bus = self.bus.borrow_mut();
+        for &p in &self.procs {
+            self.dirty.set(self.dirty.get() | 1 << p);
+            bus.post(p, Addr::of(self.instance), msg::END, |w| {
+                w.u8(stopped as u8).u16(0).u32(frame);
+            })?;
         }
         Ok(())
     }
@@ -700,5 +1057,29 @@ impl Devices for Bus {
     fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String> {
         out.extend_from_slice(&self.state(slot)?);
         Ok(())
+    }
+
+    fn restore_state(&mut self, slot: u8, bytes: &[u8], _ram_len: usize) -> Result<usize, RestoreError> {
+        match self.restore(slot, bytes) {
+            Ok(Some(n)) if n <= bytes.len() => Ok(n),
+            Ok(_) => Err(bad("a device refused its section")),
+            Err(_) => Err(bad("a device driver failed")),
+        }
+    }
+
+    fn list3(&self) -> Cow<'_, [u8]> {
+        if self.slot_proc[terse_core::vector3::SLOT as usize].is_none() {
+            return Cow::Borrowed(&[]);
+        }
+        if let Some(l) = self.list.borrow().as_ref() {
+            return Cow::Owned(l.clone());
+        }
+        let list = self.property(property::LIST3).ok().flatten().unwrap_or_default();
+        *self.list.borrow_mut() = Some(list.clone());
+        Cow::Owned(list)
+    }
+
+    fn new_machine(&self, serial: u32, image: &Image, identity: Option<&ProgramId>) -> Result<Machine<Self>, StartFailure> {
+        Bus::open_instance(&self.bus, serial, image, identity)
     }
 }

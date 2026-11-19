@@ -1,17 +1,20 @@
 //! `terse-dev-page`: the page (SPEC 11, slot 7) as a driver (DEVICES.md):
-//! terse-core's `Page` for the state; the layout events (height, anchor,
-//! located) from terse-core's `PageInput`, laid out between frames with the
-//! reference layout, or, when the core presents, with real fonts
-//! (terse-host's typesetter, as `terse-host --screenshot` does); one layer
-//! (z 20) drawn by terse-host's software page renderer.
+//! per machine, terse-core's `Page` for the state and the layout events
+//! (height, anchor, located) from terse-core's `PageInput`, laid out
+//! between frames with the reference layout, or, when the core presents,
+//! with real fonts (terse-host's typesetter, shared by every machine, as
+//! `terse-host --screenshot` does); one layer (z 20) drawn by terse-host's
+//! software page renderer. It subscribes to the vector display's
+//! figures-as-outlines flag (SPEC 11.4).
 //!
 //! Options: `--fonts` or `--reference` force the layout; `--page-sans`,
 //! `--page-serif`, `--page-mono` name the fonts.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use terse_bus::driver::{Begin, CallIn, Device, Inputs, LayerFile, LayerOut, Mem, Present, PresentOut, Reply, Session};
-use terse_bus::proto::{CallEntry, DeviceInfo, EVENT_PAIR, LayerDecl, PosEvent, access, position, property, rule, z};
+use terse_bus::proto::{CallEntry, DeviceInfo, EVENT_PAIR, LayerDecl, Open, PosEvent, SlotInfo, access, position, property, rule, z};
 use terse_core::machine::copy_charge;
 use terse_core::page::{MAX_DOCUMENT, Page, PageInput, ReferenceLayouter};
 use terse_core::{ERR_UNKNOWN, Event};
@@ -21,6 +24,7 @@ use terse_host::soft::base::IRect;
 use terse_host::soft::page::{PageKey, SoftPage};
 
 const LAYER: u8 = 0;
+const SLOT: u8 = 7;
 
 fn table() -> Vec<CallEntry> {
     let e = CallEntry::plain;
@@ -44,16 +48,24 @@ struct Drawn {
 
 type Latest = Arc<Mutex<Option<Arc<HostLayout>>>>;
 
-struct PageDriver {
+/// One machine's page.
+struct Inst {
     page: Page,
     input: PageInput,
     latest: Option<Latest>,
-    fonts: Option<bool>,
-    page_fonts: PageFonts,
     soft: SoftPage,
     drawn: Option<Drawn>,
+    outlines: bool,
+}
+
+struct PageDriver {
+    fonts: Option<bool>,
+    page_fonts: PageFonts,
+    /// The fonts, shared by every machine's layouter.
+    typesetter: Option<Arc<Mutex<Typesetter>>>,
     replay: bool,
     presents: bool,
+    inst: HashMap<u32, Inst>,
 }
 
 /// The events of a frame as a record: 8 bytes each, as in INPUTS.
@@ -72,21 +84,21 @@ fn decode(b: &[u8]) -> Vec<PosEvent> {
         .collect()
 }
 
-impl PageDriver {
-    fn draw(&mut self, p: &Present, session: &Session) -> Result<PresentOut, String> {
-        let outlines = p.properties.iter().any(|&(s, k, v)| s == 3 && k == property::OUTLINES && v != 0);
-        self.soft.set_outlines(outlines);
+impl Inst {
+    fn draw(&mut self, instance: u32, p: &Present, session: &Session) -> Result<PresentOut, String> {
+        self.soft.set_outlines(self.outlines);
         let layout = self.latest.as_ref().and_then(|l| l.lock().unwrap().clone());
         self.soft.set(Some(&self.page), layout);
         let mut fresh = false;
         if self.drawn.as_ref().is_none_or(|d| d.picture != p.picture || d.screen != p.screen) {
-            self.drawn = Some(Drawn { picture: p.picture, screen: p.screen, layer: LayerFile::create(session.dir(), 7, LAYER, p.picture)?, key: None, scissor: IRect::EMPTY });
+            let layer = LayerFile::create(session.dir(), instance, SLOT, LAYER, p.picture)?;
+            self.drawn = Some(Drawn { picture: p.picture, screen: p.screen, layer, key: None, scissor: IRect::EMPTY });
             fresh = true;
         }
         let d = self.drawn.as_mut().unwrap();
         let key = self.soft.key(p.screen, false);
         if !fresh && d.key.as_ref() == Some(&key) {
-            return Ok(PresentOut { layers: vec![LayerOut { id: LAYER, new_file: None, damage: Vec::new() }], properties: Vec::new() });
+            return Ok(PresentOut { layers: vec![LayerOut { slot: SLOT, id: LAYER, new_file: None, damage: Vec::new() }] });
         }
         self.soft.prepare(p.screen, p.picture, false);
         let scissor = self.soft.quads.scissor;
@@ -100,10 +112,8 @@ impl PageDriver {
         // The key after preparing (figures that arrived count).
         d.key = Some(self.soft.key(p.screen, false));
         d.scissor = scissor;
-        Ok(PresentOut {
-            layers: vec![LayerOut { id: LAYER, new_file: fresh.then(|| d.layer.path.clone()), damage: if damage.is_empty() { vec![] } else { vec![rect(damage)] } }],
-            properties: Vec::new(),
-        })
+        let damage = if damage.is_empty() { vec![] } else { vec![rect(damage)] };
+        Ok(PresentOut { layers: vec![LayerOut { slot: SLOT, id: LAYER, new_file: fresh.then(|| d.layer.path.clone()), damage }] })
     }
 }
 
@@ -115,61 +125,86 @@ impl Device for PageDriver {
         // the reference layout otherwise (as terse run does).
         if self.fonts.unwrap_or(self.presents) && !self.replay {
             match Typesetter::new(&self.page_fonts) {
-                Ok(t) => {
-                    let layouter = SyncLayouter::shared(Arc::new(Mutex::new(t)));
-                    self.latest = Some(layouter.latest.clone());
-                    self.input = PageInput::new(Box::new(layouter));
-                }
-                Err(e) => {
-                    eprintln!("terse-dev-page: {e}; using the reference layout");
-                    self.input = PageInput::new(Box::new(ReferenceLayouter::default()));
-                }
+                Ok(t) => self.typesetter = Some(Arc::new(Mutex::new(t))),
+                Err(e) => eprintln!("terse-dev-page: {e}; using the reference layout"),
             }
         }
         let layers = if self.presents { vec![LayerDecl { id: LAYER, z: z::PAGE }] } else { Vec::new() };
-        DeviceInfo { version: 0, name: "terse-dev-page (Rust)".into(), native: (0, 0), layers, table: table() }
+        DeviceInfo {
+            name: "terse-dev-page (Rust)".into(),
+            native: (0, 0),
+            slots: vec![SlotInfo { slot: SLOT, version: 0, layers, table: table() }],
+            publishes: Vec::new(),
+            subscribes: vec![property::OUTLINES.into()],
+            services: Vec::new(),
+        }
     }
 
-    fn reset(&mut self) {
-        self.page = Page::default();
+    fn open(&mut self, instance: u32, _: &Open, _: &Session) -> Result<(), String> {
+        let (input, latest) = match &self.typesetter {
+            Some(t) => {
+                let layouter = SyncLayouter::shared(t.clone());
+                let latest = layouter.latest.clone();
+                (PageInput::new(Box::new(layouter)), Some(latest))
+            }
+            None => (PageInput::new(Box::new(ReferenceLayouter::default())), None),
+        };
+        let mut soft = SoftPage::default();
+        // Pictures show the finished page: no scroll animation, figures at once.
+        soft.set_animate(false);
+        self.inst.insert(instance, Inst { page: Page::default(), input, latest, soft, drawn: None, outlines: false });
+        Ok(())
     }
 
-    fn call(&mut self, c: &CallIn, _: &mut dyn Mem) -> Reply {
+    fn close(&mut self, instance: u32) {
+        self.inst.remove(&instance);
+    }
+
+    fn reset(&mut self, instance: u32) {
+        if let Some(i) = self.inst.get_mut(&instance) {
+            i.page = Page::default();
+        }
+    }
+
+    fn call(&mut self, instance: u32, c: &CallIn, _: &mut dyn Mem) -> Reply {
+        let Some(i) = self.inst.get_mut(&instance) else { return Reply { a0: ERR_UNKNOWN, ..Default::default() } };
+        let page = &mut i.page;
         let [a0, a1, a2, a3, ..] = c.args;
         let (r, charge) = match c.function {
             0 => {
-                let r = self.page.submit(c.buf);
+                let r = page.submit(c.buf);
                 (r, if r == 0 { copy_charge(c.buf.len()) } else { 0 })
             }
             1 => {
-                self.page.clear();
+                page.clear();
                 (0, 0)
             }
             2 => {
-                self.page.set_region(a0, a1, a2, a3);
+                page.set_region(a0, a1, a2, a3);
                 (0, 0)
             }
             3 => {
-                self.page.set_scroll(a0);
+                page.set_scroll(a0);
                 (0, 0)
             }
             4 => {
-                self.page.set_background(a0);
+                page.set_background(a0);
                 (0, 0)
             }
-            5 => (self.page.locate(a0), 0),
+            5 => (page.locate(a0), 0),
             _ => (ERR_UNKNOWN, 0),
         };
         Reply { a0: r, a1: None, charge }
     }
 
-    fn begin(&mut self, b: &Begin, _: &mut dyn Mem) -> Inputs {
+    fn begin(&mut self, instance: u32, b: &Begin, _: &mut dyn Mem) -> Inputs {
+        let Some(i) = self.inst.get_mut(&instance) else { return Inputs::default() };
         // The last frame's locates are the layouter's now.
-        self.page.begin_frame();
+        i.page.begin_frame();
         let events = match b.replay {
             Some(record) => decode(record),
             None => {
-                let all = self.input.events(Some(&self.page), b.host);
+                let all = i.input.events(Some(&i.page), b.host);
                 let mut next_host = 0;
                 let mut out = Vec::new();
                 for e in all {
@@ -187,38 +222,49 @@ impl Device for PageDriver {
         Inputs { charge: 0, record: encode(&events), events }
     }
 
-    fn end(&mut self, _: u32, _: bool) {
-        if !self.replay {
-            self.input.after_frame(Some(&self.page));
+    fn end(&mut self, instance: u32, _: u32, _: bool) {
+        if let Some(i) = self.inst.get_mut(&instance)
+            && !self.replay
+        {
+            i.input.after_frame(Some(&i.page));
         }
     }
 
-    fn state(&self) -> Vec<u8> {
+    fn state(&self, instance: u32, _: u8) -> Vec<u8> {
         let mut out = Vec::new();
-        self.page.write_state(&mut out);
+        if let Some(i) = self.inst.get(&instance) {
+            i.page.write_state(&mut out);
+        }
         out
     }
 
-    fn restore(&mut self, bytes: &[u8]) -> bool {
+    fn restore(&mut self, instance: u32, _: u8, bytes: &[u8]) -> Option<usize> {
+        let i = self.inst.get_mut(&instance)?;
         let mut p = Page::default();
         let mut r = terse_core::snapshot::Reader::new(bytes);
-        if p.restore(&mut r).is_err() || r.remaining() != 0 {
-            return false;
-        }
+        p.restore(&mut r).ok()?;
+        let n = r.position();
         let mut again = Vec::new();
         p.write_state(&mut again);
-        if again != bytes {
-            return false;
-        }
-        self.page = p;
-        true
+        (again == bytes[..n]).then_some(())?;
+        i.page = p;
+        Some(n)
     }
 
-    fn present(&mut self, p: &Present, session: &Session) -> PresentOut {
+    fn set(&mut self, instance: u32, name: &str, value: &[u8]) {
+        if let Some(i) = self.inst.get_mut(&instance)
+            && name == property::OUTLINES
+        {
+            i.outlines = value.first().is_some_and(|&v| v != 0);
+        }
+    }
+
+    fn present(&mut self, instance: u32, p: &Present, session: &Session) -> PresentOut {
         if !self.presents {
             return PresentOut::default();
         }
-        self.draw(p, session).unwrap_or_else(|e| {
+        let Some(i) = self.inst.get_mut(&instance) else { return PresentOut::default() };
+        i.draw(instance, p, session).unwrap_or_else(|e| {
             eprintln!("terse-dev-page: {e}");
             PresentOut::default()
         })
@@ -242,9 +288,6 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
-    let mut soft = SoftPage::default();
-    // Screenshots show the finished page: no scroll animation, figures at once.
-    soft.set_animate(false);
-    let mut d = PageDriver { page: Page::default(), input: PageInput::default(), latest: None, fonts, page_fonts, soft, drawn: None, replay: false, presents: false };
+    let mut d = PageDriver { fonts, page_fonts, typesetter: None, replay: false, presents: false, inst: HashMap::new() };
     terse_bus::driver::run(&mut d, "terse-dev-page")
 }

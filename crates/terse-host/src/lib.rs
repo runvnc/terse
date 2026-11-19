@@ -8,14 +8,14 @@
 
 #[cfg(feature = "window")]
 mod app;
-mod consent;
+pub mod consent;
 pub mod display;
 mod figures;
 #[cfg(feature = "window")]
 mod gamepad;
 pub mod glyphs;
-#[cfg(feature = "window")]
-mod keymap;
+#[cfg(feature = "input")]
+pub mod keymap;
 pub mod page;
 #[cfg(feature = "gpu")]
 mod panels;

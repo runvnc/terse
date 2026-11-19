@@ -149,6 +149,28 @@ pub fn init_bus(m: &Mapping) {
     m.word(20).store(AREA as u32, Ordering::Relaxed);
 }
 
+/// How long to spin before sleeping (DEVICES.md 4.2): at most `max`; when
+/// adaptive, only about twice as long as the longest of the recent waits
+/// that ended while spinning, so that an end idle between frames sleeps
+/// almost at once while the calls of a busy frame still need no system
+/// call.
+#[derive(Clone, Copy, Debug)]
+pub struct Spin {
+    pub max: Duration,
+    pub adaptive: bool,
+}
+
+impl Spin {
+    pub fn fixed(max: Duration) -> Self {
+        Spin { max, adaptive: false }
+    }
+}
+
+/// The shortest adaptive spin.
+const MIN_SPIN: Duration = Duration::from_micros(4);
+/// Waits remembered for the adaptive spin.
+const RECENT: usize = 32;
+
 /// One side of a shared-memory bus: `core` writes requests and reads
 /// replies; the driver the other way round.
 pub struct ShmEnd {
@@ -156,21 +178,27 @@ pub struct ShmEnd {
     core: bool,
     /// The last sequence number seen from the other side.
     seen: u32,
-    /// How long to spin before sleeping.
-    pub spin: Duration,
+    pub spin: Spin,
+    /// Recent waits (µs; `u32::MAX` for one that slept).
+    recent: [u32; RECENT],
+    next: usize,
+    /// Giving up on the other end after this long (a hung driver).
+    pub deadline: Option<Duration>,
     /// For noticing that the other end has gone.
     pub socket: UnixStream,
+    /// Time spent spinning, and waits that slept (measurements).
+    pub spun: Duration,
+    pub sleeps: u64,
 }
 
 impl ShmEnd {
-    pub fn new(map: Mapping, core: bool, spin: Duration, socket: UnixStream) -> Result<Self, String> {
+    pub fn new(map: Mapping, core: bool, spin: Spin, socket: UnixStream) -> Result<Self, String> {
         if map.len() < BUS_FILE || map.word(0).load(Ordering::Relaxed) != MAGIC {
             return Err("not a bus file".into());
         }
         let seen = map.word(if core { REP_SEQ } else { REQ_SEQ }).load(Ordering::Acquire);
-        Ok(ShmEnd { map, core, seen, spin, socket })
+        Ok(ShmEnd { map, core, seen, spin, recent: [0; RECENT], next: 0, deadline: None, socket, spun: Duration::ZERO, sleeps: 0 })
     }
-
 
     fn out_area(&self) -> usize {
         if self.core { CONTROL } else { CONTROL + AREA }
@@ -178,6 +206,18 @@ impl ShmEnd {
 
     fn in_area(&self) -> usize {
         if self.core { CONTROL + AREA } else { CONTROL }
+    }
+
+    /// How long to spin now.
+    fn spin_limit(&self) -> Duration {
+        if !self.spin.adaptive {
+            return self.spin.max;
+        }
+        let max = self.spin.max.as_micros().min(u32::MAX as u128 - 1) as u32;
+        match self.recent.iter().copied().filter(|&w| w < max).max() {
+            Some(w) => Duration::from_micros((2 * w as u64).max(MIN_SPIN.as_micros() as u64)).min(self.spin.max),
+            None => MIN_SPIN.min(self.spin.max),
+        }
     }
 
     /// Writes a packet and hands it over.
@@ -197,11 +237,14 @@ impl ShmEnd {
     }
 
     /// Waits for the other side's next packet and returns it (valid until
-    /// the next send). `None`: the other end has gone.
-    pub fn recv(&mut self) -> Option<&[u8]> {
+    /// the next send). An error: the other end has gone, or (with a
+    /// deadline) has not answered in time.
+    pub fn recv(&mut self) -> Result<&[u8], String> {
         let (seq, len, sleeping) = if self.core { (REP_SEQ, REP_LEN, CORE_SLEEPING) } else { (REQ_SEQ, REQ_LEN, DRIVER_SLEEPING) };
         let start = Instant::now();
+        let limit = self.spin_limit();
         let mut spins = 0u32;
+        let mut slept = false;
         loop {
             let now = self.map.word(seq).load(Ordering::Acquire);
             if now != self.seen {
@@ -209,23 +252,39 @@ impl ShmEnd {
                 break;
             }
             spins += 1;
-            if !self.spin.is_zero() && (spins & 63 != 0 || start.elapsed() < self.spin) {
+            if !slept && !limit.is_zero() && (spins & 63 != 0 || start.elapsed() < limit) {
                 std::hint::spin_loop();
                 continue;
+            }
+            if !slept {
+                self.spun += start.elapsed();
+                self.sleeps += 1;
+                slept = true;
             }
             // Sleep until the number changes.
             self.map.word(sleeping).store(1, Ordering::SeqCst);
             if self.map.word(seq).load(Ordering::SeqCst) == self.seen {
-                futex_wait(self.map.word(seq), self.seen, Duration::from_millis(100));
+                futex_wait(self.map.word(seq), self.seen, Duration::from_millis(50));
             }
             self.map.word(sleeping).store(0, Ordering::SeqCst);
-            if self.map.word(seq).load(Ordering::Acquire) == self.seen && peer_gone(&self.socket) {
-                return None;
+            if self.map.word(seq).load(Ordering::Acquire) == self.seen {
+                if peer_gone(&self.socket) {
+                    return Err("the other end has gone".into());
+                }
+                if let Some(d) = self.deadline.filter(|&d| start.elapsed() > d) {
+                    return Err(format!("no reply within {:.1} s", d.as_secs_f64()));
+                }
             }
         }
+        let waited = start.elapsed();
+        if !slept {
+            self.spun += waited;
+        }
+        self.recent[self.next] = if slept { u32::MAX } else { waited.as_micros().min(u32::MAX as u128 - 1) as u32 };
+        self.next = (self.next + 1) % RECENT;
         let n = self.map.word(len).load(Ordering::Relaxed) as usize;
         let at = self.in_area();
-        Some(&self.map.bytes()[at..at + n.min(AREA)])
+        Ok(&self.map.bytes()[at..at + n.min(AREA)])
     }
 }
 
@@ -245,12 +304,21 @@ impl SocketEnd {
         self.stream.write_all(packet).map_err(|e| format!("send: {e}"))
     }
 
-    /// The next message's body into `buf`. `None` at the end of the stream.
+    /// Gives up waiting for a message after `d` (a hung driver), or never.
+    pub fn set_deadline(&self, d: Option<Duration>) {
+        let _ = self.stream.set_read_timeout(d);
+    }
+
+    /// The next message (what follows its length: address and body) into
+    /// `buf`. `None` at the end of the stream.
     pub fn recv(&mut self, buf: &mut Vec<u8>) -> Result<Option<()>, String> {
         let mut head = [0u8; 4];
         match self.reader.read_exact(&mut head) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                return Err("no reply in time".into());
+            }
             Err(e) => return Err(format!("receive: {e}")),
         }
         let n = u32::from_le_bytes(head) as usize;
@@ -297,10 +365,10 @@ mod tests {
         let m = Mapping::create(&path, BUS_FILE).unwrap();
         init_bus(&m);
         let (a, b) = UnixStream::pair().unwrap();
-        let mut core = ShmEnd::new(m, true, Duration::from_micros(50), a).unwrap();
+        let mut core = ShmEnd::new(m, true, Spin::fixed(Duration::from_micros(50)), a).unwrap();
         // The driver maps the file before the core's first packet, as after
         // the handshake.
-        let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Duration::ZERO, b).unwrap();
+        let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Spin { max: Duration::from_micros(200), adaptive: true }, b).unwrap();
         let driver = std::thread::spawn(move || {
             for _ in 0..1000 {
                 let p = d.recv().unwrap().to_vec();

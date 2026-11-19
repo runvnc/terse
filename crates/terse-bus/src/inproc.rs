@@ -85,8 +85,19 @@ impl Devices for InProcessHost {
         self.devices.write_state(slot, out)
     }
 
-    fn list3(&self) -> &[u8] {
+    fn list3(&self) -> std::borrow::Cow<'_, [u8]> {
         self.devices.list3()
+    }
+
+    fn restore_state(&mut self, slot: u8, bytes: &[u8], ram_len: usize) -> Result<usize, terse_core::RestoreError> {
+        self.devices.restore_state(slot, bytes, ram_len)
+    }
+
+    fn new_machine(&self, _serial: u32, image: &Image, identity: Option<&terse_core::ProgramId>) -> Result<terse_core::Machine<Self>, terse_core::StartFailure> {
+        let memory = terse_core::devices::Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
+        let mut m = terse_core::Machine::with_devices(image, memory, InProcessHost::new(image, None));
+        m.set_identity(identity.cloned());
+        Ok(m)
     }
 }
 
@@ -97,7 +108,9 @@ pub struct ContentOptions {
     pub config: Option<std::path::PathBuf>,
     pub data: Option<std::path::PathBuf>,
     pub relays: Vec<String>,
-    pub consent_allow: bool,
+    /// How requests that need consent are answered (SPEC 9.5): deny (the
+    /// default headless), allow, or ask (the core shows the question).
+    pub consent: Option<terse_net::Consent>,
     pub reading: bool,
     pub no_feed_relays: bool,
     pub no_program_download: bool,
@@ -114,11 +127,8 @@ impl ContentOptions {
             "--data" => self.data = Some(value()?.into()),
             "--relay" => self.relays.push(value()?),
             "--consent" => {
-                self.consent_allow = match value()?.as_str() {
-                    "allow" => true,
-                    "deny" => false,
-                    c => return Err(format!("bad --consent {c} (allow or deny)")),
-                }
+                let c = value()?;
+                self.consent = Some(terse_net::Consent::parse(&c).ok_or(format!("bad --consent {c} (allow, deny or ask)"))?);
             }
             "--profile" => match value()?.as_str() {
                 "reading" => self.reading = true,
@@ -142,7 +152,12 @@ impl ContentOptions {
         for r in &self.relays {
             v.extend(["--relay".to_string(), r.clone()]);
         }
-        v.extend(["--consent".to_string(), if self.consent_allow { "allow" } else { "deny" }.to_string()]);
+        let consent = match self.consent {
+            Some(terse_net::Consent::Allow) => "allow",
+            Some(terse_net::Consent::Ask) => "ask",
+            _ => "deny",
+        };
+        v.extend(["--consent".to_string(), consent.to_string()]);
         if self.reading {
             v.extend(["--profile".to_string(), "reading".to_string()]);
         }
@@ -170,8 +185,9 @@ impl ContentOptions {
         node.set_identity_path(config.join("identity.key"))?;
         node.set_nicknames(Nicknames::load_from_config(&config)?);
         node.set_records(Records::in_data_dir(&data));
+        node.set_snapshots(terse_net::Snapshots::in_data_dir(&data));
         node.set_program_download(!self.no_program_download);
-        let consent = if self.consent_allow { terse_net::Consent::Allow } else { terse_net::Consent::Deny };
+        let consent = self.consent.unwrap_or(terse_net::Consent::Deny);
         let mut content = ContentService::start_with_consent(node, consent);
         content.set_reading_profile(self.reading);
         if content.following()

@@ -1,6 +1,9 @@
-//! winit physical keys to USB HID keyboard usage IDs (SPEC 5).
+//! winit physical keys to USB HID keyboard usage IDs (SPEC 5), and the
+//! window input the hosts share: the home key, paste, the consent
+//! prompt's answer.
 
-use winit::keyboard::{KeyCode, ModifiersState};
+use winit::event::KeyEvent;
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey};
 
 pub fn hid_usage(key: KeyCode) -> Option<u8> {
     use KeyCode::*;
@@ -85,6 +88,49 @@ pub fn modifier_bits(m: ModifiersState) -> u8 {
         }
     }
     bits
+}
+
+/// The most pasted characters held for delivery.
+pub const MAX_PASTE: usize = 1 << 20;
+
+/// The host's home key (SPEC 12.4) when it runs a shell.
+pub const HOME_KEY: KeyCode = KeyCode::F12;
+
+/// The characters of pasted text the program receives: newlines (a CR LF
+/// pair or a lone CR counts as one) and no other control characters.
+pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
+    let mut prev = '\0';
+    text.chars().filter_map(move |c| {
+        let out = match c {
+            '\r' => Some('\n'),
+            '\n' if prev == '\r' => None,
+            '\n' => Some('\n'),
+            c if c.is_control() => None,
+            c => Some(c),
+        };
+        prev = c;
+        out
+    })
+}
+
+/// The answer a key press gives the consent prompt: Y yes; N or Esc no;
+/// any other key (Enter included) nothing.
+/// Notes that the release of the key `usage` is the host's, as its press
+/// was: once, however often the press auto-repeats, so that one release
+/// clears it and the key's next release reaches the program.
+pub fn swallow(swallowed: &mut Vec<u8>, usage: Option<u8>) {
+    if let Some(u) = usage.filter(|u| !swallowed.contains(u)) {
+        swallowed.push(u);
+    }
+}
+
+pub fn prompt_answer(event: &KeyEvent) -> Option<bool> {
+    match &event.logical_key {
+        Key::Named(NamedKey::Escape) => Some(false),
+        Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(true),
+        Key::Character(c) if c.eq_ignore_ascii_case("n") => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

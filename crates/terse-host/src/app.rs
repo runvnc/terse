@@ -17,13 +17,13 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::display::{Display, GlyphSource, RendererChoice};
 use crate::gamepad::Gamepads;
 use crate::glyphs::SystemGlyphs;
-use crate::keymap::{hid_usage, modifier_bits};
+use crate::keymap::{HOME_KEY, MAX_PASTE, hid_usage, modifier_bits, paste_chars, prompt_answer, swallow};
 use crate::page::{PageThread, PageWorker};
 use crate::selftest::SelfTest;
 use crate::soft::SoftScreens;
@@ -32,48 +32,6 @@ use crate::{FONT_PX, Looks, Program, fault_exit};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-/// The most pasted characters held for delivery.
-const MAX_PASTE: usize = 1 << 20;
-
-/// The host's home key (SPEC 12.4) when it runs a shell.
-const HOME_KEY: KeyCode = KeyCode::F12;
-
-/// The characters of pasted text the program receives: newlines (a CR LF
-/// pair or a lone CR counts as one) and no other control characters.
-pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
-    let mut prev = '\0';
-    text.chars().filter_map(move |c| {
-        let out = match c {
-            '\r' => Some('\n'),
-            '\n' if prev == '\r' => None,
-            '\n' => Some('\n'),
-            c if c.is_control() => None,
-            c => Some(c),
-        };
-        prev = c;
-        out
-    })
-}
-
-/// The answer a key press gives the consent prompt: Y yes; N or Esc no;
-/// any other key (Enter included) nothing.
-/// Notes that the release of the key `usage` is the host's, as its press
-/// was: once, however often the press auto-repeats, so that one release
-/// clears it and the key's next release reaches the program.
-fn swallow(swallowed: &mut Vec<u8>, usage: Option<u8>) {
-    if let Some(u) = usage.filter(|u| !swallowed.contains(u)) {
-        swallowed.push(u);
-    }
-}
-
-fn prompt_answer(event: &KeyEvent) -> Option<bool> {
-    match &event.logical_key {
-        Key::Named(NamedKey::Escape) => Some(false),
-        Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(true),
-        Key::Character(c) if c.eq_ignore_ascii_case("n") => Some(false),
-        _ => None,
-    }
-}
 
 /// Runs `program` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).

@@ -3,13 +3,17 @@
 //! both transports.
 
 /// Protocol version (DEVICES.md 1.1).
-pub const VERSION: u8 = 0;
-/// The longest message body.
+pub const VERSION: u8 = 1;
+/// The longest message (what follows its length).
 pub const MAX_MESSAGE: usize = 16 << 20;
+/// Bytes of a message's address: instance (u32), slot (u8), 3 reserved.
+pub const ADDRESS: usize = 8;
 
 pub mod msg {
     pub const HELLO: u8 = 0x01;
     pub const RESET: u8 = 0x02;
+    pub const OPEN: u8 = 0x03;
+    pub const CLOSE: u8 = 0x04;
     pub const CALL: u8 = 0x10;
     pub const BATCH: u8 = 0x11;
     pub const READ: u8 = 0x20;
@@ -17,6 +21,9 @@ pub mod msg {
     pub const END: u8 = 0x31;
     pub const STATE: u8 = 0x40;
     pub const RESTORE: u8 = 0x41;
+    pub const GET: u8 = 0x42;
+    pub const SET: u8 = 0x43;
+    pub const SERVICE: u8 = 0x44;
     pub const PRESENT: u8 = 0x50;
     pub const SHUTDOWN: u8 = 0x60;
     pub const ERROR: u8 = 0x7F;
@@ -38,24 +45,48 @@ pub mod hello_flags {
 /// event with its position: the machine's own (terse-core's `devices`).
 pub use terse_core::devices::{EVENT_PAIR, PosEvent, position};
 
-/// Transports (HELLO reply byte 4).
+/// Transports (HELLO reply byte 2).
 pub const TRANSPORT_SOCKET: u8 = 0;
 pub const TRANSPORT_SHM: u8 = 1;
 
-/// Where the RAM starts in the memory file (DEVICES.md 4.1).
+/// Where the RAM starts in a memory file (DEVICES.md 4.1).
 pub const MEMORY_RAM_OFFSET: usize = 131_072;
 
-/// A message being written: the 4-byte length is filled in by `finish`.
+/// Whom a message is for: a machine instance and one of the driver's
+/// slots (0: the instance as a whole; HELLO, BATCH and SHUTDOWN are the
+/// process's and have instance 0 and slot 0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Addr {
+    pub instance: u32,
+    pub slot: u8,
+}
+
+impl Addr {
+    pub const PROCESS: Addr = Addr { instance: 0, slot: 0 };
+
+    pub fn new(instance: u32, slot: u8) -> Self {
+        Addr { instance, slot }
+    }
+
+    /// The instance as a whole.
+    pub fn of(instance: u32) -> Self {
+        Addr { instance, slot: 0 }
+    }
+}
+
+/// A message being written: its length is filled in by `finish`.
 pub struct Writer<'a> {
     out: &'a mut Vec<u8>,
     start: usize,
 }
 
 impl<'a> Writer<'a> {
-    /// Starts a message of type `kind` at the end of `out`.
-    pub fn new(out: &'a mut Vec<u8>, kind: u8) -> Self {
+    /// Starts a message of type `kind` for `to` at the end of `out`.
+    pub fn new(out: &'a mut Vec<u8>, to: Addr, kind: u8) -> Self {
         let start = out.len();
-        out.extend_from_slice(&[0, 0, 0, 0, kind]);
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(&to.instance.to_le_bytes());
+        out.extend_from_slice(&[to.slot, 0, 0, 0, kind]);
         Writer { out, start }
     }
 
@@ -102,15 +133,6 @@ impl<'a> Writer<'a> {
     /// A u32 length and the bytes.
     pub fn blob(&mut self, b: &[u8]) -> &mut Self {
         self.u32(b.len() as u32).bytes(b)
-    }
-
-    /// Where the next byte goes (to patch a count later).
-    pub fn mark(&self) -> usize {
-        self.out.len()
-    }
-
-    pub fn patch_u32(&mut self, at: usize, v: u32) {
-        self.out[at..at + 4].copy_from_slice(&v.to_le_bytes());
     }
 
     pub fn finish(&mut self) {
@@ -182,6 +204,11 @@ impl<'a> Reader<'a> {
         self.take(n)
     }
 
+    /// A u16-length string, as UTF-8 (lossy).
+    pub fn string(&mut self) -> Result<String, Short> {
+        Ok(String::from_utf8_lossy(self.str()?).into_owned())
+    }
+
     pub fn blob(&mut self) -> Result<&'a [u8], Short> {
         let n = self.u32()? as usize;
         self.take(n)
@@ -198,8 +225,30 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Splits a packet (framed messages back to back) into message bodies.
-pub fn messages(packet: &[u8]) -> impl Iterator<Item = Result<&[u8], Short>> {
+/// A received message: whom it is for and its body (from the type byte).
+#[derive(Clone, Copy, Debug)]
+pub struct Msg<'a> {
+    pub to: Addr,
+    pub body: &'a [u8],
+}
+
+impl Msg<'_> {
+    pub fn kind(&self) -> u8 {
+        self.body.first().copied().unwrap_or(0)
+    }
+}
+
+/// A message's address and body, from what follows its length.
+pub fn split(m: &[u8]) -> Result<Msg<'_>, Short> {
+    if m.len() < ADDRESS + 1 {
+        return Err(Short);
+    }
+    let instance = u32::from_le_bytes(m[0..4].try_into().unwrap());
+    Ok(Msg { to: Addr { instance, slot: m[4] }, body: &m[ADDRESS..] })
+}
+
+/// Splits a packet (framed messages back to back) into messages.
+pub fn messages(packet: &[u8]) -> impl Iterator<Item = Result<Msg<'_>, Short>> {
     let mut at = 0;
     std::iter::from_fn(move || {
         if at >= packet.len() {
@@ -210,12 +259,12 @@ pub fn messages(packet: &[u8]) -> impl Iterator<Item = Result<&[u8], Short>> {
             return Some(Err(Short));
         };
         let n = u32::from_le_bytes(head.try_into().unwrap()) as usize;
-        let Some(body) = packet.get(at + 4..at + 4 + n) else {
+        let Some(m) = packet.get(at + 4..at + 4 + n) else {
             at = packet.len();
             return Some(Err(Short));
         };
         at += 4 + n;
-        Some(Ok(body))
+        Some(split(m))
     })
 }
 
@@ -499,42 +548,85 @@ pub mod z {
     pub const TERMINAL_CHARACTERS: u8 = 40;
 }
 
-/// Presentation property keys of the reference drivers.
+/// The properties of the reference drivers and the core (DEVICES.md 7.2):
+/// named per-machine values one end publishes and others subscribe to,
+/// carried by the core.
 pub mod property {
-    /// Slot 3: figures and filled shapes are drawn as outlines.
-    pub const OUTLINES: u8 = 1;
+    /// Published by the vector display: 1 if figures and filled shapes are
+    /// drawn as outlines (fill mode 1, or the phosphor style), else 0; the
+    /// page subscribes (SPEC 11.4).
+    pub const OUTLINES: &str = "vector.outlines";
+    /// Published by the 3D display: its list (SPEC 13), which the core
+    /// needs for device 8 and the shell's scene (SPEC 12.2–12.4).
+    pub const LIST3: &str = "vector3.list";
+    /// Published by the core: the eye (two f32, screen units from the
+    /// reference eye, SPEC 13.1).
+    pub const EYE: &str = "core.eye";
+    /// Published by the core for the 3D display of a machine whose scene
+    /// has Screens in effect (SPEC 12.3): which (u8) and the view (12 f64:
+    /// the linear part by rows, then the translation); empty otherwise.
+    pub const VIEW: &str = "core.view";
+    /// Published by the core: the line the terminal shows over its bottom
+    /// row when the machine has stopped with a fault or lost a device
+    /// (UTF-8; empty: none).
+    pub const STATUS: &str = "core.status";
+    /// Published by the content driver (instance 0): the consent question
+    /// waiting (DEVICES.md 7.2), empty if none.
+    pub const PROMPT: &str = "content.prompt";
+    /// Published by the core for the content driver (instance 0): the
+    /// user's answer to the question shown (1 allow, 0 refuse), with the
+    /// question's number.
+    pub const ANSWER: &str = "core.answer";
 }
 
-/// The device's HELLO reply, as a driver describes itself.
+/// The host services of the reference content driver (DEVICES.md 9).
+pub mod service {
+    pub const FETCH_IMAGE: &str = "image.fetch";
+    pub const FETCH_PROGRAM: &str = "program.fetch";
+    pub const SNAPSHOT_SAVE: &str = "snapshot.save";
+    pub const SNAPSHOT_LOAD: &str = "snapshot.load";
+    pub const SNAPSHOT_DELETE: &str = "snapshot.delete";
+    pub const SNAPSHOT_TABLE: &str = "snapshot.table";
+}
+
+/// One slot a driver gives (HELLO reply).
 #[derive(Clone, Debug, Default)]
-pub struct DeviceInfo {
+pub struct SlotInfo {
+    pub slot: u8,
     pub version: u8,
-    pub name: String,
-    pub native: (u16, u16),
     pub layers: Vec<LayerDecl>,
     pub table: Vec<CallEntry>,
 }
 
+/// The driver's HELLO reply, as a driver describes itself.
+#[derive(Clone, Debug, Default)]
+pub struct DeviceInfo {
+    pub name: String,
+    pub native: (u16, u16),
+    pub slots: Vec<SlotInfo>,
+    /// Properties it publishes and subscribes to (section 7.2).
+    pub publishes: Vec<String>,
+    pub subscribes: Vec<String>,
+    /// Host services it gives (section 9).
+    pub services: Vec<String>,
+}
+
 /// The HELLO a driver receives.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Hello {
-    pub slot: u8,
-    pub version: u8,
     pub flags: u32,
-    pub image_id: [u8; 32],
-    pub rom_len: u32,
-    pub ram_len: u32,
-    pub memory_path: String,
-    pub bus_path: String,
+    /// The slots the core asks this driver for.
+    pub slots: Vec<u8>,
     pub session_dir: String,
-    pub rom: Vec<u8>,
+    /// The driver's bus file (section 4.2); empty if shared memory is not
+    /// offered.
+    pub bus_path: String,
 }
 
 impl Hello {
     pub fn encode(&self, out: &mut Vec<u8>) {
-        let mut w = Writer::new(out, msg::HELLO);
-        w.u8(VERSION).u8(self.slot).u8(self.version).u32(self.flags).bytes(&self.image_id).u32(self.rom_len).u32(self.ram_len);
-        w.str(self.memory_path.as_bytes()).str(self.bus_path.as_bytes()).str(self.session_dir.as_bytes()).bytes(&self.rom);
+        let mut w = Writer::new(out, Addr::PROCESS, msg::HELLO);
+        w.u8(VERSION).u16(0).u32(self.flags).u8(self.slots.len() as u8).bytes(&self.slots).str(self.session_dir.as_bytes()).str(self.bus_path.as_bytes());
         w.finish();
     }
 
@@ -543,69 +635,152 @@ impl Hello {
         if r.u8()? != msg::HELLO {
             return Err("expected HELLO".into());
         }
-        if r.u8()? != VERSION {
-            return Err("protocol version".into());
+        let version = r.u8()?;
+        if version != VERSION {
+            return Err(format!("protocol version {version}, not {VERSION}"));
         }
-        let (slot, version, flags) = (r.u8()?, r.u8()?, r.u32()?);
-        let image_id = r.take(32)?.try_into().unwrap();
-        let (rom_len, ram_len) = (r.u32()?, r.u32()?);
-        let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        let memory_path = s(r.str()?);
-        let bus_path = s(r.str()?);
-        let session_dir = s(r.str()?);
-        let rom = r.take(rom_len as usize)?.to_vec();
-        Ok(Hello { slot, version, flags, image_id, rom_len, ram_len, memory_path, bus_path, session_dir, rom })
+        r.skip(2)?;
+        let flags = r.u32()?;
+        let n = r.u8()? as usize;
+        let slots = r.take(n)?.to_vec();
+        let session_dir = r.string()?;
+        let bus_path = r.string()?;
+        Ok(Hello { flags, slots, session_dir, bus_path })
     }
 }
 
+fn names(w: &mut Writer, v: &[String]) {
+    w.u8(v.len() as u8);
+    for s in v {
+        w.str(s.as_bytes());
+    }
+}
+
+fn read_names(r: &mut Reader) -> Result<Vec<String>, Short> {
+    let n = r.u8()?;
+    (0..n).map(|_| r.string()).collect()
+}
+
 impl DeviceInfo {
-    pub fn encode(&self, slot: u8, transport: u8, out: &mut Vec<u8>) {
-        let mut w = Writer::new(out, msg::HELLO | msg::REPLY);
-        w.u8(VERSION).u8(slot).u8(self.version).u8(transport).str(self.name.as_bytes());
-        w.u16(self.native.0).u16(self.native.1).u8(self.layers.len() as u8);
-        for l in &self.layers {
-            w.u8(l.id).u8(l.z);
+    pub fn encode(&self, transport: u8, out: &mut Vec<u8>) {
+        let mut w = Writer::new(out, Addr::PROCESS, msg::HELLO | msg::REPLY);
+        w.u8(VERSION).u8(transport).u8(0).str(self.name.as_bytes()).u16(self.native.0).u16(self.native.1);
+        w.u8(self.slots.len() as u8);
+        for s in &self.slots {
+            w.u8(s.slot).u8(s.version).u8(s.layers.len() as u8);
+            for l in &s.layers {
+                w.u8(l.id).u8(l.z);
+            }
+            w.u8(s.table.len() as u8);
+            let mut t = Vec::new();
+            for e in &s.table {
+                e.encode(&mut t);
+            }
+            w.bytes(&t);
         }
-        w.u8(self.table.len() as u8);
-        let mut t = Vec::new();
-        for e in &self.table {
-            e.encode(&mut t);
-        }
-        w.bytes(&t);
+        names(&mut w, &self.publishes);
+        names(&mut w, &self.subscribes);
+        names(&mut w, &self.services);
         w.finish();
     }
 
-    /// The reply's slot, transport and the device's description.
-    pub fn decode(body: &[u8]) -> Result<(u8, u8, DeviceInfo), String> {
+    /// The reply's transport and the driver's description.
+    pub fn decode(body: &[u8]) -> Result<(u8, DeviceInfo), String> {
         let mut r = Reader::new(body);
         match r.u8()? {
             t if t == msg::HELLO | msg::REPLY => {}
             msg::ERROR => return Err(String::from_utf8_lossy(r.rest()).into_owned()),
             t => return Err(format!("expected a HELLO reply, got message {t:02x}")),
         }
-        if r.u8()? != VERSION {
-            return Err("protocol version".into());
+        let version = r.u8()?;
+        if version != VERSION {
+            return Err(format!("protocol version {version}, not {VERSION}"));
         }
-        let (slot, version, transport) = (r.u8()?, r.u8()?, r.u8()?);
-        let name = String::from_utf8_lossy(r.str()?).into_owned();
+        let transport = r.u8()?;
+        r.skip(1)?;
+        let name = r.string()?;
         let native = (r.u16()?, r.u16()?);
-        let k = r.u8()?;
-        let mut layers = Vec::new();
-        for _ in 0..k {
-            layers.push(LayerDecl { id: r.u8()?, z: r.u8()? });
+        let n = r.u8()?;
+        let mut slots = Vec::new();
+        for _ in 0..n {
+            let (slot, version, k) = (r.u8()?, r.u8()?, r.u8()?);
+            let mut layers = Vec::new();
+            for _ in 0..k {
+                layers.push(LayerDecl { id: r.u8()?, z: r.u8()? });
+            }
+            let m = r.u8()?;
+            let mut table = Vec::new();
+            for _ in 0..m {
+                table.push(CallEntry::decode(r.take(ENTRY_BYTES)?)?);
+            }
+            slots.push(SlotInfo { slot, version, layers, table });
         }
-        let m = r.u8()?;
-        let mut table = Vec::new();
-        for _ in 0..m {
-            table.push(CallEntry::decode(r.take(ENTRY_BYTES)?)?);
-        }
-        Ok((slot, transport, DeviceInfo { version, name, native, layers, table }))
+        let publishes = read_names(&mut r)?;
+        let subscribes = read_names(&mut r)?;
+        let services = read_names(&mut r)?;
+        Ok((transport, DeviceInfo { name, native, slots, publishes, subscribes, services }))
     }
 }
 
-/// A CALL message (DEVICES.md 1.3).
-pub fn encode_call(out: &mut Vec<u8>, function: u8, args: &[u32; 6], budget: i64, buf: &[u8]) {
-    let mut w = Writer::new(out, msg::CALL);
+/// OPEN (DEVICES.md 1.2): a machine instance a driver now serves.
+#[derive(Clone, Debug, Default)]
+pub struct Open {
+    pub image_id: [u8; 32],
+    pub rom_len: u32,
+    pub ram_len: u32,
+    /// The instance's memory file (section 4.1); empty without shared
+    /// memory.
+    pub memory_path: String,
+    /// The driver's slots the image lists, with the versions it lists.
+    pub listed: Vec<(u8, u8)>,
+    /// The program's identity (SPEC 12.2): publisher and name.
+    pub identity: Option<([u8; 32], Vec<u8>)>,
+    pub rom: Vec<u8>,
+}
+
+impl Open {
+    pub fn lists(&self, slot: u8) -> bool {
+        self.listed.iter().any(|l| l.0 == slot)
+    }
+
+    pub fn encode(&self, instance: u32, out: &mut Vec<u8>) {
+        let mut w = Writer::new(out, Addr::of(instance), msg::OPEN);
+        w.u8(0).u16(0).bytes(&self.image_id).u32(self.rom_len).u32(self.ram_len).str(self.memory_path.as_bytes());
+        w.u8(self.listed.len() as u8);
+        for &(s, v) in &self.listed {
+            w.u8(s).u8(v);
+        }
+        match &self.identity {
+            Some((publisher, name)) => w.u8(1).bytes(publisher).str(name),
+            None => w.u8(0),
+        };
+        w.bytes(&self.rom);
+        w.finish();
+    }
+
+    pub fn decode(body: &[u8]) -> Result<Self, String> {
+        let mut r = Reader::new(body);
+        r.skip(4)?;
+        let image_id = r.take(32)?.try_into().unwrap();
+        let (rom_len, ram_len) = (r.u32()?, r.u32()?);
+        let memory_path = r.string()?;
+        let n = r.u8()?;
+        let mut listed = Vec::new();
+        for _ in 0..n {
+            listed.push((r.u8()?, r.u8()?));
+        }
+        let identity = match r.u8()? {
+            0 => None,
+            _ => Some((r.take(32)?.try_into().unwrap(), r.str()?.to_vec())),
+        };
+        let rom = r.take(rom_len as usize)?.to_vec();
+        Ok(Open { image_id, rom_len, ram_len, memory_path, listed, identity, rom })
+    }
+}
+
+/// A CALL message (DEVICES.md 1.4).
+pub fn encode_call(out: &mut Vec<u8>, to: Addr, function: u8, args: &[u32; 6], budget: i64, buf: &[u8]) {
+    let mut w = Writer::new(out, to, msg::CALL);
     w.u8(function).u16(0);
     for a in args {
         w.u32(*a);
@@ -677,28 +852,44 @@ mod tests {
     }
 
     #[test]
-    fn hello_and_info_round_trip() {
-        let h = Hello {
-            slot: 2,
-            version: 0,
-            flags: hello_flags::SHM,
+    fn hello_open_and_info_round_trip() {
+        let h = Hello { flags: hello_flags::SHM, slots: vec![3, 9], session_dir: "/s".into(), bus_path: "/b".into() };
+        let mut out = Vec::new();
+        h.encode(&mut out);
+        let m: Vec<Msg> = messages(&out).map(Result::unwrap).collect();
+        assert_eq!(m[0].to, Addr::PROCESS);
+        let back = Hello::decode(m[0].body).unwrap();
+        assert_eq!((back.flags, back.slots, back.session_dir), (hello_flags::SHM, vec![3, 9], "/s".to_string()));
+        let open = Open {
             image_id: [7; 32],
             rom_len: 3,
             ram_len: 8192,
             memory_path: "/m".into(),
-            bus_path: "/b".into(),
-            session_dir: "/s".into(),
+            listed: vec![(9, 0)],
+            identity: Some(([1; 32], b"holo".to_vec())),
             rom: vec![1, 2, 3],
         };
         let mut out = Vec::new();
-        h.encode(&mut out);
-        let body: Vec<&[u8]> = messages(&out).map(Result::unwrap).collect();
-        let back = Hello::decode(body[0]).unwrap();
-        assert_eq!((back.slot, back.rom, back.memory_path), (2, vec![1, 2, 3], "/m".to_string()));
-        let info = DeviceInfo { version: 0, name: "t".into(), native: (640, 480), layers: vec![LayerDecl { id: 0, z: 10 }], table: vec![CallEntry::plain(3).sets_a1()] };
+        open.encode(5, &mut out);
+        let m = split(&out[4..]).unwrap();
+        assert_eq!(m.to, Addr::of(5));
+        let back = Open::decode(m.body).unwrap();
+        assert_eq!((back.rom, back.listed, back.identity, back.memory_path), (vec![1, 2, 3], vec![(9, 0)], open.identity, "/m".to_string()));
+        let info = DeviceInfo {
+            name: "t".into(),
+            native: (640, 480),
+            slots: vec![
+                SlotInfo { slot: 3, version: 0, layers: vec![LayerDecl { id: 0, z: 30 }], table: vec![CallEntry::plain(3).sets_a1()] },
+                SlotInfo { slot: 9, version: 0, layers: vec![LayerDecl { id: 0, z: 35 }], table: vec![] },
+            ],
+            publishes: vec![property::OUTLINES.into(), property::LIST3.into()],
+            subscribes: vec![property::EYE.into()],
+            services: vec![],
+        };
         let mut out = Vec::new();
-        info.encode(2, TRANSPORT_SHM, &mut out);
-        let (slot, transport, d) = DeviceInfo::decode(&out[4..]).unwrap();
-        assert_eq!((slot, transport, d.native, d.layers, d.table), (2, TRANSPORT_SHM, (640, 480), info.layers, info.table));
+        info.encode(TRANSPORT_SHM, &mut out);
+        let (transport, d) = DeviceInfo::decode(split(&out[4..]).unwrap().body).unwrap();
+        assert_eq!((transport, d.native, d.slots.len(), d.slots[1].layers[0].z), (TRANSPORT_SHM, (640, 480), 2, 35));
+        assert_eq!((d.publishes, d.subscribes), (info.publishes, info.subscribes));
     }
 }
