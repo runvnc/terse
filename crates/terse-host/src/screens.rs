@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use terse_core::{Machine, SCREEN_WIDTH, System};
+use terse_core::{Machine, System};
 use terse_net::Prompt;
 
+use crate::display::{Display, ShownPrompt, picture_rect, system_rect};
 use crate::page::HostLayout;
 use crate::renderer::Renderer;
 use crate::{consent, displayed_terminal};
@@ -74,10 +75,7 @@ impl Screens {
             // The shell's screen fills the window (at 4:3), with glyphs
             // rasterised for that size, rather than the largest whole
             // multiple of the native grid.
-            let (vw, vh) = (viewport.0 as f32, viewport.1 as f32);
-            let scale = (vw / 640.0).min(vh / 480.0);
-            let (w, h) = ((640.0 * scale).floor(), (480.0 * scale).floor());
-            self.shell.set_rect(device, Some((((vw - w) / 2.0).floor(), ((vh - h) / 2.0).floor(), w, h)));
+            self.shell.set_rect(device, Some(system_rect(viewport)));
         }
         let shown = displayed_terminal(shell);
         match &prompt {
@@ -107,17 +105,12 @@ impl Screens {
         }
 
         // The children's pictures, in the shell's units, to pixels.
-        let (ox, oy, w, _) = self.shell.screen_rect(viewport);
-        let scale = w / SCREEN_WIDTH as f32;
+        let shell_rect = self.shell.screen_rect(viewport);
         let mut keep = Vec::new();
         for (h, p) in system.pictures() {
             let Some(child) = system.child(h) else { continue };
             let Some(machine) = &child.machine else { continue };
-            let x0 = (ox + p.x as f32 * scale).round();
-            let y0 = (oy + p.y as f32 * scale).round();
-            let x1 = (ox + (p.x + p.w) as f32 * scale).round();
-            let y1 = (oy + (p.y + p.h) as f32 * scale).round();
-            let rect = (x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0));
+            let rect = picture_rect(shell_rect, p);
             let fresh = !self.children.contains_key(&child.serial);
             let (no_trails, force, animate) = (self.no_trails, self.force_phosphor, self.animate_page);
             let (format, shell_r) = (self.format, &self.shell);
@@ -178,4 +171,135 @@ fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option
     r.update_vectors(queue, machine.vector());
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));
     r.update_page(machine.page(), layout);
+}
+
+/// The GPU renderer as a [`Display`]: the screens with their device, and an
+/// offscreen target for screenshots and timing.
+pub struct GpuDisplay {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub screens: Screens,
+    format: wgpu::TextureFormat,
+    adapter: String,
+    offscreen: Option<((u32, u32), wgpu::Texture)>,
+}
+
+impl GpuDisplay {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, screens: Screens, format: wgpu::TextureFormat, adapter: String) -> Self {
+        GpuDisplay { device, queue, screens, format, adapter, offscreen: None }
+    }
+
+    /// Renders into an offscreen texture of `viewport` pixels (made once
+    /// per size) and returns it.
+    fn render_target(&mut self, viewport: (u32, u32)) -> wgpu::Texture {
+        if self.offscreen.as_ref().is_none_or(|(size, _)| *size != viewport) {
+            let target = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("offscreen"),
+                size: wgpu::Extent3d { width: viewport.0, height: viewport.1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            self.offscreen = Some((viewport, target));
+        }
+        self.offscreen.as_ref().unwrap().1.clone()
+    }
+}
+
+impl Display for GpuDisplay {
+    fn update(
+        &mut self,
+        system: &System,
+        viewport: (u32, u32),
+        ran: &[u32],
+        layout: &dyn Fn(u32) -> Option<Arc<HostLayout>>,
+        prompt: ShownPrompt,
+    ) {
+        self.screens.update(&self.device, &self.queue, system, viewport, ran, layout, prompt);
+    }
+
+    fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {
+        self.screens.set_no_trails(no_trails);
+        self.screens.set_force_phosphor(force_phosphor);
+        self.screens.set_page_animation(animate_page);
+    }
+
+    fn refresh_beams(&mut self, viewport: (u32, u32)) {
+        self.screens.refresh_beams(&self.device, &self.queue, viewport);
+    }
+
+    fn fade_shell(&mut self, viewport: (u32, u32)) {
+        self.screens.shell.accumulate(&self.device, &self.queue, viewport);
+    }
+
+    fn shell_phosphor(&self) -> bool {
+        self.screens.shell.phosphor()
+    }
+
+    fn anchor(&self, serial: u32, x: u16, y: u16) -> u16 {
+        self.screens.anchor(serial, x, y)
+    }
+
+    fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16) {
+        self.screens.shell.screen_pos(viewport, x, y)
+    }
+
+    fn row_height(&self, viewport: (u32, u32)) -> f64 {
+        self.screens.shell.row_height(viewport)
+    }
+
+    fn take_page_figure_log(&mut self) -> Vec<String> {
+        self.screens.shell.take_page_figure_log()
+    }
+
+    fn snapshot(&mut self, viewport: (u32, u32)) -> Result<Vec<u8>, String> {
+        let (width, height) = viewport;
+        let target = self.render_target(viewport);
+        let row_bytes = width * 4;
+        let padded = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (padded * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.screens.render(&self.device, &self.queue, &mut encoder, &view, viewport);
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: None },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |r| r.expect("map readback buffer"));
+        self.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
+        Ok(mapped.chunks(padded as usize).flat_map(|row| &row[..row_bytes as usize]).copied().collect())
+    }
+
+    fn render_offscreen(&mut self, viewport: (u32, u32)) -> Result<(), String> {
+        let target = self.render_target(viewport);
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.screens.render(&self.device, &self.queue, &mut encoder, &view, viewport);
+        self.queue.submit([encoder.finish()]);
+        self.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn grid_size(&self) -> (u32, u32) {
+        self.screens.shell.grid_size()
+    }
+
+    fn name(&self) -> String {
+        format!("gpu, {}", self.adapter)
+    }
 }

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use fontdb::{Database, Family, ID, Query, Source, Style, Weight};
 use fontdue::{Font, FontSettings};
 
-use crate::renderer::GlyphSource;
+use crate::display::GlyphSource;
 
 /// Glyphs at one size. Copies at other sizes (`resized`, one per machine
 /// screen) share the fonts and what was learned about them.

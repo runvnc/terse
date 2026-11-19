@@ -19,14 +19,9 @@
 //! renderer blurs the light for the bloom and composites the textures.
 
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
-use terse_core::vector::{MAX_LIST, decode, decode_outlines};
 
+pub use crate::display::{MAX_PRIMITIVES, decode_shapes};
 use crate::phosphor::{self, DEPOSIT_BUDGET, Deposit, FAST_DECAY};
-
-/// Most primitives a list can give: a rectangle command is 5 bytes and four
-/// outline lines in the phosphor style (otherwise a 3-byte circle or disc
-/// is the densest).
-pub const MAX_PRIMITIVES: usize = MAX_LIST / 5 * 4 + 4;
 
 /// Format of the phosphor texture: linear light, unclamped, so long trails
 /// fade smoothly and overlaps can exceed 1 (shown white-hot).
@@ -310,17 +305,6 @@ fn instance(p: &Primitive, deposit: [f32; 2], dwell: u32, out: &mut Vec<u8>) {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&rgba);
-}
-
-/// The primitives the host draws for `list`: its outlines
-/// (`decode_outlines`) or its primitives with the fill cap (`decode`).
-pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
-    out.clear();
-    if outlines {
-        out.extend(decode_outlines(list).take(MAX_PRIMITIVES));
-    } else {
-        out.extend(decode(list).take(MAX_PRIMITIVES));
-    }
 }
 
 /// The phosphor textures of one machine frame (all [`PHOSPHOR_FORMAT`],
@@ -709,16 +693,5 @@ mod tests {
         out.clear();
         instance(&Primitive::Line { x0: 0, y0: 0, x1: 1, y1: 1, width: 3, rgba: [0; 4] }, [0.0; 2], 0x21, &mut out);
         assert_eq!(&out[0..4], &(KIND_LINE | 0x21 << 8).to_le_bytes());
-    }
-
-    /// The densest lists fit the instance buffer: all rectangles in the
-    /// phosphor style (4 lines per 5 bytes), all discs otherwise.
-    #[test]
-    fn densest_lists_fit() {
-        let rects: Vec<u8> = [8u8, 1, 0, 1, 0].iter().copied().cycle().take(MAX_LIST).collect();
-        assert_eq!(decode_outlines(&rects).count(), MAX_LIST / 5 * 4);
-        let discs: Vec<u8> = [7u8, 1, 0].iter().copied().cycle().take(MAX_LIST).collect();
-        assert_eq!(decode(&discs).count(), MAX_LIST / 3);
-        assert!(MAX_LIST / 5 * 4 <= MAX_PRIMITIVES && MAX_LIST / 3 <= MAX_PRIMITIVES);
     }
 }

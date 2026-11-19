@@ -110,7 +110,7 @@ pub const SUBSTEPS: u32 = 4;
 pub const MAX_SUBSTEPS: u32 = 16;
 pub const SMEAR_SPACING: i32 = 16;
 /// Most deposit instances in one frame.
-pub const DEPOSIT_BUDGET: usize = crate::vectors::MAX_PRIMITIVES * SUBSTEPS as usize;
+pub const DEPOSIT_BUDGET: usize = crate::display::MAX_PRIMITIVES * SUBSTEPS as usize;
 /// A shape that jumped further than this between frames (in sixteenths of
 /// a screen unit, on either axis: 40 units) is not smeared; it teleported.
 pub const MAX_SMEAR: i32 = 40 * 16;
@@ -134,6 +134,7 @@ pub fn slow_decay(persistence: u8) -> f32 {
 }
 
 /// The constants as WGSL declarations, prepended to the shaders.
+#[cfg(feature = "gpu")]
 pub fn wgsl() -> String {
     let consts = [
         ("CORE_WIDTH", CORE_WIDTH),

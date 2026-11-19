@@ -233,6 +233,11 @@ phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 `--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
 `--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
+Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
+(wgpu) or by the CPU (see [Software renderer](#software-renderer)); `auto`, the
+default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
+`--threads <n>` sets the software renderer's drawing threads (default one per core)
+and `--bloom full|half|auto` the resolution of its phosphor bloom.
 `--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo]`
 (with no image or `--shell [<image>]`: the shell and its machines) runs
 headless like `terse run` (relay only with `--relay`; consent `deny` unless given; with
@@ -245,6 +250,11 @@ afterglow is built up over the last 600 frames, as in the window.
 (default 200) in the window with vsync, with only the scripted input (default: the
 image's file name with `.events`, if it exists; keyboard, mouse and gamepads are
 ignored), and prints timings: see [Conformance image](#conformance-image).
+`--bench-render [<image|id> | --shell [<image>]] --frames N [--warmup N] [--size <W>x<H>] [--events <file>] [--renderer gpu|software] [--threads n]`
+runs headless like `--screenshot` but with the page's scroll animated as in a window,
+draws every frame offscreen and prints the drawing time per frame (p50, p99, max,
+mean, frames over 16.7 ms) over the N frames after the warm-up (default 60); a GPU
+frame is timed until the GPU has finished it. It opens no window.
 
 `terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws://host:port>]...`
 serves a blob store and feeds over WebSocket (NETWORK.md sections 3, 4.3 and 4.7), one
@@ -386,10 +396,12 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
                          shell.rs, conform.rs)
-    crates/terse-host/   `terse-host`: winit + wgpu window; renderer.rs is the
-                         window-independent renderer of one screen (terminal, vectors.rs's
-                         shapes, the phosphor tube: SPEC 10.5, 10.6, and the host's overlay);
-                         screens.rs draws a system's screens together (SPEC 12.3); page.rs
+    crates/terse-host/   `terse-host`: winit window, drawn by the GPU or the CPU behind
+                         display.rs's Display trait; renderer.rs is the wgpu renderer of
+                         one screen (terminal, vectors.rs's shapes, the phosphor tube:
+                         SPEC 10.5, 10.6, and the host's overlay); screens.rs draws a
+                         system's screens together (SPEC 12.3); soft/ is the software
+                         renderer of the same picture (see Software renderer); page.rs
                          lays the page out with cosmic-text on a worker thread and draws
                          it; consent.rs the consent prompt; setup.rs the relay choice and
                          --demo, whose articles are in demo/
@@ -1177,6 +1189,76 @@ phase), 200 frames in the window: emulation p50 0.13 ms, p99 0.88 ms; render-sub
 p50 1.05 ms, p99 11.9 ms, the same one-time 1.06 s for the CJK fonts (before the
 page device: p50 1.02 ms, p99 9.2 ms); 199 of 200 frames presented. Nothing passes
 or fails on these numbers.
+
+## Software renderer
+
+`terse-host --renderer software` (or `auto` on a machine without a hardware
+graphics adapter) draws the same picture as the GPU renderer, on the CPU, into a
+buffer of XRGB8888 pixels (`0x00RRGGBB` words, what softbuffer and DRM dumb buffers
+take): the shell's screen, each machine's picture scaled into its tile, the
+consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind the
+`Display` trait both renderers implement (`display.rs`).
+
+- **What it draws.** Every layer of SPEC 10.5 with the GPU shaders' arithmetic:
+  cell backgrounds; the page (background, glyphs rendered with swash at whole-pixel
+  positions, rules, figures rasterised with tiny-skia, scrolled and clipped); the
+  vector display (lines, circle outlines and discs by their distance from the pixel
+  centre with a one-pixel edge, rectangles and triangles by pixel centres; fill mode
+  1 as outlines); the glyphs (wide and colour ones) and the cursor; the host's
+  overlay over everything. Cells, glyph pixels and screen pixels map through tables
+  computed with the shader's formula, so a glyph lands on the pixels it does on the
+  GPU.
+- **The phosphor style** follows `phosphor.rs` pass by pass in linear float RGB:
+  glyph light with its halo, the page and shapes as additive beam (core, halo,
+  vertex dwell), the afterglow's two components faded and deposited with `max`
+  (with the smear of moving shapes), the whitened light blurred into the bloom,
+  then spill, tone curve and sRGB. Differences from the GPU: the glyph halo is
+  sampled at whole-pixel offsets, the halo profile comes from a 1,024-step table,
+  sRGB from a 4,096-step table, floats are 32-bit (the GPU's are 16-bit), and from
+  1,200 pixels wide (`--bloom auto`) the bloom is computed at half resolution: the
+  light averaged over 2 × 2 pixels, blurred with half the radius less the spread
+  the averaging and the bilinear upsampling add, sampled back bilinearly (an eighth
+  of the blur's work; `--bloom full` computes it as the GPU does).
+- **Only what changed is drawn.** Each screen keeps an image of its pixels and
+  compares what it shows with what it drew: cells whose glyph or colours changed,
+  the cursor's old and new cells, the page's rectangle when it scrolled or its
+  layout, figures or background changed, the boxes of shapes that changed; the
+  damage is kept in 32-pixel tiles and drawn again from scratch there, cell by cell
+  (a blank cell is a fill). The frame is then put together where anything changed
+  (shell, pictures in handle order, prompt), and the damaged rectangles go to the
+  presenter. A phosphor screen keeps, per row and buffer, a mask of the 16-pixel
+  blocks where light may be, so dark parts of the tube cost nothing.
+- **Threads.** Tile rows (and bands of 16 rows of the tube) are drawn on a rayon
+  pool; `--threads n` sets its size (default one per core; 1 draws on the calling
+  thread). There is no `unsafe` code: the inner loops are written to vectorise.
+- **Presenting.** In a window the frame is copied into a softbuffer surface, only
+  the damage when the buffer handed back still holds a recent frame. This path has
+  not been tried in a live window yet. `soft::FrameSink` is where the bootable
+  image's KMS/DRM output is to plug in.
+- **Without the GPU and the window.** `cargo build --release -p terse-host
+  --no-default-features` leaves out wgpu and winit (features `gpu` and `window`):
+  the result has `--screenshot` and `--bench-render` with the software renderer and
+  no window yet.
+- **Tests.** `cargo test -p terse-host` checks that a screen drawn bit by bit
+  equals one drawn from scratch, that the phosphor afterglow fades to black, the
+  shapes' row spans against brute force, and six scripted scenes against pictures in
+  `crates/terse-host/tests/reference/` (400 × 300, made with the DejaVu fonts; at
+  most 0.5% of pixels may differ by more than 8/255).
+
+Drawing time per frame, p50 in ms (`--bench-render`, i7-10750H, 600 frames after
+the warm-up; software with one thread and with all twelve; GPU: RTX 2060, timed
+until the GPU is done). A single machine is shown at a whole multiple of its
+native 880 × 660 grid, so at 1320 × 990 it is drawn at 880 × 660 and at
+1920 × 1440 at 1760 × 1320; the shell fills the window.
+
+| Scene | 880 × 660: 1 / 12 threads / GPU | 1320 × 990 | 1920 × 1440 |
+|---|---|---|---|
+| hello, idle but for its frame counter | 0.13 / 0.20 / 0.21 | 0.13 / 0.17 / 0.25 | 0.14 / 0.17 / 0.53 |
+| reader, an article scrolling all the time | 1.29 / 0.58 / 0.36 | 1.23 / 0.47 / 0.42 | 3.79 / 1.27 / 0.56 |
+| sparks | 0.18 / 0.14 / 0.20 | 0.18 / 0.11 / 0.26 | 0.36 / 0.17 / 0.36 |
+| sparks, phosphor | 6.84 / 1.62 / 0.82 | 6.68 / 1.84 / 0.84 | 20.9 / 6.41 / 3.72 |
+| shell: reader scrolling, sparks phosphor, hello, sparks | 2.00 / 0.83 / 0.74 | 3.00 / 1.18 / 0.84 | 5.62 / 1.98 / 1.06 |
+| reader scrolling with `--force-phosphor` (a screen of glowing text) | 16.5 / 4.58 / 0.99 | 16.1 / 4.77 / 1.02 | 54.3 / 15.2 / 4.29 |
 
 ## Measurements
 

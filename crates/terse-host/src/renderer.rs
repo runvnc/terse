@@ -30,27 +30,14 @@ use std::collections::HashMap;
 
 use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
+pub use crate::display::GlyphSource;
+use crate::display::{grid_rect, outlined, screen_pos};
 use crate::page::{HostLayout, PageLayer};
 use crate::phosphor;
 use crate::vectors::{PHOSPHOR_FORMAT, PhosphorTargets, VectorLayer};
 
 /// Format of the offscreen layer of backgrounds and shapes.
 const LAYER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-
-/// Supplies glyph coverage bitmaps, one or two terminal cells in size.
-pub trait GlyphSource {
-    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC 5.4:
-    /// square screen units); the renderer shows the grid at 4:3 regardless,
-    /// so glyphs from a cell of another shape are stretched.
-    fn cell_size(&self) -> (u32, u32);
-    /// Writes the coverage of `ch` spanning `cells` cells (1, or 2 for a wide
-    /// character) into `out` (`cells * width * height` bytes, row major,
-    /// already zeroed). Unknown characters may be left blank.
-    fn rasterize(&mut self, ch: char, cells: u32, out: &mut [u8]);
-    /// The same glyphs for a cell `width` pixels wide (and twice as high),
-    /// for a screen shown smaller or larger than the native size.
-    fn resized(&self, width: u32) -> Box<dyn GlyphSource>;
-}
 
 const ATLAS_COLS: u32 = 64;
 const ATLAS_ROWS: u32 = 64;
@@ -338,27 +325,6 @@ struct Atlas {
     next: usize,
 }
 
-/// The grid rectangle (x, y, width, height) inside a viewport: the largest
-/// integer multiple of the native size `grid` that fits, or a scaled-down fit,
-/// centred. The scale is the same on both axes, so a 4:3 `grid` stays 4:3.
-fn grid_rect(grid: (u32, u32), viewport: (u32, u32)) -> (f32, f32, f32, f32) {
-    let (gw, gh) = grid;
-    let fit = (viewport.0 as f32 / gw as f32).min(viewport.1 as f32 / gh as f32);
-    let scale = if fit >= 1.0 { fit.floor() } else { fit };
-    let (w, h) = (gw as f32 * scale, gh as f32 * scale);
-    (((viewport.0 as f32 - w) / 2.0).floor(), ((viewport.1 as f32 - h) / 2.0).floor(), w, h)
-}
-
-/// A viewport position in screen units, given the grid rectangle: the grid
-/// spans exactly the 640 × 480 screen.
-fn screen_pos(rect: (f32, f32, f32, f32), x: f64, y: f64) -> (u16, u16) {
-    let (ox, oy, w, h) = rect;
-    let unit = |p: f64, origin: f32, size: f32, units: u16| {
-        ((p as f32 - origin) / size * units as f32).floor().clamp(0.0, (units - 1) as f32) as u16
-    };
-    (unit(x, ox, w, SCREEN_WIDTH), unit(y, oy, h, SCREEN_HEIGHT))
-}
-
 /// The shader module `label` for `device`, compiled from `source` the first
 /// time: every machine's screen has a renderer of its own (SPEC 12.3), and
 /// they share their shaders.
@@ -375,13 +341,6 @@ pub fn shader_module(device: &wgpu::Device, label: &'static str, source: impl Fn
             })
         })
         .clone()
-}
-
-/// Whether the list is drawn as outlines: in the phosphor presentation
-/// (`phosphor`, which may be forced), or as `Vector::outlined` says (fill
-/// off in the clean style).
-fn outlined(phosphor: bool, vector: Option<&Vector>) -> bool {
-    phosphor || vector.is_some_and(Vector::outlined)
 }
 
 pub struct Renderer {
@@ -1186,82 +1145,5 @@ impl Renderer {
         pass.set_bind_group(0, group, &[]);
         pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.draw(0..3, 0..1);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The renderer uploads exactly what `Vector::shapes` gives: outlines in
-    /// the phosphor style or with fill off, the capped list otherwise; and
-    /// outlines when the phosphor presentation is forced.
-    #[test]
-    fn draws_what_the_device_says() {
-        use crate::vectors::decode_shapes;
-        // A disc, a rectangle and a triangle.
-        let list = [
-            &[0x04, 0, 1, 0, 1][..],
-            &[0x07, 64, 0],
-            &[0x08, 0, 2, 0, 2],
-            &[0x09, 0, 3, 0, 3, 0, 4, 0, 1],
-        ]
-        .concat();
-        for (style, fill) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-            let mut v = Vector::default();
-            assert_eq!(v.submit(&list), 0);
-            v.set_style(style);
-            v.set_fill(fill);
-            let mut drawn = Vec::new();
-            decode_shapes(v.list(), outlined(v.phosphor(), Some(&v)), &mut drawn);
-            assert_eq!(drawn, v.shapes().collect::<Vec<_>>(), "style {style} fill {fill}");
-            let filled = drawn.iter().any(|p| !matches!(p, terse_core::Primitive::Line { .. } | terse_core::Primitive::Circle { .. }));
-            assert_eq!(filled, style == 0 && fill == 0, "style {style} fill {fill}");
-            decode_shapes(v.list(), outlined(true, Some(&v)), &mut drawn);
-            assert_eq!(drawn, terse_core::vector::decode_outlines(v.list()).collect::<Vec<_>>());
-        }
-        assert!(!outlined(false, None) && outlined(true, None));
-    }
-
-    #[test]
-    fn viewport_to_screen_units() {
-        // A 10 × 20 px cell grid (800 × 600) shown at 2x in a 1700 × 1300
-        // viewport: offset (50, 50), 1600 × 1200.
-        let rect = grid_rect((800, 600), (1700, 1300));
-        assert_eq!(rect, (50.0, 50.0, 1600.0, 1200.0));
-        assert_eq!(screen_pos(rect, 50.0, 50.0), (0, 0));
-        assert_eq!(screen_pos(rect, 1649.9, 1249.9), (639, 479));
-        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC 5.4).
-        assert_eq!(screen_pos(rect, 50.0 + 3.0 * 20.0, 50.0 + 2.0 * 40.0), (24, 32));
-        // Outside the grid: clamped.
-        assert_eq!(screen_pos(rect, 0.0, 2000.0), (0, 479));
-        assert_eq!(screen_pos(rect, 1699.0, -5.0), (639, 0));
-        // Scaled down to fit.
-        let rect = grid_rect((800, 600), (400, 600));
-        assert_eq!(rect, (0.0, 150.0, 400.0, 300.0));
-        assert_eq!(screen_pos(rect, 200.0, 300.0), (320, 240));
-    }
-
-    /// Whatever the window's shape, the grid is 4:3 and centred, so a screen
-    /// unit is as wide as it is high (SPEC 5.4), and the pointer maps back
-    /// through the same rectangle.
-    #[test]
-    fn grid_stays_four_by_three() {
-        let native = (880, 660); // 11 x 22 pixel cells
-        for viewport in [(880, 660), (1920, 1080), (1000, 2000), (300, 200), (1761, 1321), (881, 1500)] {
-            let (x, y, w, h) = grid_rect(native, viewport);
-            assert!((w / h - 4.0 / 3.0).abs() < 1e-6, "{viewport:?}: {w} x {h}");
-            assert!(w <= viewport.0 as f32 && h <= viewport.1 as f32, "{viewport:?}");
-            // Centred (the offset is a whole pixel, the size need not be).
-            assert!((x - (viewport.0 as f32 - w - x)).abs() < 2.0, "{viewport:?}");
-            assert!((y - (viewport.1 as f32 - h - y)).abs() < 2.0, "{viewport:?}");
-            // One screen unit is the same size on both axes.
-            assert!((w / 640.0 - h / 480.0).abs() < 1e-4);
-            // The centre of the window is the centre of the screen.
-            let c = screen_pos((x, y, w, h), viewport.0 as f64 / 2.0, viewport.1 as f64 / 2.0);
-            assert!(c.0.abs_diff(320) <= 1 && c.1.abs_diff(240) <= 1, "{viewport:?}: {c:?}");
-        }
-        assert_eq!(grid_rect(native, (1920, 1080)), (520.0, 210.0, 880.0, 660.0));
-        assert_eq!(grid_rect(native, (1760, 1400)), (0.0, 40.0, 1760.0, 1320.0));
     }
 }
