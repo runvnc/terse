@@ -52,6 +52,8 @@ fn looks() -> Option<Looks> {
         renderer: RendererChoice::Software,
         threads: 2,
         bloom: crate::soft::BloomRes::Auto,
+        eye: (0.0, 0.0),
+        parallax: false,
     })
 }
 
@@ -166,13 +168,23 @@ fn sparks_outlines() {
     check("sparks-outlines", Some(SPARKS), &events, 300, Consent::Deny);
 }
 
+const HOLO: &[u8] = include_bytes!("../../../programs/holo/holo.terse");
+
+/// The 3D vector display (device 9) in the phosphor style: the projected
+/// segments as beam with the depth cue, the vertex dwell and the smear of
+/// turning models; labels on the glass.
+#[test]
+fn holo_phosphor() {
+    check("holo-phosphor", Some(HOLO), "2 press p\n", 90, Consent::Deny);
+}
+
 /// The shell with four machines tiled (one in the phosphor style), each
 /// scaled into its picture with glyphs for its size.
 #[test]
 fn shell_four_machines() {
-    let events = "5 press enter\n30 press down\n32 press down\n34 press down\n36 press enter\n45 home\n46 press up\n47 press up\n\
-                  48 press up\n49 press up\n50 press enter\n75 press p\n77 press enter\n85 home\n86 press up\n87 press up\n88 press up\n89 press enter\n\
-                  110 home\n111 press up\n112 press up\n113 press up\n114 press up\n115 press up\n116 press up\n117 press enter\n\
+    let events = "5 press enter\n30 press down\n32 press down\n34 press down\n36 press enter\n45 home\n46 press up\n46 press up\n47 press up\n\
+                  48 press up\n49 press up\n50 press enter\n75 press p\n77 press enter\n85 home\n86 press up\n86 press up\n87 press up\n88 press up\n89 press enter\n\
+                  110 home\n111 press up\n111 press up\n112 press up\n113 press up\n114 press up\n115 press up\n116 press up\n117 press enter\n\
                   140 press enter\n150 home\n151 press 1\n152 press esc\n160 press pagedown\n";
     check("shell-four", None, events, 200, Consent::Deny);
 }

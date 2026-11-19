@@ -11,6 +11,7 @@ use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
 use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
 use crate::vector::Vector;
+use crate::vector3::Vector3;
 
 /// Leading domain string of the state serialization (STATE.md).
 pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
@@ -18,7 +19,7 @@ pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
 /// Budget units added each frame (SPEC 1.4). Provisional.
 pub const BUDGET_PER_FRAME: i64 = 125_000;
 
-/// The charges of SPEC 13, in budget units. Provisional.
+/// The charges of SPEC 14, in budget units. Provisional.
 pub mod charge {
     /// Every call, on top of the `ecall` instruction itself.
     pub const CALL: u32 = 4;
@@ -100,6 +101,11 @@ pub mod call {
     pub const PAGE_SCROLL: u32 = 0x703;
     pub const PAGE_BACKGROUND: u32 = 0x704;
     pub const PAGE_LOCATE: u32 = 0x705;
+
+    pub const V3_SUBMIT: u32 = 0x900;
+    pub const V3_CLEAR: u32 = 0x901;
+    pub const V3_STYLE: u32 = 0x902;
+    pub const V3_PERSISTENCE: u32 = 0x903;
 }
 
 /// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
@@ -171,7 +177,13 @@ pub struct Machine {
     ram: Vec<u8>,
     system: System,
     terminal: Option<Terminal>,
+    /// Device 3; also there (for the style and persistence it shares with
+    /// device 9, SPEC 13.2) when the image lists only device 9.
     vector: Option<Vector>,
+    /// The image lists device 3: its calls are answered.
+    lists_vector: bool,
+    /// Device 9 (SPEC 13).
+    vector3: Option<Vector3>,
     content: Option<Content>,
     page: Option<Page>,
     /// Device 8, only for the shell (SPEC 12.1).
@@ -197,7 +209,7 @@ pub struct Machine {
     /// whether the shell has been told of it (SPEC 4). Not machine state.
     open_request: Option<([u8; crate::machines::REQUEST_BYTES], bool)>,
     /// The blob ID the shell gave the machine before its first frame
-    /// (STATE.md 1.11).
+    /// (STATE.md 1.12).
     argument: Option<[u8; 32]>,
 }
 
@@ -213,7 +225,9 @@ impl Machine {
             ram,
             system: System::default(),
             terminal: image.has_device(2).then(Terminal::default),
-            vector: image.has_device(3).then(Vector::default),
+            vector: (image.has_device(3) || image.has_device(crate::vector3::SLOT)).then(Vector::default),
+            lists_vector: image.has_device(3),
+            vector3: image.has_device(crate::vector3::SLOT).then(Vector3::default),
             content: image.has_device(4).then(Content::default),
             page: image.has_device(7).then(Page::default),
             machines: None,
@@ -536,7 +550,7 @@ impl Machine {
                     _ => ERR_UNKNOWN,
                 }
             }
-            0x300..=0x3FF if self.vector.is_some() => {
+            0x300..=0x3FF if self.lists_vector => {
                 let v = self.vector.as_mut().unwrap();
                 match n {
                     call::VEC_SUBMIT => {
@@ -556,6 +570,26 @@ impl Machine {
                     call::VEC_STYLE => v.set_style(a0),
                     call::VEC_PERSISTENCE => v.set_persistence(a0),
                     call::VEC_FILL => v.set_fill(a0),
+                    _ => ERR_UNKNOWN,
+                }
+            }
+            0x900..=0x9FF if self.vector3.is_some() => {
+                let v = self.vector3.as_mut().unwrap();
+                match n {
+                    call::V3_SUBMIT => match ram_range(ram.len(), a0, a1 as usize) {
+                        Some(at) if v.submit(&ram[at..at + a1 as usize]) == crate::vector::RESULT_DONE => {
+                            units += copy_charge(a1 as usize);
+                            crate::vector::RESULT_DONE
+                        }
+                        _ => crate::vector::RESULT_REJECTED,
+                    },
+                    call::V3_CLEAR => {
+                        v.clear();
+                        0
+                    }
+                    // The style and persistence are device 3's (SPEC 13.2).
+                    call::V3_STYLE => self.vector.as_mut().unwrap().set_style(a0),
+                    call::V3_PERSISTENCE => self.vector.as_mut().unwrap().set_persistence(a0),
                     _ => ERR_UNKNOWN,
                 }
             }
@@ -642,6 +676,17 @@ impl Machine {
 
     pub fn vector(&self) -> Option<&Vector> {
         self.vector.as_ref()
+    }
+
+    /// Whether the image lists device 3 (a machine with only device 9 has
+    /// a [`Vector`] for the shared style, but no 2D list).
+    pub fn lists_vector(&self) -> bool {
+        self.lists_vector
+    }
+
+    /// Device 9, if the image lists it.
+    pub fn vector3(&self) -> Option<&Vector3> {
+        self.vector3.as_ref()
     }
 
     pub fn vector_list(&self) -> &[u8] {
@@ -775,7 +820,11 @@ impl Machine {
                 m.write_state(&mut out);
             }
         }
-        // Only for a machine given an argument (STATE.md 1.11).
+        // Only for an image that lists device 9 (STATE.md 1.11).
+        if let Some(v) = &self.vector3 {
+            v.write_state(&mut out);
+        }
+        // Only for a machine given an argument (STATE.md 1.12).
         if let Some(id) = &self.argument {
             out.extend_from_slice(id);
         }
@@ -850,6 +899,10 @@ impl Machine {
         }
         if let Some(v) = &mut m.vector {
             v.restore(&mut r)?;
+            // Without device 3 the fill mode and the 2D list cannot be set.
+            if !m.lists_vector && (!v.fill() || !v.list().is_empty()) {
+                return Err(bad("a fill mode or 2D list without device 3"));
+            }
         }
         if r.flag()? != m.content.is_some() {
             return Err(bad("content present"));
@@ -865,6 +918,9 @@ impl Machine {
         }
         if m.lists_machines && r.u8()? != 0 {
             return Err(bad("the state of a shell cannot be restored"));
+        }
+        if let Some(v) = &mut m.vector3 {
+            v.restore(&mut r)?;
         }
         m.argument = match r.remaining() {
             0 => None,

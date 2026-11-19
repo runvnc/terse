@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
 pub use crate::display::GlyphSource;
-use crate::display::{grid_rect, outlined, screen_pos};
+use crate::display::{VectorScene, grid_rect, outlined, screen_pos};
 use crate::page::{HostLayout, PageLayer};
 use crate::phosphor;
 use crate::vectors::{PHOSPHOR_FORMAT, PhosphorTargets, VectorLayer};
@@ -671,8 +671,10 @@ impl Renderer {
     /// Takes the vector display's style (SPEC 8.7) and uploads its list
     /// (SPEC 8) as `Vector::shapes` gives it (outlines in the phosphor
     /// presentation even if only forced), unless the list's generation shows
-    /// it is unchanged. `None`: the image has no vector display.
-    pub fn update_vectors(&mut self, queue: &wgpu::Queue, vector: Option<&Vector>) {
+    /// it is unchanged, and the 3D list's segments over it (SPEC 13).
+    /// `vector` `None`: the image has no vector display.
+    pub fn update_vectors(&mut self, queue: &wgpu::Queue, scene: &VectorScene) {
+        let vector = scene.vector;
         let persistence = vector.map_or(terse_core::vector::DEFAULT_PERSISTENCE, Vector::persistence);
         let style = (self.force_phosphor || vector.is_some_and(Vector::phosphor), persistence);
         if style.0 != self.style.0 {
@@ -682,8 +684,7 @@ impl Renderer {
         self.style = style;
         let outlines = outlined(style.0, vector);
         self.page.set_outlines(outlines);
-        let (list, generation) = vector.map_or((&[][..], 0), |v| (v.list(), v.generation()));
-        self.vectors.update(queue, list, generation, outlines);
+        self.vectors.update(queue, scene, outlines);
     }
 
     /// Takes the page device's state and the layout to show (once per

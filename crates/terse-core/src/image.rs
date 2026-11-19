@@ -13,13 +13,14 @@ pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 
 /// Device slots and versions this implementation provides (SPEC 3).
-pub const SUPPORTED_DEVICES: [DeviceReq; 6] = [
+pub const SUPPORTED_DEVICES: [DeviceReq; 7] = [
     DeviceReq { slot: 1, version: 0 },
     DeviceReq { slot: 2, version: 0 },
     DeviceReq { slot: 3, version: 0 },
     DeviceReq { slot: 4, version: 0 },
     DeviceReq { slot: 7, version: 0 },
     DeviceReq { slot: 8, version: 0 },
+    DeviceReq { slot: 9, version: 0 },
 ];
 
 /// A (device slot, device version) requirement from the image header.

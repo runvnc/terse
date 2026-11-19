@@ -1,4 +1,4 @@
-//! programs/conform: the conformance image (SPEC 14). The state hash
+//! programs/conform: the conformance image (SPEC 15). The state hash
 //! (STATE.md) every 10 frames of the scripted run must match
 //! `expected-hashes.txt`, the final screen (terminal and decoded display list)
 //! `expected-screen.txt`, and every section the program checks itself must
@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 /// The scripted run: every phase ends by frame 145 (the stress phase in 108).
 const FRAMES: &str = "200";
 /// PASS lines on the results screen: one per section.
-const SECTIONS: usize = 28;
+const SECTIONS: usize = 29;
 
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/conform")

@@ -62,7 +62,8 @@ const USAGE: &str = "usage:
              [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
              [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
-  terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>]
+             [--parallax off|pointer] [--eye <dx>,<dy>]
+  terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--eye <dx>,<dy>]
              [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
              [--builtin <image|id>]...
@@ -71,11 +72,15 @@ const USAGE: &str = "usage:
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--consent allow|deny] [...]
+  3D vector display (device 9, SPEC 13): in a window the eye follows the pointer (parallax): the
+  pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
+  --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
+  puts the eye there for --screenshot and --bench-render (and keeps it there with --parallax off).
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
   threads; default one per core).
   With no image, runs the shell built into terse-host (programs/shell, SPEC 12): it starts the
-  built-in programs (reader, sparks, fetch, hello, and each --builtin image) as machines of their
+  built-in programs (reader, sparks, fetch, hello, sketch, holo, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
   launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
   --screenshot and --selftest, --shell alone is the built-in shell. <image> alone runs that image
@@ -144,6 +149,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let (mut renderer, mut threads, mut bench, mut warmup) = (RendererChoice::Auto, 0usize, false, None);
     let mut bloom = soft::BloomRes::Auto;
+    let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -169,6 +175,21 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
                 warmup = Some(v.parse::<u64>().map_err(|_| format!("bad --warmup {v}"))?);
+            }
+            "--eye" => {
+                let v = it.next().ok_or(USAGE)?;
+                let max = terse_core::vector3::MAX_EYE_OFFSET;
+                let parsed = v.split_once(',').and_then(|(x, y)| Some((x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?)));
+                eye = parsed
+                    .filter(|&(x, y)| x.abs() <= max && y.abs() <= max)
+                    .ok_or(format!("bad --eye {v} (<dx>,<dy>, each from -{max} to {max})"))?;
+            }
+            "--parallax" => {
+                parallax = match it.next().ok_or(USAGE)?.as_str() {
+                    "pointer" => true,
+                    "off" => false,
+                    v => return Err(format!("bad --parallax {v} (off or pointer)")),
+                };
             }
             "--demo" => demo = true,
             "--shell" => shell_flag = true,
@@ -324,7 +345,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -340,14 +361,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0) };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom };
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -355,7 +376,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax })
         }
         _ => Err(USAGE.into()),
     }
@@ -405,6 +426,12 @@ pub struct Looks {
     pub threads: usize,
     /// `--bloom`: the software renderer's phosphor bloom resolution.
     pub bloom: soft::BloomRes,
+    /// `--eye`: where the eye is for 3D lists (SPEC 13.1), screen units
+    /// from the reference eye; in a window with parallax, where it rests.
+    pub eye: display::Eye,
+    /// `--parallax pointer` (the default): in a window the eye follows the
+    /// pointer; `off`: it stays at `eye`.
+    pub parallax: bool,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -546,6 +573,7 @@ fn run_headless(
     // SPEC 11: a screenshot shows the finished page (no scroll animation,
     // figures rasterised at once); a benchmark draws as a window does.
     display.configure(looks.no_trails, looks.force_phosphor, bench);
+    display.set_eye(looks.eye);
     let viewport = size.unwrap_or(display.grid_size());
     eprintln!("terse-host: renderer {}, {}x{}", display.name(), viewport.0, viewport.1);
 

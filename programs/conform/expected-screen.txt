@@ -1,4 +1,4 @@
-Terse conformance image • conform.events
+Terse conformance • All sections pass.  Esc: exit (code = sections failed).
 PASS cpu: RV32I
 PASS cpu: M extension
 PASS cpu: compressed
@@ -10,6 +10,7 @@ PASS terminal: malformed UTF-8
 PASS terminal: commands
 PASS terminal: cells, palette, buffers
 PASS vector: submit, reject, style, fill
+PASS 3D vector: submit, reject, shared style
 PASS system calls
 PASS unknown calls, absent devices
 PASS events: key, text, pointer, wheel, feeds
@@ -27,7 +28,6 @@ PASS content: subscriptions, timeline
 PASS stress frames run = 60
 PASS page: calls, rejections, buffers
 PASS page: height, anchor and located events = 2
-All sections pass.  Esc: exit (code = sections failed).
 -- vectors: 173 list bytes --
 line 256 6400 1920 6400 w 1 c 4080ffff
 line 1920 6400 1920 7360 w 48 c 4080ffff
@@ -42,4 +42,37 @@ rect 0 0 10240 7680 c 30306020
 rect 0 0 10240 7680 c 30306020
 line 160 7520 10080 7520 w 16 c ffff00ff
 circle 5120 6400 r 512 w 16 c ffff00ff
+-- 3d vectors: 169 list bytes --
+colour 60d0ffff
+width 24
+push
+translate 9120 4000 0
+rotate y 4096
+rotate x 3072
+scale 640
+move -256 -256 -256
+line 256 -256 -256
+line 256 256 -256
+line -256 256 -256
+line -256 -256 -256
+line -256 -256 256
+line 256 -256 256
+line 256 256 256
+line -256 256 256
+line -256 -256 256
+move 256 -256 -256
+line 256 -256 256
+move 256 256 -256
+line 256 256 256
+move -256 256 -256
+line -256 256 256
+pop
+move 9120 4000 0
+colour ffffffff
+width 64
+point
+colour 60d0ff80
+width 16
+circle 1024
+-- 3d: 77 segments, length 1141.9 units --
 -- page: height 0, scroll 0 (stored -40), region 0 0 0 0 --

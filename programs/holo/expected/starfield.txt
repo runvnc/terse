@@ -1,0 +1,818 @@
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                       384 points receding from the glass
+
+
+ Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+-- 3d vectors: 3163 list bytes --
+colour 28466eff
+width 12
+move 192 384 0
+line 10048 384 0
+line 10048 7296 0
+line 192 7296 0
+line 192 384 0
+push
+translate 5120 3840 12800
+rotate y 0
+rotate x 0
+translate -5120 -3840 -12800
+width 40
+colour c8dcffff
+move 624 3936 -1856
+point
+move -4368 12048 -1280
+point
+move 10240 14384 4832
+point
+move -6176 -5408 26704
+point
+move 6160 1248 -1664
+point
+move 15184 -768 -1792
+point
+move -6672 64 17104
+point
+move 11392 5376 4736
+point
+move 2864 -5440 17712
+point
+move 13824 9680 29424
+point
+move -7296 -4496 22720
+point
+move 10752 -1616 17952
+point
+move 3840 12752 1728
+point
+move 9376 816 5376
+point
+move -128 3520 12848
+point
+move -3536 -6720 15808
+point
+move 14800 -1648 12896
+point
+move 2368 -2816 3008
+point
+move 11904 -3440 9344
+point
+move 11456 11712 11184
+point
+move -3184 9792 5856
+point
+move -8288 8240 26512
+point
+move 17712 7888 10528
+point
+move -4288 -3440 5760
+point
+move 5104 -6320 11248
+point
+move 4944 -2272 31984
+point
+move -2464 12672 3456
+point
+move -2176 -6112 5248
+point
+move 14720 3520 26880
+point
+move 3088 -6336 22576
+point
+move -8032 9968 7952
+point
+move -2768 1504 16432
+point
+move 16144 11920 31104
+point
+move 11888 9024 1472
+point
+move 3744 6080 28496
+point
+move 3360 12592 0
+point
+move 6464 -624 17616
+point
+move 13168 10368 31360
+point
+move 18720 11952 15264
+point
+move 12144 3632 10864
+point
+move 5312 7856 8816
+point
+move 16256 10240 26192
+point
+move -2864 6608 22896
+point
+move -320 -2800 -2624
+point
+move 16448 -384 18896
+point
+move 992 13984 -1600
+point
+move -6048 11648 28208
+point
+move 5008 6544 15520
+point
+move 15488 6480 23136
+point
+move 1200 4160 11664
+point
+move 10864 12352 17248
+point
+move 17792 10848 17744
+point
+move 15152 256 -128
+point
+move -4304 9968 8672
+point
+move -8720 288 576
+point
+move -8448 9328 4688
+point
+move 6080 -2704 17584
+point
+move -6000 -3856 3888
+point
+move -1296 10752 10384
+point
+move 13248 9168 2576
+point
+move 17456 -624 8528
+point
+move 128 -6112 18928
+point
+move 15552 14304 16256
+point
+move 96 -736 -1280
+point
+move 13840 -1152 6368
+point
+move 8368 4608 8864
+point
+move 2528 -6512 4240
+point
+move 14208 -3968 28560
+point
+move 1552 3744 20176
+point
+move -2352 -1424 18864
+point
+move 5648 -3872 320
+point
+move 15872 -64 28208
+point
+move -1312 7936 2704
+point
+move -7536 11248 21376
+point
+move -1872 -2432 4832
+point
+move -5008 12288 12624
+point
+move 18240 7408 27520
+point
+move -5728 -784 29824
+point
+move 5568 12432 25344
+point
+move -1920 1200 17232
+point
+move 6080 752 9504
+point
+move -7264 9552 14640
+point
+move 14576 7104 12032
+point
+move -4128 8640 25280
+point
+move 1328 12912 22240
+point
+move 16736 7712 -576
+point
+move 192 464 23632
+point
+move 11856 10400 16896
+point
+move 17968 9952 11312
+point
+move -3216 -368 30528
+point
+move 6672 -3248 20592
+point
+move 9088 -5312 3952
+point
+move 13168 8480 30832
+point
+move 14304 7024 -3712
+point
+move -8848 -5600 29888
+point
+move 784 7056 7584
+point
+colour ffdcffff
+move 8288 -1680 18560
+point
+move -6640 1488 28768
+point
+move -5584 -960 13152
+point
+move -7936 1424 22208
+point
+move -3520 6640 3648
+point
+move -7360 9040 -2688
+point
+move -2064 896 20688
+point
+move 1632 -2704 192
+point
+move 12784 14032 19664
+point
+move 7888 12272 9824
+point
+move 12480 -6608 -384
+point
+move -1488 -1088 11920
+point
+move 17920 64 18528
+point
+move 5248 5760 29648
+point
+move -3168 -1472 31472
+point
+move -16 8544 24320
+point
+move 704 7632 9504
+point
+move 944 -4912 14096
+point
+move 18032 144 7184
+point
+move 10352 12048 22880
+point
+move 5312 14288 27440
+point
+move 3536 6304 26976
+point
+move 8992 9136 23584
+point
+move 9168 -1680 -1856
+point
+move 15952 -4240 20176
+point
+move 8928 4960 -64
+point
+move 48 2608 21856
+point
+move -7888 400 21680
+point
+move 4096 2128 14384
+point
+move -1392 12736 15312
+point
+move 6672 11104 4592
+point
+move 4704 9536 24576
+point
+move 10272 10272 10112
+point
+move 5136 14336 21072
+point
+move 288 5712 14336
+point
+move 5648 4544 9744
+point
+move 816 1184 5344
+point
+move -2928 4192 -1920
+point
+move 11728 2880 10688
+point
+move -1648 -816 8688
+point
+move -5728 1264 6288
+point
+move 16000 -320 8176
+point
+move 1184 -5024 28016
+point
+move 7168 3056 -2368
+point
+move 14304 4432 15040
+point
+move 13904 4784 9552
+point
+move -8720 3024 25904
+point
+move 15376 -6208 16400
+point
+move 5744 13408 15264
+point
+move 3344 11344 31264
+point
+move 64 3424 10032
+point
+move 5088 -1392 21680
+point
+move 7328 -1568 1856
+point
+move 17488 -5392 16240
+point
+move 8784 4608 384
+point
+move 4944 4640 6144
+point
+move 8688 -6448 4640
+point
+move -672 7584 21104
+point
+move 2432 -6560 17088
+point
+move -8736 13616 2320
+point
+move 1488 6960 19488
+point
+move 4528 -2384 24672
+point
+move 336 10816 29872
+point
+move 6896 -3856 6944
+point
+move 14240 11760 20864
+point
+move 1744 -3392 10848
+point
+move -5600 -848 -640
+point
+move 9712 10112 10608
+point
+move -6672 -5280 11920
+point
+move 18960 7168 18864
+point
+move 18304 7040 14288
+point
+move -2480 2336 12048
+point
+move 2848 6560 26464
+point
+move -1296 1712 1920
+point
+move 16064 13648 8544
+point
+move 16384 8672 1856
+point
+move -3168 4720 27696
+point
+move 8928 -5408 30960
+point
+move 1040 8832 25728
+point
+move 13856 -2496 -3840
+point
+move 15328 2544 8496
+point
+move 4656 2688 -256
+point
+move 8160 10816 16224
+point
+move 1072 -880 2080
+point
+move 15488 7904 -3456
+point
+move 17296 3392 8064
+point
+move -8576 8512 12352
+point
+move 18944 -1152 -3328
+point
+move -1200 -432 22640
+point
+move 8512 13008 4880
+point
+move 6800 -5728 23872
+point
+move 3424 7392 28032
+point
+move -1168 -6000 6928
+point
+move -2128 14000 8960
+point
+move 4176 -4944 23696
+point
+move 15936 9504 13904
+point
+colour c8dca0ff
+move 14352 -4176 -3712
+point
+move -3360 -4336 24720
+point
+move -7184 1440 10720
+point
+move -8672 -4896 23216
+point
+move -1216 -2960 8928
+point
+move 6880 10400 28848
+point
+move -2400 -1072 128
+point
+move -6064 3760 5296
+point
+move 4496 5456 5488
+point
+move 13760 5456 24640
+point
+move -4912 11152 -64
+point
+move -1808 -4112 21552
+point
+move 17776 10080 -3776
+point
+move -3200 -4640 1088
+point
+move 14080 -2736 31280
+point
+move 4144 9728 10240
+point
+move -3280 13536 18032
+point
+move -7456 -3312 14784
+point
+move 2976 -336 3376
+point
+move 3824 4048 -3328
+point
+move -4000 4896 1216
+point
+move 880 8192 21872
+point
+move -6592 11088 20176
+point
+move -5264 4848 5280
+point
+move 14560 -4752 4160
+point
+move 8096 11472 5216
+point
+move 13200 -2976 -3840
+point
+move -8256 9120 6992
+point
+move 16944 6496 26816
+point
+move -96 6528 29568
+point
+move 11296 -3888 -576
+point
+move 14192 6000 10784
+point
+move 18448 -2912 21056
+point
+move 10128 3728 1984
+point
+move -5440 6384 19232
+point
+move -4944 8256 20480
+point
+move 13216 -1120 27840
+point
+move 10176 -688 3584
+point
+move -3152 -4256 22208
+point
+move 17856 -5872 10224
+point
+move 12848 -304 16400
+point
+move 5184 3008 24400
+point
+move 3904 3280 -1344
+point
+move 3776 9536 23760
+point
+move 13536 11952 3136
+point
+move -176 -1328 8320
+point
+move 15504 11584 256
+point
+move 8688 -4144 6544
+point
+move 6368 5904 16688
+point
+move 16656 368 25232
+point
+move 12176 5984 -2176
+point
+move -3744 1184 12592
+point
+move 15712 14336 10960
+point
+move -6208 14224 13936
+point
+move 2976 -4432 9296
+point
+move 14800 7744 1664
+point
+move -3184 2400 18688
+point
+move 5536 13984 6416
+point
+move -864 3472 19728
+point
+move -8176 8544 18592
+point
+move 6816 816 18384
+point
+move -2368 -2928 31568
+point
+move 8592 10640 2016
+point
+move 3552 -2944 -1472
+point
+move 13808 10016 -256
+point
+move 17744 8656 19008
+point
+move -7248 6560 6832
+point
+move 128 13616 1664
+point
+move 16368 -3952 -320
+point
+move -2656 7632 14000
+point
+move -6112 -5728 31584
+point
+move -4032 6336 17536
+point
+move 15600 9392 6928
+point
+move 10176 3712 2464
+point
+move 16 784 20464
+point
+move 13232 -1168 2752
+point
+move 9568 -2592 16256
+point
+move 1008 -704 17408
+point
+move 17072 -5456 1600
+point
+move 17072 14192 25712
+point
+move 5792 11424 4144
+point
+move 4704 -5216 26288
+point
+move 1856 11184 -960
+point
+move 16064 -6288 128
+point
+move -3616 -5904 19744
+point
+move -2768 13696 30400
+point
+move 3344 -3120 15376
+point
+move -7056 448 26048
+point
+move 14416 544 25120
+point
+move -4448 9792 12544
+point
+move 13072 7632 26464
+point
+move -5680 13136 -1216
+point
+move 288 -1216 31552
+point
+move 4832 12784 10864
+point
+move -7424 -176 -960
+point
+move -2816 2608 21472
+point
+colour c8dcffff
+move -6896 10768 15456
+point
+move -1504 6752 31040
+point
+move 15200 9312 10272
+point
+move 9392 11344 -3008
+point
+move -8032 464 3952
+point
+move 8400 -5120 256
+point
+move 12608 80 28976
+point
+move 4656 10672 17968
+point
+move 11520 -768 31904
+point
+move 4928 -3408 13712
+point
+move 14048 -4560 27968
+point
+move 5664 4368 29152
+point
+move -2272 -3552 5792
+point
+move -5696 8576 28160
+point
+move 6464 9520 14560
+point
+move 16944 12976 2304
+point
+move -8704 13568 11296
+point
+move -3872 13760 28224
+point
+move 14416 3856 192
+point
+move 3664 14272 26944
+point
+move 9872 944 -64
+point
+move 1648 13824 26096
+point
+move 18944 10288 18896
+point
+move -4512 6656 4176
+point
+move -1632 784 28720
+point
+move -5504 272 15552
+point
+move 16960 -3040 8304
+point
+move 18528 9632 5088
+point
+move 9264 7328 19520
+point
+move 15072 5632 26224
+point
+move 9472 -3376 -1664
+point
+move 2608 12992 18832
+point
+move 3904 -720 25216
+point
+move 18336 8224 23200
+point
+move -4320 10560 3488
+point
+move 4560 13344 16176
+point
+move 3008 2272 7584
+point
+move -3104 7056 -2816
+point
+move -8288 10592 3456
+point
+move 8736 736 576
+point
+move 10384 8672 31856
+point
+move 15824 -16 7504
+point
+move 17264 9824 14800
+point
+move 12832 10176 128
+point
+move -7008 1520 7552
+point
+move 2336 0 13120
+point
+move -4432 -2736 832
+point
+move 6336 -5152 13312
+point
+move 9952 -480 18304
+point
+move 15488 12032 12896
+point
+move -832 1504 4752
+point
+move 8576 -2832 -1600
+point
+move 592 4032 26928
+point
+move 992 -5248 21120
+point
+move 13328 9152 24672
+point
+move -896 -1616 8240
+point
+move 8480 10368 -704
+point
+move 12080 13392 19280
+point
+move -8064 13264 30048
+point
+move -4208 10320 27760
+point
+move 13904 6000 2656
+point
+move -912 8976 29808
+point
+move 736 11584 15936
+point
+move -7184 7280 10336
+point
+move -2864 -2464 17200
+point
+move 16240 12384 5520
+point
+move 18480 -2240 27568
+point
+move 15248 8656 28064
+point
+move -3008 4128 -2496
+point
+move -3536 7952 19056
+point
+move -2208 -4496 19040
+point
+move -7568 6032 30208
+point
+move -7472 10880 -1344
+point
+move 416 -4704 1664
+point
+move -3760 7824 11008
+point
+move -1920 8304 13072
+point
+move -3232 -5696 3808
+point
+move 720 -4848 20992
+point
+move 12048 4944 21072
+point
+move 14224 13376 640
+point
+move -3312 7520 5504
+point
+move 9840 6352 28704
+point
+move 18800 12768 25824
+point
+move 15312 -4944 17968
+point
+move 18784 12000 13632
+point
+move 1952 -1504 30896
+point
+move -2368 -4256 -3200
+point
+move 18688 12032 27552
+point
+move 15184 6656 10464
+point
+move 8768 -2528 24432
+point
+move -2176 8416 -2368
+point
+move -1104 -6112 128
+point
+move 17344 -4016 2832
+point
+move 10800 -4576 -3072
+point
+move 9232 -2656 6016
+point
+move -2064 -6208 31408
+point
+pop
+-- 3d: 218 segments, length 2096.0 units --

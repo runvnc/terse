@@ -1,5 +1,5 @@
 //! Host cost per budget unit of each kind of call, against plain ROM
-//! instructions (SPEC 13): a frame spent entirely in one call type should
+//! instructions (SPEC 14): a frame spent entirely in one call type should
 //! cost the host about what a frame of instructions costs. `measure` prints
 //! the table (run in release; it is ignored by default):
 //!

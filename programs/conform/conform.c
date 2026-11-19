@@ -1,4 +1,4 @@
-/* conform.c: the Terse conformance image (SPEC 14), RV32IMC.
+/* conform.c: the Terse conformance image (SPEC 15), RV32IMC.
  *
  * Run with conform.events (README, "Conformance image"). Each section checks
  * what the program itself can observe and records one PASS or FAIL line; a
@@ -24,7 +24,7 @@
  * library changes do not change this image.
  *
  * Frames (the scripted input of conform.events is in the frames named):
- *   0-5     CPU, RAM code, terminal, vector display, system calls
+ *   0-5     CPU, RAM code, terminal, vector displays, system calls
  *   6       the events of frames 2-5;  9: the 70 text events of frame 8
  *   10-13   controllers
  *   14-31   the budget: timed loops (ROM, RAM, scroll carry, write)
@@ -44,7 +44,7 @@
 
 /* ---------------------------------------------------------------- machine */
 
-/* SPEC 1.4, 11 and 13: the provisional values. The budget section predicts
+/* SPEC 1.4, 11 and 14: the provisional values. The budget section predicts
  * its loop counts from these (model_*), so if the machine's constants are
  * retuned, change them here, rebuild (build.sh) and regenerate the expected
  * files (UPDATE_GOLDEN=1 cargo test -p terse-cli --test conform). */
@@ -75,6 +75,7 @@ enum {
     V_SUBMIT = 0x300, V_CLEAR, V_STYLE, V_PERSISTENCE, V_FILL,
     C_SUBMIT = 0x400,
     P_SUBMIT = 0x700, P_CLEAR, P_REGION, P_SCROLL, P_BACKGROUND, P_LOCATE,
+    V3_SUBMIT = 0x900, V3_CLEAR, V3_STYLE, V3_PERSISTENCE,
 };
 
 static inline uint32_t call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
@@ -944,6 +945,71 @@ static void t_vector(void)
     n = build_final(l);
     ck(call(V_SUBMIT, A(l), n, 0) == 0);
     report("vector: submit, reject, style, fill");
+}
+
+/* ========================================================= 7b. 3D vector */
+
+#define XYZ(x, y, z) XY(x, y), (uint8_t)(z), (uint8_t)((z) >> 8)
+
+/* Every opcode (SPEC 13.3): a cube 80 units wide at (570, 250), half in
+ * front of the glass, turned so that three faces show, in a ring on the
+ * glass, with a dot at its centre; then an End and a command after it. */
+static const uint8_t cube3d[] = {
+    0x01, 0x60, 0xD0, 0xFF, 0xFF,               /* colour */
+    0x02, R16(24),                              /* width 1.5 units */
+    0x07,                                       /* push */
+    0x09, XYZ(570 * 16, 250 * 16, 0),           /* translate */
+    0x0A, 1, R16(0x1000),                       /* rotate y, 1/16 turn */
+    0x0A, 0, R16(0x0C00),                       /* rotate x */
+    0x0B, R16(640),                             /* scale 2.5 */
+    0x03, XYZ(-256, -256, -256),                /* move: a corner (16 units, scaled) */
+    0x04, XYZ(256, -256, -256),                 /* line */
+    0x04, XYZ(256, 256, -256),
+    0x04, XYZ(-256, 256, -256),
+    0x04, XYZ(-256, -256, -256),
+    0x04, XYZ(-256, -256, 256),
+    0x04, XYZ(256, -256, 256),
+    0x04, XYZ(256, 256, 256),
+    0x04, XYZ(-256, 256, 256),
+    0x04, XYZ(-256, -256, 256),
+    0x03, XYZ(256, -256, -256), 0x04, XYZ(256, -256, 256),
+    0x03, XYZ(256, 256, -256), 0x04, XYZ(256, 256, 256),
+    0x03, XYZ(-256, 256, -256), 0x04, XYZ(-256, 256, 256),
+    0x08,                                       /* pop */
+    0x03, XYZ(570 * 16, 250 * 16, 0),
+    0x01, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x02, R16(64),
+    0x05,                                       /* point */
+    0x01, 0x60, 0xD0, 0xFF, 0x80,
+    0x02, R16(16),
+    0x06, R16(64 * 16),                         /* circle, radius 64 units */
+    0x00,                                       /* end */
+    0x05,                                       /* after the end: not drawn */
+};
+
+static void t_vector3(void)
+{
+    begin();
+    uint8_t *l = small_list;
+    memcpy(l, cube3d, sizeof cube3d);
+    ck(call(V3_SUBMIT, A(l), sizeof cube3d, 0) == 0);
+    ck(call(V3_SUBMIT, A(l), 0, 0) == 1);             /* length 0 */
+    ck(call(V3_SUBMIT, A(buf_a), 16385, 0) == 1);     /* too long */
+    ck(call(V3_SUBMIT, A(cube3d), sizeof cube3d, 0) == 1); /* in ROM */
+    ck(call(V3_SUBMIT, RAM_END - 1, 2, 0) == 1);      /* past the end of RAM */
+    ck(call(V3_SUBMIT, RAM_END - 1, 1, 0) == 0);      /* the last byte: accepted */
+    ck(call(V3_SUBMIT, TOP, 16384, 0) == 0);          /* the longest */
+    ck(call(V3_CLEAR, 0, 0, 0) == 0);
+    /* The style and persistence are device 3's: set here, set there. */
+    ck(call(V3_STYLE, 1, 0, 0) == 0);
+    ck(call(V3_STYLE, 2, 0, 0) == 1);
+    ck(call(V3_PERSISTENCE, 90, 0, 0) == 0);
+    ck(call(V3_PERSISTENCE, 256, 0, 0) == 1);
+    ck(call(V_STYLE, 0, 0, 0) == 0);                  /* clean again, through device 3 */
+    ck(call(0x904, 0, 0, 0) == ERR_UNKNOWN);
+    ck(call(0x9FF, 0, 0, 0) == ERR_UNKNOWN);
+    ck(call(V3_SUBMIT, A(l), sizeof cube3d, 0) == 0);
+    report("3D vector: submit, reject, shared style");
 }
 
 /* ===================================================== 5. system calls */
@@ -1952,6 +2018,7 @@ int main(void)
     t_ram_code();
     t_terminal();
     t_vector();
+    t_vector3();
     t_system();
     show_all();
     t_events();
@@ -1969,7 +2036,10 @@ int main(void)
     for (uint32_t i = 0; i < n_results; i++)
         failed += results[i].fails != 0;
     show_all();
-    tw("\n");
+    /* The verdict on the title's row (the results fill the others). */
+    call(T_SET_CURSOR, 0, 0, 0);
+    cmd(4);
+    tw("Terse conformance \xE2\x80\xA2 ");
     if (failed) {
         colours(9, 0x100);
         tw("Sections failed: ");

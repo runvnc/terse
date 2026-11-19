@@ -1,0 +1,150 @@
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+               an orrery: four planets on tilted orbits, two moons
+
+ Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+-- 3d vectors: 483 list bytes --
+colour 28466eff
+width 12
+move 192 384 0
+line 10048 384 0
+line 10048 7296 0
+line 192 7296 0
+line 192 384 0
+push
+translate 5120 4000 2560
+rotate x 4608
+rotate y 0
+move 0 0 0
+push
+rotate y 0
+rotate x 60928
+width 24
+colour ffe650ff
+circle 224
+colour ffbe50ff
+circle 320
+colour ff9650ff
+circle 416
+pop
+push
+move 0 0 0
+rotate y 0
+rotate x 16384
+colour 424246ff
+width 12
+circle 1120
+rotate z 63000
+move 1120 0 0
+translate 1120 0 0
+rotate z 2536
+rotate x 49152
+rotate y 0
+rotate y 0
+rotate x 60928
+colour c8c8d2ff
+width 20
+circle 112
+pop
+push
+move 0 0 0
+rotate y 8192
+rotate x 17664
+colour 55381eff
+width 12
+circle 1920
+rotate z 50088
+move 1920 0 0
+translate 1920 0 0
+rotate z 15448
+rotate x 47872
+rotate y 57344
+rotate y 0
+rotate x 60928
+colour ffaa5aff
+width 20
+circle 176
+rotate x 12288
+colour 6e6e78ff
+width 8
+circle 400
+rotate z 3928
+move 400 0 0
+colour e6e6f0ff
+width 40
+point
+pop
+push
+move 0 0 0
+rotate y 24576
+rotate x 14848
+colour 1e3855ff
+width 12
+circle 2880
+rotate z 47976
+move 2880 0 0
+translate 2880 0 0
+rotate z 17560
+rotate x 50688
+rotate y 40960
+rotate y 0
+rotate x 60928
+colour 5aaaffff
+width 20
+circle 208
+rotate x 12288
+colour 6e6e78ff
+width 8
+circle 432
+rotate z 3928
+move 432 0 0
+colour e6e6f0ff
+width 40
+point
+pop
+push
+move 0 0 0
+rotate y 40960
+rotate x 17408
+colour 55241eff
+width 12
+circle 3920
+rotate z 51264
+move 3920 0 0
+translate 3920 0 0
+rotate z 14272
+rotate x 48128
+rotate y 24576
+rotate y 0
+rotate x 60928
+colour ff6e5aff
+width 20
+circle 144
+pop
+pop
+-- 3d: 838 segments, length 5354.2 units --

@@ -1,0 +1,67 @@
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                  six rings, each turning in the one outside it
+
+ Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+-- 3d vectors: 152 list bytes --
+colour 28466eff
+width 12
+move 192 384 0
+line 10048 384 0
+line 10048 7296 0
+line 192 7296 0
+line 192 384 0
+push
+translate 5120 3840 640
+rotate y 0
+rotate x 0
+width 24
+move 0 0 0
+rotate x 8100
+colour 5a96ffff
+circle 2816
+rotate y 15796
+colour 7878ffff
+circle 2400
+rotate x 23492
+colour aa64ffff
+circle 1984
+rotate y 31188
+colour dc5ae6ff
+circle 1568
+rotate x 38884
+colour ff64aaff
+circle 1152
+rotate y 46580
+colour ff8c6eff
+circle 736
+colour ffffffff
+width 48
+point
+pop
+-- 3d: 389 segments, length 5237.1 units --

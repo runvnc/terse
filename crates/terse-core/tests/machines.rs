@@ -376,7 +376,7 @@ fn calls() {
     assert_eq!(absent.last(), Some(&0));
 }
 
-/// Charges (SPEC 13): 4 per call, plus 1 per 4 bytes copied.
+/// Charges (SPEC 14): 4 per call, plus 1 per 4 bytes copied.
 #[test]
 fn charges() {
     if !common::have_tools() {
@@ -657,7 +657,7 @@ child: .fill 32, 1, 0
 /// SPEC 4 `open` and `argument`, SPEC 12.2 `request` and `argument`: one
 /// request waits at a time until the shell reads it; the shell is told
 /// once per request; the shell's own `open` and a machine run alone get 0;
-/// the argument is the child's state (STATE.md 1.11).
+/// the argument is the child's state (STATE.md 1.12).
 #[test]
 fn open_requests_and_arguments() {
     if !common::have_tools() {

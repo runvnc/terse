@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use terse_core::vector::{MAX_LIST, decode, decode_outlines};
-use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH, System, Vector};
+use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH, System, Vector, Vector3};
 use terse_net::Prompt;
 
 use crate::page::HostLayout;
@@ -99,6 +99,58 @@ pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
     }
 }
 
+/// Most shapes the vector layer draws: a 2D list's primitives and a 3D
+/// list's segments (SPEC 13.4).
+pub const MAX_SHAPES: usize = MAX_PRIMITIVES + terse_core::vector3::SEGMENT_CAP;
+
+/// The eye the host sees 3D lists from: screen units from the reference
+/// eye (SPEC 13.1), each at most 160.
+pub type Eye = (f32, f32);
+
+/// What a machine's vector layer shows: its 2D list (as [`decode_shapes`]
+/// gives it), then, over it, its 3D list's segments seen from `eye`
+/// (`terse_core::vector3::project`, the same for every renderer).
+#[derive(Clone, Copy)]
+pub struct VectorScene<'a> {
+    pub vector: Option<&'a Vector>,
+    pub vector3: Option<&'a Vector3>,
+    pub eye: Eye,
+}
+
+/// Identifies what [`VectorScene::shapes`] gives: the lists' generations,
+/// the eye (only if there is a 3D list) and whether as outlines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneKey {
+    lists: (u64, u64),
+    eye: Option<(u32, u32)>,
+    outlines: bool,
+}
+
+impl VectorScene<'_> {
+    pub fn key(&self, outlines: bool) -> SceneKey {
+        let v3 = self.vector3.filter(|v| !v.list().is_empty());
+        SceneKey {
+            lists: (self.vector.map_or(0, Vector::generation), self.vector3.map_or(0, Vector3::generation)),
+            eye: v3.map(|_| (self.eye.0.to_bits(), self.eye.1.to_bits())),
+            outlines,
+        }
+    }
+
+    /// The shapes in drawing order into `out`, and into `opcodes` a
+    /// signature that is the same for two scenes whose shapes line up (the
+    /// same shapes, maybe moved: for the afterglow's smear).
+    pub fn shapes(&self, outlines: bool, out: &mut Vec<Primitive>, opcodes: &mut Vec<u8>) {
+        let list = self.vector.map_or(&[][..], Vector::list);
+        decode_shapes(list, outlines, out);
+        *opcodes = crate::phosphor::opcodes(list);
+        if let Some(v) = self.vector3.filter(|v| !v.list().is_empty()) {
+            terse_core::vector3::project(v.list(), self.eye, out);
+            opcodes.push(0xFF);
+            opcodes.extend(terse_core::vector3::opcodes(v.list()));
+        }
+    }
+}
+
 /// The host's consent prompt as the screens show it: the prompt, how many
 /// requests wait, and the asking machine's title.
 pub type ShownPrompt<'a> = Option<(&'a Prompt, usize, String)>;
@@ -139,6 +191,10 @@ pub trait Display {
         layout: &dyn Fn(u32) -> Option<Arc<HostLayout>>,
         prompt: ShownPrompt,
     );
+    /// Where the eye is for 3D lists (SPEC 13.1): screen units from the
+    /// reference eye, the same for every machine. Takes effect at the next
+    /// `update`.
+    fn set_eye(&mut self, eye: Eye);
     /// The user's presentation options: the phosphor style without its
     /// afterglow, the phosphor presentation whatever the style, and whether
     /// the page's scroll is animated (and its figures rasterised on their
@@ -204,6 +260,31 @@ mod tests {
             assert_eq!(drawn, decode_outlines(v.list()).collect::<Vec<_>>());
         }
         assert!(!outlined(false, None) && outlined(true, None));
+    }
+
+    /// A 3D list's segments come after the 2D list's shapes, as
+    /// `vector3::project` gives them for the eye; the key changes with the
+    /// eye only when there is a 3D list.
+    #[test]
+    fn scenes_add_the_projected_segments() {
+        use terse_core::Vector3;
+        let mut v = Vector::default();
+        v.submit(&[0x04, 0, 1, 0, 1, 0x05, 0, 2, 0, 2]);
+        let mut v3 = Vector3::default();
+        let z = (-4000i16).to_le_bytes();
+        v3.submit(&[0x03, 0, 1, 0, 1, z[0], z[1], 0x04, 0, 2, 0, 2, 0, 0, 0x05]);
+        let scene = |eye| VectorScene { vector: Some(&v), vector3: Some(&v3), eye };
+        let (mut shapes, mut opcodes) = (Vec::new(), Vec::new());
+        scene((40.0, 0.0)).shapes(false, &mut shapes, &mut opcodes);
+        let mut want = v.shapes().collect::<Vec<_>>();
+        terse_core::vector3::project(v3.list(), (40.0, 0.0), &mut want);
+        assert_eq!(shapes, want);
+        assert_eq!(shapes.len(), 3);
+        assert_eq!(opcodes, [0x04, 0x05, 0xFF, 0x03, 0x04, 0x05]);
+        assert_ne!(scene((40.0, 0.0)).key(false), scene((0.0, 0.0)).key(false));
+        let flat = |eye| VectorScene { vector: Some(&v), vector3: None, eye };
+        assert_eq!(flat((40.0, 0.0)).key(false), flat((0.0, 0.0)).key(false));
+        assert_ne!(scene((0.0, 0.0)).key(false), scene((0.0, 0.0)).key(true));
     }
 
     /// The densest lists fit: all rectangles in the phosphor style (4 lines

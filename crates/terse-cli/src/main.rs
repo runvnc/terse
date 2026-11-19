@@ -82,12 +82,14 @@ the one the snapshot names, by ID); its hash is then the hash at the moment of t
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
 --shell runs a system (SPEC 12): the image (default: the built-in shell, programs/shell) is the shell,
-with device 8; the built-in programs (reader, sparks, fetch, hello), and each --builtin image after
+with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo), and each --builtin image after
 them, are put into the store and offered to it. Scripted events are the host's input: `home` is the
 home key, pointer positions are in the whole screen's units, and the system routes them. --dump
 prints the shell's screen, then for each machine whose rectangle is not empty a line
 `-- machine <handle> <state> <x> <y> <w> <h> <title> --` and its screen; --hash prints the shell's
 hash, --hash-all also `<handle> <hash>` for each machine started (`-` while it has no image).
+--dump-vectors prints the 2D list (device 3) as shapes and the 3D list (device 9) as commands, then
+`-- 3d: <n> segments, length <l> units --`: what it draws seen from the reference eye (SPEC 13.4).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
 its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
@@ -498,8 +500,14 @@ fn dump(machine: &Machine, args: &Args) {
         if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
             println!("{line}");
         }
-        println!("-- vectors: {} list bytes --", machine.vector_list().len());
-        if let Some(v) = machine.vector() {
+        if machine.lists_vector() {
+            println!("-- vectors: {} list bytes --", machine.vector_list().len());
+            if let Some(v) = machine.vector() {
+                print!("{}", v.dump());
+            }
+        }
+        // SPEC 13: the 3D list's commands, and what the reference eye sees.
+        if let Some(v) = machine.vector3() {
             print!("{}", v.dump());
         }
     }

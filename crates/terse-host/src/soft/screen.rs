@@ -29,7 +29,7 @@ use super::base::{Damage, IRect, Pixels, Pool, TILE, mix, over, pack, tile_rows}
 use super::page::{PageKey, PageQuads, SoftPage};
 use super::phosphor::{BloomRes, Light, Smear, Tube, linear_table};
 use super::shapes::{Geom, Mode, Shape, visit};
-use crate::display::{GlyphSource, decode_shapes, grid_rect, outlined, screen_pos};
+use crate::display::{GlyphSource, SceneKey, VectorScene, grid_rect, outlined, screen_pos};
 use crate::page::HostLayout;
 
 /// A cell as drawn: its glyph's slot in the atlas and its colours.
@@ -145,7 +145,7 @@ fn overlay_bg(code: u8) -> u32 {
 /// The vector display as uploaded.
 #[derive(Default)]
 struct Vectors {
-    uploaded: Option<(u64, bool)>,
+    uploaded: Option<SceneKey>,
     shapes: Vec<Primitive>,
     dwell: Vec<u32>,
     opcodes: Vec<u8>,
@@ -411,8 +411,9 @@ impl SoftScreen {
         self.overlay = first.map_or(0, |r| r.clamp(1, ROWS - 1) as u32);
     }
 
-    /// Takes the vector display's style and list (as `Renderer::update_vectors`).
-    pub fn update_vectors(&mut self, vector: Option<&Vector>) {
+    /// Takes the vector display's style and lists (as `Renderer::update_vectors`).
+    pub fn update_vectors(&mut self, scene: &VectorScene) {
+        let vector = scene.vector;
         let persistence = vector.map_or(terse_core::vector::DEFAULT_PERSISTENCE, Vector::persistence);
         let style = (self.force_phosphor || vector.is_some_and(Vector::phosphor), persistence);
         if style.0 != self.style.0 {
@@ -422,14 +423,13 @@ impl SoftScreen {
         self.style = style;
         let outlines = outlined(style.0, vector);
         self.page.set_outlines(outlines);
-        let (list, generation) = vector.map_or((&[][..], 0), |v| (v.list(), v.generation()));
+        let key = scene.key(outlines);
         let v = &mut self.vectors;
-        if v.uploaded == Some((generation, outlines)) {
+        if v.uploaded == Some(key) {
             return;
         }
-        v.uploaded = Some((generation, outlines));
-        decode_shapes(list, outlines, &mut v.shapes);
-        v.opcodes = crate::phosphor::opcodes(list);
+        v.uploaded = Some(key);
+        scene.shapes(outlines, &mut v.shapes, &mut v.opcodes);
         if outlines {
             crate::phosphor::dwell_ends(&v.shapes, &mut v.dwell);
         } else {

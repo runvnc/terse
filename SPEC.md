@@ -2,7 +2,7 @@
 
 Status: draft for the first prototype. Everything here may change until v1;
 after v1 a published machine profile and published device versions never
-change. Section 15 lists the numbers that are placeholders until hosts have
+change. Section 16 lists the numbers that are placeholders until hosts have
 been measured.
 
 Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
@@ -28,7 +28,7 @@ Design rules that every part of this spec follows:
    host renders can be read back by the program.
 4. **Every unit of budget costs a host about the same.** Device calls are
    charged so that a frame spent in calls costs a host no more than a frame
-   spent executing instructions (section 13).
+   spent executing instructions (section 14).
 5. **Small enough to reimplement.** An independent implementation of this
    document should be a few thousand lines.
 
@@ -113,16 +113,16 @@ does the following, in order:
    6), and applies the content completions it has for this frame
    (section 9.2).
 2. Adds 125,000 to the budget, subtracts the charge for content delivered
-   in step 1 (section 13), and runs the CPU while the budget is greater
+   in step 1 (section 14), and runs the CPU while the budget is greater
    than zero.
 3. Ends the frame: the frame counter increases by one, and the host presents
-   the terminal, the vector display and the page as they are at this moment.
+   the terminal, the vector displays and the page as they are at this moment.
 
 Rules:
 
 - An instruction fetched from ROM costs 1 unit; one fetched from RAM costs
   4. An `ecall` costs 1 (or 4 from RAM) plus the charge of the call it makes
-  (section 13).
+  (section 14).
 - An instruction that starts with a positive budget runs to completion, so
   the budget can end below zero. A negative remainder carries into the next
   frame; it may be larger than a frame's budget, in which case that frame
@@ -207,9 +207,9 @@ by the ROM contents.
 | 6 | Sound | — | reserved |
 | 7 | Page | 0 | specified (section 11) |
 | 8 | Machines | 0 | specified (section 12); only the shell of a system has it |
-| 10 | 3D vector display | — | reserved |
+| 9 | 3D vector display | 0 | specified (section 13) |
 
-Other slots are free; 0, 9 and 11–255 are not devices in v0.
+Other slots are free; 0 and 10–255 are not devices in v0.
 
 ---
 
@@ -234,7 +234,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
   (section 10.2), and a content request block not in RAM is rejected with
   handle 0 (section 9.2).
 - Buffers need no alignment.
-- Every call is charged, also when it fails (section 13).
+- Every call is charged, also when it fails (section 14).
 
 ### 3.2 Call table
 
@@ -286,8 +286,12 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `80Ch` | `restore` | `a0` = slot | a handle 1–8, or 0 if none is free or the slot is out of range |
 | `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
 | `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+| `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected |
+| `901h` | `clear` | — | 0 |
+| `902h` | `style` | `a0` = style | 0 done, 1 rejected |
+| `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected |
 
-Sections 4 to 12 define each call.
+Sections 4 to 13 define each call.
 
 ---
 
@@ -338,7 +342,7 @@ Sections 4 to 12 define each call.
   in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
   shell gave none, it runs on its own, or it is the shell) gets 0 and
   nothing is written. The argument never changes and is part of the
-  machine's state (`STATE.md` 1.11).
+  machine's state (`STATE.md` 1.12).
 
 Events, the latched time, the random bytes and controller state are the
 machine's only inputs from this device. A host that records them per frame
@@ -460,7 +464,7 @@ cell.
 
 - **`write`** puts characters (section 8.3) from the bytes of the buffer,
   in order, and returns how many bytes it consumed. Each byte is charged as
-  it is consumed (section 13), and the call stops after the byte whose charge
+  it is consumed (section 14), and the call stops after the byte whose charge
   brings the budget to zero or below, so it may consume fewer bytes than
   asked; it always consumes at least one byte of a non-empty buffer. The
   program calls `write` again with the rest (the machine pauses first if the
@@ -980,7 +984,7 @@ bottom:
 
 1. the terminal's cell backgrounds;
 2. the page (section 11): its background, then its text;
-3. the vector display;
+3. the vector displays: device 3's shapes, then device 9's (section 13.5);
 4. the terminal's characters and cursor.
 
 So terminal text is always drawn over vector shapes, and a cell's background
@@ -1029,7 +1033,8 @@ afterglow off. In the clean style the persistence value has no effect.
 ### 10.7 Determinism
 
 The device's state is the style, the persistence, the fill mode and the copy
-of the list. It takes no input from the host.
+of the list. It takes no input from the host. The style and the persistence
+are also set by device 9 (section 13.2): one setting for both displays.
 
 ---
 
@@ -1658,7 +1663,164 @@ the restore.
 
 ---
 
-## 13. Charges
+## 13. Device 9 — 3D vector display (version 0)
+
+Draws lines, points and circles placed in a box around the screen, from a
+display list like device 3's (section 10). The program gives geometry, not
+a picture: the host projects it onto the screen from an eye it chooses
+(section 13.1), so it may let the viewer look around the models, and the
+program cannot observe that choice. As with device 3, nothing drawn can be
+read back.
+
+### 13.1 Space and view
+
+Coordinates are signed 16-bit numbers in **sixteenths of a screen unit**
+(section 7), little-endian. x and y are as on the screen (x right, y down);
+z is depth in the same units: 0 is the **glass** (the plane of the screen),
+positive is away from the viewer. The axes are right-handed.
+
+The **reference eye** is at (320, 240, −960) in screen units. Seen from an
+eye at (ex, ey, −960), a point (x, y, z) with z > −800 is drawn on the glass
+at
+
+  x′ = ex + (x − ex) × 960 / (960 + z),  y′ = ey + (y − ey) × 960 / (960 + z).
+
+So a point on the glass is drawn exactly where the 2D layers would put it,
+from any eye; a point behind the glass moves with the eye, one in front of
+it against the eye. A host may move the eye sideways and up or down by up
+to 160 units on each axis from the reference eye, at its own discretion
+(for example following the viewer's pointer or head); the eye's distance
+from the glass, and the glass, stay fixed. The program is not told where
+the eye is.
+
+### 13.2 Calls
+
+- **`submit`** copies `a1` bytes from address `a0` into the device,
+  replacing the previous list, and returns 0. It is rejected, returning 1
+  and keeping the previous list, if the length is 0 or more than 16,384 or
+  any part of the range is outside RAM.
+- **`clear`** empties the list.
+- **`style`** and **`persistence`** set the display style and the
+  persistence of section 10.6, with the results of device 3's calls of the
+  same names. They are one setting with device 3's: whichever device sets
+  them, both displays (and the whole screen) are shown that way. A machine
+  whose image lists device 9 and not device 3 has the setting too (device
+  3's calls stay absent).
+
+After reset the list is empty (and the style and persistence are as section
+10.2 says). The list the device holds at the end of a frame is the one the
+host shows for that frame. Nothing of device 9 is filled, so the fill mode
+does not apply.
+
+### 13.3 Display list
+
+A list is a sequence of commands, each one opcode byte followed by its
+operands. Drawing state at the start of a list: colour opaque white (255,
+255, 255, 255), width 16 (one screen unit), the identity transform, no
+saved transforms, current point (0, 0, 0).
+
+| Opcode | Command | Operands | Effect |
+|---|---|---|---|
+| `00h` | End | — | Ends the list |
+| `01h` | Colour | r, g, b, a (1 byte each) | Sets the colour; `a` is opacity, 255 opaque |
+| `02h` | Width | w (2 bytes, unsigned) | Sets the line width in sixteenths, the same on the screen at any depth; 0 counts as 1, more than 255 as 255 |
+| `03h` | Move | x, y, z | Sets the current point |
+| `04h` | Line | x, y, z | Draws a line from the current point to (x, y, z), which becomes the current point |
+| `05h` | Point | — | Draws a dot at the current point |
+| `06h` | Circle | radius (2 bytes, unsigned) | Draws a circle about the current point in the transform's xy plane |
+| `07h` | Push | — | Saves the transform |
+| `08h` | Pop | — | Restores the transform saved last |
+| `09h` | Translate | x, y, z | Moves the transform's origin to (x, y, z) |
+| `0Ah` | Rotate | axis (1 byte: 0 x, 1 y, 2 z), angle (2 bytes, unsigned, in 1/65,536 of a turn) | Turns the transform about its axis |
+| `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly |
+
+- **The transform.** A point p given to Move or Line is drawn at M(p),
+  where M is the transform in force, with p and every translation in
+  screen units (sixteenths divided by 16). Translate t, Rotate R and Scale
+  s replace M by M ∘ T(t), M ∘ R and M ∘ S(s): each applies to coordinates
+  given after it, before the transforms given earlier, as in ordinary
+  matrix-stack graphics. So "Translate (100, 0, 0), Rotate z a quarter
+  turn, Move (10, 0, 0)" puts the current point at (100, 10, 0).
+- **Rotation.** A positive angle θ about x turns y towards z, about y turns
+  z towards x, and about z turns x towards y (clockwise as seen on the
+  screen): about x, (x, y, z) goes to (x, y cos θ − z sin θ, y sin θ +
+  z cos θ); about y, to (x cos θ + z sin θ, y, −x sin θ + z cos θ); about z,
+  to (x cos θ − y sin θ, x sin θ + y cos θ, z).
+- **The current point** is kept as Move or Line placed it, in the box (M
+  applied), so a later transform does not move it, as a later Origin does
+  not move the 2D display's (section 10.3). A Line after a Push, a
+  Translate and a Pop starts where the Move put it. To draw a circle about
+  a transform's origin, Move to (0, 0, 0) first.
+- **A circle** of radius r (in sixteenths) about the current point c is
+  the closed curve c + L(r cos φ, r sin φ, 0) / 16, where L is M without its
+  translation (so it lies in the plane of M's x and y axes and is scaled
+  with it). It is drawn as the 64 chords between the points at φ = k/64 of
+  a turn, k = 0 to 63, which join without ends of their own: one curve.
+- Lines and points use the current width and have round ends, as the 2D
+  display's lines do (a Point is the dot a line of length 0 draws). Circle,
+  Point and the transform commands leave the current point unchanged.
+- **The stack** holds up to 8 transforms. Push saves only the transform
+  (not the colour, the width or the current point). A Push with 8 saved,
+  and a Pop with none saved, end the list.
+- The list ends at an End command, at the end of the submitted bytes, at
+  an unknown opcode, at a command whose operands are cut off by the end of
+  the list, at a Rotate whose axis is above 2, or as the stack rule says.
+  Commands before that point are drawn.
+- Lines, points and circles are drawn in list order, each over the earlier
+  ones, blended by opacity as in section 10.3. Nothing hides what is
+  behind it: a near line does not cover a far one any more than a later
+  one covers an earlier one.
+
+### 13.4 Clipping and caps
+
+A line is cut where it crosses the plane z = −800: only its part with z >
+−800 is drawn; a point (or a dot) at z ≤ −800 is not drawn. What is left is
+projected (section 13.1) and clipped to the screen.
+
+The amount one list draws is limited. In list order, each Line, Point and
+Circle counts a **length** and a number of **segments**:
+
+| Command | Length (screen units) | Segments |
+|---|---|---|
+| Line | its length on the glass, seen from the reference eye, of its part with z > −800 that lies on the screen (0 to 640 by 0 to 480) | 1 |
+| Point | 0 | 1 |
+| Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 |
+
+A command that would take the list's total length above 65,536 or its
+number of segments above 16,384 is not drawn, and neither is any command
+after it. A command that is not drawn does not count. The caps are counted
+from the reference eye whatever eye the host draws from, so the same
+commands are drawn from every eye.
+
+### 13.5 Presentation
+
+- **Depth cue.** Light dims with depth. Each end of a line (after the cut
+  at z = −800) has the factor min(1, 960 / (960 + z)); along the line on
+  the glass the factor goes linearly from one end's to the other's, which
+  is its value at every point of the line, as it is the projection's own
+  scale. The opacity is multiplied by the factor: 0.5 at z = 960, and never
+  more than the colour's own in front of the glass. A point has its own,
+  each chord of a circle those of its ends.
+- **Layers.** Device 9 is drawn in the vector layer of section 10.5, after
+  device 3's shapes: over the page and the 2D shapes, under the terminal's
+  characters, so text on the glass labels the models.
+- **Phosphor.** In the phosphor style (section 10.6) lines, points and
+  circles are beam light like the 2D display's lines: core, halo, bloom,
+  afterglow and smear, with the vertex dwell at line ends and points but
+  not where a circle's chords join.
+- The trigonometry and the projection are the host's, and hosts may differ
+  in the last pixel. Smoothing, the exact colour of blended pixels and how
+  the eye moves are up to the host.
+
+### 13.6 Determinism
+
+The device's state is the copy of the list (STATE.md 1.11); the style and
+the persistence are device 3's (section 10.7, STATE.md 1.7), held once for
+both devices. It takes no input from the host: the eye is presentation.
+
+---
+
+## 14. Charges
 
 Every call is charged in budget units on top of the `ecall` instruction
 itself (1 from ROM, 4 from RAM). Charges are subtracted from the budget as
@@ -1669,7 +1831,7 @@ the call runs and may take it below zero (section 1.4).
 | Any call, including one that fails | 4 |
 | `write`: each byte consumed | 1 |
 | A clear, scroll up or scroll down, including one caused by `write` (`0Ah` on the last row, `0Ch`, a wrap) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit`, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), an accepted page `submit`, device 8's `start` (32, when the ID is read), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes, rounded up, per frame, subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -1682,7 +1844,7 @@ costs a host no more per unit than a frame of instructions from ROM;
 
 ---
 
-## 14. Conformance
+## 15. Conformance
 
 An implementation conforms to profile 1 if:
 
@@ -1699,21 +1861,25 @@ or FAIL line per section) and its last phase is a deliberate worst case for a
 host (full-budget frames, every cell rewritten, maximum-size display lists at
 the fill cap), for measuring how a host holds its frame rate.
 
-## 15. Provisional values
+## 16. Provisional values
 
 These numbers are placeholders until weak hosts have been measured:
 
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
-- the charges of section 13 (4 per call, 1 per `write` byte, 1 per 4 bytes
+- the charges of section 14 (4 per call, 1 per `write` byte, 1 per 4 bytes
   copied, 150 per clear or scroll);
 - the fill cap, 4 × 640 × 480 square units (section 10.4);
+- the 3D display's caps, 65,536 units of length and 16,384 segments, its
+  64 chords to a circle, and its eye: 960 units from the glass, at most 160
+  from the reference eye on each axis, and the near plane at z = −800
+  (section 13);
 - the figure caps: 256 paths, the area (8 × the figure's, at most
   4 × 640 × 480) and the length (65,536) of section 11.3;
 - the number of machines a shell can start, 8, and of its snapshot slots,
   16 (section 12).
 
-## 16. Not yet specified
+## 17. Not yet specified
 
 - Font selection, combining marks and complex scripts in the terminal.
 - Named pointers (a signed, versioned pointer from a key and a name to a
@@ -1725,7 +1891,11 @@ These numbers are placeholders until weak hosts have been measured:
   requests, and publishing replies or kinds of entry other than articles,
   documents and profiles (programs are published by the host, not by
   programs).
-- Devices 5, 6 and 10.
+- Devices 5 and 6.
+- On the 3D display (section 13): filled faces and hiding what is behind
+  them; a stereo picture or another display of the same geometry (the eye
+  rule allows one; how a host shows it is not specified); a limit on the
+  area its lines cover (as for the 2D display's lines below).
 - On the page: bitmap images, arcs and gradients in figures, links the host
   follows itself, selecting and copying
   text, and fonts beyond the three faces.

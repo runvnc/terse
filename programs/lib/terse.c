@@ -365,6 +365,62 @@ void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     vec_ptr += 4;
 }
 
+uint8_t *v3_ptr;
+
+static void v3_xyz(uint8_t op, int16_t x, int16_t y, int16_t z)
+{
+    uint8_t *p = v3_ptr;
+    p[0] = op;
+    p[1] = x;
+    p[2] = (uint16_t)x >> 8;
+    p[3] = y;
+    p[4] = (uint16_t)y >> 8;
+    p[5] = z;
+    p[6] = (uint16_t)z >> 8;
+    v3_ptr = p + 7;
+}
+
+static void v3_u16(uint8_t op, uint16_t v)
+{
+    uint8_t *p = v3_ptr;
+    p[0] = op;
+    p[1] = v;
+    p[2] = v >> 8;
+    v3_ptr = p + 3;
+}
+
+void v3_move(int16_t x, int16_t y, int16_t z) { v3_xyz(V3_OP_MOVE, x, y, z); }
+void v3_line(int16_t x, int16_t y, int16_t z) { v3_xyz(V3_OP_LINE, x, y, z); }
+void v3_translate(int16_t x, int16_t y, int16_t z) { v3_xyz(V3_OP_TRANSLATE, x, y, z); }
+void v3_width(uint16_t w) { v3_u16(V3_OP_WIDTH, w); }
+void v3_circle(uint16_t r) { v3_u16(V3_OP_CIRCLE, r); }
+void v3_scale(uint16_t s) { v3_u16(V3_OP_SCALE, s); }
+void v3_point(void) { *v3_ptr++ = V3_OP_POINT; }
+void v3_push(void) { *v3_ptr++ = V3_OP_PUSH; }
+void v3_pop(void) { *v3_ptr++ = V3_OP_POP; }
+void v3_end(void) { *v3_ptr++ = V3_OP_END; }
+
+void v3_rotate(uint8_t axis, uint16_t angle)
+{
+    uint8_t *p = v3_ptr;
+    p[0] = V3_OP_ROTATE;
+    p[1] = axis;
+    p[2] = angle;
+    p[3] = angle >> 8;
+    v3_ptr = p + 4;
+}
+
+void v3_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    uint8_t *p = v3_ptr;
+    p[0] = V3_OP_COLOUR;
+    p[1] = r;
+    p[2] = g;
+    p[3] = b;
+    p[4] = a;
+    v3_ptr = p + 5;
+}
+
 /* What the compiler may call. memcpy copies whole words where it can (about
  * 1.5 units a byte instead of 5): a word at a time when both pointers have
  * the same alignment, else shifting words together (never reading a word

@@ -59,6 +59,10 @@
 #define CALL_MACH_RESTORE 0x80C
 #define CALL_MACH_SNAPSHOT_INFO 0x80D
 #define CALL_MACH_SNAPSHOT_DELETE 0x80E
+#define CALL_V3_SUBMIT 0x900
+#define CALL_V3_CLEAR 0x901
+#define CALL_V3_STYLE 0x902
+#define CALL_V3_PERSISTENCE 0x903
 
 #define TERSE_ERR_UNKNOWN 0xFFFFFFFFu
 #define TERSE_ERR_BUFFER 0xFFFFFFFEu
@@ -319,6 +323,58 @@ static inline void vec_clear(void) { terse_call(CALL_VEC_CLEAR, 0, 0, 0); }
 static inline uint8_t vec_style(uint32_t s) { return terse_call(CALL_VEC_STYLE, s, 0, 0); }
 static inline uint8_t vec_persistence(uint32_t p) { return terse_call(CALL_VEC_PERSISTENCE, p, 0, 0); }
 static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f, 0, 0); }
+
+/* Device 9, 3D vector display (SPEC 13). Coordinates are sixteenths of a
+ * screen unit: x right, y down, z away from the viewer, 0 at the glass.
+ * Transforms apply to later coordinates, the last given first. A rotation
+ * angle is in 1/65,536 of a turn: a positive angle about x turns y towards
+ * z, about y z towards x, about z x towards y (clockwise on the screen). */
+#define V3_MAX_LIST 16384
+#define V3_UNIT 16
+#define V3_TURN 65536u
+#define V3_AXIS_X 0
+#define V3_AXIS_Y 1
+#define V3_AXIS_Z 2
+#define V3_SCALE_ONE 256
+
+#define V3_OP_END 0x00
+#define V3_OP_COLOUR 0x01
+#define V3_OP_WIDTH 0x02
+#define V3_OP_MOVE 0x03
+#define V3_OP_LINE 0x04
+#define V3_OP_POINT 0x05
+#define V3_OP_CIRCLE 0x06
+#define V3_OP_PUSH 0x07
+#define V3_OP_POP 0x08
+#define V3_OP_TRANSLATE 0x09
+#define V3_OP_ROTATE 0x0A
+#define V3_OP_SCALE 0x0B
+
+/* Builder: appends commands at v3_ptr; the caller owns the buffer. */
+extern uint8_t *v3_ptr;
+#define v3_begin(buf) (v3_ptr = (buf))
+#define v3_length(buf) ((uint32_t)(v3_ptr - (uint8_t *)(buf)))
+void v3_colour(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+void v3_width(uint16_t w);
+void v3_move(int16_t x, int16_t y, int16_t z);
+void v3_line(int16_t x, int16_t y, int16_t z);
+void v3_point(void);
+void v3_circle(uint16_t r);
+void v3_push(void);
+void v3_pop(void);
+void v3_translate(int16_t x, int16_t y, int16_t z);
+void v3_rotate(uint8_t axis, uint16_t angle);
+void v3_scale(uint16_t s);
+void v3_end(void);
+
+/* Submits `len` bytes at `list` (in RAM); returns VEC_DONE or VEC_REJECTED.
+ * Costs 1 unit per 4 bytes. */
+static inline uint8_t v3_submit(const void *list, uint32_t len) { return terse_call(CALL_V3_SUBMIT, (uint32_t)list, len, 0); }
+#define v3_submit_list(buf) v3_submit((buf), v3_length(buf))
+static inline void v3_clear(void) { terse_call(CALL_V3_CLEAR, 0, 0, 0); }
+/* The display style and persistence, shared with device 3. */
+static inline uint8_t v3_style(uint32_t s) { return terse_call(CALL_V3_STYLE, s, 0, 0); }
+static inline uint8_t v3_persistence(uint32_t p) { return terse_call(CALL_V3_PERSISTENCE, p, 0, 0); }
 
 /* Device 4, content (SPEC 9). */
 #define CONTENT_GET 0x01

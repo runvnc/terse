@@ -110,7 +110,7 @@ pub const SUBSTEPS: u32 = 4;
 pub const MAX_SUBSTEPS: u32 = 16;
 pub const SMEAR_SPACING: i32 = 16;
 /// Most deposit instances in one frame.
-pub const DEPOSIT_BUDGET: usize = crate::display::MAX_PRIMITIVES * SUBSTEPS as usize;
+pub const DEPOSIT_BUDGET: usize = crate::display::MAX_SHAPES * SUBSTEPS as usize;
 /// A shape that jumped further than this between frames (in sixteenths of
 /// a screen unit, on either axis: 40 units) is not smeared; it teleported.
 pub const MAX_SMEAR: i32 = 40 * 16;
@@ -225,6 +225,12 @@ fn moved(prev: &Primitive, cur: &Primitive) -> Option<i32> {
         (Primitive::Circle { x: a, y: b, radius: r, .. }, Primitive::Circle { x, y, radius, .. }) => {
             Some(d(&[(a as i32, x as i32), (b as i32, y as i32), (r as i32, radius as i32)]))
         }
+        (Primitive::Beam { x0: a0, y0: b0, x1: a1, y1: b1, .. }, Primitive::Beam { x0, y0, x1, y1, .. }) => Some(d(&[
+            (a0 as i32, x0 as i32),
+            (b0 as i32, y0 as i32),
+            (a1 as i32, x1 as i32),
+            (b1 as i32, y1 as i32),
+        ])),
         _ => None,
     }
 }
@@ -251,6 +257,18 @@ fn between(prev: &Primitive, cur: &Primitive, t: f32) -> Option<Primitive> {
                 radius: (r as f32 + (radius as f32 - r as f32) * t).round() as u16,
                 width,
                 rgba,
+            })
+        }
+        (Primitive::Beam { x0: a0, y0: b0, x1: a1, y1: b1, .. }, Primitive::Beam { x0, y0, x1, y1, width, rgba, fade, butt }) => {
+            near(&[(a0, x0), (b0, y0), (a1, x1), (b1, y1)]).then(|| Primitive::Beam {
+                x0: lerp(a0, x0, t),
+                y0: lerp(b0, y0, t),
+                x1: lerp(a1, x1, t),
+                y1: lerp(b1, y1, t),
+                width,
+                rgba,
+                fade,
+                butt,
             })
         }
         _ => None,
@@ -284,16 +302,19 @@ pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, slow_decay: 
     }
 }
 
-/// The vertex dwell of each shape ([`DWELL`]): for a line, how many
-/// different lines end at its start (bits 0-3) and at its end (bits 4-7),
-/// itself included, at most 15; 0 for anything else. Lines with the same
-/// two end points count once, whatever their colour or width; a line of
-/// length 0 is one end.
+/// The vertex dwell of each shape ([`DWELL`]): for a line (or a 3D
+/// segment), how many different lines end at its start (bits 0-3) and at
+/// its end (bits 4-7), itself included, at most 15; 0 for anything else.
+/// Lines with the same two end points count once, whatever their colour or
+/// width; a line of length 0 is one end. A segment's butt end (where a
+/// circle's chords join) has no dwell, so a segment both of whose ends are
+/// butt ends is not counted (and gets 0).
 pub fn dwell_ends(shapes: &[Primitive], out: &mut Vec<u32>) {
     use std::collections::{HashMap, HashSet};
     out.clear();
     let ends = |p: &Primitive| match *p {
         Primitive::Line { x0, y0, x1, y1, .. } => Some(((x0, y0), (x1, y1))),
+        Primitive::Beam { x0, y0, x1, y1, butt: 0, .. } => Some(((x0, y0), (x1, y1))),
         _ => None,
     };
     let mut lines = HashSet::new();

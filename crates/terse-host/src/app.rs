@@ -79,6 +79,7 @@ pub fn run(
     let mut system = System::new(&program.image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
     terse_net::snapshots::load_table(&mut system, &program.data);
+    let looks_eye = looks.eye;
     let mut app = App {
         system,
         io: HashMap::new(),
@@ -98,6 +99,8 @@ pub fn run(
         buttons: 0,
         pointer: None,
         pointer_sent: None,
+        pointer_px: None,
+        eye: looks_eye,
         wheel: (0.0, 0.0),
         gamepads: Gamepads::new(),
         next_frame: Instant::now(),
@@ -554,6 +557,10 @@ struct App {
     /// movement is sent at most once per frame).
     pointer: Option<(u16, u16)>,
     pointer_sent: Option<(u16, u16)>,
+    /// The pointer in the window (pixels), while it is in it: the eye of
+    /// the 3D display follows it (SPEC 13.1), smoothed.
+    pointer_px: Option<(f64, f64)>,
+    eye: crate::display::Eye,
     /// Wheel steps not yet sent (vertical, horizontal; positive is down, right).
     wheel: (f64, f64),
     gamepads: Gamepads,
@@ -666,6 +673,23 @@ impl App {
             });
             let io = &self.io;
             let layout = |serial: u32| io.get(&serial).and_then(|io| io.page.as_ref()).and_then(|w| w.shown.clone());
+            // Parallax: the eye moves towards where the pointer says, a
+            // quarter of the way each frame, and rests exactly there.
+            if self.looks.parallax && self.selftest.is_none() {
+                let max = terse_core::vector3::MAX_EYE_OFFSET;
+                let target = match self.pointer_px {
+                    Some((x, y)) => {
+                        let (ux, uy) = gfx.display().screen_pos(viewport, x, y);
+                        let w = terse_core::SCREEN_WIDTH as f32 / 2.0;
+                        let h = terse_core::SCREEN_HEIGHT as f32 / 2.0;
+                        (((ux as f32 + 0.5 - w) / w * max).clamp(-max, max), ((uy as f32 + 0.5 - h) / h * max).clamp(-max, max))
+                    }
+                    None => self.looks.eye,
+                };
+                let step = |e: f32, t: f32| if (t - e).abs() < 0.05 { t } else { e + (t - e) * 0.25 };
+                self.eye = (step(self.eye.0, target.0), step(self.eye.1, target.1));
+            }
+            gfx.display_mut().set_eye(self.eye);
             gfx.display_mut().update(&self.system, viewport, &ran, &layout, prompt);
             gfx.window.request_redraw();
         }
@@ -792,6 +816,7 @@ impl App {
     }
 
     fn pointer_moved(&mut self, pos: PhysicalPosition<f64>) {
+        self.pointer_px = Some((pos.x, pos.y));
         let Some(gfx) = &self.gfx else { return };
         self.pointer = Some(gfx.display().screen_pos(gfx.viewport(), pos.x, pos.y));
     }
@@ -884,6 +909,7 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => self.key(event),
             WindowEvent::CursorMoved { position, .. } => self.pointer_moved(position),
+            WindowEvent::CursorLeft { .. } => self.pointer_px = None,
             WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             _ => {}

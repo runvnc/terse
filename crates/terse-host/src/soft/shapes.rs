@@ -39,7 +39,9 @@ impl Geom {
 /// A primitive ready to draw: coordinates in sixteenths (f32), colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
-    Line { a: (f32, f32), b: (f32, f32), hw: f32, rgba: [u8; 4], dwell: u32 },
+    /// A line, or a 3D segment: `fade` is its depth cue at each end (1 for
+    /// a 2D line), `butt` its butt ends (`terse_core::vector3::BUTT_START`, `BUTT_END`).
+    Line { a: (f32, f32), b: (f32, f32), hw: f32, rgba: [u8; 4], dwell: u32, fade: (f32, f32), butt: u8 },
     Circle { c: (f32, f32), r: f32, hw: f32, rgba: [u8; 4] },
     Disc { c: (f32, f32), r: f32, rgba: [u8; 4] },
     Rect { a: (f32, f32), b: (f32, f32), rgba: [u8; 4] },
@@ -53,8 +55,17 @@ impl Shape {
         let f = |x: i16, y: i16| (x as f32, y as f32);
         match *p {
             Primitive::Line { x0, y0, x1, y1, width, rgba } => {
-                Shape::Line { a: f(x0, y0), b: f(x1, y1), hw: width as f32 * 0.5, rgba, dwell }
+                Shape::Line { a: f(x0, y0), b: f(x1, y1), hw: width as f32 * 0.5, rgba, dwell, fade: (1.0, 1.0), butt: 0 }
             }
+            Primitive::Beam { x0, y0, x1, y1, width, rgba, fade, butt } => Shape::Line {
+                a: f(x0, y0),
+                b: f(x1, y1),
+                hw: width as f32 * 0.5,
+                rgba,
+                dwell,
+                fade: (fade[0] as f32 / 255.0, fade[1] as f32 / 255.0),
+                butt,
+            },
             Primitive::Circle { x, y, radius, width, rgba } => {
                 Shape::Circle { c: f(x, y), r: radius as f32, hw: width as f32 * 0.5, rgba }
             }
@@ -208,12 +219,18 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
         (x0.max(clip.x0), x1.min(clip.x1))
     };
     match *shape {
-        Shape::Line { a, b, hw, dwell, .. } => {
+        Shape::Line { a, b, hw, dwell, fade, butt, .. } => {
             let core = hw * CORE_WIDTH;
             let dw = Dwell::new(a, b, dwell, core, px);
             let ba = (b.0 - a.0, b.1 - a.1);
-            let inv_len2 = 1.0 / (ba.0 * ba.0 + ba.1 * ba.1).max(1e-6);
+            let len2 = ba.0 * ba.0 + ba.1 * ba.1;
+            let inv_len2 = 1.0 / len2.max(1e-6);
             let (hw_px, core_px) = (hw * inv_px, core * inv_px);
+            let plain = butt == 0 && fade == (1.0, 1.0);
+            // A butt end: a step half a pixel either side of it instead of
+            // a round cap (as the GPU's `segment`).
+            let (b0, b1) = (butt & 1 != 0, butt & 2 != 0);
+            let len_px = len2.sqrt() * inv_px;
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
                 let Some((lo, hi)) = capsule_row(a, b, reach, yq) else { continue };
@@ -223,13 +240,27 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                     let q = (qx(x), yq);
                     // The distance to the segment.
                     let pax = q.0 - a.0;
-                    let h = ((pax * ba.0 + pay * ba.1) * inv_len2).clamp(0.0, 1.0);
+                    let hr = (pax * ba.0 + pay * ba.1) * inv_len2;
+                    let mut h = hr.clamp(0.0, 1.0);
+                    let mut w = 1.0;
+                    if !plain {
+                        w = fade.0 + (fade.1 - fade.0) * h;
+                        if butt != 0 {
+                            let along = hr * len_px;
+                            let s0 = if b0 { (along + 0.5).clamp(0.0, 1.0) } else { 1.0 };
+                            let s1 = if b1 { (along - len_px + 0.5).clamp(0.0, 1.0) } else { 0.0 };
+                            w *= s0 - s1;
+                            if (b0 && hr < 0.0) || (b1 && hr > 1.0) {
+                                h = hr;
+                            }
+                        }
+                    }
                     let (dx, dy) = (pax - ba.0 * h, pay - ba.1 * h);
                     let d = (dx * dx + dy * dy).sqrt();
                     let v = match mode {
                         Mode::Cover => stroke(hw_px, d * inv_px),
                         Mode::Light => beam_light(core, core_px, d, inv_px, table) * dw.at(q),
-                    };
+                    } * w;
                     if v > 0.0 {
                         f(x, y, v);
                     }
@@ -432,7 +463,7 @@ mod tests {
         let clip = IRect::new(0, 0, 400, 400);
         for (a, b, hw) in [((100.0, 200.0), (900.0, 1300.0), 8.0), ((50.0, 50.0), (50.0, 50.0), 24.0), ((10.0, 300.0), (800.0, 300.0), 3.0)] {
             for mode in [Mode::Cover, Mode::Light] {
-                let shape = Shape::Line { a, b, hw, rgba: [255; 4], dwell: 0x11 };
+                let shape = Shape::Line { a, b, hw, rgba: [255; 4], dwell: 0x11, fade: (1.0, 1.0), butt: 0 };
                 let got = covered(&shape, &g, mode, clip);
                 let mut want: Vec<(i32, i32, f32)> = Vec::new();
                 let px = g.px();
@@ -459,6 +490,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Butt ends: a line cut into pieces that join with butt ends covers
+    /// what the whole line does (no bright beads where they join, as a
+    /// circle's chords do), and the depth cue fades it along its length.
+    #[test]
+    fn butt_ends_join_seamlessly() {
+        let g = Geom { origin: (0.5, 0.25), scale: (0.4, 0.4) };
+        let clip = IRect::new(0, 0, 200, 60);
+        let line = |a, b, butt, fade| Shape::Line { a, b, hw: 12.0, rgba: [255; 4], dwell: 0, fade, butt };
+        for mode in [Mode::Cover, Mode::Light] {
+            let mut whole = vec![0.0f32; 200 * 60];
+            visit(&line((40.0, 70.0), (440.0, 70.0), 0, (1.0, 1.0)), &g, mode, clip, |x, y, v| whole[(y * 200 + x) as usize] += v);
+            let mut pieces = vec![0.0f32; 200 * 60];
+            let cuts = [40.0, 77.3, 150.0, 151.0, 300.5, 440.0];
+            for i in 0..cuts.len() - 1 {
+                let butt = (if i > 0 { 1 } else { 0 }) | (if i + 2 < cuts.len() { 2 } else { 0 });
+                let s = line((cuts[i], 70.0), (cuts[i + 1], 70.0), butt, (1.0, 1.0));
+                visit(&s, &g, mode, clip, |x, y, v| pieces[(y * 200 + x) as usize] += v);
+            }
+            let worst = whole.iter().zip(&pieces).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+            let at = whole.iter().zip(&pieces).position(|(a, b)| (a - b).abs() == worst).unwrap();
+            assert!(worst < 1e-3, "{worst} at {} {} {:?}: {} {}", at % 200, at / 200, mode == Mode::Cover, whole[at], pieces[at]);
+            // Faded from 1 to 0.5: the far end has half the light.
+            let mut faded = vec![0.0f32; 200 * 60];
+            visit(&line((40.0, 70.0), (440.0, 70.0), 0, (1.0, 0.5)), &g, mode, clip, |x, y, v| faded[(y * 200 + x) as usize] += v);
+            let (near, far) = ((28 * 200 + 25) as usize, (28 * 200 + 170) as usize);
+            assert!((faded[near] / whole[near] - 0.97).abs() < 0.02, "{}", faded[near] / whole[near]);
+            assert!((faded[far] / whole[far] - 0.519).abs() < 0.01, "{}", faded[far] / whole[far]);
+        }
+        // A zero-length piece with butt ends draws nothing.
+        let mut n = 0;
+        visit(&line((80.0, 70.0), (80.0, 70.0), 3, (1.0, 1.0)), &g, Mode::Cover, clip, |_, _, _| n += 1);
+        assert_eq!(n, 0);
     }
 
     #[test]

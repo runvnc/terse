@@ -221,6 +221,12 @@ pub enum Primitive {
     Disc { x: i16, y: i16, radius: u16, rgba: Rgba },
     Rect { x0: i16, y0: i16, x1: i16, y1: i16, rgba: Rgba },
     Triangle { x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, rgba: Rgba },
+    /// A segment of the 3D vector display as seen on the glass
+    /// (`crate::vector3::project`): drawn like a line, with its opacity
+    /// times `fade` (255 = 1) at each end, interpolated along it; an end
+    /// whose bit is set in `butt` (bit 0 the start, bit 1 the end) has no
+    /// round cap and no vertex dwell, where a circle's chords join.
+    Beam { x0: i16, y0: i16, x1: i16, y1: i16, width: u8, rgba: Rgba, fade: [u8; 2], butt: u8 },
 }
 
 fn hex(rgba: &Rgba) -> String {
@@ -242,6 +248,9 @@ impl fmt::Display for Primitive {
             Primitive::Rect { x0, y0, x1, y1, rgba } => write!(f, "rect {x0} {y0} {x1} {y1} c {}", hex(rgba)),
             Primitive::Triangle { x0, y0, x1, y1, x2, y2, rgba } => {
                 write!(f, "triangle {x0} {y0} {x1} {y1} {x2} {y2} c {}", hex(rgba))
+            }
+            Primitive::Beam { x0, y0, x1, y1, width, rgba, fade, butt } => {
+                write!(f, "beam {x0} {y0} {x1} {y1} w {width} c {} f {} {} b {butt}", hex(rgba), fade[0], fade[1])
             }
         }
     }
@@ -277,7 +286,7 @@ pub fn fill_area(p: &Primitive) -> u64 {
             let ys = [y0 as i32, y1 as i32, y2 as i32];
             (*xs.iter().min().unwrap(), *ys.iter().min().unwrap(), *xs.iter().max().unwrap(), *ys.iter().max().unwrap())
         }
-        Primitive::Line { .. } | Primitive::Circle { .. } => return 0,
+        Primitive::Line { .. } | Primitive::Circle { .. } | Primitive::Beam { .. } => return 0,
     };
     let w = (x1.min(SCREEN_W16) - x0.max(0)).max(0) as u64;
     let h = (y1.min(SCREEN_H16) - y0.max(0)).max(0) as u64;
@@ -426,7 +435,7 @@ impl Iterator for Outlines<'_> {
         // The width the decoder holds now is the one in effect at `p`.
         let width = self.decoder.width;
         let (corners, n, rgba) = match p {
-            Primitive::Line { .. } | Primitive::Circle { .. } => return Some(p),
+            Primitive::Line { .. } | Primitive::Circle { .. } | Primitive::Beam { .. } => return Some(p),
             Primitive::Disc { x, y, radius, rgba } => return Some(Primitive::Circle { x, y, radius, width, rgba }),
             Primitive::Rect { x0, y0, x1, y1, rgba } => ([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], 4, rgba),
             Primitive::Triangle { x0, y0, x1, y1, x2, y2, rgba } => ([(x0, y0), (x1, y1), (x2, y2), (0, 0)], 3, rgba),

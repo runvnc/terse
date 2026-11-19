@@ -395,6 +395,7 @@ pub const SESSION: &str = "\
 40 press pagedown
 50 home
 51 press up
+51 press up
 52 press up
 53 press up
 54 press up
@@ -403,6 +404,7 @@ pub const SESSION: &str = "\
 70 down up
 90 up up
 100 home
+101 press up
 101 press up
 102 press up
 103 press enter

@@ -106,7 +106,7 @@ fn pack_refuses_bad_headers() {
     for (extra, why) in [
         (&["--ram-pages", "0"][..], "RAM pages 0"),
         (&["--ram-pages", "129"][..], "RAM pages 129"),
-        (&["--ram-pages", "1", "--device", "9:0"][..], "device 9 version 0"),
+        (&["--ram-pages", "1", "--device", "10:0"][..], "device 10 version 0"),
     ] {
         let out = terse(&[&base[..], extra].concat());
         assert!(!out.status.success(), "{extra:?}");

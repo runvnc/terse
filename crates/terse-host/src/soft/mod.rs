@@ -32,7 +32,7 @@ use terse_core::{Machine, System};
 
 use self::base::{Damage, IRect, Pixels, Pool, tile_rows};
 use self::screen::SoftScreen;
-use crate::display::{Display, GlyphSource, ShownPrompt, cell_width_for, picture_rect, system_rect};
+use crate::display::{Display, Eye, GlyphSource, ShownPrompt, VectorScene, cell_width_for, picture_rect, system_rect};
 use crate::page::HostLayout;
 use crate::{consent, displayed_terminal};
 
@@ -58,6 +58,8 @@ pub struct SoftScreens {
     pool: Pool,
     frame: Pixels,
     damage: Damage,
+    /// The eye for 3D lists, the same for every machine (SPEC 13.1).
+    eye: Eye,
     /// The damage of the frame drawn last, for presenters.
     last_damage: Vec<IRect>,
     /// What the frame was put together from: the children's areas in
@@ -78,6 +80,7 @@ impl SoftScreens {
             pool: Pool::new(threads),
             frame: Pixels::default(),
             damage: Damage::default(),
+            eye: (0.0, 0.0),
             last_damage: Vec::new(),
             composed: (Vec::new(), IRect::EMPTY),
         }
@@ -217,7 +220,8 @@ impl Display for SoftScreens {
                 self.shell.set_overlay(None);
             }
         }
-        show(&mut self.shell, shell, layout(0));
+        let eye = self.eye;
+        show(&mut self.shell, shell, layout(0), eye);
         self.shell.place(viewport);
         if ran.contains(&0) {
             self.shell.accumulate(viewport, true, &self.pool);
@@ -241,7 +245,7 @@ impl Display for SoftScreens {
             });
             s.set_rect(Some(rect));
             s.update(&displayed_terminal(machine));
-            show(s, machine, layout(child.serial));
+            show(s, machine, layout(child.serial), eye);
             s.place(viewport);
             if fresh || ran.contains(&child.serial) {
                 s.accumulate(viewport, true, &self.pool);
@@ -249,6 +253,10 @@ impl Display for SoftScreens {
             keep.push(child.serial);
         }
         self.children.retain(|serial, _| keep.contains(serial));
+    }
+
+    fn set_eye(&mut self, eye: Eye) {
+        self.eye = eye;
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {
@@ -311,8 +319,8 @@ impl Display for SoftScreens {
 }
 
 /// A machine's vector list and page to its screen.
-fn show(s: &mut SoftScreen, machine: &Machine, layout: Option<Arc<HostLayout>>) {
-    s.update_vectors(machine.vector());
+fn show(s: &mut SoftScreen, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye) {
+    s.update_vectors(&VectorScene { vector: machine.vector(), vector3: machine.vector3(), eye });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));
     s.update_page(machine.page(), layout);
 }
@@ -352,7 +360,7 @@ mod tests {
     /// Brings `s` up to date and draws it; returns the damage.
     fn show(s: &mut SoftScreen, t: &Terminal, v: &Vector, pool: &Pool) -> Damage {
         s.update(t);
-        s.update_vectors(Some(v));
+        s.update_vectors(&crate::display::VectorScene { vector: Some(v), vector3: None, eye: (0.0, 0.0) });
         s.update_page(None, None);
         s.render(VIEWPORT, pool);
         let mut d = Damage::new(VIEWPORT);
@@ -404,6 +412,58 @@ mod tests {
         assert!(show(&mut s, &t, &v, &pool).is_empty());
     }
 
+    /// The 3D display's segments are drawn bit by bit as from scratch too,
+    /// when the list changes and when only the eye moves; an idle screen
+    /// with a 3D list draws nothing.
+    #[test]
+    fn incremental_drawing_with_a_3d_list() {
+        use crate::display::VectorScene;
+        use terse_core::Vector3;
+        let pool = Pool::new(2);
+        let t = Terminal::default();
+        let v = Vector::default();
+        let mut v3 = Vector3::default();
+        let show3 = |s: &mut SoftScreen, v3: &Vector3, eye: (f32, f32)| {
+            s.update(&t);
+            s.update_vectors(&VectorScene { vector: Some(&v), vector3: Some(v3), eye });
+            s.update_page(None, None);
+            s.render(VIEWPORT, &pool);
+            let mut d = Damage::new(VIEWPORT);
+            s.take_damage(&mut d);
+            d
+        };
+        let fresh3 = |v3: &Vector3, eye: (f32, f32)| {
+            let mut s = SoftScreen::new(Box::new(Blocks(8)));
+            show3(&mut s, v3, eye);
+            s.image.data.clone()
+        };
+        // A square in depth and a circle (a point, lines, butt-ended chords).
+        let xyz = |x: i16, y: i16, z: i16| [x.to_le_bytes(), y.to_le_bytes(), z.to_le_bytes()].concat();
+        let list = |z: i16| {
+            [
+                vec![0x01, 255, 200, 100, 255, 0x03],
+                xyz(1600, 1600, 0),
+                vec![0x04],
+                xyz(4800, 1600, z),
+                vec![0x04],
+                xyz(4800, 4800, z),
+                vec![0x05, 0x06, 0x00, 0x04],
+            ]
+            .concat()
+        };
+        let mut s = SoftScreen::new(Box::new(Blocks(8)));
+        show3(&mut s, &v3, (0.0, 0.0));
+        for (z, eye) in [(0, (0.0, 0.0)), (8000, (0.0, 0.0)), (8000, (160.0, -40.0)), (-4000, (-160.0, 160.0))] {
+            v3.submit(&list(z));
+            show3(&mut s, &v3, eye);
+            assert_eq!(s.image.data, fresh3(&v3, eye), "z {z}, eye {eye:?}");
+            assert!(show3(&mut s, &v3, eye).is_empty(), "idle: nothing");
+        }
+        v3.clear();
+        show3(&mut s, &v3, (0.0, 0.0));
+        assert_eq!(s.image.data, fresh3(&v3, (0.0, 0.0)));
+    }
+
     /// The phosphor tube: light where the shapes and glyphs are, and an
     /// afterglow that fades all the way to black once they are gone.
     #[test]
@@ -416,7 +476,7 @@ mod tests {
         v.set_persistence(200);
         let mut s = SoftScreen::new(Box::new(Blocks(8)));
         s.update(&t);
-        s.update_vectors(Some(&v));
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) });
         s.update_page(None, None);
         s.accumulate(VIEWPORT, true, &pool);
         let lit = |s: &SoftScreen| s.image.data.iter().filter(|&&p| p != 0).count();
@@ -426,7 +486,7 @@ mod tests {
         t.command(0x01);
         t.command(0x06);
         s.update(&t);
-        s.update_vectors(Some(&v));
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) });
         s.accumulate(VIEWPORT, true, &pool);
         let fading = lit(&s);
         assert!(fading > 0, "an afterglow");

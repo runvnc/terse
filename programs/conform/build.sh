@@ -29,4 +29,4 @@ for src in "$here/crt0.S" "$here/conform.c" "$here/cpu.S"; do
 done
 "${LLD:-ld.lld}" -T "$here/conform.ld" --gc-sections 0.o 1.o 2.o -o conform.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary conform.elf conform.bin
-terse pack --rom conform.bin --title conform --ram-pages 16 --device 2:0 --device 3:0 --device 4:0 --device 7:0 -o "$out/conform.terse"
+terse pack --rom conform.bin --title conform --ram-pages 16 --device 2:0 --device 3:0 --device 4:0 --device 7:0 --device 9:0 -o "$out/conform.terse"

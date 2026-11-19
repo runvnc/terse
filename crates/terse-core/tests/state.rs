@@ -406,7 +406,7 @@ fn named_records_replay() {
     let other_load = run(0x6463_6261, b'k', b"wxyz").1;
     assert_eq!(a[0], other_load[0]);
     assert_ne!(a[1], other_load[1], "what a load delivers is an input");
-    // The save's 4 bytes cost 1 unit at submit (SPEC 13).
+    // The save's 4 bytes cost 1 unit at submit (SPEC 14).
     let mut empty = Machine::new(&common::program(&assemble(&src(0x6463_6261, b'k').replace("li t1, 4\n    sw t1, 48(t0)", "li t1, 0\n    sw t1, 48(t0)")), 2, &ALL));
     assert_eq!(used - empty.run_frame(&FrameInput::default()).used, 1);
 }

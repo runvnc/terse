@@ -20,7 +20,7 @@
 
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
 
-pub use crate::display::{MAX_PRIMITIVES, decode_shapes};
+use crate::display::{MAX_SHAPES, SceneKey, VectorScene};
 use crate::phosphor::{self, DEPOSIT_BUDGET, Deposit, FAST_DECAY};
 
 /// Format of the phosphor texture: linear light, unclamped, so long trails
@@ -32,6 +32,9 @@ const KIND_CIRCLE: u32 = 1;
 const KIND_DISC: u32 = 2;
 const KIND_RECT: u32 = 3;
 const KIND_TRIANGLE: u32 = 4;
+/// A 3D segment (`Primitive::Beam`): a line with a depth cue at each end
+/// (bits 16-23 and 24-31 of the kind) and butt ends (bits 4-5).
+const KIND_BEAM: u32 = 5;
 
 /// One instance: kind, a = (x0, y0, x1, y1), b = (x2, y2, radius, width),
 /// all in sixteenths, then r, g, b, a. An afterglow deposit (always a line or
@@ -62,6 +65,8 @@ struct Out {
     @location(3) @interpolate(flat) color: vec4<f32>,
     @location(4) @interpolate(flat) deposit: vec2<f32>,  // fast, slow (afterglow deposits)
     @location(5) @interpolate(flat) dwell: u32,  // lines sharing each end (phosphor::dwell_ends)
+    @location(6) @interpolate(flat) fade: vec2<f32>,  // a 3D segment's depth cue at each end
+    @location(7) @interpolate(flat) butt: u32,  // a 3D segment's butt ends: bit 0 start, bit 1 end
 }
 
 @vertex
@@ -72,7 +77,7 @@ fn vs(
     @location(2) b: vec4<f32>,
     @location(3) color: vec4<f32>,
 ) -> Out {
-    let kind = kind_dwell & 0xFFu;
+    let kind = kind_dwell & 0xFu;
     let p0 = a.xy;
     let p1 = a.zw;
     let p2 = b.xy;
@@ -93,7 +98,7 @@ fn vs(
     }
     var q: vec2<f32>;
     switch kind {
-        case 0u: {
+        case 0u, 5u: {
             let d = p1 - p0;
             let len = length(d);
             var dir = vec2<f32>(1.0, 0.0);
@@ -127,7 +132,13 @@ fn vs(
     out.shape = vec3<f32>(r, hw, px_mean);
     out.color = color;
     out.deposit = b.xy;
-    out.dwell = kind_dwell >> 8u;
+    out.dwell = (kind_dwell >> 8u) & 0xFFu;
+    out.fade = vec2<f32>(1.0);
+    out.butt = 0u;
+    if kind == 5u {
+        out.fade = vec2<f32>(f32((kind_dwell >> 16u) & 0xFFu), f32(kind_dwell >> 24u)) / 255.0;
+        out.butt = (kind_dwell >> 4u) & 3u;
+    }
     return out;
 }
 
@@ -147,6 +158,35 @@ fn stroke(hw: f32, d: f32) -> f32 {
     return clamp(1.0 - d, 0.0, 1.0) * 2.0 * hw;
 }
 
+// A line's (kind 0) or 3D segment's (kind 5) distance from q (sixteenths)
+// and its weight there: for a segment, the depth cue interpolated along it,
+// and at a butt end a step half a pixel either side of the end instead of
+// a round cap (so chords that join add up to one).
+fn segment(in: Out, q: vec2<f32>) -> vec2<f32> {
+    let pa = q - in.ends.xy;
+    let ba = in.ends.zw - in.ends.xy;
+    let len2 = dot(ba, ba);
+    let hr = dot(pa, ba) / max(len2, 1e-6);
+    var h = clamp(hr, 0.0, 1.0);
+    if in.kind != 5u {
+        return vec2<f32>(length(pa - ba * h), 1.0);
+    }
+    let w = mix(in.fade.x, in.fade.y, h);
+    if in.butt == 0u {
+        return vec2<f32>(length(pa - ba * h), w);
+    }
+    let len = sqrt(len2);
+    let along = hr * len / in.shape.z;
+    let b0 = (in.butt & 1u) != 0u;
+    let b1 = (in.butt & 2u) != 0u;
+    let s0 = select(1.0, clamp(along + 0.5, 0.0, 1.0), b0);
+    let s1 = select(0.0, clamp(along - len / in.shape.z + 0.5, 0.0, 1.0), b1);
+    if (b0 && hr < 0.0) || (b1 && hr > 1.0) {
+        h = hr;
+    }
+    return vec2<f32>(length(pa - ba * h), w * (s0 - s1));
+}
+
 @fragment
 fn fs(in: Out) -> @location(0) vec4<f32> {
     // This pixel's centre in sixteenths; distances below are in pixels.
@@ -154,11 +194,9 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     let px = in.shape.z;
     var cover = 1.0;
     switch in.kind {
-        case 0u: {
-            let pa = q - in.ends.xy;
-            let ba = in.ends.zw - in.ends.xy;
-            let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
-            cover = stroke(in.shape.y / px, length(pa - ba * h) / px);
+        case 0u, 5u: {
+            let dw = segment(in, q);
+            cover = stroke(in.shape.y / px, dw.x / px) * dw.y;
         }
         case 1u: {
             cover = stroke(in.shape.y / px, abs(length(q - in.ends.xy) - in.shape.x) / px);
@@ -184,7 +222,7 @@ fn to_linear(c: vec3<f32>) -> vec3<f32> {
 // points, where the beam lingers: 1 + DWELL at a lone end, shared between the
 // n different lines that end at the same point. hw is the core's half width.
 fn dwell(in: Out, q: vec2<f32>, hw: f32) -> f32 {
-    if in.kind != 0u || in.dwell == 0u {
+    if (in.kind != 0u && in.kind != 5u) || in.dwell == 0u {
         return 1.0;
     }
     let r = max(DWELL_SIZE * hw, DWELL_MIN_PX * in.shape.z);
@@ -208,12 +246,12 @@ fn beam_light(in: Out) -> f32 {
     let px = in.shape.z;
     let hw = in.shape.y * CORE_WIDTH;
     var d: f32;
+    var w = 1.0;
     switch in.kind {
-        case 0u: {
-            let pa = q - in.ends.xy;
-            let ba = in.ends.zw - in.ends.xy;
-            let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
-            d = length(pa - ba * h);
+        case 0u, 5u: {
+            let dw = segment(in, q);
+            d = dw.x;
+            w = dw.y;
         }
         case 1u: {
             d = abs(length(q - in.ends.xy) - in.shape.x);
@@ -224,7 +262,7 @@ fn beam_light(in: Out) -> f32 {
     }
     let edge = max(d - hw, 0.0);
     let halo = HALO * exp(-edge / HALO_FALLOFF) * (1.0 - smoothstep(0.5 * HALO_REACH, HALO_REACH, edge));
-    return max(CORE * stroke(hw / px, d / px), CORE * halo) * dwell(in, q, hw);
+    return max(CORE * stroke(hw / px, d / px), CORE * halo) * dwell(in, q, hw) * w;
 }
 
 // The beam: this frame's light, added into the beam texture.
@@ -286,6 +324,10 @@ fn instance(p: &Primitive, deposit: [f32; 2], dwell: u32, out: &mut Vec<u8>) {
     let f = |v: i16| v as f32;
     let [df, ds] = deposit;
     let (kind, a, b, rgba) = match *p {
+        Primitive::Beam { x0, y0, x1, y1, width, rgba, fade, butt } => {
+            let kind = KIND_BEAM | (butt as u32 & 3) << 4 | (fade[0] as u32) << 16 | (fade[1] as u32) << 24;
+            (kind, [f(x0), f(y0), f(x1), f(y1)], [df, ds, 0.0, width as f32], rgba)
+        }
         Primitive::Line { x0, y0, x1, y1, width, rgba } => {
             (KIND_LINE, [f(x0), f(y0), f(x1), f(y1)], [df, ds, 0.0, width as f32], rgba)
         }
@@ -300,7 +342,7 @@ fn instance(p: &Primitive, deposit: [f32; 2], dwell: u32, out: &mut Vec<u8>) {
             (KIND_TRIANGLE, [f(x0), f(y0), f(x1), f(y1)], [f(x2), f(y2), 0.0, 0.0], rgba)
         }
     };
-    out.extend_from_slice(&(kind | dwell << 8).to_le_bytes());
+    out.extend_from_slice(&(kind | (dwell & 0xFF) << 8).to_le_bytes());
     for v in a.iter().chain(&b) {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -337,8 +379,8 @@ pub struct VectorLayer {
     count: u32,
     /// The afterglow deposits of a frame, with motion sub-steps.
     deposit_instances: wgpu::Buffer,
-    /// The list generation last uploaded, and whether as outlines.
-    uploaded: Option<(u64, bool)>,
+    /// What was uploaded last (lists, eye, outlines).
+    uploaded: Option<SceneKey>,
     /// The primitives uploaded and the list's opcodes; the same for the
     /// previous machine frame of the phosphor style.
     shapes: Vec<Primitive>,
@@ -408,7 +450,7 @@ impl VectorLayer {
                 mapped_at_creation: false,
             })
         };
-        let instances = vertex_buffer("vector instances", MAX_PRIMITIVES);
+        let instances = vertex_buffer("vector instances", MAX_SHAPES);
         let deposit_instances = vertex_buffer("afterglow deposits", DEPOSIT_BUDGET);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("vectors"),
@@ -555,17 +597,18 @@ impl VectorLayer {
         })
     }
 
-    /// Uploads the display list, unless `generation` says it is unchanged:
-    /// with `outlines`, as `decode_outlines` gives it (the phosphor style,
-    /// or fill off), otherwise as `decode` does (with the fill cap), the
-    /// same primitives as `Vector::shapes`.
-    pub fn update(&mut self, queue: &wgpu::Queue, list: &[u8], generation: u64, outlines: bool) {
-        if self.uploaded == Some((generation, outlines)) {
+    /// Uploads the display lists, unless their generations and the eye say
+    /// they are unchanged: the 2D list with `outlines` as `decode_outlines`
+    /// gives it (the phosphor style, or fill off), otherwise as `decode`
+    /// does (with the fill cap), the same primitives as `Vector::shapes`;
+    /// then the 3D list's segments (`VectorScene::shapes`).
+    pub fn update(&mut self, queue: &wgpu::Queue, scene: &VectorScene, outlines: bool) {
+        let key = scene.key(outlines);
+        if self.uploaded == Some(key) {
             return;
         }
-        self.uploaded = Some((generation, outlines));
-        decode_shapes(list, outlines, &mut self.shapes);
-        self.opcodes = phosphor::opcodes(list);
+        self.uploaded = Some(key);
+        scene.shapes(outlines, &mut self.shapes, &mut self.opcodes);
         if outlines {
             phosphor::dwell_ends(&self.shapes, &mut self.dwell);
         } else {
@@ -693,5 +736,10 @@ mod tests {
         out.clear();
         instance(&Primitive::Line { x0: 0, y0: 0, x1: 1, y1: 1, width: 3, rgba: [0; 4] }, [0.0; 2], 0x21, &mut out);
         assert_eq!(&out[0..4], &(KIND_LINE | 0x21 << 8).to_le_bytes());
+        out.clear();
+        let beam = Primitive::Beam { x0: 1, y0: 2, x1: 3, y1: 4, width: 9, rgba: [5, 6, 7, 8], fade: [255, 128], butt: 3 };
+        instance(&beam, [0.0; 2], 0, &mut out);
+        assert_eq!(&out[0..4], &(KIND_BEAM | 3 << 4 | 255 << 16 | 128 << 24).to_le_bytes());
+        assert_eq!(&out[32..36], &9f32.to_le_bytes());
     }
 }

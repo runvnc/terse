@@ -17,6 +17,7 @@ pub mod snapshot;
 pub mod system;
 pub mod terminal;
 pub mod vector;
+pub mod vector3;
 pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
@@ -34,3 +35,4 @@ pub use snapshot::{RestoreError, Snapshot, SnapshotInfo};
 pub use system::{CONTROLLERS, Controller, Event, SCREEN_HEIGHT, SCREEN_WIDTH, buttons, modifiers, pad};
 pub use terminal::{CONTINUATION, Cell, COLS, ROWS, Terminal};
 pub use vector::{Primitive, Vector};
+pub use vector3::Vector3;

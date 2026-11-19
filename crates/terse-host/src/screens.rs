@@ -11,7 +11,7 @@ use std::sync::Arc;
 use terse_core::{Machine, System};
 use terse_net::Prompt;
 
-use crate::display::{Display, ShownPrompt, picture_rect, system_rect};
+use crate::display::{Display, Eye, ShownPrompt, VectorScene, picture_rect, system_rect};
 use crate::page::HostLayout;
 use crate::renderer::Renderer;
 use crate::{consent, displayed_terminal};
@@ -25,11 +25,25 @@ pub struct Screens {
     no_trails: bool,
     force_phosphor: bool,
     animate_page: bool,
+    /// The eye for 3D lists, the same for every machine (SPEC 13.1).
+    eye: Eye,
 }
 
 impl Screens {
     pub fn new(shell: Renderer, format: wgpu::TextureFormat) -> Self {
-        Screens { shell, children: HashMap::new(), format, no_trails: false, force_phosphor: false, animate_page: true }
+        Screens {
+            shell,
+            children: HashMap::new(),
+            format,
+            no_trails: false,
+            force_phosphor: false,
+            animate_page: true,
+            eye: (0.0, 0.0),
+        }
+    }
+
+    pub fn set_eye(&mut self, eye: Eye) {
+        self.eye = eye;
     }
 
     pub fn set_no_trails(&mut self, on: bool) {
@@ -88,7 +102,8 @@ impl Screens {
                 self.shell.set_overlay(None);
             }
         }
-        show(&mut self.shell, queue, shell, layout(0));
+        let eye = self.eye;
+        show(&mut self.shell, queue, shell, layout(0), eye);
         // Every screen's phosphor light of this frame, in one submission
         // (none if no screen is in the phosphor style).
         let mut encoder = None;
@@ -125,7 +140,7 @@ impl Screens {
             });
             r.set_rect(device, Some(rect));
             r.update(queue, &displayed_terminal(machine));
-            show(r, queue, machine, layout(child.serial));
+            show(r, queue, machine, layout(child.serial), eye);
             if fresh || ran.contains(&child.serial) {
                 light(r);
             }
@@ -167,8 +182,8 @@ impl Screens {
 }
 
 /// Uploads a machine's vector list and page to its renderer.
-fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option<Arc<HostLayout>>) {
-    r.update_vectors(queue, machine.vector());
+fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye) {
+    r.update_vectors(queue, &VectorScene { vector: machine.vector(), vector3: machine.vector3(), eye });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));
     r.update_page(machine.page(), layout);
 }
@@ -219,6 +234,10 @@ impl Display for GpuDisplay {
         prompt: ShownPrompt,
     ) {
         self.screens.update(&self.device, &self.queue, system, viewport, ran, layout, prompt);
+    }
+
+    fn set_eye(&mut self, eye: Eye) {
+        self.screens.set_eye(eye);
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {

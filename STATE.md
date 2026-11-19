@@ -1,6 +1,6 @@
 # Terse machine state hash — v0 (draft)
 
-Status: part of SPEC section 14 (Conformance). It lets two implementations of
+Status: part of SPEC section 15 (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
 Nth). The first frame whose hashes differ is where the implementations diverge.
@@ -100,12 +100,16 @@ Let `V` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| V | 1 | Present (flag): the image lists device 3. If `00h`, the section ends here. |
+| V | 1 | Present (flag): the image lists device 3 or device 9. If `00h`, the section ends here. |
 | V + 1 | 1 | Style: `00h` clean, `01h` phosphor |
 | V + 2 | 1 | Persistence; 160 after reset |
 | V + 3 | 1 | Fill mode: `00h` fill, `01h` outlines |
 | V + 4 | 4 | m (u32): length of the list the device holds, 0–16,384 |
 | V + 8 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
+
+The style and the persistence are also those device 9 sets (SPEC 13.2):
+they are held here once. For an image that lists device 9 and not device
+3 the fill mode is `00h` and m is 0 (nothing can set them).
 
 The afterglow (SPEC 10.6) is presentation and is not included.
 
@@ -155,8 +159,8 @@ Let `M` be the offset after this section.
 ### 1.10 Machines (0, 1 or 1,108 + 32b + 83r bytes)
 
 This section is there only if the image lists device 8; for any other image
-the serialization ends at `M`, so the hashes of images without device 8 are
-as they were before device 8 existed.
+it is empty (0 bytes), so the hashes of images without device 8 are as they
+were before device 8 existed.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -186,20 +190,35 @@ its state: each has a state of its own, serialized as for any machine (it
 never has device 8, so its section 1.10 is `00h` if its image lists device 8,
 and absent otherwise).
 
-### 1.11 Argument (0 or 32 bytes)
+### 1.11 3D vector display (0 or 4 + m bytes)
+
+This section is there only if the image lists device 9; for any other
+image it is empty, so the hashes of images without device 9 are as they
+were before device 9 existed.
+
+| Offset | Size | Field |
+|---|---|---|
+| D | 4 | m (u32): length of the list the device holds, 0–16,384 |
+| D + 4 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
+
+`D` is the offset after section 1.10. The style and persistence are in
+section 1.7; the eye a host draws from (SPEC 13.1) is presentation and is
+not included.
+
+### 1.12 Argument (0 or 32 bytes)
 
 | Offset | Size | Field |
 |---|---|---|
 | A | 32 | The machine's argument (SPEC 4 `argument`); there only if the shell gave it one |
 
-`A` is the offset after section 1.10. A machine with no argument (every
+`A` is the offset after section 1.11. A machine with no argument (every
 machine run on its own, and every shell) has nothing here, so its hash is
 as it was before arguments existed.
 
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,108 + 32b +
-83r (machines) and 0 or 32 (argument).
+83r (machines), 0 or 4 + m (3D vector) and 0 or 32 (argument).
 
 ## 2. What is left out, and why
 
@@ -227,7 +246,8 @@ That is the end of the serialization. Its length is
   per-frame statistics (units used, events dropped), the decoded form of ROM,
   caches.
 - **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
-  10.6). The vector list bytes are included; how they are drawn is not.
+  10.6), the eye the 3D display is seen from (SPEC 13.1). The vector list
+  bytes are included; how they are drawn is not.
 - **A system's host bookkeeping** (SPEC 12): which machines exist, their
   images while they load, the order of their frames, what the host shows.
   The shell sees all of it that it can observe through device 8's records
@@ -276,7 +296,8 @@ restored machine would not give S again, byte for byte (so every field is
 in range: a flag is `00h` or `01h`, the stopped and fault fields agree, the
 budget is zero or negative, L is the image's RAM size, n ≤ 64, the cursor
 is on the grid, the incomplete sequence is one, the style, fill mode and
-list length are valid, the page rectangle is clamped, a document is at most
+list lengths are valid, an image without device 3 has fill mode `00h` and
+an empty 2D list, the page rectangle is clamped, a document is at most
 65,536 bytes, every pending request has a known `op`, its block in RAM and
 its fields as a submit leaves them). The restored machine's state hash is
 S's hash, and it is between frames: its next frame is the one whose number

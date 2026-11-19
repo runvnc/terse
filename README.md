@@ -32,7 +32,7 @@ feed got the first three samples from an earlier `--demo`, publish the fourth
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 **The shell.** The window opens on the launcher: the programs built into
-`terse-host` (reader, sparks, fetch, hello, sketch). Up and Down choose one, Enter
+`terse-host` (reader, sparks, fetch, hello, sketch, holo). Up and Down choose one, Enter
 starts it as a machine of its own, and it gets the keyboard. Start more the
 same way: **F12 is the home key**, which always brings you back to the
 launcher (no program ever sees F12). The bar at the top shows each machine:
@@ -120,7 +120,7 @@ images were built with clang and LLD 23.1.4.
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
   below runs a system (SPEC 12): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
-  sparks, fetch, hello, sketch, then each `--builtin` image) are put into the store
+  sparks, fetch, hello, sketch, holo, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
   script's events are the host's input and the system routes them: `home` is the
   home key, pointer positions are in units of the whole screen, keys and text go to
@@ -140,7 +140,11 @@ images were built with clang and LLD 23.1.4.
   cell is skipped). `--dump-vectors` adds the display list device 3 holds, after
   a `-- vectors: N list bytes --` line, one shape per line as the host draws it
   (see [Vector display](#vector-display)); when the style or fill mode is not
-  the default a `-- vector style: … --` line comes first. `--dump-page` adds the
+  the default a `-- vector style: … --` line comes first. For an image with the 3D
+  display (device 9) the list follows as commands, one per line, after a `-- 3d
+  vectors: N list bytes --` line, and a line `-- 3d: <n> segments, length <l> units
+  --` says what the reference eye sees (see [3D vector display](#3d-vector-display)).
+  `--dump-page` adds the
   page (device 7) as the reference layout lays it out (see [Page](#page)).
   The page is laid out with the reference layout between frames, so its height
   event arrives in the frame after a change, the answers to `locate` come with
@@ -194,10 +198,10 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>]`
+`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
-which starts the built-in programs (reader, sparks, fetch, hello and sketch, also built in, and
+which starts the built-in programs (reader, sparks, fetch, hello, sketch and holo, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
 machine, with every key (F12 included) going to it. With `--demo` it first sets up the
@@ -236,6 +240,8 @@ it stays open, shows the fault on the bottom row (white on red) and in the title
 and the process then ends by SIGTERM like `terse run`. `--no-trails` shows the
 phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
+The 3D vector display is seen from an eye that follows the pointer (parallax; see
+[3D vector display](#3d-vector-display)); `--parallax off` keeps it still, at `--eye`.
 `--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
 `--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
 Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
@@ -243,7 +249,7 @@ Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
 default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
 `--threads <n>` sets the software renderer's drawing threads (default one per core)
 and `--bloom full|half|auto` the resolution of its phosphor bloom.
-`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo]`
+`--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo] [--eye <dx>,<dy>]`
 (with no image or `--shell [<image>]`: the shell and its machines) runs
 headless like `terse run` (relay only with `--relay`; consent `deny` unless given; with
 `ask` a prompt is left unanswered and shown in the picture) (but the page is laid out with this host's fonts, between
@@ -379,7 +385,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-core/   the machine: cpu.rs (the RV32IMC interpreter), machine.rs (memory,
                          frame loop, budget, calls and charges, state serialization), image
                          parsing, and the devices: system.rs, terminal.rs, vector.rs (device
-                         3 and the one display-list decoder, with the fill cap), content.rs,
+                         3 and the one display-list decoder, with the fill cap), vector3.rs
+                         (device 9: its decoder and the one projection every renderer
+                         draws), content.rs,
                          page.rs (device 7: the document decoder, the reference layout, when
                          to report the height), machines.rs (device 8); shell.rs: the
                          System (the shell and its machines: frame order, latching, input
@@ -400,7 +408,7 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          finds none)
     crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
-                         shell.rs, conform.rs)
+                         sketch.rs, holo.rs, shell.rs, conform.rs)
     crates/terse-host/   `terse-host`: winit window, drawn by the GPU or the CPU behind
                          display.rs's Display trait; renderer.rs is the wgpu renderer of
                          one screen (terminal, vectors.rs's shapes, the phosphor tube:
@@ -411,7 +419,7 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          it; consent.rs the consent prompt; setup.rs the relay choice and
                          --demo, whose articles are in demo/
     programs/lib/        what a program needs: crt0.S, terse.ld (the memory map), terse.h
-                         and terse.c (the calls, a display-list builder, content requests)
+                         and terse.c (the calls, display-list builders, content requests)
     programs/hello/      demo program in assembly: hello.S, build.sh, the built hello.terse
                          and the golden screen used by the tests
     programs/fetch/      content device demo in C: gets message.txt by its ID and prints it;
@@ -423,6 +431,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     programs/sparks/     a game for the vector display, in C: sparks.c, build.sh, the
                          built sparks.terse, recorded sessions in sessions/ and the golden
                          screens in expected/
+    programs/sketch/     a drawing program for the vector display and documents, in C
+    programs/holo/       scenes on the 3D vector display (device 9), in C: holo.c,
+                         build.sh, the built holo.terse and the golden screens in expected/
     programs/conform/    the conformance and responsiveness image (C and assembly),
                          build.sh, conform.terse, its input conform.events, and
                          expected-hashes.txt and expected-screen.txt
@@ -477,7 +488,7 @@ sources and the same clang give the same image, and each program's test fails if
 its checked-in `.terse` is not what its sources build to (and is skipped when
 clang lacks the riscv32 target).
 
-Costs to keep in mind (SPEC 13): an instruction from ROM costs 1 unit, one from
+Costs to keep in mind (SPEC 14): an instruction from ROM costs 1 unit, one from
 RAM 4; a call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies; `write`
 costs 1 per byte, and a scroll or clear 150. Writing a whole row with one `write`
 or `term_cells_write` is far cheaper than a call per character.
@@ -923,6 +934,79 @@ Try it in Sparks (P switches style):
     cargo run --release -p terse-host -- programs/sparks/sparks.terse --events programs/sparks/sessions/phosphor.txt --frames 900 --screenshot /tmp/phosphor.png
     cargo run --release -p terse-host -- programs/reader/reader.terse --force-phosphor
 
+## 3D vector display
+
+Device 9 (SPEC 13) draws lines, points and circles placed in depth: the program
+gives geometry, the host projects it. Coordinates are sixteenths of a screen unit,
+x right and y down as on the screen and z away from the viewer, with 0 at the glass
+(the screen's plane). The reference eye is at (320, 240, −960); a point is drawn at
+x′ = ex + (x − ex)·960 / (960 + z) (y′ likewise), so a point on the glass is where
+the 2D layers put it, from any eye. The host moves the eye up to 160 units each way
+(parallax): in a window it follows the pointer (the picture's centre is the
+reference eye, an edge the full 160 units, smoothed over a few frames; in the shell
+every tile has the same eye); `--parallax off` keeps it still, and `--eye <dx>,<dy>`
+places it for `--screenshot` and `--bench-render`. The program never learns where the
+eye is.
+
+The list (at most 16,384 bytes, submitted like device 3's) has a matrix stack:
+Translate, Rotate (about x, y or z, by 1/65,536 of a turn; a positive angle about z
+turns x towards y, clockwise on the screen) and Scale (8.8) multiply the transform
+on the right, so the last given applies first to later coordinates; Push and Pop
+save and restore it, 8 deep. Move and Line keep the current point where they put it
+(transformed), so a later transform does not move it; Circle draws about the current
+point in the transform's xy plane (Move to (0, 0, 0) after a Translate to centre a
+circle there); Point draws a dot. Lines are cut at z = −800 and at the screen, and
+dim with depth: opacity × 960 / (960 + z) at each end (at most 1), interpolated
+along the line. One list draws at most 65,536 units of length on the glass (seen
+from the reference eye, so the same lines are drawn from every eye) and 16,384
+segments; a circle is 64 chords. The style and persistence are device 3's (calls
+`902h`, `903h` set the same setting), so a program with only device 9 can choose
+the phosphor style. Device 9 is drawn after device 3's shapes, under the terminal's
+characters, so text on the glass labels the models.
+
+`terse_core::vector3::project` turns a list and an eye into the segments to draw (on
+the glass, in sixteenths, with the depth cue at each end and, where a circle's
+chords join, butt ends instead of round caps and vertex dwell); both renderers draw
+them through the 2D display's line path, in the same instanced quads and the same
+software spans, so the clean style, the phosphor beam, afterglow and smear all apply.
+They project again only when the list or the eye changes. From C:
+
+    static uint8_t list[1024];
+    v3_begin(list);
+    v3_colour(80, 220, 255, 255);
+    v3_width(20);
+    v3_push();
+    v3_translate(320 * V3_UNIT, 240 * V3_UNIT, 0);  /* the centre, on the glass */
+    v3_rotate(V3_AXIS_Y, angle);                     /* angle: 0-65535, a turn */
+    v3_move(-50 * V3_UNIT, 0, -50 * V3_UNIT);
+    v3_line(50 * V3_UNIT, 0, 50 * V3_UNIT);
+    v3_move(0, 0, 0);
+    v3_circle(60 * V3_UNIT);
+    v3_pop();
+    v3_submit_list(list);                            /* VEC_DONE or VEC_REJECTED */
+
+`v3_point`, `v3_scale`, `v3_clear()`, `v3_style()` and `v3_persistence()` are the rest
+(`programs/lib/terse.h`).
+
+## Holo
+
+`programs/holo` shows the 3D display: Space (or Tab) goes to the next scene, 1–4
+choose one: a turning cube and icosahedron labelled on the glass, six nested rings
+each turning in the one outside it, 384 points receding from the glass, and an
+orrery of four planets on tilted orbits (two with moons). The arrows turn the model,
+A stops and starts the turning, R resets the view, P switches between the clean and
+the phosphor style. All the rotation is the host's (Rotate); the program only
+changes angles, so it does no trigonometry. Move the pointer over the window to look
+around the models: near parts move against far ones, while the labels and the dim
+frame on the glass stay put.
+
+    cargo run --release -p terse-host -- programs/holo/holo.terse
+    cargo run --release -p terse-host -- programs/holo/holo.terse --frames 90 --eye 160,0 --screenshot /tmp/holo.png
+
+ROM 4,140 bytes, 2 RAM pages; devices 2 and 9. Tests: `crates/terse-cli/tests/holo.rs`
+(golden screens of each scene in `programs/holo/expected/`, the keys, the frame
+budget).
+
 ## Page
 
 Device 7 (SPEC 11) shows typeset prose: proportional fonts, shaped (ligatures,
@@ -1109,7 +1193,7 @@ devices 2, 3 and 4. Tests: `crates/terse-cli/tests/sketch.rs`.
 `programs/conform/conform.terse` (C and assembly: `conform.c`, `cpu.S`, with its own
 `crt0.S` and `conform.ld`, so changes to `programs/lib` do not touch it) is for
 whoever writes a new host: run it with its scripted input `conform.events` and
-compare. It needs devices 2, 3, 4 and 7 and 16 RAM pages. Two uses:
+compare. It needs devices 2, 3, 4, 7 and 9 and 16 RAM pages. Two uses:
 
 **Conformance (headless, deterministic).** Run it for 200 frames with an empty
 store and no subscriptions, printing the state hash ([STATE.md](STATE.md)) every
@@ -1184,7 +1268,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   fill cap stops the fills), frames 79–108 the worst legal case: fills totalling
   just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
   3,268 translucent lines of width 255 across the screen, about 109 screens of line
-  area (lines are not capped, SPEC 16).
+  area (lines are not capped, SPEC 17).
 
 **Responsiveness (window).** `terse-host --selftest` runs the image in the normal
 window with vsync and the same script, and prints for each machine frame the
@@ -1263,7 +1347,8 @@ consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind th
   no window yet.
 - **Tests.** `cargo test -p terse-host` checks that a screen drawn bit by bit
   equals one drawn from scratch, that the phosphor afterglow fades to black, the
-  shapes' row spans against brute force, and six scripted scenes against pictures in
+  shapes' row spans against brute force, butt-ended segments against a whole line,
+  and seven scripted scenes against pictures in
   `crates/terse-host/tests/reference/` (400 × 300, made with the DejaVu fonts; at
   most 0.5% of pixels may differ by more than 8/255).
 
@@ -1281,6 +1366,9 @@ native 880 × 660 grid, so at 1320 × 990 it is drawn at 880 × 660 and at
 | sparks, phosphor | 6.84 / 1.62 / 0.82 | 6.68 / 1.84 / 0.84 | 20.9 / 6.41 / 3.72 |
 | shell: reader scrolling, sparks phosphor, hello, sparks | 2.00 / 0.83 / 0.74 | 3.00 / 1.18 / 0.84 | 5.62 / 1.98 / 1.06 |
 | reader scrolling with `--force-phosphor` (a screen of glowing text) | 16.5 / 4.58 / 0.99 | 16.1 / 4.77 / 1.02 | 54.3 / 15.2 / 4.29 |
+| holo, rings (six circles of 64 chords turning; its busiest scene) | 1.12 / 0.36 / 0.26 | 1.09 / 0.35 / 0.25 | — |
+| holo, rings, phosphor (the turning rings' smear: about 5,000 deposits a frame) | 19.6 / 3.95 / 0.99 | 19.9 / 4.35 / 0.98 | — |
+| holo standing still (A): nothing to draw again | 0.00 / — / 0.22 | — | — |
 
 ## Measurements
 
@@ -1293,6 +1381,7 @@ recorded sessions.
 | hello | 915 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
 | reader | 28,108 bytes | 22 pages | 74,809 (60%, building an article's document) | 138 (0.1%) | — |
+| holo | 4,140 bytes | 2 pages | 20,836 (16.7%, frame 0); 20,566 (16.5%) in the starfield | 5,600 (4.5%) | — |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 37,160 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |
 | shell | 16,344 bytes | 3 pages | 12,353 (9.9%, the launcher rebuilt with 4 machines); saving a session of 3 machines 7,373 (5.9%), restoring it 5,730 (4.6%) | 515 (0.4%) | — |

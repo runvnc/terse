@@ -1,0 +1,144 @@
+ HOLO   1 WIREFRAMES   2 RINGS   3 STARFIELD   4 ORRERY                PHOSPHOR
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                     CUBE                          ICOSAHEDRON
+              8 corners, 12 edges             12 corners, 30 edges
+
+
+
+ Space next scene  1-4 scene  arrows turn  A stop/turn  R reset  P phosphor
+-- vector style: phosphor, persistence 200 --
+-- 3d vectors: 712 list bytes --
+colour 28466eff
+width 12
+move 192 384 0
+line 10048 384 0
+line 10048 7296 0
+line 192 7296 0
+line 192 384 0
+colour 5a6478ff
+width 10
+move 2944 3680 0
+line 3136 3680 0
+move 3040 3584 0
+line 3040 3776 0
+push
+translate 3040 3680 0
+rotate y 1500
+rotate x 3672
+colour 50dcffff
+width 20
+move -1200 -1200 -1200
+line 1200 -1200 -1200
+line 1200 -1200 1200
+line -1200 -1200 1200
+line -1200 -1200 -1200
+move -1200 1200 -1200
+line 1200 1200 -1200
+line 1200 1200 1200
+line -1200 1200 1200
+line -1200 1200 -1200
+move -1200 -1200 -1200
+line -1200 1200 -1200
+move 1200 -1200 -1200
+line 1200 1200 -1200
+move -1200 -1200 1200
+line -1200 1200 1200
+move 1200 -1200 1200
+line 1200 1200 1200
+pop
+colour 5a6478ff
+width 10
+move 7104 3680 0
+line 7296 3680 0
+move 7200 3584 0
+line 7200 3776 0
+push
+translate 7200 3680 0
+rotate x 900
+rotate y 64036
+colour ffbe46ff
+width 20
+move 0 799 1293
+line 0 -799 1293
+move 0 799 1293
+line 799 1293 0
+move 0 799 1293
+line -799 1293 0
+move 0 799 1293
+line 1293 0 799
+move 0 799 1293
+line -1293 0 799
+move 0 799 -1293
+line 0 -799 -1293
+move 0 799 -1293
+line 799 1293 0
+move 0 799 -1293
+line -799 1293 0
+move 0 799 -1293
+line 1293 0 -799
+move 0 799 -1293
+line -1293 0 -799
+move 0 -799 1293
+line 799 -1293 0
+move 0 -799 1293
+line -799 -1293 0
+move 0 -799 1293
+line 1293 0 799
+move 0 -799 1293
+line -1293 0 799
+move 0 -799 -1293
+line 799 -1293 0
+move 0 -799 -1293
+line -799 -1293 0
+move 0 -799 -1293
+line 1293 0 -799
+move 0 -799 -1293
+line -1293 0 -799
+move 799 1293 0
+line -799 1293 0
+move 799 1293 0
+line 1293 0 799
+move 799 1293 0
+line 1293 0 -799
+move 799 -1293 0
+line -799 -1293 0
+move 799 -1293 0
+line 1293 0 799
+move 799 -1293 0
+line 1293 0 -799
+move -799 1293 0
+line -1293 0 799
+move -799 1293 0
+line -1293 0 -799
+move -799 -1293 0
+line -1293 0 799
+move -799 -1293 0
+line -1293 0 -799
+move 1293 0 799
+line 1293 0 -799
+move -1293 0 799
+line -1293 0 -799
+pop
+-- 3d: 50 segments, length 5925.4 units --

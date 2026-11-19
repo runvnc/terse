@@ -36,5 +36,6 @@ sparks
 fetch
 hello
 sketch
+holo
 Up, Down choose · Enter start · the home key comes back
 here · D discards the session
