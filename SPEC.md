@@ -1137,6 +1137,9 @@ pixels are up to the host and cannot be observed by the program.
 
 In a system (section 12) each machine's screen is combined in this order on
 its own, with its own style; section 12.3 says how the screens are combined.
+A machine whose 3D list has Surfaces in effect (section 13.3) is drawn as
+section 13.5 says: these layers, less the Surfaces' sources, then the
+Surfaces, then its 3D lines.
 
 ### 10.6 Phosphor style
 
@@ -1773,6 +1776,8 @@ and ph = h; it starts at px = x + ⌊(w − pw) / 2⌋, py = y + ⌊(h − ph) /
 If pw or ph is 0 nothing is shown. A machine that is running, paused,
 exited or faulted has a picture; one that is loading or failed has none.
 Exited and faulted machines show the screen as it was at their last frame.
+A machine's screen here is its complete picture, its own Surfaces (section
+13.5) included.
 
 A machine is shown **flat** in its picture: the picture of its own
 rectangle, or, once the view (section 12.2 `face`) of it has finished
@@ -1796,14 +1801,15 @@ If it has at least one, the host shows the shell's **scene**, from the
 bottom:
 
 1. the shell's screen as above, without the lines, points and circles of
-   its 3D list;
-2. the panels, from the farthest to the nearest by the distance from the
-   eye in use (section 13.1) to the panel's centre (the mean of its
-   corners), the lower handle first where two are as far; each covers
-   what is below it;
+   its 3D list (its glass, section 13.5, if it has Surfaces in effect);
+2. the panels, and the shell's own Surfaces (section 13.3), from the
+   farthest to the nearest by the distance from the eye in use (section
+   13.1) to the panel's centre (the mean of its corners), the lower handle
+   first where two are as far (a Surface before a Screen, two Surfaces in
+   list order); each covers what is below it;
 3. the lines, points and circles of the shell's 3D list as section 13
-   draws them, each Screen in effect hiding what is behind it as a face
-   of its four corners does;
+   draws them, each Screen and Surface in effect hiding what is behind it
+   as a face of its four corners does;
 4. each flat picture, in increasing handle order, as step 2 above;
 5. the host's own prompts, as step 3 above.
 
@@ -1858,7 +1864,7 @@ from):
 | Key down, key up, text, wheel | the machine with the focus if it is running; the shell if the focus is 0; otherwise nobody |
 | Pointer, over a flat picture | the machine whose picture it is (the highest handle where pictures overlap), mapped into its screen units, if it is running; otherwise nobody |
 | Pointer, over the front of a panel and no flat picture | while the view moves (section 12.2), nobody; otherwise the machine whose panel it is, mapped into its screen units, if it is running; otherwise nobody |
-| Pointer, over nothing else | the shell, unchanged |
+| Pointer, over nothing else | the shell, unchanged (but for the shell's own Surfaces, below) |
 | Controllers (section 6) | the machine with the focus (the shell if the focus is 0); every other machine reads every controller as not connected, so nobody reads them while the machine with the focus does not run |
 | Content done, feeds updated, page events | each machine its own (sections 9, 11.5) |
 | Any other event in the host's input | the shell, unchanged |
@@ -1882,6 +1888,17 @@ picture, or over a panel while the view does not move, also gives the
 shell a machine pressed event, in the place among the shell's events that
 the pointer event had in the input, whatever the machine's state (also
 when the pointer event itself goes to nobody).
+
+**Surfaces.** A machine's own Surfaces (section 13.3) map the pointer once
+more: a pointer event going to a machine, at (x′, y′) in its screen units
+as above, is delivered at the point of the Surface it is over, if any, as
+section 13.3 says, seen from the same eye. The shell's own Surfaces, when
+its scene has panels, are among the panels (section 12.3): a pointer over
+the front of one goes to the shell at that point (while the view moves, to
+nobody), and gives no machine pressed event; when its scene has no
+panels, the pointer events that go to the shell are mapped through its
+Surfaces as any machine's are. A host running a single machine maps its
+pointer events through its Surfaces in the same way.
 
 **The home key.** A host reserves one key (or other input) as its home key;
 which one is up to the host. It is never delivered to any machine as a key
@@ -2008,7 +2025,8 @@ the restore.
 
 Draws lines, points and circles placed in a box around the screen, from a
 display list like device 3's (section 10); faces, which draw nothing, hide
-what is behind them; in the shell's list, Screens place the screens of the
+what is behind them; Surfaces show parts of the machine's own 2D layers
+as panels in the box; in the shell's list, Screens place the screens of the
 machines it started as panels in the box (section 12.3). The program gives geometry, not
 a picture: the host projects it onto the screen from an eye it chooses
 (section 13.1), so it may let the viewer look around the models, and the
@@ -2078,6 +2096,7 @@ saved transforms, current point (0, 0, 0).
 | `0Bh` | Scale | s (2 bytes, unsigned, 8.8 fixed point: 256 is 1) | Scales the transform uniformly; s = 0 puts every point given after it at the transform's origin |
 | `0Ch` | Face | n (1 byte: 3 or 4), then n corners x, y, z | Hides what is behind it (below); draws nothing |
 | `0Dh` | Screen | handle (1 byte, 1–8), width w (2 bytes, unsigned) | Shows machine `handle`'s screen as a panel (below and section 12.3) |
+| `0Eh` | Surface | x, y, width, height (2 bytes each, unsigned, screen units), panel width w (2 bytes, unsigned) | Shows that rectangle of the machine's own 2D layers as a panel (below and section 13.5) |
 
 - **The transform.** A point p given to Move or Line is drawn at M(p),
   where M is the transform in force, with p and every translation in
@@ -2167,6 +2186,45 @@ saved transforms, current point (0, 0, 0).
   hides nothing and is not counted. A Screen in effect is shown as section
   12.3 says, and hides lines, points and circles exactly as a Face of its
   four corners does; one of width 0 has no area and hides nothing.
+- **A Surface** shows a rectangle of the machine's own screen: its
+  **source**, x, y, width and height in screen units, clamped so it lies
+  on the screen as the page's rectangle is (section 11.2: x to at most
+  640, y to at most 480, the width to at most 640 − x, the height to at
+  most 480 − y). What it shows is the machine's 2D layers there (section
+  10.5: the terminal's cell backgrounds, the page, device 3's shapes, the
+  terminal's characters and cursor, in that order and in the machine's
+  style), never its 3D list. It is a flat panel w/16 units wide and as
+  high as the source's shape makes it, h′ = w × height / width (in
+  sixteenths), centred on the transform's origin in its xy plane: its
+  corners are M(−w/32, −h′/32, 0) (top left), M(w/32, −h′/32, 0) (top
+  right), M(w/32, h′/32, 0) (bottom right) and M(−w/32, h′/32, 0) (bottom
+  left), lying as a Screen's do; the point of the panel a fraction u along
+  its top edge and v down its left edge shows the point (x + u × width,
+  y + v × height) of the screen. It does not change the current point. It
+  is seen from behind as a Screen is.
+- **Which Surfaces are in effect.** Any machine's list may have them (a
+  machine needs no device but 9 for them; they show what its other devices
+  draw). A Surface is in effect if its source, after clamping, has a width
+  and a height, its w is not 0 and fewer than **4** Surfaces before it in
+  the list are in effect; any other Surface is decoded and does nothing: it
+  draws nothing, hides nothing, is not counted and leaves the glass as it
+  is. A Surface in effect counts as one face for the caps (section 13.4);
+  if a cap stops it, it is not in effect either. It is shown as section
+  13.5 says: it is opaque, hides lines, points and circles exactly as a
+  Face of its four corners does (from either side), and its source is not
+  drawn on the glass.
+- **The pointer over a Surface.** A pointer position (x, y) on the glass
+  is over a Surface in effect if the ray from the eye in use (section
+  13.1) through (x + 1/2, y + 1/2, 0) meets it in front of the near plane
+  (z > −800) at a fraction u along its top edge (0 ≤ u < 1) and v down its
+  left edge (0 ≤ v < 1); of several, the one it meets nearest the eye
+  counts. If that Surface's front is seen, the machine receives the
+  pointer event at x′ = sx + ⌊u × sw⌋, y′ = sy + ⌊v × sh⌋, where (sx, sy,
+  sw, sh) is its source, with the same buttons; otherwise (seen from
+  behind, or over no Surface) at (x, y) as on the glass. The list and the
+  eye are those the machine's picture was last shown with (section 12.4);
+  a page anchor press (section 11.5) is found at the position delivered,
+  so text and anchors shown on a Surface can be pressed there.
 
 ### 13.4 Clipping and caps
 
@@ -2186,6 +2244,7 @@ Circle counts a **length** and a number of **segments**:
 | Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 | 0 |
 | Face | 0 | 0 | 1 |
 | Screen in effect | 0 | 0 | 1 |
+| Surface in effect | 0 | 0 | 1 |
 
 A command that would take the list's total length above 65,536, its
 number of segments above 16,384, its number of faces above 256, or its
@@ -2234,6 +2293,43 @@ never the machine's state, which holds the list as submitted (section
   12.3), not in the vector layer: the shell's lines, points and circles
   are then drawn over the panels, and in the phosphor style how they are
   lit there (beam, afterglow) is up to the host.
+- **Surfaces.** A machine whose list has no Surface in effect is drawn
+  exactly as without this rule (section 10.5). One that has Surfaces in
+  effect is drawn, from the bottom:
+  1. the **glass**: its 2D layers as section 10.5 combines them, without
+     the lines, points and circles of its 3D list, and where a pixel lies
+     in the source of a Surface in effect, black instead (the 2D layers
+     are not drawn there: what a Surface shows is not also on the glass);
+  2. its Surfaces, from the farthest to the nearest by the distance from
+     the eye in use to their centres (the mean of their corners), the
+     earlier in the list first where two are as far; each shows its source
+     (section 13.3) in perspective, or from behind the dark plate of a
+     Screen, and covers what is below it;
+  3. the lines, points and circles of its 3D list as this section draws
+     them, each Surface hiding what is behind it as a face of its corners
+     does.
+
+  So the program's text on the glass outside the sources stays where it
+  is, as a heads-up line, and its 3D lines are drawn over it. The 2D
+  layers a Surface shows are those of the same frame, in the machine's
+  style; in the phosphor style the afterglow is that of the 2D layers on
+  the screen, so it moves with the panel (a moving Surface leaves no
+  trail), and how the 3D lines are lit over the Surfaces is up to the host,
+  as over a shell's panels. Surfaces are cut at the near plane and at the
+  edges of the screen as panels are. A host that cannot draw a picture in
+  perspective may draw each Surface's source flat instead, scaled
+  uniformly into the bounding rectangle of its projection (its part in
+  front of the near plane) and centred, as section 12.3 allows for panels;
+  it still hides what it would hide. The resolution the source is drawn at
+  for a Surface, its filtering and the smoothing of its edges are
+  presentation.
+
+  The shell's own Surfaces, when its scene has panels (section 12.3), are
+  among them: step 1 there is the shell's glass, and its Surfaces are
+  drawn with the panels, far to near, before the shell's lines. Wherever a
+  machine's screen is shown (on its own, as a flat picture or as a panel)
+  it is its complete picture, its Surfaces included; a Surface shows only
+  2D layers, so no picture shows itself.
 - The trigonometry and the projection are the host's, and hosts may differ
   in the last pixel. Smoothing, the exact colour of blended pixels and how
   the eye moves are up to the host.
@@ -2243,7 +2339,10 @@ never the machine's state, which holds the list as submitted (section
 The device's state is the copy of the list (STATE.md 1.11); the style and
 the persistence are device 3's (section 10.7, STATE.md 1.7), held once for
 both devices. It takes no input from the host: the eye is presentation,
-and so is what faces hide from it. Which Screens are in effect depends on
+and so is what faces hide from it. Which Surfaces are in effect depends on
+the list alone; where a pointer event over a Surface is delivered depends
+on the eye, which is part of the host's input (section 12.6). Which
+Screens are in effect depends on
 the shell's device 8 records, and only for what is shown; a shell's
 `face` reads its list as decoded (section 12.2).
 
@@ -2316,7 +2415,8 @@ What one frame or one list may make a host draw:
 - the 3D display's caps (section 13.4): 65,536 units of length, 16,384
   segments, 256 faces, 131,072 faces × segments and 16,384 pieces drawn
   after hiding; its 64 chords to a circle, its transform stack of 8, its
-  widest line, 255 sixteenths (section 13.3); a face hides only what lies
+  widest line, 255 sixteenths, and its 4 Surfaces in effect in a list
+  (section 13.3); a face hides only what lies
   more than 2 sixteenths beyond its plane, and a cut piece shorter than
   1/2 unit is dropped (section 13.3); the margin of 32 units around the
   screen within which pieces are drawn (section 13.4); and its eye: 960
@@ -2374,9 +2474,9 @@ versions.
   programs).
 - Devices 5 and 6.
 - On the 3D display (section 13): filled or shaded faces; the exact
-  intersection of faces (a line drawn where two faces cross); a program
-  showing its own 2D layers as a panel in its own scene; curved or
-  non-rectangular screens; panels that cross one another (they are drawn
+  intersection of faces (a line drawn where two faces cross); more than 4
+  Surfaces in a list, Surfaces that show the 3D layer, and curved or
+  non-rectangular Surfaces and screens; panels that cross one another (they are drawn
   far to near by their centres, and one does not cut another); a stereo
   picture or another display of the same geometry (the eye
   rule allows one; how a host shows it is not specified); a limit on the

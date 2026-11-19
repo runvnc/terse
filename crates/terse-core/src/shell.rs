@@ -291,7 +291,7 @@ impl System {
         }
         crate::vector3::project_scene(list, eye, &scene.view, &mut Vec::new(), &mut Vec::new(), &mut scene.panels);
         let faced = scene.faced;
-        scene.panels.retain(|p| p.handle != faced);
+        scene.panels.retain(|p| faced == 0 || p.handle != faced);
         Some(scene)
     }
 
@@ -558,12 +558,28 @@ impl System {
     /// Step 2 (SPEC 12.4): each input event goes to the shell or to one
     /// child, by the focus and the pictures as they are now.
     fn route(&mut self, events: &[Event], shell: &mut Vec<Event>, routed: &mut [Vec<Event>; MAX_MACHINES]) {
+        let eye = self.eye;
+        // A pointer over a machine's own Surface goes to the point of its
+        // source rectangle (SPEC 13.3 Surface), the list as shown now.
+        let own = |m: &Machine, x: u16, y: u16| match m.vector3() {
+            Some(v) => crate::vector3::surface_pointer(v.list(), eye, x, y),
+            None => (x, y),
+        };
         if !self.is_system() {
-            shell.extend(events.iter().filter(|e| e.kind != Event::HOME));
+            for e in events.iter().filter(|e| e.kind != Event::HOME) {
+                shell.push(match e.kind {
+                    Event::POINTER => {
+                        let (x, y, buttons) = e.pointer_parts();
+                        let (x, y) = own(&self.shell, x, y);
+                        Event::pointer(x, y, buttons)
+                    }
+                    _ => *e,
+                });
+            }
             return;
         }
         let pictures = self.pictures();
-        let scene = self.scene(self.eye);
+        let scene = self.scene(eye);
         for &e in events {
             match e.kind {
                 Event::HOME => {
@@ -577,25 +593,38 @@ impl System {
                     // The topmost picture under the pointer: the highest
                     // handle; then the nearest panel (SPEC 12.4).
                     let mut hit = pictures.iter().rev().find_map(|&(h, p)| Some((h, map_into(p, x, y)?)));
+                    // The shell's own Surfaces are panels of its scene
+                    // (handle 0) when it has one.
+                    let mut on_shell = None;
                     if hit.is_none()
                         && let Some(scene) = &scene
-                        && let Some((h, at)) = crate::vector3::panel_hit(&scene.panels, self.eye, x as f64 + 0.5, y as f64 + 0.5)
+                        && let Some((h, at)) = crate::vector3::panel_hit(&scene.panels, eye, x as f64 + 0.5, y as f64 + 0.5)
                     {
                         match at {
                             // Seen from behind: as if over no picture.
                             None => {}
                             // Over a moving scene: nobody.
                             Some(_) if scene.moving => continue,
+                            Some(at) if h == 0 => on_shell = Some(at),
                             Some(at) => hit = Some((h, at)),
                         }
                     }
                     match hit {
-                        None => shell.push(e),
+                        None => {
+                            let (x, y) = match (on_shell, &scene) {
+                                (Some(at), _) => at,
+                                (None, Some(_)) => (x, y),
+                                (None, None) => own(&self.shell, x, y),
+                            };
+                            shell.push(Event::pointer(x, y, buttons));
+                        }
                         Some((h, (cx, cy))) => {
                             if pressed {
                                 shell.push(Event::machine_pressed(h, buttons));
                             }
                             if self.state(h) == state::RUNNING {
+                                let machine = self.children[h as usize - 1].as_ref().and_then(|c| c.machine.as_ref());
+                                let (cx, cy) = machine.map_or((cx, cy), |m| own(m, cx, cy));
                                 routed[h as usize - 1].push(Event::pointer(cx, cy, buttons));
                             }
                         }
