@@ -14,9 +14,11 @@
  * list, an article's details line, a feed's page, search results) it is
  * its name, then its short key in brackets (the key alone if no name is
  * known). The name is the user's nickname, else the feed's declared name,
- * from the names records (op 09h, one per subscribed feed, read with the
- * subscriptions), else the profile's name among the search results. Names
- * are not unique, so a name is never shown without the key.
+ * from the names records (op 09h, one per subscribed feed and per feed with
+ * a nickname, read with the subscriptions), else the profile's name among
+ * the search results. Names are not unique, so a name is never shown
+ * without the key. A feed found by search shows the name it declares, and
+ * the user's nickname for it beside the key.
  *
  * Every frame it handles the queued events, rebuilds and submits the page's
  * document if what it shows changed, does a bounded share of the work in
@@ -36,7 +38,8 @@
  * wholly visible. Until a height arrives e is estimated (1.35 x the sizes);
  * a height that is not a whole number of slots, or gives an implausible
  * slot, belongs to another document and is ignored. Titles are cut at the
- * rectangle's edge (no wrap); control characters and line or paragraph
+ * rectangle's edge with an ellipsis (no wrap, ellipsis: SPEC 11.3); control
+ * characters and line or paragraph
  * separators in them become spaces, so a slot always has two lines. Each
  * entry is an anchor (its index + 1): a click on it opens it (timeline) or
  * selects it (feeds). The selection is shown by colour.
@@ -71,13 +74,24 @@
  *   - Every other block has 10 units of space above it. The LF after a
  *     block's last line is dropped; CRs are left for the device to ignore.
  *   - Links: http(s) URLs, terse:<blob ID> (an article) and
- *     terse:feed/<key> (a feed). The first 512 get anchors 1, 2, ... and
- *     the link colour. Tab and Shift+Tab make the next or previous link
- *     the current one, in amber (its Colour command is changed in place
- *     and the document submitted again, keeping the scroll value), and the
- *     status row shows it; Enter or a click follows it. A program does not
- *     learn where the page put a link, so the current link is not scrolled
- *     into view. A web link only shows its URL (there is no browser). An
+ *     terse:feed/<key> (a feed), bare (a terse: link shown shortened to
+ *     its first and last six digits, "terse:360793…dec189") or with text
+ *     ("[text](target)", shown as the text). A link with text is found at
+ *     the colon of its target, by looking back for "](" and its "["; so
+ *     that a frame's share of building never ends inside one, it ends
+ *     before a "[" on the current line. The first 512 links get anchors 1,
+ *     2, ... and the link colour. Tab and Shift+Tab make the next or
+ *     previous link the current one, in amber (its Colour command is
+ *     changed in place and the document submitted again, keeping the
+ *     scroll value), and the status row shows its target; Enter or a click
+ *     follows it. The reader then asks the page where the link's line is
+ *     (locate, SPEC 11.2; the answer comes in a later frame) and scrolls
+ *     just enough to show it whole, MARGIN units from the edges. After the
+ *     user scrolled, Tab goes to the first link at or below the top of the
+ *     view and Shift+Tab to the last above its bottom instead, found by a
+ *     binary search over the links' places (one locate a frame; Tabs
+ *     pressed meanwhile are counted and applied after it). A web link only
+ *     shows its URL (there is no browser). An
  *     article link opens that article: the one shown goes on a back stack
  *     of 8 (Esc goes back through it, each to its scroll value, then to
  *     the view the first was opened from); its title is the timeline's if
@@ -312,13 +326,14 @@ static uint8_t op_name[48], op_nlen, op_listed;
 /* The Y/N question about listing the public name is shown. */
 static uint8_t asking;
 
-/* Names (op 09h) of the subscribed feeds: the records and where each
- * starts, in key order. */
+/* Names (op 09h) of the subscribed feeds and of those with a nickname:
+ * the records and where each starts, in key order. */
 #define NAMES_LEN 16384
 static content_req nm_req;
 static uint8_t nm_handle, nm_again;
 static uint8_t nm_buf[NAMES_LEN];
-static uint16_t nm_at[MAX_SUBS], nm_n;
+#define NM_MAX 482 /* 16,384 / 34, the shortest record */
+static uint16_t nm_at[NM_MAX], nm_n;
 
 /* The text being typed on row 28: a feed key (the non-blank characters,
  * ASCII, anything else as 0x80; entry_n counts them), or a nickname, a
@@ -425,6 +440,7 @@ static uint8_t b_style;    /* the style the document is in */
 static uint8_t b_skip;     /* B_EMIT: blanks at b_emit are dropped */
 static uint16_t b_emit;    /* B_EMIT: the next byte to look at */
 static uint16_t b_text;    /* B_EMIT: the first byte not yet in the document */
+static uint16_t b_ls;      /* B_EMIT: the start of the line being emitted */
 static uint16_t b_shown;   /* the article bytes in the document */
 static uint32_t b_work;    /* units left for this frame */
 static const uint8_t *b_colour; /* the colour of the block's text */
@@ -458,6 +474,16 @@ static int32_t scroll, scroll_sent;
 static uint8_t to_end;    /* End was pressed: stay at the end as the height grows */
 static uint16_t link_shown; /* the anchor whose URL the status row shows, 0 none */
 static uint16_t cur_link;   /* the current link (Tab), 0 none */
+/* Locating links (page_locate): the anchor whose place is awaited (0
+ * none), whether it is a step of the search for the first link in view
+ * (between sr_lo and sr_hi, at or below y sr_at), and whether the user
+ * scrolled since the current link was chosen. */
+static uint16_t loc_id, sr_lo, sr_hi;
+static uint8_t loc_search, tab_scrolled;
+static int8_t sr_dir, tab_more; /* tab_more: Tab presses during a search */
+static int32_t sr_at;
+static page_place place;
+#define MARGIN 8 /* kept between a located link and the rectangle's edge */
 
 static const uint8_t rgb_title[3] = {240, 240, 240};
 static const uint8_t rgb_meta[3] = {140, 140, 140};
@@ -964,13 +990,17 @@ static void unhex(const uint8_t *h, uint8_t *out)
 
 static void prefetch_add(const uint8_t *id);
 
-/* A link of `len` bytes at art[i]: an anchor (the first MAX_LINKS) in the
- * link colour (the current link's colour if it is the current one). An
- * article link is also queued for prefetching. */
-static void put_link(uint32_t i, uint32_t len, uint8_t kind)
+/* A link to the target of `len` bytes at art[i], shown as the `n` bytes
+ * at `show` (a link with text), or as the target itself (0): a terse:
+ * link shortened to its first and last six digits. The article bytes up
+ * to `next` are done. The first MAX_LINKS links are anchors in the link
+ * colour (the current link's colour if it is the current one). An article
+ * link is also queued for prefetching. */
+static void put_link(uint32_t i, uint32_t len, uint8_t kind, const uint8_t *show, uint32_t n, uint32_t next)
 {
-    b_text = i + len;
-    spend(W_LINK + len * W_EMIT);
+    uint8_t sb[11 + 6 + 3 + 6], anchored = links < MAX_LINKS;
+    b_text = next;
+    spend(W_LINK + (next - i) * W_EMIT);
     if (doc_overflow)
         return;
     if (kind == LK_ARTICLE) {
@@ -978,19 +1008,65 @@ static void put_link(uint32_t i, uint32_t len, uint8_t kind)
         unhex(art + i + 6, id);
         prefetch_add(id);
     }
-    if (links < MAX_LINKS) {
+    if (!show) {
+        show = art + i;
+        n = len;
+        if (kind != LK_WEB) {
+            /* "terse:" or "terse:feed/", six digits, "…", six digits. */
+            n = len - 58;
+            memcpy(sb, art + i, n);
+            memcpy(sb + n, "\xE2\x80\xA6", 3);
+            memcpy(sb + n + 3, art + i + len - 6, 6);
+            show = sb;
+            n += 9;
+        }
+    }
+    if (anchored) {
         link_at[links] = i;
         link_len[links] = len;
         link_kind[links] = kind;
         doc_anchor(++links);
         link_doc[links - 1] = doc_ptr - doc;
         doc_rgb(links == cur_link ? rgb_cur_link : rgb_link);
-        b_shown = i + doc_text(art + i, len);
+    }
+    if (doc_text(show, n) == n && !doc_overflow)
+        b_shown = next;
+    if (anchored) {
         doc_anchor(0);
         doc_rgb(b_colour);
-    } else {
-        b_shown = i + doc_text(art + i, len);
     }
+}
+
+/* A link with text: `[`, 1-200 bytes of text without `[`, `]` or a line
+ * break, `](`, a target that is a whole link, `)`; the target starts at
+ * art[at], the block ends at `end`. Its length and kind, and the text's
+ * first byte in *ts; 0 if there is none. Only text not yet in the document
+ * (from b_text) on the current line (from b_ls) can be the link's. */
+static uint32_t text_link(uint32_t at, uint32_t end, uint32_t *ts, uint8_t *kind)
+{
+    uint32_t k = at, t = at - 2, len;
+    if (at < b_text + 3 || art[at - 1] != '(' || art[at - 2] != ']')
+        return 0;
+    while (k < end && k - at < 76 + 200 && art[k] > ' ' && art[k] < 0x7F && art[k] != ')')
+        k++;
+    spend((k - at) * W_EMIT);
+    if (k >= end || art[k] != ')')
+        return 0;
+    if (art[at] == 'h') {
+        *kind = LK_WEB;
+        len = link_length(at, k);
+    } else {
+        len = terse_length(at, k, kind);
+    }
+    if (len != k - at)
+        return 0;
+    while (t > b_text && t > b_ls && at - 2 - t < 200 && art[t - 1] != '[' && art[t - 1] != ']' && art[t - 1] != '\n')
+        t--;
+    spend((at - t) * W_EMIT);
+    if (t == at - 2 || t <= b_text || t <= b_ls || art[t - 1] != '[')
+        return 0;
+    *ts = t;
+    return len;
 }
 
 /* The first byte in [p, e) that is `a` or `b`, or e: a word at a time
@@ -1258,7 +1334,7 @@ static void figure_start(void);
 static void start_block(void)
 {
     spend(W_BLOCK);
-    b_emit = b_text = b_start;
+    b_emit = b_text = b_ls = b_start;
     b_skip = b_kind < K_PRE;
     switch (b_kind) {
     case K_FIGURE:
@@ -1326,6 +1402,7 @@ static uint8_t emit_block(void)
             break;
         spend(W_HIT);
         if (*p == '\n') {
+            b_ls = p + 1 - art;
             if (!pre) {
                 *p = ' ';
                 if (p + 1 < e && is_blank(p[1])) {
@@ -1336,23 +1413,39 @@ static uint8_t emit_block(void)
         } else {
             /* A link has "http:" or "https:" before its "//", or is
              * "terse:" and an ID or "feed/" and a key. */
-            uint32_t c = p - art, at = c - 4, len;
+            uint32_t c = p - art, at = c - 4, len, ts;
             uint8_t kind = LK_WEB;
             if (c >= b_text + 5 && art[c - 1] == 's')
                 at = c - 5;
-            if (at >= b_text && c >= b_text + 4 && art[at] == 'h' && (len = link_length(at, end))) {
-                flush(at);
-                put_link(at, len, LK_WEB);
-                p = art + at + len;
-                continue;
+            if (at >= b_text && c >= b_text + 4 && art[at] == 'h' && c + 1 < end && art[c + 1] == '/') {
+                /* A link with text (its target after "]("), else a bare one. */
+                if (at && art[at - 1] == '(' && (len = text_link(at, end, &ts, &kind)))
+                    goto text;
+                if ((len = link_length(at, end))) {
+                    flush(at);
+                    put_link(at, len, LK_WEB, 0, 0, at + len);
+                    p = art + at + len;
+                    continue;
+                }
             }
             at = c - 5;
-            if (c >= b_text + 5 && art[at] == 't' && (len = terse_length(at, end, &kind))) {
-                flush(at);
-                put_link(at, len, kind);
-                p = art + at + len;
-                continue;
+            if (c >= b_text + 5 && art[at] == 't' && c + 1 < end && is_lower_hex(art[c + 1])) {
+                if (at && art[at - 1] == '(' && (len = text_link(at, end, &ts, &kind)))
+                    goto text;
+                if ((len = terse_length(at, end, &kind))) {
+                    flush(at);
+                    put_link(at, len, kind, 0, 0, at + len);
+                    p = art + at + len;
+                    continue;
+                }
             }
+            p++;
+            continue;
+        text:
+            flush(ts - 1);
+            put_link(at, len, kind, art + ts, at - 2 - ts, at + len + 1);
+            p = art + at + len + 1;
+            continue;
         }
         p++;
     }
@@ -1361,15 +1454,22 @@ static uint8_t emit_block(void)
         flush(end);
         return 1;
     }
-    /* This frame's share is used: add the text so far, cut after a space
-     * (so that no link is cut) or else at least between characters. */
-    for (k = i; k > b_text && i - k < 64 && art[k - 1] > ' '; k--)
+    /* This frame's share is used: add the text so far, cut before a `[`
+     * on this line (which may start a link with text), else after a space
+     * (so that no link is cut), or else at least between characters. */
+    for (k = i; k > b_text && k > b_ls && i - k < 280 && art[k - 1] != '['; k--)
         ;
-    if (k > b_text && art[k - 1] <= ' ')
-        i = k;
-    else
-        while (i > b_text && (art[i] & 0xC0) == 0x80)
-            i--;
+    if (k > b_text && k > b_ls && art[k - 1] == '[') {
+        i = k - 1;
+    } else {
+        for (k = i; k > b_text && i - k < 64 && art[k - 1] > ' '; k--)
+            ;
+        if (k > b_text && art[k - 1] <= ' ')
+            i = k;
+        else
+            while (i > b_text && (art[i] & 0xC0) == 0x80)
+                i--;
+    }
     flush(i);
     b_emit = i;
     return 0;
@@ -1667,6 +1767,9 @@ static void submit_len(uint32_t n)
     page_submit(doc, n);
     scroll_sent = 0; /* a submit sets the scroll value to 0 */
     dirty[STATUS_ROW] = 1;
+    /* The answer for the document replaced will not come. */
+    if (loc_id)
+        page_locate(loc_id);
 }
 
 static void submit_doc(void)
@@ -1824,7 +1927,7 @@ static void column_submit(void)
  * ends the anchor. */
 static void slot_begin(const uint8_t *rgb, uint8_t flags, uint16_t anchor)
 {
-    doc_paragraph(DOC_START, 0, SLOT_SPACE, DOC_NOWRAP);
+    doc_paragraph(DOC_START, 0, SLOT_SPACE, DOC_NOWRAP | DOC_ELLIPSIS);
     doc_font(DOC_SANS, flags);
     doc_size(SLOT_TITLE);
     doc_rgb(rgb);
@@ -2029,7 +2132,7 @@ static void names_done(uint8_t status)
     uint32_t at = 0, n = 0;
     nm_handle = 0;
     if (status == STATUS_DONE) {
-        while (at < nm_req.length && n < MAX_SUBS) {
+        while (at < nm_req.length && n < NM_MAX) {
             nm_at[n++] = at;
             at += 1 + nm_buf[at];
         }
@@ -2454,7 +2557,13 @@ static void search_doc(void)
         slot_meta(s ? rgb_sel_meta : rgb_meta);
         tb_n = 0;
         if (i <= sf_n) {
+            uint8_t nn, nick;
+            const uint8_t *nm = name_of(r + R_FEED, &nn, &nick);
             tb_key(r + R_FEED);
+            if (nick) {
+                tb_s("  \xC2\xB7  your nickname: ");
+                tb_name(nm, nn);
+            }
             if (own_known && !memcmp(r + R_FEED, own_key, 32))
                 tb_s("  \xC2\xB7  you");
             if (find_sub(r + R_FEED) >= 0)
@@ -2584,7 +2693,7 @@ static const char *const help_keys[] = {
     "Esc", "quit",
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
-    "Tab, Shift+Tab", "the next or previous link (the current one is in amber; it may be off screen)",
+    "Tab, Shift+Tab", "the next or previous link, in amber, scrolled into view (after you scroll: the first one in view)",
     "Enter, click", "follow the link: terse: links open the article or the feed's page; a web link shows its address",
     "Esc, Backspace, \xE2\x86\x90", "back to the previous article, then to where you came from",
     0, "Feeds",
@@ -2786,6 +2895,7 @@ static void scroll_to(int32_t s)
 static void scroll_by(int32_t delta)
 {
     to_end = 0;
+    tab_scrolled = 1;
     art_restore = -1;
     scroll_to(scroll + delta);
 }
@@ -2802,6 +2912,7 @@ static void page_laid_out(uint32_t h)
     if (art_restore >= 0 && view == ARTICLE && doc_state == 2) {
         scroll = art_restore;
         art_restore = -1;
+        tab_scrolled = 1;
     }
     scroll_to(to_end ? (int32_t)max_scroll() : scroll);
     dirty[STATUS_ROW] = 1;
@@ -2857,6 +2968,7 @@ static void article_start(int32_t restore)
     art_restore = restore;
     to_end = 0;
     link_shown = cur_link = 0;
+    loc_id = loc_search = tab_scrolled = place.half = tab_more = 0;
     pf_n = pf_next = 0;
     dirty[STATUS_ROW] = 1;
     article_page();
@@ -3001,6 +3113,7 @@ static void set_cur_link(uint16_t id)
     }
     link_colour(cur_link, rgb_link);
     cur_link = id;
+    tab_scrolled = 0;
     link_colour(id, rgb_cur_link);
     if (doc_state == 2)
         submit_len(a_ptr - doc);
@@ -3008,23 +3121,107 @@ static void set_cur_link(uint16_t id)
     dirty[STATUS_ROW] = 1;
 }
 
-/* Tab and Shift+Tab: the next or previous link in the document. */
-static void tab_link(int8_t dir)
+/* The links in the document as submitted. */
+static uint16_t links_in(void)
 {
-    uint16_t n = 0, id;
+    uint16_t n = 0;
     while (n < links && link_usable(n + 1))
         n++;
+    return n;
+}
+
+static void locate(uint16_t id)
+{
+    loc_id = id;
+    page_locate(id);
+}
+
+/* Makes link `id` current and asks where it is, to bring it into view. */
+static void tab_to(uint16_t id)
+{
+    loc_id = loc_search = 0;
+    set_cur_link(id);
+    locate(id);
+}
+
+/* Tab and Shift+Tab: the next or previous link in the document; after the
+ * user scrolled, the first link at or below the top of the view (Tab) or
+ * the last above its bottom (Shift+Tab), found by a binary search over
+ * the links' places (the links are in document order, so their y never
+ * decreases), one locate a frame. */
+static void tab_link(int8_t dir)
+{
+    uint16_t n = links_in(), id;
     if (!n) {
         tb_n = 0;
         tb_s("No links in this article");
         say(C_INFO);
         return;
     }
+    if (loc_id && loc_search) {
+        if (tab_more > -100 && tab_more < 100)
+            tab_more += dir;
+        return;
+    }
+    /* At the top, the first link in view is the first link. */
+    if (tab_scrolled && !(dir > 0 && scroll <= 0)) {
+        loc_search = 1;
+        tab_more = 0;
+        sr_dir = dir;
+        sr_lo = 1;
+        sr_hi = n + 1;
+        sr_at = dir > 0 ? scroll : scroll + RECT_H;
+        locate((sr_lo + sr_hi) >> 1);
+        return;
+    }
     if (dir > 0)
         id = cur_link >= n ? 1 : cur_link + 1;
     else
         id = cur_link <= 1 || cur_link > n ? n : cur_link - 1;
-    set_cur_link(id);
+    tab_to(id);
+}
+
+/* The place of loc_id has arrived: the next step of the search, or the
+ * current link scrolled just enough to be wholly in view, MARGIN units
+ * from the edges. */
+static void located(void)
+{
+    uint16_t n, id;
+    int32_t s = scroll, top, bottom;
+    loc_id = 0;
+    if (loc_search) {
+        if (!place.height || (int32_t)place.y >= sr_at)
+            sr_hi = place.id;
+        else
+            sr_lo = place.id + 1;
+        if (sr_lo < sr_hi) {
+            locate((sr_lo + sr_hi) >> 1);
+            return;
+        }
+        n = links_in();
+        if (sr_dir > 0)
+            id = sr_lo <= n ? sr_lo : 1;
+        else
+            id = sr_lo > 1 ? sr_lo - 1 : n;
+        /* The presses that came during the search, in simple order. */
+        for (; tab_more > 0; tab_more--)
+            id = id >= n ? 1 : id + 1;
+        for (; tab_more < 0; tab_more++)
+            id = id <= 1 ? n : id - 1;
+        tab_to(id);
+        return;
+    }
+    if (!place.height || place.id != cur_link)
+        return;
+    top = (int32_t)place.y - MARGIN;
+    bottom = (int32_t)place.y + place.height + MARGIN;
+    if (bottom > s + RECT_H)
+        s = bottom - RECT_H;
+    if (top < s)
+        s = top;
+    to_end = 0;
+    art_restore = -1;
+    scroll_to(s);
 }
 
 /* Follows link `id`: an article link opens the article (the one shown
@@ -3862,6 +4059,7 @@ static void scroll_key(uint8_t code)
     case KEY_END:
         to_end = 1;
         art_restore = -1;
+        tab_scrolled = 1;
         if (page_h_known)
             scroll_to(max_scroll());
         break;
@@ -4092,6 +4290,11 @@ static uint8_t handle_events(void)
                 page_laid_out(EV_PAGE_HEIGHT(ev));
             break;
         case EV_PAGE_ANCHOR: anchor(EV_ANCHOR_ID(ev), EV_ANCHOR_BUTTONS(ev)); break;
+        case EV_PAGE_LOCATED:
+        case EV_PAGE_LOCATED_Y:
+            if (page_place_event(&ev, &place) && view == ARTICLE && loc_id && place.id == loc_id)
+                located();
+            break;
         case EV_FEEDS_UPDATED: reload(); break;
         case EV_CONTENT_DONE:
             if (done_for(tl_handle, &tl_req))

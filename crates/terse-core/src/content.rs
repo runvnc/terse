@@ -50,6 +50,8 @@ pub const MAX_NAMES_RECORD: usize = 2 + NAMES_HEAD + MAX_NAME;
 pub const NAME_NICKNAME: u8 = 0x01;
 /// Names record flag: the feed has a profile in force.
 pub const NAME_PROFILE: u8 = 0x02;
+/// Names record flag: the feed is not subscribed (listed for its nickname).
+pub const NAME_UNSUBSCRIBED: u8 = 0x04;
 /// Find scopes (`offset` of a find request).
 pub const FIND_FEEDS: u8 = 1;
 pub const FIND_ENTRIES: u8 = 2;
@@ -231,7 +233,7 @@ pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) ->
         let Some(&flags) = data.get(at + 1) else { return false };
         if op == OP_NAMES {
             // L counts the flags byte, the key and the name.
-            if !(1 + NAMES_HEAD..=1 + NAMES_HEAD + MAX_NAME).contains(&l) || flags & !(NAME_NICKNAME | NAME_PROFILE) != 0 {
+            if !(1 + NAMES_HEAD..=1 + NAMES_HEAD + MAX_NAME).contains(&l) || flags & !(NAME_NICKNAME | NAME_PROFILE | NAME_UNSUBSCRIBED) != 0 {
                 return false;
             }
         } else {
@@ -1104,7 +1106,7 @@ mod tests {
 
     #[test]
     fn names_records_must_tile_the_delivered_bytes() {
-        let (a, b, c) = (names_record(0, 0, 1), names_record(48, 3, 2), names_record(5, NAME_NICKNAME, 3));
+        let (a, b, c) = (names_record(0, 0, 1), names_record(48, 3, 2), names_record(5, NAME_NICKNAME | NAME_UNSUBSCRIBED, 3));
         assert_eq!((a.len(), b.len(), c.len()), (34, MAX_NAMES_RECORD, 39));
         let abc = [a.clone(), b.clone(), c.clone()].concat();
         let mut rig = Rig::new();
@@ -1115,7 +1117,7 @@ mod tests {
         let mut long_name = names_record(49, 0, 1);
         long_name[0] = 82;
         let mut bad_flags = abc.clone();
-        bad_flags[1] = 0x04;
+        bad_flags[1] = 0x08;
         for (data, why) in [
             (&short_l[..], "L under 33"),
             (&long_name, "name over 48 bytes"),

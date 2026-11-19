@@ -230,6 +230,11 @@ impl Nicknames {
         self.names.get(feed).map(String::as_str)
     }
 
+    /// The feeds that have a nickname, in increasing order of key.
+    pub fn feeds(&self) -> impl Iterator<Item = &FeedKey> {
+        self.names.keys()
+    }
+
     /// Sets a nickname (`None` or an empty name removes it); false if it
     /// already was as asked. The name must be valid.
     pub fn set(&mut self, feed: FeedKey, name: Option<&str>) -> io::Result<bool> {

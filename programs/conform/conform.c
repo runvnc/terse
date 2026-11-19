@@ -74,7 +74,7 @@ enum {
     T_GET_COLOURS, T_CELLS_READ, T_CELLS_WRITE, T_PALETTE_SET, T_SIZE,
     V_SUBMIT = 0x300, V_CLEAR, V_STYLE, V_PERSISTENCE, V_FILL,
     C_SUBMIT = 0x400,
-    P_SUBMIT = 0x700, P_CLEAR, P_REGION, P_SCROLL, P_BACKGROUND,
+    P_SUBMIT = 0x700, P_CLEAR, P_REGION, P_SCROLL, P_BACKGROUND, P_LOCATE,
 };
 
 static inline uint32_t call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
@@ -1784,6 +1784,8 @@ static uint8_t fig_ram[sizeof fig_head + sizeof page_doc];
 /* The frame each height event arrived in, and the heights (in RAM, so the
  * state hash covers the exact frames of the headless run). */
 static uint32_t page_frames[8], page_heights[8], page_events;
+/* Located anchors (0Dh then 0Eh): id, height, y. */
+static uint32_t loc[4][3], locs;
 
 /* Waits for a height event (08h) until frame `last`; returns it, or
  * 0xFFFFFFFF (and a failed check) if none came. Other events are dropped;
@@ -1797,6 +1799,12 @@ static uint32_t page_height(uint32_t last)
             if (e[0] == 8) {
                 n++;
                 h = e[1] | (uint32_t)e[2] << 8 | (uint32_t)e[3] << 16;
+            } else if (e[0] == 0x0D && locs < 4) {
+                loc[locs][0] = e[1] | e[2] << 8;
+                loc[locs][1] = e[3];
+                /* The y follows at once. */
+                ck(call(NEXT_EVENT, A(e), 0, 0) == 1 && e[0] == 0x0E);
+                loc[locs++][2] = e[1] | (uint32_t)e[2] << 8 | (uint32_t)e[3] << 16;
             }
         }
         ck(n <= 1);
@@ -1852,13 +1860,16 @@ static void t_page(void)
     ck(call(P_BACKGROUND, 0x80402010, 0, 0) == 0);
     ck(call(P_CLEAR, 0, 0, 0) == 0);
     ck(call(P_CLEAR, 0, 0, 0) == 0);
-    ck(call(0x705, 0, 0, 0) == ERR_UNKNOWN);
+    ck(call(P_LOCATE, ANCHOR_ID, 0, 0) == 1); /* no document */
+    ck(call(0x706, 0, 0, 0) == ERR_UNKNOWN);
     ck(call(0x7FF, 0, 0, 0) == ERR_UNKNOWN);
     /* The state the frame ends with: the document, the wide rectangle, a
      * negative scroll value (shown as 0). */
     ck(call4(P_REGION, PX, PY, PW, PH) == 0);
     ck(call(P_SUBMIT, A(page_ram), sizeof page_doc, 0) == 0);
     ck(call(P_SCROLL, (uint32_t)-40, 0, 0) == 0);
+    ck(call(P_LOCATE, 0, 0, 0) == 1);
+    ck(call(P_LOCATE, 0x10000 | ANCHOR_ID, 0, 0) == 1);
     report("page: calls, rejections, buffers");
 
     /* Height events: only what any host's layout must satisfy. */
@@ -1904,7 +1915,17 @@ static void t_page(void)
     memcpy(fig_ram, fig_head, sizeof fig_head);
     memcpy(fig_ram + sizeof fig_head, &page_doc, sizeof page_doc);
     call(P_SUBMIT, A(fig_ram), sizeof fig_ram, 0);
+    /* Located with the height: the figure at 0, 100 high; the text after
+     * it at 100; an anchor that is not there. */
+    ck(call(P_LOCATE, FIG_ANCHOR, 0, 0) == 0);
+    ck(call(P_LOCATE, ANCHOR_ID, 0, 0) == 0);
+    ck(call(P_LOCATE, 0x0999, 0, 0) == 0);
+    locs = 0;
     ck(page_height(PAGE_CLICK + 2) == wide + 100);
+    ck(locs == 3);
+    ck(loc[0][0] == FIG_ANCHOR && loc[0][1] == 100 && loc[0][2] == 0);
+    ck(loc[1][0] == ANCHOR_ID && loc[1][1] > 0 && loc[1][2] == 100);
+    ck(loc[2][0] == 0x0999 && loc[2][1] == 0 && loc[2][2] == 0xFFFFFF);
     wait_until(PAGE_CLICK + 4);
     uint32_t fig_anchors = 0;
     while (call(NEXT_EVENT, A(e), 0, 0) == 1)
@@ -1918,7 +1939,7 @@ static void t_page(void)
     ck(page_height(PAGE_CLICK + 12) == 0);
     call4(P_REGION, 0, 0, 0, 0);
     call(P_SCROLL, (uint32_t)-40, 0, 0);
-    report("page: height and anchor events");
+    report("page: height, anchor and located events");
 }
 
 /* ================================================================== main */

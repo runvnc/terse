@@ -491,6 +491,20 @@ void doc_anchor(uint16_t id)
     }
 }
 
+uint8_t page_place_event(const terse_event *e, page_place *p)
+{
+    if (e->type == EV_PAGE_LOCATED) {
+        p->id = e->a | (uint16_t)e->b << 8;
+        p->height = e->c;
+        p->half = 1;
+    } else if (e->type == EV_PAGE_LOCATED_Y && p->half) {
+        p->y = e->a | (uint32_t)e->b << 8 | (uint32_t)e->c << 16;
+        p->half = 0;
+        return 1;
+    }
+    return 0;
+}
+
 void doc_end(void)
 {
     uint8_t *p = doc_room(1);

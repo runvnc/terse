@@ -800,11 +800,14 @@ impl Node {
     /// The names records from index `offset` that fit in `length` bytes,
     /// and how many exist (SPEC 9.5): one per subscribed feed in key order.
     pub fn name_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
-        let feeds: Vec<&FeedKey> = self.subscriptions.feeds().collect();
+        let subscribed: BTreeSet<&FeedKey> = self.subscriptions.feeds().collect();
+        let feeds: BTreeSet<&FeedKey> = subscribed.iter().copied().chain(self.nicknames.feeds()).collect();
         let records = feeds.iter().skip(offset as usize).map(|feed| {
             let declared = self.feeds.latest_profile(feed).ok().flatten().map(|p| p.entry.title);
             let nickname = self.nicknames.get(feed);
-            let flags = nickname.is_some() as u8 | (declared.is_some() as u8) << 1;
+            let flags = nickname.is_some() as u8
+                | (declared.is_some() as u8) << 1
+                | (!subscribed.contains(feed) as u8) << 2;
             let name = nickname.map(str::to_string).or(declared).unwrap_or_default();
             timeline::name_record(feed, flags, name.as_bytes())
         });
@@ -1431,6 +1434,14 @@ mod tests {
         assert!(data.windows(rec(&key, 3, "Me").len()).any(|w| w == rec(&key, 3, "Me")));
         assert!(data.windows(rec(&other, 0, "").len()).any(|w| w == rec(&other, 0, "")));
         assert_eq!(node.name_records(0, 33), (2, Vec::new()), "the shortest record is 34 bytes");
+        // A feed that is not subscribed is listed for its nickname, flagged.
+        let third = Identity::from_seed([3; 32]).feed_key();
+        node.set_nickname(third, Some("Cy")).unwrap();
+        let (total, data) = node.name_records(0, 1000);
+        assert_eq!(total, 3);
+        assert!(data.windows(rec(&third, 5, "Cy").len()).any(|w| w == rec(&third, 5, "Cy")));
+        node.set_subscriptions(Subscriptions::in_memory([key, other, third]));
+        assert!(node.name_records(0, 1000).1.windows(rec(&third, 1, "Cy").len()).any(|w| w == rec(&third, 1, "Cy")));
     }
 
     /// A scripted relay: answers requests from in-memory state.
@@ -1630,9 +1641,9 @@ mod tests {
         assert_eq!(s.subscribes, [(feed, 0), (feed, 6)]);
     }
 
-    /// Prefetch (NETWORK 4.4): the first 8 distinct links not held, one
-    /// level, none known or found to be over the limit; off with
-    /// `set_prefetch(false)`.
+    /// Prefetch (NETWORK 4.4): the first 8 distinct links not held (also
+    /// the target of a link with text), one level, none known or found to
+    /// be over the limit; off with `set_prefetch(false)`.
     #[test]
     fn prefetches_links_of_downloaded_articles() {
         let author = Identity::from_seed([6; 32]);
@@ -1644,7 +1655,9 @@ mod tests {
         let small: Vec<Vec<u8>> = (1..=7).map(|i| format!("small {i}").into_bytes()).collect();
         let big_known = vec![b'y'; 2000];
         let big_unknown = vec![b'x'; 2000];
-        let mut text = format!("{} {} {} {} {}", link(&held), link(&big_known), link(&big_unknown), link(&nested), link(&small[0]));
+        // One through a link with text (NETWORK 4.5).
+        let mut text =
+            format!("{} {} {} [Nested]({}) {}", link(&held), link(&big_known), link(&big_unknown), link(&nested), link(&small[0]));
         text += &format!(" again {} feed terse:feed/{}", link(&small[0]), to_hex(&blob_id(&small[6])));
         for s in &small[1..] {
             text += &format!(" {}", link(s));

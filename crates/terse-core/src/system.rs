@@ -45,6 +45,8 @@ impl Event {
     pub const MACHINE_CHANGED: u8 = 0x0A;
     pub const HOME: u8 = 0x0B;
     pub const MACHINE_PRESSED: u8 = 0x0C;
+    pub const PAGE_LOCATED: u8 = 0x0D;
+    pub const PAGE_LOCATED_Y: u8 = 0x0E;
 
     /// `key` is a USB HID keyboard usage ID.
     pub fn key_down(key: u8, modifiers: u8) -> Self {
@@ -94,6 +96,18 @@ impl Event {
     /// A pointer button was pressed over text with anchor `id` (SPEC 11.5).
     pub fn page_anchor(id: u16, buttons: u8) -> Self {
         Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: buttons & 0x07 }
+    }
+
+    /// The answer to a `locate` of anchor `id` (SPEC 11.5), as the pair of
+    /// events that carries it: the anchor and the line's height (at most
+    /// 255), then its y (at most 24 bits). `None`: the document has no such
+    /// anchor (height 0, y FFFFFFh).
+    pub fn page_located(id: u16, at: Option<(u32, u32)>) -> [Self; 2] {
+        let (y, h) = at.map_or((0xFF_FFFF, 0), |(y, h)| (y.min(0xFF_FFFF), h.min(255)));
+        [
+            Event { kind: Self::PAGE_LOCATED, a: id as u8, b: (id >> 8) as u8, c: h as u8 },
+            Event { kind: Self::PAGE_LOCATED_Y, a: y as u8, b: (y >> 8) as u8, c: (y >> 16) as u8 },
+        ]
     }
 
     /// Machine `handle` is now in `state` (SPEC 12.4), for the shell.

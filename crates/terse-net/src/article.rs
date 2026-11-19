@@ -115,4 +115,14 @@ mod tests {
         // A feed link is not an article link.
         assert!(terse_links(format!("terse:feed/{A}").as_bytes()).is_empty());
     }
+
+    /// Links with text (NETWORK 4.5): the target in the parentheses is
+    /// found like a bare link, also by prefetch.
+    #[test]
+    fn links_with_text() {
+        let b = "f".repeat(64);
+        let text = format!("- [How Terse works](terse:{A}), and [a feed](terse:feed/{b}).\n[x]( terse:{b})");
+        assert_eq!(links(text.as_bytes()), [Link::Article(id(A)), Link::Feed(id(&b)), Link::Article(id(&b))]);
+        assert_eq!(terse_links(text.as_bytes()), [id(A), id(&b)]);
+    }
 }

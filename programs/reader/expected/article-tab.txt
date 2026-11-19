@@ -28,23 +28,17 @@
 
 
  Link 1: terse:2c3d70…77a524  (an article)   Enter: open
--- page: height 450, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 336, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Links
    53  15     0   sans12 |Alice (66be7e…0c473a)  ·  #13  ·  2026-11-17 20:10 UTC  ·  494 bytes
    78   8     0  -- rule --
    96  19     0   sans15 |Links of every kind.
-  125  19     0   sans15 |The sourdough article:
-  144  19     0   sans15 |[terse:2c3d7071c5ceb3c3826793ebf5a68e97e4aa99a5b08d11e20c3ba7805d77a5]{1}
-  163  19     0   sans15 |[24]{1}
-  192  19     0   sans15 |One that is nowhere:
-  211  19     0   sans15 |[terse:a5a09dfea6c7ab36f55c9544513136cf58bb69b35319b46f19b53395211b03]{2}
-  230  19     0   sans15 |[5c]{2}
-  259  19     0   sans15 |Bob's feed:
-  278  19     0   sans15 |[terse:feed/0b513ad9b4924015ca0902ed079044d3ac5dbec2306f06948c10da8eb]{3}
-  297  19     0   sans15 |[6e39f2d]{3}
-  326  19     0   sans15 |And the web: [https://example.com/x]{4}
-  355  19     0   sans15 |Not links:
-  374  19     0   sans15 |terse:2c3d7071c5ceb3c3826793ebf5a68e97e4aa99a5b08d11e20c3ba7805d77a5
-  393  19     0   sans15 |240 and
-  412  19     0   sans15 |xterse:2c3d7071c5ceb3c3826793ebf5a68e97e4aa99a5b08d11e20c3ba7805d77a
-  431  19     0   sans15 |524
+  125  19     0   sans15 |The sourdough article: [terse:2c3d70…77a524]{1}
+  154  19     0   sans15 |One that is nowhere: [terse:a5a09d…1b035c]{2}
+  183  19     0   sans15 |Bob's feed: [terse:feed/0b513a…e39f2d]{3}
+  212  19     0   sans15 |And the web: [https://example.com/x]{4}
+  241  19     0   sans15 |Not links:
+  260  19     0   sans15 |terse:2c3d7071c5ceb3c3826793ebf5a68e97e4aa99a5b08d11e20c3ba7805d77a5
+  279  19     0   sans15 |240 and
+  298  19     0   sans15 |xterse:2c3d7071c5ceb3c3826793ebf5a68e97e4aa99a5b08d11e20c3ba7805d77a
+  317  19     0   sans15 |524

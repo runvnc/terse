@@ -213,7 +213,9 @@ That is the end of the serialization. Its length is
 - **The page's layout** (SPEC 11.4): it depends on the host's fonts. The
   document bytes (with its figures' path commands), rectangle, scroll value
   and background are included; how figures are drawn is not; the height a
-  host reports is an input event.
+  host reports is an input event. The locates a program made (SPEC 11.2)
+  are not included either: a host takes them after the frame, and the
+  answers are input events.
 
 ## 3. Test vectors
 

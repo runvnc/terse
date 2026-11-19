@@ -279,12 +279,13 @@ impl Driver for FrameDriver<'_> {
         let mut input = std::mem::take(&mut io.carry);
         // SPEC 11.5: a layout of the current page finished: its height first.
         if let Some(worker) = &mut io.page
-            && let Ok(Some(e)) = worker.poll(machine.page())
+            && let Ok(page_events) = worker.poll(machine.page())
+            && !page_events.is_empty()
         {
             if self.trace {
-                eprintln!("page: machine {}: frame {}: height queued", who.handle, machine.frame());
+                eprintln!("page: machine {}: frame {}: {} page events queued", who.handle, machine.frame(), page_events.len());
             }
-            input.insert(0, e);
+            input.splice(0..0, page_events);
         }
         for e in events {
             input.push(e);

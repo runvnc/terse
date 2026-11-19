@@ -150,7 +150,8 @@ received first is kept.
   associated with the entry. Larger blobs are fetched only on request.
 - **Prefetch:** when the host stores an article blob through automatic
   download for an article entry (kind 1) of a subscribed feed, it scans the
-  text for `terse:` article links (section 4.5), takes the first 8 distinct
+  text for `terse:` article links (section 4.5, also the targets of links
+  with text), takes the first 8 distinct
   ones whose blobs it does not hold and is not already fetching, and gets
   them. It skips a link when an entry it holds gives the blob a size over
   the automatic download limit, and discards a fetched blob over that
@@ -216,6 +217,15 @@ below), which then starts the next block.
   `terse:feed/` followed by 64 lowercase hexadecimal digits (a feed key),
   not preceded by a letter or digit, with the digits not followed by a
   letter or digit. Links count in every block that shows text.
+- A **link with text** is `[`, the text, `]`, `(`, the target, `)`, all
+  on one line: the text is 1 to 200 bytes holding no `[`, `]` or link,
+  and the target is a link by the rules above that is the whole of what is
+  between the parentheses (so it holds no blank and no `)`). A reader
+  shows the text as the link and does not show the target. Links are found
+  from the start of the line: where two would overlap, the one that starts
+  first counts, and a link with text starts at its `[`. Brackets that are
+  not all of a link with text are ordinary text, and the links in them
+  count as bare links.
 - There is no inline markup: `*`, `_` and backquotes inside a line are
   ordinary text.
 

@@ -26,7 +26,7 @@ PASS content: eight pending, ninth rejected
 PASS content: subscriptions, timeline
 PASS stress frames run = 60
 PASS page: calls, rejections, buffers
-PASS page: height and anchor events = 2
+PASS page: height, anchor and located events = 2
 All sections pass.  Esc: exit (code = sections failed).
 -- vectors: 173 list bytes --
 line 256 6400 1920 6400 w 1 c 4080ffff

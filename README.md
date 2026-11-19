@@ -143,8 +143,9 @@ images were built with clang and LLD 23.1.4.
   the default a `-- vector style: … --` line comes first. `--dump-page` adds the
   page (device 7) as the reference layout lays it out (see [Page](#page)).
   The page is laid out with the reference layout between frames, so its height
-  event arrives in the frame after a change, and a scripted press over anchored
-  text is followed by its anchor event.
+  event arrives in the frame after a change, the answers to `locate` come with
+  it (or in the next frame, if the document is laid out already), and a
+  scripted press over anchored text is followed by its anchor event.
   Content requests (device 4) are carried out between frames and always complete at
   the start of the next frame, so runs are reproducible. For an image with device 4
   the feeds (SPEC 9.5) are those subscribed in `--config` (see [Feeds](#feeds)):
@@ -487,7 +488,9 @@ An article is UTF-8 text that reads well as it is (NETWORK 4.5 is exact). Blank
 lines separate blocks; the markers count only at the start of a line:
 
 - a paragraph: lines joined with spaces and wrapped by the reader; bare
-  `http://` and `https://` URLs are links;
+  `http://` and `https://` URLs, `terse:<article ID>` and `terse:feed/<key>`
+  are links, and so is `[text](target)` with one of those as the target,
+  shown as its text (on one line, the text 1–200 bytes without brackets);
 - `# ` a heading, `## ` a subheading (one line each);
 - `- ` or `* ` a list item (one level; the lines after it continue it);
 - four spaces or a tab: preformatted lines, shown as written;
@@ -577,7 +580,8 @@ the terminal shows only the status row (row 29: key hints, the position such as
 - **Search** (/ from the timeline or feeds): type a feed's name or words of an
   article's title and press Enter. The reader asks the relays for listed feeds by
   name and for their articles by title at once (op 0Ah, twice) and lists both: the
-  feeds (name; short key, `you`, `subscribed`) and the articles (title; feed, date,
+  feeds (name, your nickname for it if you gave one, also to a feed you do not
+  follow; short key, `you`, `subscribed`) and the articles (title; feed, date,
   size), under a heading each that says how many were found, or that none were,
   or why it could not search (no relay could be reached; the relays refused, which
   a relay does when one connection searches more than 4 times a second). Up/Down,
@@ -597,7 +601,8 @@ the terminal shows only the status row (row 29: key hints, the position such as
 
 The timeline and feeds lists are virtual: the page holds a heading and only the
 entries from the top of the visible window on (at most 24), every one laid out the
-same way (one title line of 16 units and one detail line of 12, neither wrapped), so
+same way (one title line of 16 units and one detail line of 12, neither wrapped, and
+cut with an ellipsis when too long), so
 the height of the whole document, which the page's height event reports, divided by
 the number of entries plus one gives the height of an entry with the host's fonts.
 From that the reader knows how many entries are fully visible and scrolls the window
@@ -614,15 +619,18 @@ preformatted blocks and fences in monospace without wrapping, figures centred (o
 wider than the column scaled down to its 512 units). Bare `http://` and `https://`
 URLs get an anchor and a link colour; pressing one shows the URL in the status bar,
 since there is no browser. So do `terse:<id>` links (an article, by its blob ID) and
-`terse:feed/<key>` links (a feed): clicking one, or making it current with Tab or
-Shift+Tab (it turns amber and the status row shows it) and pressing Enter, opens the
-article or the feed's page. The article opened by a link has the title of the
+`terse:feed/<key>` links (a feed), shown shortened (`terse:360793…dec189`), and
+links with text (`[text](target)`), shown as their text: clicking one, or making it
+current with Tab or Shift+Tab (it turns amber, the status row shows its target and
+the page scrolls just enough to show its line) and pressing Enter, opens the article
+or the feed's page. After you scroll, Tab starts again from the first link at the
+top of the view (Shift+Tab from the last one above its bottom): the reader finds it
+by asking the page where links are (`locate`, SPEC 11.2), a binary search of one
+question a frame. The article opened by a link has the title of the
 timeline's entry for that blob if your host has one, else its ID's short form; one
 that is missing, larger than the 48 KiB the reader shows, or cannot be fetched gets
 a page saying so. Esc goes back through the articles followed (up to 8, each at the
-place it was scrolled to), then to where the first was opened from. The reader does
-not know where the page put a link, so Tab does not scroll the current link into
-view. On opening an article the reader also gets its first 8 article links, one byte
+place it was scrolled to), then to where the first was opened from. On opening an article the reader also gets its first 8 article links, one byte
 each, at most two at a time, so the host holds them by the time you follow one (the
 host itself does the same for articles of subscribed feeds as they arrive,
 NETWORK 4.4). Up/Down scroll by 20 units, PageUp/PageDown/Space by the rectangle less one
@@ -682,13 +690,13 @@ document with the new selection in the same frame and its height arrives in the
 next; the list is drawn 3 frames after reset; an already-local article is submitted
 2 frames after Enter (a stand-in page with its title in the Enter frame) and its
 height arrives in the next; the whole height of a 48 KiB article arrives 15 frames
-after Enter. The busiest frame uses 74,580 units (60% of 125,000, building an
-article's document; 61,202 for an article with a 4 KB figure path); outside the article view at most 32,211
+after Enter. The busiest frame uses 73,044 units (58% of 125,000, building an
+article's document; 61,252 for an article with a 4 KB figure path); outside the article view at most 32,232
 (26%, publishing a test article); a typical frame 162; no frame runs out of budget.
-ROM 44,282 bytes, 28 RAM pages (the 64 KiB document, the 48 KiB article, the
+ROM 46,042 bytes, 28 RAM pages (the 64 KiB document, the 48 KiB article, the
 timeline records, the names and the search results). Following a `terse:` link to
 a local article: the article is on the page 2 frames after Enter, busiest frame
-40,697 units; a search: busiest frame 20,336 units.
+39,497 units; a search: busiest frame 20,381 units.
 
 In the window (release build, `TERSE_PAGE_TRACE=1 terse-host --selftest` with 28
 entries, 13 Down then 13 Up presses 8 frames apart, the list window scrolling): every
@@ -838,10 +846,14 @@ display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor, Figure; at most
 the scroll value (screen units from the top of the document) and the background.
 The host lays the document out with its own fonts and draws the part in view,
 between the cell backgrounds and the vector shapes (SPEC 10.5). The program learns
-one fact about the layout, the document's height, from an input event (`08h`) that
-arrives some frames after a submit, a clear or a width change; a press over text
-with an anchor gives an anchor event (`09h`). Both are recorded inputs, so a run
-replays exactly although layouts differ between hosts. An image gets the device
+two facts about the layout, each from input events: the document's height (`08h`),
+which arrives some frames after a submit, a clear or a width change, and, when it
+calls `locate` with an anchor id, the y and height of the first line or figure with
+that anchor (`0Dh` and `0Eh`, a pair; `page_place_event` in `terse.h` puts them
+together), which arrive with the height or in the next frame. A press over text
+with an anchor gives an anchor event (`09h`). All are recorded inputs, so a run
+replays exactly although layouts differ between hosts. A paragraph flag cuts a
+no-wrap line that does not fit with an ellipsis. An image gets the device
 with `terse pack … --device 7:0`.
 
 From C (`programs/lib/terse.h`), a builder appends commands to a buffer you own,
@@ -1048,7 +1060,8 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   (one the frame after a submit, again for the same bytes, a narrower rectangle
   gives a height at least as large, none while the width is 0, 0 after a clear),
   and anchor events for scripted presses over large anchored text, each right
-  after its pointer event with its buttons. Its own checks hold for any host's
+  after its pointer event with its buttons; `locate` rejections and answers (a
+  figure at y 0, 100 high; the text after it at y 100; an absent anchor). Its own checks hold for any host's
   layout (they pass in `terse-host` with Noto Sans and DejaVu Sans as well); the
   exact heights and frames of the reference layout are in RAM, so the hashes
   cover them;

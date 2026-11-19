@@ -41,6 +41,7 @@
 #define CALL_PAGE_REGION 0x702
 #define CALL_PAGE_SCROLL 0x703
 #define CALL_PAGE_BACKGROUND 0x704
+#define CALL_PAGE_LOCATE 0x705
 #define CALL_MACH_START 0x800
 #define CALL_MACH_STOP 0x801
 #define CALL_MACH_PLACE 0x802
@@ -114,6 +115,10 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
 #define EV_MACHINE_CHANGED 0x0A
 #define EV_HOME 0x0B
 #define EV_MACHINE_PRESSED 0x0C
+/* The answer to page_locate, always this pair, one after the other: the
+ * anchor and its line's height, then the line's y (page_place_event). */
+#define EV_PAGE_LOCATED 0x0D
+#define EV_PAGE_LOCATED_Y 0x0E
 
 /* USB HID key codes used by most programs. */
 #define KEY_ENTER 0x28
@@ -347,9 +352,10 @@ uint8_t content_identity(content_req *r);
 #define CONTENT_SET_NICKNAME 0x0C
 
 /* Names record flags: the name is the user's nickname; the feed has a
- * profile in force. */
+ * profile in force; the feed is not subscribed (listed for its nickname). */
 #define NAME_NICKNAME 0x01
 #define NAME_PROFILE 0x02
+#define NAME_UNSUBSCRIBED 0x04
 
 /* Find scopes. */
 #define FIND_FEEDS 1
@@ -393,6 +399,26 @@ static inline void page_region(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
 /* Units from the top of the document to the top of the rectangle; the host
  * clamps it to 0 .. max(0, height - rectangle height) when it draws. */
 static inline void page_scroll(int32_t y) { terse_call(CALL_PAGE_SCROLL, (uint32_t)y, 0, 0); }
+/* Asks where anchor `id` (1-65535) is laid out in the current document:
+ * PAGE_DONE, or PAGE_REJECTED (no document, id 0, or 8 locates already this
+ * frame). The answer arrives in a later frame as EV_PAGE_LOCATED and
+ * EV_PAGE_LOCATED_Y (page_place_event), unless the document is replaced
+ * first. */
+static inline uint32_t page_locate(uint32_t id) { return terse_call(CALL_PAGE_LOCATE, id, 0, 0); }
+
+/* Where an anchor is: y and height of the first line (or figure) carrying
+ * it, in screen units from the top of the document; height 0 (and y
+ * PAGE_ABSENT) if the document has no such anchor. */
+#define PAGE_ABSENT 0xFFFFFFu
+typedef struct {
+    uint16_t id;
+    uint8_t height, half; /* half: the EV_PAGE_LOCATED half has arrived */
+    uint32_t y;
+} page_place;
+/* Give it every EV_PAGE_LOCATED and EV_PAGE_LOCATED_Y event: returns 1
+ * when *p holds a whole answer (at the second of the pair), else 0. */
+uint8_t page_place_event(const terse_event *e, page_place *p);
+
 /* The colour behind the text; a = 0 lets the cell backgrounds show. */
 static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
@@ -420,6 +446,8 @@ static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 #define DOC_CENTRE 1
 #define DOC_END 2
 #define DOC_NOWRAP 0x01
+/* With DOC_NOWRAP: a line that does not fit ends in an ellipsis. */
+#define DOC_ELLIPSIS 0x02
 /* Longest text of one Text command. */
 #define DOC_TEXT_MAX 65535u
 

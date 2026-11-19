@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use cosmic_text::fontdb::{self, Database, ID, Query};
 use cosmic_text::{
-    Align as CtAlign, Attrs, Buffer, CacheKey, CacheKeyFlags, Color, Family, Font, FontSystem, LayoutGlyph, Metrics,
-    Shaping, Style, Weight, Wrap,
+    Align as CtAlign, Attrs, Buffer, CacheKey, CacheKeyFlags, Color, Ellipsize, EllipsizeHeightLimit, Family, Font,
+    FontSystem, LayoutGlyph, Metrics, Shaping, Style, Weight, Wrap,
 };
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
@@ -247,6 +247,10 @@ impl Typesetter {
         let Typesetter { fonts, faces } = self;
         let mut buffer = Buffer::new(fonts, Metrics::new(first_size, first_size * 1.25));
         buffer.set_wrap(if p.nowrap { Wrap::None } else { Wrap::WordOrGlyph });
+        if p.ellipsis {
+            // SPEC 11.3: a no-wrap line that does not fit ends in an ellipsis.
+            buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
+        }
         buffer.set_size(Some(avail), None);
         let align = match p.align {
             Align::Start => None,
@@ -364,6 +368,20 @@ impl HostLayout {
         }
         0
     }
+
+    /// Where anchor `id` is (SPEC 11.5): the top of the first line or
+    /// figure that carries it, rounded down, and its height, with the
+    /// bottom rounded up.
+    pub fn locate(&self, id: u16) -> Option<(u32, u32)> {
+        let line = self.lines.iter().find(|l| self.glyphs[l.glyphs.clone()].iter().any(|g| g.anchor() == id)).map(|l| (l.top, l.height));
+        let figure = self.figures.iter().find(|f| f.anchor == id).map(|f| (f.top, f.height));
+        let (top, height) = match (line, figure) {
+            (Some(l), Some(f)) => if f.0 < l.0 { f } else { l },
+            (l, f) => l.or(f)?,
+        };
+        let y = top.max(0.0).floor();
+        Some((y as u32, ((top + height).ceil() - y).max(1.0) as u32))
+    }
 }
 
 /// The host's layout as a [`Layouter`] for a synchronous host (`--screenshot`
@@ -397,6 +415,10 @@ impl Layouter for SyncLayouter {
 
     fn height(&self) -> u32 {
         self.latest.lock().unwrap().as_ref().map_or(0, |l| l.reported_height())
+    }
+
+    fn locate(&self, id: u16) -> Option<(u32, u32)> {
+        self.latest.lock().unwrap().as_ref().and_then(|l| l.locate(id))
     }
 }
 
@@ -458,7 +480,17 @@ impl PageThread {
     pub fn worker(&self) -> PageWorker {
         let (reply, done) = std::sync::mpsc::channel();
         let client = self.clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        PageWorker { jobs: self.jobs.clone(), client, reply, done, watch: PageWatch::default(), requested: None, shown: None }
+        PageWorker {
+            jobs: self.jobs.clone(),
+            client,
+            reply,
+            done,
+            watch: PageWatch::default(),
+            requested: None,
+            shown: None,
+            reported: None,
+            locates: Vec::new(),
+        }
     }
 }
 
@@ -474,17 +506,23 @@ pub struct PageWorker {
     requested: Option<LayoutKey>,
     /// The layout shown, if any.
     pub shown: Option<Arc<HostLayout>>,
+    /// The layout of the current document whose height was reported last
+    /// (or found unchanged): locates are answered from it.
+    reported: Option<Arc<HostLayout>>,
+    /// Locates not yet answered: document generation and anchor.
+    locates: Vec<(u64, u16)>,
 }
 
 impl PageWorker {
-    /// Before a frame: takes finished layouts. Returns the height event to
-    /// queue for this frame, if a layout of the current page finished; an
-    /// error if the fonts could not be loaded.
-    pub fn poll(&mut self, page: Option<&Page>) -> Result<Option<Event>, String> {
+    /// Before a frame: takes finished layouts. Returns the events to queue
+    /// first in this frame: the height event, if a layout of the current
+    /// page finished, then the answers to the locates whose document is
+    /// laid out (SPEC 11.5); an error if the fonts could not be loaded.
+    pub fn poll(&mut self, page: Option<&Page>) -> Result<Vec<Event>, String> {
         let mut event = None;
         loop {
             let layout = match self.done.try_recv() {
-                Ok(Ok(l)) => l,
+                Ok(Ok(l)) => Arc::new(l),
                 Ok(Err(e)) => return Err(e),
                 Err(_) => break,
             };
@@ -492,19 +530,33 @@ impl PageWorker {
             let current = page.and_then(|p| self.watch.wanted(p));
             if current == Some(key) {
                 event = self.watch.finished(key, layout.reported_height()).or(event);
+                self.reported = Some(layout.clone());
             }
             // Show it unless an older document's layout came late.
             if self.shown.as_ref().is_none_or(|s| s.key.0 <= key.0) && page.is_some_and(|p| p.document().is_some()) {
-                self.shown = Some(Arc::new(layout));
+                self.shown = Some(layout);
             }
         }
-        Ok(event)
+        let mut events: Vec<Event> = event.into_iter().collect();
+        let generation = page.map(|p| p.generation());
+        self.locates.retain(|&(g, _)| Some(g) == generation);
+        if let Some(layout) = self.reported.as_ref().filter(|l| Some(l.key.0) == generation) {
+            for (_, id) in self.locates.drain(..) {
+                events.extend(Event::page_located(id, layout.locate(id)));
+            }
+        }
+        Ok(events)
     }
 
     /// After a frame: starts a layout if the page changed. A cleared page
     /// is done at once (height 0); its event is returned for the next frame.
     pub fn after_frame(&mut self, page: Option<&Page>) -> Option<Event> {
         let page = page?;
+        // Locates of the document current at the end of the frame wait for
+        // its layout (SPEC 11.5); at most 8.
+        self.locates.extend(page.locates().iter().filter(|l| l.0 == page.generation()));
+        let n = self.locates.len();
+        self.locates.drain(..n.saturating_sub(core_page::MAX_PENDING_LOCATES));
         if page.document().is_none() {
             self.shown = None;
         }
@@ -1307,6 +1359,90 @@ mod tests {
         // Narrower than the figure: cut at the edge.
         let n = t.layout((1, 60), &doc, 60);
         assert_eq!((n.figures[0].x, n.figures[0].width), (0.0, 60.0));
+    }
+
+    #[test]
+    fn locate_lines_and_figures() {
+        let Some(mut t) = typesetter() else { return };
+        let mut doc = vec![op::SIZE, 20];
+        doc.extend(text("Above"));
+        doc.extend_from_slice(&[op::PARAGRAPH, 0, 0, 12, 0, op::ANCHOR, 4, 0]);
+        doc.extend_from_slice(&[op::FIGURE, 100, 0, 50, 0, 2, 0, 0]);
+        doc.extend_from_slice(&[op::ANCHOR, 9, 0]);
+        doc.extend(text("Below"));
+        let l = t.layout((1, 400), &doc, 400);
+        let f = &l.figures[0];
+        assert_eq!(l.locate(4), Some((f.top.floor() as u32, ((f.top + 50.0).ceil() - f.top.floor()) as u32)));
+        let line = &l.lines[1];
+        let (y, h) = l.locate(9).unwrap();
+        assert!(y as f32 <= line.top && line.top < y as f32 + 1.0 && (y + h) as f32 >= line.top + line.height, "{y} {h} {line:?}");
+        assert_eq!(l.locate(5), None);
+    }
+
+    /// The windowed host's worker: a locate is answered with (after) the
+    /// height of its document, or at the next poll once that is laid out;
+    /// one whose document is replaced is dropped.
+    #[test]
+    fn worker_answers_locates() {
+        if typesetter().is_none() {
+            return;
+        }
+        let thread = PageThread::start(PageFonts::default());
+        let mut w = thread.worker();
+        let mut page = Page::default();
+        page.set_region(0, 0, 300, 100);
+        let mut doc = vec![op::ANCHOR, 3, 0];
+        doc.extend(text("link"));
+        page.submit(&doc);
+        page.locate(3);
+        page.locate(8);
+        assert_eq!(w.after_frame(Some(&page)), None);
+        let poll = |w: &mut PageWorker, page: &Page| {
+            for _ in 0..500 {
+                let events = w.poll(Some(page)).unwrap();
+                if !events.is_empty() {
+                    return events;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("no events");
+        };
+        let events = poll(&mut w, &page);
+        assert_eq!(events.len(), 5, "{events:?}");
+        assert_eq!(events[0].kind, Event::PAGE_LAID_OUT);
+        let h = events[0].a as u32;
+        assert_eq!(&events[1..3], Event::page_located(3, Some((0, h))));
+        assert_eq!(&events[3..], Event::page_located(8, None));
+        // Laid out already: at the next poll.
+        page.begin_frame();
+        page.locate(3);
+        w.after_frame(Some(&page));
+        assert_eq!(w.poll(Some(&page)).unwrap(), Event::page_located(3, Some((0, h))));
+        // Replaced in the frame of the call: dropped.
+        page.begin_frame();
+        page.locate(3);
+        page.submit(&text("x"));
+        w.after_frame(Some(&page));
+        let events = poll(&mut w, &page);
+        assert_eq!(events.iter().map(|e| e.kind).collect::<Vec<_>>(), [Event::PAGE_LAID_OUT]);
+    }
+
+    #[test]
+    fn ellipsis_cuts_a_line_that_does_not_fit() {
+        let Some(mut t) = typesetter() else { return };
+        let long = "A title long enough that it cannot possibly fit in a hundred units";
+        let mut extent = |flags: u8| {
+            let mut doc = vec![op::PARAGRAPH, 0, 0, 0, flags, op::SIZE, 16];
+            doc.extend(text(long));
+            let l = t.layout((1, 100), &doc, 100);
+            let line = &l.lines[0];
+            let glyphs = &l.glyphs[line.glyphs.clone()];
+            (glyphs.len(), glyphs.iter().map(|g| g.glyph.x + g.glyph.w).fold(0.0, f32::max))
+        };
+        let (cut_n, cut_right) = extent(3);
+        let (all_n, all_right) = extent(1);
+        assert!(all_right > 300.0, "no wrap alone: the whole line ({all_right})");
+        assert!(cut_right <= 100.5 && cut_n < all_n, "with ellipsis: within the width ({cut_right}, {cut_n} glyphs)");
     }
 
     #[test]

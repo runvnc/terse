@@ -23,6 +23,11 @@ pub const RESULT_REJECTED: u32 = 1;
 pub const DEFAULT_BACKGROUND: u32 = 0xFF00_0000;
 /// Largest height event `08h` can carry (24 bits).
 pub const MAX_REPORTED_HEIGHT: u32 = 0xFF_FFFF;
+/// Most `locate` calls a frame takes (SPEC 11.2); later ones are rejected.
+pub const MAX_LOCATES: usize = 8;
+/// Most locates a host keeps waiting for a layout (SPEC 11.5); older ones
+/// are dropped.
+pub const MAX_PENDING_LOCATES: usize = 8;
 
 /// Document opcodes (SPEC 11.3).
 pub mod op {
@@ -92,11 +97,21 @@ pub struct Page {
     /// Changes at every accepted submit and every clear (not machine state;
     /// hosts use it to know when to lay out and report the height).
     generation: u64,
+    /// The `locate` calls of this frame: the document generation at the
+    /// call and the anchor (not machine state: the answers are inputs).
+    locates: Vec<(u64, u16)>,
 }
 
 impl Default for Page {
     fn default() -> Self {
-        Page { document: None, region: Region::default(), scroll: 0, background: DEFAULT_BACKGROUND, generation: 0 }
+        Page {
+            document: None,
+            region: Region::default(),
+            scroll: 0,
+            background: DEFAULT_BACKGROUND,
+            generation: 0,
+            locates: Vec::new(),
+        }
     }
 }
 
@@ -136,6 +151,29 @@ impl Page {
 
     pub fn set_background(&mut self, rgba: u32) {
         self.background = rgba;
+    }
+
+    /// `locate` (SPEC 11.2): asks for where anchor `id` is laid out in the
+    /// current document. [`RESULT_REJECTED`] for an id of 0 or above
+    /// 65,535, with no document, or after [`MAX_LOCATES`] in this frame.
+    pub fn locate(&mut self, id: u32) -> u32 {
+        if id == 0 || id > u16::MAX as u32 || self.document.is_none() || self.locates.len() >= MAX_LOCATES {
+            return RESULT_REJECTED;
+        }
+        self.locates.push((self.generation, id as u16));
+        RESULT_DONE
+    }
+
+    /// The `locate` calls of the frame just run, in order: the document
+    /// generation at each call and the anchor.
+    pub fn locates(&self) -> &[(u64, u16)] {
+        &self.locates
+    }
+
+    /// A new frame: the last frame's locates are the host's now (the
+    /// machine calls this at the start of each frame).
+    pub fn begin_frame(&mut self) {
+        self.locates.clear();
     }
 
     /// The document bytes, or `None` when there is no document.
@@ -233,6 +271,8 @@ pub struct Paragraph {
     pub space: u8,
     /// Lines break only at U+000A and are clipped at the rectangle's edge.
     pub nowrap: bool,
+    /// With `nowrap`: a line that does not fit ends in an ellipsis.
+    pub ellipsis: bool,
     pub runs: Vec<Run>,
     /// A rule paragraph: a line in this colour across the rectangle.
     pub rule: Option<[u8; 3]>,
@@ -572,6 +612,7 @@ pub fn parse(doc: &[u8]) -> Vec<Paragraph> {
                     indent: args[1],
                     space: args[2],
                     nowrap: args[3] & 1 != 0,
+                    ellipsis: args[3] & 3 == 3,
                     runs: Vec::new(),
                     rule: None,
                     figure: None,
@@ -740,7 +781,10 @@ pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
             } else {
                 wrap(&chars, avail, &mut lines);
             }
-            for line in lines {
+            for mut line in lines {
+                if p.ellipsis {
+                    ellipsize(&mut line, avail);
+                }
                 let height = line.iter().map(|(_, s)| line_height(s.size)).max().unwrap_or(line_height(end_style.size));
                 let w: u32 = line.iter().map(|&(c, s)| advance(c, s.size)).sum();
                 let offset = match p.align {
@@ -768,6 +812,26 @@ pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
     }
     layout.height = y;
     layout
+}
+
+/// A no-wrap line with an ellipsis (SPEC 11.6): if it is wider than
+/// `avail` half units, characters are dropped from its end until the rest
+/// and an ellipsis in the style of the last one dropped fit (or none is
+/// left), and the ellipsis is added.
+fn ellipsize(line: &mut Vec<(char, Style)>, avail: u32) {
+    let mut width: u32 = line.iter().map(|&(c, s)| advance(c, s.size)).sum();
+    if width <= avail {
+        return;
+    }
+    let mut style = line[line.len() - 1].1;
+    while let Some((c, s)) = line.pop() {
+        width -= advance(c, s.size);
+        style = s;
+        if width + advance('\u{2026}', s.size) <= avail {
+            break;
+        }
+    }
+    line.push(('\u{2026}', style));
 }
 
 /// Greedy wrapping at spaces within `avail` half units. Spaces where a line
@@ -828,6 +892,15 @@ impl Layout {
     pub fn visible(&self, scroll: u32, h: u16) -> impl Iterator<Item = &Line> {
         let bottom = scroll.saturating_add(h as u32);
         self.lines.iter().filter(move |l| l.y < bottom && l.y.saturating_add(l.height) > scroll)
+    }
+
+    /// Where anchor `id` is (SPEC 11.5): the top and height of the first
+    /// line or figure that carries it; `None` if none does.
+    pub fn locate(&self, id: u16) -> Option<(u32, u32)> {
+        self.lines
+            .iter()
+            .find(|l| l.figure.is_some_and(|f| f.anchor == id) || l.spans.iter().any(|s| s.style.anchor == id))
+            .map(|l| (l.y, l.height))
     }
 
     /// The anchor of the text at (x, y), in screen units from the rectangle's
@@ -966,6 +1039,10 @@ pub trait Layouter {
     fn anchor_at(&self, x: u32, y: u32) -> u16;
     /// The height of the last layout.
     fn height(&self) -> u32;
+    /// Where anchor `id` is in the last layout: the top of the first line
+    /// or figure that carries it and its height, in whole screen units (the
+    /// top rounded down, the bottom up); `None` if none does.
+    fn locate(&self, id: u16) -> Option<(u32, u32)>;
 }
 
 /// The reference layout as a [`Layouter`].
@@ -987,6 +1064,10 @@ impl Layouter for ReferenceLayouter {
     fn height(&self) -> u32 {
         self.layout.height
     }
+
+    fn locate(&self, id: u16) -> Option<(u32, u32)> {
+        self.layout.locate(id)
+    }
 }
 
 /// The page events of a host that lays out synchronously between frames
@@ -1001,6 +1082,12 @@ pub struct PageInput {
     buttons: u8,
     /// The height event for the next frame.
     next: Option<Event>,
+    /// The generation the layouter holds a layout of.
+    laid: Option<u64>,
+    /// Locates not yet answered: generation and anchor.
+    pending: Vec<(u64, u16)>,
+    /// The answers to the last frame's locates, for the next frame.
+    located: Vec<Event>,
 }
 
 impl Default for PageInput {
@@ -1011,15 +1098,17 @@ impl Default for PageInput {
 
 impl PageInput {
     pub fn new(layouter: Box<dyn Layouter + Send>) -> Self {
-        PageInput { watch: PageWatch::default(), layouter, laid_out: false, buttons: 0, next: None }
+        PageInput { watch: PageWatch::default(), layouter, laid_out: false, buttons: 0, next: None, laid: None, pending: Vec::new(), located: Vec::new() }
     }
 
     /// The events for the next frame, given its other events: the pending
-    /// height event first, and after each pointer event that presses a
-    /// button over anchored text, an anchor event (SPEC 5).
+    /// height event first, then the answers to the last frame's locates,
+    /// and after each pointer event that presses a button over anchored
+    /// text, an anchor event (SPEC 5).
     pub fn events(&mut self, page: Option<&Page>, events: &[Event]) -> Vec<Event> {
-        let mut out = Vec::with_capacity(events.len() + 1);
+        let mut out = Vec::with_capacity(events.len() + 1 + self.located.len());
         out.extend(self.next.take());
+        out.append(&mut self.located);
         for &e in events {
             out.push(e);
             if e.kind != Event::POINTER {
@@ -1039,13 +1128,16 @@ impl PageInput {
     }
 
     /// After a frame: lays the page out if it changed and keeps the height
-    /// event for the next frame.
+    /// event and the answers to the frame's locates (those of the document
+    /// current at its end) for the next frame.
     pub fn after_frame(&mut self, page: Option<&Page>) {
         let Some(page) = page else { return };
+        self.located.clear();
         if let Some(key) = self.watch.wanted(page) {
             let height = match page.document() {
                 Some(doc) => {
                     self.laid_out = true;
+                    self.laid = Some(key.0);
                     self.layouter.layout(doc, key.1)
                 }
                 None => {
@@ -1059,6 +1151,17 @@ impl PageInput {
         } else if page.document().is_none() {
             self.laid_out = false;
         }
+        // A locate is answered once its document is laid out, and dropped
+        // if the document is replaced first.
+        self.pending.extend_from_slice(page.locates());
+        self.pending.retain(|&(generation, _)| generation == page.generation());
+        if self.laid == Some(page.generation()) {
+            for (_, id) in self.pending.drain(..) {
+                self.located.extend(Event::page_located(id, self.layouter.locate(id)));
+            }
+        }
+        let n = self.pending.len();
+        self.pending.drain(..n.saturating_sub(MAX_PENDING_LOCATES));
     }
 
     pub fn layouter(&self) -> &dyn Layouter {
@@ -1382,6 +1485,109 @@ mod tests {
         let dump = l.dump(&p);
         assert!(dump.contains("   13  30    30  -- figure 40x30 --\n"), "{dump}");
         assert!(dump.contains("   63  20     0  -- figure 300x20 -- {9}\n"), "{dump}");
+    }
+
+    /// A document with "a" (no anchor), "link" (anchor 3) on a line of its
+    /// own, then a figure and text with anchor 5: lines (0, 18), (22, 18),
+    /// (44, 30), (78, 18).
+    fn anchored() -> Vec<u8> {
+        let mut doc = text("a");
+        doc.extend_from_slice(&[op::PARAGRAPH, 0, 0, 4, 0, op::ANCHOR, 3, 0]);
+        doc.extend(text("link"));
+        doc.extend_from_slice(&[op::ANCHOR, 5, 0]);
+        doc.extend(figure(10, 30, 0, &[]));
+        doc.extend(text("after"));
+        doc
+    }
+
+    #[test]
+    fn reference_locates_lines_and_figures() {
+        let l = reference_layout(&anchored(), 100);
+        let ys: Vec<(u32, u32)> = l.lines.iter().map(|l| (l.y, l.height)).collect();
+        assert_eq!(ys, [(0, 18), (22, 18), (44, 30), (78, 18)]);
+        assert_eq!(l.locate(3), Some((22, 18)));
+        assert_eq!(l.locate(5), Some((44, 30)), "the figure is the first line of anchor 5");
+        assert_eq!(l.locate(4), None);
+    }
+
+    #[test]
+    fn locate_calls_and_answers() {
+        let mut page = Page::default();
+        let mut input = PageInput::default();
+        assert_eq!(page.locate(3), RESULT_REJECTED, "no document");
+        page.set_region(0, 0, 100, 50);
+        page.submit(&anchored());
+        assert_eq!(page.locate(0), RESULT_REJECTED);
+        assert_eq!(page.locate(0x1_0003), RESULT_REJECTED);
+        for id in [3, 5, 4] {
+            assert_eq!(page.locate(id), RESULT_DONE);
+        }
+        input.after_frame(Some(&page));
+        // Next frame: the height, then the answers in call order.
+        page.begin_frame();
+        let events = input.events(Some(&page), &[Event::key_down(4, 0)]);
+        let mut want = vec![Event::page_laid_out(96)];
+        want.extend(Event::page_located(3, Some((22, 18))));
+        want.extend(Event::page_located(5, Some((44, 30))));
+        want.extend(Event::page_located(4, None));
+        want.push(Event::key_down(4, 0));
+        assert_eq!(events, want);
+        assert_eq!((want[5].c, [want[6].a, want[6].b, want[6].c]), (0, [0xFF; 3]), "absent: height 0, y FFFFFFh");
+        // The document laid out already: answered at the next frame.
+        assert_eq!(page.locate(3), RESULT_DONE);
+        input.after_frame(Some(&page));
+        page.begin_frame();
+        assert_eq!(input.events(Some(&page), &[]), Event::page_located(3, Some((22, 18))));
+        // Replaced (here later in the frame of the call): never answered.
+        page.locate(3);
+        page.submit(&text("x"));
+        input.after_frame(Some(&page));
+        page.begin_frame();
+        assert_eq!(input.events(Some(&page), &[]), [Event::page_laid_out(18)]);
+        // At most 8 a frame.
+        for i in 0..MAX_LOCATES {
+            assert_eq!(page.locate(1 + i as u32), RESULT_DONE);
+        }
+        assert_eq!(page.locate(1), RESULT_REJECTED);
+        assert_eq!(page.locates().len(), MAX_LOCATES);
+        let mut fresh = page.clone();
+        fresh.begin_frame();
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        page.write_state(&mut a);
+        fresh.write_state(&mut b);
+        assert_eq!(a, b, "locates are not machine state");
+        page.begin_frame();
+        assert!(page.locates().is_empty());
+        // While the width is 0 the answer waits.
+        page.set_region(0, 0, 0, 50);
+        page.submit(&anchored());
+        page.locate(5);
+        input.after_frame(Some(&page));
+        page.begin_frame();
+        assert_eq!(input.events(Some(&page), &[]), []);
+        page.set_region(0, 0, 100, 50);
+        input.after_frame(Some(&page));
+        let mut want = vec![Event::page_laid_out(96)];
+        want.extend(Event::page_located(5, Some((44, 30))));
+        assert_eq!(input.events(Some(&page), &[]), want);
+    }
+
+    #[test]
+    fn reference_ellipsis() {
+        let doc = |flags: u8, s: &str| {
+            let mut d = vec![op::PARAGRAPH, 0, 0, 0, flags, op::SIZE, 8];
+            d.extend(text(s));
+            d
+        };
+        let line = |d: &[u8]| -> String { reference_layout(d, 20).lines[0].spans.iter().map(|s| s.text.as_str()).collect() };
+        // 20 units hold five characters of size 8 (4 units each).
+        assert_eq!(line(&doc(3, "abcdefgh")), "abcd…");
+        assert_eq!(line(&doc(3, "abcde")), "abcde", "it fits");
+        assert_eq!(line(&doc(1, "abcdefgh")), "abcdefgh", "no wrap alone is cut where it is drawn");
+        assert_eq!(line(&doc(2, "abcdefgh")), "abcde", "ellipsis without no wrap does nothing");
+        assert_eq!(line(&doc(3, "ab\u{4E00}\u{4E00}\u{4E00}")), "ab\u{4E00}…");
+        let l = reference_layout(&doc(3, "abcdefgh\nxy"), 20);
+        assert_eq!(l.lines.len(), 2, "each line on its own");
     }
 
     #[test]

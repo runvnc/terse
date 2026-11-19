@@ -97,6 +97,7 @@ pub mod call {
     pub const PAGE_REGION: u32 = 0x702;
     pub const PAGE_SCROLL: u32 = 0x703;
     pub const PAGE_BACKGROUND: u32 = 0x704;
+    pub const PAGE_LOCATE: u32 = 0x705;
 }
 
 /// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
@@ -231,17 +232,34 @@ impl Machine {
             random_used: 0,
             completions_ignored: 0,
         };
+        // The last frame's locates are the host's now.
+        if let Some(page) = &mut self.page {
+            page.begin_frame();
+        }
         if self.stopped.is_some() {
             return result;
         }
 
         // Step 1: inputs.
         let mut feeds_updated = false;
+        let mut skip_y = false;
         for &e in input.events {
             if e.kind == Event::FEEDS_UPDATED && std::mem::replace(&mut feeds_updated, true) {
                 result.events_dropped += 1;
                 continue;
             }
+            // SPEC 11.5: the two events of a located anchor are queued
+            // together or not at all.
+            if e.kind == Event::PAGE_LOCATED_Y && std::mem::take(&mut skip_y) {
+                result.events_dropped += 1;
+                continue;
+            }
+            if e.kind == Event::PAGE_LOCATED && self.system.queue().len() + 2 > crate::system::QUEUE_CAPACITY {
+                result.events_dropped += 1;
+                skip_y = true;
+                continue;
+            }
+            skip_y = false;
             if !self.system.push_event(e) {
                 result.events_dropped += 1;
             }
@@ -492,6 +510,7 @@ impl Machine {
                         page.set_background(a0);
                         0
                     }
+                    call::PAGE_LOCATE => page.locate(a0),
                     _ => ERR_UNKNOWN,
                 }
             }

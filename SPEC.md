@@ -262,6 +262,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 |
 | `703h` | `scroll` | `a0` = y | 0 |
 | `704h` | `background` | `a0` = colour | 0 |
+| `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
 | `800h` | `start` | `a0` = address of an image ID (32 bytes, read) | a handle 1–8, or 0 if none is free |
 | `801h` | `stop` | `a0` = handle | 1, or 0 if the handle is not in use |
 | `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if the handle is not in use |
@@ -321,6 +322,8 @@ full is dropped.
 | `0Ah` | Machine changed | handle | new state | 0 |
 | `0Bh` | Home | 0 | 0 | 0 |
 | `0Ch` | Machine pressed | handle | buttons | 0 |
+| `0Dh` | Page located | anchor id bits 0–7 | bits 8–15 | line height |
+| `0Eh` | Page located y | y bits 0–7 | bits 8–15 | bits 16–23 |
 
 - **Key codes** are USB HID keyboard usage IDs (for example `04h` = A,
   `28h` = Enter, `29h` = Escape, `4Fh`–`52h` = Right, Left, Down, Up).
@@ -346,8 +349,8 @@ full is dropped.
   frame; a second in the same frame's input is dropped. It is sent after the
   automatic download of those entries' articles has finished or failed, so
   the timeline's "local" flags are already correct.
-- **Page laid out** and **page anchor** come from the page device
-  (section 11.5).
+- **Page laid out**, **page anchor**, **page located** and **page located
+  y** come from the page device (section 11.5).
 - **Machine changed**, **home** and **machine pressed** are sent only to the
   shell of a system (section 12.4).
 
@@ -589,7 +592,8 @@ reaches the machine only as its completion.
 
 Ten further operations use the feeds of `NETWORK.md` section 4, with the
 same request block, call, handles and completion rules as get and put.
-Three read what the host holds about the feeds it has subscribed to; one
+Three read what the host holds about the feeds it has subscribed to (and,
+for names, about the feeds the user gave a nickname); one
 searches the relays; five change the user's subscriptions, feed, profile or
 nicknames, with the user's consent; one tells the program the host's own
 feed key.
@@ -665,19 +669,20 @@ no control characters (U+0000–U+001F, U+007F–U+009F), and no whitespace
 (the Unicode White_Space property) as its first or last character.
 Otherwise the request is invalid (section 9.2).
 
-**Names** (`09h`) delivers one record per subscribed feed, in increasing
-order of feed key:
+**Names** (`09h`) delivers one record per feed that is subscribed or has a
+nickname, in increasing order of feed key:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | `L`: number of bytes that follow in this record, 33 to 81 |
-| 1 | 1 | Flags. Bit 0: the name is the user's local nickname for the feed. Bit 1: the feed has a profile in force (`NETWORK.md` section 4.6). Other bits are zero. |
+| 1 | 1 | Flags. Bit 0: the name is the user's local nickname for the feed. Bit 1: the feed has a profile in force (`NETWORK.md` section 4.6). Bit 2: the feed is not subscribed (it is listed for its nickname). Other bits are zero. |
 | 2 | 32 | Feed key |
 | 34 | `L − 33` | The name, 0 to 48 bytes of UTF-8 |
 
 The name is the user's nickname for the feed if there is one (bit 0 set),
 else the display name of the feed's profile in force, else empty. Bit 1 is
-set whenever a profile is in force, whichever name is given. Names are
+set whenever a profile is in force, whichever name is given (for a feed
+that is not subscribed, a profile the host still holds). Names are
 declared by the feeds themselves (or chosen by the user) and are not
 unique: a program that shows a name should show the short key beside it.
 
@@ -897,9 +902,10 @@ and draws the part that is scrolled into view. The device parses no markup
 language and does no layout for the program.
 
 Layout is the host's business and differs between hosts, because fonts
-differ. The only fact about it a program learns is the laid-out height of
-the document, and it learns it through an input event (section 11.5), so a
-recorded run replays exactly whatever the fonts.
+differ. The only facts about it a program learns are the laid-out height of
+the document and, when it asks, where an anchor is, and it learns them
+through input events (section 11.5), so a recorded run replays exactly
+whatever the fonts.
 
 ### 11.1 Rectangle and scrolling
 
@@ -930,6 +936,11 @@ rectangle with a width or height of 0 hides the page.
 - **`background`** sets the colour behind the text in the rectangle:
   `a0` = r | g << 8 | b << 16 | a << 24, where `a` is opacity (255 opaque,
   0 transparent, so the cell backgrounds show through).
+- **`locate`** asks where anchor `a0` is laid out in the current document;
+  the host answers later with the two page located events (section 11.5).
+  It returns 0, or 1 (rejected, and nothing is asked) if `a0` is 0 or above
+  65,535, if there is no document, or if the program has already made 8
+  locates in this frame.
 
 After reset there is no document, the rectangle is (0, 0, 0, 0) (hidden),
 the scroll value is 0 and the background is `FF00_0000h`, opaque black.
@@ -970,7 +981,9 @@ anchor carry on across paragraphs.
   paragraph with no text (which takes no other room), so an empty paragraph
   is a vertical gap. Flags bit 0 is **no wrap**: lines break only at U+000A,
   and a line wider than the rectangle is cut off at the rectangle's edge.
-  Other flag bits are ignored.
+  Flags bit 1 is **ellipsis**, used only with no wrap: a line wider than
+  the rectangle less the indent ends in an ellipsis (U+2026) where it is
+  cut, so that the ellipsis is wholly shown. Other flag bits are ignored.
 - **Start and end** follow each paragraph's text direction, which the host
   takes from its text (the first strong character, as in the Unicode
   bidirectional algorithm): left for left-to-right text, right for
@@ -995,8 +1008,9 @@ anchor carry on across paragraphs.
 - **Line height** is the host's natural line height for the font and size;
   a line's height is that of the largest text on it. A line break at the end
   of a paragraph's text gives an empty last line.
-- **Anchors** mark text and figures a pointer press reports (section
-  11.5); the host draws anchored text like any other text, in its colour.
+- **Anchors** mark text and figures a pointer press reports, and that
+  `locate` finds (section 11.5); the host draws anchored text like any
+  other text, in its colour.
 
 **Path commands.** A figure's n bytes are a sequence of path commands, each
 an opcode byte followed by its operands. Coordinates are signed 16-bit
@@ -1089,14 +1103,38 @@ the view (showing a figure some frames late).
   is sent as usual. "Over text" means within the extent of the text's
   glyphs along the line and within the line's height; "over a figure",
   within its box as shown (cut off at the rectangle's edge).
+- **Page located** (`0Dh`) and **page located y** (`0Eh`) answer a
+  `locate`, always as this pair, one after the other: `0Dh` has `a`, `b` =
+  the anchor id, low then high byte, and `c` = the height in screen units
+  of the first line, or figure, of the document that carries the anchor
+  (255 if it is larger); `0Eh` has `a`, `b`, `c` = bits 0–7, 8–15 and 16–23
+  of y, the distance in screen units from the top of the document to the
+  top of that line or figure (FFFFFFh if it is larger). If no text or
+  figure carries the anchor, the height is 0 and y is FFFFFFh. Lines are
+  in document order, so the first line is the topmost one. A host gives
+  whole units: the top rounded down, and a height that reaches the bottom
+  rounded up. The two are queued together: if the queue has room for only
+  one, neither is queued.
+- A locate is answered from the layout of the document current at the call,
+  the same layout as the latest height event (at the rectangle's width of
+  that layout): at the start of a frame after the one of the call, in the
+  same frame as that document's height event (after it) if that is still to
+  come, else as soon as the host has the layout. Answers come in the order
+  of the calls. A locate whose document is replaced (by a submit or a
+  clear, also later in the frame of the call) before it is answered is
+  dropped and never answered. While the rectangle's width is 0 the answer
+  waits, like the height event; a host keeps at least the 8 latest locates
+  that wait and may drop older ones.
 
 A height event describes the document and width as they were at the end of
 an earlier frame. A program that submits again before reading it gets
 another one later, so the last height event it has read is the height of
 the last document only once no newer change is pending; a program should
 use it for clamping and showing progress, never for anything that must be
-exact. Both events are ordinary inputs (section 4): recorded with the rest,
-they make replay exact although layout differs between hosts.
+exact. A located anchor, like the height, is a fact about one layout that
+the host may show differently later (after a change of width). All these
+events are ordinary inputs (section 4): recorded with the rest, they make
+replay exact although layout differs between hosts.
 
 ### 11.6 Reference layout
 
@@ -1121,17 +1159,23 @@ users see.
 - Centre puts a line's leftover width, halved and rounded down, before it;
   end puts all of it there. Paragraph space and indent are as in section
   11.3; a rule is 8 units high.
+- A no-wrap line with ellipsis that is wider than the width less the
+  indent loses characters from its end until the rest and an ellipsis
+  (U+2026, in the style of the last character dropped) fit, or none is
+  left; then the ellipsis is added.
 - A figure is a line as high as the figure, placed as in section 11.3 (the
   leftover width halved and rounded down for centre); a press within its
   box hits its anchor.
+- A locate gives the y and height of the first line (a figure is a line)
+  with a character or figure of that anchor.
 - The height is the sum of the spaces, line heights, rules and figures.
 
 ### 11.7 Determinism
 
 The device's state is the document bytes (or no document), the rectangle,
-the scroll value and the background. Nothing about layout is machine state;
-what the layout means for the program arrives only as the events of
-section 11.5.
+the scroll value and the background. Nothing about layout is machine state,
+nor are the locates the program made: what the layout means for the
+program arrives only as the events of section 11.5.
 
 ---
 
@@ -1395,9 +1439,7 @@ These numbers are placeholders until weak hosts have been measured:
 - Devices 5, 6 and 10.
 - On the page: bitmap images, arcs and gradients in figures, links the host
   follows itself, selecting and copying
-  text, fonts beyond the three faces, and a way for a program to learn where
-  an anchor was laid out (to scroll to it, or to move a keyboard focus from
-  link to link).
+  text, and fonts beyond the three faces.
 - A limit on the area covered by lines and circle outlines. The fill cap
   does not apply to them, so a legal list of about 3,000 maximum-width lines
   across the whole screen still costs a host far more fill than four

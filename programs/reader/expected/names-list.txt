@@ -37,7 +37,7 @@
   114  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes]{2}
   137  20     0   sans16 |[A big article (over 48 KiB)]{3}
   157  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KB]{3}
-  180  20     0   sans16 |[A title long enough that the list has to cut it short with an ellipsis, wide characters: 長い題名]{4}
+  180  20     0   sans16 |[A title long enough that the list has to cut it short with an ellipsis,…]{4}
   200  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:20  ·  7 bytes]{4}
   223  20     0   sans16 |[An article that is not in the store]{5}
   243  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:10  ·  4 bytes  ·  not downloaded]{5}

@@ -7,9 +7,9 @@ program; the host only lays the text out with its own fonts.
 Three more articles came with it. Press Tab to move to a link and Enter
 to follow it (or click it); Esc brings you back here:
 
-- How Terse works, a longer read: terse:LONG
-- Hello in three languages: terse:LANGUAGES
-- Pictures in articles: terse:PICTURES
+- [How Terse works](terse:LONG), a longer read
+- [Hello in three languages](terse:LANGUAGES)
+- [Pictures in articles](terse:PICTURES)
 
 # Writing an article
 
@@ -30,10 +30,12 @@ which is handy for tables, code and the occasional bit of ASCII art:
     Esc          back, or quit from the timeline
 
 Bare links such as https://en.wikipedia.org/wiki/RISC-V are marked in a
-link colour. There is no browser here, so pressing one only shows the
-address in the status line, where you can read it and type it elsewhere.
-A link to another article is terse: followed by its ID, the 64 hex digits
-of its hash; one to a feed is terse:feed/ followed by the feed's key.
+link colour, and so is the text of a link written as [text](address),
+like [the RISC-V article](https://en.wikipedia.org/wiki/RISC-V). There is
+no browser here, so pressing a web link only shows the address in the
+status line, where you can read it and type it elsewhere. A link to
+another article is terse: followed by its ID, the 64 hex digits of its
+hash; one to a feed is terse:feed/ followed by the feed's key.
 
 A block between two lines of three backquotes is kept as written too;
 one that starts with ```path holds a small drawing (see "Pictures in

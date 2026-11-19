@@ -304,3 +304,36 @@ fn names_find_and_profile_operations_replay() {
     assert_eq!(used6 - used2, 3, "three copies of 6 bytes cost 2 units each, of 2 bytes 1");
     assert_ne!(a[0], b[0], "the name lengths are state");
 }
+
+/// `locate` (SPEC 11.2): results, the frame's locates handed to the host
+/// (not state), and the two answer events queued together or not at all.
+#[test]
+fn page_locate() {
+    if !common::have_tools() {
+        return;
+    }
+    // Submit 2 ROM bytes; locate 0 (s0), then 3 nine times (s1: the
+    // rejections); wait; then wait forever.
+    let calls = "    li a0, 0x10000\n    li a1, 2\n    li a7, 0x700\n    ecall\n    li a0, 0\n    li a7, 0x705\n    ecall\n    \
+                 mv s0, a0\n    li s2, 9\n1:  li a0, 3\n    li a7, 0x705\n    ecall\n    add s1, s1, a0\n    addi s2, s2, -1\n    \
+                 bnez s2, 1b\n";
+    let wait = "2:  li a7, 0x100\n    ecall\n    j 2b\n";
+    let mut m = Machine::new(&common::program(&assemble(&format!("{calls}{wait}")), 2, &ALL));
+    m.run_frame(&FrameInput::default());
+    assert_eq!((m.cpu().x[8], m.cpu().x[9]), (1, 1), "id 0 and the ninth locate of a frame are rejected");
+    let page = m.page().unwrap();
+    assert_eq!(page.locates(), [(page.generation(), 3); 8]);
+    // Queue room: 61 events, a pair that fits, a pair with room for one
+    // only (dropped whole), an event.
+    let mut events = vec![Event::key_down(4, 0); 61];
+    events.extend(Event::page_located(3, Some((10, 20))));
+    events.extend(Event::page_located(3, None));
+    events.push(Event::key_down(5, 0));
+    let r = m.run_frame(&FrameInput { events: &events, ..Default::default() });
+    assert!(m.page().unwrap().locates().is_empty(), "the frame's locates are cleared at its start");
+    let kinds: Vec<u8> = m.system().queue().map(|e| e.kind).collect();
+    assert_eq!(kinds.len(), 64);
+    assert_eq!(&kinds[61..], [Event::PAGE_LOCATED, Event::PAGE_LOCATED_Y, Event::KEY_DOWN]);
+    assert_eq!(m.system().queue().nth(61).unwrap().c, 20);
+    assert_eq!(r.events_dropped, 2);
+}
