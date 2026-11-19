@@ -1,17 +1,30 @@
 //! `terse-host`: runs a Terse image in a window, or renders a screenshot.
 
+// Without the window, the windowed host's machinery (the page layout
+// thread, input) waits for the bootable image's KMS/DRM front end.
+#![cfg_attr(not(feature = "window"), allow(dead_code))]
+
+#[cfg(feature = "window")]
 mod app;
 mod consent;
+mod display;
 mod figures;
+#[cfg(feature = "window")]
 mod gamepad;
 mod glyphs;
+#[cfg(feature = "window")]
 mod keymap;
 mod page;
 mod phosphor;
+#[cfg(feature = "gpu")]
 mod renderer;
+#[cfg(feature = "gpu")]
 mod screens;
+#[cfg(feature = "window")]
 mod selftest;
 mod setup;
+mod soft;
+#[cfg(feature = "gpu")]
 mod vectors;
 
 use std::collections::HashMap;
@@ -28,8 +41,8 @@ use terse_net::{
     parse_hex,
 };
 
+use crate::display::{Display, RendererChoice};
 use crate::glyphs::SystemGlyphs;
-use crate::renderer::Renderer;
 
 /// Font size in logical pixels.
 const FONT_PX: f32 = 18.0;
@@ -53,6 +66,11 @@ const USAGE: &str = "usage:
   terse-host --selftest <image|id> | --selftest --shell [<image|id>] [--frames <N>] [--events <file>] [--csv <file>]
              [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>]
              [--store <dir>] [--config <dir>] [--builtin <image|id>]...
+  terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
+             [--events <file>] [--renderer gpu|software] [--threads <n>] [--consent allow|deny] [...]
+  Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
+  adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
+  threads; default one per core).
   With no image, runs the shell built into terse-host (programs/shell, SPEC 12): it starts the
   built-in programs (reader, sparks, fetch, hello, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
@@ -89,6 +107,11 @@ const USAGE: &str = "usage:
   a proportional font keeps the grid, each glyph centred in its cell. --page-sans, --page-serif,
   --page-mono: the fonts of the page device's three faces (default: the system's sans-serif, serif
   and monospace families); every form of the command takes them.
+  --bench-render runs the image (or the system) headless like --screenshot, with the page's scroll
+  animated as in a window, and draws every frame offscreen with the chosen renderer, timing only the
+  drawing (taking the machines' screens and drawing the picture; a GPU frame is timed until the GPU
+  has finished it): it prints p50, p99 and max per frame over the N frames after --warmup frames
+  (default 60), and how many took over 16.7 ms. No window is opened.
   Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the focused program as typed text.";
 
 fn main() -> ExitCode {
@@ -113,11 +136,25 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut feed_relays, mut prefetch) = (true, true);
     let (mut consent, mut demo) = (None, false);
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
+    let (mut renderer, mut threads, mut bench, mut warmup) = (RendererChoice::Auto, 0usize, false, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
+            "--bench-render" => bench = true,
+            "--renderer" => {
+                let v = it.next().ok_or(USAGE)?;
+                renderer = RendererChoice::parse(&v).ok_or(format!("bad --renderer {v} (gpu, software or auto)"))?;
+            }
+            "--threads" => {
+                let v = it.next().ok_or(USAGE)?;
+                threads = v.parse().map_err(|_| format!("bad --threads {v}"))?;
+            }
+            "--warmup" => {
+                let v = it.next().ok_or(USAGE)?;
+                warmup = Some(v.parse::<u64>().map_err(|_| format!("bad --warmup {v}"))?);
+            }
             "--demo" => demo = true,
             "--shell" => shell_flag = true,
             "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
@@ -151,7 +188,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ => return Err(USAGE.into()),
         }
     }
-    let windowed = !selftest && screenshot.is_none();
+    if bench && (selftest || screenshot.is_some() || frames.is_none()) {
+        return Err(USAGE.into());
+    }
+    let windowed = !selftest && !bench && screenshot.is_none();
     // No image: the built-in shell. --shell: the image named (if any) is
     // the shell.
     let shell = shell_flag || image_path.is_none();
@@ -236,7 +276,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Some(ContentService::start_with_consent(node, consent))
         }
     };
-    let program = app::Program { image, shell, builtins };
+    let program = Program { image, shell, builtins };
 
     if selftest {
         if screenshot.is_some() {
@@ -254,32 +294,73 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             None => Script::default(),
         };
         let frames = u32::try_from(frames.unwrap_or(200)).map_err(|_| "bad frame count")?;
+        #[cfg(feature = "window")]
         let test = selftest::SelfTest::new(script, frames, csv);
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size };
-        return app::run(program, content, Some(test), looks);
+        #[cfg(not(feature = "window"))]
+        let test = {
+            let _ = (script, frames, csv);
+            SelfTestStub
+        };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads };
+        return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
         return Err(USAGE.into());
     }
+    let script = || -> Result<Script, String> {
+        match &events {
+            Some(path) => {
+                let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+                Script::parse(&text).map_err(|e| format!("{path}: {e}"))
+            }
+            None => Ok(Script::default()),
+        }
+    };
+    if bench {
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads };
+        let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0) };
+        run_headless(program, content, script()?, mode, size, looks)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let script = match &events {
-                Some(path) => {
-                    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-                    Script::parse(&text).map_err(|e| format!("{path}: {e}"))?
-                }
-                None => Script::default(),
-            };
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None };
-            take_screenshot(program, content, script, Path::new(&out), frames, size, looks)?;
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads };
+            let mode = Headless::Screenshot { frames };
+            let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
+            write_png(Path::new(&out), &pixels, (width, height))?;
+            eprintln!("terse-host: wrote {out} ({width}x{height}) after {frame} frames");
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            app::run(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads })
         }
         _ => Err(USAGE.into()),
     }
 }
+
+/// What to run: an image, as the shell (with the built-in programs' IDs)
+/// or as a single machine.
+pub struct Program {
+    pub image: Image,
+    pub shell: bool,
+    pub builtins: Vec<[u8; 32]>,
+}
+
+#[cfg(feature = "window")]
+fn run_window(program: Program, content: Option<ContentService>, test: Option<selftest::SelfTest>, looks: Looks) -> Result<ExitCode, String> {
+    app::run(program, content, test, looks)
+}
+
+/// Without the window feature (the bootable image's build, which is to
+/// show its frames on a KMS/DRM display through `soft::FrameSink`) there
+/// is no window yet.
+#[cfg(not(feature = "window"))]
+fn run_window(_: Program, _: Option<ContentService>, _: Option<SelfTestStub>, _: Looks) -> Result<ExitCode, String> {
+    Err("this terse-host was built without a window (feature \"window\"): use --screenshot or --bench-render".into())
+}
+
+#[cfg(not(feature = "window"))]
+struct SelfTestStub;
 
 /// The user's presentation options.
 pub struct Looks {
@@ -291,6 +372,10 @@ pub struct Looks {
     pub page_fonts: page::PageFonts,
     /// `--size` of a window.
     pub window: Option<(u32, u32)>,
+    /// `--renderer`.
+    pub renderer: RendererChoice,
+    /// `--threads`: the software renderer's drawing threads (0: one per core).
+    pub threads: usize,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.
@@ -312,6 +397,7 @@ fn displayed_terminal(machine: &Machine) -> std::borrow::Cow<'_, Terminal> {
     Cow::Owned(t)
 }
 
+#[cfg(feature = "window")]
 /// Ends the process after a fault by signal SIGTERM, as `terse run` does,
 /// so that no exit code can be mistaken for it.
 fn fault_exit() -> ExitCode {
@@ -328,6 +414,7 @@ fn fault_exit() -> ExitCode {
     ExitCode::from(255)
 }
 
+#[cfg(feature = "gpu")]
 async fn request_device(
     adapter_options: wgpu::RequestAdapterOptions<'_, '_>,
     instance: &wgpu::Instance,
@@ -347,39 +434,89 @@ async fn request_device(
     Ok((adapter, device, queue))
 }
 
-/// Runs `frames` frames headless, exactly as `terse run` does (scripted
-/// events, time 0, no random bytes, content requests and images completed at
-/// the next frame, feeds caught up first), and renders the screens offscreen
-/// to a PNG. In the phosphor presentation the afterglow is built up over the
-/// last `PHOSPHOR_FRAMES` frames, as the window would have shown it.
-fn take_screenshot(
-    program: app::Program,
+/// What a headless run does with the pictures.
+enum Headless {
+    /// Returns the last frame's picture.
+    Screenshot { frames: u64 },
+    /// Draws every frame offscreen and prints how long that took.
+    Bench { warmup: u64, frames: u64 },
+}
+
+/// The renderer `--renderer` asks for, offscreen.
+fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
+    let glyphs = SystemGlyphs::new(FONT_PX, looks.font.as_deref())?;
+    if looks.renderer != RendererChoice::Software {
+        #[cfg(feature = "gpu")]
+        {
+            match gpu_display(glyphs.clone(), looks.renderer == RendererChoice::Auto) {
+                Ok(d) => return Ok(d),
+                Err(e) if looks.renderer == RendererChoice::Auto => {
+                    eprintln!("terse-host: {e}; using the software renderer")
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        if looks.renderer == RendererChoice::Gpu {
+            return Err("this terse-host was built without the GPU renderer (feature \"gpu\")".into());
+        }
+    }
+    Ok(Box::new(soft::SoftScreens::new(Box::new(glyphs), looks.threads)))
+}
+
+/// The GPU renderer drawing offscreen; with `hardware_only` (`--renderer
+/// auto`), an error if the only adapter is a software one.
+#[cfg(feature = "gpu")]
+fn gpu_display(glyphs: SystemGlyphs, hardware_only: bool) -> Result<Box<dyn Display>, String> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let (adapter, device, queue) = pollster::block_on(request_device(Default::default(), &instance))?;
+    let info = adapter.get_info();
+    if hardware_only && info.device_type == wgpu::DeviceType::Cpu {
+        return Err(format!("no graphics adapter but a software one ({})", info.name));
+    }
+    eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let renderer = renderer::Renderer::new(&device, format, Box::new(glyphs));
+    let screens = screens::Screens::new(renderer, format);
+    Ok(Box::new(screens::GpuDisplay::new(device, queue, screens, format, info.name)))
+}
+
+/// p50, p99 and max of `values` (ms).
+fn spread(mut values: Vec<f64>) -> (f64, f64, f64) {
+    if values.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    values.sort_by(f64::total_cmp);
+    let at = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
+    (at(0.5), at(0.99), values[values.len() - 1])
+}
+
+/// Runs the frames headless, exactly as `terse run` does (scripted events,
+/// time 0, no random bytes, content requests and images completed at the
+/// next frame, feeds caught up first), and draws the screens offscreen: a
+/// PNG of the last frame (in the phosphor presentation the afterglow is
+/// built up over the last `PHOSPHOR_FRAMES` frames, as the window would
+/// have shown it), or every frame, timed.
+fn run_headless(
+    program: Program,
     mut content: Option<ContentService>,
     script: Script,
-    out: &Path,
-    frames: u64,
+    mode: Headless,
     size: Option<(u32, u32)>,
     looks: Looks,
-) -> Result<(), String> {
+) -> Result<Option<(Vec<u8>, (u32, u32), u64)>, String> {
     if let Some(c) = content.as_mut().filter(|c| c.following())
         && let Err(e) = c.wait_caught_up(SYNC_DEADLINE)
     {
         eprintln!("terse-host: feeds: {e}; running with the entries held locally");
     }
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let (adapter, device, queue) = pollster::block_on(request_device(Default::default(), &instance))?;
-    let info = adapter.get_info();
-    eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let renderer = Renderer::new(&device, format, Box::new(SystemGlyphs::new(FONT_PX, looks.font.as_deref())?));
-    let (width, height) = size.unwrap_or(renderer.grid_size());
-    let viewport = (width, height);
-    let mut screens = screens::Screens::new(renderer, format);
-    screens.set_no_trails(looks.no_trails);
-    screens.set_force_phosphor(looks.force_phosphor);
-    // SPEC 11: the page laid out with this host's fonts, between frames, so
-    // the run is reproducible and the picture shows the finished layout.
-    screens.set_page_animation(false);
+    let mut display = headless_display(&looks)?;
+    let bench = matches!(mode, Headless::Bench { .. });
+    // SPEC 11: a screenshot shows the finished page (no scroll animation,
+    // figures rasterised at once); a benchmark draws as a window does.
+    display.configure(looks.no_trails, looks.force_phosphor, bench);
+    let viewport = size.unwrap_or(display.grid_size());
+    eprintln!("terse-host: renderer {}, {}x{}", display.name(), viewport.0, viewport.1);
 
     let image = &program.image;
     let mut system = System::new(image, program.shell, program.builtins);
@@ -399,17 +536,47 @@ fn take_screenshot(
         }));
     }
     let shown = |serial: u32| latest.lock().unwrap().get(&serial).and_then(|l| l.lock().unwrap().clone());
-    for f in 0..frames {
+    let total = match mode {
+        Headless::Screenshot { frames, .. } => frames,
+        Headless::Bench { warmup, frames } => warmup + frames,
+    };
+    let mut times = Vec::new();
+    for f in 0..total {
         let done = headless.frame(&mut system);
         let stopped = system.stopped().is_some();
-        if frames - f <= PHOSPHOR_FRAMES {
-            let mut ran: Vec<u32> = done.shell.iter().map(|_| 0).collect();
-            ran.extend(done.children.iter().filter_map(|(h, _)| Some(system.child(*h)?.serial)));
-            screens.update(&device, &queue, &system, viewport, &ran, &shown, None);
+        let mut ran: Vec<u32> = done.shell.iter().map(|_| 0).collect();
+        ran.extend(done.children.iter().filter_map(|(h, _)| Some(system.child(*h)?.serial)));
+        match &mode {
+            Headless::Screenshot { .. } => {
+                if total - f <= PHOSPHOR_FRAMES {
+                    display.update(&system, viewport, &ran, &shown, None);
+                }
+            }
+            Headless::Bench { warmup, .. } => {
+                let start = std::time::Instant::now();
+                display.update(&system, viewport, &ran, &shown, None);
+                display.render_offscreen(viewport)?;
+                if f >= *warmup {
+                    times.push(start.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
         }
         if stopped {
             break;
         }
+    }
+    if bench {
+        let n = times.len();
+        let mean = times.iter().sum::<f64>() / n.max(1) as f64;
+        let over = times.iter().filter(|&&t| t > 1000.0 / 60.0).count();
+        let (p50, p99, max) = spread(times);
+        println!(
+            "{} {}x{}: {n} frames: p50 {p50:.2} ms, p99 {p99:.2} ms, max {max:.2} ms, mean {mean:.2} ms, over 16.7 ms: {over}",
+            display.name(),
+            viewport.0,
+            viewport.1
+        );
+        return Ok(None);
     }
 
     // A consent prompt still waiting for an answer (`--consent ask`) is
@@ -422,61 +589,22 @@ fn take_screenshot(
         };
         Some((p, c.prompts_waiting(), title))
     });
-    screens.update(&device, &queue, &system, viewport, &[], &shown, prompt);
+    display.update(&system, viewport, &[], &shown, prompt);
     // The beam of what is shown now (e.g. a fault reported after the last
     // frame), without advancing the afterglow.
-    screens.refresh_beams(&device, &queue, viewport);
+    display.refresh_beams(viewport);
+    let pixels = display.snapshot(viewport)?;
+    Ok(Some((pixels, viewport, system.shell().frame() as u64)))
+}
 
-    let target = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("screenshot"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let row_bytes = width * 4;
-    let padded = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: (padded * height) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    screens.render(&device, &queue, &mut encoder, &view, viewport);
-    encoder.copy_texture_to_buffer(
-        target.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: None },
-        },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-    );
-    queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |r| r.expect("map readback buffer"));
-    device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
-    let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
-    let pixels: Vec<u8> = mapped
-        .chunks(padded as usize)
-        .flat_map(|row| &row[..row_bytes as usize])
-        .copied()
-        .collect();
-
+/// Writes RGBA pixels (8 bits a channel, sRGB) to a PNG file.
+fn write_png(out: &Path, pixels: &[u8], (width, height): (u32, u32)) -> Result<(), String> {
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer.write_image_data(&pixels).map_err(|e| e.to_string())?;
-    writer.finish().map_err(|e| e.to_string())?;
-    eprintln!("terse-host: wrote {} ({width}x{height}) after {} frames", out.display(), system.shell().frame());
-    Ok(())
+    writer.write_image_data(pixels).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())
 }

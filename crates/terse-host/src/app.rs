@@ -20,14 +20,15 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::display::{Display, GlyphSource, RendererChoice};
 use crate::gamepad::Gamepads;
 use crate::glyphs::SystemGlyphs;
 use crate::keymap::{hid_usage, modifier_bits};
 use crate::page::{PageThread, PageWorker};
-use crate::renderer::{GlyphSource, Renderer};
-use crate::screens::Screens;
 use crate::selftest::SelfTest;
-use crate::{FONT_PX, Looks, fault_exit, request_device};
+use crate::soft::SoftScreens;
+use crate::soft::base::IRect;
+use crate::{FONT_PX, Looks, Program, fault_exit};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -63,14 +64,6 @@ fn prompt_answer(event: &KeyEvent) -> Option<bool> {
         Key::Character(c) if c.eq_ignore_ascii_case("n") => Some(false),
         _ => None,
     }
-}
-
-/// What to run: an image, as the shell (with the built-in programs' IDs)
-/// or as a single machine.
-pub struct Program {
-    pub image: Image,
-    pub shell: bool,
-    pub builtins: Vec<[u8; 32]>,
 }
 
 /// Runs `program` in a window. With `selftest`, input comes only from its
@@ -134,13 +127,25 @@ fn fresh_random() -> Vec<u8> {
     random
 }
 
+/// How the window is drawn: by the GPU renderer into a wgpu surface, or by
+/// the software renderer into a softbuffer surface (a shared-memory buffer
+/// the compositor shows; only the damaged rectangles are copied when the
+/// buffer it hands back still holds a recent frame).
+enum Presenter {
+    #[cfg(feature = "gpu")]
+    Gpu { surface: wgpu::Surface<'static>, config: wgpu::SurfaceConfiguration, display: crate::screens::GpuDisplay },
+    Soft {
+        surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+        display: SoftScreens,
+        size: (u32, u32),
+        /// The damage of the last frames presented, newest first.
+        history: VecDeque<Vec<IRect>>,
+    },
+}
+
 struct Gfx {
     window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    screens: Screens,
+    presenter: Presenter,
 }
 
 impl Gfx {
@@ -150,9 +155,6 @@ impl Gfx {
         let glyphs = SystemGlyphs::new(FONT_PX * scale as f32, looks.font.as_deref())?;
         eprintln!("terse-host: font {}", glyphs.primary_family());
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
-            Box::new(event_loop.owned_display_handle()),
-        ));
         let (cell_w, cell_h) = glyphs.cell_size();
         let grid = PhysicalSize::new(cell_w * COLS as u32, cell_h * ROWS as u32);
         let inner = looks.window.map_or(grid, |(w, h)| PhysicalSize::new(w, h));
@@ -166,20 +168,74 @@ impl Gfx {
             WindowAttributesExtWayland::with_name(attributes, class, class)
         };
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+        let size = Some(window.inner_size()).filter(|s| s.width > 0 && s.height > 0).unwrap_or(inner);
+        let size = (size.width, size.height);
+
+        if looks.renderer != RendererChoice::Software {
+            #[cfg(feature = "gpu")]
+            {
+                let auto = looks.renderer == RendererChoice::Auto;
+                match Self::gpu(event_loop, &window, glyphs.clone(), size, auto) {
+                    Ok(presenter) => return Ok(Self::with(window, presenter, looks)),
+                    Err(e) if auto => eprintln!("terse-host: {e}; using the software renderer"),
+                    Err(e) => return Err(e),
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            if looks.renderer == RendererChoice::Gpu {
+                return Err("this terse-host was built without the GPU renderer (feature \"gpu\")".into());
+            }
+        }
+        // The software renderer, presented with softbuffer. (Not yet tried
+        // in a live window: see README, Software renderer.)
+        let context = softbuffer::Context::new(window.clone()).map_err(|e| format!("softbuffer: {e}"))?;
+        let surface = softbuffer::Surface::new(&context, window.clone()).map_err(|e| format!("softbuffer: {e}"))?;
+        let display = SoftScreens::new(Box::new(glyphs), looks.threads);
+        eprintln!("terse-host: renderer {}", display.name());
+        let mut gfx = Self::with(window, Presenter::Soft { surface, display, size: (0, 0), history: VecDeque::new() }, looks);
+        gfx.resize(PhysicalSize::new(size.0, size.1));
+        Ok(gfx)
+    }
+
+    fn with(window: Arc<Window>, mut presenter: Presenter, looks: &Looks) -> Self {
+        let d: &mut dyn Display = match &mut presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { display, .. } => display,
+            Presenter::Soft { display, .. } => display,
+        };
+        d.configure(looks.no_trails, looks.force_phosphor, true);
+        Gfx { window, presenter }
+    }
+
+    /// The GPU renderer on a wgpu surface; with `hardware_only`, an error if
+    /// the only adapter is a software one.
+    #[cfg(feature = "gpu")]
+    fn gpu(
+        event_loop: &ActiveEventLoop,
+        window: &Arc<Window>,
+        glyphs: SystemGlyphs,
+        size: (u32, u32),
+        hardware_only: bool,
+    ) -> Result<Presenter, String> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
+            Box::new(event_loop.owned_display_handle()),
+        ));
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let options = wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() };
-        let (adapter, device, queue) = pollster::block_on(request_device(options, &instance))?;
+        let (adapter, device, queue) = pollster::block_on(crate::request_device(options, &instance))?;
         let info = adapter.get_info();
+        if hardware_only && info.device_type == wgpu::DeviceType::Cpu {
+            return Err(format!("no graphics adapter but a software one ({})", info.name));
+        }
         eprintln!("terse-host: adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
-        let size = Some(window.inner_size()).filter(|s| s.width > 0 && s.height > 0).unwrap_or(inner);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: size.width,
-            height: size.height,
+            width: size.0,
+            height: size.1,
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
@@ -187,45 +243,143 @@ impl Gfx {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
-        let mut screens = Screens::new(Renderer::new(&device, format, Box::new(glyphs)), format);
-        screens.set_no_trails(looks.no_trails);
-        screens.set_force_phosphor(looks.force_phosphor);
-        Ok(Gfx { window, surface, device, queue, config, screens })
+        let renderer = crate::renderer::Renderer::new(&device, format, Box::new(glyphs));
+        let screens = crate::screens::Screens::new(renderer, format);
+        let display = crate::screens::GpuDisplay::new(device, queue, screens, format, info.name);
+        Ok(Presenter::Gpu { surface, config, display })
+    }
+
+    fn display(&self) -> &dyn Display {
+        match &self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { display, .. } => display,
+            Presenter::Soft { display, .. } => display,
+        }
+    }
+
+    fn display_mut(&mut self) -> &mut dyn Display {
+        match &mut self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { display, .. } => display,
+            Presenter::Soft { display, .. } => display,
+        }
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width > 0 && size.height > 0 {
-            self.config.width = size.width;
-            self.config.height = size.height;
-            self.surface.configure(&self.device, &self.config);
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        match &mut self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { surface, config, display } => {
+                config.width = size.width;
+                config.height = size.height;
+                surface.configure(&display.device, config);
+            }
+            Presenter::Soft { surface, size: current, history, .. } => {
+                let (Some(w), Some(h)) = (std::num::NonZeroU32::new(size.width), std::num::NonZeroU32::new(size.height)) else {
+                    return;
+                };
+                match surface.resize(w, h) {
+                    Ok(()) => *current = (size.width, size.height),
+                    Err(e) => eprintln!("terse-host: softbuffer: {e}"),
+                }
+                history.clear();
+            }
         }
     }
 
     fn viewport(&self) -> (u32, u32) {
-        (self.config.width, self.config.height)
+        match &self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { config, .. } => (config.width, config.height),
+            Presenter::Soft { size, .. } => *size,
+        }
     }
 
     /// Draws and presents; returns how long acquiring the swapchain image
-    /// took and how long the rest (encode, submit, present) took.
+    /// (or buffer) took and how long the rest (draw, present) took.
     fn draw(&mut self) -> Option<(Duration, Duration)> {
-        let start = Instant::now();
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return None;
+        match &mut self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { surface, config, display } => {
+                let viewport = (config.width, config.height);
+                let start = Instant::now();
+                let frame = match surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                        surface.configure(&display.device, config);
+                        return None;
+                    }
+                    _ => return None,
+                };
+                let acquired = Instant::now();
+                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let mut encoder = display.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                display.screens.render(&display.device, &display.queue, &mut encoder, &view, viewport);
+                display.queue.submit([encoder.finish()]);
+                self.window.pre_present_notify();
+                display.queue.present(frame);
+                Some((acquired - start, acquired.elapsed()))
             }
-            _ => return None,
-        };
-        let acquired = Instant::now();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let viewport = self.viewport();
-        self.screens.render(&self.device, &self.queue, &mut encoder, &view, viewport);
-        self.queue.submit([encoder.finish()]);
-        self.window.pre_present_notify();
-        self.queue.present(frame);
-        Some((acquired - start, acquired.elapsed()))
+            Presenter::Soft { surface, display, size, history } => {
+                if size.0 == 0 || size.1 == 0 {
+                    return None;
+                }
+                let start = Instant::now();
+                display.render(*size);
+                let damage = display.damage().to_vec();
+                let frame = display.frame();
+                let drawn = Instant::now();
+                let mut buffer = match surface.buffer_mut() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("terse-host: softbuffer: {e}");
+                        return None;
+                    }
+                };
+                let acquired = Instant::now();
+                history.push_front(damage);
+                history.truncate(4);
+                // The buffer holds the frame of `age` presents ago: copy
+                // what changed since, or everything.
+                let age = buffer.age() as usize;
+                let stride = size.0 as usize;
+                let rects: Vec<IRect> = if age >= 1 && age <= history.len() {
+                    history.iter().take(age).flatten().copied().collect()
+                } else {
+                    vec![IRect::of_size(*size)]
+                };
+                if buffer.len() == frame.data.len() {
+                    for r in &rects {
+                        for y in r.y0..r.y1 {
+                            let at = y as usize * stride;
+                            buffer[at + r.x0 as usize..at + r.x1 as usize].copy_from_slice(&frame.data[at + r.x0 as usize..at + r.x1 as usize]);
+                        }
+                    }
+                } else {
+                    let n = buffer.len().min(frame.data.len());
+                    buffer[..n].copy_from_slice(&frame.data[..n]);
+                }
+                let damage: Vec<softbuffer::Rect> = rects
+                    .iter()
+                    .filter_map(|r| {
+                        Some(softbuffer::Rect {
+                            x: r.x0 as u32,
+                            y: r.y0 as u32,
+                            width: std::num::NonZeroU32::new(r.width() as u32)?,
+                            height: std::num::NonZeroU32::new(r.height() as u32)?,
+                        })
+                    })
+                    .collect();
+                self.window.pre_present_notify();
+                let presented = if damage.is_empty() { buffer.present() } else { buffer.present_with_damage(&damage) };
+                if let Err(e) = presented {
+                    eprintln!("terse-host: softbuffer: {e}");
+                }
+                Some((acquired - drawn, (drawn - start) + acquired.elapsed()))
+            }
+        }
     }
 }
 
@@ -252,7 +406,7 @@ struct FrameDriver<'a> {
     io: &'a mut HashMap<u32, MachineIo>,
     content: &'a mut Option<ContentService>,
     fetching: &'a mut Vec<u32>,
-    screens: Option<&'a Screens>,
+    screens: Option<&'a dyn Display>,
     page_thread: &'a mut Option<PageThread>,
     looks: &'a Looks,
     unix_time: u32,
@@ -404,10 +558,10 @@ impl App {
             // A fault stays on screen until the window is closed; the
             // afterglow goes on fading.
             if let Some(gfx) = &mut self.gfx
-                && gfx.screens.shell.phosphor()
+                && gfx.display().shell_phosphor()
             {
                 let viewport = gfx.viewport();
-                gfx.screens.shell.accumulate(&gfx.device, &gfx.queue, viewport);
+                gfx.display_mut().fade_shell(viewport);
                 gfx.window.request_redraw();
             }
             return;
@@ -453,7 +607,7 @@ impl App {
             io: &mut self.io,
             content: &mut self.content,
             fetching: &mut self.fetching,
-            screens: self.gfx.as_ref().map(|g| &g.screens),
+            screens: self.gfx.as_ref().map(|g| g.display()),
             page_thread: &mut self.page_thread,
             looks: &self.looks,
             unix_time,
@@ -478,7 +632,7 @@ impl App {
             });
             let io = &self.io;
             let layout = |serial: u32| io.get(&serial).and_then(|io| io.page.as_ref()).and_then(|w| w.shown.clone());
-            gfx.screens.update(&gfx.device, &gfx.queue, &self.system, viewport, &ran, &layout, prompt);
+            gfx.display_mut().update(&self.system, viewport, &ran, &layout, prompt);
             gfx.window.request_redraw();
         }
         if let Some(t) = &mut self.selftest {
@@ -605,7 +759,7 @@ impl App {
 
     fn pointer_moved(&mut self, pos: PhysicalPosition<f64>) {
         let Some(gfx) = &self.gfx else { return };
-        self.pointer = Some(gfx.screens.shell.screen_pos(gfx.viewport(), pos.x, pos.y));
+        self.pointer = Some(gfx.display().screen_pos(gfx.viewport(), pos.x, pos.y));
     }
 
     /// winit's deltas are positive when content should move right and down,
@@ -615,7 +769,7 @@ impl App {
             MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
             MouseScrollDelta::PixelDelta(p) => {
                 // One step per terminal row of travel.
-                let row = self.gfx.as_ref().map_or(16.0, |g| g.screens.shell.row_height(g.viewport())).max(1.0);
+                let row = self.gfx.as_ref().map_or(16.0, |g| g.display().row_height(g.viewport())).max(1.0);
                 (p.x / row, p.y / row)
             }
         };
@@ -684,7 +838,7 @@ impl ApplicationHandler for App {
                     && let Some((acquire, render)) = gfx.draw()
                 {
                     if self.trace {
-                        for line in gfx.screens.shell.take_page_figure_log() {
+                        for line in gfx.display_mut().take_page_figure_log() {
                             eprintln!("page: frame {}: {line}", self.system.shell().frame());
                         }
                     }

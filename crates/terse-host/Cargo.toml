@@ -1,6 +1,6 @@
 [package]
 name = "terse-host"
-description = "Windowed GPU host for Terse."
+description = "Host for Terse: a window drawn with the GPU or the CPU, screenshots, benchmarks."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -9,23 +9,35 @@ publish.workspace = true
 name = "terse-host"
 path = "src/main.rs"
 
+[features]
+default = ["gpu", "window"]
+# The GPU renderer (wgpu).
+gpu = ["dep:wgpu", "dep:pollster"]
+# The window (winit), drawn with the GPU renderer or, through softbuffer,
+# the software one; the clipboard and game controllers come with it. The
+# bootable image builds without both (--no-default-features): the software
+# renderer only, its frames for a KMS/DRM display.
+window = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:gilrs"]
+
 [dependencies]
 terse-core.workspace = true
 terse-net.workspace = true
 terse-relay.workspace = true
-winit = "0.30"
-wgpu = "30"
-pollster = "0.4"
+winit = { version = "0.30", optional = true }
+wgpu = { version = "30", optional = true }
+pollster = { version = "0.4", optional = true }
+softbuffer = { version = "0.4", optional = true }
+rayon = "1.10"
 fontdue = "0.9"
 fontdb = "0.24"
 ttf-parser = "0.25"
 png = "0.18"
 getrandom = "0.4"
-gilrs = "0.11"
+gilrs = { version = "0.11", optional = true }
 cosmic-text = "0.19"
 swash = "0.2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
-arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

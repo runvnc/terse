@@ -11,7 +11,9 @@
 //! pixels when drawn, so glyphs stay crisp while the page scrolls smoothly
 //! at sub-unit steps.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(feature = "gpu")]
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -21,25 +23,32 @@ use cosmic_text::{
     Align as CtAlign, Attrs, Buffer, CacheKey, CacheKeyFlags, Color, Family, Font, FontSystem, LayoutGlyph, Metrics,
     Shaping, Style, Weight, Wrap,
 };
+#[cfg(feature = "gpu")]
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Angle, Format, Transform, Vector};
 use terse_core::page::{
     self as core_page, Align, FigureBox, FigurePath, LayoutKey, Layouter, Page, PageWatch, Paragraph,
 };
-use terse_core::{Event, SCREEN_HEIGHT, SCREEN_WIDTH};
+use terse_core::Event;
+#[cfg(feature = "gpu")]
+use terse_core::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
+#[cfg(feature = "gpu")]
 use crate::figures::{self, FigureKey, Rasterizer};
+#[cfg(feature = "gpu")]
 use crate::phosphor;
+#[cfg(feature = "gpu")]
 use crate::vectors::PHOSPHOR_FORMAT;
 
 /// The smallest line height the host uses, as a multiple of the size; a
 /// font whose own (ascent + descent + gap) is tighter is given this.
 const MIN_LINE_HEIGHT: f32 = 1.3;
 /// The thickness of a rule in screen units (SPEC 11.3: about one).
-const RULE_THICKNESS: f32 = 1.0;
+pub(crate) const RULE_THICKNESS: f32 = 1.0;
 /// Atlas size in texels (RGBA: coverage masks in alpha, colour glyphs as
 /// they are).
+#[cfg(feature = "gpu")]
 const ATLAS: u32 = 2048;
 /// Per presented machine frame, the shown scroll moves this share of the
 /// way to the program's scroll value; jumps longer than this many rectangle
@@ -48,13 +57,15 @@ const SCROLL_EASE: f32 = 0.45;
 const SCROLL_JUMP: f32 = 3.0;
 /// Figures are rasterised while they are within this many rectangle
 /// heights of the view (above and below), and dropped beyond.
-const FIGURE_MARGIN: f32 = 0.5;
+pub(crate) const FIGURE_MARGIN: f32 = 0.5;
 /// The most pixels one figure's texture has; a bigger one is rasterised at
 /// a lower resolution and stretched.
-const FIGURE_PIXELS: f32 = 4.0 * 1024.0 * 1024.0;
+pub(crate) const FIGURE_PIXELS: f32 = 4.0 * 1024.0 * 1024.0;
 /// At most this many figure textures, and this many bytes (but at least
 /// one texture), are uploaded in one frame.
+#[cfg(feature = "gpu")]
 const FIGURE_UPLOADS: usize = 32;
+#[cfg(feature = "gpu")]
 const FIGURE_UPLOAD_BYTES: usize = 8 << 20;
 
 /// The fonts of the three faces (SPEC 11.3): family names as given (or as
@@ -285,7 +296,7 @@ impl Typesetter {
 /// the baseline; colour and anchor in its attributes).
 #[derive(Clone, Debug)]
 pub struct HostGlyph {
-    glyph: LayoutGlyph,
+    pub(crate) glyph: LayoutGlyph,
 }
 
 impl HostGlyph {
@@ -293,7 +304,7 @@ impl HostGlyph {
         self.glyph.metadata as u16
     }
 
-    fn rgb(&self) -> [u8; 3] {
+    pub(crate) fn rgb(&self) -> [u8; 3] {
         let c = self.glyph.color_opt.unwrap_or(Color::rgb(229, 229, 229));
         [c.r(), c.g(), c.b()]
     }
@@ -307,7 +318,7 @@ pub struct HostLine {
     pub baseline: f32,
     /// The paragraph's x offset (its indent, for left-to-right text).
     pub x: f32,
-    glyphs: std::ops::Range<usize>,
+    pub(crate) glyphs: std::ops::Range<usize>,
     /// A rule across the rectangle in this colour.
     pub rule: Option<[u8; 3]>,
 }
@@ -331,11 +342,11 @@ pub struct HostLayout {
     /// The height in screen units.
     pub height: f32,
     pub lines: Vec<HostLine>,
-    glyphs: Vec<HostGlyph>,
+    pub(crate) glyphs: Vec<HostGlyph>,
     /// The figures, top to bottom.
     pub figures: Vec<HostFigure>,
     /// The fonts the glyphs use, for rasterising them on another thread.
-    fonts: HashMap<(ID, fontdb::Weight), Option<Arc<Font>>>,
+    pub(crate) fonts: HashMap<(ID, fontdb::Weight), Option<Arc<Font>>>,
     /// How long the layout took, in ms.
     pub ms: f64,
 }
@@ -525,6 +536,46 @@ impl PageWorker {
 
 // --- Drawing -------------------------------------------------------------
 
+/// The scroll to show next, in screen units: the shown scroll `shown`
+/// moves [`SCROLL_EASE`] of the way to the program's `target` per presented
+/// machine frame, unless not animated or the jump is longer than
+/// [`SCROLL_JUMP`] heights `h` of the rectangle.
+pub(crate) fn next_scroll(shown: Option<f32>, target: f32, h: f32, animate: bool) -> f32 {
+    match shown {
+        Some(s) if animate && (target - s).abs() <= SCROLL_JUMP * h => {
+            let next = s + (target - s) * SCROLL_EASE;
+            if (target - next).abs() < 0.1 { target } else { next }
+        }
+        _ => target,
+    }
+}
+
+/// The page glyph `key` of `font` as swash renders it: a coverage mask, or
+/// a colour image (emoji), without hinting.
+pub(crate) fn render_glyph(scale_context: &mut ScaleContext, font: &Font, key: CacheKey) -> Option<swash::scale::image::Image> {
+    let swash_font = font.as_swash();
+    let wght = swash_font.variations().find_by_tag(swash::Tag::from_be_bytes(*b"wght"));
+    let mut builder = scale_context.builder(swash_font).size(f32::from_bits(key.font_size_bits)).hint(false);
+    if let Some(v) = wght {
+        builder = builder.normalized_coords(swash_font.variations().normalized_coords([(
+            swash::Tag::from_be_bytes(*b"wght"),
+            f32::from(key.font_weight.0).clamp(v.min_value(), v.max_value()),
+        )]));
+    }
+    let mut scaler = builder.build();
+    Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline])
+        .format(Format::Alpha)
+        .offset(Vector::new(key.x_bin.as_float(), key.y_bin.as_float()))
+        .transform(
+            key.flags
+                .contains(CacheKeyFlags::FAKE_ITALIC)
+                .then(|| Transform::skew(Angle::from_degrees(14.0), Angle::from_degrees(0.0))),
+        )
+        .render(&mut scaler, key.glyph_id)
+}
+
+
+#[cfg(feature = "gpu")]
 const SHADER: &str = r#"
 struct Params {
     viewport: vec2<f32>,
@@ -588,8 +639,10 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
 }
 "#;
 
+#[cfg(feature = "gpu")]
 const INSTANCE_BYTES: usize = 16 + 16 + 4 + 4;
 
+#[cfg(feature = "gpu")]
 /// Where a glyph image is in the atlas, and how it sits on its pen position.
 #[derive(Clone, Copy)]
 struct Slot {
@@ -602,6 +655,7 @@ struct Slot {
     colour: bool,
 }
 
+#[cfg(feature = "gpu")]
 /// A shelf packer over the atlas.
 struct Shelves {
     x: u32,
@@ -609,6 +663,7 @@ struct Shelves {
     row: u32,
 }
 
+#[cfg(feature = "gpu")]
 impl Shelves {
     fn alloc(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         if w > ATLAS || h > ATLAS {
@@ -636,6 +691,7 @@ pub struct PageView {
     pub background: [u8; 4],
 }
 
+#[cfg(feature = "gpu")]
 /// A figure's texture, with bind groups for the clean and the light pipeline.
 struct FigureTexture {
     _texture: wgpu::Texture,
@@ -643,6 +699,7 @@ struct FigureTexture {
     bytes: usize,
 }
 
+#[cfg(feature = "gpu")]
 /// The page's GPU side: the glyph atlas and the quads of what is in view.
 pub struct PageLayer {
     clean_pipeline: wgpu::RenderPipeline,
@@ -686,10 +743,12 @@ pub struct PageLayer {
     sync_figures: bool,
 }
 
+#[cfg(feature = "gpu")]
 fn blend(c: wgpu::BlendComponent) -> wgpu::BlendState {
     wgpu::BlendState { color: c, alpha: c }
 }
 
+#[cfg(feature = "gpu")]
 impl PageLayer {
     /// `layer_format` is the format of the layer of backgrounds and shapes.
     pub fn new(device: &wgpu::Device, layer_format: wgpu::TextureFormat) -> Self {
@@ -863,40 +922,14 @@ impl PageLayer {
         };
         let target = page.scroll_for(layout.reported_height()) as f32;
         let h = page.region().h as f32;
-        self.shown_scroll = Some(match self.shown_scroll {
-            Some(s) if self.animate && (target - s).abs() <= SCROLL_JUMP * h => {
-                let next = s + (target - s) * SCROLL_EASE;
-                if (target - next).abs() < 0.1 { target } else { next }
-            }
-            _ => target,
-        });
+        self.shown_scroll = Some(next_scroll(self.shown_scroll, target, h, self.animate));
     }
 
     fn glyph(&mut self, queue: &wgpu::Queue, key: CacheKey) -> Option<Slot> {
         if let Some(slot) = self.slots.get(&key) {
             return *slot;
         }
-        let image = self.fonts.get(&(key.font_id, key.font_weight)).cloned().flatten().and_then(|font| {
-            let swash_font = font.as_swash();
-            let wght = swash_font.variations().find_by_tag(swash::Tag::from_be_bytes(*b"wght"));
-            let mut builder = self.scale_context.builder(swash_font).size(f32::from_bits(key.font_size_bits)).hint(false);
-            if let Some(v) = wght {
-                builder = builder.normalized_coords(swash_font.variations().normalized_coords([(
-                    swash::Tag::from_be_bytes(*b"wght"),
-                    f32::from(key.font_weight.0).clamp(v.min_value(), v.max_value()),
-                )]));
-            }
-            let mut scaler = builder.build();
-            Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline])
-                .format(Format::Alpha)
-                .offset(Vector::new(key.x_bin.as_float(), key.y_bin.as_float()))
-                .transform(
-                    key.flags
-                        .contains(CacheKeyFlags::FAKE_ITALIC)
-                        .then(|| Transform::skew(Angle::from_degrees(14.0), Angle::from_degrees(0.0))),
-                )
-                .render(&mut scaler, key.glyph_id)
-        });
+        let image = self.fonts.get(&(key.font_id, key.font_weight)).cloned().flatten().and_then(|font| render_glyph(&mut self.scale_context, &font, key));
         let slot = image.filter(|i| i.placement.width > 0 && i.placement.height > 0).and_then(|image| {
             let (w, h) = (image.placement.width, image.placement.height);
             let (x, y) = self.shelves.alloc(w, h)?;
@@ -1200,6 +1233,7 @@ impl PageLayer {
     }
 }
 
+#[cfg(feature = "gpu")]
 /// Where the page is drawn, for its figures: the rectangle's corner in
 /// target pixels, pixels per unit, the scroll shown and the rectangle's
 /// height in units, and whether figures are outlined.
@@ -1213,6 +1247,7 @@ struct FigureGeometry {
     outline: bool,
 }
 
+#[cfg(feature = "gpu")]
 fn push(out: &mut Vec<u8>, rect: [f32; 4], uv: [f32; 4], rgba: [u8; 4], mode: u32) {
     for v in rect.iter().chain(&uv) {
         out.extend_from_slice(&v.to_le_bytes());
