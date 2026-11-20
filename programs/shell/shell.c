@@ -571,14 +571,19 @@ static uint8_t bar_num(uint8_t col, uint32_t v, uint8_t fg, uint8_t bg)
     return n;
 }
 
+/* Whether the shell has full text (SPEC §terminal.text). Without it, its
+ * own marks outside basic text are drawn as basic stand-ins; titles are
+ * shown as they are, with placeholders. */
+static uint8_t full_text;
+
 static uint16_t mark(uint8_t state)
 {
     switch (state) {
-    case MACH_LOADING: return 0x2026; /* … */
-    case MACH_PAUSED: return 0x2016;  /* ‖ */
-    case MACH_EXITED: return 0x25A0;  /* ■ */
+    case MACH_LOADING: return 0x2026;                    /* … */
+    case MACH_PAUSED: return full_text ? 0x2016 : 0x2551; /* ‖, else ║ */
+    case MACH_EXITED: return full_text ? 0x25A0 : 0x2584; /* ■, else ▄ */
     case MACH_FAULTED: return '!';
-    case MACH_FAILED: return 0x2717;  /* ✗ */
+    case MACH_FAILED: return full_text ? 0x2717 : 0xD7;   /* ✗, else × */
     default: return ' ';
     }
 }
@@ -590,7 +595,7 @@ static void draw_bar(void)
         bar[i] = cell(' ', BAR_FG, BAR_BG);
     uint8_t home = !focus;
     bar[0] = cell(' ', home ? FOCUS_FG : BAR_FG, home ? FOCUS_BG : BAR_BG);
-    bar[1] = cell(0x2302, home ? FOCUS_FG : BAR_FG, home ? FOCUS_BG : BAR_BG); /* ⌂ */
+    bar[1] = cell(full_text ? 0x2302 : '~', home ? FOCUS_FG : BAR_FG, home ? FOCUS_BG : BAR_BG); /* ⌂, else ~ */
     bar[2] = bar[0];
     uint8_t n = machine_count(), col = 4;
     uint8_t width = n ? (TERM_COLS - 4 - 7) / n : 0;
@@ -1664,6 +1669,7 @@ static void handle(void)
 
 int main(void)
 {
+    full_text = terse_has_full_text();
     term_cmd(TERM_CURSOR_OFF);
     page_background(22, 25, 34, 255);
     while (prog_n < MAX_PROGS && mach_builtin(prog_n, prog_id[prog_n]))

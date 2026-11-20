@@ -1,0 +1,91 @@
+# Terse test vectors: the basic text repertoire (ARTICLE.md 1.1), which is
+# also the terminal's basic repertoire (SPEC.md §terminal.text).
+# Format: vectors/README.
+
+repertoire basic-text
+  count 361
+  range 0020 007e
+  range 00a0 00ff
+  range 2013 2014
+  range 2018 2019
+  range 201c 201d
+  range 2022 2022
+  range 2026 2026
+  range 2212 2212
+  range 2500 259f
+  range fffd fffd
+
+text ascii
+  note tab, CR and LF are handled by ARTICLE.md 1
+  hex 506c61696e2041534349492c207461627309616e640d0a6c696e65732e
+  basic yes
+
+text punctuation
+  note the nine marks beyond Latin-1
+  hex 3320c397203420e28892203120e2809420e2809c796573e2809d2c20e280986e6fe2809920e2809320e280a220e280a6
+  basic yes
+
+text latin-1
+  note accented letters and signs
+  hex 636166c3a9206e61c3af76652c20313220c2b0432c20c2bd20c2a32c20c2bf73c3ad3f
+  basic yes
+
+text no-break-space
+  note U+00A0
+  hex 78c2a079
+  basic yes
+
+text box-drawing
+  note U+2500 to U+259F
+  hex e2948ce29480e2949020e29688e29693e29692e2969120e2969f
+  basic yes
+
+text malformed
+  note shown as U+FFFD, which is basic
+  hex 6d616c666f726d656420ff20697320552b46464644
+  basic yes
+
+text bom-at-start
+  note a byte order mark that starts the text is not shown
+  hex efbbbf74657874
+  basic yes
+
+text control
+  note control characters are not shown
+  hex 6101627f63c28564
+  basic yes
+
+text bom-inside
+  note U+FEFF anywhere else is text, and not basic
+  hex 61efbbbf62
+  basic no
+
+text euro
+  note U+20AC
+  hex 3520e282ac
+  basic no
+
+text figure-dash
+  note U+2012, next to the en dash
+  hex 31e2809232
+  basic no
+
+text black-square
+  note U+25A0, just after block elements
+  hex e296a0
+  basic no
+
+text greek
+  note another script
+  hex cea96d656761
+  basic no
+
+text cjk
+  note wide characters
+  hex e4bda0e5a5bd
+  basic no
+
+text emoji
+  note beyond the BMP
+  hex f09f9880
+  basic no

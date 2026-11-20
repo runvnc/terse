@@ -34,7 +34,7 @@ func TestInteropNode(t *testing.T) {
 	e.publisher("alice", relay, "key", "new")
 	alice := e.key("alice", relay)
 	e.publisher("alice", relay, "profile", "set", "--name", "Alice")
-	text := "# Through the node\n\nRead with no cryptography: café.\n"
+	text := "# Through the node\n\nRead with no cryptography: café, 5 €.\n"
 	e.publisher("alice", relay, "feed", "publish", e.file("a.txt", text), "--title", "Through the node")
 
 	dir := "node-store"

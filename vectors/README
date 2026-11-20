@@ -122,6 +122,18 @@ replay skips pushes; and a refusal's reason (after status 3 in a reply
 `A0h` to `ABh`) is text for people, so only the bytes up to the status
 are compared.
 
+basic-text.txt (ARTICLE.md section 1.1, SPEC.md §terminal.text)
+---------------------------------------------------------------
+The basic text repertoire, which every reader and every Terse
+machine's terminal must be able to show: one record `repertoire
+basic-text` with `count` (the number of characters) and one line
+`range <first> <last>` per run of code points (inclusive, lowercase
+hexadecimal). Then records `text <name>`, each with a `note`, the
+text's bytes (`hex`) and `basic`: `yes` if the text is in basic text
+(every character it shows is in the repertoire; a byte order mark that
+starts it, and control characters, are not shown; malformed UTF-8 is
+shown as U+FFFD), `no` if it needs full text.
+
 articles/ (ARTICLE.md)
 ----------------------
 An article corpus: each `<name>.txt` is an article (bytes as they are,

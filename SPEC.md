@@ -64,10 +64,11 @@ document. A **program-profile host** (§profiles) implements:
   East Asian Width property for the terminal's wide characters
   (§terminal.cells), the xterm palette (§terminal.reset), and the
   White_Space property for display names (§display-names).
-- **Basic text** (§terminal.text): the terminal must draw only 351
-  characters (printable ASCII, the Latin-1 Supplement, box drawing and
-  block elements), one fixed-width font; every other character is drawn
-  as a placeholder box. Full text, every character, is device 10, which
+- **Basic text** (§terminal.text): the terminal must draw only 361
+  characters (printable ASCII, the Latin-1 Supplement, dashes, quotation
+  marks, bullet, ellipsis, minus, box drawing and block elements, U+FFFD;
+  the articles' basic text repertoire), one fixed-width font; every other
+  character is drawn as a placeholder box. Full text, every character, is device 10, which
   a program-profile host may leave out: no shaping, bidirectional text or
   font fallback is needed.
 
@@ -844,10 +845,25 @@ commands and the cursor are the same on every host, and so is the
 machine's state. Only what is drawn differs:
 
 - The **basic repertoire** is what every host that has the terminal
-  draws: U+0020–U+007E (printable ASCII), U+00A0–U+00FF (the printable
-  Latin-1 Supplement) and U+2500–U+259F (box drawing and block elements),
-  351 characters, all narrow. One fixed-width font of 8 × 16 cells
-  covers them.
+  draws. It is the basic text repertoire of articles (`ARTICLE.md`
+  section 1.1 lists it in the same words), 361 characters:
+
+      U+0020-U+007E  printable ASCII                       95
+      U+00A0-U+00FF  Latin-1 Supplement: no-break space,   96
+                     accented letters, £ ° × ÷ and more
+      U+2013-U+2014  – — en dash, em dash                   2
+      U+2018-U+2019  ‘ ’ single quotation marks             2
+      U+201C-U+201D  “ ” double quotation marks             2
+      U+2022         • bullet                               1
+      U+2026         … horizontal ellipsis                  1
+      U+2212         − minus sign                           1
+      U+2500-U+259F  box drawing and block elements       160
+      U+FFFD         � replacement character                1
+
+  All are narrow (§terminal.cells: none is W or F; those whose East
+  Asian Width is A, such as × and …, are narrow like every other), so
+  one fixed-width font of 8 × 16 cells covers them.
+  `vectors/basic-text.txt` gives the list as ranges.
 - **Full text** is every other character as well, drawn with fonts and
   fallback the host chooses, a wide character across its two cells
   (§terminal.cells).
@@ -868,9 +884,9 @@ repertoire as that character (U+0020 and U+00A0 as its background
 only), a cell holding a control code (`0000h`–`001Fh`, `007Fh`–`009Fh`)
 as its background only, and every other cell as the **placeholder**: an
 outlined box inside the cell, in the cell's foreground colour. So a wide
-character is two placeholders, its own cell and its continuation cell,
-and U+FFFD, which put character writes for malformed UTF-8, is a
-placeholder too. A machine that has device 10 is drawn with full text.
+character is two placeholders, its own cell and its continuation cell;
+U+FFFD, which put character writes for malformed UTF-8, is basic and
+drawn as itself. A machine that has device 10 is drawn with full text.
 
 Text input is not affected: a text event (§events) carries any Unicode
 scalar value, on every host and whether or not the machine has full

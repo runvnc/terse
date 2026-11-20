@@ -193,3 +193,53 @@ fn call_tables_equal_the_index() {
 fn event_tables_equal_the_index() {
     check_table("| Type | Name | `a` | `b` | `c` |\n|---|---|---|---|---|\n", "events", 16, &["SPEC.md", "spec/content.md", "spec/page.md", "spec/machines.md"]);
 }
+
+/// The indented block that first follows `heading` in `text`, each line
+/// with its indent removed.
+fn list_after(text: &str, heading: &str) -> Vec<String> {
+    let at = text.find(heading).unwrap_or_else(|| panic!("no heading {heading:?}"));
+    let lines: Vec<&str> = text[at..].lines().collect();
+    let start = lines.iter().position(|l| l.trim_start().starts_with("U+")).expect("a list");
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    lines[start..]
+        .iter()
+        .take_while(|l| !l.trim().is_empty())
+        .map(|l| l.get(indent..).unwrap_or_else(|| panic!("{l:?}: indented less")).to_string())
+        .collect()
+}
+
+/// The basic text repertoire is listed in the same words in ARTICLE.md 1.1
+/// and SPEC §terminal.text (so that a reader's and a machine's implementer
+/// each read only their own document), and the code points that list names
+/// are those of `vectors/basic-text.txt` and of the code.
+#[test]
+fn basic_text_lists_agree() {
+    let root = common::workspace();
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+    let article = list_after(&read("ARTICLE.md"), "### 1.1 The basic text repertoire");
+    let spec = list_after(&read("SPEC.md"), "### §terminal.text ");
+    assert_eq!(article, spec, "ARTICLE.md 1.1 and SPEC.md §terminal.text list the same characters");
+    let hex = |s: &str| u16::from_str_radix(s.trim_start_matches("U+"), 16).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+    let mut listed = Vec::new();
+    let mut total = 0;
+    for line in &article {
+        let Some(first) = line.split_whitespace().next().filter(|w| w.starts_with("U+")) else { continue };
+        let (lo, hi) = first.split_once('-').map_or_else(|| (hex(first), hex(first)), |(a, b)| (hex(a), hex(b)));
+        let n: u32 = line.split_whitespace().last().unwrap().parse().unwrap_or_else(|e| panic!("{line:?}: {e}"));
+        assert_eq!(n, (hi - lo + 1) as u32, "{line}");
+        total += n;
+        listed.push((lo, hi));
+    }
+    assert_eq!(listed, terse_core::text::BASIC);
+    assert_eq!(total, terse_core::text::BASIC_COUNT);
+    let vectors = read("vectors/basic-text.txt");
+    let ranges: Vec<(u16, u16)> = vectors
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("range "))
+        .map(|r| {
+            let (a, b) = r.split_once(' ').unwrap();
+            (u16::from_str_radix(a, 16).unwrap(), u16::from_str_radix(b, 16).unwrap())
+        })
+        .collect();
+    assert_eq!(ranges, listed);
+}

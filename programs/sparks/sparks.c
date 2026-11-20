@@ -23,7 +23,11 @@
  * and 3 only. Without device 4 the record calls return TERSE_ERR_UNKNOWN,
  * which is no handle (load_handle keeps its low byte, FFh, and no content
  * event ever names it), so the high score lasts for the session only and
- * the game is otherwise the same. */
+ * the game is otherwise the same.
+ *
+ * Full text (device 10) is optional too (SPEC §terminal.text): the HUD's
+ * hearts, the one character outside basic text, are "<3" on a host
+ * without it. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -111,7 +115,7 @@ typedef struct {
 static sweeper_t sweepers[MAX_SWEEPERS];
 static int nsweepers;
 
-static uint8_t state, lives, inv, flash, wait, tick, hud_dirty, until_next;
+static uint8_t state, lives, inv, flash, wait, tick, hud_dirty, until_next, full_text;
 static uint8_t digits[4];
 
 /* The high score and its record requests. */
@@ -229,7 +233,7 @@ static void hud(void)
     put_at(62, 0, 15, HUD_BG, "LIVES ");
     term_fg(196);
     for (int i = 0; i < lives; i++)
-        term_puts("♥ ");
+        term_puts(full_text ? "♥ " : "<3 ");
 }
 
 /* A text box in the middle of the screen, rows 11-17. */
@@ -631,6 +635,7 @@ static void draw(void)
 int main(void)
 {
     seed = 0xACE1;
+    full_text = terse_has_full_text();
     term_cmd(TERM_CURSOR_OFF);
     /* Asked for now, shown when it arrives: the first frame does not wait. */
     load_handle = record_load(&load_req, "high-score", 0, 4, high_buf);
