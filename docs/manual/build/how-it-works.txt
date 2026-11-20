@@ -142,18 +142,30 @@ host does for one frame of any program is bounded.
 
 Programs reach devices with the `ecall` instruction: the call number in
 register `a7` is the device slot times 256 plus a function, arguments go in
-`a0` to `a5`, and the result comes back in `a0`. An image lists the devices
-it needs in its header; a host that lacks one refuses the image, and a
-device the image does not list behaves as absent.
+`a0` to `a5`, and the result comes back in `a0`.
+
+No host has to build every device, and no program has to use them all.
+A program's image says in its header which devices it needs, each with
+a version. A host that lacks one of them refuses the image before it
+runs, and a device the image does not list behaves as absent. So a
+program that needs only the terminal runs on every host, and a host
+can tell from the header alone what a program will use.
+
+The devices a reading host provides (the reading profile):
 
 | Slot | Device |
 |---|---|
 | 1 | System: frames, events, clock, random bytes, controllers, exit (always present) |
 | 2 | Terminal: 80 × 30 character cells |
-| 3 | 2D vector display: lines and filled shapes from a display list |
 | 4 | Content: blobs, feeds, search, named records |
-| 6 | Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo (optional) |
 | 7 | Page: typeset proportional text and figures |
+
+The extras, each of which a host may leave out:
+
+| Slot | Device |
+|---|---|
+| 3 | 2D vector display: lines and filled shapes from a display list |
+| 6 | Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo |
 | 8 | Machines: starting and placing other machines (the shell only) |
 | 9 | 3D vector display: lines placed in space, seen in perspective |
 
