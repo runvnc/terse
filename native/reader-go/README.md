@@ -102,10 +102,32 @@ on it shows. Strokes are thickened to at least one dot.
 - Bidirectional reordering or shaping of complex scripts (left to the
   terminal); character widths are approximate.
 
+## A node and a reader (LOCAL.md)
+
+The network half can run on its own and serve readers over a local socket
+(`LOCAL.md`):
+
+    tersereader node                  # the node: relays, verifying, the store
+    tersereader list                  # a reader: uses the node if its socket answers
+
+`tersereader` with `--node auto` (the default) uses a running node if
+`$XDG_RUNTIME_DIR/terse/node.sock` (or `--socket`, or `$TERSE_NODE_SOCKET`)
+answers, else runs the node in its own process as before; `--node socket`
+and `--node in-process` force either. Relay changes made through a running
+node take effect when it next starts.
+
+A **thin reader** has no network half at all:
+
+    CGO_ENABLED=0 go build -tags thin -o tersereader-thin .
+
+It links no cryptography, BLAKE3, store, WebSocket or relay client
+(`TestThinReader` checks the import graph): about 5,300 lines of Go and
+2.7 MB stripped, against 8,300 lines and 5.8 MB for the full program.
+
 ## Layout
 
 The network half and the reading half are separate packages that meet only
-in `internal/nodeapi`, so that they could later run as two programs:
+in `internal/nodeapi`, so that they also run as two programs:
 
     internal/nodeapi   the seam: the Node interface and plain data types
     internal/node      the network half, implementing nodeapi.Node
@@ -117,8 +139,12 @@ in `internal/nodeapi`, so that they could later run as two programs:
                        display names, profile documents, feed addresses
     internal/article   the article parser and the vectors' dump format
     internal/render    layout for a terminal: wrapping, tables, figures
+    internal/local     the local node protocol: messages, framing, the socket
+    internal/localnode a node served over the socket
+    internal/localclient  nodeapi.Node over the socket (all a thin reader has)
     main.go, ui.go     the commands and the interactive reader
-    wire.go            the one file that binds the reader to package node
+    wire.go            binds the reader to a running node or package node;
+                       wire_thin.go, with -tags thin, to a running node only
 
 `TestSeam` checks that the reading half imports nothing of the network half.
 

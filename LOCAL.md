@@ -202,7 +202,8 @@ node ignores them like any unknown type.
 - **Sync** connects (if the node is not connected), waits until every
   subscribed feed has caught up on its relays (`NETWORK.md` 4.3) and
   the automatic downloads it caused are done, or the timeout: status 1
-  if everything arrived, 2 if not (also when the node has no relay).
+  if everything arrived, 2 if not, 3 (with a reason) if it cannot try,
+  for example because it has no relay.
 - **Title** is the title of an article entry the node holds for that
   blob ID and size (status 2 if none): what a reader shows for an
   article reached by a link (`ARTICLE.md` 4.4).

@@ -75,6 +75,9 @@ func ParseProfile(b []byte) (p Profile, ok bool) {
 	return p, true
 }
 
+// IsRelayURL is the test of NETWORK.md 4.6 for a relay URL (see isRelayURL).
+func IsRelayURL(v string) bool { return isRelayURL(v) }
+
 // isRelayURL reports whether a relay line's value counts as a relay URL
 // (NETWORK.md 4.6): it starts with `ws://` or `wss://` (lowercase), what
 // follows is not empty and does not start with `/`, and it holds no

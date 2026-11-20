@@ -40,6 +40,7 @@ type Entry struct {
 	ReplyTo [32]byte
 	Title   string
 	Raw     []byte // the whole entry as received
+	Arrival uint32 // set by a store: its place in arrival order, from 1
 }
 
 func (e *Entry) KeyHex() string  { return KeyHex(e.Key[:]) }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"tersereader/internal/article"
+	"tersereader/internal/local"
 	"tersereader/internal/nodeapi"
 	"tersereader/internal/render"
 	"tersereader/internal/terse"
@@ -37,6 +38,8 @@ usage:
   tersereader --dump <blob-id|file>      an article as text (from the store, the relays or a file)
   tersereader relay add|remove <ws://host:port> | relay list
   tersereader nickname <key> [<name>]    name a feed for yourself (no name: clear it)
+  tersereader node                       run only the network node, serving the local
+                                         socket (LOCAL.md) until interrupted
 
 options:
   --dir <dir>          the reader's store (default $XDG_DATA_HOME/tersereader,
@@ -50,6 +53,11 @@ options:
   --auto-download <n>  articles up to n bytes are fetched as entries arrive (default 16384; 0: none)
   --no-prefetch        do not fetch the articles that small articles link to
   --no-feed-relays     do not follow feeds on the relays their profiles name, nor on hints
+  --socket <path>      the local node's socket (default $TERSE_NODE_SOCKET, else
+                       $XDG_RUNTIME_DIR/terse/node.sock)
+  --node <mode>        auto (default): use a running node if its socket answers, else
+                       run the node in this process; socket: only a running node;
+                       in-process: never a running node
 
 Interactive keys: arrows or j/k move, Enter opens, Tab/Shift-Tab select a link,
 a number then Enter follows link n, Esc or Backspace goes back, s subscribes,
@@ -70,6 +78,8 @@ type config struct {
 	prefetch    bool
 	feedRelays  bool
 	args        []string
+	socket      string // the local node's socket (LOCAL.md)
+	nodeMode    string // auto, socket or in-process
 }
 
 func defaultDir() string {
@@ -85,7 +95,7 @@ func defaultDir() string {
 
 func parseArgs(args []string) (*config, error) {
 	c := &config{dir: defaultDir(), linkNumbers: true, timeout: 20 * time.Second,
-		autoLimit: 16384, prefetch: true, feedRelays: true}
+		autoLimit: 16384, prefetch: true, feedRelays: true, socket: local.DefaultPath(), nodeMode: "auto"}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		name, inline, hasInline := strings.Cut(a, "=")
@@ -137,6 +147,13 @@ func parseArgs(args []string) (*config, error) {
 			c.prefetch = false
 		case "--no-feed-relays":
 			c.feedRelays = false
+		case "--socket":
+			c.socket, err = val()
+		case "--node":
+			c.nodeMode, err = val()
+			if err == nil && c.nodeMode != "auto" && c.nodeMode != "socket" && c.nodeMode != "in-process" {
+				err = fmt.Errorf("--node is auto, socket or in-process, not %q", c.nodeMode)
+			}
 		default:
 			if strings.HasPrefix(a, "--") {
 				return nil, fmt.Errorf("unknown option %s", a)
@@ -171,6 +188,9 @@ func run(cfg *config) error {
 		if _, err := os.Stat(cfg.dump); err == nil {
 			return dumpFile(cfg, cfg.dump)
 		}
+	}
+	if len(cfg.args) > 0 && cfg.args[0] == "node" {
+		return runNode(cfg)
 	}
 	n, err := openNode(cfg)
 	if err != nil {
@@ -217,6 +237,9 @@ func run(cfg *config) error {
 			title := shownTitle(e.Title)
 			if e.Kind == nodeapi.KindDocument {
 				title = "[document, cannot open] " + title
+			}
+			if e.FullText {
+				title += "  [needs full text]" // ARTICLE.md 1.1
 			}
 			fmt.Printf("%s %s %s  %s  %s\n", mark, e.Blob, when(e.Time), e.Label, title)
 		}
