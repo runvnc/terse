@@ -46,6 +46,20 @@ struct Faces {
     found: HashMap<char, ID>,
 }
 
+/// The monospace family to use where fontconfig does not choose one (macOS,
+/// Windows), if the system has it: fontdb's own choice there is Courier New,
+/// a thin typewriter face that suits a terminal grid poorly.
+pub(crate) fn platform_monospace(has: impl Fn(&str) -> bool) -> Option<&'static str> {
+    let candidates: &[&str] = if cfg!(target_os = "macos") {
+        &["Menlo", "Monaco"]
+    } else if cfg!(windows) {
+        &["Cascadia Mono", "Consolas"]
+    } else {
+        &[]
+    };
+    candidates.iter().copied().find(|&n| has(n))
+}
+
 impl SystemGlyphs {
     /// `px` is the font size in pixels (for a proportional `font`, that of
     /// the default monospace font it stands in for). `font` is a family
@@ -54,6 +68,9 @@ impl SystemGlyphs {
         let base_px = px;
         let mut db = Database::new();
         db.load_system_fonts();
+        if let Some(name) = platform_monospace(|n| db.faces().any(|f| f.families.iter().any(|(m, _)| m == n))) {
+            db.set_monospace_family(name);
+        }
         let regular = |db: &Database, families: &[Family]| {
             db.query(&Query { families, weight: Weight::NORMAL, style: Style::Normal, ..Query::default() })
         };

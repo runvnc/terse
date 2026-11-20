@@ -7,7 +7,42 @@ websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
 that run on tiny isolated virtual machines.
 
-That machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
+## Install
+
+Download the file for your system from the
+[latest release](https://github.com/runvnc/terse/releases/latest), unpack it
+and run `terse-host`: the window opens on the launcher. Choose **reader**,
+press **Enter**, then **M**: that is the Terse manual. Nothing else needs to be
+installed. Each download also has `terse` (the command-line tool),
+`terse-relay` (for sharing) and a `README.txt`.
+
+- **Windows 10 or newer**: `terse-<version>-windows-x86_64.zip`. Extract all,
+  double-click `terse-host.exe`. The files are not signed, so SmartScreen may
+  say "Windows protected your PC": click **More info**, then **Run anyway**.
+- **macOS 11 or newer** (Apple silicon and Intel): `terse-<version>-macos.zip`.
+  The files are not notarised by Apple, so macOS blocks them the first time.
+  Unzip, then in Terminal run
+  `xattr -dr com.apple.quarantine ~/Downloads/terse-<version>-macos` and
+  double-click `Terse.app` (or Control-click `Terse.app`, Open; on macOS 15 or
+  newer: try once, then System Settings > Privacy & Security > Open Anyway).
+- **Linux** (x86_64 or aarch64, glibc 2.35 or newer: Ubuntu 22.04, Debian 12,
+  Fedora 36 or newer): `terse-<version>-linux-x86_64.tar.gz` (or `-aarch64`).
+  `tar xzf` it and run `./terse-<version>-linux-x86_64/terse-host`. It needs
+  Wayland or X11, and draws with Vulkan or OpenGL if it can, with the CPU
+  otherwise. `terse` and `terse-relay` are static and run on any Linux.
+- **A terminal reader** (Linux, macOS): `tersereader-<version>-<system>.tar.gz`,
+  the Go reader of `native/reader-go/`, one static file.
+
+To check a download, compare it with `SHA256SUMS.txt` from the same release:
+`sha256sum -c --ignore-missing SHA256SUMS.txt` (Linux),
+`shasum -a 256 -c --ignore-missing SHA256SUMS.txt` (macOS), or
+`Get-FileHash <file>` in PowerShell (Windows), compared by eye.
+
+To build from source instead, see [Getting started](#getting-started) and
+[Build, run, test](#build-run-test). `RELEASING.md` says how the downloads are
+made.
+
+The Terse machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
 of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device

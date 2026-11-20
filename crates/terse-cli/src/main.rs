@@ -49,6 +49,7 @@ const USAGE: &str = "usage:
   terse vectors [--dir <vectors>]   (the core test vectors: blobs, entries, profiles, relay messages, articles)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
+  terse --version
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
   [--config <dir>] [--no-feed-relays])
 
@@ -180,6 +181,10 @@ fn main() -> ExitCode {
         Some("records") => records(&args[1..]),
         Some("manual") => feed::manual(&args[1..]),
         Some("vectors") => vectors(&args[1..]),
+        Some("--version") => {
+            println!("terse {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
         _ => Err(USAGE.to_string()),
     };
     result.unwrap_or_else(|e| {

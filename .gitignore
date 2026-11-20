@@ -4,3 +4,4 @@
 /native/reader-go/tersereader
 /native/core-c/tcore
 /native/core-c/*.o
+/dist
