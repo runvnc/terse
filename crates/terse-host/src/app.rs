@@ -151,6 +151,8 @@ impl Gfx {
             let class = if test { "terse-host-test" } else { "terse-host" };
             WindowAttributesExtWayland::with_name(attributes, class, class)
         };
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let _ = test;
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
         let size = Some(window.inner_size()).filter(|s| s.width > 0 && s.height > 0).unwrap_or(inner);
         let size = (size.width, size.height);

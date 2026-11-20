@@ -129,6 +129,9 @@ impl Typesetter {
         // With fontconfig, this also sets the generic families (sans-serif,
         // serif, monospace) to the system's preferred ones.
         db.load_system_fonts();
+        if let Some(name) = crate::glyphs::platform_monospace(|n| has_family(&db, n)) {
+            db.set_monospace_family(name);
+        }
         let mut family = |given: &Option<String>, kind: Family| -> Result<String, String> {
             let Some(name) = given else { return Ok(generic(&db, kind)) };
             if Path::new(name).is_file() {
