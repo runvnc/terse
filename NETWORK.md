@@ -92,6 +92,24 @@ Message types `01h`–`08h` are requests, `81h`–`86h` and `88h` replies and
 Clients do not trust relays: every blob is verified against its ID on
 receipt.
 
+**The WebSocket itself** (RFC 6455):
+
+- A relay URL is `ws://` (plain) or `wss://` (over TLS), a host, an
+  optional port (80 and 443 by default, as for any WebSocket URL; a hint
+  names 7878 when it gives none, section 4.9) and an optional path. The
+  client opens the WebSocket with the URL's path and query as written,
+  or `/` when it has none. A relay accepts any path.
+- No subprotocol is used: a client sends no `Sec-WebSocket-Protocol`
+  header, and a relay chooses none.
+- Every message of this protocol is one binary WebSocket message. A
+  sender should send each in one frame; a receiver must accept one split
+  into fragments and reassemble it. Each side must accept messages of up
+  to 1,048,582 bytes (the largest in this protocol: a get reply with the
+  largest blob) and may close the connection on a larger one.
+- Each side answers pings as RFC 6455 says; neither needs to send any.
+- A client may support only `ws://`: a `wss://` relay it cannot reach is
+  then a relay that cannot be reached (section 5.1).
+
 ## 4. Feeds
 
 A feed is a numbered series of small signed entries from one author, each
@@ -103,8 +121,24 @@ so that reading never waits on the network.
 
 A feed is identified by an Ed25519 public key (32 bytes; written as 64
 lowercase hexadecimal digits). A **valid feed key** is 32 bytes that
-decode to an Ed25519 point that is not of small order. The author's
-client holds the secret key and never sends it anywhere.
+are the canonical encoding of an Ed25519 point that is not of small
+order:
+
+- **Decoding** (RFC 8032 section 5.1.3): bit 255 (the top bit of the
+  last byte) is the sign of x; the other 255 bits, little-endian, are y.
+  The bytes decode only if y < p (p = 2^255 − 19), the curve equation
+  gives an x for that y, and x is not 0 while the sign bit is 1. So an
+  encoding with y ≥ p is refused even where y − p is the y of a point:
+  each point has exactly one encoding. (Equivalently: the bytes decode,
+  and encoding the point again gives the same 32 bytes.)
+- **Small order**: P is of small order if [8]P is the neutral point
+  (there are eight such points). A point that is not of small order is
+  accepted whether or not it lies in the prime-order subgroup (a key
+  with a small-order component is valid).
+
+`vectors/addresses.txt` has a non-canonical key (`key-not-canonical`)
+and a valid key with a small-order component (`key-mixed-order`). The
+author's client holds the secret key and never sends it anywhere.
 
 ### 4.2 Entry
 
@@ -124,9 +158,36 @@ client holds the secret key and never sends it anywhere.
 The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by
 bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
+**Strict verification.** The signature is R (its first 32 bytes) and S
+(its last 32, a little-endian integer); A is the feed key's 32 bytes, M
+the signed message. It verifies if and only if all of these hold:
+
+1. A is a valid feed key (section 4.1): canonical, and not of small
+   order.
+2. S < L, where L = 2^252 + 27742317777372353535851937790883648493 (the
+   order of the base point B).
+3. R decodes to a point (as A does, but without the canonical check,
+   which step 4 makes) that is not of small order.
+4. With k = SHA-512(R ‖ A ‖ M) taken as a little-endian integer modulo
+   L (R and A as the bytes received), the canonical encoding of the
+   point [S]B − [k]A is exactly the 32 bytes R. This is the
+   cofactorless equation: it is not multiplied by 8. A non-canonical R
+   never verifies, since the encoding computed is canonical.
+
+An ordinary Ed25519 verification function is not enough: many accept a
+small-order R or A, a non-canonical A, an S ≥ L that passes a check of
+its top bits only, or check the cofactored equation. An implementation
+adds the checks it lacks (1 to 3 can be done before calling it; 4 by
+comparing bytes). `vectors/entries.txt` has an entry for each check
+(`small-order-key-signed`, `small-order-key-order-8-signed`,
+`non-canonical-key`, `non-canonical-signature`, `small-order-r`,
+`non-canonical-r`, `mixed-order-r`): an implementation that accepts any
+of them is wrong. With these rules each valid entry has exactly one
+valid encoding.
+
 An entry is valid if `n` is at most 120, its length matches `n`, the
-signature verifies under the feed key (strict verification: small-order keys
-and non-canonical signatures are rejected), `seq` is at least 1, the kind is
+signature verifies under the feed key by strict verification (above),
+`seq` is at least 1, the kind is
 not `0` or `255`, the size is 1 to 1,048,576 (1 to 4,096 for a profile),
 the title is valid UTF-8, and, for a profile or a program, the title is a
 valid display name (section 4.6). Clients and relays discard invalid
@@ -212,9 +273,15 @@ received first is kept.
   subscribed feed whose size is at most 16,384 bytes (the user may change
   this limit), it gets the blob without being asked. This applies to
   profile and document entries too, not to programs (below) or to kinds
-  this revision does not define (section 4.2). If the blob's length differs from the
-  entry's size, the blob is not associated with the entry. Larger blobs
-  are fetched only on request.
+  this revision does not define (section 4.2). Larger blobs are fetched
+  only on request.
+- **A blob whose length differs from the entry's size** is not
+  associated with the entry: the client treats the entry as not having
+  its blob (it is not shown as downloaded, is not scanned for prefetch
+  and is not downloaded again automatically); opening the entry should
+  say that its blob does not match. The blob is still valid by its ID:
+  the client may keep it or discard it, and following an article link
+  to its ID shows it like any other blob.
 - **Programs** (for a client that runs them) are downloaded differently:
   once a subscribed feed is caught up (section 4.3), and after that
   whenever one of its program entries arrives, the client gets the image
@@ -227,8 +294,10 @@ received first is kept.
   the text for article links (`terse:` and 64 lowercase hexadecimal
   digits, not preceded by an ASCII letter or digit and not followed by
   one, `ARTICLE.md` section 4.1; also the targets of links with text),
-  takes the first 8 distinct ones whose blobs it does not hold and is not
-  already fetching, and gets them. The scan may be a plain scan of the
+  takes the first 8 distinct ones, in the order of the text, whose blobs
+  it does not hold and is not already fetching, and gets each of those 8
+  that the two rules below do not skip (a link so skipped still counts
+  as one of the 8; one held or being fetched does not). The scan may be a plain scan of the
   bytes that does not parse the article's blocks (so that it also finds
   the link forms in code spans, which are not links when the article is
   shown): prefetch only fetches ahead of time. It skips a link when an
@@ -247,7 +316,10 @@ received first is kept.
   document entries (kinds 1 and 4), not profiles, programs or kinds this
   revision does not define.
   Unsubscribing removes a feed's entries from the timeline but not from
-  the record; subscribing again puts them back where they were.
+  the record; subscribing again puts them back where they were. The
+  timeline holds documents because a machine host's programs read it
+  (section 7); a client that does not open documents may leave them out
+  of the timeline it shows, or show them as something it cannot open.
 - **Publishing** an article or a document (when the user asks; a machine
   host also lets programs ask, section 7): the client puts the blob, then
   signs and publishes an entry with the next `seq` (one more than the
@@ -281,7 +353,7 @@ makes the document invalid. Fields in v0:
 | Field | Value |
 |---|---|
 | `listed` | `yes`: the name may be found by search (section 4.7). Any other value, or no `listed` line, means not listed. |
-| `relay` | A `ws://` or `wss://` URL of a relay where the author publishes. Zero to four lines; readers take the first four that are URLs and skip other values. |
+| `relay` | A `ws://` or `wss://` URL of a relay where the author publishes. Zero to four lines; readers take the first four that are URLs and skip other values. A value is a URL here if it starts with `ws://` or `wss://` (lowercase), what follows is not empty and does not start with `/`, and it holds no control character (U+0000–U+001F, U+007F–U+009F) and no whitespace (the White_Space characters listed above). Whether its host may be used is section 5.1's question. |
 
 Unknown fields are ignored. A client that writes a profile for its user
 puts a `relay` line for each of its relays that is not a loopback
@@ -393,8 +465,14 @@ names compare without regard to case. The address of an article link is
 
 **A malformed address.** A client refuses an address that does not match
 this grammar when it is typed or given to it (the whole address is
-invalid, hints included: it does not subscribe to the key alone); it may
-ignore blanks around it and take the link form `terse:feed/<address>`.
+invalid, hints included: it does not subscribe to the key alone). As
+typing aids it may ignore blanks around it, take the link form
+`terse:feed/<address>`, and take a key written with capital hexadecimal
+digits (it then uses the key in lowercase); it need not. A hint's host
+ends at the first `:` that is not inside brackets, so an IPv6 address
+without brackets is malformed. The reasons named in
+`vectors/addresses.txt` show one order of checking; an implementation
+that refuses the same addresses for other reasons conforms.
 In an article a malformed hint list never makes the link invalid: the
 link is then the key alone and the rest is text (`ARTICLE.md` section
 4.1), so an article reads the same in a reader of this revision as in
@@ -406,17 +484,28 @@ entry received through one is verified like any other (section 4.2).
 - Subscribing with an address, the client keeps the hints with the
   subscription (a newer address for a feed already subscribed replaces
   them) and subscribes on its own relays as section 4.4 says.
-- If none of its own relays holds an entry of the feed (every connected
-  one answers the subscribe with `highest` 0, section 4.3, or it has no
-  relay, or none can be reached), it also follows the feed on the hinted
-  relays, at most two: it connects to them as to feed relays (section
-  5.1: the same refusal of loopback, private and link-local addresses,
-  checked when connecting, a name resolved once; they count towards the
-  16 connections; turning feed relays off turns hints off too), and
-  subscribes to that feed there.
-- As soon as the feed's profile in force has `relay` lines (section 4.6),
-  the hints are not used (the client keeps them): the feed relays of
-  section 5.1 take their place.
+- If none of its own relays holds an entry of the feed, it also follows
+  the feed on the hinted relays, at most two: it connects to them as to
+  feed relays (section 5.1: the same refusal of loopback, private and
+  link-local addresses, checked when connecting, a name resolved once;
+  they count towards the 16 connections; turning feed relays off turns
+  hints off too), and subscribes to that feed there. None of its own
+  relays holds an entry of the feed when it has no own relay; or the
+  last attempt to connect to each own relay failed; or at least one own
+  relay is connected and every connected one has answered the feed's
+  subscribe with `highest` 0 (section 4.3) or refused it. An own relay
+  that is still connecting does not hold this up, and the client does
+  not wait for one.
+- Once it follows a feed on its hints, it goes on doing so, with one
+  exception: when an own relay answers a subscribe for the feed with
+  `highest` above 0 (after a reconnection, for example), the client
+  stops following the feed on the hinted relays (it unsubscribes there,
+  or closes a connection that serves nothing else) and does not use the
+  hints again until the feed is unsubscribed and subscribed again.
+- While the feed's profile in force names usable relays (sections 4.6,
+  5.1), the hints are not used (the client keeps them): the feed relays
+  of section 5.1 take their place. If a later profile names none, the
+  hints are used again as above.
 - A client tells its user which feeds it follows through a hinted relay
   and, before subscribing with hints on someone's behalf (a link, a
   program), that it will connect to the relays they name.
@@ -448,8 +537,20 @@ checked, without resolving the name again. A client connects to all its
 relays and, when a connection fails or drops, tries again after 1 s,
 doubling the wait up to 30 s. A relay that is still connecting does not
 hold up requests: they go to the relays that are connected. Only while
-none is connected does a request wait, for the first connection (and
-briefly for the others).
+none is connected does a request wait: if none is connecting either, it
+fails at once (a get: not found); otherwise it waits until none is
+still connecting, or until at least one is connected and 200 ms have
+passed since the request began to wait, whichever comes first, and then
+goes to the relays connected then.
+
+Own relays come first within the 16 connections; which feed relays get
+the rest is the client's choice. A feed's relays are worked out again
+whenever its profile in force, or that profile's document, changes, and
+when the feed is subscribed or unsubscribed: a relay no longer named
+for a feed stops serving it (the client unsubscribes from the feed
+there, or closes the connection if it serves no other feed), and newly
+named ones are added. A profile in force whose document the client does
+not hold (yet) names no relays.
 
 - **Put and publish** go to every connected relay. They succeed when at
   least one relay accepts. When publishing an article, the entry is
@@ -459,11 +560,17 @@ briefly for the others).
   profile or by its address's hints), each with `after` set to the
   highest `seq` the client holds. An entry
   received from several relays is stored once (the first received of a
-  `seq` wins, section 4.2).
+  `seq` wins, section 4.2). A pushed entry is kept if it is a valid
+  entry of a feed the client subscribes to, whichever of its relays sent
+  it; entries of other feeds are ignored.
 - **Get** asks the connected relays in turn: first the feed relays named in
   the profile in force of a feed with an entry pointing at the blob, then
-  the rest, two at a time. The blob is not found only when every connected
-  relay has said so or failed.
+  the rest in the client's order, with at most two requests outstanding:
+  as soon as one relay answers without the blob (not found, a blob that
+  fails the check of section 2, or no answer within 10 s, which counts as
+  a failure), the next is asked. The first blob that passes the check is
+  the answer. The blob is not found only when every connected relay has
+  said so or failed.
 - **Find** and **lookup** ask every connected relay (sections 4.7, 4.8).
 
 ### 5.2 Relays that mirror each other
@@ -525,6 +632,10 @@ A reading client **must**:
 - show a feed's name only with its key or a short form of it beside it
   (section 4.6), and show the profile in force's display name, or the
   user's nickname, as section 4.6 says.
+
+A reading client may be one program or two: a node that does the
+network side and a reader that shows articles, talking over a local
+socket (`LOCAL.md`); the pair is then the reading client.
 
 A reading client **may**:
 

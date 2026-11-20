@@ -6,10 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
+	"tersereader/internal/article"
 	"tersereader/internal/client"
 	"tersereader/internal/nodeapi"
 	"tersereader/internal/store"
@@ -103,10 +103,12 @@ func (n *Node) Changed() <-chan struct{} { return n.changed }
 func (n *Node) Log() <-chan string       { return n.logs }
 
 func (n *Node) entry(e *terse.Entry) nodeapi.Entry {
-	_, held := n.st.BlobForEntry(e)
+	b, held := n.st.BlobForEntry(e)
+	full := !article.BasicText([]byte(e.Title)) || held && e.Kind == terse.KindArticle && !article.BasicText(b)
 	return nodeapi.Entry{
 		Feed: e.KeyHex(), Label: n.st.Label(e.Key), Seq: e.Seq, Time: e.Time, Kind: e.Kind,
 		Size: e.Size, Blob: e.BlobHex(), Title: e.Title, Held: held,
+		Arrival: e.Arrival, Name: n.st.Name(e.Key), FullText: full, Raw: e.Raw,
 	}
 }
 
@@ -119,7 +121,8 @@ func (n *Node) Timeline() []nodeapi.Entry {
 }
 
 func (n *Node) feed(a terse.Address, withEntries bool) nodeapi.Feed {
-	f := nodeapi.Feed{Key: a.KeyHex(), Address: a.String(), Label: n.st.Label(a.Key)}
+	f := nodeapi.Feed{Key: a.KeyHex(), Address: a.String(), Label: n.st.Label(a.Key), Name: n.st.Name(a.Key)}
+	f.Nickname = n.st.Nickname(a.Key) != ""
 	if sb, ok := n.st.Subscribed(a.Key); ok {
 		f.Subscribed = true
 		if len(a.Hints) == 0 {
@@ -277,8 +280,11 @@ func (n *Node) Relays() []nodeapi.Relay {
 func (n *Node) ConfiguredRelays() []string { return n.st.Relays() }
 
 func (n *Node) SetRelays(urls []string) error {
+	if len(urls) > 8 {
+		return errors.New("at most eight relays")
+	}
 	for _, u := range urls {
-		if !strings.HasPrefix(u, "ws://") && !strings.HasPrefix(u, "wss://") {
+		if !terse.IsRelayURL(u) {
 			return fmt.Errorf("a relay is a ws:// or wss:// URL: %s", u)
 		}
 	}

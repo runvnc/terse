@@ -53,6 +53,18 @@ discard every one of them. The valid entry `unknown-kind-9` is of a kind
 NETWORK.md does not define: a relay must store and pass it on like any
 other, and a client keep or skip it without error and not open it.
 
+Strict verification (NETWORK.md 4.2). An ordinary Ed25519 verification
+function accepts some of the invalid entries; these test each check that
+strict verification adds: `small-order-key`, `small-order-key-signed` and
+`small-order-key-order-8-signed` (a feed key of small order; the last two
+with signatures that satisfy the equation, as anyone can make for such a
+key), `non-canonical-key` (a key whose y is p + 3: no secret is known for
+it, so this tests the key check), `small-order-r` (R the neutral point,
+the equation holding), `non-canonical-r` (R written as y = p + 1),
+`mixed-order-r` (the equation holds only multiplied by 8: verification is
+cofactorless) and `non-canonical-signature` (S + L, which still passes a
+check of S's top three bits only).
+
 profiles.txt (NETWORK.md section 4.6)
 -------------------------------------
 Records `name <hex>`: a title's bytes, `valid` (whether they are a
@@ -74,7 +86,9 @@ its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
 shortest form), the port (7878 if the hint names none) and the relay's
 URL. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
-digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1),
+digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
+`key-not-canonical` is a point of large order written as y = p + 3, and
+`key-mixed-order`, which is valid, the test key plus a point of order 8),
 `empty-hint`, `too-many-hints`, `hint-too-long`, `bad-name`, `bad-ipv4`
 (also a name whose last label holds no letter), `bad-ipv6` or
 `bad-port`. A client refuses every invalid address typed or given to it
@@ -94,6 +108,19 @@ of its own). Each message is one binary WebSocket message. The entries
 are those of entries.txt. A relay that answers the client messages in
 this order must send exactly the `r>` messages (the test suite checks
 this against the Terse relay).
+
+local-session.txt (LOCAL.md)
+----------------------------
+The messages of one session between a reader and a local node in the
+state the file's first comment describes, in the format of
+relay-session.txt: `c>` from the reader, `n>` from the node. Each line
+is one message without its 4-byte length (LOCAL.md 2 frames every
+message with one). A node that answers the reader's messages in this
+order must send the `n>` messages, with two allowances: a pushed message
+(`C0h`, `C1h`) may come between any two replies or not at all, so a
+replay skips pushes; and a refusal's reason (after status 3 in a reply
+`A0h` to `ABh`) is text for people, so only the bytes up to the status
+are compared.
 
 articles/ (ARTICLE.md)
 ----------------------

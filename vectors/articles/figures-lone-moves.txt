@@ -1,0 +1,5 @@
+```path 50 50
+M1 1 M2 2 L3 3
+fill #000 M5 5 stroke fg M6 6 L7 7 M8 8
+M9 9
+```

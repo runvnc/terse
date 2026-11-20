@@ -176,6 +176,7 @@ func (s *Store) index(e *terse.Entry) bool {
 	}
 	m[e.Seq] = e
 	s.entries = append(s.entries, e)
+	e.Arrival = uint32(len(s.entries))
 	s.byBlob[e.Blob] = append(s.byBlob[e.Blob], e)
 	return true
 }
@@ -287,6 +288,13 @@ func (s *Store) Profile(key [32]byte) (terse.Profile, bool) {
 		return terse.Profile{}, false
 	}
 	return terse.ParseProfile(b)
+}
+
+// Nickname is the user's nickname for a feed, or "".
+func (s *Store) Nickname(key [32]byte) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.nick[key]
 }
 
 // Name is the name shown for a feed: the user's nickname, else the

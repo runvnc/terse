@@ -1,0 +1,113 @@
+# Terse test vectors: a session between a reader and a local node (LOCAL.md).
+# Format: vectors/README. The node at the start: no relays; it has stored the
+# entries `article` (arrival 1) and `profile` (arrival 2) of entries.txt and
+# holds both their blobs; it subscribes to the test feed, by its bare key; no
+# nicknames.
+
+# Hello, req 1: version 0, no token (a Unix socket)
+c> 20010000000000
+
+# Hello reply, req 1: done, version 0, flags 0 (no find or lookup)
+n> a001000000010000
+
+# Subscriptions, req 2
+c> 2302000000
+
+# Subscriptions reply, req 2: done, 1 feed: the test key, subscribed, named "Alice" by its profile, no hints, no relays, no description
+n> a30200000001010003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80105416c696365000000000000
+
+# Timeline, req 3: before 0 (from the newest), at most 10
+c> 2203000000000000000a00
+
+# Timeline reply, req 3: done, 1 record: arrival 1, held, "Alice", the entry `article` (the profile is not in the timeline)
+n> a203000000010100010000000105416c696365b20003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80100000000f15365010d0000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe800000000000000000000000000000000000000000000000000000000000000000548656c6c6ffad3de68a1e3ee879d622f7efefc267d0e1778db22ae4fef89f2070b50c892723189587ecfa3cc3dba997633b35eb5793a310578e40d1a4500cceea6ad9f860c
+
+# Held, req 4: the blob of `article`
+c> 2104000000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe8
+
+# Held reply, req 4: done, the blob
+n> a1040000000148656c6c6f2c20546572736521
+
+# Held, req 5: the ID of "missing"
+c> 2105000000fd689a4b55c242d60d71f0aed4a0ecb2cf4da6860c2b9c755f4ee68c08d38fcf
+
+# Held reply, req 5: not found
+n> a10500000002
+
+# Get, req 6: the ID of "missing" (the relay protocol's Get)
+c> 0106000000fd689a4b55c242d60d71f0aed4a0ecb2cf4da6860c2b9c755f4ee68c08d38fcf
+
+# Get reply, req 6: not found (the node has no relay, so at once)
+n> 810600000002
+
+# Title, req 7: the blob of `article`, size 13
+c> 2b07000000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe80d000000
+
+# Title reply, req 7: done, "Hello"
+n> ab07000000010548656c6c6f
+
+# Title, req 8: the same blob, size 14 (no entry says so)
+c> 2b08000000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe80e000000
+
+# Title reply, req 8: not found
+n> ab0800000002
+
+# Nickname, req 9: the test key, "Al"
+c> 270900000003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b802416c
+
+# Nickname reply, req 9: done
+n> a70900000001
+
+# Changed (pushed; pushes may come between any two replies)
+n> c0
+
+# Feed, req 10: with entries, the test key
+c> 240a000000014030336131303762666633636531306265316437306464313865373462633039393637653464363330396261353064356631646463383636343132353533316238
+
+# Feed reply, req 10: done, the feed (subscribed, a nickname: "Al"), 2 records in increasing seq: `article` and `profile`, both held
+n> a40a0000000103a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80302416c0000000000000200010000000102416cb20003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80100000000f15365010d0000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe800000000000000000000000000000000000000000000000000000000000000000548656c6c6ffad3de68a1e3ee879d622f7efefc267d0e1778db22ae4fef89f2070b50c892723189587ecfa3cc3dba997633b35eb5793a310578e40d1a4500cceea6ad9f860c020000000102416cb20003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8020000003cf15365020c0000c87e03f4b03f250e11c1b24a410d44e17d5de105bab331c50483f8ce0369e33e000000000000000000000000000000000000000000000000000000000000000005416c69636506d9d2995b8817278f72f8bad23e05a7f4c9e2a2718ef0864d86c1f23834168dc8dfcb7251b0b9ebf869d42e285777ab09aa124b544e5676456cfe36cbe58f0e
+
+# Subscribe, req 11: the other test key
+c> 250b0000004032396163626165313431626363616630623232653161393464333464306263373336316535323664306266653132633839373934626339333232393636646437
+
+# Subscribe reply, req 11: done, new
+n> a50b0000000101
+
+# Subscribe, req 12: "not an address"
+c> 250c0000000e6e6f7420616e2061646472657373
+
+# Subscribe reply, req 12: refused, with a reason (its text is not compared)
+n> a50c00000003116d616c666f726d65642061646472657373
+
+# Unsubscribe, req 13: the other test key
+c> 260d00000029acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7
+
+# Unsubscribe reply, req 13: done
+n> a60d00000001
+
+# Relays, req 14
+c> 280e000000
+
+# Relays reply, req 14: done, none
+n> a80e0000000100
+
+# Set relays, req 15: "http://relay.example"
+c> 290f0000000114687474703a2f2f72656c61792e6578616d706c65
+
+# Set relays reply, req 15: refused (not a relay URL)
+n> a90f000000030f6e6f7420612072656c61792055524c
+
+# Timeline, req 16: before 1, at most 10
+c> 2210000000010000000a00
+
+# Timeline reply, req 16: done, no records
+n> a210000000010000
+
+# Type 3Fh, req 17: not a local message; the node ignores it (no reply)
+c> 3f11000000
+
+# Nickname, req 18: the test key, empty (removes it)
+c> 271200000003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b800
+
+# Nickname reply, req 18: done
+n> a71200000001

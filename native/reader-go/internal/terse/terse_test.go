@@ -115,6 +115,33 @@ func TestEntryVectors(t *testing.T) {
 	}
 }
 
+// The strict verification vectors are not refused by an ordinary Ed25519
+// verifier (the standard library's): each of these satisfies the equation
+// it checks, so VerifyStrict's own checks are what refuses them.
+func TestStrictVectorsNeedStrictVerification(t *testing.T) {
+	lenient := map[string]bool{"small-order-r": true, "small-order-key-signed": true, "small-order-key-order-8-signed": true}
+	strict := map[string]bool{"non-canonical-r": true, "mixed-order-r": true, "non-canonical-key": true}
+	seen := 0
+	for _, r := range load(t, "entries.txt") {
+		if r.Type != "entry" || !(lenient[r.Name] || strict[r.Name]) {
+			continue
+		}
+		seen++
+		raw := unhex(t, field(t, r, "bytes"))
+		n := len(raw) - 64
+		msg := append([]byte("terse-entry-0"), raw[:n]...)
+		if got := ed25519.Verify(ed25519.PublicKey(raw[:32]), msg, raw[n:]); got != lenient[r.Name] {
+			t.Errorf("entry %s: the standard verifier says %v", r.Name, got)
+		}
+		if VerifyStrict(raw[:32], msg, raw[n:]) {
+			t.Errorf("entry %s: VerifyStrict accepts it", r.Name)
+		}
+	}
+	if seen != len(lenient)+len(strict) {
+		t.Fatalf("found %d of the strict verification vectors", seen)
+	}
+}
+
 func TestDisplayNames(t *testing.T) {
 	for _, r := range load(t, "profiles.txt") {
 		if r.Type != "name" {

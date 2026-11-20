@@ -41,7 +41,8 @@ const (
 	maxConns     = 16
 	maxOwn       = 8
 	prefetchMax  = 8
-	getTimeout   = 30 * time.Second
+	getTimeout   = 10 * time.Second       // a relay that has not answered a get by then has failed
+	getGrace     = 200 * time.Millisecond // how long a request waits for more relays once one is up
 	dialTimeout  = 10 * time.Second
 	firstBackoff = time.Second
 	maxBackoff   = 30 * time.Second
@@ -58,17 +59,24 @@ type subState struct {
 	caughtUp bool
 }
 
+// Why a feed relay serves a feed: its profile in force names the relay,
+// or the relay is a hint of the feed's address (or both).
+const (
+	viaProfile uint8 = 1 << iota
+	viaHint
+)
+
 type conn struct {
-	url  string
-	own  bool
-	hint bool // a feed relay taken from an address's hints
-	cl   *Client
+	url string
+	own bool
+	cl  *Client
 
 	// guarded by cl.mu
-	feeds     map[[32]byte]bool // feeds a feed relay serves (own relays serve all)
-	ws        *ws.Conn
-	connected bool
-	tried     bool // a connection attempt has finished, one way or the other
+	feeds      map[[32]byte]uint8 // feeds a feed relay serves, and why (own relays serve all)
+	ws         *ws.Conn
+	connected  bool
+	connecting bool // a connection attempt is under way
+	tried      bool // a connection attempt has finished, one way or the other
 	refused   bool // its host is refused (NETWORK.md 5.1): never connected
 	nextReq   uint32
 	pending   map[uint32]chan *terse.Reply
@@ -93,8 +101,14 @@ type Client struct {
 	work     int // download jobs queued or running
 	jobs     chan job
 	changed  chan struct{}
-	anyConn  chan struct{} // closed when a first connection is made
-	anyOnce  sync.Once
+	wake     chan struct{} // closed (and replaced) whenever a connection's state changes
+
+	// NETWORK.md 4.9, per subscribed feed (guarded by mu): hintsOn, the
+	// hints are in use (they stay so); heldOnOwn, an own relay answered a
+	// subscribe with highest > 0, so the hints are not used again until
+	// the feed is unsubscribed.
+	hintsOn   map[[32]byte]bool
+	heldOnOwn map[[32]byte]bool
 }
 
 type job struct {
@@ -113,8 +127,10 @@ func New(st *store.Store, opt Options) *Client {
 		st: st, opt: opt, ctx: ctx, cancel: cancel,
 		fetching: map[[32]byte]bool{},
 		jobs:     make(chan job, 4096),
-		changed:  make(chan struct{}, 1),
-		anyConn:  make(chan struct{}),
+		changed:   make(chan struct{}, 1),
+		wake:      make(chan struct{}),
+		hintsOn:   map[[32]byte]bool{},
+		heldOnOwn: map[[32]byte]bool{},
 	}
 }
 
@@ -143,7 +159,7 @@ func (c *Client) Start() {
 	}
 	c.mu.Lock()
 	for _, u := range relays {
-		c.addConnLocked(u, true, false)
+		c.addConnLocked(u, true)
 	}
 	c.mu.Unlock()
 	for i := 0; i < 3; i++ {
@@ -189,7 +205,13 @@ func (c *Client) findConnLocked(u string) *conn {
 	return nil
 }
 
-func (c *Client) addConnLocked(u string, own, hint bool) *conn {
+// connStateLocked wakes the requests waiting for a connection (cl.mu held).
+func (c *Client) connStateLocked() {
+	close(c.wake)
+	c.wake = make(chan struct{})
+}
+
+func (c *Client) addConnLocked(u string, own bool) *conn {
 	if cn := c.findConnLocked(u); cn != nil {
 		return cn
 	}
@@ -198,8 +220,8 @@ func (c *Client) addConnLocked(u string, own, hint bool) *conn {
 		return nil
 	}
 	cn := &conn{
-		url: u, own: own, hint: hint, cl: c,
-		feeds:   map[[32]byte]bool{},
+		url: u, own: own, cl: c, connecting: true,
+		feeds:   map[[32]byte]uint8{},
 		pending: map[uint32]chan *terse.Reply{},
 		subReq:  map[uint32][32]byte{},
 		subs:    map[[32]byte]*subState{},
@@ -213,6 +235,8 @@ func (c *Client) addConnLocked(u string, own, hint bool) *conn {
 
 func (c *Client) removeConnLocked(cn *conn) {
 	c.stopConnLocked(cn)
+	cn.connecting = false
+	c.connStateLocked()
 	for i, x := range c.conns {
 		if x == cn {
 			c.conns = append(c.conns[:i], c.conns[i+1:]...)
@@ -227,7 +251,18 @@ func (cn *conn) serves(key [32]byte) bool {
 		_, ok := cn.cl.st.Subscribed(key)
 		return ok
 	}
-	return cn.feeds[key]
+	return cn.feeds[key] != 0
+}
+
+// hint reports whether a feed relay serves some feed because of a hint
+// (cl.mu held).
+func (cn *conn) hint() bool {
+	for _, v := range cn.feeds {
+		if v&viaHint != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // --- connections ---
@@ -241,11 +276,17 @@ func (cn *conn) run() {
 			return
 		default:
 		}
-		w, err := cn.dial()
 		cl := cn.cl
+		cl.mu.Lock()
+		cn.connecting = !cn.stopped
+		cl.connStateLocked()
+		cl.mu.Unlock()
+		w, err := cn.dial()
 		if err != nil {
 			cl.mu.Lock()
 			cn.tried = true
+			cn.connecting = false
+			cl.connStateLocked()
 			cl.mu.Unlock()
 			cl.opt.Logf("%s: %v", cn.url, err)
 			cl.afterConnChange()
@@ -265,20 +306,23 @@ func (cn *conn) run() {
 		}
 		backoff = firstBackoff
 		cl.mu.Lock()
+		cn.connecting = false
 		if cn.stopped {
+			cl.connStateLocked()
 			cl.mu.Unlock()
 			w.Close()
 			return
 		}
 		cn.ws, cn.connected, cn.tried = w, true, true
+		cl.connStateLocked()
 		cl.mu.Unlock()
-		cl.anyOnce.Do(func() { close(cl.anyConn) })
 		cl.opt.Logf("connected to %s", cn.url)
 		cn.subscribeAll()
 		cn.readLoop(w)
 		cl.mu.Lock()
 		cn.connected = false
 		cn.ws = nil
+		cl.connStateLocked()
 		for req, ch := range cn.pending {
 			close(ch)
 			delete(cn.pending, req)
@@ -421,6 +465,7 @@ func (cn *conn) readLoop(w *ws.Conn) {
 			key, ok := cn.subReq[r.Req]
 			delete(cn.subReq, r.Req)
 			s := cn.subs[key]
+			held := false
 			if ok && s != nil {
 				s.replied = true
 				if r.Status != terse.StatusDone {
@@ -430,11 +475,16 @@ func (cn *conn) readLoop(w *ws.Conn) {
 					if r.Highest <= s.after {
 						s.caughtUp = true
 					}
+					held = cn.own && r.Highest > 0
 				}
 			}
 			cn.cl.mu.Unlock()
-			if ok {
+			if held {
+				cn.cl.heldOnOwnRelay(key)
+			} else if ok {
 				cn.cl.evaluateHints(key)
+			}
+			if ok {
 				cn.cl.signal()
 			}
 		case terse.MsgGetReply:
@@ -455,10 +505,9 @@ func (cn *conn) readLoop(w *ws.Conn) {
 func (c *Client) handleEntry(cn *conn, raw []byte) {
 	e, err := terse.ParseEntry(raw)
 	if err == nil {
-		c.mu.Lock()
-		serves := cn.serves(e.Key)
-		c.mu.Unlock()
-		if serves {
+		// A valid entry of a subscribed feed is kept whichever relay
+		// pushed it; entries of other feeds are ignored.
+		if _, subscribed := c.st.Subscribed(e.Key); subscribed {
 			added, err := c.st.AddEntry(e)
 			if err != nil {
 				c.opt.Logf("store: %v", err)
@@ -562,8 +611,11 @@ func (c *Client) runJob(j job) {
 	}
 }
 
-// prefetch gets the first 8 distinct article links of an automatically
-// downloaded article that are not held or being fetched (NETWORK.md 4.4).
+// prefetch takes the first 8 distinct article links of an automatically
+// downloaded article (in text order) whose blobs are neither held nor
+// being fetched, and fetches each of them that no entry held puts over the
+// automatic download limit or names as a program (NETWORK.md 4.4). Links
+// skipped that way count towards the 8.
 func (c *Client) prefetch(text []byte) {
 	n := 0
 	for _, id := range ScanArticleLinks(text) {
@@ -579,17 +631,15 @@ func (c *Client) prefetch(text []byte) {
 		if busy {
 			continue
 		}
+		n++
 		skip := false
 		for _, e := range c.st.EntriesForBlob(id) {
 			if e.Kind == terse.KindProgram || int(e.Size) > c.opt.AutoLimit {
 				skip = true
 			}
 		}
-		if skip {
-			continue
-		}
-		if c.enqueue(job{id: id, prefetch: true}) {
-			n++
+		if !skip {
+			c.enqueue(job{id: id, prefetch: true})
 		}
 	}
 }
@@ -649,69 +699,115 @@ func (c *Client) Get(id [32]byte) ([]byte, error) {
 	return c.get(id, 0)
 }
 
-// get asks the connected relays in turn, feed relays of the feeds with
-// an entry pointing at the blob first, then the rest, two at a time
-// (NETWORK.md 5.1). A blob over limit (if not 0) is discarded.
+// get asks the connected relays in turn, the relays named by the profile
+// in force of a feed with an entry pointing at the blob first, then the
+// rest, with at most two requests outstanding: as soon as one answers
+// without the blob, the next is asked (NETWORK.md 5.1). The first
+// verified blob wins. A blob over limit (if not 0) is discarded.
 func (c *Client) get(id [32]byte, limit int) ([]byte, error) {
+	if err := c.waitForRelays(); err != nil {
+		return nil, err
+	}
 	order := c.getOrder(id)
 	if len(order) == 0 {
-		// Only while none is connected does a request wait, for the first
-		// connection and briefly for the others.
-		select {
-		case <-c.anyConn:
-			time.Sleep(300 * time.Millisecond)
-		case <-time.After(dialTimeout):
-		case <-c.ctx.Done():
-			return nil, c.ctx.Err()
+		return nil, ErrNotFound
+	}
+	results := make(chan []byte, len(order))
+	next, outstanding := 0, 0
+	ask := func() {
+		cn := order[next]
+		next++
+		outstanding++
+		go func() { results <- cn.getOne(id) }()
+	}
+	for next < len(order) && outstanding < 2 {
+		ask()
+	}
+	var found []byte
+	for outstanding > 0 {
+		b := <-results
+		outstanding--
+		if b != nil {
+			found = b
+			break
 		}
-		order = c.getOrder(id)
-		if len(order) == 0 {
-			return nil, errors.New("no relay connected")
+		if next < len(order) {
+			ask()
 		}
 	}
-	for i := 0; i < len(order); i += 2 {
-		batch := order[i:min(i+2, len(order))]
-		results := make(chan []byte, len(batch))
-		for _, cn := range batch {
-			go func(cn *conn) { results <- cn.getOne(id) }(cn)
-		}
-		var found []byte
-		for range batch {
-			if b := <-results; b != nil && found == nil {
-				found = b
-			}
-		}
-		if found != nil {
-			if limit > 0 && len(found) > limit {
-				return nil, fmt.Errorf("%d bytes, over the automatic download limit", len(found))
-			}
-			if err := c.st.PutBlob(id, found); err != nil {
-				return nil, err
-			}
-			c.signal()
-			return found, nil
-		}
+	if found == nil {
+		return nil, ErrNotFound
 	}
-	return nil, ErrNotFound
+	if limit > 0 && len(found) > limit {
+		return nil, fmt.Errorf("%d bytes, over the automatic download limit", len(found))
+	}
+	if err := c.st.PutBlob(id, found); err != nil {
+		return nil, err
+	}
+	c.signal()
+	return found, nil
 }
 
-func (c *Client) getOrder(id [32]byte) []*conn {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	first := map[*conn]bool{}
-	for _, e := range c.st.EntriesForBlob(id) {
+// waitForRelays holds a request up only while no relay is connected: with
+// none connecting either, it fails at once (ErrNotFound); otherwise it
+// waits until none is still connecting, or until one is connected and
+// getGrace has passed since it started waiting, whichever comes first.
+func (c *Client) waitForRelays() error {
+	start := time.Now()
+	for {
+		c.mu.Lock()
+		connected, connecting := false, false
 		for _, cn := range c.conns {
-			if !cn.own && cn.feeds[e.Key] {
-				first[cn] = true
+			connected = connected || cn.connected
+			connecting = connecting || cn.connecting
+		}
+		wake := c.wake
+		c.mu.Unlock()
+		if !connecting {
+			if connected {
+				return nil
+			}
+			return ErrNotFound
+		}
+		var timer <-chan time.Time
+		if connected {
+			left := getGrace - time.Since(start)
+			if left <= 0 {
+				return nil
+			}
+			timer = time.After(left)
+		}
+		select {
+		case <-wake:
+		case <-timer:
+			return nil
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		}
+	}
+}
+
+// getOrder lists the connected relays for a get of id: the preferred ones
+// (named by the relay lines of the profile in force of a feed with an
+// entry pointing at the blob) first, then the rest, each in the client's
+// order.
+func (c *Client) getOrder(id [32]byte) []*conn {
+	named := map[string]bool{}
+	for _, e := range c.st.EntriesForBlob(id) {
+		if p, ok := c.st.Profile(e.Key); ok {
+			for _, u := range p.Relays {
+				named[normURL(u)] = true
 			}
 		}
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var a, b []*conn
 	for _, cn := range c.conns {
 		if !cn.connected {
 			continue
 		}
-		if first[cn] {
+		if named[normURL(cn.url)] {
 			a = append(a, cn)
 		} else {
 			b = append(b, cn)
@@ -719,6 +815,8 @@ func (c *Client) getOrder(id [32]byte) []*conn {
 	}
 	return append(a, b...)
 }
+
+func normURL(u string) string { return strings.TrimSuffix(u, "/") }
 
 // getOne asks one relay; nil if it has not got the blob, it fails, or the
 // bytes do not hash to the ID (then it counts as not found there).
@@ -789,6 +887,10 @@ func (c *Client) Unsubscribe(key [32]byte) error {
 	if _, err := c.st.Unsubscribe(key); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	delete(c.hintsOn, key)
+	delete(c.heldOnOwn, key)
+	c.mu.Unlock()
 	for _, cn := range conns {
 		cn.unsubscribe(key)
 		c.mu.Lock()
@@ -804,26 +906,60 @@ func (c *Client) Unsubscribe(key [32]byte) error {
 	return nil
 }
 
-// addFeedRelay follows a feed on a feed relay.
-func (c *Client) addFeedRelay(u string, key [32]byte, hint bool) {
+// addFeedRelay follows a feed on a feed relay, for the reason via.
+func (c *Client) addFeedRelay(u string, key [32]byte, via uint8) {
 	c.mu.Lock()
+	if via == viaHint && (c.heldOnOwn[key] || !c.hintsOn[key]) {
+		c.mu.Unlock()
+		return
+	}
 	for _, cn := range c.conns {
-		if cn.url == u && cn.own {
+		if cn.own && normURL(cn.url) == normURL(u) {
 			c.mu.Unlock()
 			return
 		}
 	}
-	cn := c.addConnLocked(u, false, hint)
+	cn := c.addConnLocked(u, false)
 	if cn == nil {
 		c.mu.Unlock()
 		return
 	}
-	isNew := !cn.feeds[key]
-	cn.feeds[key] = true
+	was := cn.feeds[key]
+	cn.feeds[key] = was | via
 	connected := cn.connected
 	c.mu.Unlock()
-	if isNew && connected {
+	if was == 0 && connected {
 		cn.subscribe(key)
+	}
+}
+
+// dropFeedRelays stops following a feed on the feed relays that serve it
+// for the reason via, except those keep names: a relay that no longer
+// serves the feed for any reason is unsubscribed from it, and closed when
+// it serves no feed any more.
+func (c *Client) dropFeedRelays(key [32]byte, via uint8, keep map[string]bool) {
+	c.mu.Lock()
+	var drop []*conn
+	for _, cn := range c.conns {
+		v := cn.feeds[key]
+		if cn.own || v&via == 0 || keep[cn.url] {
+			continue
+		}
+		if v &^= via; v != 0 {
+			cn.feeds[key] = v
+			continue
+		}
+		delete(cn.feeds, key)
+		drop = append(drop, cn)
+	}
+	c.mu.Unlock()
+	for _, cn := range drop {
+		cn.unsubscribe(key)
+		c.mu.Lock()
+		if len(cn.feeds) == 0 {
+			c.removeConnLocked(cn)
+		}
+		c.mu.Unlock()
 	}
 }
 
@@ -835,65 +971,113 @@ func hostOf(u string) string {
 	return p.Hostname()
 }
 
-// updateFeedRelays follows a feed on up to two relays its profile in
-// force names that are not among the user's relays; hints are then no
-// longer used for it (NETWORK.md 4.9, 5.1).
-func (c *Client) updateFeedRelays(key [32]byte) {
-	if !c.opt.FeedRelays {
-		return
-	}
-	if _, ok := c.st.Subscribed(key); !ok {
-		return
-	}
-	p, ok := c.st.Profile(key)
-	if !ok || len(p.Relays) == 0 {
-		return
-	}
+func (c *Client) ownSet() map[string]bool {
 	own := map[string]bool{}
 	for _, u := range c.ownRelays() {
-		own[strings.TrimSuffix(u, "/")] = true
+		own[normURL(u)] = true
 	}
-	n := 0
-	var chosen []string
+	return own
+}
+
+// profileRelays returns the relays the profile in force of a feed names
+// that the feed is followed on: the first two relay lines that are not
+// among the user's relays and whose host is not refused (NETWORK.md 4.9,
+// 5.1). A profile whose document is not held names none. While this list
+// is not empty, the feed's hints are not used.
+func (c *Client) profileRelays(key [32]byte) (chosen []string) {
+	p, ok := c.st.Profile(key)
+	if !ok || len(p.Relays) == 0 {
+		return nil
+	}
+	own := c.ownSet()
 	for _, u := range p.Relays {
-		if n >= 2 {
+		if len(chosen) >= 2 {
 			break
 		}
-		if own[strings.TrimSuffix(u, "/")] {
+		if own[normURL(u)] {
 			continue
 		}
 		if !c.opt.AllowPrivate && terse.RefusedHost(hostOf(u)) {
 			continue
 		}
 		chosen = append(chosen, u)
-		n++
 	}
-	// Drop the hint relays of this feed.
-	c.mu.Lock()
-	var drop []*conn
-	for _, cn := range c.conns {
-		if cn.hint && cn.feeds[key] {
-			drop = append(drop, cn)
-		}
+	return chosen
+}
+
+// updateFeedRelays recomputes, from scratch, the relays a feed is
+// followed on because its profile in force names them; relays no longer
+// named stop serving it. While it names relays to follow the feed on, the
+// hints are not used; once it names none, they come back if they were in
+// use (NETWORK.md 4.9, 5.1).
+func (c *Client) updateFeedRelays(key [32]byte) {
+	if !c.opt.FeedRelays {
+		return
 	}
-	c.mu.Unlock()
-	for _, cn := range drop {
-		cn.unsubscribe(key)
-		c.mu.Lock()
-		delete(cn.feeds, key)
-		if len(cn.feeds) == 0 {
-			c.removeConnLocked(cn)
-		}
-		c.mu.Unlock()
+	var chosen []string
+	if _, ok := c.st.Subscribed(key); ok {
+		chosen = c.profileRelays(key)
 	}
+	keep := map[string]bool{}
 	for _, u := range chosen {
-		c.addFeedRelay(u, key, false)
+		keep[u] = true
+	}
+	c.dropFeedRelays(key, viaProfile, keep)
+	for _, u := range chosen {
+		c.addFeedRelay(u, key, viaProfile)
+	}
+	if len(chosen) > 0 {
+		c.dropFeedRelays(key, viaHint, nil)
+	} else {
+		c.evaluateHints(key)
 	}
 }
 
-// evaluateHints follows a feed on its address's hints when none of the
-// user's relays holds an entry of it: every connected one answered the
-// subscribe with highest 0, or there is none, or none can be reached.
+// ownHoldNoneLocked reports whether none of the user's relays holds an
+// entry of a feed (NETWORK.md 4.9): there is no own relay; or every own
+// relay's last connection attempt failed; or one is connected and every
+// connected one answered the subscribe with highest 0 or refused it.
+// Relays still connecting do not hold the decision up (c.mu held).
+func (c *Client) ownHoldNoneLocked(key [32]byte) bool {
+	anyOwn, anyConnected, allFailed := false, false, true
+	for _, cn := range c.conns {
+		if !cn.own {
+			continue
+		}
+		anyOwn = true
+		if cn.connected {
+			anyConnected = true
+		}
+		if cn.connected || cn.connecting || !cn.tried {
+			allFailed = false
+		}
+	}
+	if !anyOwn {
+		return true
+	}
+	if !anyConnected {
+		return allFailed
+	}
+	for _, cn := range c.conns {
+		if !cn.own || !cn.connected {
+			continue
+		}
+		s := cn.subs[key]
+		if s == nil || !s.replied {
+			return false
+		}
+		if !s.refused && s.highest > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateHints follows a feed on its address's hints (at most two) when
+// none of the user's relays holds an entry of it. Once in use they stay
+// in use, unless an own relay reports entries of the feed (heldOnOwnRelay);
+// while the profile in force names relays to follow the feed on
+// (profileRelays) they are not used.
 func (c *Client) evaluateHints(key [32]byte) {
 	if !c.opt.FeedRelays {
 		return
@@ -902,41 +1086,49 @@ func (c *Client) evaluateHints(key [32]byte) {
 	if !ok || len(sb.Addr.Hints) == 0 {
 		return
 	}
-	if p, ok := c.st.Profile(key); ok && len(p.Relays) > 0 {
+	if len(c.profileRelays(key)) > 0 {
 		return
 	}
 	c.mu.Lock()
-	use := true
-	for _, cn := range c.conns {
-		if !cn.own {
-			continue
-		}
-		if !cn.tried {
-			use = false
-			break
-		}
-		if cn.connected {
-			s := cn.subs[key]
-			if s == nil || !s.replied || (s.highest > 0 && !s.refused) {
-				use = false
-				break
-			}
-		}
+	use := !c.heldOnOwn[key] && (c.hintsOn[key] || c.ownHoldNoneLocked(key))
+	if use {
+		c.hintsOn[key] = true
 	}
 	c.mu.Unlock()
 	if !use {
 		return
 	}
-	for i, h := range sb.Addr.Hints {
-		if i >= 2 {
+	own := c.ownSet()
+	n := 0
+	for _, h := range sb.Addr.Hints {
+		if n >= 2 {
 			break
+		}
+		u := h.URL()
+		if own[normURL(u)] {
+			continue
 		}
 		if !c.opt.AllowPrivate && terse.RefusedHost(h.Host) {
 			c.opt.Logf("hint %s refused: a local or private address", h.Text)
 			continue
 		}
-		c.addFeedRelay(h.URL(), key, true)
+		c.addFeedRelay(u, key, viaHint)
+		n++
 	}
+}
+
+// heldOnOwnRelay records that an own relay holds entries of a feed: the
+// feed is no longer followed on its hints, and they are not used again
+// until it is unsubscribed (NETWORK.md 4.9).
+func (c *Client) heldOnOwnRelay(key [32]byte) {
+	if _, ok := c.st.Subscribed(key); !ok {
+		return
+	}
+	c.mu.Lock()
+	c.heldOnOwn[key] = true
+	delete(c.hintsOn, key)
+	c.mu.Unlock()
+	c.dropFeedRelays(key, viaHint, nil)
 }
 
 func (c *Client) afterConnChange() {
@@ -962,7 +1154,7 @@ func (c *Client) Relays() []RelayStatus {
 	defer c.mu.Unlock()
 	var out []RelayStatus
 	for _, cn := range c.conns {
-		out = append(out, RelayStatus{cn.url, cn.own, cn.hint, cn.connected, len(cn.feeds)})
+		out = append(out, RelayStatus{cn.url, cn.own, cn.hint(), cn.connected, len(cn.feeds)})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Own && !out[j].Own })
 	return out
@@ -974,7 +1166,7 @@ func (c *Client) HintRelays(key [32]byte) []string {
 	defer c.mu.Unlock()
 	var out []string
 	for _, cn := range c.conns {
-		if cn.hint && cn.feeds[key] {
+		if cn.feeds[key]&viaHint != 0 {
 			out = append(out, cn.url)
 		}
 	}

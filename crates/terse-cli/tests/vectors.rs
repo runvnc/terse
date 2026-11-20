@@ -591,3 +591,45 @@ fn relay_session_matches_the_relay() {
     }
     assert!(sent >= 10 && received >= 10, "{sent} sent, {received} received");
 }
+
+/// entries.txt: the reference decoder and a Terse relay, as a black box,
+/// accept every valid entry and refuse every invalid one (strict
+/// verification included).
+#[test]
+fn relay_judges_entries_as_the_vectors_say() {
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+    let store = tempfile::tempdir().unwrap();
+    let relay = std::sync::Arc::new(terse_relay::Relay::new(BlobStore::open(store.path(), None).unwrap(), terse_relay::DEFAULT_FEED_CAP));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || terse_relay::serve(listener, relay));
+    let stream = TcpStream::connect(addr).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut ws = tungstenite::client::client(format!("ws://{addr}"), stream).unwrap().0;
+    let text = std::fs::read_to_string(vectors_dir().join("entries.txt")).unwrap();
+    let (mut name, mut valid) = (String::new(), None);
+    let (mut req, mut checked) = (0u32, 0);
+    for line in text.lines() {
+        if let Some(n) = line.strip_prefix("entry ") {
+            (name, valid) = (n.to_string(), None);
+        } else if let Some(v) = line.strip_prefix("  valid ") {
+            valid = Some(v == "yes");
+        } else if let Some(hex) = line.strip_prefix("  bytes ") {
+            let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+            let valid = valid.unwrap_or_else(|| panic!("{name}: no valid line"));
+            assert_eq!(terse_net::entry::decode(&bytes).is_ok(), valid, "decode: {name}");
+            req += 1;
+            ws.send(tungstenite::Message::binary(terse_net::protocol::encode_publish(req, &bytes))).unwrap();
+            let got = loop {
+                if let tungstenite::Message::Binary(b) = ws.read().unwrap() {
+                    break b.to_vec();
+                }
+            };
+            let status = if valid { 1 } else { 3 };
+            assert_eq!(got, terse_net::protocol::encode_status_reply(terse_net::protocol::PUBLISH_REPLY, req, status), "relay: {name}");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 34, "{checked} entries");
+}

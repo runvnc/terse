@@ -13,6 +13,11 @@ use crate::article_parse;
 use crate::entry::{self, Entry, Invalid, SignedEntry};
 use crate::identity::Identity;
 use crate::{blob, profile, protocol};
+use curve25519_dalek::constants::EIGHT_TORSION;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::{Identity as _, IsIdentity as _};
+use sha2::{Digest as _, Sha512};
 
 /// A file of the vectors directory: its path under the directory and its
 /// bytes.
@@ -196,7 +201,15 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
             "figures-numbers",
             fill("```path 100 100\nM10-5L.5.5 L5 5L6 6,,7,7\nM+1.03125 -0.03125 L0.96875 2.\nM2047 -2047 L-2047 2047\n```\n"),
         ),
-        ("figures-implicit-moves", fill("```path 50 50\nM10 10 L20 10 Z L20 20\nfill #000 L30 30\n```\n")),
+        (
+            "figures-width-forms",
+            fill(
+                "```path 100 100\nstroke fg 2M0 0 L10 10\nstroke #f00 +3 M20 20 L30 30\nstroke fg 2,M40 40 L50 50\n```\n\n\
+                 ```path 10 10\nstroke fg 2 3 M0 0 L1 1\n```\n\n```path 10 10\nstroke fg2 M0 0 L1 1\n```\n",
+            ),
+        ),
+        ("figures-lone-moves", fill("```path 50 50\nM1 1 M2 2 L3 3\nfill #000 M5 5 stroke fg M6 6 L7 7 M8 8\nM9 9\n```\n")),
+        ("figures-implicit-moves",fill("```path 50 50\nM10 10 L20 10 Z L20 20\nfill #000 L30 30\n```\n")),
         ("figures-empty", fill("```path 40 20\n```\n\n```path 40 20\nfill #fff stroke none\n```\n")),
         (
             "figures-size-forms",
@@ -564,6 +577,7 @@ fn entries_file() -> String {
     });
     let small = [&small[..], &b[b.len() - 64..]].concat();
     invalid_entry(&mut out, "small-order-key", &small, "the feed key is a point of small order (the neutral point)", None);
+    strict_vectors(&mut out, &unsigned(b));
     invalid_entry(&mut out, "kind-0", &with(40, &[0]), "kind 0 is reserved", Some(Invalid::Kind));
     invalid_entry(&mut out, "kind-255", &reserved_kind_entry(), "kind 255 is reserved", Some(Invalid::Kind));
     invalid_entry(&mut out, "seq-0", &with(32, &0u32.to_le_bytes()), "seq is 0", Some(Invalid::Seq));
@@ -592,6 +606,170 @@ fn entries_file() -> String {
     invalid_entry(&mut out, "truncated", &b[..b.len() - 1], "one byte short", Some(Invalid::Length));
     invalid_entry(&mut out, "too-short", &b[..100], "shorter than the fixed part", Some(Invalid::Length));
     out
+}
+
+// --- Strict verification (NETWORK.md 4.2) -----------------------------------------
+
+/// The test key's secret scalar a (RFC 8032: SHA-512 of the seed, clamped).
+fn test_scalar() -> Scalar {
+    let h = Sha512::digest(std::array::from_fn::<u8, 32, _>(|i| i as u8));
+    let mut a: [u8; 32] = h[..32].try_into().unwrap();
+    a[0] &= 248;
+    a[31] &= 127;
+    a[31] |= 64;
+    Scalar::from_bytes_mod_order(a)
+}
+
+/// k = SHA-512(R || A || M) mod L, from the bytes as written.
+fn challenge(r: &[u8; 32], a: &[u8; 32], m: &[u8]) -> Scalar {
+    let mut h = Sha512::new();
+    h.update(r);
+    h.update(a);
+    h.update(m);
+    Scalar::from_bytes_mod_order_wide(&h.finalize().into())
+}
+
+/// Whether [S]B - [k]A encodes to exactly R: the cofactorless equation
+/// that an ordinary (lenient) verifier checks, without the key and R checks.
+fn cofactorless(unsigned: &[u8], sig: &[u8]) -> bool {
+    let a: [u8; 32] = unsigned[..32].try_into().unwrap();
+    let r: [u8; 32] = sig[..32].try_into().unwrap();
+    let s = Option::<Scalar>::from(Scalar::from_canonical_bytes(sig[32..].try_into().unwrap())).unwrap();
+    let Some(ap) = CompressedEdwardsY(a).decompress() else { return false };
+    let k = challenge(&r, &a, &[entry::DOMAIN, unsigned].concat());
+    (EdwardsPoint::mul_base(&s) - k * ap).compress().to_bytes() == r
+}
+
+/// `unsigned` with the signature (R, S).
+fn with_signature(unsigned: &[u8], r: [u8; 32], s: Scalar) -> Vec<u8> {
+    [unsigned, &r[..], &s.to_bytes()[..]].concat()
+}
+
+/// The 32 bytes of y = p + d (d at most 18), the sign bit clear.
+fn y_bytes(d: u8) -> [u8; 32] {
+    // p = 2^255 - 19: ed ff … ff 7f, little-endian.
+    let mut b = [0xff; 32];
+    b[31] = 0x7f;
+    b[0] = 0xed + d;
+    b
+}
+
+/// The entries that only strict verification refuses: each satisfies, or
+/// would satisfy, what an ordinary Ed25519 verifier checks.
+fn strict_vectors(out: &mut String, u: &[u8]) {
+    let key = test_identity().feed_key();
+    let a = test_scalar();
+    assert_eq!(EdwardsPoint::mul_base(&a).compress().to_bytes(), key, "the test key's scalar");
+    let msg = |u: &[u8]| [entry::DOMAIN, u].concat();
+    let neutral = EdwardsPoint::identity().compress().to_bytes();
+
+    // R the neutral point, S = k a: [S]B - [k]A is the neutral point.
+    let k = challenge(&neutral, &key, &msg(u));
+    let e = with_signature(u, neutral, k * a);
+    assert!(cofactorless(u, &e[u.len()..]));
+    invalid_entry(
+        out,
+        "small-order-r",
+        &e,
+        "R is the neutral point (small order) and [S]B = R + [k]A holds, so an ordinary verifier accepts it: strict verification refuses a small-order R",
+        Some(Invalid::Signature),
+    );
+
+    // R a non-canonical encoding of the neutral point (y = p + 1).
+    let r = y_bytes(1);
+    assert_eq!(CompressedEdwardsY(r).decompress(), Some(EdwardsPoint::identity()));
+    let k = challenge(&r, &key, &msg(u));
+    let e = with_signature(u, r, k * a);
+    invalid_entry(
+        out,
+        "non-canonical-r",
+        &e,
+        "R is not a canonical encoding (y = p + 1, standing for the neutral point) and [S]B - [k]A is the point it stands for, so a verifier that decodes R and compares points accepts it: strict verification compares the canonical encoding of [S]B - [k]A with R's bytes",
+        Some(Invalid::Signature),
+    );
+
+    // R = [r]B + T, T of order 8; S = r + k a: only the cofactored
+    // equation ([8][S]B = [8]R + [8][k]A) holds.
+    let rs = Scalar::from_bytes_mod_order([0x5a; 32]);
+    let r = (EdwardsPoint::mul_base(&rs) + EIGHT_TORSION[1]).compress().to_bytes();
+    let k = challenge(&r, &key, &msg(u));
+    let e = with_signature(u, r, rs + k * a);
+    assert!(!cofactorless(u, &e[u.len()..]));
+    invalid_entry(
+        out,
+        "mixed-order-r",
+        &e,
+        "R has a component of order 8, so the equation holds only multiplied by 8 (cofactored): strict verification checks it without the factor",
+        Some(Invalid::Signature),
+    );
+
+    // A small-order key with a signature that satisfies the equation:
+    // [k]A is the neutral point, so R = [r]B and S = r verify, for any
+    // message, made by anyone.
+    for (name, point, what) in [
+        ("small-order-key-signed", EdwardsPoint::identity(), "the neutral point"),
+        ("small-order-key-order-8-signed", EIGHT_TORSION[1], "a point of order 8"),
+    ] {
+        let akey = point.compress().to_bytes();
+        let mut uu = u.to_vec();
+        uu[..32].copy_from_slice(&akey);
+        let mut seed = 1u8;
+        let e = loop {
+            let rs = Scalar::from_bytes_mod_order([seed; 32]);
+            let r = EdwardsPoint::mul_base(&rs).compress().to_bytes();
+            let k = challenge(&r, &akey, &msg(&uu));
+            if (k * point).is_identity() {
+                break with_signature(&uu, r, rs);
+            }
+            seed += 1;
+        };
+        assert!(cofactorless(&uu, &e[uu.len()..]));
+        let reason = format!(
+            "the feed key is {what} (small order) and the signature satisfies the equation, as anyone can make one for such a key: a valid feed key is not of small order"
+        );
+        invalid_entry(out, name, &e, &reason, Some(Invalid::Key));
+    }
+
+    // A key that is not a canonical encoding: y = p + 3, a point of large
+    // order. Nobody holds its secret, so the signature is the article's;
+    // what is tested is that the key itself is refused.
+    let mut nc = u.to_vec();
+    nc[..32].copy_from_slice(&non_canonical_key());
+    let e = [&nc[..], &hello_entry().bytes[u.len()..]].concat();
+    invalid_entry(
+        out,
+        "non-canonical-key",
+        &e,
+        "the feed key is not a canonical encoding (its y is p + 3), though it decodes to a point of large order: a valid feed key is canonical",
+        Some(Invalid::Key),
+    );
+}
+
+/// The encoding y = p + d of a point of large order, for the first d that
+/// has one (3).
+fn non_canonical_key() -> [u8; 32] {
+    for d in 0..19 {
+        let b = y_bytes(d);
+        if let Some(p) = CompressedEdwardsY(b).decompress() {
+            if !p.is_small_order() {
+                // An ordinary key decoder takes it as a key.
+                assert!(ed25519_dalek::VerifyingKey::from_bytes(&b).is_ok_and(|k| !k.is_weak()));
+                assert!(!crate::identity::valid_feed_key(&b));
+                assert_eq!(d, 3);
+                return b;
+            }
+        }
+    }
+    unreachable!()
+}
+
+/// The test key plus a point of order 8: of large order, so a valid feed
+/// key, though not in the prime-order subgroup.
+fn mixed_order_key() -> [u8; 32] {
+    let p = CompressedEdwardsY(test_identity().feed_key()).decompress().unwrap() + EIGHT_TORSION[1];
+    let b = p.compress().to_bytes();
+    assert!(!p.is_torsion_free() && crate::identity::valid_feed_key(&b));
+    b
 }
 
 // --- Profiles and names (NETWORK.md 4.6) -------------------------------------------
@@ -640,6 +818,13 @@ fn profiles_file() -> String {
             "relays",
             b"relay: ws://a.example\nrelay: http://b.example\nrelay: wss://c.example\nrelay: ws://d.example\nrelay: ws://e.example\nrelay: ws://f.example\n".to_vec(),
             "the first four that are ws:// or wss:// URLs",
+        ),
+        (
+            "relay-values",
+            "relay: ws:///x\nrelay: WS://a.example\nrelay: ws://a\u{a0}b.example\nrelay: ws://a\u{1}b.example\nrelay: ws://\nrelay: ws://b.example/terse\nrelay: wss://c.example:9000\n"
+                .as_bytes()
+                .to_vec(),
+            "a URL is ws:// or wss://, then something not starting with /, with no control or whitespace character",
         ),
         ("description-only", b"\nJust a description.\n".to_vec(), "no header lines"),
         ("no-space", b"listed:yes\n".to_vec(), "a header line without `: `"),
@@ -742,6 +927,115 @@ fn session_file() -> String {
     out
 }
 
+// --- A local node session (LOCAL.md) -------------------------------------------------
+
+/// A local message: type, `req`, then the parts.
+fn lmsg(t: u8, req: u32, parts: &[&[u8]]) -> Vec<u8> {
+    let mut m = vec![t];
+    m.extend_from_slice(&req.to_le_bytes());
+    for p in parts {
+        m.extend_from_slice(p);
+    }
+    m
+}
+
+/// `n` (1) and the bytes.
+fn short(b: &[u8]) -> Vec<u8> {
+    assert!(b.len() <= 255);
+    [&[b.len() as u8][..], b].concat()
+}
+
+/// A record of LOCAL.md 4.3: arrival, flags, name, entry.
+fn lrecord(arrival: u32, flags: u8, name: &str, entry: &[u8]) -> Vec<u8> {
+    [&arrival.to_le_bytes()[..], &[flags], &short(name.as_bytes()), &(entry.len() as u16).to_le_bytes(), entry].concat()
+}
+
+/// A feed record of LOCAL.md 4.3 for a feed with no hints, no relays and
+/// an empty description.
+fn lfeed(key: &[u8; 32], flags: u8, name: &str) -> Vec<u8> {
+    [&key[..], &[flags], &short(name.as_bytes()), &short(b""), &[0, 0, 0], &[0, 0]].concat()
+}
+
+/// The messages of a session between a reader and a node in a known state
+/// (`local-session.txt`): (direction, commentary, bytes); `c>` reader to
+/// node, `n>` node to reader.
+pub fn local_session() -> Vec<(&'static str, String, Vec<u8>)> {
+    let key = test_identity().feed_key();
+    let other = other_identity().feed_key();
+    let hello = hello_entry();
+    let profile = profile_entry();
+    let hid = hello.entry.blob;
+    let missing = blob::blob_id(b"missing");
+    let key_hex = blob::to_hex(&key);
+    let other_hex = blob::to_hex(&other);
+    let ok = |t: u8, req: u32, rest: &[&[u8]]| lmsg(t, req, &[&[&[1u8][..]][..], rest].concat());
+    let refused = |t: u8, req: u32, why: &str| lmsg(t, req, &[&[3], &short(why.as_bytes())]);
+    vec![
+        ("c>", "Hello, req 1: version 0, no token (a Unix socket)".into(), lmsg(0x20, 1, &[&[0], &short(b"")])),
+        ("n>", "Hello reply, req 1: done, version 0, flags 0 (no find or lookup)".into(), ok(0xa0, 1, &[&[0, 0]])),
+        ("c>", "Subscriptions, req 2".into(), lmsg(0x23, 2, &[])),
+        (
+            "n>",
+            "Subscriptions reply, req 2: done, 1 feed: the test key, subscribed, named \"Alice\" by its profile, no hints, no relays, no description".into(),
+            ok(0xa3, 2, &[&1u16.to_le_bytes(), &lfeed(&key, 1, "Alice")]),
+        ),
+        ("c>", "Timeline, req 3: before 0 (from the newest), at most 10".into(), lmsg(0x22, 3, &[&0u32.to_le_bytes(), &10u16.to_le_bytes()])),
+        (
+            "n>",
+            "Timeline reply, req 3: done, 1 record: arrival 1, held, \"Alice\", the entry `article` (the profile is not in the timeline)".into(),
+            ok(0xa2, 3, &[&1u16.to_le_bytes(), &lrecord(1, 1, "Alice", &hello.bytes)]),
+        ),
+        ("c>", "Held, req 4: the blob of `article`".into(), lmsg(0x21, 4, &[&hid])),
+        ("n>", "Held reply, req 4: done, the blob".into(), ok(0xa1, 4, &[HELLO])),
+        ("c>", "Held, req 5: the ID of \"missing\"".into(), lmsg(0x21, 5, &[&missing])),
+        ("n>", "Held reply, req 5: not found".into(), lmsg(0xa1, 5, &[&[2]])),
+        ("c>", "Get, req 6: the ID of \"missing\" (the relay protocol's Get)".into(), protocol::encode_get(6, &missing)),
+        ("n>", "Get reply, req 6: not found (the node has no relay, so at once)".into(), protocol::encode_get_reply(6, protocol::status::NOT_FOUND, b"")),
+        ("c>", "Title, req 7: the blob of `article`, size 13".into(), lmsg(0x2b, 7, &[&hid, &13u32.to_le_bytes()])),
+        ("n>", "Title reply, req 7: done, \"Hello\"".into(), ok(0xab, 7, &[&short(b"Hello")])),
+        ("c>", "Title, req 8: the same blob, size 14 (no entry says so)".into(), lmsg(0x2b, 8, &[&hid, &14u32.to_le_bytes()])),
+        ("n>", "Title reply, req 8: not found".into(), lmsg(0xab, 8, &[&[2]])),
+        ("c>", "Nickname, req 9: the test key, \"Al\"".into(), lmsg(0x27, 9, &[&key, &short(b"Al")])),
+        ("n>", "Nickname reply, req 9: done".into(), ok(0xa7, 9, &[])),
+        ("n>", "Changed (pushed; pushes may come between any two replies)".into(), vec![0xc0]),
+        ("c>", "Feed, req 10: with entries, the test key".into(), lmsg(0x24, 10, &[&[1], &short(key_hex.as_bytes())])),
+        (
+            "n>",
+            "Feed reply, req 10: done, the feed (subscribed, a nickname: \"Al\"), 2 records in increasing seq: `article` and `profile`, both held".into(),
+            ok(0xa4, 10, &[&lfeed(&key, 3, "Al"), &2u16.to_le_bytes(), &lrecord(1, 1, "Al", &hello.bytes), &lrecord(2, 1, "Al", &profile.bytes)]),
+        ),
+        ("c>", "Subscribe, req 11: the other test key".into(), lmsg(0x25, 11, &[&short(other_hex.as_bytes())])),
+        ("n>", "Subscribe reply, req 11: done, new".into(), ok(0xa5, 11, &[&[1]])),
+        ("c>", "Subscribe, req 12: \"not an address\"".into(), lmsg(0x25, 12, &[&short(b"not an address")])),
+        ("n>", "Subscribe reply, req 12: refused, with a reason (its text is not compared)".into(), refused(0xa5, 12, "malformed address")),
+        ("c>", "Unsubscribe, req 13: the other test key".into(), lmsg(0x26, 13, &[&other])),
+        ("n>", "Unsubscribe reply, req 13: done".into(), ok(0xa6, 13, &[])),
+        ("c>", "Relays, req 14".into(), lmsg(0x28, 14, &[])),
+        ("n>", "Relays reply, req 14: done, none".into(), ok(0xa8, 14, &[&[0]])),
+        ("c>", "Set relays, req 15: \"http://relay.example\"".into(), lmsg(0x29, 15, &[&[1], &short(b"http://relay.example")])),
+        ("n>", "Set relays reply, req 15: refused (not a relay URL)".into(), refused(0xa9, 15, "not a relay URL")),
+        ("c>", "Timeline, req 16: before 1, at most 10".into(), lmsg(0x22, 16, &[&1u32.to_le_bytes(), &10u16.to_le_bytes()])),
+        ("n>", "Timeline reply, req 16: done, no records".into(), ok(0xa2, 16, &[&0u16.to_le_bytes()])),
+        ("c>", "Type 3Fh, req 17: not a local message; the node ignores it (no reply)".into(), lmsg(0x3f, 17, &[])),
+        ("c>", "Nickname, req 18: the test key, empty (removes it)".into(), lmsg(0x27, 18, &[&key, &short(b"")])),
+        ("n>", "Nickname reply, req 18: done".into(), ok(0xa7, 18, &[])),
+    ]
+}
+
+fn local_session_file() -> String {
+    let mut out = String::from(
+        "# Terse test vectors: a session between a reader and a local node (LOCAL.md).\n\
+         # Format: vectors/README. The node at the start: no relays; it has stored the\n\
+         # entries `article` (arrival 1) and `profile` (arrival 2) of entries.txt and\n\
+         # holds both their blobs; it subscribes to the test feed, by its bare key; no\n\
+         # nicknames.\n",
+    );
+    for (dir, note, bytes) in local_session() {
+        let _ = writeln!(out, "\n# {note}\n{dir} {}", hex(&bytes));
+    }
+    out
+}
+
 // --- Everything ----------------------------------------------------------------
 // --- Everything ----------------------------------------------------------------
 
@@ -775,6 +1069,8 @@ fn addresses_file() -> String {
         ("key-65-digits", k("0")),
         ("key-not-hex", format!("{}g", &key[..63])),
         ("key-not-valid", "0".repeat(64)),
+        ("key-not-canonical", blob::to_hex(&non_canonical_key())),
+        ("key-mixed-order", blob::to_hex(&mixed_order_key())),
         ("at-only", k("@")),
         ("empty-second-hint", k("@a.example,")),
         ("empty-first-hint", k("@,a.example")),
@@ -828,6 +1124,7 @@ pub fn generate() -> Vec<File> {
         File { path: "profiles.txt".into(), bytes: profiles_file().into_bytes() },
         File { path: "addresses.txt".into(), bytes: addresses_file().into_bytes() },
         File { path: "relay-session.txt".into(), bytes: session_file().into_bytes() },
+        File { path: "local-session.txt".into(), bytes: local_session_file().into_bytes() },
     ];
     out.extend(article_files());
     out
@@ -912,6 +1209,18 @@ discard every one of them. The valid entry `unknown-kind-9` is of a kind
 NETWORK.md does not define: a relay must store and pass it on like any
 other, and a client keep or skip it without error and not open it.
 
+Strict verification (NETWORK.md 4.2). An ordinary Ed25519 verification
+function accepts some of the invalid entries; these test each check that
+strict verification adds: `small-order-key`, `small-order-key-signed` and
+`small-order-key-order-8-signed` (a feed key of small order; the last two
+with signatures that satisfy the equation, as anyone can make for such a
+key), `non-canonical-key` (a key whose y is p + 3: no secret is known for
+it, so this tests the key check), `small-order-r` (R the neutral point,
+the equation holding), `non-canonical-r` (R written as y = p + 1),
+`mixed-order-r` (the equation holds only multiplied by 8: verification is
+cofactorless) and `non-canonical-signature` (S + L, which still passes a
+check of S's top three bits only).
+
 profiles.txt (NETWORK.md section 4.6)
 -------------------------------------
 Records `name <hex>`: a title's bytes, `valid` (whether they are a
@@ -933,7 +1242,9 @@ its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
 shortest form), the port (7878 if the hint names none) and the relay's
 URL. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
-digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1),
+digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
+`key-not-canonical` is a point of large order written as y = p + 3, and
+`key-mixed-order`, which is valid, the test key plus a point of order 8),
 `empty-hint`, `too-many-hints`, `hint-too-long`, `bad-name`, `bad-ipv4`
 (also a name whose last label holds no letter), `bad-ipv6` or
 `bad-port`. A client refuses every invalid address typed or given to it
@@ -953,6 +1264,19 @@ of its own). Each message is one binary WebSocket message. The entries
 are those of entries.txt. A relay that answers the client messages in
 this order must send exactly the `r>` messages (the test suite checks
 this against the Terse relay).
+
+local-session.txt (LOCAL.md)
+----------------------------
+The messages of one session between a reader and a local node in the
+state the file's first comment describes, in the format of
+relay-session.txt: `c>` from the reader, `n>` from the node. Each line
+is one message without its 4-byte length (LOCAL.md 2 frames every
+message with one). A node that answers the reader's messages in this
+order must send the `n>` messages, with two allowances: a pushed message
+(`C0h`, `C1h`) may come between any two replies or not at all, so a
+replay skips pushes; and a refusal's reason (after status 3 in a reply
+`A0h` to `ABh`) is text for people, so only the bytes up to the status
+are compared.
 
 articles/ (ARTICLE.md)
 ----------------------

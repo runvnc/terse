@@ -10,7 +10,7 @@ The machine is the optional third layer of Terse: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:a54e536056d91e095c370355be0ca18c2a3854589d8bc5009aa6eed65e21a502).
+[the system device](terse:98a525845483b713d9eadd1435ee393ac6f55b7fbba0b8025c9388abd86e9c34).
 
 ## CPU
 
@@ -198,7 +198,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:a54e536056d91e095c370355be0ca18c2a3854589d8bc5009aa6eed65e21a502), slot 1, always present:
+[The system device](terse:98a525845483b713d9eadd1435ee393ac6f55b7fbba0b8025c9388abd86e9c34), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -238,7 +238,7 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:bd0dad360531ad9c22a31d8fcfa851de40b4d20b3508a33b3a0779eabd6a3fe8), [feeds](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7) and [named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32)):
+The content device, slot 4 (see [blobs](terse:d3fef9f4aaa18a9274874bed9628b1c394d4943e5d2721ce13fcccceccc46a1d), [feeds](terse:24e3bc68253cd45be8ef03eda35f3de6a0c5f8a241d11c9db4f2a9d6f01ec1b1) and [named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
