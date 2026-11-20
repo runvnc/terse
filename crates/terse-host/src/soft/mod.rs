@@ -610,6 +610,54 @@ mod tests {
         assert!(diff.is_empty(), "{} differ, first at {:?}, last {:?}", diff.len(), diff.first().map(|i| (i % 700, i / 700)), diff.last().map(|i| (i % 700, i / 700)));
     }
 
+    /// A wide glyph in column 0 replaced by narrow ones (and the other way
+    /// round) is redrawn as from scratch, with no stale pixels left.
+    #[test]
+    fn wide_glyph_in_column_0_replaced() {
+        let pool = Pool::new(2);
+        let v = Vector::default();
+        for (first, then) in [("你x", "ab"), ("你x", "  "), ("ab", "你"), ("你", "好")] {
+            let mut s = SoftScreen::new(Box::new(Blocks(8)));
+            let mut t = Terminal::with_full_text(true);
+            t.write(first.as_bytes());
+            show(&mut s, &t, &v, &pool);
+            let mut t2 = Terminal::with_full_text(true);
+            t2.write(then.as_bytes());
+            show(&mut s, &t2, &v, &pool);
+            let f = fresh(&t2, &v, &pool);
+            let diff: Vec<(usize, usize)> = s.image.data.iter().zip(&f).enumerate().filter(|(_, (x, y))| x != y).map(|(i, _)| (i % 700, i / 700)).collect();
+            assert!(diff.is_empty(), "{first:?} then {then:?}: {} differ, first at {:?}", diff.len(), diff.first());
+        }
+        // When the glyph atlas starts over, a slot means another glyph: "ab"
+        // is drawn (slots 1 and 2), screens of new glyphs are taken but not
+        // drawn until the atlas is nearly full, and "ba" then starts it
+        // over, b in slot 1 and a in slot 2. The cells' slots are those
+        // drawn, the glyphs are not, and both must be redrawn.
+        use terse_core::terminal::{COLS, ROWS};
+        let grid = (COLS * ROWS) as u32;
+        let mut codes = (0x100u32..0xFFFE)
+            .filter(|&c| !(0xD800..0xE000).contains(&c) && !terse_core::wide::is_wide(c as u16))
+            .map(|c| c as u16);
+        let mut s = SoftScreen::new(Box::new(Blocks(8)));
+        let mut t = Terminal::with_full_text(true);
+        t.write(b"ab");
+        show(&mut s, &t, &v, &pool);
+        let fillers = (super::screen::ATLAS_SLOTS - 2 * grid - 3) / grid + 1;
+        for _ in 0..fillers {
+            let mut f = Terminal::with_full_text(true);
+            let cells: Vec<u8> = (0..grid).flat_map(|_| {
+                let [lo, hi] = codes.next().unwrap().to_le_bytes();
+                [lo, hi, 7, 0]
+            }).collect();
+            f.cells_write(0, &cells);
+            s.update(&f);
+        }
+        let mut t = Terminal::with_full_text(true);
+        t.write(b"ba");
+        show(&mut s, &t, &v, &pool);
+        assert_eq!(s.image.data, fresh(&t, &v, &pool), "after the atlas starts over");
+    }
+
     /// The 3D display's segments are drawn bit by bit as from scratch too,
     /// when the list changes and when only the eye moves; an idle screen
     /// with a 3D list draws nothing.
