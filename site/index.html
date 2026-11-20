@@ -11,22 +11,8 @@
 <main>
 <article>
 <h1 id="what-terse-is">What Terse is</h1>
-<p>First and foremost, Terse is a way to share information: formatted text, with diagrams where they help, without the bloat of web browsers (JavaScript, ads, tracking) and without the centralised control of websites like Reddit.</p>
-<p>Secondly, and completely optionally, Terse can be used to share very lightweight programs, at most 1 MiB of memory each, that run on a small isolated virtual machine made for the purpose.</p>
-<h2 id="sharing-information">Sharing information</h2>
-<p>An article is plain text that reads well as it is, with a few marks for headings, lists, tables, preformatted text and links. A diagram is written into the article as path data in the style of SVG, so it is part of the text and needs no image file. There are no scripts, no styles and no embedded programs, and an article cannot link to a web page, only to other Terse articles, feeds and programs.</p>
-<p>Authors publish articles in feeds. A feed belongs to a key that its author holds, not to a website: every entry is signed, so a reader can check that it came from the author whoever delivered it. Relays store and pass on feeds and articles. Anyone can run a relay, a feed can be on several at once, and a reader can follow the same feed through any of them, so no single site decides what may be published or read.</p>
-<p>A reader for all of this is a small program. It needs the network and the article format and nothing else.</p>
-<h2 id="sharing-programs">Sharing programs</h2>
-<p>A Terse program is a small file of machine code for a simple virtual computer. The machine is isolated: a program sees only its own memory and the few devices its host offers, such as a terminal, a vector display and the content store. It gets a fixed amount of work per frame, so it cannot slow its host down, and it behaves the same on every host.</p>
-<p>All of this is optional. A host may leave out the machine altogether, or any device it does not want to build, and still be a complete Terse reader. Articles never contain programs: they can only link to them.</p>
-<h2 id="where-to-go-next">Where to go next</h2>
-<ul>
-<li><a href="how-it-works.html">How Terse works</a>: the network, articles, the machine, its devices and the shell, each in a few paragraphs.</li>
-<li><a href="using.html">Using Terse</a>: the tools, the shell and the reader.</li>
-<li><a href="writing-articles.html">Writing articles</a>: the article format, tables and figures.</li>
-<li><a href="writing-programs.html">Writing programs</a>: building a C program and packing it as an image.</li>
-</ul>
+<p>First and foremost, Terse is a way to share information: formatted text, with diagrams where they help, without the bloat of web browsers (JavaScript, ads, tracking) and without the centralised control of websites like Reddit. Secondly, and completely optionally, it can be used to share very lightweight programs, at most 1 MiB of memory each, that run on a small isolated virtual machine.</p>
+<p><a href="how-it-works.html">Continue to technical details...</a></p>
 </article>
 <hr>
 <section class="toc">
@@ -46,6 +32,7 @@
 <li><a href="device-vector.html">The 2D vector display (device 3)</a></li>
 <li><a href="device-vector3.html">The 3D vector display (device 9)</a></li>
 <li><a href="device-vector3-surfaces.html">Surfaces: a program&#39;s own screen in its 3D scene</a></li>
+<li><a href="device-sound.html">The sound device (device 6)</a></li>
 <li><a href="device-page.html">The page (device 7)</a></li>
 <li><a href="device-page-figures.html">Figures on the page</a></li>
 <li><a href="device-machines.html">The Machines device (device 8)</a></li>

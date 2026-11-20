@@ -14,8 +14,8 @@
 <p>This manual describes the whole Terse system: the machine, its devices, the network that carries articles and programs, and the programs that come with it. It is written as Terse articles, so you can read it in the reader, follow its links with Tab and Enter, and publish it to a feed. Each article below says what it covers.</p>
 <h2 id="start-here">Start here</h2>
 <ul>
-<li><a href="index.html">What Terse is</a>: what Terse is for, in one page: sharing articles without the web&#39;s bloat or a site in control, and, optionally, sharing small programs.</li>
-<li><a href="how-it-works.html">How Terse works</a>: the overall picture in two pages: the network and articles, the machine and its frame budget, the devices, determinism and the shell.</li>
+<li><a href="index.html">What Terse is</a>: what Terse is for, in one paragraph.</li>
+<li><a href="how-it-works.html">How Terse works</a>: the technical details in three pages: sharing articles and programs, the network, the machine and its frame budget, the devices, determinism and the shell.</li>
 <li><a href="writing-programs.html">Writing a program</a>: the toolchain, the C library, building, running a program headless and in the host, and publishing it in a feed.</li>
 <li><a href="using.html">Using the shell and the reader</a>: the keys of the shell and the reader, layouts, sessions and the consent prompts.</li>
 <li><a href="writing-articles.html">Writing an article</a>: the article format, every construct shown as source and as it is shown.</li>
@@ -37,6 +37,7 @@
 <tr><td>4</td><td>Content</td><td><a href="content-blobs.html">Blobs, requests and statuses</a></td></tr>
 <tr><td>4</td><td>Content</td><td><a href="content-feeds.html">Feeds, names, search and publishing</a></td></tr>
 <tr><td>4</td><td>Content</td><td><a href="content-records.html">Named records</a></td></tr>
+<tr><td>6</td><td>Sound</td><td><a href="device-sound.html">The sound device</a></td></tr>
 <tr><td>7</td><td>Page</td><td><a href="device-page.html">The page</a></td></tr>
 <tr><td>7</td><td>Page</td><td><a href="device-page-figures.html">Figures on the page</a></td></tr>
 <tr><td>8</td><td>Machines</td><td><a href="device-machines.html">The Machines device</a></td></tr>
@@ -48,6 +49,7 @@
 <li>The terminal: an 80 by 30 grid of character cells.</li>
 <li>The 2D vector display: lines and filled shapes from a display list, in a clean or a phosphor style.</li>
 <li>Content: blobs fetched and published by hash, the feeds the host follows, search, and named records kept on the host.</li>
+<li>Sound: a 16-voice wavetable synthesizer, with pairing, feedback, ring modulation, noise and samples; optional, and bit-exact.</li>
 <li>The page: typeset proportional text, figures and tables in a rectangle of the screen.</li>
 <li>Machines: the shell&#39;s device, which starts other machines and lays out their screens, flat or as panels in its 3D scene.</li>
 <li>The 3D vector display: lines, points and circles in a box behind and in front of the screen, seen from an eye the host chooses.</li>

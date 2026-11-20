@@ -24,6 +24,7 @@
 <tr><td>Any call, also an unknown or failing one: a deferred call, or one of the system device or Machines</td><td>4, provisional</td><td>every call</td></tr>
 <tr><td>Any answered call, also a failing one</td><td>64, provisional</td><td><code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, content <code>submit</code>, page <code>locate</code></td></tr>
 <tr><td><code>write</code>: each byte of the buffer</td><td>2, provisional</td><td>the whole buffer (at most 4,096 bytes) is taken whatever the budget; the scrolls and clears it causes cost nothing more</td></tr>
+<tr><td>Sound <code>submit</code> (<code>600h</code>): each byte of the list</td><td>2, provisional</td><td>only when accepted (1 to 4,096 bytes)</td></tr>
 <tr><td>A clear, scroll up or scroll down by <code>command</code></td><td>150, provisional</td><td>commands <code>01h</code>, <code>02h</code>, <code>03h</code></td></tr>
 <tr><td>Bytes copied between memory and a device</td><td>1 per 4 bytes, rounded up, per call; provisional</td><td>by the calls of the next table</td></tr>
 <tr><td>Content delivered at completion</td><td>1 per 4 bytes: the frame&#39;s completions added up, rounded up once; provisional</td><td>subtracted from the frame&#39;s budget before the CPU runs</td></tr>
@@ -39,6 +40,8 @@
 <tr><td><code>palette_set</code></td><td>3 per entry</td><td>when the call is valid</td></tr>
 <tr><td>vector <code>submit</code> (<code>300h</code>, <code>900h</code>)</td><td>the list&#39;s length</td><td>only when accepted</td></tr>
 <tr><td>page <code>submit</code> (<code>700h</code>)</td><td>the document&#39;s length</td><td>when copied: length in range and buffer valid</td></tr>
+<tr><td>sound <code>wave</code> (<code>601h</code>)</td><td>64</td><td>when the call is valid</td></tr>
+<tr><td>sound <code>sample</code> (<code>602h</code>)</td><td>the length</td><td>when the call is valid</td></tr>
 <tr><td>content <code>submit</code> (<code>400h</code>)</td><td>put or save: <code>size</code>; publish: the title; find: the query; set profile or set nickname: the name</td><td>only when accepted</td></tr>
 <tr><td><code>open</code> (<code>107h</code>)</td><td>33, or 34 + n for a program</td><td>when the request is read, also if the call returns 0</td></tr>
 <tr><td>system <code>argument</code> (<code>108h</code>)</td><td>32</td><td>only when written</td></tr>
@@ -112,6 +115,17 @@
 <tr><td>Style, fill mode</td><td>0 or 1 each</td><td></td></tr>
 <tr><td>Persistence</td><td>0 to 255, 160 after reset</td><td></td></tr>
 <tr><td>Fill cap</td><td>1,228,800 square units of filled shapes a list</td><td>provisional</td></tr>
+</tbody></table></div>
+<h2 id="sound-device-6">Sound (device 6)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Command list</td><td>1 to 4,096 bytes, in ROM or RAM</td><td>provisional</td></tr>
+<tr><td>Output</td><td>48,000 stereo pairs a second, 800 a frame, 16 bits</td><td></td></tr>
+<tr><td>Voices</td><td>16</td><td></td></tr>
+<tr><td>Wavetables</td><td>32 of 64 signed bytes</td><td></td></tr>
+<tr><td>Sample slots</td><td>4, each 0 to 65,536 signed bytes</td><td>provisional</td></tr>
+<tr><td>Envelope level</td><td>0 to <code>FF_FFFFh</code>; rates 0 to 65,535 a pair</td><td></td></tr>
 </tbody></table></div>
 <h2 id="s-3d-vector-display-device-9">3D vector display (device 9)</h2>
 <div class="table"><table>

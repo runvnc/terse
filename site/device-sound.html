@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The sound device (device 6) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-sound-device-device-6">The sound device (device 6)</h1>
+<p>The sound device is a small retro synthesizer in the spirit of the MSX SCC: 16 voices, each playing a 64-sample wavetable, a noise generator or a sample, with an envelope, a volume and a pan, and three cheap extras taken from FM chips. Pairing lets one voice&#39;s output move another&#39;s phase; feedback lets a voice&#39;s output move its own; ring modulation multiplies two voices. Every step is integer arithmetic specified to the bit, so every host renders the same samples, and a snapshot restored in the middle of a note goes on exactly as the machine would have.</p>
+<h2 id="getting-the-device">Getting the device</h2>
+<p>The device is slot 6, version 0: <code>terse pack ... --device 6:0</code>. It is optional. The reading profile does not have it, a reading host refuses an image that lists it, and nothing a reader shows depends on it. In an image that does not list it, every call from <code>600h</code> to <code>6FFh</code> returns <code>FFFF_FFFFh</code>. A host with no audio output still has the device: it runs as usual and nothing is heard.</p>
+<h2 id="output">Output</h2>
+<p>The device renders 48,000 stereo sample pairs a second, 16 bits each: 800 pairs a frame. It renders a frame&#39;s pairs at the end of the frame, from the registers as the frame&#39;s calls left them, so what a program sets in a frame is heard from the first pair of that frame. A frame that does not run (a stopped or paused machine) renders nothing. In a shell, the host adds the pairs of every machine that ran and clamps the sum.</p>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>600h</code></td><td><code>submit</code></td><td><code>a0</code> list address, <code>a1</code> length</td><td>0 done, 1 rejected</td></tr>
+<tr><td><code>601h</code></td><td><code>wave</code></td><td><code>a0</code> slot, <code>a1</code> 64 bytes</td><td>0</td></tr>
+<tr><td><code>602h</code></td><td><code>sample</code></td><td><code>a0</code> slot, <code>a1</code> bytes, <code>a2</code> length, <code>a3</code> loop start</td><td>0</td></tr>
+<tr><td><code>603h</code></td><td><code>info</code></td><td>none</td><td><code>a0</code> 16, <code>a1</code> capabilities</td></tr>
+</tbody></table></div>
+<ul>
+<li><code>submit</code> carries out a command list (below) of 1 to 4,096 bytes in ROM or RAM at once. A length out of range, or a list not wholly in ROM or RAM, is rejected with 1. It costs 2 units a byte, as <code>write</code> does.</li>
+<li><code>wave</code> loads wavetable <code>a0</code> (0-31) with 64 signed bytes. A bad slot or buffer gives <code>FFFF_FFFEh</code>.</li>
+<li><code>sample</code> loads sample slot <code>a0</code> (0-3) with <code>a2</code> signed bytes (0 to 65,536; 0 empties it). A voice playing past the end goes on from byte <code>a3</code>; with <code>a3</code> at or past the end the sample plays once.</li>
+<li><code>info</code> gives 16 voices and the capabilities: bit 0, samples. Every version-0 host sets it.</li>
+</ul>
+<p>All four are deferred. <code>wave</code> and <code>sample</code> cost 1 unit per 4 bytes copied. In C: <code>snd_submit</code>, <code>snd_load_wave</code>, <code>snd_load_sample</code>, <code>snd_info</code>, and the builder below.</p>
+<h2 id="the-command-list">The command list</h2>
+<p>The commands set the registers of the current voice, voice 0 at the start of each list. Multi-byte operands are little-endian.</p>
+<div class="table"><table>
+<thead><tr><th>Op</th><th>Command</th><th>Operands</th></tr></thead>
+<tbody>
+<tr><td><code>00h</code></td><td>End</td><td>none</td></tr>
+<tr><td><code>01h</code></td><td>Voice</td><td>v, 0-15: the current voice</td></tr>
+<tr><td><code>02h</code></td><td>Wave</td><td>w, 0-31: play wavetable w</td></tr>
+<tr><td><code>03h</code></td><td>Noise</td><td>none: play the noise generator</td></tr>
+<tr><td><code>04h</code></td><td>Sample</td><td>s, 0-3: play sample slot s</td></tr>
+<tr><td><code>05h</code></td><td>Frequency</td><td>the phase increment, 4 bytes</td></tr>
+<tr><td><code>06h</code></td><td>Volume</td><td>0-255</td></tr>
+<tr><td><code>07h</code></td><td>Pan</td><td>left, right: 0-255 each</td></tr>
+<tr><td><code>08h</code></td><td>Envelope</td><td>attack (2), decay (2), sustain (1), release (2)</td></tr>
+<tr><td><code>09h</code></td><td>Key on</td><td>none</td></tr>
+<tr><td><code>0Ah</code></td><td>Key off</td><td>none</td></tr>
+<tr><td><code>0Bh</code></td><td>Modulator</td><td>m (0-15, or <code>FFh</code> none), depth</td></tr>
+<tr><td><code>0Ch</code></td><td>Feedback</td><td>depth, 0 none</td></tr>
+<tr><td><code>0Dh</code></td><td>Ring</td><td>q (0-15, or <code>FFh</code> none)</td></tr>
+<tr><td><code>0Eh</code></td><td>Mix</td><td>1 heard, 0 muted</td></tr>
+</tbody></table></div>
+<p>The builders, in the same order: <code>snd_voice</code>, <code>snd_wave</code>, <code>snd_noise</code>, <code>snd_sample</code>, <code>snd_frequency</code>, <code>snd_volume</code>, <code>snd_pan</code>, <code>snd_envelope</code>, <code>snd_key_on</code>, <code>snd_key_off</code>, <code>snd_modulator</code>, <code>snd_feedback</code>, <code>snd_ring</code>, <code>snd_mix</code>, appending to the buffer given to <code>snd_begin</code>; <code>snd_submit_list</code> submits it.</p>
+<p>A list ends at End, at its last byte, at an unknown opcode, at a command whose operands are cut off, or at an operand out of range (a voice above 15, a wavetable above 31, a slot above 3, a mix value above 1). The commands before it have taken effect. <code>submit</code> still returns 0: it does not report where a list ended.</p>
+<h2 id="voices">Voices</h2>
+<p>After reset each voice plays wavetable 0 with increment 0, volume 255, pan 255 and 255, the envelope 0, 0, 255, 0 (a gate), no modulator, feedback or ring, and is heard. Every wavetable is zero and every sample slot empty.</p>
+<ul>
+<li>The **increment** is how far the phase moves each pair. One turn (2^32) is one pass through a wavetable, so a tone of f Hz has round(f x 2^32 / 48,000): 440 Hz is 39,370,534. <code>SND_HZ(440)</code> computes it at compile time.</li>
+<li>For noise the increment sets how often the noise changes: each time the phase carries past 2^32.</li>
+<li>For a sample it is the playback rate with 16 fraction bits: 65,536 plays one byte a pair. <code>SND_RATE(r)</code> gives the increment of a sample recorded at r a second.</li>
+<li>**Key on** starts the attack, sets the phase to 0 and restarts a sample; the level is kept. **Key off** starts the release.</li>
+</ul>
+<h2 id="the-envelope">The envelope</h2>
+<p>The level runs from 0 to <code>FF_FFFFh</code>; the rates are steps a pair, and 0 means at once. Attack climbs to the top, decay falls to the sustain level (sustain x 65,793), sustain holds it, release falls to 0. The reset envelope is a gate: full from the first pair after a key on, silent from the first after a key off. Attack <code>FFFFh</code> takes 256 pairs (5 ms); decay 300 from the top to sustain 128 takes 0.6 s.</p>
+<h2 id="how-a-pair-is-made">How a pair is made</h2>
+<p>For each pair the voices are computed in order, 0 to 15. Voice v:</p>
+<p>1. steps its envelope; 2. reads its raw sample r (-128 to 127) from its source; 3. makes its output o = (r x (level &gt;&gt; 8) x volume) &gt;&gt; 16; 4. if it has a ring voice q, o becomes (o x q&#39;s output) &gt;&gt; 15.</p>
+<p>For a wavetable, the index is the top 6 bits of phase + 1,024 x (M + F), where M is the modulator&#39;s output times the depth and F is the voice&#39;s own previous output times the feedback. Neither changes the phase itself.</p>
+<p>A voice reads a lower-numbered voice (modulator or ring) as it is in this pair, and a higher-numbered one, or itself, as it was in the previous pair. So pair a carrier with a lower-numbered modulator to hear it at once.</p>
+<p>The pair is the sum over the heard voices of o x left, and of o x right, each shifted right by 10 and clamped to 16 bits. One voice at full volume and pan reaches a quarter of the range, so four can sound at full volume before the sum is clamped.</p>
+<p>Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n &gt;&gt; 1) | (((n ^ (n &gt;&gt; 1)) &amp; 1) &lt;&lt; 14). A sample reads byte (phase &gt;&gt; 16), loops from the loop start or stops at the end. SPEC.md section 18 gives every formula.</p>
+<h2 id="state">State</h2>
+<p>The device&#39;s state is every voice&#39;s registers (36 bytes each), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display&#39;s section, and only for an image that lists device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout&#39;s place; <code>programs/tune/expected-audio.txt</code> holds the hashes of the demonstration&#39;s samples.</p>
+<h2 id="example">Example</h2>
+<pre>#include &quot;terse.h&quot;
+
+static uint8_t list[64];
+static const int8_t square[64] = { /* 32 x 90, 32 x -90 */ };
+
+int main(void)
+{
+    snd_load_wave(0, square);
+    snd_begin(list, sizeof list);
+    snd_voice(0);
+    snd_wave(0);
+    snd_envelope(0xFFFF, 200, 100, 800);
+    snd_frequency(SND_HZ(440));
+    snd_key_on();
+    snd_submit_list(list);          /* 18 bytes: 4 + 36 units */
+    for (int i = 0; i &lt; 30; i++)
+        terse_wait_frame();
+    snd_begin(list, sizeof list);
+    snd_key_off();                  /* voice 0 again */
+    snd_submit_list(list);
+    for (int i = 0; i &lt; 60; i++)
+        terse_wait_frame();
+    return 0;
+}</pre>
+<p><code>programs/tune</code> plays a piece through every kind of voice. <code>terse run programs/tune/tune.terse --audio-out tune.wav</code> writes it to a file; <code>terse-host</code> plays it when built with the <code>audio</code> feature. Its charges are in <a href="charges.html">charges</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-vector3-surfaces.html">← Surfaces: a program&#39;s own screen in its 3D scene</a><a rel="next" href="device-page.html">The page (device 7) →</a></nav></footer>
+</body>
+</html>
