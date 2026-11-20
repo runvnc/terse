@@ -16,6 +16,35 @@ reader synced, verified and showed what the reference CLI published, through
 the reference relay, also on the first run. The questions below are about
 details at the edges.
 
+## Resolved
+
+Every finding below has since been settled in the documents, and both
+implementations (the Rust reference and this reader) follow the written
+rule:
+
+| # | Decision | Where | Vectors | Code changed |
+|---|---|---|---|---|
+| 1 | Strict verification is four listed checks: canonical, non-small-order A; S < L; R decodes and is not of small order; the canonical encoding of [S]B − [k]A equals R's bytes (cofactorless) | NETWORK.md 4.2 | entries.txt: `small-order-key-signed`, `small-order-key-order-8-signed`, `non-canonical-key`, `small-order-r`, `non-canonical-r`, `mixed-order-r` | Rust: a key must be canonical (was accepted with y ≥ p). Go: tests only (it already followed the rule) |
+| 2 | RFC 8032 decoding: y < p, no sign bit on x = 0; a small-order component is allowed | NETWORK.md 4.1 | addresses.txt: `key-not-canonical`, `key-mixed-order` | Rust (as 1) |
+| 3 | Hints: no own relay, all failed, or every connected own relay answered `highest` 0 or refused; relays still connecting do not hold it up; an own relay later answering `highest` > 0 stops the hints | NETWORK.md 4.9 | — | Rust: a refusal counts as holding none. Go: all three parts |
+| 4 | Not associated: not held for the entry, not scanned, not fetched again; may be kept; opens by its ID | NETWORK.md 4.4 | — | none (both conform) |
+| 5 | `ws://`/`wss://`, then non-empty, not starting with `/`, no control or whitespace character | NETWORK.md 4.6 | profiles.txt: `relay-values` | Rust: `/` and control characters. Go: Unicode whitespace, `/` |
+| 6 | The first 8 links not held and not being fetched; skipped ones (over the limit, program blobs) count | NETWORK.md 4.4 | — | Go |
+| 7 | At most two outstanding (sliding); 10 s per relay; wait until none connecting, or one connected and 200 ms since the request began to wait; fail at once with none connecting | NETWORK.md 5.1 | — | Go |
+| 8 | Path as written or `/`; no subprotocol; one binary message each; fragments reassembled; at least 1,048,582 bytes accepted | NETWORK.md 3 | — | none |
+| 9 | Feed relays recomputed from the profile in force; relays no longer named stop serving the feed; a profile whose document is not held names none | NETWORK.md 5.1 | — | Go |
+| 10 | Coarse surfaces may thicken, threshold, reduce colours, drop a monochrome panel; must keep size, positions, order, clipping; text fallback always conforms | ARTICLE.md 6.3 | — | none |
+| 11 | Monospaced body text: 68 cells are 512 units | ARTICLE.md 6.2 | — | none |
+| 12 | A width is a number: `+` allowed, a command may follow directly | ARTICLE.md 6.1 | articles: `figures-width-forms` | none |
+| 13 | A lone `M` moves, draws nothing, and is dumped | ARTICLE.md 6.3 | articles: `figures-lone-moves` | none |
+| 14 | The first block, if it is a heading | ARTICLE.md 4.4, 9 | — | none |
+| 15 | Plain text: an empty line or a line of `-` after the header row | ARTICLE.md 2.5 | — | none |
+| 16 | Titles and names by the text rules of section 1, on one line | ARTICLE.md 9 | — | Go: titles were printed raw |
+| 17 | The timeline keeps documents (programs read it); a reader may leave them out of what it shows | NETWORK.md 4.4 | — | none |
+| 18 | Capital hex digits are an optional typing aid | NETWORK.md 4.9 | — | none |
+| 19 | A host ends at the first `:` outside brackets; reason names are one order of checking | NETWORK.md 4.9 | — | none |
+| 20 | A pushed valid entry of any subscribed feed is kept, whichever relay sent it | NETWORK.md 5.1 | — | Go |
+
 ## Had to guess (behaviour could differ between implementations)
 
 1. **NETWORK.md 4.2, "strict verification".** The text says small-order

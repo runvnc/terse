@@ -214,10 +214,16 @@ pub fn decode(bytes: &[u8]) -> Result<SignedEntry, Invalid> {
         title: title.to_string(),
     };
     entry.check()?;
+    // Strict verification (NETWORK 4.2): the key is canonical and not of
+    // small order (checked here, since the library accepts non-canonical
+    // key encodings); `verify_strict` then refuses S >= L and a small-order
+    // R, and compares the canonical encoding of [S]B - [k]A with R's bytes
+    // (cofactorless), so each valid entry has exactly one valid encoding.
+    if !crate::identity::valid_feed_key(&entry.feed) {
+        return Err(Invalid::Key);
+    }
     let key = VerifyingKey::from_bytes(&entry.feed).map_err(|_| Invalid::Key)?;
     let signature = Signature::from_bytes(bytes[HEAD + n..].try_into().unwrap());
-    // Strict verification: rejects small-order keys and non-canonical
-    // signatures, so each valid entry has exactly one valid encoding.
     key.verify_strict(&signed_message(&bytes[..HEAD + n]), &signature).map_err(|_| Invalid::Signature)?;
     Ok(SignedEntry { entry, bytes: bytes.to_vec() })
 }

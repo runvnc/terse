@@ -214,7 +214,7 @@ func run(cfg *config) error {
 			if e.Held {
 				mark = "*"
 			}
-			title := e.Title
+			title := shownTitle(e.Title)
 			if e.Kind == nodeapi.KindDocument {
 				title = "[document, cannot open] " + title
 			}
@@ -357,17 +357,25 @@ func feedHead(f nodeapi.Feed) []string {
 
 // entryText shows an entry in a list; kinds the reader does not open say so.
 func entryText(e nodeapi.Entry) string {
+	t := shownTitle(e.Title)
 	switch e.Kind {
 	case nodeapi.KindArticle:
-		return e.Title
+		return t
 	case nodeapi.KindProfile:
-		return "profile: " + e.Title
+		return "profile: " + t
 	case nodeapi.KindProgram:
-		return "[program " + e.Title + ": this reader does not run programs]"
+		return "[program " + t + ": this reader does not run programs]"
 	case nodeapi.KindDocument:
-		return "[document " + e.Title + ": cannot open]"
+		return "[document " + t + ": cannot open]"
 	}
-	return fmt.Sprintf("[kind %d: %s, cannot open]", e.Kind, e.Title)
+	return fmt.Sprintf("[kind %d: %s, cannot open]", e.Kind, t)
+}
+
+// shownTitle is a title as ARTICLE.md 9 says to show it: the text rules
+// of section 1 (control characters not shown, tabs and lone CRs as
+// spaces), on one line.
+func shownTitle(t string) string {
+	return strings.ReplaceAll(article.Clean([]byte(t)), "\n", " ")
 }
 
 // loaded is an article ready to show.

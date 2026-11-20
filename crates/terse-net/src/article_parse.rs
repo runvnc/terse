@@ -178,6 +178,26 @@ fn white_space(c: char) -> bool {
         0x09..=0x0D | 0x20 | 0x85 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000)
 }
 
+/// The characters of the basic text repertoire beyond printable ASCII
+/// (ARTICLE.md 1.1).
+pub const BASIC_EXTRA: [char; 11] =
+    ['\u{d7}', '\u{2013}', '\u{2014}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2026}', '\u{2212}', '\u{fffd}'];
+
+/// Whether a character is in the basic text repertoire, or is one that
+/// ARTICLE.md 1 does not show (control characters) or shows as a blank.
+pub fn basic_char(c: char) -> bool {
+    (' '..='~').contains(&c) || c.is_control() || BASIC_EXTRA.contains(&c)
+}
+
+/// Whether text (an article's bytes, or a title) is in basic text
+/// (ARTICLE.md 1.1): every character it shows is in the basic text
+/// repertoire. Malformed UTF-8 is shown as U+FFFD, which is; a byte order
+/// mark that starts it is not shown.
+pub fn basic_text(bytes: &[u8]) -> bool {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    String::from_utf8_lossy(bytes).chars().all(basic_char)
+}
+
 /// A display name: 1 to 48 bytes of UTF-8, no control characters, no
 /// whitespace first or last.
 pub fn display_name(bytes: &[u8]) -> Option<String> {
@@ -1076,6 +1096,16 @@ pub fn dump(p: &Parsed) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn basic_text_repertoire() {
+        assert!(basic_text(b"Plain ASCII, tabs\tand\r\nlines. 3 \xc3\x97 4 \xe2\x88\x92 1 \xe2\x80\x94 \xe2\x80\x9cyes\xe2\x80\x9d\xe2\x80\xa6"));
+        assert!(basic_text(b"\xef\xbb\xbfmalformed \xff is U+FFFD"));
+        assert!(!basic_text("caf\u{e9}".as_bytes()));
+        assert!(!basic_text("x\u{a0}y".as_bytes()), "no-break space");
+        assert!(!basic_text("a\u{feff}b".as_bytes()), "a BOM not at the start is text");
+        assert_eq!((0..=0x10ffffu32).filter_map(char::from_u32).filter(|&c| basic_char(c) && !c.is_control()).count(), 106);
+    }
 
     fn d(s: &str) -> String {
         dump(&parse(s.as_bytes()))

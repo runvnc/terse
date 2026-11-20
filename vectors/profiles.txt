@@ -126,6 +126,15 @@ document relays
   relay ws://e.example
   description ""
 
+document relay-values
+  hex 72656c61793a2077733a2f2f2f780a72656c61793a2057533a2f2f612e6578616d706c650a72656c61793a2077733a2f2f61c2a0622e6578616d706c650a72656c61793a2077733a2f2f6101622e6578616d706c650a72656c61793a2077733a2f2f0a72656c61793a2077733a2f2f622e6578616d706c652f74657273650a72656c61793a207773733a2f2f632e6578616d706c653a393030300a
+  note "a URL is ws:// or wss://, then something not starting with /, with no control or whitespace character"
+  valid yes
+  listed no
+  relay ws://b.example/terse
+  relay wss://c.example:9000
+  description ""
+
 document description-only
   hex 0a4a7573742061206465736372697074696f6e2e0a
   note "no header lines"

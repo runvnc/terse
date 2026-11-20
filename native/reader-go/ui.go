@@ -228,7 +228,7 @@ func (u *ui) fillTimeline(s *screen) {
 	s.items = nil
 	for _, e := range u.n.Timeline() {
 		e := e
-		it := item{entry: &e, text: e.Title}
+		it := item{entry: &e, text: shownTitle(e.Title)}
 		if it.text == "" {
 			it.text = "(no title)"
 		}

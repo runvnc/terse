@@ -32,7 +32,7 @@ A relay speaks binary WebSocket messages with little-endian integers. A reader n
 
 ## Entries and the timeline
 
-After a subscribe, the relay sends the feed's entries with `seq` above `after`, oldest first, then each new one as it is published. An entry is at most 293 bytes: the feed key, `seq`, a time, a kind, the blob's size and ID, a reply-to ID, a title, and an Ed25519 signature over `terse-entry-0` and the bytes before it. Verify it strictly and check the rest of the rules of NETWORK.md section 4.2; keep the first valid entry of each feed and `seq`.
+After a subscribe, the relay sends the feed's entries with `seq` above `after`, oldest first, then each new one as it is published. An entry is at most 293 bytes: the feed key, `seq`, a time, a kind, the blob's size and ID, a reply-to ID, a title, and an Ed25519 signature over `terse-entry-0` and the bytes before it. Verify it strictly, with every check NETWORK.md section 4.2 lists (your library's ordinary verify accepts some forged entries: `vectors/entries.txt` has one for each check), and check the rest of the rules of section 4.2; keep the first valid entry of each feed and `seq`.
 
 Your timeline is the article and document entries (kinds 1 and 4) of your subscribed feeds, newest first in the order you first stored them; keep that order across restarts. Subscribe again on each connection with `after` set to the highest `seq` you hold, and fetch each blob of at most 16,384 bytes as its entry arrives, so reading never waits.
 
@@ -48,6 +48,7 @@ ARTICLE.md is written as requirements on what the person sees, not as a layout a
 - Lay tables out as grids, or show their lines as a paragraph.
 - Draw figures from their path strings, or show them as their text. A figure's units are 512ths of a column of the recommended width (about 68 characters of body text): scale figures by your column's width over that, down for a narrower column, and up only if you enlarge your text the same way.
 - Anything you do not recognise, or that is malformed, is ordinary text.
+- You need not show every Unicode character: show at least the basic text repertoire (printable ASCII and eleven others, ARTICLE.md section 1.1), and each other character or a placeholder for it, never dropping one silently; keep the real characters in plain-text and screen-reader output.
 
 Only `terse:` forms are links: `terse:` and a blob ID (an article), `terse:feed/` and a key, maybe with `@` and the hints of its address (a feed; a malformed hint list leaves the key alone), `terse:program/`, a key and a name (a program), bare or as the target of `[text](target)`. Web addresses are ordinary text.
 
@@ -59,4 +60,4 @@ Feeds also carry programs (kind 3) and documents (kind 4) for the machine, and m
 
 Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with `terse manual publish`, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.
 
-The details of the network are in [the network](terse:77d981fd3554801a22218d9e36d4dec6c6e933190297aa0a21a5bb3a78a0d7be); how the built-in reader lays articles out on the machine is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), which you do not need to follow.
+The details of the network are in [the network](terse:0fff72a7d6367dec873b06db4277523cd5bf951f7b72e177e12b234c2385c762); how the built-in reader lays articles out on the machine is in [the page device](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0), which you do not need to follow.

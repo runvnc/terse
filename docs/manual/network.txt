@@ -47,7 +47,7 @@ The relay computes a put's ID itself. It must refuse blobs over 1,048,576 bytes 
 
 ## Feeds
 
-A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is a curve point that is not of small order. Only the author's client holds the secret key.
+A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is the canonical encoding of a curve point that is not of small order. Only the author's client holds the secret key.
 
 ## The entry
 
@@ -66,7 +66,7 @@ A feed is a numbered series of small signed entries from one author, each pointi
 
 The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
-An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); `seq` is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
+An entry is valid if: `n` is at most 120 and the entry's length matches it; the signature verifies under the feed key with strict verification (NETWORK.md section 4.2 lists its checks: a canonical key and S below the group order, no small-order key or R, and the cofactorless equation compared byte for byte; an ordinary library verify is not enough); `seq` is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and `seq`, the one received first is kept. `seq` values need not be consecutive, and the time is not checked.
 
 | Kind | Entry | Title | Blob |
 |---|---|---|---|

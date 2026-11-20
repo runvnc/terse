@@ -110,6 +110,16 @@ address key-not-valid
   valid no
   reason invalid-key
 
+address key-not-canonical
+  text "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+  valid no
+  reason invalid-key
+
+address key-mixed-order
+  text "b502ff3d92e31d8190b4aa4ea0414005167fad089c4de9dac8a2fc850fed4f58"
+  valid yes
+  key b502ff3d92e31d8190b4aa4ea0414005167fad089c4de9dac8a2fc850fed4f58
+
 address at-only
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@"
   valid no
