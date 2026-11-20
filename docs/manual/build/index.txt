@@ -8,9 +8,9 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:389f1891673aee7e733f4a1694973fe700747799fdf0a959c5c592b211e4baf5): what Terse is for, in one
+- [What Terse is](terse:4c5f422c54aeac9dcbc9be2578e1224bee98d1b879193142d4c6581714949d7c): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:446635cb5b91d46e45703ee7e50527058701e3d317d949e4a1f9fa31b5092c72): the technical details in
+- [How Terse works](terse:c4d3f7e58beb5401d0fe9187409e20057f9dd6c2170a7acbf8f8845ea0df002e): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
 - [Writing a program](terse:5da01f5f793084dceb119bad34cb906ac33bf051763b090d2d7b54a931739942): the toolchain, the C

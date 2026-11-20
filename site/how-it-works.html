@@ -46,16 +46,23 @@
 <p>The drawing is not to scale: the address space is 4 GiB, and the two regions are small islands in it.</p>
 <p>Time advances in frames, nominally 60 a second. Each frame the machine gets a budget of 125,000 units: an instruction from ROM costs 1, one from RAM costs 4, and each device call has a small charge on top. When the budget runs out the machine pauses and continues with the next instruction in the next frame; the program is not told. A program that has done its work for the frame calls <code>wait_frame</code>, which gives up the rest of the budget and returns at the start of the next frame. Because the budget is the same on every host, a program runs at the same speed everywhere, and the work a host does for one frame of any program is bounded.</p>
 <h2 id="devices">Devices</h2>
-<p>Programs reach devices with the <code>ecall</code> instruction: the call number in register <code>a7</code> is the device slot times 256 plus a function, arguments go in <code>a0</code> to <code>a5</code>, and the result comes back in <code>a0</code>. An image lists the devices it needs in its header; a host that lacks one refuses the image, and a device the image does not list behaves as absent.</p>
+<p>Programs reach devices with the <code>ecall</code> instruction: the call number in register <code>a7</code> is the device slot times 256 plus a function, arguments go in <code>a0</code> to <code>a5</code>, and the result comes back in <code>a0</code>.</p>
+<p>No host has to build every device, and no program has to use them all. A program&#39;s image says in its header which devices it needs, each with a version. A host that lacks one of them refuses the image before it runs, and a device the image does not list behaves as absent. So a program that needs only the terminal runs on every host, and a host can tell from the header alone what a program will use.</p>
+<p>The devices a reading host provides (the reading profile):</p>
 <div class="table"><table>
 <thead><tr><th>Slot</th><th>Device</th></tr></thead>
 <tbody>
 <tr><td>1</td><td>System: frames, events, clock, random bytes, controllers, exit (always present)</td></tr>
 <tr><td>2</td><td>Terminal: 80 × 30 character cells</td></tr>
-<tr><td>3</td><td>2D vector display: lines and filled shapes from a display list</td></tr>
 <tr><td>4</td><td>Content: blobs, feeds, search, named records</td></tr>
-<tr><td>6</td><td>Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo (optional)</td></tr>
 <tr><td>7</td><td>Page: typeset proportional text and figures</td></tr>
+</tbody></table></div>
+<p>The extras, each of which a host may leave out:</p>
+<div class="table"><table>
+<thead><tr><th>Slot</th><th>Device</th></tr></thead>
+<tbody>
+<tr><td>3</td><td>2D vector display: lines and filled shapes from a display list</td></tr>
+<tr><td>6</td><td>Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo</td></tr>
 <tr><td>8</td><td>Machines: starting and placing other machines (the shell only)</td></tr>
 <tr><td>9</td><td>3D vector display: lines placed in space, seen in perspective</td></tr>
 </tbody></table></div>
