@@ -188,6 +188,14 @@ Publish a file in your own feed with the command line tool:
 
 It puts the blob, publishes the next entry of your feed and prints `seq N blob <id>`; `--reply-to <blob id>` marks a reply. The entry's title is what timelines show. Like the other feed commands it takes `--relay`, `--store` and `--config`. In the reader, T publishes a test article of its own, not your text; a program that publishes asks the host, which asks you.
 
+## Your feed as a website
+
+Readers without Terse can read your feed on the web. This writes it as a static website, plain HTML with no scripts:
+
+    terse feed site --out site --base-url https://example.org/
+
+Each article gets a page, drawn like this manual's web pages; an index lists them newest first; `feed.xml` is an Atom feed for RSS readers (only with `--base-url`, the site's own address). Every page names your feed's address, for readers who want to follow it in Terse. Run it again after publishing: it writes only the new article's page and the index, and reads no other article. Give a feed address to make the site of another feed.
+
 ## How the reader shows it
 
 In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:{device-page}).

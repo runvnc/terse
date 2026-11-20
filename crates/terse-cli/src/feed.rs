@@ -109,6 +109,7 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
         "programs" => programs(rest),
         "read" => read_article(rest),
         "nickname" => nickname(rest),
+        "site" => site(rest),
         _ => Err(USAGE.into()),
     }
 }
@@ -623,6 +624,102 @@ fn read_article(args: &[String]) -> Result<ExitCode, String> {
         text.push('\n');
     }
     print!("{text}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `terse feed site [<address>] --out <dir> [--title <t>] [--base-url
+/// <url>] [--force]`: the articles of a feed (default: the user's own) as a
+/// static website, brought up to date incrementally
+/// ([`terse_net::feed_site`]). The feed's entries are first fetched from
+/// the relays (its hints too, NETWORK 4.9); blobs are read only for the
+/// pages that must be written.
+fn site(args: &[String]) -> Result<ExitCode, String> {
+    use terse_net::feed_site;
+    let args = Args::parse(args, &["--force"])?;
+    known(&args, &["--out", "--title", "--base-url", "--force"])?;
+    let out = PathBuf::from(args.require("--out")?);
+    if let Some(t) = args.get("--title").filter(|t| t.trim().is_empty()) {
+        return Err(format!("\"{t}\": the title is empty"));
+    }
+    let base = args.get("--base-url").map(feed_site::base_url).transpose()?;
+    let relays = relay_urls(&args, true)?;
+    let mut node = crate::open_node(&args, &relays)?;
+    let (key, hints) = match args.positional.as_slice() {
+        [] => {
+            let identity = load_identity(&args)?;
+            let key = identity.feed_key();
+            node.set_identity(identity);
+            (key, None)
+        }
+        [text] => {
+            let a = parse_address(text).map_err(|e| format!("{}: {e}", printable(text.trim(), false)))?;
+            (a.key, (!a.hints.is_empty()).then_some(a.hints))
+        }
+        _ => return Err(USAGE.into()),
+    };
+    // Follow this feed alone, without downloading anything: the blobs the
+    // site needs are fetched below, one by one.
+    let mut subs = Subscriptions::in_memory([key]);
+    if let Some(h) = &hints {
+        subs.set_hints(&key, Some(h)).map_err(|e| e.to_string())?;
+    }
+    node.set_subscriptions(subs);
+    node.set_auto_download_limit(0);
+    node.set_prefetch(false);
+    node.set_program_download(false);
+    if node.has_relays() || hints.is_some() {
+        let deadline = Instant::now() + SYNC_DEADLINE;
+        'sync: loop {
+            node.poll();
+            for event in node.take_feed_events() {
+                match event {
+                    FeedEvent::Settled => break 'sync,
+                    FeedEvent::Unreachable => {
+                        eprintln!("terse: cannot reach a relay: using the entries held locally");
+                        break 'sync;
+                    }
+                    _ => {}
+                }
+            }
+            if Instant::now() >= deadline {
+                eprintln!("terse: not caught up after {} s: using the entries held locally", SYNC_DEADLINE.as_secs());
+                break;
+            }
+        }
+    }
+    let address = match &hints {
+        Some(h) => format!("{}@{h}", to_hex(&key)),
+        None if node.identity_key() == Some(key) => {
+            let h = terse_net::address::hint_text(&node.own_hints());
+            if h.is_empty() { to_hex(&key) } else { format!("{}@{h}", to_hex(&key)) }
+        }
+        None => to_hex(&key),
+    };
+    let entries = node.feed_store().entries(&key).map_err(|e| e.to_string())?;
+    let articles: Vec<feed_site::FeedArticle> = entries
+        .iter()
+        .map(|s| &s.entry)
+        .filter(|e| e.kind == terse_net::entry::KIND_ARTICLE)
+        .map(|e| feed_site::FeedArticle { seq: e.seq, time: e.time, title: e.title.clone(), blob: e.blob, size: e.size })
+        .collect();
+    let programs = node.current_programs(&key).into_iter().map(|s| s.entry.title).collect();
+    let profile = node.feed_store().latest_profile(&key).ok().flatten().map(|s| (s.entry.blob, s.entry.title));
+    if entries.is_empty() {
+        eprintln!("terse: no entry of feed {} is held{}", to_hex(&key), if relays.is_empty() { " (and no relay to ask)" } else { "" });
+    }
+    let input = feed_site::Input { feed: key, address, articles, programs, profile };
+    let opts = feed_site::Options { title: args.get("--title").map(str::to_string), base_url: base.clone(), force: args.has("--force") };
+    let summary = feed_site::generate(&out, &input, &opts, &mut |id| node.fetch_bytes(*id))?;
+    if let Some(why) = &summary.full {
+        eprintln!("terse: every file rewritten: {why}");
+    }
+    for (blob, why) in &summary.missing {
+        eprintln!("terse: article {} left out for now: {why}", to_hex(blob));
+    }
+    if base.is_none() {
+        eprintln!("terse: no Atom feed (feed.xml): it needs the site's address, --base-url https://...");
+    }
+    println!("{} in {}", summary.line(), out.display());
     Ok(ExitCode::SUCCESS)
 }
 

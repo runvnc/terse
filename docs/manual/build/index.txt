@@ -8,17 +8,17 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:b62b8869588ebe1888cfe10eb2eb7a140d3f20a280adad0c92200d081865fd1b): what Terse is for, in one
+- [What Terse is](terse:b05a2a447a42b97211d0921adaf532804e2dc443f60068c78f45029e3499ebdf): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:bae9908c052978a6b6ccffeba81851bde6b1edc21642b47f8ebf5554d7198b5b): the technical details in
+- [How Terse works](terse:accc3c69a04c7cbfe03c1c7102371e11800c993f820baf57775c072f33247788): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:4db0ec8a32d39e1a0ec493a7f0e552bf52931b6b9b76427a919013e5c5fe73c3): the toolchain, the C
+- [Writing a program](terse:7204704df8189ca354246c3cf1a891c6b7c2741c04dcd33f074b7134b5ec79b8): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:371d372162411679ce0bec03bfafd12ab1ad0518473e355e3f2cabccf7b983ae): the keys of the
+- [Using the shell and the reader](terse:8530f43137ac19bafc67db7fba1e7ea7ad37358e75c4466535962b0ebd081cdf): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
-- [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format,
+- [Writing an article](terse:7a1608758c30131d63598142f26d342b98cbf1c3046b68e7b0be9d8cc93c5f55): the article format,
   every construct shown as source and as it is shown.
 - [State, replay and conformance](terse:52fcd7cb8357b85a536baaad5b7b2268b610ba13613b990e260071e6adeb9255): what a machine's state
   is, its hash, snapshots and the conformance image.
