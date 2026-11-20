@@ -1,0 +1,25 @@
+# Every form of the events file (STATE.md 6.2), for an image that never
+# reads its queue (spin), so the state holds each event as appended.
+# Lines out of frame order; events of a frame stay in the order written.
+2 press 5          # a single digit is the key 5 (22h), not usage 5
+2 press 05         # two digits are a usage ID
+2 down F12 shift ctrl alt meta
+2 up Escape control
+2 press 0x28
+0 text a#b c	tab
+0 pointer 700 9999 7     # clamped to 639, 479
+0 click 640 3
+0 wheel -127 127
+0 wheel 5
+1 feeds-updated
+1 feeds-updated          # dropped: at most one a frame
+1 home                   # a system's only: dropped for a machine alone
+1 pad 0 0x2001 -127 127
+1 pad 3 ffff 1 -1 2 -2
+3 pad 0 off
+3 text
+3 press PAGEDOWN
+3 press z
+4 down 255
+# a comment line
+   # an indented one

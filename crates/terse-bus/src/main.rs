@@ -53,7 +53,8 @@ second. --frame-times writes each frame's emulation time (ms). --bench prints th
 on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; drivers spin adaptively
 (TERSE_BUS_SPIN=fixed and TERSE_BUS_SPIN_US for theirs). --driver-timeout (default 30 s): a driver
 that does not answer in time is given up as hung; --start-timeout (default 10 s): for it to start.
-A driver that fails ends the run (exit status 3). --record writes the bus's recording of a single
+A driver that fails ends the run (exit status 3); a fault ends it by signal SIGTERM, as terse run does
+(STATE.md 6.4). --record writes the bus's recording of a single
 machine; --replay runs one again, checking every frame's hash. --audio-out writes what the sound
 devices played (SPEC §sound.presentation: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
 is ever played. --without withholds an optional device (SPEC §image: the machine runs without it); a
@@ -236,9 +237,36 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
     Ok(o)
 }
 
+/// Set when the machine faulted: the process then ends by SIGTERM, as
+/// `terse run` does, once every driver is reaped (STATE.md 6.4).
+static FAULTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// SPEC §stopping: a fault is never shown as an exit code. Prints it and
+/// notes it for `main`.
+fn faulted(stopped: Stopped) -> ExitCode {
+    eprintln!("terse-bus: {stopped}");
+    FAULTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    ExitCode::from(255)
+}
+
+/// Ends the process by SIGTERM (restoring its default action first: the
+/// run's handler only notes a signal).
+fn fault_exit() -> ExitCode {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: resets one signal's action and sends it to this process.
+    unsafe {
+        libc::signal(libc::SIGTERM, libc::SIG_DFL);
+        libc::raise(libc::SIGTERM);
+    }
+    ExitCode::from(255)
+}
+
 fn main() -> ExitCode {
     signals::install();
     match run(std::env::args().skip(1).collect()) {
+        Ok(_) if FAULTED.load(std::sync::atomic::Ordering::SeqCst) => fault_exit(),
         Ok(code) => code,
         Err(e) => {
             eprintln!("terse-bus: {e}");
@@ -519,7 +547,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
     }
     Ok(match bs.system.stopped() {
         Some(Stopped::Exit(c)) => ExitCode::from(c),
-        Some(Stopped::Fault(_)) => ExitCode::from(255),
+        Some(stopped @ Stopped::Fault(_)) => faulted(stopped),
         None => ExitCode::SUCCESS,
     })
 }
@@ -606,7 +634,7 @@ fn in_process(opts: &Opts, core: &mut Machine<InProcessHost>, script: &Script, s
     }
     Ok(match core.stopped() {
         Some(Stopped::Exit(c)) => ExitCode::from(c),
-        Some(Stopped::Fault(_)) => ExitCode::from(255),
+        Some(stopped @ Stopped::Fault(_)) => faulted(stopped),
         None => ExitCode::SUCCESS,
     })
 }

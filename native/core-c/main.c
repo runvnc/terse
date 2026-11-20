@@ -1,4 +1,6 @@
 /* tcore's command line: run an image headless, scripted input, hashes. */
+#include <ctype.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,34 +12,58 @@ static const char *usage =
     "             [--dump] [--state <file>] [--drivers <dir>] [--driver <slots>=<command line>]...\n"
     "             [--without <slot>]... [--no-batch] [--bench]\n";
 
-/* ---- scripted input (the format of `terse run --events`) ---- */
-typedef struct { uint32_t frame; int pad; uint8_t ev[4]; uint8_t ps[8]; } In;
+/* ---- scripted input: the events file of STATE.md 6.2 ---- */
+typedef struct { uint32_t frame; size_t seq; int pad; uint8_t ev[4]; uint8_t ps[8]; } In;
 static In *in; static size_t nin, incap;
+static unsigned long lineno;
 
 static void add(uint32_t f, int pad, const uint8_t *ev, const uint8_t *ps)
 {
     if (nin == incap) { incap = incap * 2 + 64; in = realloc(in, incap * sizeof *in); }
-    In *e = &in[nin++];
+    In *e = &in[nin];
     memset(e, 0, sizeof *e);
-    e->frame = f; e->pad = pad;
+    e->frame = f; e->seq = nin++; e->pad = pad;
     if (ev) memcpy(e->ev, ev, 4);
     if (ps) memcpy(e->ps, ps, 8);
 }
 
-static int key(const char *s)
+#define BAD(...) do { fprintf(stderr, "tcore: events line %lu: ", lineno); die(2, __VA_ARGS__); } while (0)
+
+/* A whole word as a number in [lo, hi] (base 10 or 16; a sign only if lo < 0). */
+static long num(const char *w, int base, long lo, long hi, const char *what)
+{
+    const char *p = w + (*w == '-' && lo < 0);
+    if (!*p || !(base == 16 ? isxdigit((unsigned char)*p) : isdigit((unsigned char)*p))) BAD("bad %s %s", what, w);
+    char *e;
+    errno = 0;
+    long v = strtol(w, &e, base);
+    if (*e || errno || v < lo || v > hi) BAD("bad %s %s", what, w);
+    return v;
+}
+
+/* A key: a name or a USB HID usage ID, case-insensitive (STATE.md 6.2). */
+static int key(const char *w)
 {
     static const struct { const char *n; int k; } names[] = {
-        {"enter", 0x28}, {"esc", 0x29}, {"backspace", 0x2A}, {"tab", 0x2B}, {"space", 0x2C},
-        {"right", 0x4F}, {"left", 0x50}, {"down", 0x51}, {"up", 0x52}, {"home", 0x4A},
-        {"end", 0x4D}, {"pageup", 0x4B}, {"pagedown", 0x4E}, {"insert", 0x49}, {"delete", 0x4C}};
-    if (s[0] >= 'a' && s[0] <= 'z' && !s[1]) return 0x04 + s[0] - 'a';
-    if (s[0] >= '0' && s[0] <= '9' && !s[1]) return s[0] == '0' ? 0x27 : 0x1E + s[0] - '1';
-    if (s[0] == 'f' && s[1] >= '1' && s[1] <= '9') { int n = atoi(s + 1); if (n >= 1 && n <= 12) return 0x39 + n; }
+        {"enter", 0x28}, {"esc", 0x29}, {"escape", 0x29}, {"backspace", 0x2A}, {"tab", 0x2B},
+        {"space", 0x2C}, {"insert", 0x49}, {"home", 0x4A}, {"pageup", 0x4B}, {"delete", 0x4C},
+        {"end", 0x4D}, {"pagedown", 0x4E}, {"right", 0x4F}, {"left", 0x50}, {"down", 0x51}, {"up", 0x52}};
+    char s[32];
+    size_t n = strlen(w);
+    if (n >= sizeof s) BAD("unknown key %s", w);
+    for (size_t i = 0; i <= n; i++) s[i] = tolower((unsigned char)w[i]);
+    if (s[0] == '0' && s[1] == 'x') return num(s + 2, 16, 0, 255, "key");
+    if (n == 1 && s[0] >= 'a' && s[0] <= 'z') return 0x04 + s[0] - 'a';
+    if (n == 1 && s[0] >= '1' && s[0] <= '9') return 0x1E + s[0] - '1';
+    if (n == 1 && s[0] == '0') return 0x27;
+    if (isdigit((unsigned char)s[0])) return num(s, 10, 0, 255, "key");
+    if (s[0] == 'f' && isdigit((unsigned char)s[1])) {
+        long f = strtol(s + 1, 0, 10);
+        if (strspn(s + 1, "0123456789") == n - 1 && f >= 1 && f <= 12) return 0x39 + f;
+    }
     for (size_t i = 0; i < sizeof names / sizeof *names; i++) if (!strcmp(s, names[i].n)) return names[i].k;
-    char *e;
-    long v = strtol(s, &e, 0);
-    if (*e || v < 0 || v > 255) die(2, "events: unknown key %s", s);
-    return v;
+    BAD("unknown key %s", w);
+    return 0;
 }
 
 static int mods(char **t, int n)
@@ -45,40 +71,53 @@ static int mods(char **t, int n)
     int m = 0;
     for (int i = 0; i < n; i++) {
         if (!strcmp(t[i], "shift")) m |= 1;
-        else if (!strcmp(t[i], "ctrl")) m |= 2;
+        else if (!strcmp(t[i], "ctrl") || !strcmp(t[i], "control")) m |= 2;
         else if (!strcmp(t[i], "alt")) m |= 4;
         else if (!strcmp(t[i], "meta")) m |= 8;
-        else die(2, "events: unknown modifier %s", t[i]);
+        else BAD("unknown modifier %s", t[i]);
     }
     return m;
 }
 
+/* Pointer positions are clamped to the screen (SPEC §events). */
 static void pointer(uint32_t f, long x, long y, long btn)
 {
-    x = x < 0 ? 0 : x > 639 ? 639 : x;
-    y = y < 0 ? 0 : y > 479 ? 479 : y;
+    x = x > 639 ? 639 : x;
+    y = y > 479 ? 479 : y;
     uint8_t ev[4] = {4, x & 0xFF, y & 0xFF, (x >> 8 & 3) | (y >> 8 & 1) << 2 | (btn & 7) << 3};
     add(f, 0, ev, 0);
+}
+
+static int by_frame(const void *a, const void *b)
+{
+    const In *x = a, *y = b;
+    if (x->frame != y->frame) return x->frame < y->frame ? -1 : 1;
+    return x->seq < y->seq ? -1 : x->seq > y->seq;
 }
 
 static void load_events(const char *path)
 {
     FILE *fp = fopen(path, "r");
     if (!fp) die(2, "cannot open %s", path);
-    char line[8192];
-    while (fgets(line, sizeof line, fp)) {
-        line[strcspn(line, "\r\n")] = 0;
-        char *p = line;
-        while (*p == ' ' || *p == '\t') p++;
-        char *e;
-        unsigned long f = strtoul(p, &e, 10);
-        if (e == p) {
-            if (*p && *p != '#') die(2, "events: bad line: %s", line);
-            continue;
-        }
-        p = e + strspn(e, " \t");
-        if (!strncmp(p, "text ", 5)) {            /* the rest of the line, one event a character */
-            const uint8_t *s = (const uint8_t *)p + 5;
+    char *line = 0;
+    size_t cap = 0;
+    ssize_t len;
+    while ((len = getline(&line, &cap, fp)) >= 0) {
+        lineno++;
+        if (len && line[len - 1] == '\n') line[--len] = 0;
+        if (len && line[len - 1] == '\r') line[--len] = 0;
+        char *p = line + strspn(line, " \t");
+        if (!*p || *p == '#') continue;                 /* blank, or a comment */
+        size_t fl = strcspn(p, " \t");
+        char fw[16];
+        if (fl >= sizeof fw) BAD("bad frame number");
+        memcpy(fw, p, fl); fw[fl] = 0;
+        uint32_t f = num(fw, 10, 0, 4294967295L, "frame number");
+        p += fl; p += strspn(p, " \t");
+        if (!strncmp(p, "text", 4) && (p[4] == ' ' || p[4] == '\t' || !p[4])) {
+            /* the rest of the line after one whitespace character: one text
+               event per Unicode scalar value, '#' included */
+            const uint8_t *s = (const uint8_t *)p + 4 + (p[4] != 0);
             while (*s) {
                 uint32_t c = *s++, k = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
                 if (k) c &= 0x3F >> k;
@@ -91,42 +130,50 @@ static void load_events(const char *path)
         char *h = strchr(p, '#');
         if (h) *h = 0;
         char *t[16]; int n = 0;
-        for (char *w = strtok(p, " \t"); w && n < 16; w = strtok(0, " \t")) t[n++] = w;
-        if (!n) continue;
-        if (!strcmp(t[0], "down") || !strcmp(t[0], "up") || !strcmp(t[0], "press")) {
-            if (n < 2) die(2, "events: %s needs a key", t[0]);
+        for (char *w = strtok(p, " \t"); w; w = strtok(0, " \t")) {
+            if (n == 16) BAD("too many arguments");
+            t[n++] = w;
+        }
+        if (!n) BAD("no command");
+        const char *c = t[0];
+        if (!strcmp(c, "down") || !strcmp(c, "up") || !strcmp(c, "press")) {
+            if (n < 2) BAD("missing key");
             uint8_t k = key(t[1]), md = mods(t + 2, n - 2);
             uint8_t dn[4] = {1, k, md, 0}, up[4] = {2, k, md, 0};
-            if (t[0][0] != 'u') add(f, 0, dn, 0);
-            if (t[0][0] != 'd') add(f, 0, up, 0);
-        } else if (!strcmp(t[0], "pointer") && n >= 3) {
-            pointer(f, atol(t[1]), atol(t[2]), n > 3 ? atol(t[3]) : 0);
-        } else if (!strcmp(t[0], "click") && n >= 3) {
-            pointer(f, atol(t[1]), atol(t[2]), 1);
-            pointer(f, atol(t[1]), atol(t[2]), 0);
-        } else if (!strcmp(t[0], "wheel") && n >= 2) {
-            uint8_t ev[4] = {6, (uint8_t)atol(t[1]), (uint8_t)(n > 2 ? atol(t[2]) : 0), 0};
+            if (c[0] != 'u') add(f, 0, dn, 0);          /* press: down, then up */
+            if (c[0] != 'd') add(f, 0, up, 0);
+        } else if (!strcmp(c, "pointer") || !strcmp(c, "click")) {
+            if (n < 3) BAD("missing position");
+            long x = num(t[1], 10, 0, 65535, "x"), y = num(t[2], 10, 0, 65535, "y");
+            if (c[0] == 'c') { pointer(f, x, y, 1); pointer(f, x, y, 0); }
+            else pointer(f, x, y, n > 3 ? num(t[3], 10, 0, 7, "buttons") : 0);
+        } else if (!strcmp(c, "wheel")) {
+            if (n < 2) BAD("missing vertical steps");
+            uint8_t ev[4] = {6, (uint8_t)num(t[1], 10, -127, 127, "vertical steps"),
+                             (uint8_t)(n > 2 ? num(t[2], 10, -127, 127, "horizontal steps") : 0), 0};
             add(f, 0, ev, 0);
-        } else if (!strcmp(t[0], "feeds-updated")) {
+        } else if (!strcmp(c, "feeds-updated")) {
             uint8_t ev[4] = {7, 0, 0, 0};
             add(f, 0, ev, 0);
-        } else if (!strcmp(t[0], "pad") && n >= 3) {
+        } else if (!strcmp(c, "pad")) {
+            if (n < 3) BAD("pad wants <n> <buttons> <lx> <ly> [<rx> <ry>]");
+            int pn = num(t[1], 10, 0, 3, "controller");
             uint8_t ps[8] = {0};
-            if (strcmp(t[2], "off")) {
-                unsigned long b = strtoul(t[2], 0, 16);
+            if (n != 3 || strcmp(t[2], "off")) {
+                if (n != 5 && n != 7) BAD("pad wants <n> <buttons> <lx> <ly> [<rx> <ry>]");
+                long b = num(t[2] + 2 * (t[2][0] == '0' && t[2][1] == 'x'), 16, 0, 0xFFFF, "buttons");
                 ps[0] = 1; ps[1] = b; ps[2] = b >> 8;
-                for (int i = 0; i < 4; i++) {
-                    long v = 3 + i < n ? atol(t[3 + i]) : 0;
-                    ps[3 + i] = (uint8_t)(v < -127 ? -127 : v > 127 ? 127 : v);
-                }
+                for (int i = 0; i + 3 < n; i++) ps[3 + i] = (uint8_t)num(t[3 + i], 10, -127, 127, "stick");
             }
-            add(f, 1 + atoi(t[1]), 0, ps);
-        } else if (!strcmp(t[0], "home")) {
-            /* a shell's only: nothing for a machine run alone */
+            add(f, 1 + pn, 0, ps);
+        } else if (!strcmp(c, "home")) {
+            /* a shell's only: dropped for a machine run alone */
         } else
-            die(2, "events: unknown command %s", t[0]);
+            BAD("unknown command %s", c);
     }
+    free(line);
     fclose(fp);
+    qsort(in, nin, sizeof *in, by_frame);   /* events of a frame in the order written */
 }
 
 static void hex(const uint8_t *h) { for (int i = 0; i < 32; i++) printf("%02x", h[i]); }
@@ -140,28 +187,29 @@ static void state_hash(M *m, uint8_t h[32], const char *dump)
     free(s);
 }
 
-static void put_utf8(uint32_t c)
-{
-    if (c < 0x80) putchar(c);
-    else if (c < 0x800) { putchar(0xC0 | c >> 6); putchar(0x80 | (c & 0x3F)); }
-    else { putchar(0xE0 | c >> 12); putchar(0x80 | (c >> 6 & 0x3F)); putchar(0x80 | (c & 0x3F)); }
-}
-
-/* The terminal's grid, from its STATE section (DEVICES.md 1.7, STATE.md 1.6). */
+/* The terminal's grid, from its STATE section (DEVICES.md 1.7, STATE.md
+   1.6), as STATE.md 6.3 prints it. */
 static void dump(M *m)
 {
     uint8_t *s; uint32_t n;
     if (!m->has[2] || !bus_state(m, 2, &s, &n) || n < 9600) return;
     for (int row = 0; row < 30; row++) {
-        int last = -1;
+        char line[80 * 3 + 1];
+        size_t len = 0;
         for (int c = 0; c < 80; c++) {
             uint32_t ch = rd16(s + 4 * (row * 80 + c));
-            if (ch != 0x20 && ch != 0xFFFF) last = c;
+            if (ch == 0xFFFF) {
+                /* the right half of a wide pair is skipped; any other is a space */
+                if (c > 0 && rd16(s + 4 * (row * 80 + c - 1)) != 0xFFFF) continue;
+                ch = ' ';
+            }
+            if (ch >= 0xD800 && ch < 0xE000) ch = 0xFFFD;
+            if (ch < 0x80) line[len++] = ch;
+            else if (ch < 0x800) { line[len++] = 0xC0 | ch >> 6; line[len++] = 0x80 | (ch & 0x3F); }
+            else { line[len++] = 0xE0 | ch >> 12; line[len++] = 0x80 | (ch >> 6 & 0x3F); line[len++] = 0x80 | (ch & 0x3F); }
         }
-        for (int c = 0; c <= last; c++) {
-            uint32_t ch = rd16(s + 4 * (row * 80 + c));
-            if (ch != 0xFFFF) put_utf8(ch < 0x20 ? ' ' : ch);
-        }
+        while (len && line[len - 1] == ' ') len--;
+        fwrite(line, 1, len, stdout);
         putchar('\n');
     }
     free(s);

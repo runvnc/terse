@@ -17,7 +17,7 @@ trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/store" "$T/config" "$T/data" "$T/home"
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/config" XDG_CACHE_HOME="$T/home/cache" XDG_DATA_HOME="$T/home/data"
 export TERSE_DRIVERS="$D" TMPDIR="$T"
-CONTENT="4=terse-dev-content --store $T/store --config $T/config --data $T/data"
+CONTENT="4=$D/terse-dev-content --store $T/store --config $T/config --data $T/data"
 pass=0 fail=0
 ok() { pass=$((pass + 1)); echo "ok   $*"; }
 no() { fail=$((fail + 1)); echo "FAIL $*"; }
@@ -42,6 +42,15 @@ h=$("$TC" "$P/hello/hello.terse" --frames 1 --hash)
 [ "$h" = 8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42 ] && ok "hello after 1 frame" || no "hello 1: $h"
 h=$("$TC" "$P/hello/hello.terse" --frames 30 --hash)
 [ "$h" = cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d ] && ok "hello after 30 frames" || no "hello 30: $h"
+# the exit vector: STATE.md 3 gives the image's bytes and both hashes
+x=5445525300010a000001000000000000657869740000000000000000000000001d459308601073000000
+python3 -I -c "import sys; open(sys.argv[1], 'wb').write(bytes.fromhex(sys.argv[2]))" "$T/exit7.terse" "$x"
+h0=$("$TC" "$T/exit7.terse" --frames 0 --hash --drivers /nonexistent)
+h1=$("$TC" "$T/exit7.terse" --frames 1 --hash --drivers /nonexistent); s=$?
+if grep -q "$x" "$root/STATE.md" && grep -q "$h0" "$root/STATE.md" && grep -q "$h1" "$root/STATE.md" && [ $s -eq 7 ] \
+    && [ "$h0" = 9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a ] \
+    && [ "$h1" = 3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b ]
+then ok "exit vector (a0 = 0 after exit, status 7)"; else no "exit vector: $h0 $h1 status $s"; fi
 "$TC" "$P/hello/hello.terse" --frames 30 --dump --events "$here/tests/type.events" > "$T/a"
 ref "$P/hello/hello.terse" --frames 30 --dump --events "$here/tests/type.events" > "$T/b"
 cmp -s "$T/a" "$T/b" && ok "hello typed into: --dump is the reference's" || no "hello screen"
@@ -70,17 +79,48 @@ same "hostile (every kind of call, full budget)" "$P/hostile/hostile.terse" --fr
 same "hello, typed into" "$P/hello/hello.terse" --events "$here/tests/type.events" --frames 30 --hash-every 1
 same "hello, Esc exits with 0" "$P/hello/hello.terse" --events "$here/tests/esc.events" --frames 30 --hash
 
-echo "== optional devices whose driver is not installed"
-"$TC" "$P/sketch/sketch.terse" --frames 60 --hash --driver "4=/nonexistent/terse-dev-content" > "$T/a" 2>&1
+echo "== optional devices whose driver is not installed (DEVICES.md 2.1)"
+mkdir -p "$T/drv" "$T/none"
+for d in terse-dev-terminal terse-dev-vector terse-dev-sound terse-dev-page; do ln -s "$D/$d" "$T/drv/$d"; done
+"$TC" "$P/sketch/sketch.terse" --frames 60 --hash --drivers "$T/drv" > "$T/a" 2>&1
 ref "$P/sketch/sketch.terse" --frames 60 --hash --without 4 > "$T/b" 2>&1
-cmp -s "$T/a" "$T/b" && ok "sketch, no content driver = reference --without 4" || no "sketch without content driver"
+cmp -s "$T/a" "$T/b" && ok "sketch, no content driver installed = reference --without 4" || no "sketch without content driver"
 
 same "opt with its optional devices granted" "$here/tests/opt.terse" --frames 4 --hash
 same "opt, terminal granted, content withheld" "$here/tests/opt.terse" --frames 4 --hash --without 4
 
-echo "== a required device with no driver is refused"
-"$TC" "$P/hello/hello.terse" --frames 1 --driver "2=/nonexistent/terse-dev-terminal" > /dev/null 2> "$T/e"
+echo "== a required device with no driver, or a --driver that cannot start, refuses the run"
+"$TC" "$P/hello/hello.terse" --frames 1 --drivers "$T/none" > /dev/null 2> "$T/e"
 s=$?; [ $s -eq 2 ] && grep -q "needs a device" "$T/e" && ok "hello without a terminal driver: refused (status 2)" || no "missing terminal driver: status $s"
+for img in hello/hello sketch/sketch; do
+    "$TC" "$P/$img.terse" --frames 1 --driver "$(case $img in hello*) echo 2;; *) echo 4;; esac)=/nonexistent" > /dev/null 2>&1; sa=$?
+    "$D/terse-bus" "$P/$img.terse" --frames 1 --driver "$(case $img in hello*) echo 2;; *) echo 4;; esac)=/nonexistent" > /dev/null 2>&1; sb=$?
+    [ $sa -eq 2 ] && [ $sb -eq 2 ] && ok "$img with a --driver that cannot start: refused (status 2, as terse-bus)" || no "$img --driver /nonexistent: status $sa vs $sb"
+done
+"$TC" "$P/hello/hello.terse" --frames 1 --driver "2=$D/terse-dev-vector" > /dev/null 2>&1; sa=$?
+"$D/terse-bus" "$P/hello/hello.terse" --frames 1 --driver "2=$D/terse-dev-vector" > /dev/null 2>&1; sb=$?
+[ $sa -eq 2 ] && [ $sb -eq 2 ] && ok "a driver answering for the wrong slots: refused (status 2, as terse-bus)" || no "wrong slots: status $sa vs $sb"
+
+echo "== the events file and the dump (STATE.md 6.2, 6.3)"
+same "every form of the events file (spin keeps its queue)" "$here/tests/spin.terse" --events "$here/tests/script.events" --frames 6 --hash-every 1
+sed 's/$/\r/' "$here/tests/script.events" > "$T/crlf.events"
+same "the same with CR LF line ends" "$here/tests/spin.terse" --events "$T/crlf.events" --frames 6 --hash-every 1
+for bad in "1 pointer 1 2 8" "1 pointer -1 2" "1 wheel -128" "1 wheel 1 -128" "1 pad 0 0 -128 0" "1 pad 0 10000 0 0" "1 pad 4 0 0 0" \
+           "1 pad 0 0 0" "1 press nokey" "1 press 256" "1 down a hyper" "1 jump" "x press a" "1"; do
+    printf '%s\n' "$bad" > "$T/bad.events"
+    "$TC" "$here/tests/spin.terse" --events "$T/bad.events" --frames 1 --drivers /nonexistent > /dev/null 2>&1; sa=$?
+    ref "$here/tests/spin.terse" --events "$T/bad.events" --frames 1 > /dev/null 2>&1; sb=$?
+    [ $sa -eq 2 ] && [ $sb -eq 2 ] && ok "refused: $bad" || no "events line '$bad': status $sa vs $sb"
+done
+python3 -I "$here/tests/dump.py" "$T/dump"
+"$TC" "$T/dump/dump.terse" --frames 2 --dump > "$T/a"
+ref "$T/dump/dump.terse" --frames 2 --dump > "$T/b"
+cmp -s "$T/a" "$T/b" && ok "--dump: continuations, control codes, a surrogate" || no "--dump differs"
+"$D/terse-bus" "$T/dump/dump.terse" --frames 2 --dump > "$T/c" 2>/dev/null
+cmp -s "$T/c" "$T/b" && ok "--dump: terse-bus prints the same" || no "terse-bus --dump differs"
+sb=$(sh -c '"$0" "$1" --frames 2 --hash > /dev/null 2>&1; echo $?' "$D/terse-bus" "$here/tests/load.terse" 2> /dev/null)
+ref "$here/tests/load.terse" --frames 2 --hash > /dev/null 2>&1; sr=$?
+[ $sb -eq 143 ] && [ $sr -eq 143 ] && ok "a fault ends terse-bus and terse run by SIGTERM" || no "fault status: terse-bus $sb, terse run $sr"
 
 echo "== images of tests/ (System only, faults, exits): no drivers at all"
 for img in "$here"/tests/*.terse; do

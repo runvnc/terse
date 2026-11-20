@@ -16,7 +16,8 @@ devices of `SPEC.md` (slots) and speaks the protocol below to a **core
 host**. The core runs the machines: the CPU, ROM and RAM, the budget and the
 frame loop, the System device (slot 1), the Machines device (slot 8) of a
 shell, the event queue, and the composition of the picture. It knows
-nothing of what any other device means: every call to a slot other than 1
+nothing of what any other device means (but where its section goes in the
+state serialization, section 1.7): every call to a slot other than 1
 and 8 goes to the slot's driver, checked first against a **call table** the
 driver gives at the handshake. So a device is written once, in any language,
 and used by any core that speaks this protocol; a driver can be replaced by
@@ -123,8 +124,8 @@ The core starts the driver (section 2) and sends HELLO:
 | 2 | 2 | Reserved |
 | 4 | 4 | Flags: bit 0 shared memory is offered; bit 1 the core presents (visual drivers will be asked for layers, section 7); bit 2 replay (the run's inputs come from a recording, section 8: the driver must not use its live source, for example the network) |
 | 8 | 1 | `s`: the number of slots the core asks this driver for |
-| 9 | `s` | The slots |
-| … | 2 + … | The session directory: where a driver creates its layer files (section 7) |
+| 9 | `s` | The slots (which ones: below) |
+| … | 2 + … | The session directory: where a driver creates its layer files (section 7). Always a directory that exists, which the core created for the run and removes after it; given also when the core neither presents nor offers shared memory (a driver that never draws need not use it) |
 | … | 2 + … | The driver's bus file (section 4.2); empty if shared memory is not offered |
 
 The driver answers HELLO (`81h`):
@@ -143,9 +144,16 @@ The driver answers HELLO (`81h`):
 | … | 1 + … | Properties it subscribes to: a count, then names |
 | … | 1 + … | Host services it gives: a count, then names (section 9) |
 
-- The core refuses a driver that answers for other slots than it asked
-  for (but for slot 10, below), or which chooses shared memory when it
-  was not offered.
+- **Which slots the core asks for.** The slots of the driver (section 2)
+  that a machine of the run may have: for a single machine, those its
+  image lists (required, or optional and not withheld), never 1, 8 or a
+  slot that is no device (SPEC §image); for a shell, all of them. Slots
+  that share state are asked for together (next item).
+- A driver answers for **exactly** the slots it was asked for, or for all
+  of them but slot 10 (below). The core refuses a driver that answers for
+  any other set (a slot it did not ask for, or one asked for left out),
+  or that chooses shared memory when it was not offered: the run does not
+  start (`STATE.md` 6.4, status 2).
 - **A driver may serve several slots.** It does when the devices share
   state: device 9's `style` and `persistence` are device 3's (SPEC §vector3d.calls),
   one section of the state (`STATE.md` 1.7), so `terse-dev-vector` serves
@@ -153,6 +161,16 @@ The driver answers HELLO (`81h`):
   slots go to the one process, in order (a batch may hold both), so the
   shared setting is never in two places. Each slot keeps its own call
   table, layers and state section.
+- **Slots that share state are asked for together**, whichever of them a
+  machine lists: a core that asks the vector driver for 3 or 9 asks it
+  for both, in HELLO, whether or not an image lists the other, since the
+  driver needs slot 3's state to carry out device 9's calls. (`terse-dev-vector`
+  refuses OPEN of a machine that has device 9 when it was not asked for
+  slot 3.) OPEN then lists, per machine, only the slots the machine has:
+  for `programs/holo`, which lists only 9, HELLO asks for 3 and 9 and
+  OPEN lists 9. STATE for that machine asks for slot 3's section
+  (section 1.7). In general, the drivers' documentation (section 2's
+  table) names each group; 3 and 9 are the only one in v0.
 - **Full text (slot 10) goes with the terminal.** Device 10 (SPEC
   §terminal.text) is a capability: no calls, no layers, no state. When a
   machine's image lists it, the core asks the terminal's driver (slot 2)
@@ -213,7 +231,9 @@ image ID).
 CLOSE (`04h`) ends an instance (the shell stopped the machine, or the run
 ends): the driver drops its state and unmaps its memory file. RESET
 (`02h`, reply `82h`) returns an instance's devices to their reset state and
-drops their host bookkeeping (pending layouts, requests in flight).
+drops their host bookkeeping (pending layouts, requests in flight). The
+reference core never sends RESET (a machine is reset by a new OPEN of a
+new instance); a driver should still answer it.
 
 ### 1.3 Ordering
 
@@ -233,7 +253,7 @@ one order, which is the system's.
 | 1 | 1 | Function (the low byte of `a7`) |
 | 2 | 2 | Reserved |
 | 4 | 24 | `a0`–`a5` (u32 each) |
-| 28 | 8 | Budget (i64): what is left after the `ecall` instruction and the call's 4 (SPEC §charges); no reference driver needs it |
+| 28 | 8 | Budget (i64): the budget after the `ecall` instruction's own cost (1, or 4 from RAM) less 4, for every call: an answered call's further 60 is not taken off (the core charges it with the result). No reference driver reads it |
 | 36 | 4 | `n`: the bytes of the call's read buffer that follow |
 | 40 | `n` | Those bytes, from the buffer's start |
 
@@ -283,7 +303,10 @@ every driver of the machine:
 | 8 | 4 | The Unix time latched for it |
 | 12 | 4 | `e`: the host's input events for this frame, as the system routed them to this machine (keys, text, pointer, wheel, …) |
 | 16 | 4 × `e` | The events: type, `a`, `b`, `c` |
-| … | 4 + … | Replay: the driver's recorded input for this frame (u32 length, bytes) |
+| … | 4 + … | Replay: the driver's recorded input for this frame: a u32 length, then that many bytes. **Always present**: the length is 0 unless flag bit 0 is set |
+
+Every driver of the machine gets the same BEGIN, with all of the frame's
+host events, whether or not its device uses them.
 
 and the driver replies INPUTS:
 
@@ -301,9 +324,12 @@ and the driver replies INPUTS:
 and the drivers' events: first every event at position 0 (before the
 host's events); then the host's events, each followed by the events at
 position 1 whose index is its index; then those at position 2 (after the
-input events). Among events of the same place, drivers in increasing order
-of their lowest slot, each driver's in the order it gave them. These are
-queued as SPEC §events and §content.events say (at most 64; one feeds-updated event a frame). Then
+input events). An event at position 1 whose index is not that of one of
+the frame's host events (the index is `e` or more) is dropped. Among
+events of the same place, drivers in increasing order of their lowest
+slot, each driver's in the order it gave them. These are queued as SPEC
+§events says (at most 64; at most one feeds-updated event a frame,
+whoever sent it; a pair, below, both or neither). Then
 the core latches the time, random bytes and controllers, copies every
 driver's writes into RAM, and queues the events at position 3
 (completions: SPEC §content.submit's content-done events, queued after the frame's
@@ -332,6 +358,29 @@ serialization (`STATE.md` 1.6–1.12: the bytes after the present flag). The
 core writes the present flags and puts the sections in `STATE.md`'s order
 (slot 3's section for an image that lists only device 9 too: the style
 lives there, SPEC §vector3d.calls). Defined only between frames.
+
+**This is where the core knows the devices.** The core knows nothing of
+what a device means, but to write the serialization, and so to hash, it
+must know where each device's section goes and when it is there: that is
+the one device-specific table every core holds. After the System section
+(`STATE.md` 1.5), in this order:
+
+| Order | `STATE.md` | Section of slot (STATE) | Present flag | What the core writes |
+|---|---|---|---|---|
+| 1 | 1.6 | 2 | yes | `01h` and slot 2's section if the machine has device 2, else `00h` |
+| 2 | 1.7 | 3 | yes | `01h` and slot 3's section if the machine has device 3 **or** device 9 (asked of the vector driver as slot 3 in both cases), else `00h` |
+| 3 | 1.8 | 4 | yes | `01h` and slot 4's section if it has device 4, else `00h` |
+| 4 | 1.9 | 7 | yes | `01h` and slot 7's section if it has device 7, else `00h` |
+| 5 | 1.10 | none: the core's own (device 8) | yes, if there at all | nothing if the image does not list 8; `00h` if it lists 8 and the machine is not a shell (run alone, or started by a shell: SPEC §image); `01h` and the core's own device-8 section for the shell |
+| 6 | 1.11 | 9 | no | slot 9's section if the machine has device 9, else nothing |
+| 7 | 1.12 | 6 | no | slot 6's section if it has device 6, else nothing |
+| 8 | 1.13 | none: the core's | no | the machine's argument, if it has one |
+
+"Has" is SPEC §image's: the image requires the device, or lists it as
+optional and it was granted. Device 10 has no section (its grant flag is
+in `STATE.md` 1.4); slots that are no device have none. A new device would
+need a new row here, in every core, before any core could hash a machine
+that has it; section 14 asks whether drivers should declare it instead.
 
 RESTORE is `41h`, 3 reserved bytes, a length (u32) and the rest of a
 serialization from the slot's section on (STATE.md 4): the core cannot
@@ -381,6 +430,9 @@ variables:
 | `TERSE_BUS_SOCKET` | Path of a Unix-domain stream socket the core listens on |
 | `TERSE_BUS_CPU` | Optional: a CPU number the driver should run on |
 
+Standard input is not used (the reference cores give `/dev/null`); a
+driver writes diagnostics to standard error.
+
 The driver connects to the socket and waits for HELLO. The core accepts
 one connection per driver, waits at most 10 seconds (`--start-timeout`)
 for it and for the HELLO reply, and refuses the run if either does not
@@ -389,16 +441,64 @@ the core gives up on it without leaving it running. The core reaps every
 driver it started: it sends SHUTDOWN, closes the socket, and kills a
 driver that has not exited 2 seconds later.
 
-`terse-bus` starts, by default, `terse-dev-terminal` for slot 2,
-`terse-dev-vector` for slots 3 and 9, `terse-dev-content` for 4,
-`terse-dev-sound` for 6 and `terse-dev-page` for 7, from its own directory, each only if a machine of
-the run may list one of its slots (for a shell, all of them); `--driver
-<slots>=<command line>` replaces the driver of those slots (`--driver
-2=...`, `--driver 3,9=...`). For a single machine, a driver whose slots
-only optional devices of the image use is not started if its program is
-not installed (and no `--driver` names it) or `--without <slot>`
-withholds them: the run goes on without those devices (SPEC §image). A
-required device whose driver is missing still stops the run.
+### 2.1 Which driver serves which slot
+
+A core chooses its drivers. The reference drivers are one program per
+group of slots, with fixed names:
+
+| Slots | Program | Options |
+|---|---|---|
+| 2, and 10 (full text) | `terse-dev-terminal` | none |
+| 3 and 9 (shared state, section 1.1) | `terse-dev-vector` | none |
+| 4 | `terse-dev-content` | `--store <dir>`, `--config <dir>`, `--data <dir>`, `--relay <ws://…>` (repeatable; `none` for no relay), `--consent allow\|deny\|ask`, `--profile reading`, `--no-feed-relays`, `--no-program-download`: those of `terse run`, with the same defaults, which are **the user's own** blob store, configuration and data directories. A test must always give `--store`, `--config` and `--data` (and `--relay none` to stay off the network) |
+| 6 | `terse-dev-sound` | none |
+| 7 | `terse-dev-page` | `--fonts` or `--reference` (lay pages out with real fonts, or with the reference layout; by default real fonts only when the core presents), `--page-sans`, `--page-serif`, `--page-mono <font file>` |
+
+Options follow the program name on its command line. The content and
+page drivers refuse an option they do not know (status 2); the others
+ignore their arguments. Every Rust driver also reads
+`TERSE_BUS_TRANSPORT=socket` (never take shared memory),
+`TERSE_BUS_SPIN=fixed` and `TERSE_BUS_SPIN_US` (section 4.2). The other
+drivers in the repository take no options:
+`crates/terse-devices/c/terminal.c` (slots 2 and 10; the socket unless
+`TERSE_C_SHM=1`), `crates/terse-devices/python/vector.py` (slots 3 and 9,
+socket only), `native/driver-example/terminal.c` (slots 2 and 10, socket
+only, section 13) and `terse-dev-crash`, a terminal that fails on purpose
+for tests (`TERSE_CRASH`, `TERSE_CRASH_AT`, `TERSE_CRASH_THEN`).
+
+How a core finds its drivers (`terse-bus` does this, and `tcore`):
+
+1. It looks for the programs above in **one directory**: by default the
+   directory of its own executable (`tcore` also takes `--drivers <dir>`
+   or `TERSE_DRIVERS`). It does not search `PATH` for them.
+2. `--driver <slots>=<command line>` replaces the driver of the slots it
+   names (`--driver 2=...`, `--driver 3,9=...`). The command line is
+   split at spaces; its program is a path, or a name looked up on `PATH`
+   as a shell would. A driver that replaces slot 2 is asked for slot 10
+   too when a machine lists 10. Name a whole group (`3,9`).
+3. It starts a driver only if a machine of the run may have one of its
+   slots (section 1.1; for a shell, all of them), and asks it only for
+   those.
+4. **An optional device without a driver is absent.** For a single
+   machine, a default driver whose slots only optional devices of the
+   image use is not started if its program is not in the directory, or
+   if `--without <slot>` withholds them: the machine runs without those
+   devices, which are not granted (SPEC §image).
+5. **A required device without a driver refuses the run**, with status 2
+   ("needs a device", `STATE.md` 6.4). So does a driver named by
+   `--driver` that cannot be started, and any driver whose handshake
+   fails (it exits or closes its socket first, does not answer in time,
+   answers for the wrong slots, or will not take the machine in OPEN,
+   section 1.2), whether its devices are required or optional: a
+   `--driver` is a deliberate choice, so the core does not quietly run
+   without it.
+6. Slots that are no device (0, 5, 11–255) are never asked for, also not
+   of a `--driver`: an image that lists one as optional runs without it,
+   and one that requires it is refused (SPEC §image).
+
+The set of drivers, and so the devices a machine may be granted, is
+fixed when the run starts; section 14 sketches a per-user drivers
+directory.
 
 ---
 
@@ -540,10 +640,21 @@ deferred. The System device's calls and device 8's are the machine's own
 | 56 | 4 | Charge rule: high |
 | 60 | 4 | Charge rule: units added when low ≤ the argument ≤ high |
 
-Fields an entry does not use are zero, but argument numbers, which are
-`FFh` ("none"); a call that is not batchable has rule 0 and charge zero.
+The core reads only the fields an entry uses: the buffer fields
+(offsets 2–16) only if flag bit 2 is set, the checked argument's
+greatest value only if offset 17 is not `FFh`, the result and charge
+rules only if flag bit 1 is set, the charge rule's range only if offset 49
+is not `FFh`. Writers set every unused field to zero, except three
+argument numbers, which are `FFh` ("none") when unused: the buffer's
+length argument (offset 3) of a call without a buffer, the checked
+argument (17) and the charge rule's argument (49). (The reference tables
+also put `FFFF_FFFEh` in the two failure results of a call without a
+buffer; the core never reads them.) A call that is not batchable has rule
+0 and charge zero.
 
-**The core's checks.** For a call with a buffer, in this order:
+**The core's checks.** For every call, in this order (steps 1 and 2 only
+for a call with a buffer, step 3 only for one with a checked argument,
+whether or not it has a buffer):
 
 1. The length is the length argument × the scale (computed without
    overflow), or the fixed length. Outside least … greatest: the result is
@@ -551,9 +662,9 @@ Fields an entry does not use are zero, but argument numbers, which are
 2. A buffer of length 0 is valid at any address. Otherwise it must lie
    wholly in RAM, or (if bit 2 and the device does not write it) wholly in
    ROM or wholly in RAM: if not, the place result.
-3. The checked argument, if any, must be at most its greatest value: if
-   not, the place result (SPEC §calls.convention: a bad buffer and a bad argument give
-   the same `FFFF_FFFEh` in every call that has both).
+3. The checked argument must be at most its greatest value: if not, the
+   place result (SPEC §calls.convention: a bad buffer and a bad argument
+   give the same `FFFF_FFFEh` in every call that has both).
 
 A call that fails a check is charged its base charge (4, or 64 for an
 answered call) and does not reach the driver (SPEC §charges: nothing is copied).
@@ -886,9 +997,11 @@ defines; a driver's failure is the host's. So:
 
 - **The run stops.** The core stops running frames, kills every driver it
   started (none is left behind), removes the session's files, prints which
-  driver failed, in which frame, and why, and exits with status 3 (a
-  window shows the last picture until it is closed, with the reason in its
-  title and on standard error). With one driver process per device for all
+  driver failed, in which frame, and why, and exits with status 3
+  (`STATE.md` 6.4: status 2 is a run that did not start, a refused image
+  or a driver that failed its handshake, section 2.1). A window shows the
+  last picture until it is closed, with the reason in its title and on
+  standard error. With one driver process per device for all
   machines, a failed driver is a failed device of every machine, so this
   is also what a per-machine rule would come to.
 - Nothing is written to a machine's state: hashes up to the failure are
@@ -966,7 +1079,124 @@ Wayland compositor): present interval p50 16.6–16.7 ms in every run; p99
 20–46 ms (the frames in which a machine starts); the scripted input reached
 the same machines as headless (the same state hashes).
 
-## 12. Open questions
+## 12. A minimal core
+
+What a core must do to run one machine headless with drivers, check it
+against the expected hashes, and nothing more (`native/core-c`'s `tcore`
+does exactly this, in about 600 lines of C for the bus). The order is
+the order of a run:
+
+1. **Start each driver** it needs (section 2): listen on a fresh socket,
+   start the program with `TERSE_BUS_SOCKET`, accept one connection
+   within 10 seconds.
+2. **HELLO** (section 1.1): flags 0 (no shared memory, no presenting, no
+   replay), the slots it asks for (section 1.1: listed slots, both of 3
+   and 9, 10 with the terminal), a session directory, an empty bus file.
+   From the reply it needs the slots, their versions and their call
+   tables; it skips the name, native size, layers, properties and
+   services. A wrong set of slots, or a transport other than 0, refuses
+   the run.
+3. **Grants** (SPEC §image): which optional devices the drivers serve in
+   the version listed; a required device none serves refuses the run.
+4. **OPEN** instance 0 (section 1.2) to every driver: the image ID, the
+   ROM and RAM lengths, an empty memory file, the driver's slots the
+   machine has, no identity, the ROM. A refusal refuses the run.
+5. **Each frame:**
+   - step 1: **BEGIN** to every driver (frame counter, Unix time, the
+     host's events, an empty replay field), **INPUTS** back; queue the
+     events by position, apply the writes, queue the completions
+     (section 1.5); the budget gains 125,000 less every driver's charge;
+   - step 2: each `ecall` to a driver's slot: the call table's checks
+     (section 5), then **CALL** and its **RESULT** (an answered call costs
+     64 plus the driver's charge, a deferred one 4 plus the table's
+     charge; writes only within the write buffer, section 1.4), answering
+     any **READ** with **DATA** meanwhile;
+   - step 3: **END** to every driver.
+6. **STATE** for each section, between frames, when it hashes: the
+   sections in the order and on the rules of section 1.7's table.
+7. **SHUTDOWN** to every driver at the end; close the sockets, reap each
+   process (kill one that has not exited 2 seconds later).
+
+A message that is not the reply asked for, or ERROR, is a driver failure:
+the run stops with status 3 (section 10).
+
+What such a core may leave out, and when it would need it:
+
+| Left out | Needed for |
+|---|---|
+| BATCH (section 6) | speed only: a deferred call sent as a CALL gets the same result and charge from the driver (`tcore --no-batch` checks this) |
+| Shared memory (section 4) | speed only: offer none, and every driver takes the socket |
+| PRESENT, layers, native size, section 7.1 | a picture |
+| GET and SET (section 7.2) | presenting (subscribers get their properties before PRESENT), device 8 (`vector3.list`: a shell), playing sound (`sound.frame`) |
+| SERVICE (section 9) | a shell (images to start, snapshots) |
+| RESET | nothing: the reference core never sends it |
+| CLOSE | a system (a machine the shell stops); at the end of a run SHUTDOWN is enough |
+| RESTORE (section 1.7) | snapshots (`--load-state`, a shell's `restore`) |
+| HELLO flag bit 2, BEGIN flag bit 0, the input records (section 8) | recording and replay |
+| READ and DATA | nothing, for drivers that never READ; the content driver reads its data ranges with it (SPEC §content.request), so a core that starts it must answer |
+
+Besides the protocol, the core keeps four facts of particular devices,
+all stated above: slots 3 and 9 go to one driver, asked for together
+(1.1); slot 10 goes with slot 2 and has no calls (1.1); the order and
+presence of the state's device sections (1.7); and device 8, which is the
+core's own and absent on a machine that is not a shell (SPEC §image).
+
+## 13. A minimal driver
+
+What a driver must do to serve one device for any number of machines,
+drawing nothing, on the socket. `native/driver-example/terminal.c` does
+exactly this for the terminal, with a comment at each step; its README
+lists the same steps.
+
+1. **Connect** to `TERSE_BUS_SOCKET`. Read messages as section 1 frames
+   them (length, address, body); every reply carries the address of its
+   request.
+2. **HELLO**: reply `81h`, protocol 1, transport 0 (the socket, whatever
+   is offered), a name, native size 0 × 0, then for exactly the slots it
+   was asked for (it may leave out 10, and must refuse with ERROR a set it
+   cannot serve): the slot, the device version, no layers, the call table
+   (section 5). Then no properties published, none subscribed, no
+   services.
+3. **OPEN**: a new instance, its device at reset (SPEC §reset); reply
+   `83h` with `01h` (taken), or `00h` and a reason, for example a device
+   version it does not implement. Keep one state per instance; an OPEN
+   of an instance already open starts it again.
+4. **CLOSE**: drop the instance. No reply.
+5. **CALL**: carry the call out on the instance and slot of its address
+   and reply RESULT: `a0`, `a1` if the table says the call sets it, the
+   charge on top of the base charge, and the bytes it writes (only within
+   the call's write buffer). The core has already made the table's checks
+   and sent the read buffer's bytes. Every function of the table must be
+   handled, deferred ones too: a core that does not batch sends them as
+   CALLs, and the reply must then be what the table's rules say.
+6. **BATCH**: carry out each CALL in it, in order (they may be for
+   several instances and slots), and reply to none.
+7. **BEGIN**: reply INPUTS. A device with no inputs replies a charge of
+   0, no events, no writes and an empty record. BEGIN's replay field is
+   always there.
+8. **END**: no reply; do what the device does at the end of a frame (the
+   terminal: nothing).
+9. **STATE**: reply `C0h` and the slot's section of the serialization
+   (`STATE.md`, the bytes after the present flag), for the instance and
+   slot of the address.
+10. **SHUTDOWN**, or the socket closed: exit. Any other message it does
+    not handle: reply ERROR with the reason, and exit.
+
+What it may leave out: shared memory (it never chooses it); PRESENT and
+layers (sent only to a driver that declares layers, and only when the
+core presents); GET and SET (sent only to a driver that publishes or
+subscribes to a property); SERVICE (only to one that names a service);
+RESET (never sent by the reference core; trivial anyway); RESTORE, if it
+does not mind that a run restoring a snapshot then fails with its ERROR;
+the input records of section 8 (a device without inputs has none).
+
+A device must be **complete** to be served: a driver that answers for a
+slot implements every call of that device's version exactly (results,
+charges, state), since a program asks `device` and relies on all of it,
+and the state hash covers it. There is no partial device, and no driver
+for a slot that is no device of v0 (section 2.1, rule 6).
+
+## 14. Open questions
 
 - **The phosphor style** (section 7.1).
 - **Trust.** A driver on shared memory can write any of an instance's RAM
@@ -980,3 +1210,30 @@ the same machines as headless (the same state hashes).
 - **A driver per machine.** One process per device serves every machine;
   a process set per machine would isolate a crash to one machine but costs
   a process per device per machine (section 11).
+- **Drivers declaring their state section.** The core's one
+  device-specific table (section 1.7) means a new device needs every core
+  changed before it can be hashed. A driver could instead declare, per
+  slot in its HELLO reply, where its section goes (its position in
+  `STATE.md`'s order) and its presence rule (a present flag always
+  written, or a section only when the machine has the device), and which
+  slot's section serves another (9 → 3). `STATE.md` would still fix the
+  order for every device, so hashes would not change; the core would read
+  the order from the drivers instead of knowing it. Not done: v0 has a
+  fixed set of devices, and a declaration is one more thing to get wrong.
+- **A per-user drivers directory.** Today a core finds drivers in its
+  own directory, or as `--driver` says (section 2.1), so a third party
+  cannot ship one driver (a sound device for some hardware) without the
+  user editing a command line. A convention could fix that: a directory
+  in the user's data directory (`$XDG_DATA_HOME/terse/drivers`, or the
+  platform's equivalent), holding one subdirectory per installed driver
+  with its program and a small manifest: the slots it serves and the
+  device version of each, its command line, and a name. A user installs
+  a driver by copying its directory there. At start a core lists the
+  manifests and, for each slot, chooses in this order: an explicit
+  `--driver`; a driver of the user's directory (if two serve one slot,
+  the run refuses to guess and says so); the core's own directory. The
+  manifest is read only at start: the set of drivers, like a machine's
+  grants (SPEC §image), is fixed at reset, so hot-plugging a driver into
+  a running machine is deliberately out of scope (a device that appeared
+  mid-run would contradict `device`'s answer, which never changes while
+  the machine runs). Nothing of this is implemented.

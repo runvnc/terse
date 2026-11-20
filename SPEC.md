@@ -75,6 +75,24 @@ document. A **program-profile host** (§profiles) implements:
 What a host draws (fonts, smoothing, the phosphor style's glow) is up to
 it and is never machine state.
 
+**A core on the device bus** (`DEVICES.md`) keeps less. Devices 2 and 3
+(and every other device but 1 and 8) are then separate driver programs,
+which may be the reference drivers, so the core implements only the
+machine of §profile, the image format, device 1 System with §events and
+§controllers, §calls.convention's rules for buffers (from each driver's
+call table, `DEVICES.md` 5), §charges, and the state serialization's
+layout (`STATE.md` 1, whose device sections it asks of the drivers). It
+needs none of the terminal's Unicode tables or the palette: only UTF-8
+validation and the White_Space property, for `open`'s display names
+(§display-names). `DEVICES.md` 12 lists the messages such a core must
+speak; `native/core-c` is one, in C.
+
+**Headless, for tests**, a host needs no clock, randomness or
+controllers: the reference's headless runs latch Unix time 0, supply no
+random bytes (`random` gives zeros) and have controllers only from the
+scripted input (`STATE.md` 6), and every expected hash in this repository
+is made that way.
+
 **Running is one tier, verifying is another.** Everything above is enough
 to run every program written for the program profile. Showing that a host
 runs them exactly as the reference does needs `STATE.md` as well:
@@ -180,6 +198,13 @@ and the reserved MISC-ALU codes, every compressed floating-point load or
 store, and all 48-bit and longer encodings; CSR instructions, `FENCE.I`,
 `MRET`, `WFI` and other privileged encodings.
 
+An instruction is fetched by its first 16-bit parcel: if the parcel's
+low two bits are not `11` it is a 16-bit instruction, else the next
+parcel is fetched too and the 32 bits are decoded. So a 48-bit or longer
+encoding is fetched as 32 bits and faults as an illegal instruction with
+those 32 bits recorded (§stopping); if its second parcel lies outside ROM
+and RAM, it is a fetch fault at the second parcel's address instead.
+
 ### §memory Memory map
 
 | Address | Contents | Access |
@@ -242,7 +267,9 @@ Rules:
   units (8 requests of 16,384 bytes, §charges).
 - `exit` and a fault stop the machine at once (§stopping). The rest of
   that frame's budget is dropped; the frame still counts. Nothing runs in
-  later frames.
+  later frames. The budget left in the state is that of any other frame's
+  end: a positive remainder becomes 0, and a negative one (an `exit`
+  whose `ecall` and charge took the budget below zero) is kept.
 
 A host that falls behind real time lets virtual time lag. It must not run
 extra frames to catch up.
@@ -272,6 +299,9 @@ pointing at it.
 | Load | a load from outside ROM and RAM | the load address |
 | Store | a store outside RAM (ROM included) | the store address |
 | Misaligned | a load or store whose address is not a multiple of its size | the access address |
+
+Alignment is checked first: a load or store that is both misaligned and
+outside memory is a misaligned fault.
 
 A host must show the user that the program faulted, with the kind and the
 addresses, and must not present a fault as an exit code.
@@ -305,7 +335,12 @@ by the ROM contents.
   optional; a host refuses an image that lists one twice. Devices 1 and 8
   are never optional: a host refuses an image that lists either with the
   top bit set (device 1 is always there; device 8 is the shell's,
-  §machines.shell, and absent elsewhere whatever the header says).
+  §machines.shell, and absent elsewhere whatever the header says). So an
+  image that lists device 8 and runs alone, or is started by a shell, is
+  not refused and does not have device 8: `device` and every call to slot
+  8 return `FFFF_FFFFh`, and its state's section for device 8 is the
+  single byte `00h` (`STATE.md` 1.10; an image that does not list 8 has
+  no such section at all).
 - The **title** is the 16 bytes without their trailing `00h` bytes
   (possibly empty). It should be UTF-8, but a host does not check it: it
   shows what it cannot decode as it can (for example as U+FFFD). A
@@ -422,7 +457,10 @@ buffers it is said to write. `pc` continues after the `ecall`.
 
 - An unknown call, or a call to a device the machine does not have (one
   the image does not list, or lists as optional and was not granted,
-  §image), returns `FFFF_FFFFh` and does nothing else.
+  §image), returns `FFFF_FFFFh` and does nothing else. That includes
+  every call to slot 8 on a machine that is not a shell (§image), to slot
+  10 (a device with no calls, §terminal.text), to a slot that is no device
+  (0, 5, 11–255) and with `a7` above `FFFFh`. Its charge is 4 (§charges).
 - A **buffer** is a pointer and a length in bytes. A buffer the device
   reads must lie wholly in ROM or wholly in RAM; one it writes must lie
   wholly in RAM. A buffer of length 0 is valid at any address, for every
@@ -511,6 +549,11 @@ machine's own and cost 4.
   (§controllers) and returns byte 0. A controller number above 3 reads as a
   controller that is not connected.
 - **`exit`** stops the machine with exit code `a0 & FFh` (§stopping).
+  Like any call it then writes its result, 0, to `a0`, and `pc` is left
+  after the `ecall`; the call is charged as any of device 1 (4, plus the
+  `ecall`'s own 1 or 4), and then the budget is settled as §frames says.
+  The state after an `exit` (`STATE.md` 1.2, 1.3) therefore has `a0` = 0
+  whatever code was given (`STATE.md` 3 has a test vector).
 - **`open`** asks the shell to open something. `a0` is the address of an
   **open request**, which must lie wholly in ROM or wholly in RAM:
 
@@ -522,7 +565,12 @@ machine's own and cost 4.
   | 34 | n | Kind 2: the name, a valid display name (§display-names) |
 
   A request of another kind, or one that does not lie wholly in ROM or
-  RAM, or whose name is not valid, is a bad buffer (`FFFF_FFFEh`). If the
+  RAM, or whose name is not valid, is a bad buffer (`FFFF_FFFEh`). Since
+  the request's length depends on its bytes, it is checked in this order,
+  each step reading only what the earlier ones showed to be there: byte 0
+  is in ROM or RAM; the kind is 1 or 2; for kind 1, bytes 0–32 lie wholly
+  in ROM or wholly in RAM; for kind 2, bytes 0–33 do, n is 1–48, bytes
+  0 to 33 + n do, and the name is a valid display name. If the
   machine is not one a shell started (it runs on its own, or it is the
   shell itself), or a request of this machine still waits (the shell has
   not read it with `request`, §machines.calls), the call returns 0 and does
@@ -606,6 +654,12 @@ full is dropped.
   up smaller movements until they make a whole step.
 - **Content done** and **feeds updated** come from the content device
   (§content.events).
+- **At most one feeds-updated event is queued per frame**: a second one
+  in the same frame's input (from the host or a device) is dropped, as
+  is any event that finds the queue full. This holds for every machine,
+  also one without device 4: a host that is given such an event (a
+  scripted input, `STATE.md` 6) queues it like any other, and a program
+  that does not use content ignores it.
 - **Page laid out**, **page anchor**, **page located** and **page located
   y** come from the page device (§page.events).
 - **Machine changed**, **home**, **machine pressed**, **open
@@ -1003,6 +1057,7 @@ the call runs and may take it below zero (§frames).
 | What | Charge |
 |---|---|
 | Any call, including one that fails: its base charge | 4 for a deferred call and for every call of devices 1 and 8; 64 for an answered call |
+| An unknown call, a call to a device the machine does not have, and a call whose `a7` is above `FFFFh` (§calls.convention) | 4 |
 | `write`: each byte of the buffer | 2 |
 | A clear, scroll up or scroll down done by `command` (`01h`–`03h`) | 150 |
 | Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set` and an accepted vector `submit`, each when it is carried out; `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |

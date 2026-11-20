@@ -99,9 +99,14 @@ void bus_shutdown(void)
     if (session[0]) { rmdir(session); session[0] = 0; }
 }
 
-void die(int status, const char *fmt, ...)
+/* Until the machine runs, a failing driver means the run did not start:
+   status 2, not 3 (STATE.md 6.4, DEVICES.md 2.1). */
+static int starting = 1;
+
+_Noreturn void die(int status, const char *fmt, ...)
 {
     va_list ap;
+    if (status == 3 && starting) status = 2;
     va_start(ap, fmt);
     fputs("tcore: ", stderr); vfprintf(stderr, fmt, ap); fputc('\n', stderr);
     va_end(ap);
@@ -188,12 +193,18 @@ static uint8_t *request(Driver *d, Buf *b, int want, uint32_t *len, int timeout_
 }
 
 /* ---- driver specs and start ---- */
-static struct { uint8_t slots[8]; int n; char *cmd; } spec[MAXD] = {
-    {{2, 10}, 2, "terse-dev-terminal"}, {{3, 9}, 2, "terse-dev-vector"},
-    {{4}, 1, "terse-dev-content"},      {{6}, 1, "terse-dev-sound"},
-    {{7}, 1, "terse-dev-page"},
+/* DEVICES.md 2.1: the default drivers, one program per group of slots,
+   found in one directory; --driver replaces them (`given`). */
+static struct { uint8_t slots[8]; int n; char *cmd; int given; } spec[MAXD] = {
+    {{2, 10}, 2, "terse-dev-terminal", 0}, {{3, 9}, 2, "terse-dev-vector", 0},
+    {{4}, 1, "terse-dev-content", 0},      {{6}, 1, "terse-dev-sound", 0},
+    {{7}, 1, "terse-dev-page", 0},
 };
 static int nspec = 5;
+
+/* The slots that are devices of v0 besides 1 and 8 (SPEC §image): no other
+   slot is ever asked of a driver (DEVICES.md 2.1, rule 6). */
+static int device_slot(int s) { return s == 2 || s == 3 || s == 4 || s == 6 || s == 7 || s == 9 || s == 10; }
 
 void bus_set_driver(const char *arg)
 {
@@ -201,26 +212,32 @@ void bus_set_driver(const char *arg)
     if (!eq) die(2, "--driver wants <slots>=<command line>");
     uint8_t s[8]; int n = 0;
     for (const char *p = arg; p < eq && n < 8; p++) {
-        s[n++] = strtoul(p, (char **)&p, 10);
+        unsigned long v = strtoul(p, (char **)&p, 10);
+        if (device_slot(v)) s[n++] = v;   /* a slot that is no device: never asked */
         if (*p != ',') break;
     }
+    int has2 = 0, has10 = 0;               /* full text goes with the terminal */
+    for (int k = 0; k < n; k++) { has2 |= s[k] == 2; has10 |= s[k] == 10; }
+    if (has2 && !has10 && n < 8) s[n++] = 10;
     for (int i = 0; i < nspec; i++)       /* those slots leave their old driver */
         for (int j = 0; j < spec[i].n; j++)
             for (int k = 0; k < n; k++)
                 if (spec[i].slots[j] == s[k]) { spec[i].slots[j--] = spec[i].slots[--spec[i].n]; break; }
-    if (n == 1 && s[0] == 2) s[n++] = 10;   /* full text goes with the terminal */
     memcpy(spec[nspec].slots, s, n); spec[nspec].n = n; spec[nspec].cmd = strdup(eq + 1);
+    spec[nspec].given = 1;
     nspec++;
 }
 
-/* Splits at spaces; resolves the program against --drivers; NULL if not installed. */
-static char **split(const char *cmd)
+/* Splits a command line at spaces. A default driver's program is looked for
+   in the drivers directory only; a --driver's is a path or a name on PATH
+   (DEVICES.md 2.1). NULL if it is not installed. */
+static char **split(const char *cmd, int given)
 {
     char *c = strdup(cmd), **v = calloc(64, sizeof *v);
     int n = 0;
     for (char *t = strtok(c, " "); t && n < 63; t = strtok(0, " ")) v[n++] = t;
     if (!n) return 0;
-    if (!strchr(v[0], '/') && bus_driver_dir) {
+    if (!given) {
         char *p = malloc(strlen(bus_driver_dir) + strlen(v[0]) + 2);
         sprintf(p, "%s/%s", bus_driver_dir, v[0]);
         v[0] = p;
@@ -288,8 +305,8 @@ static void start(Driver *d, char **argv, const uint8_t *ask, int nask)
     uint32_t len;
     uint8_t *r = request(d, &b, 0x81, &len, 10000), *e = r + len;
     free(b.p);
-#define NEED(k) do { if (r + (k) > e) die(3, "driver %s: short HELLO reply", argv[0]); } while (0)
-    if (r[1] != 1 || r[2] != 0) die(3, "driver %s: protocol %d, transport %d", argv[0], r[1], r[2]);
+#define NEED(k) do { if (r + (k) > e) die(2, "driver %s: short HELLO reply", argv[0]); } while (0)
+    if (r[1] != 1 || r[2] != 0) die(2, "driver %s: protocol %d, transport %d", argv[0], r[1], r[2]);
     r += 4; NEED(2);
     uint32_t nl = rd16(r); NEED(2 + nl);
     snprintf(d->name, sizeof d->name, "%.*s", (int)nl, r + 2);
@@ -301,13 +318,20 @@ static void start(Driver *d, char **argv, const uint8_t *ask, int nask)
         r += 3 + 2 * k; NEED(1);
         int nm = *r++; NEED(64 * nm);
         for (int j = 0; j < nask; j++) ok |= ask[j] == slot;
-        if (!ok) die(3, "driver %s answers for slot %d, not asked for", d->name, slot);
+        for (int j = 0; j < d->nslots; j++) ok &= d->slots[j] != slot;
+        if (!ok) die(2, "driver %s answers for slot %d, not asked for", d->name, slot);
         d->slots[d->nslots] = slot; d->vers[d->nslots++] = ver;
         drv_of[slot] = d;
         table[slot] = calloc(256, sizeof(Entry));
         for (int j = 0; j < nm; j++, r += 64) parse_entry(&table[slot][r[0]], r);
     }
     /* properties and services follow; a headless core uses none of them */
+    /* DEVICES.md 1.1: exactly the slots asked for, or all of them but 10 */
+    for (int j = 0; j < nask; j++) {
+        int ok = ask[j] == 10;
+        for (int k = 0; k < d->nslots; k++) ok |= d->slots[k] == ask[j];
+        if (!ok) die(2, "driver %s does not answer for slot %d", d->name, ask[j]);
+    }
 }
 
 static int lowest(const Driver *d)
@@ -327,27 +351,36 @@ int bus_setup(M *m, char *err, size_t el)
     const char *tmp = getenv("TMPDIR");
     snprintf(session, sizeof session, "%s/tcore-XXXXXX", tmp && *tmp ? tmp : "/tmp");
     if (!mkdtemp(session)) { snprintf(err, el, "mkdtemp: %s", strerror(errno)); session[0] = 0; return 0; }
+    /* DEVICES.md 1.1 and 2.1: the slots wanted are the devices the image
+       lists (an optional one not withheld); 3 and 9 share state, so either
+       brings the other, and a driver is asked for the wanted slots it serves. */
+    int want[256] = {0}, req[256] = {0};
+    for (int s = 0; s < 256; s++) {
+        want[s] = device_slot(s) && listed[s] && !(opt[s] && bus_withheld[s]);
+        req[s] = device_slot(s) && listed[s] && !opt[s];
+    }
+    want[3] = want[9] = want[3] || want[9];
+    req[3] = req[9] = req[3] || req[9];
+    if (!bus_driver_dir) {          /* the default: the directory of tcore itself */
+        static char self[4096];
+        ssize_t k = readlink("/proc/self/exe", self, sizeof self - 1);
+        self[k > 0 ? k : 0] = 0;
+        char *slash = strrchr(self, '/');
+        if (slash) *slash = 0;
+        bus_driver_dir = self;
+    }
     for (int i = 0; i < nspec; i++) {
         uint8_t ask[8]; int nask = 0, required = 0;
         for (int j = 0; j < spec[i].n; j++) {
             int s = spec[i].slots[j];
-            if (!listed[s] || (opt[s] && bus_withheld[s])) continue;
-            if (s == 10) continue;
+            if (!want[s]) continue;
             ask[nask++] = s;
-            required |= !opt[s];
+            required |= req[s];
         }
         if (!nask) continue;
-        /* Device 10 goes with the terminal, and device 9 needs its driver to
-           serve device 3 as well, whose state section holds 9's style
-           (DEVICES.md 1.1; the driver says so if it is not asked). */
-        int has3 = 0, has9 = 0;
-        for (int j = 0; j < nask; j++) { has3 |= ask[j] == 3; has9 |= ask[j] == 9; }
-        for (int j = 0; j < spec[i].n; j++) {
-            if (spec[i].slots[j] == 10 && listed[10] && !(opt[10] && bus_withheld[10])) ask[nask++] = 10;
-            if (spec[i].slots[j] == 3 && has9 && !has3) ask[nask++] = 3;
-        }
-        char **argv = split(spec[i].cmd);
+        char **argv = split(spec[i].cmd, spec[i].given);
         if (!argv) {
+            if (spec[i].given) { snprintf(err, el, "driver %s: cannot start it", spec[i].cmd); return 0; }
             if (required) { snprintf(err, el, "needs a device: no driver %s installed", spec[i].cmd); return 0; }
             continue;     /* only optional devices: not granted */
         }
@@ -399,6 +432,7 @@ int bus_setup(M *m, char *err, size_t el)
             return 0;
         }
     }
+    starting = 0;
     return 1;
 }
 
