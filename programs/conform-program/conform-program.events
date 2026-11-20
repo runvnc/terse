@@ -1,0 +1,43 @@
+# Scripted input for programs/conform-program (README "Conformance image"), the
+# same as programs/conform's: conform.c built with -DPROGRAM checks the same events.
+# conform.c checks these exact events (ev_want, t_pads), so keep the two in
+# step.
+
+# Frames 2-5: one of each kind of input event; the program reads the queue
+# at frame 6 and compares it with ev_want.
+2 down a shift ctrl
+2 up a
+2 press enter alt meta
+3 text aé你😀
+3 pointer 639 479 7
+3 pointer 0 0 0
+4 click 320 240
+4 wheel -3 2
+4 wheel 127 -127
+5 feeds-updated
+5 feeds-updated   # a second one in the same frame is dropped (SPEC 5)
+5 down f12 meta
+5 up 0xE7
+
+# Frame 8: 70 text events; the queue holds 64 (SPEC 5), read at frame 9.
+8 text 0123456789012345678901234567890123456789012345678901234567890123456789
+
+# Controllers (SPEC 6), read at frames 9 (none), 10, 11, 12 and 13.
+10 pad 0 2013 -127 127 5 -5
+10 pad 2 ffff 0 0
+12 pad 0 1 0 0
+13 pad 0 off
+13 pad 2 off
+
+# The page (conform.c t_page): in frame 140, presses over the big anchored
+# text at the rectangle's top left, with the primary and then the secondary
+# button (each gives a page-anchor event after its pointer event), over
+# plain text and over no text (neither gives one); read at frame 141.
+140 click 52 64
+140 pointer 52 64 2
+140 pointer 52 64 0
+140 click 52 150
+140 click 590 430
+
+# The figure (conform.c t_page): a press over it in frame 143, read at 144.
+143 click 590 130

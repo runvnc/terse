@@ -46,7 +46,13 @@
  * record "drawing": U, C, S and P do nothing ("Draw to edit a copy"). The
  * first press of the primary button makes it an ordinary drawing, a copy
  * that S saves as "drawing" like any other. If the blob cannot be got or is
- * not a sketch document, sketch says so and loads the record as usual. */
+ * not a sketch document, sketch says so and loads the record as usual.
+ *
+ * Content (device 4) is optional (SPEC 2; build.sh packs it with
+ * --optional): on a host without it, such as one of the program profile
+ * (devices 1, 2 and 3), sketch says "Drawings are not kept", loads
+ * nothing, ignores an argument, and S and P only say that they cannot
+ * save or publish there. Drawing is the same. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -84,6 +90,7 @@ static uint8_t vlist[VEC_MAX_LIST];
 static uint32_t vend, vlen;
 
 static uint8_t colour, phosphor, viewing, full, drawing, buttons, vdirty, sdirty;
+static uint8_t keeps;     /* the machine has device 4: drawings are kept */
 static uint32_t stroke;   /* where the stroke being drawn starts in data */
 static uint16_t lastx, lasty;
 
@@ -319,6 +326,10 @@ static void clear(void)
 
 static void save(void)
 {
+    if (!keeps) {
+        say("No saving on this host");
+        return;
+    }
     if (save_h) {
         say("Saving...");
         return;
@@ -332,6 +343,10 @@ static void publish(void)
     static const uint8_t name[NAME_LEN] = { 's', 'k', 'e', 't', 'c', 'h' };
     uint32_t n, i;
     char digits[10];
+    if (!keeps) {
+        say("No publishing on this host");
+        return;
+    }
     if (put_h || pub_h) {
         say("Publishing...");
         return;
@@ -509,7 +524,10 @@ int main(void)
     vec_width(WIDTH);
     vend = 2;
     vdirty = 1;
-    if (terse_argument(arg)) {
+    keeps = terse_has_device(4);
+    if (!keeps)
+        say("Drawings are not kept");
+    else if (terse_argument(arg)) {
         fetch_h = content_get(&fetch_req, arg, 0, sizeof doc, doc);
         if (!fetch_h) {
             say("Could not get the document");
@@ -518,7 +536,8 @@ int main(void)
             say("Loading...");
     } else
         load_drawing();
-    count_h = record_load(&count_req, "published", 0, 4, count_buf);
+    if (keeps)
+        count_h = record_load(&count_req, "published", 0, 4, count_buf);
     for (;;) {
         terse_event ev;
         while (terse_event_pop(&ev)) {

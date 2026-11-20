@@ -64,9 +64,12 @@ fn replay_ok(image: &str, rec: &Path, extra: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-/// Every frame of a recording.
-fn frames(rec: &[u8]) -> Vec<terse_core::record::Frame> {
+/// Every frame of a recording of `image` (after its grants, one flag per
+/// optional device of the image).
+fn frames(rec: &[u8], image: &str) -> Vec<terse_core::record::Frame> {
+    let image = terse_core::Image::parse(&std::fs::read(image).unwrap()).unwrap();
     let mut r = Recording::parse(rec).unwrap();
+    r.grants(image.optional().count()).unwrap();
     std::iter::from_fn(|| r.next_frame()).map(|f| f.unwrap().0).collect()
 }
 
@@ -117,7 +120,7 @@ fn reader_with_a_relay_replays_without_one() {
     // The recording holds the article's bytes as the gets delivered them,
     // the key presses, and the page's events.
     let bytes = std::fs::read(&rec).unwrap();
-    let all = frames(&bytes);
+    let all = frames(&bytes, &reader);
     assert_eq!(all.len(), 120);
     assert!(all.iter().enumerate().all(|(i, f)| f.frame == i as u32));
     let got: Vec<&[u8]> = all
@@ -176,11 +179,42 @@ fn sparks_session_replays() {
         "run", &sparks, "--events", session.to_str().unwrap(), "--frames", "3600", "--store", store, "--config", config, "--data",
         data, "--record", rec.to_str().unwrap(), "--hash-every", "1", "--dump", "--dump-vectors",
     ]);
-    let all = frames(&std::fs::read(&rec).unwrap());
+    let all = frames(&std::fs::read(&rec).unwrap(), &sparks);
     assert_eq!(all.len(), 3600);
     assert!(all.iter().any(|f| f.controllers[0][0] == 1 && f.controllers[0][1] != 0), "controller 0 recorded");
     assert!(all.iter().any(|f| !f.completions.is_empty()), "named records completed");
     assert_eq!(replay_ok(&sparks, &rec, &["--hash-every", "1", "--dump", "--dump-vectors"]), recorded);
+}
+
+/// SPEC 2, STATE.md 5: the grants are in the recording, after the
+/// snapshot: sparks without content (`--without 4`, or the program
+/// profile) records 00h and replays without content, on a host that has
+/// it; with content, 01h. Each replays only as it was recorded.
+#[test]
+fn recordings_carry_the_grants() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = |n: &str| dir.path().join(n).to_str().unwrap().to_string();
+    let sparks = image("sparks");
+    let session = programs().join("sparks/sessions/keys.txt");
+    let session = session.to_str().unwrap();
+    let args = ["--events", session, "--frames", "300", "--hash-every", "1", "--store", &path("st"), "--data", &path("d"), "--config", &path("c")];
+    let with = terse_ok(&[&["run", &sparks, "--record", &path("with")][..], &args].concat());
+    let without = terse_ok(&[&["run", &sparks, "--without", "4", "--record", &path("without")][..], &args].concat());
+    let program = terse_ok(&[&["run", &sparks, "--profile", "program", "--record", &path("program")][..], &args].concat());
+    assert_ne!(with, without, "the grants are in the state");
+    assert_eq!(without, program, "--without 4 is the program profile for sparks");
+    for (name, flag) in [("with", 1u8), ("without", 0), ("program", 0)] {
+        let bytes = std::fs::read(path(name)).unwrap();
+        assert_eq!(bytes[terse_core::record::HEADER_LEN], flag, "{name}");
+        assert_eq!(frames(&bytes, &sparks).len(), 300);
+    }
+    assert_eq!(replay_ok(&sparks, Path::new(&path("with")), &["--hash-every", "1"]), with);
+    assert_eq!(replay_ok(&sparks, Path::new(&path("without")), &["--hash-every", "1"]), without);
+    // A grant byte that is not a flag is refused.
+    let mut bad = std::fs::read(path("without")).unwrap();
+    bad[terse_core::record::HEADER_LEN] = 2;
+    std::fs::write(path("bad"), bad).unwrap();
+    assert!(!replay(&sparks, Path::new(&path("bad")), &[]).status.success());
 }
 
 /// A run started from a snapshot (`--load-state`) records the snapshot

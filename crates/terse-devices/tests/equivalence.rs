@@ -213,6 +213,129 @@ fn conform_reading_hashes() {
     }
 }
 
+/// programs/conform-program with its script: the checked-in hashes.
+#[test]
+fn conform_program_hashes() {
+    let dir = programs().join("conform-program");
+    let img = image(&dir.join("conform-program.terse"));
+    let s = script(&dir.join("conform-program.events"));
+    let want: Vec<String> = std::fs::read_to_string(dir.join("expected-hashes.txt")).unwrap().lines().map(str::to_string).collect();
+    let tmp = tempfile::tempdir().unwrap();
+    for run in conformance_runs(tmp.path()) {
+        let dirs = Dirs::new();
+        let got = bus_hashes(&img, &s, 200, 10, &run, &dirs.options());
+        assert_eq!(got, want, "drivers {:?}, socket {}, no batch {}", run.drivers, run.socket, run.no_batch);
+    }
+}
+
+/// `reference_hashes` with the optional devices `grants` grants.
+fn reference_hashes_granted(image: &Image, grants: &terse_core::Grants, script: &Script, frames: u32, every: u32, content: &ContentOptions) -> Vec<String> {
+    let service = image.device_set(grants).has(4).then(|| content.start().unwrap());
+    let mut system = System::with_machine(terse_core::Machine::with_grants(image, grants.clone()));
+    let mut headless = HeadlessSystem::new(service, script.clone());
+    let mut out = Vec::new();
+    for _ in 0..frames {
+        headless.frame(&mut system);
+        let m = system.shell();
+        if m.frame() % every == 0 {
+            out.push(format!("{} {}", m.frame(), hex(&m.state_hash())));
+        }
+    }
+    out
+}
+
+/// The hashes of a bus run started with `drivers` (from `dir`), `without`.
+fn bus_hashes_with(image: &Image, dir: &Path, without: &[u8], script: &Script, frames: u32, every: u32, content: &ContentOptions) -> Result<Vec<String>, String> {
+    let slots = host::installed_slots(dir, image, false, without, &[]);
+    let drivers = host::drivers(dir, &slots, &content.args(), &[])?;
+    let start = Start { config: BusConfig::new(PathBuf::new()), drivers, image, shell: None, identity: None, snapshot: None, grants: None, without: without.to_vec() };
+    let mut bs = start.start()?;
+    let mut out = Vec::new();
+    for _ in 0..frames {
+        let f = bs.system.shell().frame();
+        bs.frame(script.events(f), script.controllers(f))?;
+        let m = bs.system.shell_mut();
+        if m.frame() % every == 0 {
+            out.push(format!("{} {}", m.frame(), hex(&m.try_state_hash()?)));
+        }
+    }
+    Ok(out)
+}
+
+/// SPEC 2: sparks lists content (device 4) as optional. On the bus with
+/// content, with content withheld (`without`), and with no content driver
+/// installed, it gives the hashes of the devices compiled in with the same
+/// grants; without content they are the golden `program-hashes.txt`. An
+/// image that requires content (fetch) still cannot start without its
+/// driver.
+#[test]
+fn optional_devices_on_the_bus() {
+    let img = image(&programs().join("sparks/sparks.terse"));
+    let s = script(&programs().join("sparks/sessions/keys.txt"));
+    let with = terse_core::Grants(vec![true]);
+    let without = terse_core::Grants(vec![false]);
+    let dirs = Dirs::new();
+    let want_with = reference_hashes_granted(&img, &with, &s, 900, 30, &dirs.options());
+    let dirs = Dirs::new();
+    let want_without = reference_hashes_granted(&img, &without, &s, 900, 30, &dirs.options());
+    assert_ne!(want_with, want_without);
+    let golden: Vec<String> = std::fs::read_to_string(programs().join("sparks/expected/program-hashes.txt")).unwrap().lines().take(2).map(str::to_string).collect();
+    assert_eq!(golden, [want_without[0].clone(), want_without[29].clone()]);
+
+    let dirs = Dirs::new();
+    assert_eq!(bus_hashes_with(&img, &bin_dir(), &[], &s, 900, 30, &dirs.options()).unwrap(), want_with, "content granted");
+    let dirs = Dirs::new();
+    assert_eq!(bus_hashes_with(&img, &bin_dir(), &[4], &s, 900, 30, &dirs.options()).unwrap(), want_without, "content withheld");
+    // A directory with the terminal and vector drivers only.
+    let partial = tempfile::tempdir().unwrap();
+    for name in ["terse-dev-terminal", "terse-dev-vector"] {
+        std::os::unix::fs::symlink(bin_dir().join(name), partial.path().join(name)).unwrap();
+    }
+    assert_eq!(host::installed_slots(partial.path(), &img, false, &[], &[]), [2, 3, 9]);
+    let dirs = Dirs::new();
+    assert_eq!(bus_hashes_with(&img, partial.path(), &[], &s, 900, 30, &dirs.options()).unwrap(), want_without, "no content driver");
+    let fetch = image(&programs().join("fetch/fetch.terse"));
+    assert!(host::installed_slots(partial.path(), &fetch, false, &[], &[]).contains(&4));
+    let dirs = Dirs::new();
+    assert!(bus_hashes_with(&fetch, partial.path(), &[], &s, 1, 1, &dirs.options()).is_err(), "a required device without its driver");
+}
+
+/// Snapshots carry the grants between hosts: one terse-bus takes without
+/// content restores in `terse run` on a full host and goes on without it;
+/// one taken with content does not restore in terse-bus without content.
+#[test]
+fn optional_snapshots_cross_hosts() {
+    if !terse().exists() || !terse_bus().exists() {
+        eprintln!("skipped: terse and terse-bus are not built");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let p = |n: &str| tmp.path().join(n).display().to_string();
+    let dirs = Dirs::new();
+    let img = programs().join("sparks/sparks.terse").display().to_string();
+    let events = programs().join("sparks/sessions/keys.txt").display().to_string();
+    let run = |prog: &Path, extra: &[&str]| {
+        let mut c = Command::new(prog);
+        if prog == terse().as_path() {
+            c.arg("run");
+        }
+        c.args([&img, "--events", &events]).args(dirs.args()).args(extra);
+        c.output().unwrap()
+    };
+    let ok = |o: std::process::Output| {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let whole = ok(run(&terse(), &["--without", "4", "--frames", "600", "--hash-every", "300"]));
+    ok(run(&terse_bus(), &["--without", "4", "--frames", "300", "--save-state", &p("without.snap")]));
+    let later = ok(run(&terse(), &["--frames", "300", "--hash-every", "300", "--load-state", &p("without.snap")]));
+    assert_eq!(later, whole.lines().nth(1).unwrap().to_string() + "\n");
+    ok(run(&terse(), &["--frames", "300", "--save-state", &p("with.snap")]));
+    let refused = run(&terse_bus(), &["--without", "4", "--frames", "1", "--load-state", &p("with.snap")]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("device 4"), "{}", String::from_utf8_lossy(&refused.stderr));
+}
+
 /// programs/sparks with its recorded keyboard session: `keys-hashes.txt`
 /// at frames 30 and 900, with the Rust drivers, and with the C terminal
 /// and the Python vector display.

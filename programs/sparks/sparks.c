@@ -16,7 +16,14 @@
  *
  * The high score is a named record, "high-score" (SPEC 9.6): four bytes,
  * little-endian. It is asked for in the first frame and shown once it
- * arrives; a game that beats it saves the new one. */
+ * arrives; a game that beats it saves the new one.
+ *
+ * Content (device 4) is optional (SPEC 2; build.sh packs it with
+ * --optional): sparks runs on a host of the program profile, devices 1, 2
+ * and 3 only. Without device 4 the record calls return TERSE_ERR_UNKNOWN,
+ * which is no handle (load_handle keeps its low byte, FFh, and no content
+ * event ever names it), so the high score lasts for the session only and
+ * the game is otherwise the same. */
 
 #include <stdint.h>
 #include "terse.h"
