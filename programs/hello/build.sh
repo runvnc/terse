@@ -24,4 +24,4 @@ cflags="--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32 -Os -ffreestandi
 "${CLANG:-clang}" $cflags -I "$lib" -c "$here/hello.S" -o 0.o
 "${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o -o hello.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary hello.elf hello.bin
-terse pack --rom hello.bin --title hello --ram-pages 1 --device 2:0 -o "$out/hello.terse"
+terse pack --rom hello.bin --title hello --ram-pages 1 --device 2:0 --optional 10:0 -o "$out/hello.terse"

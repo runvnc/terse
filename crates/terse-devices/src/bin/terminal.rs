@@ -13,7 +13,7 @@ use terse_bus::driver::{Begin, CallIn, Device, Inputs, LayerFile, LayerOut, Mem,
 use terse_bus::proto::{CallEntry, DeviceInfo, LayerDecl, Open, SlotInfo, access, property, rule, z};
 use terse_core::machine::{charge, copy_charge};
 use terse_core::terminal::{CELL_BYTES, CELLS};
-use terse_core::{COLS, CONTINUATION, ERR_BUFFER, ERR_UNKNOWN, ROWS, Terminal};
+use terse_core::{COLS, ERR_BUFFER, ERR_UNKNOWN, ROWS, Terminal};
 use terse_devices::{rect, union};
 use terse_host::display::GlyphSource;
 use terse_host::soft::base::IRect;
@@ -91,7 +91,11 @@ impl Glyphs {
         let cells = 1 + wide as u32;
         let (w, h) = self.cell;
         let mut glyph = vec![0; (cells * w * h) as usize];
-        self.source.rasterize(ch, cells, &mut glyph);
+        if code == terse_core::text::PLACEHOLDER_CODE {
+            terse_core::text::placeholder(w, h, &mut glyph);
+        } else {
+            self.source.rasterize(ch, cells, &mut glyph);
+        }
         let slot = self.next;
         self.next += cells;
         for i in 0..cells {
@@ -176,21 +180,7 @@ fn cells(t: &Terminal, g: &mut Glyphs, generations: &mut u64) -> Vec<(u32, u8, u
         *generations += 1;
         g.generation = *generations;
     }
-    let mut out = vec![(0, 0, 0); CELLS];
-    for row in 0..ROWS {
-        let mut col = 0;
-        while col < COLS {
-            let cell = t.cell(col, row);
-            let wide = cell.ch != CONTINUATION && col + 1 < COLS && t.cell(col + 1, row).ch == CONTINUATION;
-            let slot = if cell.ch == CONTINUATION { 0 } else { g.slot(cell.ch, wide) };
-            for half in 0..1 + wide as usize {
-                let c = t.cell(col + half, row);
-                out[row * COLS + col + half] = (if slot == 0 { 0 } else { slot + half as u32 }, c.fg, c.bg);
-            }
-            col += 1 + wide as usize;
-        }
-    }
-    out
+    terse_core::text::draw_cells(t, |code, wide| g.slot(code, wide))
 }
 
 impl TerminalDriver {
@@ -328,15 +318,25 @@ impl Device for TerminalDriver {
         DeviceInfo {
             name: "terse-dev-terminal (Rust)".into(),
             native,
-            slots: vec![SlotInfo { slot: SLOT, version: 0, layers, table: table() }],
+            // Device 10, full text (SPEC §terminal.text): a capability with
+            // no calls and no layers; a machine that has it is drawn with
+            // every character the fonts have.
+            slots: vec![
+                SlotInfo { slot: SLOT, version: 0, layers, table: table() },
+                SlotInfo { slot: terse_core::text::FULL_TEXT, version: 0, layers: Vec::new(), table: Vec::new() },
+            ]
+            .into_iter()
+            .filter(|s| session.asks(s.slot))
+            .collect(),
             publishes: Vec::new(),
             subscribes: vec![property::STATUS.into()],
             services: Vec::new(),
         }
     }
 
-    fn open(&mut self, instance: u32, _: &Open, _: &Session) -> Result<(), String> {
-        self.inst.insert(instance, Inst { t: Terminal::default(), status: String::new(), drawn: None });
+    fn open(&mut self, instance: u32, open: &Open, _: &Session) -> Result<(), String> {
+        let full_text = open.listed.iter().any(|&(s, _)| s == terse_core::text::FULL_TEXT);
+        self.inst.insert(instance, Inst { t: Terminal::with_full_text(full_text), status: String::new(), drawn: None });
         Ok(())
     }
 
@@ -346,7 +346,7 @@ impl Device for TerminalDriver {
 
     fn reset(&mut self, instance: u32) {
         if let Some(i) = self.inst.get_mut(&instance) {
-            i.t = Terminal::default();
+            i.t = Terminal::with_full_text(i.t.full_text());
         }
     }
 

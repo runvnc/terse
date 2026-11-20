@@ -160,8 +160,9 @@ the device entries, then the ROM. All numbers are little-endian.
 | 7 | Page | 0 | reading |
 | 8 | Machines | 0 | none: the shell of a system only |
 | 9 | 3D vector display | 0 | none |
+| 10 | Full text (no calls) | 0 | reading |
 
-Slots 0 and 10 to 255 are not devices.
+Slots 0 and 11 to 255 are not devices.
 
 ## Calls
 
@@ -213,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:4104a4e383d5681c36ea122a9872fec1093988a92d1af4eb08ff1766ef5d9e7e), slot 2:
+[The terminal](terse:2d8a958181a69be54fc086e3fca342ea990fc079e46ad35fb19d36eeec0b0a5a), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

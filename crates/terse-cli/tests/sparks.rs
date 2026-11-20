@@ -349,7 +349,7 @@ fn high_score_persists() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80)]);
+    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80), (10, 0x80)]);
 }
 
 /// Records programs/sparks/sessions/{keys,pad}.txt: a player that reads only

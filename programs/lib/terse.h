@@ -247,6 +247,16 @@ static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGU
  * Calls to a device the machine does not have return TERSE_ERR_UNKNOWN. */
 static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVICE, slot, 0, 0); }
 static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
+/* Full text (SPEC §terminal.text): device 10, a capability with no calls.
+ * Every host draws the basic repertoire in the terminal (ASCII, the
+ * Latin-1 Supplement, box drawing and block elements); a machine without
+ * full text shows every other character as a placeholder box (the cells,
+ * widths and cursor are the same either way). A program that prints other
+ * characters lists device 10: `terse pack --device 10:0` if it cannot do
+ * without, `--optional 10:0` if a placeholder will do, and may ask
+ * terse_has_full_text() at the start to choose what it prints. */
+#define DEV_FULL_TEXT 10
+static inline int terse_has_full_text(void) { return terse_has_device(DEV_FULL_TEXT); }
 
 /* Controllers (SPEC §controllers): the 8-byte state. */
 typedef struct {

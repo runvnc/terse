@@ -282,7 +282,11 @@ impl Bus {
         slots.sort_unstable();
         let mut asked = want.slots.clone();
         asked.sort_unstable();
-        if slots != asked || (transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
+        // Full text (10, a capability) is asked of the terminal's driver; one
+        // that does not answer for it does not give it (DEVICES.md 1.1).
+        let full_text = terse_core::text::FULL_TEXT;
+        let without_full_text: Vec<u8> = asked.iter().copied().filter(|&s| s != full_text).collect();
+        if (slots != asked && slots != without_full_text) ||(transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
             return Err(fail(&mut child, format!("it answered for slots {slots:?}, transport {transport}")));
         }
         let link = if transport == proto::TRANSPORT_SHM {

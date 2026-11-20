@@ -16,7 +16,7 @@ pub const TITLE_LEN: usize = 16;
 pub const OPTIONAL: u8 = 0x80;
 
 /// Device slots and versions this implementation provides (SPEC §image).
-pub const SUPPORTED_DEVICES: [DeviceReq; 8] = [
+pub const SUPPORTED_DEVICES: [DeviceReq; 9] = [
     DeviceReq::new(1, 0),
     DeviceReq::new(2, 0),
     DeviceReq::new(3, 0),
@@ -25,6 +25,8 @@ pub const SUPPORTED_DEVICES: [DeviceReq; 8] = [
     DeviceReq::new(7, 0),
     DeviceReq::new(8, 0),
     DeviceReq::new(9, 0),
+    // Full text, a capability (SPEC §terminal.text).
+    DeviceReq::new(crate::text::FULL_TEXT, 0),
 ];
 
 /// A device entry of the image header (SPEC §image): a slot, a version (0 to

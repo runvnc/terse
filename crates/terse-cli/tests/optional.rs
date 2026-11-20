@@ -75,7 +75,7 @@ fn sparks_on_the_program_profile() {
     assert!(!Path::new(&dirs.p("store")).exists() && !Path::new(&dirs.p("data")).exists());
 
     let image = Image::parse(&std::fs::read(sparks()).unwrap()).unwrap();
-    let mut m = Machine::with_grants(&image, Grants(vec![false]));
+    let mut m = Machine::with_grants(&image, Grants(vec![false, false]));
     let mut h = Headless::new(None, Script::parse(&std::fs::read_to_string(keys()).unwrap()).unwrap());
     let mut got = String::new();
     for f in 1..=3000u32 {
@@ -88,7 +88,7 @@ fn sparks_on_the_program_profile() {
     let cli = run(&["--profile", "program", "--frames", "1800", "--hash-every", "900"], &dirs);
     assert_eq!(cli, got.lines().skip(1).take(2).map(|l| format!("{l}\n")).collect::<String>());
     // --without 4 on a full host is the same machine.
-    assert_eq!(run(&["--without", "4", "--frames", "1800", "--hash-every", "900"], &dirs), cli);
+    assert_eq!(run(&["--without", "4", "--without", "10", "--frames", "1800", "--hash-every", "900"], &dirs), cli);
 }
 
 /// With and without content, the game is the same frame for frame: the
@@ -100,7 +100,7 @@ fn the_same_game_without_content() {
     let image = Image::parse(&std::fs::read(sparks()).unwrap()).unwrap();
     let script = Script::parse(&std::fs::read_to_string(keys()).unwrap()).unwrap();
     let mut with = Machine::new(&image);
-    let mut without = Machine::with_grants(&image, Grants(vec![false]));
+    let mut without = Machine::with_grants(&image, Grants(vec![false, false]));
     let store = tempfile::tempdir().unwrap();
     let mut node = terse_net::Node::new(terse_net::BlobStore::open(store.path().join("store"), None).unwrap(), None);
     node.set_records(terse_net::Records::in_data_dir(&store.path().join("data")));
@@ -159,7 +159,7 @@ fn pack_and_info() {
     let info = terse_ok(&["info", &p("a.terse")]);
     assert!(info.contains("devices:   2:0\n") && info.contains("optional:  6:0 4:0\n"), "{info}");
     let hello = terse_ok(&["info", common::programs().join("hello/hello.terse").to_str().unwrap()]);
-    assert!(hello.contains("optional:  -\n"), "{hello}");
+    assert!(hello.contains("optional:  10:0\n") && hello.contains("text:      full where"), "{hello}");
     for bad in [&["--optional", "4:128"][..], &["--device", "2:200"], &["--optional", "8:0"], &["--optional", "1:0"]] {
         let out = terse(&[&base[..], &[&p("b.terse")], bad].concat());
         assert!(!out.status.success(), "{bad:?}");

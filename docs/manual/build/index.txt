@@ -8,24 +8,24 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:d61d08ee497086daa96d8c85565a4b66dc925ed0e2824659c6931ee03e711a05): what Terse is for, in one
+- [What Terse is](terse:ff993ced2cd18556efba087f33d142ea31a8dddf5dec1ec11a934900016bcce6): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:5df8c3f7272f7380e7f8c1bd409c79354bf1fbb390ccd82efb2483c32869263e): the technical details in
+- [How Terse works](terse:fff4efa39e6d1a6759f9dabd6e7108daa33af1b570cf8a22f4333449be2fd37a): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:2099dd1bf700dd90fc6bf256ad16b537c366dc61d71b356e856dcf1635ef5e7b): the toolchain, the C
+- [Writing a program](terse:480fc5884171c1f1d5310905765a18b4d79bcfc63dc9d2fa8268ec2e3376aca4): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:d78da5ccd9e6cb789963c0b6ebc17373e74d20718c5ca692a02b6d4daa332cfa): the keys of the
+- [Using the shell and the reader](terse:42a808c07533cc620db3f85d08f7a86346940ef05370bd15e1487c186488b285): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
 - [Writing an article](terse:c25759cedb1872135adff023db1eef5b08f26d131277cd6948da1de3d5385787): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:1ee284d5f1a86d0af68b0cb026d91b3b19e47a6740411d48d0a8b92b015285f9): what a machine's state
+- [State, replay and conformance](terse:f429928a0cf48eb5879c984a86688b808435629603651466f202db3da8b05ae1): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
 
-- [The machine](terse:1e153e99c9edf5223916072554c6a07f1a53db9d8136d453e7c66bd0f702276e): the CPU, the memory map, reset, frames
+- [The machine](terse:7e0a58c1c0f017209b1a67f812b28956d11ea9ce247484c4d5cd9d20144c6ed3): the CPU, the memory map, reset, frames
   and the budget, faults, the image format, the call convention and the
   whole call table.
 - [Events and input](terse:2ff1d91c14260d1a4c8cb78cf69b0cc177e3b69c3a4c7b60dd4362909c06a8ad): every event, the queue, keys,
@@ -38,7 +38,7 @@ Each article below says what it covers.
 | Slot | Device | Article |
 |---|---|---|
 | 1 | System | [The system device](terse:685d33355dab5162ac045bf83d8dc3a78c4d5fced38f7e03acb2fce2cfb33218) |
-| 2 | Terminal | [The terminal](terse:4104a4e383d5681c36ea122a9872fec1093988a92d1af4eb08ff1766ef5d9e7e) |
+| 2 | Terminal | [The terminal](terse:2d8a958181a69be54fc086e3fca342ea990fc079e46ad35fb19d36eeec0b0a5a) |
 | 3 | 2D vector display | [The 2D vector display](terse:94a70a146c03632e7b355c88af61144b8b7a7f418f02b691adb6e99f654c81c6) |
 | 4 | Content | [Blobs, requests and statuses](terse:e009e110363f9261adb4a57399b7aea9d4e47e1dd267840a07d4fcb2d8840e42) |
 | 4 | Content | [Feeds, names, search and publishing](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |

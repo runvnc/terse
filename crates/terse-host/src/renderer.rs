@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
+use terse_core::{COLS, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
 pub use crate::display::GlyphSource;
 use crate::display::{VectorScene, grid_rect, outlined, screen_pos};
@@ -915,24 +915,12 @@ impl Renderer {
             self.atlas.slots.clear();
             self.atlas.next = 1;
         }
-        for row in 0..ROWS {
-            let mut col = 0;
-            while col < COLS {
-                let cell = terminal.cell(col, row);
-                // SPEC §terminal.cells: a character followed by FFFFh is drawn across both cells.
-                let wide = cell.ch != CONTINUATION
-                    && col + 1 < COLS
-                    && terminal.cell(col + 1, row).ch == CONTINUATION;
-                let slot = if cell.ch == CONTINUATION { BLANK_SLOT } else { self.slot_for(queue, cell.ch, wide) };
-                for half in 0..1 + wide as usize {
-                    let c = terminal.cell(col + half, row);
-                    let s = if slot == BLANK_SLOT { BLANK_SLOT } else { slot + half as u16 };
-                    let i = (row * COLS + col + half) * 4;
-                    let [lo, hi] = s.to_le_bytes();
-                    self.cell_data[i..i + 4].copy_from_slice(&[lo, hi, c.fg, c.bg]);
-                }
-                col += 1 + wide as usize;
-            }
+        // SPEC §terminal.cells, §terminal.text: wide characters across two
+        // cells, or, without full text, the basic repertoire and the placeholder.
+        let cells = terse_core::text::draw_cells(terminal, |code, wide| self.slot_for(queue, code, wide) as u32);
+        for (i, &(slot, fg, bg)) in cells.iter().enumerate() {
+            let [lo, hi] = (slot as u16).to_le_bytes();
+            self.cell_data[i * 4..i * 4 + 4].copy_from_slice(&[lo, hi, fg, bg]);
         }
         write_texture(queue, &self.cell_texture, (0, 0), (COLS as u32, ROWS as u32), 4, &self.cell_data);
 
@@ -951,6 +939,7 @@ impl Renderer {
 
     /// The atlas slot for `code` (for a wide glyph, the slot of its left half).
     fn slot_for(&mut self, queue: &wgpu::Queue, code: u16, wide: bool) -> u16 {
+        let placeholder = code == terse_core::text::PLACEHOLDER_CODE;
         let ch = match char::from_u32(code as u32) {
             Some(c) if c != ' ' => c,
             _ => return BLANK_SLOT,
@@ -964,7 +953,11 @@ impl Renderer {
         let (w, h) = self.cell_px;
         let glyph = &mut self.glyph_scratch[..(cells * w * h) as usize];
         glyph.fill(0);
-        self.glyphs.rasterize(ch, cells, glyph);
+        if placeholder {
+            terse_core::text::placeholder(w, h, glyph);
+        } else {
+            self.glyphs.rasterize(ch, cells, glyph);
+        }
         let mut half = vec![0; (w * h) as usize];
         for i in 0..cells {
             for (y, row) in half.chunks_exact_mut(w as usize).enumerate() {

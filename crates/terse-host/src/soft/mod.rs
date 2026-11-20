@@ -578,6 +578,38 @@ mod tests {
         assert!(show(&mut s, &t, &v, &pool).is_empty());
     }
 
+    /// SPEC §terminal.text: a machine without full text is drawn with the
+    /// basic repertoire, every other character (each half of a wide one
+    /// included) as the one placeholder; with full text as the glyphs.
+    #[test]
+    fn basic_text_draws_placeholders() {
+        let pool = Pool::new(2);
+        let v = Vector::default();
+        let draw = |full: bool, text: &str| {
+            let mut t = Terminal::with_full_text(full);
+            t.write(text.as_bytes());
+            fresh(&t, &v, &pool)
+        };
+        // Without full text, 你 (two cells), €€ and two U+FFFD look the same,
+        // and unlike full text's 你; basic characters are drawn as glyphs.
+        let basic_wide = draw(false, "a你é");
+        assert_eq!(basic_wide, draw(false, "a€€é"));
+        assert_eq!(basic_wide, draw(false, "a\u{FFFD}\u{FFFD}é"));
+        assert_ne!(basic_wide, draw(true, "a你é"));
+        assert_eq!(draw(false, "a─é"), draw(true, "a─é"), "box drawing is basic");
+        assert_ne!(basic_wide, draw(false, "a  é"), "a placeholder is drawn");
+        // An incremental screen that switches machines redraws.
+        let mut s = SoftScreen::new(Box::new(Blocks(8)));
+        let (mut a, mut b) = (Terminal::with_full_text(true), Terminal::with_full_text(false));
+        a.write("ab你".as_bytes());
+        b.write("ab你".as_bytes());
+        show(&mut s, &a, &v, &pool);
+        show(&mut s, &b, &v, &pool);
+        let f = fresh(&b, &v, &pool);
+        let diff: Vec<usize> = s.image.data.iter().zip(&f).enumerate().filter(|(_, (x, y))| x != y).map(|(i, _)| i).collect();
+        assert!(diff.is_empty(), "{} differ, first at {:?}, last {:?}", diff.len(), diff.first().map(|i| (i % 700, i / 700)), diff.last().map(|i| (i % 700, i / 700)));
+    }
+
     /// The 3D display's segments are drawn bit by bit as from scratch too,
     /// when the list changes and when only the eye moves; an idle screen
     /// with a 3D list draws nothing.

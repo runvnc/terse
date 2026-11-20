@@ -176,7 +176,7 @@ images were built with clang and LLD 23.1.4.
   for one that has no machine: its image or snapshot is still being fetched, or its
   start failed). `--hash-every` prints the shell's hashes. The exit status is the shell's. Without `--shell`, an image runs alone,
   as follows.
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--without <slot>]... [--no-feed-relays] [--no-program-download]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--with <slot>]... [--without <slot>]... [--no-feed-relays] [--no-program-download]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -221,12 +221,15 @@ images were built with clang and LLD 23.1.4.
   (it takes no other option), checking every frame's hash: it stops with an error at
   the first frame that differs, and refuses a recording of another image.
   `--profile reading` runs the machine with only its reading profile (SPEC §profiles):
-  devices 1, 2, 4 and 7, and of the content operations only get, subscriptions,
+  devices 1, 2, 4, 7 and 10 (full text), and of the content operations only get, subscriptions,
   timeline, names, identity, subscribe and unsubscribe; every other content request
   completes with status 05h (Refused) without asking. `programs/conform-reading` is
   the conformance image for it. `--profile program` runs it with only the program
-  profile, devices 1, 2 and 3 (`programs/conform-program` is its conformance image),
-  and `--without <slot>` withholds one more device. An image that requires a device
+  profile, devices 1, 2 and 3 (`programs/conform-program` is its conformance image):
+  its terminal draws only the basic repertoire, so a machine there shows any other
+  character as a placeholder box (SPEC §terminal.text). `--with <slot>` adds a
+  device to a profile (`--profile program --with 10`: with full text), and
+  `--without <slot>` withholds one more device. An image that requires a device
   the run does not provide is refused; one it lists as optional is absent, and the
   program asks the `device` call (SPEC §system) whether it has it. A snapshot (or a
   recording) keeps the devices it was taken with: one taken with content does not
@@ -580,6 +583,17 @@ image. A device the program can do without is listed with `--optional` instead
 asks at start with `terse_has_device(4)` (the `device` call, SPEC §system) whether it
 has it. A program meant to run everywhere requires only devices 2 and 3, the
 program profile (SPEC §profiles).
+
+**Text.** Every host's terminal draws the basic repertoire: printable ASCII,
+the Latin-1 Supplement (U+00A0–U+00FF), box drawing and block elements
+(U+2500–U+259F). A program that prints anything else lists device 10, full
+text (SPEC §terminal.text): `--optional 10:0` if a placeholder box will do on
+a host without it (`terse_has_full_text()` tells it which it got), `--device
+10:0` if it cannot do without. A machine that does not list it is shown with
+the basic repertoire on every host, the reference host included, so what you
+see is what every host shows. Of the bundled programs the reader requires full
+text (titles and names come in any script); hello, fetch, sparks and the shell
+list it as optional; the rest print only basic text.
 
 `crt0.S` must come first. There is no C library beyond `terse.c` and no
 compiler runtime: avoid 64-bit division and floating point, or bring the routines
@@ -1619,7 +1633,9 @@ What it checks (the frame plan is in `conform.c`'s header comment):
 - the terminal: every command and control character, pending wrap and what clears
   it, wide characters at columns 78 and 79 and on the last row, overwriting half a
   wide pair, malformed UTF-8 (the WHATWG cases, U+FFFF, above U+FFFF, sequences
-  split across `write` calls), cells and palette calls with their wrap and bounds;
+  split across `write` calls), cells and palette calls with their wrap and bounds,
+  and that basic and other characters take the same cells whether or not the
+  machine has full text (device 10, which it does not list: absent);
 - the vector display: every opcode (and bytes after End), every rejection, a
   16,384-byte list ending at the last byte of RAM, lists cut short and ending at an
   unknown opcode, style, persistence and fill with rejected values, and the fill

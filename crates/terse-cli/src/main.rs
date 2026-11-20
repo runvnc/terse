@@ -16,8 +16,8 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
-            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--without <slot>]...
-            [--audio-out <file.wav>]
+            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--with <slot>]...
+            [--without <slot>]... [--audio-out <file.wav>]
   terse run <image> --replay <file> [--frames N] [--dump ...] [--hash] [--hash-every N] [--bench] [--save-state <file>]
             [--audio-out <file.wav>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
@@ -103,13 +103,15 @@ the one the snapshot names, by ID); its hash is then the hash at the moment of t
 --replay runs such a recording again from <image> (a file) alone: no network, store, data
 directory or events, every frame's hash checked (it stops at the first that differs), and it
 refuses a recording of another image. --profile reading provides only the machine's reading
-profile: devices 1, 2, 4 and 7, and the content operations get, subscriptions, timeline, names,
-identity, subscribe and unsubscribe; every other content request completes with status 05h
-(refused) without asking. --profile program provides only the program profile: devices 1, 2
-and 3. --without <slot> withholds that device as well. An image that requires a device the run
-does not provide is refused; an optional device it does not provide is absent (SPEC §image).
-pack: --device lists a required device, --optional one the program can run without; `info`
-shows both.
+profile: devices 1, 2, 4, 7 and 10 (full text), and the content operations get, subscriptions,
+timeline, names, identity, subscribe and unsubscribe; every other content request completes with
+status 05h (refused) without asking. --profile program provides only the program profile: devices
+1, 2 and 3, the terminal with the basic text repertoire only (no device 10, SPEC §terminal.text).
+--with <slot> adds a device to a profile (--profile program --with 10: with full text);
+--without <slot> withholds one. An image that requires a device the run does not provide is
+refused; an optional device it does not provide is absent (SPEC §image).
+pack: --device lists a required device, --optional one the program can run without (--device 10:0
+or --optional 10:0: full text, SPEC §terminal.text); `info` shows both.
 A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC §machines.snapshots).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
@@ -368,14 +370,15 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
     Script::parse(&text).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The devices the machine's reading profile provides (SPEC §profiles): the system (1), the terminal (2), content (4) and the page (7).
-const READING_DEVICES: [u8; 4] = [1, 2, 4, 7];
+/// The devices the machine's reading profile provides (SPEC §profiles): the system (1), the terminal (2), content (4), the page (7)
+/// and full text (10).
+const READING_DEVICES: [u8; 5] = [1, 2, 4, 7, 10];
 /// The devices the machine's program profile provides (SPEC §profiles): the system (1), the terminal (2) and the 2D vector display (3).
 const PROGRAM_DEVICES: [u8; 3] = [1, 2, 3];
 
-/// `--without <slot>`: a device slot, 2 to 255.
+/// `--with <slot>` and `--without <slot>`: a device slot, 2 to 255.
 fn parse_slot(s: &str) -> Result<u8, String> {
-    s.parse().ok().filter(|&n: &u8| n >= 2).ok_or(format!("bad --without {s} (a device slot, 2 to 255)"))
+    s.parse().ok().filter(|&n: &u8| n >= 2).ok_or(format!("bad device slot {s} (2 to 255)"))
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
@@ -406,6 +409,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--load-state",
         "--record",
         "--profile",
+        "--with",
         "--without",
         "--audio-out",
     ])?;
@@ -433,10 +437,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         return Err(format!("the {name} profile has no device 8: it runs a single machine, not --shell"));
     }
     let without = args.all("--without").map(parse_slot).collect::<Result<Vec<u8>, _>>()?;
+    let with = args.all("--with").map(parse_slot).collect::<Result<Vec<u8>, _>>()?;
     if shell && !without.is_empty() {
         return Err("--without is for a single machine, not --shell".into());
     }
-    let provides = |slot: u8| profile.is_none_or(|(_, p)| p.contains(&slot)) && !without.contains(&slot);
+    if profile.is_none() && !with.is_empty() {
+        return Err("--with adds a device to a --profile".into());
+    }
+    let provides =
+        |slot: u8| (profile.is_none_or(|(_, p)| p.contains(&slot)) || with.contains(&slot)) && !without.contains(&slot);
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None, find: false };
     // STATE.md 4: a machine started from a snapshot.
@@ -457,7 +466,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     // optional device it lacks is not granted.
     if let Some(d) = image.devices.iter().find(|d| !d.optional && !provides(d.slot)) {
         return Err(match profile {
-            Some((name, p)) if !p.contains(&d.slot) => format!(
+            Some((name, p)) if !p.contains(&d.slot) && !with.contains(&d.slot) => format!(
                 "the image requires device {}, which the {name} profile does not provide (it has devices {})",
                 d.slot,
                 p.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
@@ -846,6 +855,13 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
     println!("devices:   {}", list(false));
     println!("optional:  {}", list(true));
+    // SPEC §terminal.text: the characters the terminal is drawn with.
+    let text = match image.devices.iter().find(|d| d.slot == terse_core::text::FULL_TEXT) {
+        Some(d) if !d.optional => "full (device 10 required)",
+        Some(_) => "full where the host has it (device 10 optional), else basic",
+        None => "basic (no device 10)",
+    };
+    println!("text:      {text}");
     println!("id:        {}", image.id_hex());
     Ok(ExitCode::SUCCESS)
 }

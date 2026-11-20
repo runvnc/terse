@@ -132,6 +132,9 @@ fn line(t: &mut Terminal, row: usize, bg: u8, parts: &[(u8, &str)]) {
 /// how many requests wait, this one included.
 pub fn with_prompt(shown: &Terminal, program: &str, prompt: &Prompt, waiting: usize) -> Terminal {
     let mut t = shown.clone();
+    // The prompt is the host's own text, drawn with every character (SPEC
+    // §terminal.text); the rows above it are drawn so too while it is shown.
+    t.set_full_text(true);
     let (what, then) = describe(program, &prompt.asked);
     let more = match waiting {
         0 | 1 => String::new(),

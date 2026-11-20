@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use terse_core::{COLS, CONTINUATION, Primitive, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
+use terse_core::{COLS, Primitive, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
 use super::base::{Damage, IRect, Pixels, Pool, TILE, mix, over, pack, tile_rows};
 use super::page::{PageKey, PageQuads, SoftPage};
@@ -183,6 +183,8 @@ pub struct SoftScreen {
     cells: Vec<CellDraw>,
     /// The terminal's bytes and palette last resolved into `cells`.
     terminal_bytes: Vec<u8>,
+    /// Whether the cells were drawn with full text (SPEC §terminal.text).
+    full_text: bool,
     palette: [[u8; 3]; 256],
     palette_px: [u32; 256],
     lin_palette: [[f32; 3]; 256],
@@ -229,6 +231,7 @@ impl SoftScreen {
             atlas: CellAtlas::new(cell_px),
             cells: vec![CellDraw::default(); COLS * ROWS],
             terminal_bytes: Vec::new(),
+            full_text: true,
             palette: [[0; 3]; 256],
             palette_px: [0; 256],
             lin_palette: [[0.0; 3]; 256],
@@ -367,30 +370,22 @@ impl SoftScreen {
             }
         }
         let bytes = terminal.cell_bytes();
-        if bytes == self.terminal_bytes {
+        if bytes == self.terminal_bytes && terminal.full_text() == self.full_text {
             return;
         }
         self.terminal_bytes = bytes;
+        self.full_text = terminal.full_text();
         if self.atlas.next + 2 * (COLS * ROWS) as u32 > ATLAS_SLOTS {
             self.atlas = CellAtlas::new(self.cell_px);
         }
-        for row in 0..ROWS {
-            let mut any = false;
-            let mut col = 0;
-            while col < COLS {
-                let cell = terminal.cell(col, row);
-                // SPEC §terminal.cells: a character followed by FFFFh is drawn across both cells.
-                let wide = cell.ch != CONTINUATION && col + 1 < COLS && terminal.cell(col + 1, row).ch == CONTINUATION;
-                let slot = if cell.ch == CONTINUATION { 0 } else { self.slot_for(cell.ch, wide) };
-                any |= slot != 0;
-                for half in 0..1 + wide as usize {
-                    let c = terminal.cell(col + half, row);
-                    let s = if slot == 0 { 0 } else { slot + half as u32 };
-                    self.cells[row * COLS + col + half] = CellDraw { slot: s, fg: c.fg, bg: c.bg };
-                }
-                col += 1 + wide as usize;
-            }
-            self.glyph_rows[row] = any;
+        // SPEC §terminal.cells, §terminal.text: wide characters across two
+        // cells, or, without full text, the basic repertoire and the placeholder.
+        let cells = terse_core::text::draw_cells(terminal, |code, wide| self.slot_for(code, wide));
+        for (i, &(slot, fg, bg)) in cells.iter().enumerate() {
+            self.cells[i] = CellDraw { slot, fg, bg };
+        }
+        for (row, any) in self.glyph_rows.iter_mut().enumerate() {
+            *any = cells[row * COLS..(row + 1) * COLS].iter().any(|c| c.0 != 0);
         }
     }
 
@@ -405,7 +400,11 @@ impl SoftScreen {
         let cells = 1 + wide as u32;
         let (w, h) = self.cell_px;
         let mut glyph = vec![0; (cells * w * h) as usize];
-        self.glyphs.rasterize(ch, cells, &mut glyph);
+        if code == terse_core::text::PLACEHOLDER_CODE {
+            terse_core::text::placeholder(w, h, &mut glyph);
+        } else {
+            self.glyphs.rasterize(ch, cells, &mut glyph);
+        }
         let slot = self.atlas.next;
         self.atlas.next += cells;
         for i in 0..cells {

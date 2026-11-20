@@ -292,7 +292,7 @@ static void show_all(void)
 {
     colours(7, 0);
     cmd(1);
-    tw("Terse conformance image \xE2\x80\xA2 conform.events");
+    tw("Terse conformance image \xC2\xB7 conform.events");
     for (uint32_t i = 0; i < n_results; i++) {
         tw("\n");
         show_result(&results[i]);
@@ -542,6 +542,8 @@ static void wide_setup(void)
     colours(3, 4);
 }
 
+static void text_checks(void);
+
 static void t_wide(void)
 {
     begin();
@@ -625,7 +627,8 @@ static void t_wide(void)
     CUR(2, 12);
     tw("\xEF\xBF\xBE"); /* U+FFFE is printed as itself */
     CH(2, 12, 0xFFFE);
-    report("terminal: wide characters");
+    text_checks();
+    report("terminal: wide characters, basic text");
 }
 
 static void t_utf8(void)
@@ -825,6 +828,37 @@ static void t_cells(void)
     ck(call(T_WRITE, A(buf_a), WRITE_MAX + 1, 0) == ERR_BUFFER); /* too long: nothing written */
     CUR(0, 0);
     report("terminal: cells, palette, buffers");
+}
+
+/* SPEC §terminal.text: what the terminal holds does not depend on which
+ * characters a host draws. This image does not list device 10 (full text),
+ * so it is drawn with the basic repertoire and placeholders everywhere;
+ * the cells and the cursor are as on any host: a character of the basic
+ * repertoire and one outside it take a cell each, a wide one two. */
+static void text_checks(void)
+{
+    cmd(1);
+    tw("A~\xC2\xA0\xC3\xA9\xC3\xBF\xE2\x94\x80\xE2\x96\x9F"); /* A ~ nbsp é ÿ ─ ▟: basic */
+    CH(0, 0, 'A');
+    CH(1, 0, '~');
+    CH(2, 0, 0xA0);
+    CH(3, 0, 0xE9);
+    CH(4, 0, 0xFF);
+    CH(5, 0, 0x2500);
+    CH(6, 0, 0x259F);
+    CUR(7, 0);
+    tw("\xE2\x82\xAC\xE2\x80\xA6\xE2\x96\xA0\xC6\x80"); /* € … ■ ƀ: not basic, narrow */
+    CH(7, 0, 0x20AC);
+    CH(8, 0, 0x2026);
+    CH(9, 0, 0x25A0);
+    CH(10, 0, 0x180);
+    CUR(11, 0);
+    tw("\xE4\xBD\xA0"); /* 你: not basic, wide */
+    CH(11, 0, 0x4F60);
+    CH(12, 0, 0xFFFF);
+    CUR(13, 0);
+    uint32_t a1, r = call2(DEVICE, 10, 0x5678, &a1); /* not listed: absent */
+    ck(r == ERR_UNKNOWN && a1 == 0x5678);
 }
 
 static void t_terminal(void)
@@ -2103,7 +2137,7 @@ int main(void)
     /* The verdict on the title's row (the results fill the others). */
     call(T_SET_CURSOR, 0, 0, 0);
     cmd(4);
-    tw("Terse conformance \xE2\x80\xA2 ");
+    tw("Terse conformance \xC2\xB7 ");
     if (failed) {
         colours(9, 0x100);
         tw("Sections failed: ");

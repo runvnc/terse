@@ -162,6 +162,7 @@ The devices a reading host provides (the reading profile):
 | 2 | Terminal: 80 × 30 character cells |
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
+| 10 | Full text: every character in the terminal |
 
 The devices a program host provides (the program profile):
 
@@ -170,6 +171,11 @@ The devices a program host provides (the program profile):
 | 1 | System (always present) |
 | 2 | Terminal |
 | 3 | 2D vector display: lines and filled shapes from a display list |
+
+A program host's terminal need draw only 351 characters (ASCII,
+Latin-1, box drawing and blocks); a machine without full text shows
+every other character as a placeholder box, though it holds the same
+text.
 
 The other devices, each of which a host may leave out:
 

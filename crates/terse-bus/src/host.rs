@@ -129,6 +129,12 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
     let mut out: Vec<Driven> = Vec::new();
     let mut covered: Vec<u8> = Vec::new();
     for (s, cmd) in overrides {
+        // Full text (10) is the terminal's: the driver that replaces the
+        // terminal's serves it too (if it says so in HELLO, it is granted).
+        let mut s = s.clone();
+        if s.contains(&2) && !s.contains(&FULL_TEXT) {
+            s.push(FULL_TEXT);
+        }
         let s: Vec<u8> = s.iter().copied().filter(|x| slots.contains(x)).collect();
         if !s.is_empty() {
             covered.extend(&s);
@@ -148,9 +154,13 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
     Ok(out)
 }
 
+/// Device 10, full text: a capability the terminal's driver gives (SPEC
+/// §terminal.text).
+const FULL_TEXT: u8 = terse_core::text::FULL_TEXT;
+
 /// The default drivers: the slots each serves and its program's name.
 const DEFAULT_DRIVERS: [(&[u8], &str); 5] = [
-    (&[2], "terse-dev-terminal"),
+    (&[2, FULL_TEXT], "terse-dev-terminal"),
     (&[3, terse_core::vector3::SLOT], "terse-dev-vector"),
     (&[4], "terse-dev-content"),
     (&[terse_core::sound::SLOT], "terse-dev-sound"),
@@ -196,7 +206,7 @@ pub fn installed_slots(dir: &Path, image: &Image, shell: bool, without: &[u8], o
 /// shares), or, for a shell, every device a machine it starts may list.
 pub fn needed_slots(image: &Image, shell: bool) -> Vec<u8> {
     if shell {
-        return vec![2, 3, 4, terse_core::sound::SLOT, 7, terse_core::vector3::SLOT];
+        return vec![2, 3, 4, terse_core::sound::SLOT, 7, terse_core::vector3::SLOT, FULL_TEXT];
     }
     let mut v: Vec<u8> = image.devices.iter().map(|d| d.slot).filter(|&s| s != 1 && s != terse_core::machines::SLOT).collect();
     if v.contains(&terse_core::vector3::SLOT) && !v.contains(&3) {

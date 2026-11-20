@@ -1286,7 +1286,7 @@ fn wide_text_frames() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["reader/reader.c"], true, "reader", RAM_PAGES, &[(2, 0), (4, 0), (7, 0)]);
+    common::check_up_to_date(IMAGE, &["reader/reader.c"], true, "reader", RAM_PAGES, &[(2, 0), (4, 0), (7, 0), (10, 0)]);
 }
 
 /// An article with every construct of the article format (ARTICLE.md).

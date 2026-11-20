@@ -176,7 +176,7 @@ impl InProcess {
     pub fn new(has: &DeviceSet) -> Self {
         InProcess {
             lists_vector: has.has(3),
-            terminal: has.has(2).then(Terminal::default),
+            terminal: has.has(2).then(|| Terminal::with_full_text(has.has(crate::text::FULL_TEXT))),
             vector: (has.has(3) || has.has(crate::vector3::SLOT)).then(Vector::default),
             vector3: has.has(crate::vector3::SLOT).then(Vector3::default),
             content: has.has(4).then(Content::default),

@@ -858,14 +858,16 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
 
 /* ----------------------------------------------------------------- main */
 
-/* HELLO (DEVICES.md 1.1): the core must ask for slot 2 alone. */
+/* HELLO (DEVICES.md 1.1): the core must ask for slot 2, and may ask for
+ * slot 10 with it (full text, SPEC §terminal.text). */
 static void hello(const uint8_t *m, size_t n, Buf *r) {
     char bus_path[4096], session[4096];
     if (n < 9 || m[1] != 1) fail("HELLO: not protocol version 1");
     uint32_t flags = rd32(m + 4);
     size_t at = 9 + (size_t)m[8];
     if (at > n) fail("HELLO: malformed");
-    if (m[8] != 1 || m[9] != 2) fail("this is the terminal's driver: it serves slot 2 alone");
+    int full_text = m[8] == 2 && ((m[9] == 2 && m[10] == 10) || (m[9] == 10 && m[10] == 2));
+    if (!(m[8] == 1 && m[9] == 2) && !full_text) fail("this is the terminal's driver: it serves slot 2 (and 10)");
     if (!get_str(m, n, &at, session, sizeof session) || !get_str(m, n, &at, bus_path, sizeof bus_path))
         fail("HELLO: malformed");
     const char *want = getenv("TERSE_C_SHM");
@@ -875,10 +877,14 @@ static void hello(const uint8_t *m, size_t n, Buf *r) {
     put8(r, 1); put8(r, (uint8_t)use_shm); put8(r, 0);
     putstr(r, "terminal (C)");
     put16(r, 0); put16(r, 0);           /* no native size */
-    put8(r, 1);                         /* one slot: */
+    put8(r, full_text ? 2 : 1);         /* one or two slots: */
     put8(r, 2); put8(r, 0); put8(r, 0); /* 2, version 0, no layers, */
-    put8(r, TABLE_LEN);                 /* and its call table */
+    put8(r, TABLE_LEN);                 /* and its call table; */
     for (int i = 0; i < TABLE_LEN; i++) put_entry(r, &TABLE[i]);
+    /* 10, full text (SPEC §terminal.text), version 0: a capability with no
+     * layers and no calls. This driver draws nothing, so it lacks no
+     * character. */
+    if (full_text) { put8(r, 10); put8(r, 0); put8(r, 0); put8(r, 0); }
     put8(r, 0); put8(r, 0); put8(r, 0); /* no properties published or subscribed, no services */
     send_msg(r); /* on the socket: shm is not chosen yet */
     shm = use_shm;

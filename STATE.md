@@ -65,6 +65,9 @@ which never change.
 | 200 | L | All of RAM, from address `0010_0000h` |
 | 200 + L | k | The grants: one flag for each device the image lists as optional (SPEC §image), in header order: `01h` granted, `00h` not |
 
+A capability, such as device 10 (full text, SPEC §terminal.text), has a
+grant flag like any optional device and no section of its own below.
+
 k is the number of optional devices in the image's header, 0 to 16. An
 image with none has no grant bytes, so its state is laid out exactly as
 before optional devices existed. Below, the machine **has** a device if
@@ -350,13 +353,14 @@ or 32 (argument).
 
 From this repository's implementation (the reference):
 
-- `programs/hello/hello.terse` at reset (no frame run): serialization
-  18,811 bytes, hash
-  `0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be`.
+- `programs/hello/hello.terse` (which lists device 10, full text, as
+  optional: one grant byte, granted) at reset (no frame run): serialization
+  18,812 bytes, hash
+  `2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18`.
 - The same after 1 frame with no input:
-  `d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe`;
+  `8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42`;
   after 30 frames:
-  `066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83`.
+  `cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
 

@@ -561,7 +561,7 @@ fn budget() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0), (9, 0)]);
+    common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0), (9, 0), (10, 0x80)]);
     assert_eq!(SHELL, builtin::SHELL, "the shell built into the hosts");
     assert!(Image::parse(SHELL).unwrap().rom.len() < 20 * 1024);
 }

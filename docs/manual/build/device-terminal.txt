@@ -21,6 +21,12 @@ Each cell is four bytes:
 
 The character code is a Unicode code point from `0000h` to `FFFFh`. A character is wide if its Unicode 16.0 East Asian Width property is W or F (including unassigned code points that Unicode gives W by default, such as U+FA6E); every other character is narrow. A wide character takes two cells of a row: the left cell holds its code and the right cell holds the continuation code `FFFFh` (`TERM_CONTINUATION` in terse.h; `term_is_wide` tells whether a code point is wide). Combining marks get no special treatment: each takes a cell.
 
+## Basic text and full text
+
+What the grid holds never depends on which characters a host can draw: cells, widths, the cursor and the machine's state are the same on every host. Every host draws the basic repertoire: printable ASCII (U+0020 to U+007E), the printable Latin-1 Supplement (U+00A0 to U+00FF), and box drawing and block elements (U+2500 to U+259F), 351 narrow characters, one fixed-width font. Every other character needs full text, device 10: a capability with no calls, listed in the image like a device. `terse pack --device 10:0` requires it (a host without full text refuses the image); `--optional 10:0` uses it where the host has it, and `terse_has_full_text()` says whether this machine has it.
+
+A machine without device 10 is drawn with the basic repertoire on every host, even one that has more fonts, so that it looks the same everywhere. Each cell is drawn on its own: a basic character as itself, a control code as its background only, and anything else (a continuation cell, U+FFFD, each half of a wide character) as the placeholder, an outlined box in the cell's foreground colour. Text events carry any character either way. `terse run --profile program` runs a machine without full text; `--without 10` withholds it on any host.
+
 ## Calls
 
 | `a7` | Call | Arguments | Result | Class |

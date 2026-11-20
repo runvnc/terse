@@ -106,7 +106,7 @@ fn pack_refuses_bad_headers() {
     for (extra, why) in [
         (&["--ram-pages", "0"][..], "RAM pages 0"),
         (&["--ram-pages", "129"][..], "RAM pages 129"),
-        (&["--ram-pages", "1", "--device", "10:0"][..], "device 10 version 0"),
+        (&["--ram-pages", "1", "--device", "11:0"][..], "device 11 version 0"),
     ] {
         let out = terse(&[&base[..], extra].concat());
         assert!(!out.status.success(), "{extra:?}");
@@ -152,7 +152,7 @@ fn hash_every_counts_by_the_frame_counter() {
     assert_eq!(counters, ["9"]);
     // The hash after 30 frames (STATE.md 3).
     let out = String::from_utf8(terse_ok(&["run", image, "--frames", "30", "--hash-every", "30"]).stdout).unwrap();
-    assert_eq!(out, "30 066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83\n");
+    assert_eq!(out, "30 cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d\n");
 }
 
 /// `--hash-all`, after the last frame only: the shell's hash, then

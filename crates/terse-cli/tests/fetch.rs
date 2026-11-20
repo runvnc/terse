@@ -102,5 +102,5 @@ fn image_is_up_to_date() {
     );
     let checked_in = std::fs::read_to_string(common::programs().join("fetch/message_id.h")).unwrap();
     assert!(header == checked_in, "programs/fetch/message_id.h is stale; run programs/fetch/build.sh");
-    common::check_up_to_date(IMAGE, &["fetch/fetch.c"], true, "fetch", 1, &[(2, 0), (4, 0)]);
+    common::check_up_to_date(IMAGE, &["fetch/fetch.c"], true, "fetch", 1, &[(2, 0), (4, 0), (10, 0x80)]);
 }

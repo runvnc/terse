@@ -108,6 +108,10 @@ pub struct Terminal {
     pending_wrap: bool,
     palette: [[u8; 3]; 256],
     decoder: Utf8Decoder,
+    /// Whether the machine has full text (SPEC §terminal.text, device 10):
+    /// how a host draws the cells, not machine state. A terminal of the
+    /// host's own (a prompt, a status line) has it.
+    full_text: bool,
 }
 
 impl Default for Terminal {
@@ -128,6 +132,7 @@ impl Default for Terminal {
             pending_wrap: false,
             palette: xterm_palette(),
             decoder: Utf8Decoder::default(),
+            full_text: true,
         };
         t.fill_rows(0..ROWS);
         t
@@ -148,6 +153,22 @@ impl Eq for Terminal {}
 const ROW_BYTES: usize = COLS * CELL_BYTES;
 
 impl Terminal {
+    /// A terminal at reset, of a machine that has full text or not (SPEC
+    /// §terminal.text).
+    pub fn with_full_text(full_text: bool) -> Self {
+        Terminal { full_text, ..Terminal::default() }
+    }
+
+    /// Whether the cells are drawn with full text; without it, with the
+    /// basic repertoire and the placeholder (SPEC §terminal.text).
+    pub fn full_text(&self) -> bool {
+        self.full_text
+    }
+
+    pub fn set_full_text(&mut self, full_text: bool) {
+        self.full_text = full_text;
+    }
+
     /// The stored row that is row `row`.
     #[inline(always)]
     fn stored(&self, row: usize) -> usize {
