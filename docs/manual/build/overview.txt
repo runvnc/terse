@@ -1,171 +1,50 @@
 # What Terse is
 
-Terse is a small virtual computer and a way of sharing what it runs. A
-program is a file of RISC-V machine code, at most 128 KiB, identified by
-the hash of its bytes. It runs in a machine with at most 1 MiB of RAM and a
-fixed amount of work per frame, and it reaches the outside world only
-through a handful of host devices. The same program, given the same inputs,
-does exactly the same thing on every host. Programs and articles travel
-between hosts as blobs named by their hash, through relays, announced in
-signed feeds.
+First and foremost, Terse is a way to share information: formatted text,
+with diagrams where they help, without the bloat of web browsers
+(JavaScript, ads, tracking) and without the centralised control of
+websites like Reddit.
 
-Terse has three layers. The network (blobs, relays, feeds, entries,
-profiles, names and search) and the article format are the core: a
-native reader that implements those two, with no virtual machine at all,
-is a complete Terse client. The machine described below is an optional
-third layer that reuses them; a host that runs only the reader needs just
-its reading profile (devices 1, 2, 4 and 7).
+Secondly, and completely optionally, Terse can be used to share very
+lightweight programs, at most 1 MiB of memory each, that run on a small
+isolated virtual machine made for the purpose.
 
-## The machine
+## Sharing information
 
-The CPU is RV32IMC: the 32-bit RISC-V base integer set with multiply and
-divide and compressed instructions, in user mode only. There are no
-floating-point instructions, no interrupts and no privileged state. The
-memory map has two regions and nothing else: ROM holds the program's bytes
-and RAM is zero at reset. Any access outside them faults, so a null pointer
-dereference stops the program with a recorded fault.
+An article is plain text that reads well as it is, with a few marks for
+headings, lists, tables, preformatted text and links. A diagram is
+written into the article as path data in the style of SVG, so it is
+part of the text and needs no image file. There are no scripts, no
+styles and no embedded programs, and an article cannot link to a web
+page, only to other Terse articles, feeds and programs.
 
-```path 512 80
-stroke none fill #80808060
-M 8 40 H 504 V 64 H 8 Z
-fill #3070e0
-M 72 40 H 168 V 64 H 72 Z
-fill #30a050
-M 232 40 H 376 V 64 H 232 Z
-fill #e04040
-M 8 34 H 12 V 70 H 8 Z
-fill #3070e0
-M 64 16 L 80 16 L 72 32 Z
-fill #e09020
-M 368 16 L 384 16 L 376 32 Z
-```
+Authors publish articles in feeds. A feed belongs to a key that its
+author holds, not to a website: every entry is signed, so a reader can
+check that it came from the author whoever delivered it. Relays store
+and pass on feeds and articles. Anyone can run a relay, a feed can be
+on several at once, and a reader can follow the same feed through any
+of them, so no single site decides what may be published or read.
 
-| Colour | Addresses | Meaning |
-|---|---|---|
-| grey | everything else | any load, store or fetch faults |
-| red mark | `0000_0000h` | address 0, so a null pointer faults |
-| blue bar | `0001_0000h` to `0001_0000h` + rom_len − 1 | ROM (1 to 131,072 bytes): read and execute |
-| green bar | `0010_0000h` to `0010_0000h` + 8,192 × ram_pages − 1 | RAM (8 KiB to 1 MiB): read, write and execute |
-| blue triangle | `0001_0000h` | where `pc` starts |
-| orange triangle | end of RAM | where `sp` starts |
+A reader for all of this is a small program. It needs the network and
+the article format and nothing else.
 
-The drawing is not to scale: the address space is 4 GiB, and the two
-regions are small islands in it.
+## Sharing programs
 
-Time advances in frames, nominally 60 a second. Each frame the machine gets
-a budget of 125,000 units: an instruction from ROM costs 1, one from RAM
-costs 4, and each device call has a small charge on top. When the budget
-runs out the machine pauses and continues with the next instruction in the
-next frame; the program is not told. A program that has done its work for
-the frame calls `wait_frame`, which gives up the rest of the budget and
-returns at the start of the next frame. Because the budget is the same on
-every host, a program runs at the same speed everywhere, and the work a
-host does for one frame of any program is bounded.
+A Terse program is a small file of machine code for a simple virtual
+computer. The machine is isolated: a program sees only its own memory
+and the few devices its host offers, such as a terminal, a vector
+display and the content store. It gets a fixed amount of work per
+frame, so it cannot slow its host down, and it behaves the same on
+every host.
 
-## Devices
-
-Programs reach devices with the `ecall` instruction: the call number in
-register `a7` is the device slot times 256 plus a function, arguments go in
-`a0` to `a5`, and the result comes back in `a0`. An image lists the devices
-it needs in its header; a host that lacks one refuses the image, and a
-device the image does not list behaves as absent.
-
-| Slot | Device |
-|---|---|
-| 1 | System: frames, events, clock, random bytes, controllers, exit (always present) |
-| 2 | Terminal: 80 × 30 character cells |
-| 3 | 2D vector display: lines and filled shapes from a display list |
-| 4 | Content: blobs, feeds, search, named records |
-| 7 | Page: typeset proportional text and figures |
-| 8 | Machines: starting and placing other machines (the shell only) |
-| 9 | 3D vector display: lines placed in space, seen in perspective |
-
-Devices present and transport; they do not compute for the program, and
-nothing a host draws can be read back. The screen is 640 × 480 units for
-every device that draws.
-
-## Determinism and replay
-
-A machine's state is a pure function of its image and its inputs: the
-events of each frame (keys, text, pointer, wheel and the answers devices
-send back), the Unix time latched at the start of each frame, the random
-bytes the host supplies, the controller state, and the completions of
-content requests. A host that records these per frame can replay a run
-exactly. To compare two implementations, the state of a machine between
-frames has a byte-for-byte serialization, and its BLAKE3-256 hash is the
-state hash: two runs agree as long as their hashes agree. The same
-serialization is a snapshot, from which a machine can be restored and
-continued.
-
-## The network
-
-Everything that travels is a blob: 1 to 1,048,576 bytes, named by the
-BLAKE3-256 hash of its bytes, so a host checks every blob it receives
-against its name and needs to trust no one to deliver it. Program images
-are blobs too, so a program's image ID is a blob ID. Relays are blob stores
-reached over WebSocket. Authors have feeds: numbered series of small
-entries signed with an Ed25519 key, each pointing at a blob and giving its
-size and title. An entry is an article, a profile (a display name and a
-short description), a program or a document. Hosts subscribe to feeds and
-fetch small articles ahead of time, so reading never waits on the network.
-
-```path 512 80
-stroke fg 2 fill #3070e040
-M 8 16 H 128 V 64 H 8 Z
-fill #e0902040
-M 196 16 H 316 V 64 H 196 Z
-fill #30a05040
-M 384 16 H 504 V 64 H 384 Z
-fill none
-M 136 40 H 186 M 176 32 L 188 40 L 176 48
-M 324 40 H 374 M 364 32 L 376 40 L 364 48
-```
-
-- Blue box: the author's host. It puts the article's blob to its relays,
-  then signs an entry with the next sequence number of the author's feed
-  and publishes it.
-- Orange box: a relay. It checks the entry's signature, stores the entry
-  and the blob, and pushes the entry to every host subscribed to the feed.
-- Green box: a reader's host. It verifies the entry, downloads the blob
-  without being asked if it is at most 16,384 bytes, and keeps both. A
-  reader program then finds the entry in the timeline and gets the blob
-  through the content device, from the local store.
-
-An article is UTF-8 text that reads well as it is, with a few line-start
-markers for headings, lists, preformatted text, tables and figures, and
-links of the form `terse:` followed by a blob ID. A program is published
-the same way, as a feed entry whose title is the program's name and whose
-blob is its image; its identity, the publisher's feed key and the name,
-stays the same from one version to the next. A host downloads the current
-version of each program in the feeds it follows. Articles never contain
-programs: they link to them.
-
-## Systems, the shell and the reader
-
-A host can run several machines as one system. One of them, the shell,
-holds device 8: it starts other machines (up to 8), places each one's
-screen in a rectangle of its own, decides which receives the keyboard, and
-keeps them as snapshots. Each machine is complete and separate, with its
-own memory, devices, events and budget. The host runs the machines, draws
-their screens where the shell put them, and routes input; layout and
-policy are the shell's. A machine can ask the shell to open a blob or a
-program, and the shell decides what to do. The host's built-in shell shows
-machines as tiles, with a launcher of built-in programs and of programs
-from the feeds the user follows.
-
-The reader is the first built-in program: a feed reader that shows the
-timeline of followed feeds and typesets articles on the page device. When
-the user follows a link to a program, the reader asks the shell to open it
-in a tile of its own.
+All of this is optional. A host may leave out the machine altogether,
+or any device it does not want to build, and still be a complete Terse
+reader. Articles never contain programs: they can only link to them.
 
 ## Where to go next
 
-- [Writing programs](terse:a9a2a9bc5f05d90fe2d5c0a2d2d064fc2c55142a1a3dfe81251c4e69ef9045b2): building a C program and packing it as an image.
+- [How Terse works](terse:cc124bef0765dd067daebbf355601435022b2a0adb3fda9d0ea812e377c9e75a): the network, articles, the
+  machine, its devices and the shell, each in a few paragraphs.
 - [Using Terse](terse:853f7eac4a2cb5619e48f97c6102c34d9a72f2a09cabc78d6f2b2bc375cba5b9): the tools, the shell and the reader.
 - [Writing articles](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format, tables and figures.
-- [The machine](terse:0269754b7f5567fee22a7cdd02d4b917110a64a0c5a642d45610454959720808): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:b90f908341dc1bc21cebed98256c6751a21e2ab68a6a3e2dd0c802ba606391e9), [the terminal](terse:169d0b10057f817f2030a724a7ba6ce8291217a02c9878a46ca18b971bca8134), [the 2D vector display](terse:4ff0f43dbdab83085bddfee6e54af38b170276cab51b8d8e561a112ca3cba3b4), [the 3D vector display](terse:e0dea6de1a019e7b8d17c2e87a3e0dfe6bac9d0be7d3b99eceb6d57b9dae0c6f), [the page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) and [machines](terse:ce60c12a99868267b77ab4887acbd2768c5da4797d152d07163cae047fb4124e).
-- [Blobs](terse:555cb77fb400d5ce32c41ecd174cd2edd4ab3f60f445eb2bb3d1e41ef15d5d90), [feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) and [named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a) on the content device.
-- [The network](terse:f11575d33ae9e1eccb62fa565632d5f74ca5a7da65f87f495b95296b2c4696b9): relays and feeds as the host sees them.
-- [Machine state](terse:641b20f6a22f0f439da6c411140fe2514067114d929083849946778b5db04a9b): the state serialization and the state hash.
-- [Events and input](terse:30fb2cb8139131db4570b2d8f23d9a44f97c8996272365f2c27ad0d42a1d0b5a) and [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).
+- [Writing programs](terse:a9a2a9bc5f05d90fe2d5c0a2d2d064fc2c55142a1a3dfe81251c4e69ef9045b2): building a C program and packing it as an image.
