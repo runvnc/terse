@@ -633,6 +633,10 @@ A reading client **must**:
   (section 4.6), and show the profile in force's display name, or the
   user's nickname, as section 4.6 says.
 
+A reading client may be one program or two: a node that does the
+network side and a reader that shows articles, talking over a local
+socket (`LOCAL.md`); the pair is then the reading client.
+
 A reading client **may**:
 
 - publish articles (and keep an identity, section 4.1), set its user's

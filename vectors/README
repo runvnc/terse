@@ -109,6 +109,19 @@ are those of entries.txt. A relay that answers the client messages in
 this order must send exactly the `r>` messages (the test suite checks
 this against the Terse relay).
 
+local-session.txt (LOCAL.md)
+----------------------------
+The messages of one session between a reader and a local node in the
+state the file's first comment describes, in the format of
+relay-session.txt: `c>` from the reader, `n>` from the node. Each line
+is one message without its 4-byte length (LOCAL.md 2 frames every
+message with one). A node that answers the reader's messages in this
+order must send the `n>` messages, with two allowances: a pushed message
+(`C0h`, `C1h`) may come between any two replies or not at all, so a
+replay skips pushes; and a refusal's reason (after status 3 in a reply
+`A0h` to `ABh`) is text for people, so only the bytes up to the status
+are compared.
+
 articles/ (ARTICLE.md)
 ----------------------
 An article corpus: each `<name>.txt` is an article (bytes as they are,

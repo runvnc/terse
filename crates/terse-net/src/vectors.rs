@@ -927,6 +927,115 @@ fn session_file() -> String {
     out
 }
 
+// --- A local node session (LOCAL.md) -------------------------------------------------
+
+/// A local message: type, `req`, then the parts.
+fn lmsg(t: u8, req: u32, parts: &[&[u8]]) -> Vec<u8> {
+    let mut m = vec![t];
+    m.extend_from_slice(&req.to_le_bytes());
+    for p in parts {
+        m.extend_from_slice(p);
+    }
+    m
+}
+
+/// `n` (1) and the bytes.
+fn short(b: &[u8]) -> Vec<u8> {
+    assert!(b.len() <= 255);
+    [&[b.len() as u8][..], b].concat()
+}
+
+/// A record of LOCAL.md 4.3: arrival, flags, name, entry.
+fn lrecord(arrival: u32, flags: u8, name: &str, entry: &[u8]) -> Vec<u8> {
+    [&arrival.to_le_bytes()[..], &[flags], &short(name.as_bytes()), &(entry.len() as u16).to_le_bytes(), entry].concat()
+}
+
+/// A feed record of LOCAL.md 4.3 for a feed with no hints, no relays and
+/// an empty description.
+fn lfeed(key: &[u8; 32], flags: u8, name: &str) -> Vec<u8> {
+    [&key[..], &[flags], &short(name.as_bytes()), &short(b""), &[0, 0, 0], &[0, 0]].concat()
+}
+
+/// The messages of a session between a reader and a node in a known state
+/// (`local-session.txt`): (direction, commentary, bytes); `c>` reader to
+/// node, `n>` node to reader.
+pub fn local_session() -> Vec<(&'static str, String, Vec<u8>)> {
+    let key = test_identity().feed_key();
+    let other = other_identity().feed_key();
+    let hello = hello_entry();
+    let profile = profile_entry();
+    let hid = hello.entry.blob;
+    let missing = blob::blob_id(b"missing");
+    let key_hex = blob::to_hex(&key);
+    let other_hex = blob::to_hex(&other);
+    let ok = |t: u8, req: u32, rest: &[&[u8]]| lmsg(t, req, &[&[&[1u8][..]][..], rest].concat());
+    let refused = |t: u8, req: u32, why: &str| lmsg(t, req, &[&[3], &short(why.as_bytes())]);
+    vec![
+        ("c>", "Hello, req 1: version 0, no token (a Unix socket)".into(), lmsg(0x20, 1, &[&[0], &short(b"")])),
+        ("n>", "Hello reply, req 1: done, version 0, flags 0 (no find or lookup)".into(), ok(0xa0, 1, &[&[0, 0]])),
+        ("c>", "Subscriptions, req 2".into(), lmsg(0x23, 2, &[])),
+        (
+            "n>",
+            "Subscriptions reply, req 2: done, 1 feed: the test key, subscribed, named \"Alice\" by its profile, no hints, no relays, no description".into(),
+            ok(0xa3, 2, &[&1u16.to_le_bytes(), &lfeed(&key, 1, "Alice")]),
+        ),
+        ("c>", "Timeline, req 3: before 0 (from the newest), at most 10".into(), lmsg(0x22, 3, &[&0u32.to_le_bytes(), &10u16.to_le_bytes()])),
+        (
+            "n>",
+            "Timeline reply, req 3: done, 1 record: arrival 1, held, \"Alice\", the entry `article` (the profile is not in the timeline)".into(),
+            ok(0xa2, 3, &[&1u16.to_le_bytes(), &lrecord(1, 1, "Alice", &hello.bytes)]),
+        ),
+        ("c>", "Held, req 4: the blob of `article`".into(), lmsg(0x21, 4, &[&hid])),
+        ("n>", "Held reply, req 4: done, the blob".into(), ok(0xa1, 4, &[HELLO])),
+        ("c>", "Held, req 5: the ID of \"missing\"".into(), lmsg(0x21, 5, &[&missing])),
+        ("n>", "Held reply, req 5: not found".into(), lmsg(0xa1, 5, &[&[2]])),
+        ("c>", "Get, req 6: the ID of \"missing\" (the relay protocol's Get)".into(), protocol::encode_get(6, &missing)),
+        ("n>", "Get reply, req 6: not found (the node has no relay, so at once)".into(), protocol::encode_get_reply(6, protocol::status::NOT_FOUND, b"")),
+        ("c>", "Title, req 7: the blob of `article`, size 13".into(), lmsg(0x2b, 7, &[&hid, &13u32.to_le_bytes()])),
+        ("n>", "Title reply, req 7: done, \"Hello\"".into(), ok(0xab, 7, &[&short(b"Hello")])),
+        ("c>", "Title, req 8: the same blob, size 14 (no entry says so)".into(), lmsg(0x2b, 8, &[&hid, &14u32.to_le_bytes()])),
+        ("n>", "Title reply, req 8: not found".into(), lmsg(0xab, 8, &[&[2]])),
+        ("c>", "Nickname, req 9: the test key, \"Al\"".into(), lmsg(0x27, 9, &[&key, &short(b"Al")])),
+        ("n>", "Nickname reply, req 9: done".into(), ok(0xa7, 9, &[])),
+        ("n>", "Changed (pushed; pushes may come between any two replies)".into(), vec![0xc0]),
+        ("c>", "Feed, req 10: with entries, the test key".into(), lmsg(0x24, 10, &[&[1], &short(key_hex.as_bytes())])),
+        (
+            "n>",
+            "Feed reply, req 10: done, the feed (subscribed, a nickname: \"Al\"), 2 records in increasing seq: `article` and `profile`, both held".into(),
+            ok(0xa4, 10, &[&lfeed(&key, 3, "Al"), &2u16.to_le_bytes(), &lrecord(1, 1, "Al", &hello.bytes), &lrecord(2, 1, "Al", &profile.bytes)]),
+        ),
+        ("c>", "Subscribe, req 11: the other test key".into(), lmsg(0x25, 11, &[&short(other_hex.as_bytes())])),
+        ("n>", "Subscribe reply, req 11: done, new".into(), ok(0xa5, 11, &[&[1]])),
+        ("c>", "Subscribe, req 12: \"not an address\"".into(), lmsg(0x25, 12, &[&short(b"not an address")])),
+        ("n>", "Subscribe reply, req 12: refused, with a reason (its text is not compared)".into(), refused(0xa5, 12, "malformed address")),
+        ("c>", "Unsubscribe, req 13: the other test key".into(), lmsg(0x26, 13, &[&other])),
+        ("n>", "Unsubscribe reply, req 13: done".into(), ok(0xa6, 13, &[])),
+        ("c>", "Relays, req 14".into(), lmsg(0x28, 14, &[])),
+        ("n>", "Relays reply, req 14: done, none".into(), ok(0xa8, 14, &[&[0]])),
+        ("c>", "Set relays, req 15: \"http://relay.example\"".into(), lmsg(0x29, 15, &[&[1], &short(b"http://relay.example")])),
+        ("n>", "Set relays reply, req 15: refused (not a relay URL)".into(), refused(0xa9, 15, "not a relay URL")),
+        ("c>", "Timeline, req 16: before 1, at most 10".into(), lmsg(0x22, 16, &[&1u32.to_le_bytes(), &10u16.to_le_bytes()])),
+        ("n>", "Timeline reply, req 16: done, no records".into(), ok(0xa2, 16, &[&0u16.to_le_bytes()])),
+        ("c>", "Type 3Fh, req 17: not a local message; the node ignores it (no reply)".into(), lmsg(0x3f, 17, &[])),
+        ("c>", "Nickname, req 18: the test key, empty (removes it)".into(), lmsg(0x27, 18, &[&key, &short(b"")])),
+        ("n>", "Nickname reply, req 18: done".into(), ok(0xa7, 18, &[])),
+    ]
+}
+
+fn local_session_file() -> String {
+    let mut out = String::from(
+        "# Terse test vectors: a session between a reader and a local node (LOCAL.md).\n\
+         # Format: vectors/README. The node at the start: no relays; it has stored the\n\
+         # entries `article` (arrival 1) and `profile` (arrival 2) of entries.txt and\n\
+         # holds both their blobs; it subscribes to the test feed, by its bare key; no\n\
+         # nicknames.\n",
+    );
+    for (dir, note, bytes) in local_session() {
+        let _ = writeln!(out, "\n# {note}\n{dir} {}", hex(&bytes));
+    }
+    out
+}
+
 // --- Everything ----------------------------------------------------------------
 // --- Everything ----------------------------------------------------------------
 
@@ -1015,6 +1124,7 @@ pub fn generate() -> Vec<File> {
         File { path: "profiles.txt".into(), bytes: profiles_file().into_bytes() },
         File { path: "addresses.txt".into(), bytes: addresses_file().into_bytes() },
         File { path: "relay-session.txt".into(), bytes: session_file().into_bytes() },
+        File { path: "local-session.txt".into(), bytes: local_session_file().into_bytes() },
     ];
     out.extend(article_files());
     out
@@ -1154,6 +1264,19 @@ of its own). Each message is one binary WebSocket message. The entries
 are those of entries.txt. A relay that answers the client messages in
 this order must send exactly the `r>` messages (the test suite checks
 this against the Terse relay).
+
+local-session.txt (LOCAL.md)
+----------------------------
+The messages of one session between a reader and a local node in the
+state the file's first comment describes, in the format of
+relay-session.txt: `c>` from the reader, `n>` from the node. Each line
+is one message without its 4-byte length (LOCAL.md 2 frames every
+message with one). A node that answers the reader's messages in this
+order must send the `n>` messages, with two allowances: a pushed message
+(`C0h`, `C1h`) may come between any two replies or not at all, so a
+replay skips pushes; and a refusal's reason (after status 3 in a reply
+`A0h` to `ABh`) is text for people, so only the bytes up to the status
+are compared.
 
 articles/ (ARTICLE.md)
 ----------------------
