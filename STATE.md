@@ -594,8 +594,8 @@ not be in frame order. Lines for a frame that is never run are ignored.
   `home` (`4Ah`), `pageup` (`4Bh`), `delete` (`4Ch`), `end` (`4Dh`),
   `pagedown` (`4Eh`), `right`, `left`, `down`, `up` (`4Fh`–`52h`);
 - two or more decimal digits are a usage ID, 0–255 (`40` is `28h`;
-  `05` is usage 5), and `0x` and one or two hexadecimal digits are one
-  (`0x28`).
+  `05` is usage 5), and so is `0x` followed by a hexadecimal number up to
+  `FF` (`0x28`).
 
 ### 6.3 The screen dump (`--dump`)
 
