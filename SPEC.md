@@ -64,6 +64,12 @@ document. A **program-profile host** (§profiles) implements:
   East Asian Width property for the terminal's wide characters
   (§terminal.cells), the xterm palette (§terminal.reset), and the
   White_Space property for display names (§display-names).
+- **Basic text** (§terminal.text): the terminal must draw only 351
+  characters (printable ASCII, the Latin-1 Supplement, box drawing and
+  block elements), one fixed-width font; every other character is drawn
+  as a placeholder box. Full text, every character, is device 10, which
+  a program-profile host may leave out: no shaping, bidirectional text or
+  font fallback is needed.
 
 What a host draws (fonts, smoothing, the phosphor style's glow) is up to
 it and is never machine state.
@@ -94,7 +100,8 @@ it set or every unit of budget, which the hashes cover.
    `programs/conform-program/expected-hashes.txt`.
 
 A host that wants more adds device documents one at a time: the reading
-profile adds `spec/content.md` and `spec/page.md`; a game may want
+profile adds `spec/content.md`, `spec/page.md` and full text
+(§terminal.text); a game may want
 `spec/sound.md`.
 
 ## §introduction Introduction
@@ -331,8 +338,9 @@ by the ROM contents.
 | 7 | Page | 0 | specified (§page, `spec/page.md`); **reading profile** |
 | 8 | Machines | 0 | specified (§machines, `spec/machines.md`); only the shell of a system has it |
 | 9 | 3D vector display | 0 | specified (§vector3d, `spec/vector3d.md`) |
+| 10 | Full text | 0 | specified (§terminal.text): a capability, no calls; **reading profile** |
 
-Other slots are free; 0 and 10–255 are not devices in v0.
+Other slots are free; 0 and 11–255 are not devices in v0.
 
 ### §profiles Machine hosts and profiles
 
@@ -351,11 +359,12 @@ A machine host that runs programs, games and tools but not
 necessarily the reader provides the machine's **program profile**:
 
 - the machine, profile 1 (§profile), and devices 1 System (§system, §events and §controllers), 2 Terminal (§terminal) and 3 2D vector display (§vector),
-  each complete;
+  each complete, the terminal drawing at least the basic repertoire
+  (§terminal.text);
 - every other device is optional for it: content, sound, the page, the
-  3D display. A program-profile host refuses an image that requires one
-  of them and runs, with the device absent, an image that lists it as
-  optional.
+  3D display, full text (device 10). A program-profile host refuses an
+  image that requires one of them and runs, with the device absent, an
+  image that lists it as optional.
 
 A program meant to run on every machine host requires only devices 1, 2
 and 3 and lists anything else it can do without as optional (for
@@ -366,8 +375,10 @@ A machine host that only wants to run the reader (the built-in feed
 reader, `programs/reader`, or any program written for the same profile)
 provides the machine's **reading profile**:
 
-- the machine, profile 1 (§profile), and devices 1 System (§system, §events and §controllers), 2 Terminal (§terminal), 4 Content (§content) and 7 Page
-  (§page), each complete except as said next for device 4;
+- the machine, profile 1 (§profile), and devices 1 System (§system, §events and §controllers), 2 Terminal (§terminal), 4 Content (§content), 7 Page
+  (§page) and 10 Full text (§terminal.text: the reader shows feeds' titles
+  and names, in any script, in the terminal; the page draws every
+  character in any case, §page.layout), each complete except as said next for device 4;
 - within Content it must carry out get (`01h`, §content.submit),
   subscriptions (`03h`), timeline (`04h`), names (`09h`), identity
   (`08h`, with the own address's hints), subscribe (`05h`, with the hints
@@ -395,7 +406,8 @@ reading` runs one machine with exactly this profile, and
 `programs/conform-reading` is the conformance image for it (§conformance);
 `terse run --profile program` and `programs/conform-program` do the same
 for the program profile. `terse run --without <slot>` withholds an
-optional device on any host.
+optional device on any host, and `--with <slot>` adds one to a profile
+(`--profile program --with 10`: a program host with full text).
 
 ## §calls Calls
 
@@ -763,11 +775,52 @@ bright colours, 16–231 the 6 × 6 × 6 colour cube, 232–255 the grey ramp.
 ### §terminal.presentation Presentation
 
 How the host draws the grid (font, size, cursor shape, smoothing) is not part
-of this spec and cannot be observed by the program. §vector.layers says how the
+of this spec and cannot be observed by the program, except which
+characters it must be able to draw (§terminal.text). §vector.layers says how the
 grid is combined with the vector display. Since the scrolls and clears inside
 a `write` are not charged, a host should make a scroll or a clear cost time
 proportional to one row, not to the whole grid (for example, rows kept as a
 ring and a cleared row filled only when it is written to).
+
+### §terminal.text Basic text and full text
+
+What the terminal holds never depends on which characters a host can
+draw: the cells, the widths of §terminal.cells, put character, the
+commands and the cursor are the same on every host, and so is the
+machine's state. Only what is drawn differs:
+
+- The **basic repertoire** is what every host that has the terminal
+  draws: U+0020–U+007E (printable ASCII), U+00A0–U+00FF (the printable
+  Latin-1 Supplement) and U+2500–U+259F (box drawing and block elements),
+  351 characters, all narrow. One fixed-width font of 8 × 16 cells
+  covers them.
+- **Full text** is every other character as well, drawn with fonts and
+  fallback the host chooses, a wide character across its two cells
+  (§terminal.cells).
+
+A machine has full text if it has **device 10, Full text** (version 0),
+a capability: a device with no calls, no events and no state. An image
+lists (10, 00h) if it cannot do without it, so that a host without full
+text refuses it (§image), or (10, 80h) if it can, and then asks `device`
+(§system) whether it was granted and may choose what it prints. A call
+to slot 10 returns `FFFF_FFFFh`. A host provides device 10 if it can
+draw full text; device 10 without device 2 changes nothing.
+
+A machine that does not have device 10 is drawn with the basic
+repertoire on every host, also on one that could draw more, so that it
+looks the same everywhere and its author sees what other hosts show.
+Each cell is drawn on its own: a cell whose code is in the basic
+repertoire as that character (U+0020 and U+00A0 as its background
+only), a cell holding a control code (`0000h`–`001Fh`, `007Fh`–`009Fh`)
+as its background only, and every other cell as the **placeholder**: an
+outlined box inside the cell, in the cell's foreground colour. So a wide
+character is two placeholders, its own cell and its continuation cell,
+and U+FFFD, which put character writes for malformed UTF-8, is a
+placeholder too. A machine that has device 10 is drawn with full text.
+
+Text input is not affected: a text event (§events) carries any Unicode
+scalar value, on every host and whether or not the machine has full
+text.
 
 ## §vector Device 3 — 2D vector display (version 0)
 
@@ -1029,7 +1082,8 @@ versions.
 
 ## §unspecified Not yet specified
 
-- Font selection, combining marks and complex scripts in the terminal.
+- Font selection, combining marks and complex scripts in the terminal
+  (with full text, §terminal.text).
 - Device 5.
 - A limit on the area covered by lines and circle outlines, including the
   outlines that filled shapes become in the phosphor style and fill mode 1

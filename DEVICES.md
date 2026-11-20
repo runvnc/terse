@@ -144,7 +144,8 @@ The driver answers HELLO (`81h`):
 | … | 1 + … | Host services it gives: a count, then names (section 9) |
 
 - The core refuses a driver that answers for other slots than it asked
-  for, or which chooses shared memory when it was not offered.
+  for (but for slot 10, below), or which chooses shared memory when it
+  was not offered.
 - **A driver may serve several slots.** It does when the devices share
   state: device 9's `style` and `persistence` are device 3's (SPEC §vector3d.calls),
   one section of the state (`STATE.md` 1.7), so `terse-dev-vector` serves
@@ -152,6 +153,16 @@ The driver answers HELLO (`81h`):
   slots go to the one process, in order (a batch may hold both), so the
   shared setting is never in two places. Each slot keeps its own call
   table, layers and state section.
+- **Full text (slot 10) goes with the terminal.** Device 10 (SPEC
+  §terminal.text) is a capability: no calls, no layers, no state. When a
+  machine's image lists it, the core asks the terminal's driver (slot 2)
+  for slot 10 as well. A driver that can draw every character answers for
+  it (version 0, no layers, an empty call table) and is told in OPEN
+  whether each machine has it; one that answers only for slot 2 does not
+  give it, which the core accepts: an optional device 10 is then not
+  granted, and an image that requires it is refused. `terse-dev-terminal`
+  answers for it; so does the C terminal driver, which draws nothing and
+  so lacks no character.
 - After the reply, every message travels on the chosen transport. A driver
   that chose shared memory keeps the socket open and sends nothing on it:
   it is how each end learns that the other has gone.
