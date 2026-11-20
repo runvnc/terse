@@ -133,7 +133,7 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 - Screens in effect are drawn as panels in the shell's scene, not in the vector layer: the shell's lines, points and circles are drawn over the panels, and in the phosphor style how they are lit there is up to the host.
 - Surfaces (at most 4 in effect) put the program's own screen on panels: see [Surfaces](terse:{device-vector3-surfaces}).
 - Layers: device 9 is drawn in the vector layer after device 3's shapes: over the page and the 2D shapes, under the terminal's characters, so text on the glass labels the models.
-- Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display's lines (core, halo, bloom, afterglow and smear), with the vertex dwell at line ends and points but not where a circle's chords join or where a face cut a line.
+- Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display's lines (sharp core, wide glow, afterglow and smear), with the vertex dwell at line ends and points but not where a circle's chords join or where a face cut a line.
 - The trigonometry and the projection are the host's, and hosts may differ in the last pixel. Smoothing, blending and how the eye moves are up to the host.
 
 ## Charges and state

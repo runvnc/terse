@@ -872,13 +872,24 @@ the keyboard while it is shown (Y allows, N or Esc refuses; no key or text
 reaches a machine, nor the release of a key pressed then) and gives the
 answer back as `core.answer`.
 
-Only the clean style is composed this way. The phosphor style (SPEC §vector.phosphor)
-is a whole-screen effect across the layers: the light of the terminal's
-characters, the page's text and the shapes adds up on one tube with one
-afterglow. It would need the drivers to give their light (linear, additive)
-instead of covering layers, and the core to own the tube and its
-persistence (or one driver to own it and the others to give it their
-primitives); the reference core leaves it out.
+Only the clean style is composed this way, and the reference core
+(`terse-bus`) draws nothing else: a machine in the phosphor style is shown
+with its shapes and the page's figures as outlines (the vector driver
+publishes `vector.outlines`, section 7.2), but composed as in the clean
+style, backgrounds drawn and layers covering one another, with no glow
+and no afterglow. The phosphor style (SPEC §vector.phosphor) is a
+whole-screen effect across the layers. In terse-host
+(`crates/terse-host/src/phosphor.rs`) the shapes are beam light (a thin
+Gaussian line, with a dot of extra light where lines end), the terminal's
+and the page's text is light in its own antialiasing and colours, not a
+beam, and both add up on one tube with one afterglow and one wide, faint
+halo computed from all of that light. Since the text is no longer drawn as
+a beam, a text driver's layer could be used as it is, as light over black;
+what the core would need is the drivers' light kept linear and additive
+(the shapes' beam, and every layer without its backgrounds) instead of
+covering layers, and the core to own the tube: the afterglow, its
+persistence and the halo (or one driver to own them and the others to
+give it their primitives). The reference core leaves it out.
 
 ### 7.2 Properties
 
@@ -1198,7 +1209,9 @@ for a slot that is no device of v0 (section 2.1, rule 6).
 
 ## 14. Open questions
 
-- **The phosphor style** (section 7.1).
+- **The phosphor style** (section 7.1): `terse-bus` shows it as the clean
+  style with outlines; terse-host's look (thin beam, sharp text, wide halo)
+  is not composed on the bus yet.
 - **Trust.** A driver on shared memory can write any of an instance's RAM
   at any time; the core trusts its drivers as it trusts its own code. A
   core that does not would offer only the socket, check every write, and

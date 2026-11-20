@@ -275,9 +275,10 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
   device 3's shapes: over the page and the 2D shapes, under the terminal's
   characters, so text on the glass labels the models.
 - **Phosphor.** In the phosphor style (§vector.phosphor) lines, points and
-  circles are beam light like the 2D display's lines: core, halo, bloom,
-  afterglow and smear, with the vertex dwell at line ends and points but
-  not where a circle's chords join or where a face cut a line.
+  circles are beam light like the 2D display's lines: a sharp core, its
+  share of the wide glow, afterglow and smear, with the vertex dwell at
+  line ends and points but not where a circle's chords join or where a
+  face cut a line.
 - **Screens** in effect are drawn as panels, in the shell's scene (§machines.screens), not in the vector layer: the shell's lines, points and circles
   are then drawn over the panels, and in the phosphor style how they are
   lit there (beam, afterglow) is up to the host.

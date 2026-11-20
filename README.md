@@ -1259,7 +1259,8 @@ not depend on the display's refresh rate and screenshots are the same on every r
 colour), `p31` (a green oscilloscope tube with a very short fast afterglow, 3 ms),
 `amber` (50 ms) or `vectrex` (white, 15 ms); the monochrome tubes show colours as
 brightness. `--vignette` darkens the glass towards the corners (by up to 30%). Both
-renderers draw all of this the same way, within rounding.
+renderers draw all of this the same way, within rounding. (`--bloom`, which chose the
+resolution of the earlier bloom, is gone: the halo is always computed on its pyramid.)
 
 Measured by `cargo test -p terse-host soft::look` (both renderers, 1280 × 960 and
 2560 × 1920; a slanted white line of width 1 unit, and grey "8 corners, 12 edges"):
@@ -1367,7 +1368,7 @@ GPU draws the machine's 2D layers a second time into a texture as large as the g
 (larger, up to twice, if a Surface magnifies its source) when they change, and maps
 it like a panel; the software renderer samples a pyramid of the part of the screen's
 own image the sources cover. In the phosphor style the sources give no light on the
-glass (nothing of them blooms there), the 2D layers on a Surface glow with their
+glass (nothing of them glows there), the 2D layers on a Surface glow with their
 afterglow (it belongs to the screen, so it moves with the panel), and the 3D lines
 over the Surfaces are drawn as over the shell's panels, as clean beams with the
 depth cue. `v3_surface(x, y, w, h, width)` builds one.

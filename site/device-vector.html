@@ -86,11 +86,11 @@
 <ul>
 <li>The screen is black: cell background colours are not drawn.</li>
 <li>Shapes are drawn as outlines and add light to what is beneath them instead of covering it; where lines cross, the crossing is brighter. Opacity acts as brightness. Hosts should make overlapping and repeated lines add up to visibly brighter light, so drawing a line more than once brightens it. Something that stays put does not grow brighter than about its own light.</li>
-<li>The terminal&#39;s characters and cursor are light on the same tube, in their foreground colour. So are the page&#39;s text and figures (as outlines); the page&#39;s background is not drawn.</li>
-<li>The beam is a sharp line with a faint bloom: its core is narrower than the stated width, and the glow around it is dim and short.</li>
+<li>The terminal&#39;s characters and cursor are light on the same tube, in their foreground colour. So are the page&#39;s text and figures (as outlines); the page&#39;s background is not drawn. Text is not beam light: it keeps its own colours and smoothing, as sharp as in the clean style, and adds only a little to the glow.</li>
+<li>The beam is a thin, sharp line on a faint, wide glow: its core follows the stated width but is never thinner than about a pixel, and the glow is dim but spreads far, so the gaps between close lines and inside letters stay dark.</li>
 <li>Light lingers. What the current list and text show is drawn at full brightness each frame; an afterglow of what was shown before fades quickly at first, then with a dim tail multiplied by persistence / 256 each frame, down to black. With persistence 0 there is no tail. A shape that keeps its structure from one frame to the next and only moves leaves a continuous smear rather than separate copies.</li>
 </ul>
-<p>The exact brightness, core width, glow, fast decay, tone curve and where an outline sits on a shape&#39;s edge are up to the host. The afterglow is presentation, not machine state, and the program cannot observe it; a host should let the user turn it off. In the clean style the persistence has no effect.</p>
+<p>The exact brightness, core width, glow, how much text adds to it, fast decay, tone curve, tint and where an outline sits on a shape&#39;s edge are up to the host. The afterglow is presentation, not machine state, and the program cannot observe it; a host should let the user turn it off. In the clean style the persistence has no effect.</p>
 <h2 id="charges">Charges</h2>
 <div class="table"><table>
 <thead><tr><th>What</th><th>Charge</th></tr></thead>
