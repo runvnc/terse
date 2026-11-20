@@ -91,7 +91,7 @@ fn an_address_finds_a_feed_on_another_relay() {
     assert_eq!(s.node.connected_relays(), [s.url_a.clone(), s.url_b.clone()]);
     assert!(s.node.followed_by_hint(&feed));
     assert_eq!(s.node.held_on_own_relays(&feed), Some(false));
-    // The names record says so (SPEC 9.5, flag 08h).
+    // The names record says so (SPEC §content.feeds, flag 08h).
     let (_, names) = s.node.name_records(0, 1000);
     assert_eq!(names[1] & terse_core::content::NAME_HINTED, terse_core::content::NAME_HINTED);
     // Unsubscribing drops the hint relay.

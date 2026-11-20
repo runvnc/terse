@@ -1,4 +1,4 @@
-//! Carries out content requests (SPEC 9) and follows feeds (NETWORK 4.4) on a
+//! Carries out content requests (SPEC §content) and follows feeds (NETWORK 4.4) on a
 //! background thread, so the frame loop only ever submits requests and
 //! collects completions and feed events without blocking. Blocking waits are
 //! for headless and command-line use.
@@ -34,22 +34,22 @@ pub enum FeedCommand {
 }
 
 /// Requests carry a tag that their completions carry back: the machine
-/// they came from, for a host that runs several (SPEC 12). 0 for one.
+/// they came from, for a host that runs several (SPEC §machines). 0 for one.
 enum Work {
-    /// With the owner of the machine's named records (SPEC 9.6), if known.
+    /// With the owner of the machine's named records (SPEC §content.records), if known.
     Content(u32, Request, Option<Owner>),
-    /// A request the user has allowed (SPEC 9.5).
+    /// A request the user has allowed (SPEC §content.feeds).
     Consented(u32, Request),
     Feed(FeedCommand),
-    /// A whole blob (an image a shell starts, SPEC 12.2), completed as a
+    /// A whole blob (an image a shell starts, SPEC §machines.calls), completed as a
     /// get with handle 0.
     Fetch(u32, [u8; 32]),
-    /// The current version of a program (`start_program`, SPEC 12.2),
+    /// The current version of a program (`start_program`, SPEC §machines.calls),
     /// completed like `Fetch`: not found if the host holds no such program.
     /// A built-in (the all-zero key) is looked for among these images.
     Program(u32, ProgramId, Vec<[u8; 32]>),
     /// Store a snapshot file in a slot of the owner's snapshots (SPEC
-    /// 12.7); reported in [`ContentService::take_snapshot_results`].
+    /// §machines.snapshots); reported in [`ContentService::take_snapshot_results`].
     SaveSnapshot(Owner, u8, Vec<u8>),
     /// Read a slot's snapshot and get its image, for machine `tag`.
     Restore(u32, Owner, u8),
@@ -57,7 +57,7 @@ enum Work {
 }
 
 /// How the host answers the requests that need the user's consent
-/// (subscribe, unsubscribe, publish; SPEC 9.5).
+/// (subscribe, unsubscribe, publish; SPEC §content.feeds).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Consent {
     /// Ask the user: the request waits in [`ContentService::prompt`] until
@@ -133,12 +133,12 @@ pub struct ContentService {
     /// snapshots and images.
     saved: Vec<(u8, bool)>,
     restored: Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>,
-    /// The machine's reading profile (SPEC 2.1): requests
+    /// The machine's reading profile (SPEC §profiles): requests
     /// outside it complete with status Refused without asking.
     reading: bool,
 }
 
-/// Whether a request is one the reading profile carries out (SPEC 2.1):
+/// Whether a request is one the reading profile carries out (SPEC §profiles):
 /// get, subscriptions, timeline, names, identity,
 /// subscribe and unsubscribe. Every other operation (put, publish, find,
 /// set profile, set nickname, programs, save, load, delete, records) is
@@ -161,7 +161,7 @@ pub fn in_reading_profile(kind: &RequestKind) -> bool {
 enum Job {
     Get { handle: u8, offset: u32, length: u16 },
     Put { handle: u8 },
-    /// A program's publish or set profile (SPEC 9.5).
+    /// A program's publish or set profile (SPEC §content.feeds).
     Publish { handle: u8 },
     /// A program's find, with its buffer size.
     Find { handle: u8, length: u16 },
@@ -172,7 +172,7 @@ enum Job {
     /// The relays asked for a program the host does not hold (NETWORK
     /// 4.8); its image is fetched next.
     Lookup(ProgramId),
-    /// The image of a snapshot being restored (SPEC 12.7).
+    /// The image of a snapshot being restored (SPEC §machines.snapshots).
     Restore(Box<Snapshot>),
 }
 
@@ -247,7 +247,7 @@ impl ContentService {
     }
 
     /// Drops the prompts of requests submitted with `tag` (a machine that
-    /// ceased to exist, SPEC 12.2). Their requests are never completed.
+    /// ceased to exist, SPEC §machines.calls). Their requests are never completed.
     pub fn cancel(&mut self, tag: u32) {
         self.prompts.retain(|(p, _)| p.tag != tag);
         self.refused.retain(|(t, _)| *t != tag);
@@ -277,7 +277,7 @@ impl ContentService {
     }
 
     /// Whether a new feed entry was stored since the last call (the
-    /// feeds-updated event, SPEC 5); never blocks. Consumes the feed
+    /// feeds-updated event, SPEC §content.events); never blocks. Consumes the feed
     /// events so far, like `take_feed_events`.
     pub fn feeds_updated(&mut self) -> bool {
         self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. }))
@@ -315,14 +315,14 @@ impl ContentService {
     }
 
     /// Submits the requests `machine` made, with `tag`; its named records
-    /// (SPEC 9.6) are those of its identity, else of its image.
+    /// (SPEC §content.records) are those of its identity, else of its image.
     pub fn submit_machine(&mut self, tag: u32, machine: &mut Machine) {
         let owner = Owner::of(machine);
         let requests = machine.take_content_requests();
         self.submit_owned(tag, owner, requests);
     }
 
-    /// Submits `requests` with `tag`; their named records (SPEC 9.6) are
+    /// Submits `requests` with `tag`; their named records (SPEC §content.records) are
     /// `owner`'s (for a content device kept outside the machine).
     pub fn submit_owned(&mut self, tag: u32, owner: Owner, requests: Vec<Request>) {
         for r in requests {
@@ -351,7 +351,7 @@ impl ContentService {
     }
 
     /// Stores `snapshot` in slot `slot` of `owner`'s snapshots (SPEC
-    /// 12.7); the result comes from [`Self::take_snapshot_results`].
+    /// §machines.snapshots); the result comes from [`Self::take_snapshot_results`].
     pub fn save_snapshot(&mut self, owner: Owner, slot: u8, snapshot: &Snapshot) {
         self.outstanding += 1;
         let _ = self.jobs.send(Work::SaveSnapshot(owner, slot, snapshot.encode()));
@@ -444,7 +444,7 @@ pub struct Headless {
     script: Script,
     completions: Vec<Completion>,
     feeds_updated: bool,
-    /// The page's events (SPEC 11.5), from the reference layout unless the
+    /// The page's events (SPEC §page.events), from the reference layout unless the
     /// host gives its own layouter.
     page: PageInput,
 }
@@ -504,7 +504,7 @@ struct HeadlessMachine {
     feeds_updated: bool,
 }
 
-/// Runs a [`System`] (a shell and the machines it starts, SPEC 12) the
+/// Runs a [`System`] (a shell and the machines it starts, SPEC §machines) the
 /// reproducible headless way, as [`Headless`] runs one machine: the script's
 /// events are the host's input, routed by the system; each machine has its
 /// own page events (laid out between frames), completions and feeds-updated
@@ -520,7 +520,7 @@ pub struct HeadlessSystem {
     /// Images to deliver at the start of the next frame.
     images: Vec<(u32, Result<terse_core::Image, StartFailure>)>,
     /// Snapshots (with their images) to deliver at the start of the next
-    /// frame (SPEC 12.7).
+    /// frame (SPEC §machines.snapshots).
     restores: Vec<(u32, Result<(terse_core::Image, Snapshot), StartFailure>)>,
     /// Makes the layouter of each machine's page (default: the reference
     /// layout).
@@ -605,7 +605,7 @@ impl HeadlessSystem {
                         m.completions.push(c);
                     }
                 }
-                // SPEC 12.7: snapshots stored are reported, and restored
+                // SPEC §machines.snapshots: snapshots stored are reported, and restored
                 // machines delivered, at the start of the next frame.
                 let (saved, restored) = content.take_snapshot_results();
                 for (slot, stored) in saved {
@@ -625,7 +625,7 @@ impl HeadlessSystem {
     }
 }
 
-/// The image a fetch delivered (SPEC 12.2: a missing blob, or one that is
+/// The image a fetch delivered (SPEC §machines.calls: a missing blob, or one that is
 /// not an image this host can run, fails the start, with its reason).
 pub fn image_from(outcome: Outcome) -> Result<terse_core::Image, StartFailure> {
     match outcome {
@@ -709,7 +709,7 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Put { handle }, Done::Put(id)) => (handle, Outcome::Put { id }),
         (Job::Publish { handle }, Done::Published { seq, .. }) => (handle, Outcome::Published { seq }),
         (Job::Find { handle, .. }, Done::Found(_)) => (handle, Outcome::Failed),
-        // NETWORK 4.7: no relay answered and one refused (SPEC 9.5).
+        // NETWORK 4.7: no relay answered and one refused (SPEC §content.feeds).
         (Job::Find { handle, .. }, Done::Refused) => (handle, Outcome::Refused),
         (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, Done::NotFound) => {
             (handle, Outcome::NotFound)
@@ -741,7 +741,7 @@ enum Step {
     Started,
 }
 
-/// SPEC 9.5: requests that change nothing complete at once without asking
+/// SPEC §content.feeds: requests that change nothing complete at once without asking
 /// (subscribing to a feed already subscribed, unsubscribing from one that
 /// is not); an invalid feed key (subscribe, unsubscribe, set nickname) is
 /// refused, before anything else is looked at, and a blob not in the store is
@@ -776,7 +776,7 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
             Asked::SetNickname { feed: *feed, name: String::from_utf8_lossy(name).into_owned() }
         }
         RequestKind::Publish { blob, title, kind } => match node.store().read(blob) {
-            // SPEC 9.5: a document must start with a document header.
+            // SPEC §content.feeds: a document must start with a document header.
             Ok(Some(bytes)) if *kind == terse_core::content::ENTRY_DOCUMENT && terse_core::content::document_format(&bytes).is_none() => {
                 return Step::Complete(Outcome::BadRequest);
             }
@@ -796,7 +796,7 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
         Consent::Allow => match &request.kind {
             // A subscription list that cannot be saved fails.
             RequestKind::Subscribe { feed, hints } => {
-                // The device checked the hints (SPEC 9.5).
+                // The device checked the hints (SPEC §content.feeds).
                 let hints = std::str::from_utf8(hints).ok().filter(|h| !h.is_empty());
                 Step::Complete(if node.subscribe_with_hints(*feed, hints).is_ok() { Outcome::Done } else { Outcome::Failed })
             }
@@ -822,7 +822,7 @@ fn feed_step(node: &mut Node, consent: Consent, consented: bool, request: &Reque
 
 /// The blob ID of the current version of `program` the host holds: for
 /// the all-zero key, the first of `builtins` whose image title is the name
-/// (SPEC 12.2).
+/// (SPEC §machines.calls).
 fn find_program(node: &Node, program: &ProgramId, builtins: &[[u8; 32]]) -> Option<[u8; 32]> {
     if program.is_builtin() {
         return builtins.iter().copied().find(|id| {
@@ -836,7 +836,7 @@ fn find_program(node: &Node, program: &ProgramId, builtins: &[[u8; 32]]) -> Opti
 }
 
 /// Carries out a save, load, delete or records request for `owner` (SPEC
-/// 9.6). A storage error fails it.
+/// §content.records). A storage error fails it.
 fn records_request(records: &crate::records::Records, owner: &Owner, kind: RequestKind) -> Outcome {
     let result = match kind {
         RequestKind::Save { name, data } => records.save(owner, &name, &data).map(|saved| match saved {
@@ -912,7 +912,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         next += 1;
         match work {
             Some(Work::Content(tag, Request { handle, kind: RequestKind::Identity }, _)) => {
-                // SPEC 9.5: with the hints of the host's own address, if any.
+                // SPEC §content.feeds: with the hints of the host's own address, if any.
                 let hints = crate::address::hint_text(&node.own_hints());
                 let outcome = match node.identity_key() {
                     Some(key) if hints.is_empty() => Outcome::Identity { key },
@@ -932,7 +932,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     pending.insert(next, (tag, Job::Fetch));
                     node.start_get(next, id);
                 }
-                // SPEC 12.2: a published program the host does not hold is
+                // SPEC §machines.calls: a published program the host does not hold is
                 // looked up on the relays first.
                 None if !program.is_builtin() => {
                     pending.insert(next, (tag, Job::Lookup(program.clone())));
@@ -945,7 +945,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     }
                 }
             },
-            // SPEC 9.6: named records, answered at once from this host's
+            // SPEC §content.records: named records, answered at once from this host's
             // records directory.
             Some(Work::Content(
                 tag,
@@ -1004,7 +1004,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 pending.insert(next, (tag, Job::Put { handle }));
                 node.start_put(next, &data);
             }
-            // SPEC 9.5: answered at once from the node's own state.
+            // SPEC §content.feeds: answered at once from the node's own state.
             Some(Work::Content(tag, Request { handle, kind: RequestKind::Subscriptions { offset, length } }, _)) => {
                 let (total, data) = node.subscription_records(offset, length);
                 let outcome = Outcome::Records { total, data };
@@ -1034,7 +1034,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 pending.insert(next, (0, Job::FeedPublish));
                 node.start_publish_article(next, &draft);
             }
-            // SPEC 12.7: snapshots, in this host's data directory.
+            // SPEC §machines.snapshots: snapshots, in this host's data directory.
             Some(Work::SaveSnapshot(owner, slot, file)) => {
                 let ok = node.snapshots().is_some_and(|s| s.save(&owner, slot, &file).is_ok());
                 if finished.send(Finished::Saved(slot, ok)).is_err() {
@@ -1099,7 +1099,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     }
                     _ => finished.send(Finished::Done(tag, Completion { handle: 0, outcome: Outcome::NotFound })).is_ok(),
                 },
-                // SPEC 12.7: the snapshot's image, by its ID.
+                // SPEC §machines.snapshots: the snapshot's image, by its ID.
                 Some((tag, Job::Restore(snapshot))) => {
                     let result = match done {
                         Done::Got(blob) => terse_core::load_image(&blob).map(|image| (image, *snapshot)),
@@ -1209,7 +1209,7 @@ mod tests {
         done.iter().map(|c| c.outcome.clone()).collect()
     }
 
-    /// SPEC 9.5: with consent denied, subscribe and publish are refused;
+    /// SPEC §content.feeds: with consent denied, subscribe and publish are refused;
     /// requests that change nothing, unknown blobs and the identity are
     /// answered without asking.
     #[test]
@@ -1276,7 +1276,7 @@ mod tests {
         assert_eq!((held.len(), held[0].entry.title.as_str(), held[0].entry.blob), (1, "Tïtle", article));
     }
 
-    /// SPEC 9.5: subscribe and unsubscribe with an invalid feed key complete
+    /// SPEC §content.feeds: subscribe and unsubscribe with an invalid feed key complete
     /// with 05h (refused) without asking, even where the user would allow
     /// them and where unsubscribing would otherwise change nothing.
     #[test]
@@ -1293,7 +1293,7 @@ mod tests {
         }
     }
 
-    /// SPEC 9.5 ops 09h–0Ch: names records; a find with no relay fails;
+    /// SPEC §content.feeds ops 09h–0Ch: names records; a find with no relay fails;
     /// set profile and set nickname with consent denied, allowed and asked.
     #[test]
     fn names_find_profile_and_nickname_requests() {
@@ -1396,7 +1396,7 @@ mod tests {
         terse_core::Image::parse(&terse_core::Image::build(title, 1, &[], &[rom, 0, 0, 0])).unwrap()
     }
 
-    /// SPEC 9.6: save, load (ranges), replace, delete and the records list,
+    /// SPEC §content.records: save, load (ranges), replace, delete and the records list,
     /// for the owner of the requests; owners do not see each other's
     /// records; a new version of a program (same feed and name) reads the
     /// old version's; records outlive the service; a machine started from
@@ -1484,7 +1484,7 @@ mod tests {
         assert_eq!(outcomes(&plain.wait_finished()), [Outcome::Failed]);
     }
 
-    /// SPEC 12.2 `start_program`: the current version the host holds, a
+    /// SPEC §machines.calls `start_program`: the current version the host holds, a
     /// built-in by title for the zero key, not found otherwise; op 0Dh.
     #[test]
     fn programs_and_their_images() {
@@ -1524,7 +1524,7 @@ mod tests {
         assert_eq!(&data[2 + 113 + 2 + 32..2 + 113 + 2 + 36], &2u32.to_le_bytes(), "tool, version 2");
     }
 
-    /// SPEC 9.5: a document publish (kind 4) needs a valid document
+    /// SPEC §content.feeds: a document publish (kind 4) needs a valid document
     /// header (else 04h, without asking); the prompt says it is a
     /// document; the entry is kind 4.
     #[test]

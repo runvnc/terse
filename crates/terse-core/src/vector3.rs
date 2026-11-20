@@ -1,25 +1,25 @@
-//! Device 9, 3D vector display (SPEC 13).
+//! Device 9, 3D vector display (SPEC §vector3d).
 //!
 //! The device only validates and copies the display list; the style and
 //! persistence it sets are device 3's ([`crate::Vector`]), shared by both
-//! displays. [`decode`] turns a stored list into its commands (SPEC 13.3
+//! displays. [`decode`] turns a stored list into its commands (SPEC §vector3d.list
 //! termination rules, the transform stack's limits), and [`project`] turns
 //! a list and an eye into the line segments a host draws on the glass, with
-//! the caps of SPEC 13.4, the depth cue of SPEC 13.5 and what faces hide
-//! cut away (SPEC 13.3). Every renderer
+//! the caps of SPEC §vector3d.caps, the depth cue of SPEC §vector3d.presentation and what faces hide
+//! cut away (SPEC §vector3d.list). Every renderer
 //! draws from [`project`], so they all draw the same segments.
 
 use std::fmt;
 
 use crate::vector::{Primitive, Rgba};
 
-/// The device's slot (SPEC 2).
+/// The device's slot (SPEC §image).
 pub const SLOT: u8 = 9;
-/// Longest list a submit accepts (SPEC 13.2).
+/// Longest list a submit accepts (SPEC §vector3d.calls).
 pub const MAX_LIST: usize = 16_384;
-/// Transforms a list can save with Push (SPEC 13.3).
+/// Transforms a list can save with Push (SPEC §vector3d.list).
 pub const STACK_DEPTH: usize = 8;
-/// The reference eye: (320, 240, −960) in screen units (SPEC 13.1).
+/// The reference eye: (320, 240, −960) in screen units (SPEC §vector3d.space).
 pub const EYE_X: f64 = 320.0;
 pub const EYE_Y: f64 = 240.0;
 pub const EYE_DISTANCE: f64 = 960.0;
@@ -28,10 +28,10 @@ pub const NEAR_Z: f64 = -800.0;
 /// How far a host may move the eye from the reference eye, on each axis.
 pub const MAX_EYE_OFFSET: f32 = 160.0;
 /// Total length (screen units, on the glass, reference eye, clipped to the
-/// screen) one list may draw (SPEC 13.4). Provisional.
+/// screen) one list may draw (SPEC §vector3d.caps). Provisional.
 pub const LENGTH_CAP: f64 = 65_536.0;
 /// Segments one list may draw: a line or point is one, a circle
-/// [`CIRCLE_CHORDS`] (SPEC 13.4). Provisional.
+/// [`CIRCLE_CHORDS`] (SPEC §vector3d.caps). Provisional.
 pub const SEGMENT_CAP: usize = 16_384;
 /// The chords a circle is drawn as.
 pub const CIRCLE_CHORDS: usize = 64;
@@ -42,7 +42,7 @@ pub const MAX_WIDTH: u16 = 255;
 /// would be without the cut.
 const DRAW_MARGIN: f64 = 32.0;
 
-/// Display-list opcodes (SPEC 13.3).
+/// Display-list opcodes (SPEC §vector3d.list).
 pub mod op {
     pub const END: u8 = 0x00;
     pub const COLOUR: u8 = 0x01;
@@ -61,7 +61,7 @@ pub mod op {
     pub const SURFACE: u8 = 0x0E;
 }
 
-/// Surfaces that take effect in one list (SPEC 13.3 Surface). Provisional.
+/// Surfaces that take effect in one list (SPEC §vector3d.list Surface). Provisional.
 pub const MAX_SURFACES: usize = 4;
 /// The whole screen as a source rectangle (a Screen's panel shows it all).
 pub const WHOLE_SCREEN: [u16; 4] = [0, 0, 640, 480];
@@ -71,7 +71,7 @@ pub const WHOLE_SCREEN: [u16; 4] = [0, 0, 640, 480];
 pub const BUTT_START: u8 = 1;
 pub const BUTT_END: u8 = 2;
 
-/// The device state (SPEC 13.6): the copy of the list. The style and the
+/// The device state (SPEC §vector3d.determinism): the copy of the list. The style and the
 /// persistence are device 3's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Vector3 {
@@ -163,7 +163,7 @@ impl Vector3 {
 /// A point of the list, in sixteenths of a screen unit.
 pub type Xyz = [i16; 3];
 
-/// One command of a list (SPEC 13.3), operands as given.
+/// One command of a list (SPEC §vector3d.list), operands as given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Colour(Rgba),
@@ -182,11 +182,11 @@ pub enum Command {
     /// A face: its corners (3 or 4; the fourth is unused for 3).
     Face(u8, [Xyz; 4]),
     /// A machine's screen as a panel: the handle (1-8) and the width in
-    /// sixteenths (SPEC 13.3).
+    /// sixteenths (SPEC §vector3d.list).
     Screen(u8, u16),
     /// A rectangle of the machine's own 2D layers as a panel: x, y, width,
     /// height (screen units, as given) and the panel's width in sixteenths
-    /// (SPEC 13.3).
+    /// (SPEC §vector3d.list).
     Surface([u16; 4], u16),
 }
 
@@ -255,7 +255,7 @@ fn operand_len(opcode: u8, first: Option<u8>) -> Option<usize> {
     })
 }
 
-/// Decodes a list (SPEC 13.3): its commands up to where it ends (an End,
+/// Decodes a list (SPEC §vector3d.list): its commands up to where it ends (an End,
 /// the end of the bytes, an unknown opcode, cut-off operands, a Rotate
 /// about an axis above 2, a Push with 8 transforms saved or a Pop with none).
 pub fn decode(list: &[u8]) -> Decoder<'_> {
@@ -375,7 +375,7 @@ impl Transform {
         Transform { m, t: self.apply(inner.t) }
     }
 
-    /// Translate (SPEC 13.3), in screen units.
+    /// Translate (SPEC §vector3d.list), in screen units.
     pub fn translate(&mut self, v: [f64; 3]) {
         *self = self.then_inner(&Transform { t: v, ..Transform::IDENTITY });
     }
@@ -414,7 +414,7 @@ fn units(p: Xyz) -> [f64; 3] {
     [p[0] as f64 / 16.0, p[1] as f64 / 16.0, p[2] as f64 / 16.0]
 }
 
-/// The list's drawing state at each command (SPEC 13.3): colour, width,
+/// The list's drawing state at each command (SPEC §vector3d.list): colour, width,
 /// the transform and its stack, and the current point in screen units
 /// (already transformed: it stays where it was put when the transform
 /// changes).
@@ -500,7 +500,7 @@ impl State {
 }
 
 /// A rectangle (x, y, width, height in screen units) clamped so it lies on
-/// the screen, as the page's rectangle is (SPEC 11.2): x to at most 640, y
+/// the screen, as the page's rectangle is (SPEC §page.calls): x to at most 640, y
 /// to at most 480, the width to at most 640 − x, the height to at most 480 − y.
 pub fn clamp_rect(r: [u16; 4]) -> [u16; 4] {
     let x = r[0].min(640);
@@ -514,7 +514,7 @@ fn unit_circle() -> &'static [(f64, f64); CIRCLE_CHORDS] {
     TABLE.get_or_init(|| std::array::from_fn(|k| (k as f64 / CIRCLE_CHORDS as f64 * std::f64::consts::TAU).sin_cos()))
 }
 
-/// The depth cue at depth `z` (SPEC 13.5): 960 / (960 + z), at most 1.
+/// The depth cue at depth `z` (SPEC §vector3d.presentation): 960 / (960 + z), at most 1.
 pub fn depth_cue(z: f64) -> f64 {
     (EYE_DISTANCE / (EYE_DISTANCE + z)).min(1.0)
 }
@@ -564,11 +564,11 @@ pub fn clip_rect(a: (f64, f64), b: (f64, f64), r: (f64, f64, f64, f64)) -> Optio
     (t0 <= t1).then_some((t0, t1))
 }
 
-/// The screen (SPEC 7), in screen units.
+/// The screen (SPEC §screen), in screen units.
 const SCREEN: (f64, f64, f64, f64) = (0.0, 0.0, 640.0, 480.0);
 
 /// The length on the glass, seen from the reference eye, of the part of
-/// a–b in front of the near plane and on the screen (SPEC 13.4).
+/// a–b in front of the near plane and on the screen (SPEC §vector3d.caps).
 pub fn counted_length(a: [f64; 3], b: [f64; 3]) -> f64 {
     let Some((a, b)) = near_clip(a, b) else { return 0.0 };
     let reference = (EYE_X, EYE_Y);
@@ -579,9 +579,9 @@ pub fn counted_length(a: [f64; 3], b: [f64; 3]) -> f64 {
     }
 }
 
-/// Faces one list may give (SPEC 13.4).
+/// Faces one list may give (SPEC §vector3d.caps).
 pub const FACE_CAP: usize = 256;
-/// The most faces × segments one list may give (SPEC 13.4): it bounds the
+/// The most faces × segments one list may give (SPEC §vector3d.caps): it bounds the
 /// work of cutting the segments against the faces.
 pub const FACE_WORK_CAP: usize = 131_072;
 /// How far beyond a face's plane (screen units, measured perpendicular to
@@ -598,7 +598,7 @@ pub const MIN_PIECE: f64 = 0.5;
 pub struct Projection {
     /// Segments drawn (`out`'s length): after cutting, from the eye used.
     pub segments: usize,
-    /// Their counted length (SPEC 13.4), in screen units, as if there were
+    /// Their counted length (SPEC §vector3d.caps), in screen units, as if there were
     /// no faces.
     pub length: f64,
     /// Faces in effect.
@@ -606,7 +606,7 @@ pub struct Projection {
     /// A command was stopped by a cap (or a segment by the cap on what is
     /// drawn after cutting).
     pub capped: bool,
-    /// Surfaces in effect (SPEC 13.3), and their source rectangles (clamped)
+    /// Surfaces in effect (SPEC §vector3d.list), and their source rectangles (clamped)
     /// in list order: what is not drawn on the glass.
     pub surfaces: usize,
     pub rects: [[u16; 4]; MAX_SURFACES],
@@ -619,7 +619,7 @@ impl Projection {
     }
 }
 
-/// The segments a host draws for `list` (SPEC 13.4, 13.5), with the eye
+/// The segments a host draws for `list` (SPEC §vector3d.caps, §vector3d.presentation), with the eye
 /// moved `eye` (screen units, each at most [`MAX_EYE_OFFSET`]) from the
 /// reference eye, as [`Primitive::Beam`]s in sixteenths on the glass, in
 /// list order, appended to `out`. Lines and points have round ends; a
@@ -637,16 +637,16 @@ pub fn project(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>) -> Projec
 /// number of segments each line, point and circle gave, as 2 bytes
 /// (little-endian) each: two projections with the same opcodes and the
 /// same `pieces` give segments that line up one for one. Screens are
-/// ignored (the list of a machine that is not the shell, SPEC 13.3);
+/// ignored (the list of a machine that is not the shell, SPEC §vector3d.list);
 /// Surfaces in effect hide as faces do (their panels are not returned: see
 /// [`project_scene`]).
 pub fn project_pieces(list: &[u8], eye: (f32, f32), out: &mut Vec<Primitive>, pieces: &mut Vec<u8>) -> Projection {
     project_scene(list, eye, &SceneView::LISTED, out, pieces, &mut Vec::new())
 }
 
-/// How the shell's scene is shown (SPEC 12.3, 13.3): which handles' Screens
+/// How the shell's scene is shown (SPEC §machines.screens, §vector3d.list): which handles' Screens
 /// are in effect (bit h − 1 for handle h) and the host's view of the whole
-/// scene (`view`, SPEC 12.2 `face`): a rigid motion and uniform scale
+/// scene (`view`, SPEC §machines.calls `face`): a rigid motion and uniform scale
 /// applied to everything after the caps are counted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneView {
@@ -688,7 +688,7 @@ impl Panel {
     }
 }
 
-/// What a list gives once its caps are applied (SPEC 13.4): the figures
+/// What a list gives once its caps are applied (SPEC §vector3d.caps): the figures
 /// that are drawn (with their width and colour), the faces (the Screens and
 /// Surfaces in effect among them) and the counts.
 struct Walk {
@@ -766,7 +766,7 @@ fn walk(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>
     Walk { drawn, faces, projection }
 }
 
-/// The Surfaces in effect in a machine's own `list` (SPEC 13.3), as the
+/// The Surfaces in effect in a machine's own `list` (SPEC §vector3d.list), as the
 /// eye moved `eye` from the reference eye sees them, far to near, and what
 /// the caps let through (no segments are cut: `segments` is 0).
 pub fn surfaces(list: &[u8], eye: (f32, f32)) -> (Vec<Panel>, Projection) {
@@ -781,7 +781,7 @@ pub fn has_surface(list: &[u8]) -> bool {
 }
 
 /// Where a pointer at (x, y) on the glass goes on the machine whose list is
-/// `list` (SPEC 13.3 Surface): over the front of a Surface in effect (the
+/// `list` (SPEC §vector3d.list Surface): over the front of a Surface in effect (the
 /// nearest one the ray from the eye meets), the point of its source
 /// rectangle; otherwise (x, y) itself.
 pub fn surface_pointer(list: &[u8], eye: (f32, f32), x: u16, y: u16) -> (u16, u16) {
@@ -802,7 +802,7 @@ fn eye_at(eye: (f32, f32)) -> (f64, f64) {
     (EYE_X + clamp(eye.0), EYE_Y + clamp(eye.1))
 }
 
-/// [`project_pieces`] for a list with panels (SPEC 13.3 Screen, Surface):
+/// [`project_pieces`] for a list with panels (SPEC §vector3d.list Screen, Surface):
 /// the Screens of the handles in `scene.screens` (the first of each handle;
 /// only the shell's list has any in effect) and the first four Surfaces
 /// count as faces and hide what is behind them, and go into `panels`
@@ -878,7 +878,7 @@ pub fn centre(c: &[[f64; 3]; 4]) -> [f64; 3] {
     std::array::from_fn(|i| (c[0][i] + c[1][i] + c[2][i] + c[3][i]) / 4.0)
 }
 
-/// The handles that have a Screen in `list` as it decodes (SPEC 13.3), bit
+/// The handles that have a Screen in `list` as it decodes (SPEC §vector3d.list), bit
 /// h − 1 for handle h, whatever the caps.
 pub fn screens_in(list: &[u8]) -> u8 {
     decode(list).fold(0, |m, c| if let Command::Screen(h, _) = c { m | 1 << (h - 1) } else { m })
@@ -900,7 +900,7 @@ pub fn screen_corners(list: &[u8], h: u8) -> Option<[[f64; 3]; 4]> {
 
 /// The pointer at (x, y) on the glass (screen units) seen from the eye at
 /// `eye` (moved from the reference eye, as for [`project`]) against the
-/// panels (SPEC 12.4, 13.3 Surface): the nearest panel the ray from the eye
+/// panels (SPEC §machines.input, §vector3d.list Surface): the nearest panel the ray from the eye
 /// through the point meets in front of the near plane, its handle (0 for a
 /// Surface), and where on its machine's screen it is (in its source
 /// rectangle; 0-639, 0-479 for a Screen), or `None` there if it is seen
@@ -940,7 +940,7 @@ pub fn panel_hit(panels: &[Panel], eye: (f32, f32), x: f64, y: f64) -> Option<(u
 /// flat on the glass over `target` (x, y, width, height in screen units):
 /// its centre goes straight to the target's, it turns by the shorter way
 /// (a slerp) to face the viewer upright, and its width changes
-/// geometrically to the target's width (SPEC 12.2 `face`).
+/// geometrically to the target's width (SPEC §machines.calls `face`).
 pub fn view_transform(c: &[[f64; 3]; 4], target: (f64, f64, f64, f64), e: f64) -> Transform {
     let len = |v: [f64; 3]| dot(v, v).sqrt();
     let (ax, ay) = (sub(c[1], c[0]), sub(c[3], c[0]));
@@ -973,7 +973,7 @@ pub fn view_transform(c: &[[f64; 3]; 4], target: (f64, f64, f64, f64), e: f64) -
     Transform { m, t: [ce[0] - mc[0], ce[1] - mc[1], ce[2] - mc[2]] }
 }
 
-/// The eased fraction of a view's motion (SPEC 12.2 `face`): smoothstep of
+/// The eased fraction of a view's motion (SPEC §machines.calls `face`): smoothstep of
 /// the linear progress `q` (0 to 4096).
 pub fn ease(q: u16) -> f64 {
     let t = (q.min(4096) as f64) / 4096.0;
@@ -2032,7 +2032,7 @@ mod tests {
         assert_eq!((p.len(), proj.faces, proj.capped), (0, 256, true));
     }
 
-    /// The pointer against the panels (SPEC 12.4).
+    /// The pointer against the panels (SPEC §machines.input).
     #[test]
     fn pointer_hits() {
         let full = [translate(320.0, 240.0, 0.0), screen(1, 640.0)].concat();
@@ -2213,7 +2213,7 @@ mod tests {
     }
 
     /// The pointer over a Surface goes to the point of its source rectangle
-    /// (SPEC 13.3): the centre, the corners, from a moved eye, from behind,
+    /// (SPEC §vector3d.list): the centre, the corners, from a moved eye, from behind,
     /// two overlapping, over none.
     #[test]
     fn surface_pointer_mapping() {

@@ -1,4 +1,4 @@
-//! Plays the sound device (SPEC 18.7) through the system's audio output
+//! Plays the sound device (SPEC §sound.presentation) through the system's audio output
 //! (cpal; on Linux ALSA, which PipeWire and PulseAudio serve). Only with
 //! the `audio` feature, and only in a window: the device is opened the
 //! first time a machine gives samples, so a program without sound never

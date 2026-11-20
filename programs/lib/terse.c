@@ -264,7 +264,7 @@ uint32_t content_set_nickname(content_req *r, const uint8_t *key, const void *na
     return content_submit(r);
 }
 
-/* Content: programs and named records (SPEC 9.5, 9.6). */
+/* Content: programs and named records (SPEC §content.feeds, §content.records). */
 uint32_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf)
 {
     return content_feed(r, CONTENT_PROGRAMS, first, length, buf);
@@ -873,7 +873,7 @@ void doc_table_end(void)
         p[0] = DOC_OP_END_TABLE;
 }
 
-/* Device 6 command-list builder (SPEC 18.3). Its state has a section of
+/* Device 6 command-list builder (SPEC §sound.list). Its state has a section of
  * its own: the compiler would otherwise merge it with the vector
  * builder's globals, and --gc-sections could not drop it from programs
  * that make no sound (their images would change). */

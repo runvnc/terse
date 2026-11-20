@@ -1,5 +1,5 @@
 //! The windowed host: winit event loop, 60 frames/s of virtual time, input.
-//! It runs a [`System`]: the shell and the machines it starts (SPEC 12), or
+//! It runs a [`System`]: the shell and the machines it starts (SPEC §machines), or
 //! a single machine.
 
 use std::collections::{HashMap, VecDeque};
@@ -102,7 +102,7 @@ pub fn run(
     Ok(ExitCode::from(shell.exit_code().unwrap_or(0)))
 }
 
-/// A buffer of random bytes for the `random` calls of a frame (SPEC 4).
+/// A buffer of random bytes for the `random` calls of a frame (SPEC §system).
 fn fresh_random() -> Vec<u8> {
     let mut random = vec![0; MAX_RANDOM_PER_FRAME];
     if getrandom::fill(&mut random).is_err() {
@@ -416,7 +416,7 @@ impl Driver for FrameDriver<'_> {
     fn frame(&mut self, who: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS]) -> FrameResult {
         let (page_thread, looks) = (&mut *self.page_thread, self.looks);
         let io = self.io.entry(who.serial).or_insert_with(|| MachineIo {
-            // SPEC 11.4: pages are laid out on a thread of their own.
+            // SPEC §page.layout: pages are laid out on a thread of their own.
             page: machine
                 .page()
                 .is_some()
@@ -428,7 +428,7 @@ impl Driver for FrameDriver<'_> {
             buttons: 0,
         });
         let mut input = std::mem::take(&mut io.carry);
-        // SPEC 11.5: a layout of the current page finished: its height first.
+        // SPEC §page.events: a layout of the current page finished: its height first.
         if let Some(worker) = &mut io.page
             && let Ok(page_events) = worker.poll(machine.page())
             && !page_events.is_empty()
@@ -451,7 +451,7 @@ impl Driver for FrameDriver<'_> {
                 }
             }
         }
-        // SPEC 5, 9.5: new entries were stored since the previous frame.
+        // SPEC §content.events, §content.feeds: new entries were stored since the previous frame.
         if std::mem::take(&mut io.feeds) {
             input.push(Event::feeds_updated());
         }
@@ -543,12 +543,12 @@ struct App {
     pending: Vec<Event>,
     modifiers: ModifiersState,
     buttons: u8,
-    /// The pointer in screen units, and the position last sent (SPEC 5:
+    /// The pointer in screen units, and the position last sent (SPEC §events:
     /// movement is sent at most once per frame).
     pointer: Option<(u16, u16)>,
     pointer_sent: Option<(u16, u16)>,
     /// The pointer in the window (pixels), while it is in it: the eye of
-    /// the 3D display follows it (SPEC 13.1), smoothed.
+    /// the 3D display follows it (SPEC §vector3d.space), smoothed.
     pointer_px: Option<(f64, f64)>,
     eye: crate::display::Eye,
     /// Wheel steps not yet sent (vertical, horizontal; positive is down, right).
@@ -562,7 +562,7 @@ struct App {
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
     trace: bool,
     fault_shown: bool,
-    /// The sound device's output (SPEC 18.7), opened when a machine
+    /// The sound device's output (SPEC §sound.presentation), opened when a machine
     /// first gives samples.
     #[cfg(feature = "audio")]
     audio: crate::audio::Audio,
@@ -605,8 +605,8 @@ impl App {
             controllers = t.script.controllers(frame);
         }
         let start = Instant::now();
-        // SPEC 9.2: whatever finished since the last frame completes now;
-        // images the shell started arrive (SPEC 12.5).
+        // SPEC §content.submit: whatever finished since the last frame completes now;
+        // images the shell started arrive (SPEC §machines.frames).
         if let Some(content) = &mut self.content {
             for (tag, c) in content.take_finished_tagged() {
                 if c.handle == 0 && self.fetching.contains(&tag) {
@@ -616,7 +616,7 @@ impl App {
                     io.completions.push(c);
                 }
             }
-            // SPEC 12.7: snapshots stored, machines restored.
+            // SPEC §machines.snapshots: snapshots stored, machines restored.
             let (saved, restored) = content.take_snapshot_results();
             for (slot, stored) in saved {
                 self.system.snapshot_done(slot, stored);
@@ -651,7 +651,7 @@ impl App {
             ran: Vec::new(),
             trace: self.trace,
         };
-        // Panels are hit as the eye now sees them (SPEC 12.4).
+        // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
@@ -662,7 +662,7 @@ impl App {
         let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
             let viewport = gfx.viewport();
-            // The prompt names the asking machine's image (SPEC 12.3).
+            // The prompt names the asking machine's image (SPEC §machines.screens).
             let prompt = self.content.as_ref().and_then(|c| {
                 let p = c.prompt()?;
                 let title = match p.tag {
@@ -722,7 +722,7 @@ impl App {
             PhysicalKey::Code(code) => hid_usage(code),
             _ => None,
         };
-        // SPEC 9.5: while the host asks for consent, the keyboard is the host's.
+        // SPEC §content.feeds: while the host asks for consent, the keyboard is the host's.
         if pressed && self.content.as_ref().is_some_and(|c| c.prompt().is_some()) {
             swallow(&mut self.swallowed, usage);
             if !event.repeat
@@ -739,7 +739,7 @@ impl App {
                 return;
             }
         }
-        // SPEC 12.4: the home key is the host's, never a key event.
+        // SPEC §machines.input: the home key is the host's, never a key event.
         if self.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
             if pressed && !event.repeat {
                 self.pending.push(Event::home());
@@ -766,7 +766,7 @@ impl App {
         }
     }
 
-    /// Queues the clipboard's text for delivery as text events (SPEC 5):
+    /// Queues the clipboard's text for delivery as text events (SPEC §events):
     /// newlines kept, other control characters dropped.
     fn paste_clipboard(&mut self) {
         if self.clipboard.is_none() {
@@ -786,7 +786,7 @@ impl App {
     /// Pointer movement and wheel steps gathered since the last frame,
     /// queued as at most one event each; also the feeds-updated events.
     fn coalesced_input(&mut self) {
-        // SPEC 5, 9.5: new entries were stored since the previous frame:
+        // SPEC §content.events, §content.feeds: new entries were stored since the previous frame:
         // every machine with the content device is told.
         if self.content.as_mut().is_some_and(ContentService::feeds_updated) {
             for (serial, io) in self.io.iter_mut() {
@@ -822,7 +822,7 @@ impl App {
     }
 
     /// winit's deltas are positive when content should move right and down,
-    /// that is, when scrolling left and up; SPEC 5 steps are the opposite.
+    /// that is, when scrolling left and up; SPEC §events steps are the opposite.
     fn wheel(&mut self, delta: MouseScrollDelta) {
         let (x, y) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
@@ -930,7 +930,7 @@ impl ApplicationHandler for App {
         let now = Instant::now();
         if now >= self.next_frame {
             self.step(event_loop);
-            // SPEC 1.4: at most one frame per tick; if the host fell behind,
+            // SPEC §frames: at most one frame per tick; if the host fell behind,
             // virtual time lags instead of catching up.
             self.next_frame += FRAME;
             if self.next_frame <= now {

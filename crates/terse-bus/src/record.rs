@@ -19,7 +19,7 @@ pub struct FrameRecord {
     pub hash: [u8; 32],
 }
 
-/// The header: the image ID, then the machine's grants (SPEC 2), a flag
+/// The header: the image ID, then the machine's grants (SPEC §image), a flag
 /// per optional device the image lists (none for most images).
 pub fn header(image_id: &[u8; 32], grants: &terse_core::Grants) -> Vec<u8> {
     let mut v = MAGIC.to_vec();

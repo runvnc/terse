@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-2d-vector-display-device-3">The 2D vector display (device 3)</h1>
-<p>The 2D vector display draws lines, circles and simple filled shapes from a display list: a short sequence of drawing commands that the program builds in RAM and hands to the device. The device keeps its own copy, and the host draws it every frame until the program submits another list or clears it. The device does no geometry for the program: it does not rotate, scale or clip against anything but the screen, and nothing it draws can be read back.</p>
+<p>The 2D vector display draws lines, circles and simple filled shapes from a display list: a short sequence of drawing commands that the program builds in RAM and hands to the device. The device keeps its own copy, and the host draws it every frame until the program submits another list or clears it. The device does no geometry for the program: it does not rotate, scale or clip against anything but the screen, and nothing it draws can be read back. The exact rules are in SPEC.md, the core machine (§vector).</p>
 <h2 id="getting-the-device">Getting the device</h2>
 <p>The display is slot 3, version 0. An image gets it by listing (3, 0) in its header, which <code>terse pack ... --device 3:0</code> does. In an image that does not list it, every call from <code>300h</code> to <code>3FFh</code> returns <code>FFFF_FFFFh</code> and does nothing else, and nothing is drawn; so does a call number in that range other than the five below. An image that lists only the 3D display (device 9) still has the style and persistence settings, through device 9&#39;s own calls, but device 3&#39;s calls stay absent.</p>
 <h2 id="coordinates">Coordinates</h2>

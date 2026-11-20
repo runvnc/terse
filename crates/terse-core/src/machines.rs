@@ -1,4 +1,4 @@
-//! Device 8, Machines (SPEC 12): the shell's handles on the machines it
+//! Device 8, Machines (SPEC §machines): the shell's handles on the machines it
 //! starts. The device holds what the shell has asked for (which image runs
 //! under which handle, where it is shown, whether it runs, which machine has
 //! the focus) and what the host has latched about each machine for the
@@ -13,23 +13,23 @@ use crate::system::{SCREEN_HEIGHT, SCREEN_WIDTH};
 /// The device slot and the version this implementation provides.
 pub const SLOT: u8 = 8;
 pub const VERSION: u8 = 0;
-/// Handles 1 to 8 (SPEC 12, provisional).
+/// Handles 1 to 8 (SPEC §machines, provisional).
 pub const MAX_MACHINES: usize = 8;
 /// The record `info` writes.
 pub const INFO_BYTES: usize = 48;
 /// The record `identity` writes: feed key, name length, name (48, zero
 /// padded).
 pub const IDENTITY_BYTES: usize = 81;
-/// Longest program name (SPEC 12.2), as a display name.
+/// Longest program name (SPEC §machines.calls), as a display name.
 pub const MAX_PROGRAM_NAME: usize = 48;
-/// An open request as `request` writes it (SPEC 12.2): the kind, then a
+/// An open request as `request` writes it (SPEC §machines.calls): the kind, then a
 /// blob ID, or a program identity as `identity` writes it.
 pub const REQUEST_BYTES: usize = 82;
-/// Open request kinds (SPEC 4 `open`).
+/// Open request kinds (SPEC §system `open`).
 pub const OPEN_BLOB: u8 = 1;
 pub const OPEN_PROGRAM: u8 = 2;
 
-/// Reads the request record of `open` at `addr` (SPEC 4): kind 1 and a
+/// Reads the request record of `open` at `addr` (SPEC §system): kind 1 and a
 /// blob ID, or kind 2, a feed key, the name's length and a valid program
 /// name; all wholly in ROM or wholly in RAM. Returns the request as
 /// `request` writes it and the number of bytes read, or `None` for a bad
@@ -55,7 +55,7 @@ pub fn read_open_request(rom: &[u8], ram: &[u8], addr: u32) -> Option<([u8; REQU
 }
 
 /// Why a start failed: byte 3 of the `info` record of a failed handle
-/// (SPEC 12.2).
+/// (SPEC §machines.calls).
 pub mod failure {
     pub const NOT_FOUND: u8 = 1;
     pub const INVALID: u8 = 2;
@@ -66,7 +66,7 @@ pub mod failure {
     pub const SNAPSHOT: u8 = 5;
 }
 
-/// A program's identity (SPEC 12.1): the feed that publishes it and its
+/// A program's identity (SPEC §machines.shell): the feed that publishes it and its
 /// name. Built-in programs have the all-zero key and their image title.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramId {
@@ -90,7 +90,7 @@ impl ProgramId {
     }
 }
 
-/// Why the image for a handle could not be had (SPEC 12.2): the reason
+/// Why the image for a handle could not be had (SPEC §machines.calls): the reason
 /// `info` reports, the image ID if the host got as far as a blob, and a
 /// message for people.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,7 +108,7 @@ impl StartFailure {
 
 /// A machine of `image` cannot have optional device `d` (`None`: grants
 /// that do not fit the image), which a restored machine was granted: reason
-/// 3 (SPEC 12.2 `restore`).
+/// 3 (SPEC §machines.calls `restore`).
 pub fn needs_device(image: &crate::image::Image, d: Option<crate::image::DeviceReq>) -> StartFailure {
     StartFailure {
         reason: failure::NEEDS_DEVICE,
@@ -120,7 +120,7 @@ pub fn needs_device(image: &crate::image::Image, d: Option<crate::image::DeviceR
     }
 }
 
-/// Checks `bytes` as an image a machine can start (SPEC 2): not an image is
+/// Checks `bytes` as an image a machine can start (SPEC §image): not an image is
 /// reason 2, an image that needs a device (slot, version) this host does
 /// not provide reason 3.
 pub fn load_image(bytes: &[u8]) -> Result<crate::image::Image, StartFailure> {
@@ -135,7 +135,7 @@ pub fn load_image(bytes: &[u8]) -> Result<crate::image::Image, StartFailure> {
     })
 }
 
-/// Machine states (SPEC 12.1).
+/// Machine states (SPEC §machines.shell).
 pub mod state {
     pub const NONE: u8 = 0;
     pub const LOADING: u8 = 1;
@@ -160,7 +160,7 @@ pub mod state {
     }
 }
 
-/// Call numbers (SPEC 3.2).
+/// Call numbers (SPEC §calls.table).
 pub mod call {
     pub const START: u32 = 0x800;
     pub const STOP: u32 = 0x801;
@@ -181,7 +181,7 @@ pub mod call {
     pub const UNFACE: u32 = 0x810;
 }
 
-/// The longest view motion `face` and `unface` take, in frames (SPEC 12.2).
+/// The longest view motion `face` and `unface` take, in frames (SPEC §machines.calls).
 pub const MAX_VIEW_FRAMES: u32 = 600;
 /// A view's progress runs from 0 (the scene as listed) to this (the panel
 /// flat on the glass).
@@ -189,7 +189,7 @@ pub const VIEW_DONE: u16 = 4096;
 /// The view's bytes in the state (STATE.md 1.10).
 pub const VIEW_BYTES: usize = 18;
 
-/// The host's view of the shell's 3D scene (SPEC 12.2 `face`, STATE.md
+/// The host's view of the shell's 3D scene (SPEC §machines.calls `face`, STATE.md
 /// 1.10): the machine whose panel it moves to the glass (0: none), the
 /// rectangle, whether it moves there or back, the progress it started from,
 /// the shell's frame counter in the frame of the call and the duration.
@@ -261,7 +261,7 @@ pub struct Slot {
 }
 
 impl Slot {
-    /// The 48-byte record of `info` (SPEC 12.2).
+    /// The 48-byte record of `info` (SPEC §machines.calls).
     pub fn info(&self) -> [u8; INFO_BYTES] {
         let mut out = [0; INFO_BYTES];
         out[..4].copy_from_slice(&[self.state, self.exit_code, self.fault_kind, self.failure]);
@@ -272,7 +272,7 @@ impl Slot {
         out
     }
 
-    /// Whether the handle is being restored (SPEC 12.2 `argument`): loading,
+    /// Whether the handle is being restored (SPEC §machines.calls `argument`): loading,
     /// with image ID zero and no identity. A `start` of the all-zero image
     /// ID, which can never be found, looks the same.
     pub fn restoring(&self) -> bool {
@@ -286,7 +286,7 @@ impl Slot {
 }
 
 /// Where a machine's 640 × 480 picture lies inside its rectangle: scaled
-/// uniformly to fit and centred (SPEC 12.3). `None` if nothing is shown.
+/// uniformly to fit and centred (SPEC §machines.screens). `None` if nothing is shown.
 pub fn picture(rect: Region) -> Option<Region> {
     let (w, h) = (rect.w as u32, rect.h as u32);
     let (sw, sh) = (SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32);
@@ -300,7 +300,7 @@ pub fn picture(rect: Region) -> Option<Region> {
 }
 
 /// A position in the shell's units mapped into the machine's screen, if it
-/// lies on the picture (SPEC 12.4).
+/// lies on the picture (SPEC §machines.input).
 pub fn map_into(picture: Region, x: u16, y: u16) -> Option<(u16, u16)> {
     let (px, py, pw, ph) = (picture.x as u32, picture.y as u32, picture.w as u32, picture.h as u32);
     let (x, y) = (x as u32, y as u32);
@@ -321,7 +321,7 @@ pub enum Command {
     /// program.
     StartProgram { handle: u8, program: ProgramId },
     Stop { handle: u8 },
-    /// `argument`: the blob ID the machine is given (SPEC 12.2).
+    /// `argument`: the blob ID the machine is given (SPEC §machines.calls).
     Argument { handle: u8, id: [u8; 32] },
     /// `restore`: a new machine from the snapshot in `slot`.
     Restore { handle: u8, slot: u8 },
@@ -339,11 +339,11 @@ pub struct Machines {
     focus: u8,
     builtins: Vec<[u8; 32]>,
     /// The open requests the machines made that the shell has been told of
-    /// and not yet read (SPEC 12.2 `request`), by handle.
+    /// and not yet read (SPEC §machines.calls `request`), by handle.
     requests: [Option<[u8; REQUEST_BYTES]>; MAX_MACHINES],
     /// Starts and stops since the host last took them (not machine state).
     commands: Vec<Command>,
-    /// The shell's snapshot slots as the host has them (SPEC 12.7): host
+    /// The shell's snapshot slots as the host has them (SPEC §machines.snapshots): host
     /// data, an input; not machine state.
     snapshots: [Option<SnapshotInfo>; SLOTS],
     /// The host's view of the shell's 3D scene (`face`, `unface`).
@@ -383,7 +383,7 @@ impl Machines {
             }
             call::START_PROGRAM => {
                 // Key and length first, then the name; a name that is not
-                // a program name is a bad buffer (SPEC 12.2).
+                // a program name is a bad buffer (SPEC §machines.calls).
                 let Some(head) = readable(rom, ram, a0, 33) else { return (ERR_BUFFER, 0) };
                 let n = head[32] as usize;
                 let Some(record) = readable(rom, ram, a0, 33 + n) else { return (ERR_BUFFER, 0) };
@@ -483,7 +483,7 @@ impl Machines {
                 let Some(id) = readable(rom, ram, a1, 32) else { return (ERR_BUFFER, 0) };
                 let id: [u8; 32] = id.try_into().unwrap();
                 // Only a machine that will be reset takes an argument: not
-                // one being restored (SPEC 12.2), which its record shows as
+                // one being restored (SPEC §machines.calls), which its record shows as
                 // loading with no image ID and no identity.
                 match slot(a0).filter(|&i| self.slots[i].state == state::LOADING && !self.slots[i].restoring()) {
                     None => (0, copy_charge(32)),
@@ -568,7 +568,7 @@ impl Machines {
         }
     }
 
-    /// Whether handle `h`'s machine may be shown as a panel (SPEC 13.3
+    /// Whether handle `h`'s machine may be shown as a panel (SPEC §vector3d.list
     /// Screen): it has a picture, its rectangle shows none, and `list` has a
     /// Screen of it.
     pub fn shows_panel(&self, h: u8, list: &[u8]) -> bool {
@@ -589,13 +589,13 @@ impl Machines {
             .fold(0, |m, h| m | 1 << (h - 1))
     }
 
-    /// The view (SPEC 12.2 `face`).
+    /// The view (SPEC §machines.calls `face`).
     pub fn view(&self) -> &View {
         &self.view
     }
 
     /// At the end of the shell's frame: a view whose machine is no longer
-    /// shown as a panel with `list` returns at once (SPEC 12.2 `face`).
+    /// shown as a panel with `list` returns at once (SPEC §machines.calls `face`).
     pub fn check_view(&mut self, list: &[u8]) {
         if self.view.handle != 0 && !self.shows_panel(self.view.handle, list) {
             self.view = View::default();
@@ -612,7 +612,7 @@ impl Machines {
         &self.slots[h as usize - 1]
     }
 
-    /// Handle `h`'s record, for the host to latch into (SPEC 12.5).
+    /// Handle `h`'s record, for the host to latch into (SPEC §machines.frames).
     pub fn slot_mut(&mut self, h: u8) -> &mut Slot {
         &mut self.slots[h as usize - 1]
     }
@@ -631,7 +631,7 @@ impl Machines {
         self.focus
     }
 
-    /// The home key (SPEC 12.4): the focus returns to the shell.
+    /// The home key (SPEC §machines.input): the focus returns to the shell.
     pub fn home(&mut self) {
         self.focus = 0;
     }
@@ -640,12 +640,12 @@ impl Machines {
         &self.builtins
     }
 
-    /// Machine `h`'s open request, for the shell to read (SPEC 12.5).
+    /// Machine `h`'s open request, for the shell to read (SPEC §machines.frames).
     pub fn set_request(&mut self, h: u8, request: [u8; REQUEST_BYTES]) {
         self.requests[h as usize - 1] = Some(request);
     }
 
-    /// The shell's snapshot slots as the host has them (SPEC 12.7).
+    /// The shell's snapshot slots as the host has them (SPEC §machines.snapshots).
     pub fn snapshots(&self) -> &[Option<SnapshotInfo>; SLOTS] {
         &self.snapshots
     }
@@ -723,7 +723,7 @@ mod tests {
         );
     }
 
-    /// SPEC 12.2 `argument`: taken by a handle that is loading after `start`
+    /// SPEC §machines.calls `argument`: taken by a handle that is loading after `start`
     /// or `start_program`; refused (0, nothing changes, the ID still read
     /// and charged) for a handle being restored, one not loading and one
     /// out of range; the buffer is checked first.
@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(call(&mut m, call::ARGUMENT, 1, base), (0, 8), "no longer loading");
     }
 
-    /// `face` and `unface` (SPEC 12.2): the checks, the progress counted
+    /// `face` and `unface` (SPEC §machines.calls): the checks, the progress counted
     /// in the shell's frames, reversing part way, and the view's return when
     /// its machine is no longer a panel.
     #[test]

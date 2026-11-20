@@ -1,6 +1,6 @@
 # Content: blobs, requests and statuses (device 4)
 
-The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:{network}).
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:{network}). The exact rules are in spec/content.md.
 
 An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
 

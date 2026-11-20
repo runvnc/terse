@@ -262,7 +262,7 @@ fn bus_hashes_with(image: &Image, dir: &Path, without: &[u8], script: &Script, f
     Ok(out)
 }
 
-/// SPEC 2: sparks lists content (device 4) as optional. On the bus with
+/// SPEC §image: sparks lists content (device 4) as optional. On the bus with
 /// content, with content withheld (`without`), and with no content driver
 /// installed, it gives the hashes of the devices compiled in with the same
 /// grants; without content they are the golden `program-hashes.txt`. An

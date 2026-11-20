@@ -1,5 +1,5 @@
-//! Optional devices (SPEC 2): the grants are fixed at reset, the `device`
-//! call (SPEC 4) tells the program, and the grants are part of the state
+//! Optional devices (SPEC §image): the grants are fixed at reset, the `device`
+//! call (SPEC §system) tells the program, and the grants are part of the state
 //! (STATE.md 1.4), so a snapshot restores only where its devices can be
 //! granted and a device it says was absent stays absent.
 

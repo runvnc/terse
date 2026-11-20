@@ -1,4 +1,4 @@
-//! `terse-dev-terminal`: the terminal (SPEC 8, slot 2) as a driver
+//! `terse-dev-terminal`: the terminal (SPEC §terminal, slot 2) as a driver
 //! (DEVICES.md): per machine, terse-core's `Terminal` for the state, and
 //! two layers drawn as terse-host's software renderer draws the grid: the
 //! cell backgrounds (z 10) and the characters and cursor (z 40), with

@@ -1,4 +1,4 @@
-//! The vector display's primitives on the CPU (SPEC 10.3), drawn the way
+//! The vector display's primitives on the CPU (SPEC §vector.list), drawn the way
 //! the GPU renderer's shader draws them (`vectors.rs`): lines, circle
 //! outlines and discs by their distance from the pixel's centre, with
 //! round ends and a one-pixel antialiased edge; rectangles and triangles as

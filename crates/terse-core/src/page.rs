@@ -1,10 +1,10 @@
-//! Device 7, Page (SPEC 11): typeset proportional text.
+//! Device 7, Page (SPEC §page): typeset proportional text.
 //!
 //! The device only validates and copies the document and keeps the
 //! rectangle, the scroll value and the background. Laying the text out is
 //! the host's business: [`parse`] turns a document into paragraphs of styled
 //! runs (the one decoder every host uses), and [`reference_layout`] is the
-//! deterministic layout of SPEC 11.6 that a host without fonts (`terse run`,
+//! deterministic layout of SPEC §page.reference that a host without fonts (`terse run`,
 //! the tests) uses. [`PageWatch`] decides when a host reports the height
 //! (event `08h`), and [`PageInput`] does that and the anchor events for a
 //! headless host.
@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use crate::system::{Event, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::wide::is_wide;
 
-/// Longest document a submit accepts (SPEC 11.2).
+/// Longest document a submit accepts (SPEC §page.calls).
 pub const MAX_DOCUMENT: usize = 65_536;
 /// Results of `submit`.
 pub const RESULT_DONE: u32 = 0;
@@ -23,13 +23,13 @@ pub const RESULT_REJECTED: u32 = 1;
 pub const DEFAULT_BACKGROUND: u32 = 0xFF00_0000;
 /// Largest height event `08h` can carry (24 bits).
 pub const MAX_REPORTED_HEIGHT: u32 = 0xFF_FFFF;
-/// Most `locate` calls a frame takes (SPEC 11.2); later ones are rejected.
+/// Most `locate` calls a frame takes (SPEC §page.calls); later ones are rejected.
 pub const MAX_LOCATES: usize = 8;
-/// Most locates a host keeps waiting for a layout (SPEC 11.5); older ones
+/// Most locates a host keeps waiting for a layout (SPEC §page.events); older ones
 /// are dropped.
 pub const MAX_PENDING_LOCATES: usize = 8;
 
-/// Document opcodes (SPEC 11.3).
+/// Document opcodes (SPEC §page.document).
 pub mod op {
     pub const END: u8 = 0x00;
     pub const TEXT: u8 = 0x01;
@@ -45,7 +45,7 @@ pub mod op {
     pub const END_TABLE: u8 = 0x0B;
 }
 
-/// Path opcodes inside a Figure (SPEC 11.3).
+/// Path opcodes inside a Figure (SPEC §page.document).
 pub mod path_op {
     pub const FILL: u8 = 0x01;
     pub const STROKE: u8 = 0x02;
@@ -56,22 +56,22 @@ pub mod path_op {
     pub const CLOSE: u8 = 0x07;
 }
 
-/// Font faces (SPEC 11.3).
+/// Font faces (SPEC §page.document).
 pub mod face {
     pub const SANS: u8 = 0;
     pub const SERIF: u8 = 1;
     pub const MONO: u8 = 2;
 }
 
-/// Sizes are clamped to this range (SPEC 11.3).
+/// Sizes are clamped to this range (SPEC §page.document).
 pub const MIN_SIZE: u8 = 6;
 pub const MAX_SIZE: u8 = 96;
-/// Initial text state (SPEC 11.3).
+/// Initial text state (SPEC §page.document).
 pub const DEFAULT_SIZE: u8 = 14;
 pub const DEFAULT_COLOUR: [u8; 3] = [229, 229, 229];
-/// Height of a rule paragraph in screen units (SPEC 11.3).
+/// Height of a rule paragraph in screen units (SPEC §page.document).
 pub const RULE_HEIGHT: u32 = 8;
-/// Tables (SPEC 11.3, 11.4): at most this many columns, cells in one
+/// Tables (SPEC §page.document, §page.layout): at most this many columns, cells in one
 /// table and cells in one document.
 pub const MAX_TABLE_COLUMNS: u8 = 8;
 pub const MAX_TABLE_CELLS: usize = 1_024;
@@ -101,7 +101,7 @@ impl Region {
     }
 }
 
-/// The device state (SPEC 11.7): the document, the rectangle, the scroll
+/// The device state (SPEC §page.determinism): the document, the rectangle, the scroll
 /// value and the background.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
@@ -169,7 +169,7 @@ impl Page {
         self.background = rgba;
     }
 
-    /// `locate` (SPEC 11.2): asks for where anchor `id` is laid out in the
+    /// `locate` (SPEC §page.calls): asks for where anchor `id` is laid out in the
     /// current document. [`RESULT_REJECTED`] for an id of 0 or above
     /// 65,535, with no document, or after [`MAX_LOCATES`] in this frame.
     pub fn locate(&mut self, id: u32) -> u32 {
@@ -285,7 +285,7 @@ impl Default for Style {
     }
 }
 
-/// Text in one style. The text is already cleaned (SPEC 11.3): no control
+/// Text in one style. The text is already cleaned (SPEC §page.document): no control
 /// characters but U+000A (a line break); tabs are spaces.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Run {
@@ -314,7 +314,7 @@ pub struct Paragraph {
     pub table: Option<Table>,
 }
 
-/// A table as the document gives it (SPEC 11.3).
+/// A table as the document gives it (SPEC §page.document).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
     /// 1 to 8.
@@ -342,7 +342,7 @@ impl Table {
         self.cells.get(row * self.columns as usize + column).map_or(&[], Vec::as_slice)
     }
 
-    /// The columns' widths from their natural widths (SPEC 11.4 step 3):
+    /// The columns' widths from their natural widths (SPEC §page.layout step 3):
     /// unchanged if they fit in `width`, else each narrowed to a common cap,
     /// the largest that fits but at least `floor`. Any unit (the reference
     /// layout uses half units).
@@ -376,18 +376,18 @@ impl Paragraph {
     }
 }
 
-/// Figure sizes are clamped to this range of screen units (SPEC 11.3).
+/// Figure sizes are clamped to this range of screen units (SPEC §page.document).
 pub const MAX_FIGURE_SIDE: u16 = 1024;
-/// The per-figure cap on painted area in square screen units (SPEC 11.3).
+/// The per-figure cap on painted area in square screen units (SPEC §page.document).
 pub const FIGURE_AREA_CAP: u64 = 4 * 640 * 480;
-/// The per-figure cap on path length in screen units (SPEC 11.3).
+/// The per-figure cap on path length in screen units (SPEC §page.document).
 pub const FIGURE_LENGTH_CAP: u64 = 65_536;
-/// The most paths a figure draws (SPEC 11.3).
+/// The most paths a figure draws (SPEC §page.document).
 pub const FIGURE_PATH_CAP: usize = 256;
 /// Initial stroke width in sixteenths (one screen unit).
 pub const DEFAULT_STROKE_WIDTH: u16 = 16;
 
-/// A figure as the document gives it (SPEC 11.3).
+/// A figure as the document gives it (SPEC §page.document).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Figure {
     /// Screen units, 1 to 1024.
@@ -424,7 +424,7 @@ pub struct FigurePath {
 }
 
 impl FigurePath {
-    /// The area this path counts against the cap (SPEC 11.3), in square
+    /// The area this path counts against the cap (SPEC §page.document), in square
     /// screen units: the box of its points, clipped to the figure's box,
     /// for its fill, and that box grown by half the stroke width, clipped,
     /// for its stroke; each rounded up.
@@ -465,7 +465,7 @@ impl FigurePath {
 }
 
 impl FigurePath {
-    /// The length this path counts against the cap (SPEC 11.3), in screen
+    /// The length this path counts against the cap (SPEC §page.document), in screen
     /// units, rounded up: for each Line, Quadratic and Cubic, |dx| + |dy|
     /// over the steps from its start through its control points to its end,
     /// summed; then for the fill and for the stroke each, twice that plus
@@ -521,7 +521,7 @@ impl Figure {
         (8 * self.width as u64 * self.height as u64).min(FIGURE_AREA_CAP)
     }
 
-    /// Decodes the path commands (SPEC 11.3) into the paths to draw, in
+    /// Decodes the path commands (SPEC §page.document) into the paths to draw, in
     /// order: up to an unknown opcode or cut-off operands, without paths
     /// that draw nothing, and only as far as the caps allow (at most
     /// [`FIGURE_PATH_CAP`] paths, area and length).
@@ -631,7 +631,7 @@ fn clean(bytes: &[u8], out: &mut String) {
     }
 }
 
-/// Decodes a document (SPEC 11.3) into paragraphs. It ends at End, at the
+/// Decodes a document (SPEC §page.document) into paragraphs. It ends at End, at the
 /// end of the bytes, at an unknown opcode, at a command whose operands are
 /// cut off or at a Table whose column count is not 1 to 8; the commands
 /// before that are used. There is always at least the implicit first
@@ -874,7 +874,7 @@ impl FigureBox {
     }
 }
 
-/// The reference layout of a document at a width (SPEC 11.6).
+/// The reference layout of a document at a width (SPEC §page.reference).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
     /// The document's height in screen units.
@@ -895,11 +895,11 @@ pub fn line_height(size: u8) -> u32 {
     (5 * size as u32).div_ceil(4)
 }
 
-/// The reference layout (SPEC 11.6): every character advances half its size
+/// The reference layout (SPEC §page.reference): every character advances half its size
 /// (a wide one its whole size), lines are ceil(1.25 × size) high (the
 /// largest size on the line), text wraps greedily at spaces and a word
 /// longer than the line is split; rules are 8 units high. Text is laid out
-/// left to right whatever its script. Tables as SPEC 11.4 says.
+/// left to right whatever its script. Tables as SPEC §page.layout says.
 pub fn reference_layout(doc: &[u8], width: u16) -> Layout {
     let mut layout = Layout::default();
     let full = 2 * width as u32;
@@ -949,7 +949,7 @@ fn natural_width(runs: &[Run]) -> u32 {
     widest
 }
 
-/// A table in the reference layout (SPEC 11.4, 11.6), with its top at `y`
+/// A table in the reference layout (SPEC §page.layout, §page.reference), with its top at `y`
 /// in a rectangle `full` half units wide; returns its bottom.
 fn reference_table(t: &Table, full: u32, y: u32, lines: &mut Vec<Line>) -> u32 {
     let n = t.columns as usize;
@@ -1046,7 +1046,7 @@ fn reference_text(runs: &[Run], avail: u32, x0: u32, align: Align, (nowrap, elli
     y
 }
 
-/// A no-wrap line with an ellipsis (SPEC 11.6): if it is wider than
+/// A no-wrap line with an ellipsis (SPEC §page.reference): if it is wider than
 /// `avail` half units, characters are dropped from its end until the rest
 /// and an ellipsis in the style of the last one dropped fit (or none is
 /// left), and the ellipsis is added.
@@ -1126,7 +1126,7 @@ impl Layout {
         self.lines.iter().filter(move |l| l.y < bottom && l.y.saturating_add(l.height.max(1)) > scroll)
     }
 
-    /// Where anchor `id` is (SPEC 11.5): the top and height of the first
+    /// Where anchor `id` is (SPEC §page.events): the top and height of the first
     /// line or figure that carries it; `None` if none does.
     pub fn locate(&self, id: u16) -> Option<(u32, u32)> {
         self.lines
@@ -1220,7 +1220,7 @@ impl Layout {
     }
 }
 
-/// When a host lays the page out and reports its height (SPEC 11.5): at
+/// When a host lays the page out and reports its height (SPEC §page.events): at
 /// every new document (submit or clear) and when the rectangle's width
 /// changes the height. Host bookkeeping, not machine state.
 #[derive(Clone, Debug, Default)]
@@ -1341,7 +1341,7 @@ impl PageInput {
     /// The events for the next frame, given its other events: the pending
     /// height event first, then the answers to the last frame's locates,
     /// and after each pointer event that presses a button over anchored
-    /// text, an anchor event (SPEC 5).
+    /// text, an anchor event (SPEC §events).
     pub fn events(&mut self, page: Option<&Page>, events: &[Event]) -> Vec<Event> {
         let mut out = Vec::with_capacity(events.len() + 1 + self.located.len());
         out.extend(self.next.take());
@@ -1695,7 +1695,7 @@ mod tests {
         assert_eq!(f.area_cap(), FIGURE_AREA_CAP);
     }
 
-    /// SPEC 11.3 caps, exactly: an odd stroke width grows the box by half
+    /// SPEC §page.document caps, exactly: an odd stroke width grows the box by half
     /// the width rounded up; a Close adds no length and is not counted in
     /// s; the fill and stroke counts are added and divided by 16 once;
     /// paths that draw nothing are not counted against the 256.

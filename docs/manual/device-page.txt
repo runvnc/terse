@@ -1,6 +1,6 @@
 # The page (device 7)
 
-The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (`terse pack --device 7:0`). Without it, and for the unknown functions `706h`..`7FFh`, a call returns `FFFF_FFFFh`.
+The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (`terse pack --device 7:0`). Without it, and for the unknown functions `706h`..`7FFh`, a call returns `FFFF_FFFFh`. The exact rules are in spec/page.md.
 
 Layout differs between hosts, because fonts differ. A program learns only two facts about it, both as input events: the document's height and, when it asks, where an anchor is. So a recorded run replays exactly whatever the fonts.
 

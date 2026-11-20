@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="charges-and-limits">Charges and limits</h1>
-<p>This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC section 16 lists them all); every other value is fixed for version 0.</p>
+<p>This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC §provisional lists the core&#39;s, and each device document in spec/ its own); every other value is fixed for version 0.</p>
 <h2 id="the-budget-in-one-line">The budget, in one line</h2>
 <p>Each frame adds 125,000 units to the budget and the CPU runs while the budget is above zero; an overshoot carries into the next frame, unused budget never does, and <code>wait_frame</code> throws away the rest of the frame.</p>
 <h2 id="charges">Charges</h2>

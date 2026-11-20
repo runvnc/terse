@@ -1,4 +1,4 @@
-//! The host's consent prompt (SPEC 9.5): drawn by the host over the bottom
+//! The host's consent prompt (SPEC §content.feeds): drawn by the host over the bottom
 //! rows of the screen, on top of everything the program shows, in colours
 //! of its own (the renderer's overlay, not the program's palette). The
 //! program cannot draw, read or answer it.
@@ -34,7 +34,7 @@ pub fn size_text(n: u32) -> String {
     }
 }
 
-/// Columns `ch` takes in the grid (SPEC 8.1; above U+FFFF it shows as U+FFFD).
+/// Columns `ch` takes in the grid (SPEC §terminal.cells; above U+FFFF it shows as U+FFFD).
 fn width(ch: char) -> usize {
     match u16::try_from(ch as u32) {
         Ok(c) if terse_core::wide::is_wide(c) => 2,

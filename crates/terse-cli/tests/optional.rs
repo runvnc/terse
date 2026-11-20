@@ -1,4 +1,4 @@
-//! Optional devices from the command line (SPEC 2, 2.1): sparks lists
+//! Optional devices from the command line (SPEC §image, §profiles): sparks lists
 //! content (device 4) as optional, so it runs on the program profile
 //! (`terse run --profile program`, devices 1, 2 and 3) and with `--without
 //! 4`, with the same game; the grants are in its state, so snapshots move

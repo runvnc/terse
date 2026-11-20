@@ -1,5 +1,5 @@
-/* cpu.S: the conformance image's CPU checks (SPEC 1.1) and the timed loops
- * whose instruction counts conform.c models (SPEC 1.4, section "budget").
+/* cpu.S: the conformance image's CPU checks (SPEC §cpu) and the timed loops
+ * whose instruction counts conform.c models (SPEC §frames, section "budget").
  *
  * Check functions: void cpu_xxx(uint32_t res[2]) runs its checks and stores
  * res[0] = failed checks, res[1] = the number of the first failed check
@@ -696,7 +696,7 @@ cpu_c:
 2:  ABS t0, 1b
     CHKR ra, t0
 
-    /* HINT encodings run as the instructions they are (SPEC 1.1) */
+    /* HINT encodings run as the instructions they are (SPEC §cpu) */
     li a0, 0x55
     .hword 0x0015           /* c.addi x0, 5 (c.nop with an immediate) */
     .hword 0x4015           /* c.li x0, 5 */

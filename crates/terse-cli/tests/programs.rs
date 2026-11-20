@@ -1,5 +1,5 @@
 //! Programs published in feeds (NETWORK 4.2, 4.4, 4.7) and named records
-//! (SPEC 9.6) from the command line, over an in-process relay on an
+//! (SPEC §content.records) from the command line, over an in-process relay on an
 //! ephemeral loopback port, with temporary stores, configs and data
 //! directories.
 
@@ -120,7 +120,7 @@ fn publish_follow_list_and_find_programs() {
     assert!(!terse(&reader.args(&["find", "--programs", "--entries", "x", "--relay", &url])).status.success());
 }
 
-/// SPEC 9.6: `terse run` keeps named records in --data; `terse records`
+/// SPEC §content.records: `terse run` keeps named records in --data; `terse records`
 /// lists, shows and deletes them. The built-in shell keeps its layout
 /// under its identity (builtin:shell); a file run keeps records under its
 /// image ID.

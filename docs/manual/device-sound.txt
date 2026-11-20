@@ -82,7 +82,7 @@ A voice reads a lower-numbered voice (modulator or ring) as it is in this pair, 
 
 The pair is the sum over the heard voices of o x left, and of o x right, each shifted right by 10 and clamped to 16 bits. One voice at full volume and pan reaches a quarter of the range, so four can sound at full volume before the sum is clamped.
 
-Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n >> 1) | (((n ^ (n >> 1)) & 1) << 14). A sample reads byte (phase >> 16), loops from the loop start or stops at the end. SPEC.md section 18 gives every formula.
+Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n >> 1) | (((n ^ (n >> 1)) & 1) << 14). A sample reads byte (phase >> 16), loops from the loop start or stops at the end. spec/sound.md §sound gives every formula.
 
 ## State
 

@@ -1,5 +1,5 @@
 //! The core host's system (DEVICES.md 2): terse-core's `System` of
-//! machines (the shell and the machines it starts, SPEC 12, or a single
+//! machines (the shell and the machines it starts, SPEC §machines, or a single
 //! machine) on the bus, run as terse-net's `HeadlessSystem` runs one with
 //! the devices compiled in: the host's input is routed by the system; each
 //! machine's devices give their own inputs (the page's events, content
@@ -113,7 +113,7 @@ pub struct BusSystem {
 }
 
 /// The default drivers, programs next to `dir` (this program's): the
-/// terminal (2), the vector displays (3 and 9, one process: SPEC 13.2),
+/// terminal (2), the vector displays (3 and 9, one process: SPEC §vector3d.calls),
 /// content (4, with `content` as its options), sound (6) and the page (7), for the
 /// slots in `slots`; `overrides` (slots, command line) replace the
 /// default driver of those slots.
@@ -143,7 +143,7 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
         }
     }
     if let Some(s) = slots.iter().find(|s| !covered.contains(s)) {
-        return Err(format!("no driver for device {s} (SPEC 2)"));
+        return Err(format!("no driver for device {s} (SPEC §image)"));
     }
     Ok(out)
 }
@@ -157,7 +157,7 @@ const DEFAULT_DRIVERS: [(&[u8], &str); 5] = [
     (&[7], "terse-dev-page"),
 ];
 
-/// The slots whose drivers a single machine's run starts (SPEC 2): those
+/// The slots whose drivers a single machine's run starts (SPEC §image): those
 /// of [`needed_slots`], less the slots only optional devices use that are
 /// withheld (`without`) or whose driver is not installed (no override and
 /// no default driver in `dir`): such a device is absent. A slot the image
@@ -220,7 +220,7 @@ pub struct Start<'a> {
     pub identity: Option<ProgramId>,
     /// Restored from this snapshot (STATE.md 4).
     pub snapshot: Option<&'a Snapshot>,
-    /// The machine's grants (SPEC 2), as a recording or snapshot gives
+    /// The machine's grants (SPEC §image), as a recording or snapshot gives
     /// them; `None`: every optional device a driver gives and `without`
     /// does not name.
     pub grants: Option<Grants>,
@@ -313,7 +313,7 @@ impl BusSystem {
         Ok(result)
     }
 
-    /// The consent question waiting (SPEC 9.5), how many wait, and the
+    /// The consent question waiting (SPEC §content.feeds), how many wait, and the
     /// asking machine's title.
     pub fn prompt(&mut self) -> Result<Option<(Prompt, usize, String)>, String> {
         let Some(bytes) = self.system.shell().devices().property(property::PROMPT)? else { return Ok(None) };
@@ -326,7 +326,7 @@ impl BusSystem {
     }
 
     /// The host's input for the next frame with the consent question in
-    /// mind (SPEC 9.5): while one is asked the keyboard is the host's: Y
+    /// mind (SPEC §content.feeds): while one is asked the keyboard is the host's: Y
     /// allows, N or Esc refuses, and no key or text reaches a machine (nor
     /// the release of a key pressed then).
     pub fn input(&mut self, events: Vec<Event>) -> Result<Vec<Event>, String> {

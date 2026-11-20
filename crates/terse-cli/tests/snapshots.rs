@@ -1,4 +1,4 @@
-//! Snapshots of the checked-in programs (STATE.md 4, SPEC 12.7): at several
+//! Snapshots of the checked-in programs (STATE.md 4, SPEC §machines.snapshots): at several
 //! points of scripted runs, serialize → restore → serialize is byte for
 //! byte the same, and a restored machine given the inputs the original got
 //! from then on has the original's hash after every frame (where no content

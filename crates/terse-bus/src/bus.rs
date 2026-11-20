@@ -471,7 +471,7 @@ impl Bus {
 
     /// Opens a machine instance on the drivers (OPEN): `image` with its
     /// memory file (`memory`) and identity. The image's required devices
-    /// other than System and Machines must all have drivers (SPEC 2), and
+    /// other than System and Machines must all have drivers (SPEC §image), and
     /// so must the optional ones `grants` grants; `None`: every optional
     /// device a driver gives is granted.
     pub fn open_instance(
@@ -512,7 +512,7 @@ impl Bus {
                 procs.push(p);
             }
         }
-        // Device 9's style lives with device 3 (SPEC 13.2).
+        // Device 9's style lives with device 3 (SPEC §vector3d.calls).
         if has.has(terse_core::vector3::SLOT) && slot_proc[3].is_none() {
             let p = slot_proc[terse_core::vector3::SLOT as usize];
             if bus.by_slot[3] != p {
@@ -530,7 +530,7 @@ impl Bus {
                 rom_len: image.rom.len() as u32,
                 ram_len: memory.ram_len as u32,
                 memory_path: if shm { path.display().to_string() } else { String::new() },
-                // Only the devices the machine has (SPEC 2).
+                // Only the devices the machine has (SPEC §image).
                 listed: image.devices.iter().filter(|d| has.has(d.slot) && bus.procs[p].slots.contains(&d.slot)).map(|d| (d.slot, d.version)).collect(),
                 identity: identity.map(|i| (i.publisher, i.name.clone())),
                 rom: image.rom.clone(),
@@ -1005,7 +1005,7 @@ impl Devices for BusDevices {
         let batching = bus.config.batching;
         let d = &mut bus.procs[p];
         let Some(e) = d.tables.get(&slot).and_then(|t| t[function as usize]) else { return unknown };
-        // An answered call's base charge, also when a check fails (SPEC 14).
+        // An answered call's base charge, also when a check fails (SPEC §charges).
         let base = e.base_extra();
         // DEVICES.md 5: the core's checks.
         let mut buf: (u32, u32) = (0, 0);

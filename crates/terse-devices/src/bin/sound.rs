@@ -1,9 +1,9 @@
-//! `terse-dev-sound`: the sound device (SPEC 18, slot 6). terse-core's
+//! `terse-dev-sound`: the sound device (SPEC §sound, slot 6). terse-core's
 //! `Sound` for the state and the synthesis: the calls set its registers
 //! and tables, and at END it renders the frame's 800 sample pairs. It
 //! plays nothing itself: it publishes the frame's samples as a property
 //! (`sound.frame`, DEVICES.md 7.2), which the core reads after each frame
-//! and mixes with its other machines' (SPEC 18.7).
+//! and mixes with its other machines' (SPEC §sound.presentation).
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use terse_core::machine::{charge, copy_charge};
 use terse_core::sound::{CAPS, MAX_LIST, MAX_SAMPLE, SAMPLE_SLOTS, SLOT, Sound, VOICES, WAVE_LEN, WAVES};
 use terse_core::{ERR_BUFFER, ERR_UNKNOWN};
 
-/// SPEC 18.2 as a call table (DEVICES.md 5): every call deferred.
+/// SPEC §sound.calls as a call table (DEVICES.md 5): every call deferred.
 fn table() -> Vec<CallEntry> {
     let e = CallEntry::plain;
     vec![
@@ -98,7 +98,7 @@ impl Device for SoundDriver {
         Inputs::default()
     }
 
-    /// SPEC 18.5: the frame's samples, rendered when it ends.
+    /// SPEC §sound.render: the frame's samples, rendered when it ends.
     fn end(&mut self, instance: u32, frame: u32, _: bool) {
         let Some(i) = self.inst.get_mut(&instance) else { return };
         i.sound.render_frame();

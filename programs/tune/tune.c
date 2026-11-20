@@ -1,4 +1,4 @@
-/* tune: a short piece for the sound device (device 6, SPEC 18), showing
+/* tune: a short piece for the sound device (device 6, SPEC §sound), showing
  * each kind of voice in turn and then several together: a plain wavetable
  * melody over a square bass; pairing (one voice's output moving another's
  * phase: a bell); feedback (a voice moving its own phase: a brassy lead);
@@ -46,7 +46,7 @@ static const uint32_t notes[61] = {
 
 /* The brass's feedback depth. Feedback stays a clean tone up to a phase
  * swing of about 2 radians, which at volume 200 is depth ~210 (SPEC
- * 18.6): 192 is brassy, near a sawtooth, with a margin. */
+ * §sound.sources): 192 is brassy, near a sawtooth, with a margin. */
 #define FEEDBACK 192
 
 static int8_t wave[64];
@@ -237,7 +237,7 @@ int main(void)
     load_waves();
     setup();
     term_cmd(TERM_CLEAR);
-    say("tune: the sound device (SPEC 18)");
+    say("tune: the sound device (spec/sound.md)");
     say("");
     for (int section = 0; section < END; section++) {
         say(titles[section]);

@@ -186,7 +186,7 @@ fn holo_city() {
     check("holo-city", Some(HOLO), "2 press 5\n", 90, Consent::Deny);
 }
 
-/// The cockpit (SPEC 13.3 Surface): three consoles, each a Surface showing
+/// The cockpit (SPEC §vector3d.list Surface): three consoles, each a Surface showing
 /// a region of holo's terminal in perspective, those regions off the glass,
 /// lines in front of and behind them; a row of the list chosen by a click
 /// on its tilted console.
@@ -221,7 +221,7 @@ const GALLERY: &str = "2 press l\n3 press l\n5 press enter\n40 press enter\n60 h
                        125 pointer 440 260 1\n126 pointer 320 360 1\n127 pointer 200 260 1\n128 pointer 200 150 1\n129 pointer 200 150 0\n\
                        140 home\n141 press up\n142 press up\n143 press up\n144 press enter\n175 home\n176 press 1\n";
 
-/// The shell's gallery (SPEC 12.3): four machines' screens as panels on a
+/// The shell's gallery (SPEC §machines.screens): four machines' screens as panels on a
 /// ring, in perspective, the front one on the glass; the ring's lines and
 /// the panels hiding what is behind them.
 #[test]
@@ -286,7 +286,7 @@ fn region(pixels: &[u8], p: terse_core::Region) -> Vec<u8> {
     (y0..y1).flat_map(|y| pixels[(y * SIZE.0 as usize + x0) * 4..(y * SIZE.0 as usize + x1) * 4].to_vec()).collect()
 }
 
-/// A machine whose panel has flown onto the glass (`face`, SPEC 12.2) is
+/// A machine whose panel has flown onto the glass (`face`, SPEC §machines.calls) is
 /// drawn exactly as the same machine placed flat in that rectangle, by
 /// both renderers; and a panel facing the viewer on the glass, as large as
 /// the screen, shows the picture a machine placed over the whole screen
@@ -331,7 +331,7 @@ fn cockpit_gpu_against_software(displays: &mut [Box<dyn crate::display::Display>
     }
 }
 
-/// A Surface command (SPEC 13.3): the source and the width in units, after
+/// A Surface command (SPEC §vector3d.list): the source and the width in units, after
 /// a Translate to (x, y, z) units.
 fn surface_list(at: (i16, i16, i16), r: [u16; 4], width: u16) -> Vec<u8> {
     let mut v = vec![0x09];
@@ -364,7 +364,7 @@ fn split(pixels: &[u8], width: usize, rect: (usize, usize, usize, usize)) -> (Ve
     (inside, outside)
 }
 
-/// A single machine's own Surfaces (SPEC 13.5), by both renderers: one
+/// A single machine's own Surfaces (SPEC §vector3d.presentation), by both renderers: one
 /// facing the viewer on the glass, as large as the screen and showing all
 /// of it, is the picture without it; one far off the screen still takes
 /// its source off the glass (black) and leaves the rest as it was; and an

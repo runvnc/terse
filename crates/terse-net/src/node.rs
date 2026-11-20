@@ -39,7 +39,7 @@
 //! `highest` is not above `after`. The node is settled when every feed is
 //! caught up on every connected relay and no automatic download is running.
 //!
-//! The node also answers the content device's feed operations (SPEC 9.5):
+//! The node also answers the content device's feed operations (SPEC §content.feeds):
 //! every new entry it stores is appended to the arrival log
 //! ([`crate::timeline::Arrivals`]); the timeline is that log, newest first,
 //! restricted to the article entries of the feeds subscribed to now.
@@ -274,9 +274,9 @@ pub struct Node {
     /// Download the current version of each program of the subscribed
     /// feeds (NETWORK 4.4).
     program_download: bool,
-    /// Named records (SPEC 9.6), if the host keeps them.
+    /// Named records (SPEC §content.records), if the host keeps them.
     records: Option<crate::records::Records>,
-    /// Snapshots of a shell's machines (SPEC 12.7), if the host keeps them.
+    /// Snapshots of a shell's machines (SPEC §machines.snapshots), if the host keeps them.
     snapshots: Option<crate::snapshots::Snapshots>,
     /// Operations waiting for a relay to be connected, and since when.
     deferred: Vec<Deferred>,
@@ -480,7 +480,7 @@ impl Node {
         self.program_download = on;
     }
 
-    /// Keeps named records (SPEC 9.6) in `records`.
+    /// Keeps named records (SPEC §content.records) in `records`.
     pub fn set_records(&mut self, records: crate::records::Records) {
         self.records = Some(records);
     }
@@ -489,7 +489,7 @@ impl Node {
         self.records.as_ref()
     }
 
-    /// Keeps the snapshots a shell asks for (SPEC 12.7) in `snapshots`.
+    /// Keeps the snapshots a shell asks for (SPEC §machines.snapshots) in `snapshots`.
     pub fn set_snapshots(&mut self, snapshots: crate::snapshots::Snapshots) {
         self.snapshots = Some(snapshots);
     }
@@ -511,7 +511,7 @@ impl Node {
     }
 
     /// The current version of the program `name` of `feed`, if the host
-    /// holds one (SPEC 12.2 `start_program`).
+    /// holds one (SPEC §machines.calls `start_program`).
     pub fn current_program(&self, feed: &FeedKey, name: &[u8]) -> Option<Entry> {
         self.current_programs(feed).into_iter().find(|s| s.entry.title.as_bytes() == name).map(|s| s.entry)
     }
@@ -1003,7 +1003,7 @@ impl Node {
     }
 
     /// The subscriptions records from index `offset` that fit in `length`
-    /// bytes, and how many exist (SPEC 9.5). The order is the key order.
+    /// bytes, and how many exist (SPEC §content.feeds). The order is the key order.
     pub fn subscription_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let feeds: Vec<&FeedKey> = self.subscriptions.feeds().collect();
         let records = feeds
@@ -1014,7 +1014,7 @@ impl Node {
     }
 
     /// The names records from index `offset` that fit in `length` bytes,
-    /// and how many exist (SPEC 9.5): one per subscribed feed in key order.
+    /// and how many exist (SPEC §content.feeds): one per subscribed feed in key order.
     pub fn name_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let subscribed: BTreeSet<&FeedKey> = self.subscriptions.feeds().collect();
         let feeds: BTreeSet<&FeedKey> = subscribed.iter().copied().chain(self.nicknames.feeds()).collect();
@@ -1032,7 +1032,7 @@ impl Node {
     }
 
     /// The stored article entries of the subscribed feeds, newest arrival
-    /// first (SPEC 9.5). Entries of feeds no longer subscribed are left out
+    /// first (SPEC §content.feeds). Entries of feeds no longer subscribed are left out
     /// (and come back in place if the feed is subscribed again); entries
     /// stored without an arrival record (by an older version) come last,
     /// highest `seq` first. Entries that fail verification and profile
@@ -1076,7 +1076,7 @@ impl Node {
     }
 
     /// The timeline records from index `offset` that fit in `length` bytes,
-    /// and how many exist (SPEC 9.5).
+    /// and how many exist (SPEC §content.feeds).
     pub fn timeline_records(&mut self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let list = self.timeline();
         let mut records = Vec::new();
@@ -1094,7 +1094,7 @@ impl Node {
     }
 
     /// The programs records from index `offset` that fit in `length`
-    /// bytes, and how many exist (SPEC 9.5): the current version of each
+    /// bytes, and how many exist (SPEC §content.feeds): the current version of each
     /// program of the subscribed feeds, by feed key, then name.
     pub fn program_records(&self, offset: u32, length: u16) -> (u32, Vec<u8>) {
         let list: Vec<SignedEntry> = self.subscriptions.feeds().flat_map(|f| self.current_programs(f)).collect();
@@ -1105,7 +1105,7 @@ impl Node {
         (list.len() as u32, timeline::fill(records, length as usize))
     }
 
-    /// Search results as records (SPEC 9.5): the timeline record of each,
+    /// Search results as records (SPEC §content.feeds): the timeline record of each,
     /// as many as fit in `length` bytes, and how many there are.
     pub fn find_records(&self, found: &[SignedEntry], length: u16) -> (u32, Vec<u8>) {
         let records = found.iter().map(|s| {
@@ -1996,7 +1996,7 @@ mod tests {
     /// program entry with that name and the highest seq; the host downloads
     /// the current versions (not older ones), whatever the article limit,
     /// once the feed is caught up, up to the largest image; programs are not
-    /// in the timeline; the programs records (SPEC 9.5).
+    /// in the timeline; the programs records (SPEC §content.feeds).
     /// NETWORK 4.8: a lookup asks the relays for the current version of a
     /// program of a feed the host does not follow; the answer is verified
     /// (forged or mismatched ones are dropped) and stored.
@@ -2495,7 +2495,7 @@ mod tests {
         titles
     }
 
-    /// SPEC 9.5: newest arrival first across feeds, the same after a
+    /// SPEC §content.feeds: newest arrival first across feeds, the same after a
     /// restart; unsubscribed feeds drop out.
     #[test]
     fn timeline_order_across_feeds_and_restarts() {

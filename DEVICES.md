@@ -21,7 +21,7 @@ and 8 goes to the slot's driver, checked first against a **call table** the
 driver gives at the handshake. So a device is written once, in any language,
 and used by any core that speaks this protocol; a driver can be replaced by
 another for some hardware, or left out (an image that lists a device no
-driver provides is refused, SPEC 2).
+driver provides is refused, SPEC §image).
 
 One driver process serves **every machine** of a run (section 1.2): the
 shell and each machine it starts are **instances**, named in every
@@ -46,7 +46,7 @@ Design rules:
    frame.
 4. **The core can check what it cannot interpret.** The call table says
    where each call's buffer is and how long it is, so the core applies
-   SPEC 3.1's rules for buffers itself, and for the calls SPEC 14 calls
+   SPEC §calls.convention's rules for buffers itself, and for the calls SPEC §charges calls
    deferred, whose result and charge need no device state, it computes
    the result and the charge itself and sends the call later, in a batch
    (section 6).
@@ -146,7 +146,7 @@ The driver answers HELLO (`81h`):
 - The core refuses a driver that answers for other slots than it asked
   for, or which chooses shared memory when it was not offered.
 - **A driver may serve several slots.** It does when the devices share
-  state: device 9's `style` and `persistence` are device 3's (SPEC 13.2),
+  state: device 9's `style` and `persistence` are device 3's (SPEC §vector3d.calls),
   one section of the state (`STATE.md` 1.7), so `terse-dev-vector` serves
   slots 3 and 9, and a core starts one driver for both. The calls of both
   slots go to the one process, in order (a batch may hold both), so the
@@ -164,7 +164,7 @@ The driver answers HELLO (`81h`):
 
 A driver serves any number of machines at once. Each is an **instance**,
 named by a u32 the core chooses; the reference core uses the machine's
-serial among the machines of its system (SPEC 12: the shell, or a single
+serial among the machines of its system (SPEC §machines: the shell, or a single
 machine, is 0; each machine the shell starts gets the next number, never
 used again). Before the first message about an instance the core sends
 OPEN:
@@ -177,26 +177,26 @@ OPEN:
 | 36 | 4 | `R`: ROM length |
 | 40 | 4 | `L`: RAM length |
 | 44 | 2 + … | The instance's memory file (section 4.1); empty unless the driver chose shared memory |
-| … | 1 + … | The driver's slots the machine has: a count (u8), then (slot, version) pairs. These are the devices the image requires and the optional ones granted (SPEC 2); a device the machine was not granted is not listed, so the driver treats it as absent |
-| … | 1 + … | The program's identity (SPEC 12.2), if it was started as one: `0`, or `1`, the publisher (32 bytes) and the name (u16 length and bytes) |
+| … | 1 + … | The driver's slots the machine has: a count (u8), then (slot, version) pairs. These are the devices the image requires and the optional ones granted (SPEC §image); a device the machine was not granted is not listed, so the driver treats it as absent |
+| … | 1 + … | The program's identity (SPEC §machines.calls), if it was started as one: `0`, or `1`, the publisher (32 bytes) and the name (u16 length and bytes) |
 | … | `R` | The ROM, so that a driver can read ROM without asking |
 
 The reply is `83h`, then `01h` if the driver took the instance or `00h` if
 not, 2 reserved bytes and a reason (a string). The core refuses to start a
-machine (SPEC 12.5: `start` fails with "needs a device") that a driver will
+machine (SPEC §machines.frames: `start` fails with "needs a device") that a driver will
 not take, or whose image requires a device no driver serves, or a version a
 driver does not implement. An optional device no driver serves (in the
 version listed) is not granted, and the machine starts without it; a
-restored machine (SPEC 12.7) gets exactly the devices its snapshot's
+restored machine (SPEC §machines.snapshots) gets exactly the devices its snapshot's
 grants say, and fails with "needs a device" if one of them has no
 driver.
 
-An instance's devices start at reset (SPEC 1.3). Each instance has its
+An instance's devices start at reset (SPEC §reset). Each instance has its
 own memory file on shared memory, and its own state in the driver; a
 driver keeps nothing of one instance in another's. What a driver may share
 between instances is what makes no difference to the machines: fonts,
 glyph caches, the content device's network node (whose named records are
-each program's own, SPEC 9.6, by the identity given in OPEN, else the
+each program's own, SPEC §content.records, by the identity given in OPEN, else the
 image ID).
 
 CLOSE (`04h`) ends an instance (the shell stopped the machine, or the run
@@ -206,12 +206,12 @@ drops their host bookkeeping (pending layouts, requests in flight).
 
 ### 1.3 Ordering
 
-A system's frame (SPEC 12.5) runs the shell's frame, then each running
+A system's frame (SPEC §machines.frames) runs the shell's frame, then each running
 machine's in increasing handle order. For each machine's frame the core
 sends BEGIN, the calls, then END, to every driver of that machine; drivers
 see instance 0's BEGIN first in every system frame (the content driver
 announces feeds updated since the last system frame then, to every
-machine, as SPEC 5 says). Each driver sees the messages of all machines in
+machine, as SPEC §events says). Each driver sees the messages of all machines in
 one order, which is the system's.
 
 ### 1.4 CALL and RESULT
@@ -222,7 +222,7 @@ one order, which is the system's.
 | 1 | 1 | Function (the low byte of `a7`) |
 | 2 | 2 | Reserved |
 | 4 | 24 | `a0`–`a5` (u32 each) |
-| 28 | 8 | Budget (i64): what is left after the `ecall` instruction and the call's 4 (SPEC 14); no reference driver needs it |
+| 28 | 8 | Budget (i64): what is left after the `ecall` instruction and the call's 4 (SPEC §charges); no reference driver needs it |
 | 36 | 4 | `n`: the bytes of the call's read buffer that follow |
 | 40 | `n` | Those bytes, from the buffer's start |
 
@@ -252,7 +252,7 @@ The driver replies RESULT:
 - On shared memory a driver may instead write its buffer in place, in the
   instance's memory file, before it replies.
 - A driver that needs other guest memory during the call (the content
-  device's data ranges, SPEC 9.1) sends READ (`20h`, 3 reserved bytes,
+  device's data ranges, SPEC §content.request) sends READ (`20h`, 3 reserved bytes,
   address u32, length u32). The core answers DATA: `A0h`, then `01h` and
   the bytes if the range lies wholly in ROM or wholly in RAM, else `00h`
   and nothing; then 2 reserved bytes before the bytes. (Shared-memory
@@ -260,7 +260,7 @@ The driver replies RESULT:
 
 ### 1.5 BEGIN and INPUTS
 
-At step 1 of each of a machine's frames (SPEC 1.4) the core sends BEGIN to
+At step 1 of each of a machine's frames (SPEC §frames) the core sends BEGIN to
 every driver of the machine:
 
 | Offset | Size | Field |
@@ -280,7 +280,7 @@ and the driver replies INPUTS:
 |---|---|---|
 | 0 | 1 | `B0h` |
 | 1 | 3 | Reserved |
-| 4 | 4 | Charge: units subtracted from this frame's budget (SPEC 14, content delivered) |
+| 4 | 4 | Charge: units subtracted from this frame's budget (SPEC §charges, content delivered) |
 | 8 | 4 | `e`: events |
 | 12 | 8 × `e` | Each: type, `a`, `b`, `c`, position (u8), flags (u8), index (u16) |
 | … | 4 + … | Writes: count, then address, length, bytes, as in RESULT; anywhere in RAM |
@@ -292,15 +292,15 @@ host's events); then the host's events, each followed by the events at
 position 1 whose index is its index; then those at position 2 (after the
 input events). Among events of the same place, drivers in increasing order
 of their lowest slot, each driver's in the order it gave them. These are
-queued as SPEC 5 says (at most 64; one feeds-updated event a frame). Then
+queued as SPEC §events and §content.events say (at most 64; one feeds-updated event a frame). Then
 the core latches the time, random bytes and controllers, copies every
 driver's writes into RAM, and queues the events at position 3
-(completions: SPEC 9.2's content-done events, queued after the frame's
+(completions: SPEC §content.submit's content-done events, queued after the frame's
 input), counting those dropped. Then it runs the frame with 125,000 units
 less every driver's charge.
 
 **Flags.** Bit 0: this event and the next one of the same driver are a
-pair, queued together or not at all (SPEC 11.5's page located events).
+pair, queued together or not at all (SPEC §page.events's page located events).
 
 The core may send BEGIN to all of a machine's drivers at once and collect
 the replies in any order. A driver may READ before it replies.
@@ -309,7 +309,7 @@ the replies in any order. A driver may READ before it replies.
 
 `31h`, stopped flag (u8: the machine has exited or faulted), 2 reserved,
 the frame counter after the frame (u32). No reply. The machine's frame has
-ended (SPEC 1.4 step 3); what the device does between frames (lay out a
+ended (SPEC §frames step 3); what the device does between frames (lay out a
 page, send content requests to the network) it does now, while the core
 goes on. Any calls of the frame still in a batch arrive just before END.
 
@@ -320,7 +320,7 @@ reserved bytes, a length (u32) and the slot's section of the state
 serialization (`STATE.md` 1.6–1.12: the bytes after the present flag). The
 core writes the present flags and puts the sections in `STATE.md`'s order
 (slot 3's section for an image that lists only device 9 too: the style
-lives there, SPEC 13.2). Defined only between frames.
+lives there, SPEC §vector3d.calls). Defined only between frames.
 
 RESTORE is `41h`, 3 reserved bytes, a length (u32) and the rest of a
 serialization from the slot's section on (STATE.md 4): the core cannot
@@ -386,7 +386,7 @@ the run may list one of its slots (for a shell, all of them); `--driver
 2=...`, `--driver 3,9=...`). For a single machine, a driver whose slots
 only optional devices of the image use is not started if its program is
 not installed (and no `--driver` names it) or `--without <slot>`
-withholds them: the run goes on without those devices (SPEC 2). A
+withholds them: the run goes on without those devices (SPEC §image). A
 required device whose driver is missing still stops the run.
 
 ---
@@ -488,9 +488,9 @@ transport is meant to avoid).
 
 Each entry is 64 bytes and describes one function of the device. A
 function not in the table is an unknown call: the core returns
-`FFFF_FFFFh` and charges 4, without the driver (SPEC 3.1).
+`FFFF_FFFFh` and charges 4, without the driver (SPEC §calls.convention).
 
-The table also gives each call's class (SPEC 14). A call with flag bit 1
+The table also gives each call's class (SPEC §charges). A call with flag bit 1
 is **deferred**: its result and charge follow from its arguments and its
 buffer's length by the entry's rules (section 6), so the core can compute
 them; its base charge is 4. Every other call is **answered**: only the
@@ -499,7 +499,7 @@ core charges, also when one of its checks fails; the driver's charge is
 on top. So "deferred" is exactly "computable by the core from the table",
 and a driver that marks a call batchable states that its class is
 deferred. The System device's calls and device 8's are the machine's own
-(SPEC 14: core, 4) and never reach a driver.
+(SPEC §charges: core, 4) and never reach a driver.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -541,12 +541,12 @@ Fields an entry does not use are zero, but argument numbers, which are
    wholly in RAM, or (if bit 2 and the device does not write it) wholly in
    ROM or wholly in RAM: if not, the place result.
 3. The checked argument, if any, must be at most its greatest value: if
-   not, the place result (SPEC 3.1: a bad buffer and a bad argument give
+   not, the place result (SPEC §calls.convention: a bad buffer and a bad argument give
    the same `FFFF_FFFEh` in every call that has both).
 
 A call that fails a check is charged its base charge (4, or 64 for an
-answered call) and does not reach the driver (SPEC 14: nothing is copied).
-This is the whole of SPEC 3.1's rules, including its five exceptions,
+answered call) and does not reach the driver (SPEC §charges: nothing is copied).
+This is the whole of SPEC §calls.convention's rules, including its five exceptions,
 which are only different results in the table.
 
 ### 5.1 The tables of the reference drivers
@@ -575,7 +575,7 @@ RAM only; both failures give 1; deferred: 0, 1 per 4 bytes), `clear`
 
 3D vector display (slot 9, the same driver): `submit` (as slot 3's),
 `clear` (0), `style` and `persistence` (as slot 3's, and they set slot 3's
-style: SPEC 13.2); all deferred.
+style: SPEC §vector3d.calls); all deferred.
 
 Content (slot 4): `submit` (`a0`, fixed 52 bytes, read and written, RAM
 only; the place result is 0); answered.
@@ -585,7 +585,7 @@ result 1, place result `FFFF_FFFEh`; deferred: 0, 1 per 4 bytes),
 `clear`, `region`, `scroll`, `background` (deferred, 0), `locate`
 (answered).
 
-Sound (slot 6, SPEC 18): `submit` (`a0`, `a1` × 1, 1 … 4,096, read, ROM;
+Sound (slot 6, SPEC §sound): `submit` (`a0`, `a1` × 1, 1 … 4,096, read, ROM;
 both failures give 1; deferred: 0, 2 per byte), `wave` (`a1`, fixed 64
 bytes, read, ROM; `a0` ≤ 31; deferred: 0, 1 per 4 bytes), `sample`
 (`a1`, `a2` × 1, 0 … 65,536, read, ROM; `a0` ≤ 3; deferred: 0, 1 per 4
@@ -630,10 +630,10 @@ vector displays; every call of the sound device; page `submit`, `clear`,
 Answered: terminal `get_cursor`, `get_colours` and `cells_read` (they read
 the device), content `submit` (the handle is the device's), page `locate`
 (it is refused when there is no document or after 8 in a frame: device
-state). These are SPEC 14's classes exactly.
+state). These are SPEC §charges's classes exactly.
 
 `write` takes its whole buffer, at most 4,096 bytes, and costs 2 per byte
-however many scrolls it causes (SPEC 8.2), so its entry says "`a0` = `a1`;
+however many scrolls it causes (SPEC §terminal.calls), so its entry says "`a0` = `a1`;
 2 per byte" and a frame of one-byte writes goes to the driver as a few
 batches instead of one round trip a call. A batched call with a buffer
 carries a copy of it: on shared memory a big one costs more batched than
@@ -643,7 +643,7 @@ sent (the vector display's 16 KiB list).
 
 A visual driver declares the **layers** of each of its slots at the
 handshake: an ID (its own name for it) and a z, the place in the stack,
-from the bottom. SPEC 10.5's order gives:
+from the bottom. SPEC §vector.layers's order gives:
 
 | z | Layer |
 |---|---|
@@ -701,7 +701,7 @@ and text is rasterised for its size, not scaled:
   cell;
 - the shell: the window at 4:3; glyph cells `⌊width / 80⌋` pixels wide
   (its native cell if that is the size);
-- a machine in a tile (SPEC 12.3): a picture the size of its rectangle,
+- a machine in a tile (SPEC §machines.screens): a picture the size of its rectangle,
   glyph cells `⌊width / 80⌋`;
 - a machine on a panel of the shell's scene: a picture as large as the
   panel looks (whole cells of 80 columns, kept while the panel moves a
@@ -709,12 +709,12 @@ and text is rasterised for its size, not scaled:
 
 The picture is then put together as terse-host's software renderer puts it
 together, and with its code (terse-host's `soft::scene` and `soft::panel`,
-used by both): the shell's screen; with Screens in effect (SPEC 12.3), the
+used by both): the shell's screen; with Screens in effect (SPEC §machines.screens), the
 shell's **scene**: its screen with its Surfaces' sources blacked out, the
 panels far to near (each machine's picture, from a pyramid of it; a
 Surface from the shell's own screen), then the shell's 3D layer over them;
 each machine shown flat in its rectangle, in increasing handle order (a
-machine with Surfaces of its own as its own scene, SPEC 13.5); the
+machine with Surfaces of its own as its own scene, SPEC §vector3d.presentation); the
 machine a finished `face` shows flat in the view's rectangle; the fault
 line (below); the host's consent prompt over everything.
 
@@ -723,7 +723,7 @@ shows a part of the machine's own picture: the pixels are the core's, put
 together from several drivers' layers (and, for a Screen, of another
 instance). So the core draws the panels, from geometry it projects itself
 from device 9's list (the `vector3.list` property: terse-core's
-projection, the one SPEC 12.4's pointer routing over panels already
+projection, the one SPEC §machines.input's pointer routing over panels already
 needs), and the 3D driver draws only lines, into its layer (z 35), which
 the core composes among the others when no scene is in effect and over
 the panels when one is. The alternative, handing the 3D driver the other
@@ -733,16 +733,16 @@ is not its device's; this way each driver draws only its device, and what
 spans machines (tiles, panels, the prompt) is the compositor's.
 
 The 3D driver needs two facts to draw: the eye (`core.eye`: where the
-window's pointer puts it, `--eye` headless; SPEC 13.1) and, for the shell,
+window's pointer puts it, `--eye` headless; SPEC §vector3d.space) and, for the shell,
 the view of its scene (`core.view`: which Screens are in effect and the
-`face` motion, SPEC 12.2), which the core publishes (section 7.2): its
+`face` motion, SPEC §machines.calls), which the core publishes (section 7.2): its
 lines are then cut by the panels' faces and move with the view.
 
-**The fault line** is the terminal's: when a machine faults (SPEC 1.5)
+**The fault line** is the terminal's: when a machine faults (SPEC §stopping)
 the core publishes `core.status`, "fault: …", and the terminal shows it
 over its bottom row as terse-host does (colours 15 on 1).
 
-**The consent prompt** (SPEC 9.5) is the core's: the content driver
+**The consent prompt** (SPEC §content.feeds) is the core's: the content driver
 publishes the question it waits on (`content.prompt`: the asking machine,
 the request, what is asked, how many wait); the core draws it over
 everything, with terse-host's grid renderer in the overlay's colours, takes
@@ -750,7 +750,7 @@ the keyboard while it is shown (Y allows, N or Esc refuses; no key or text
 reaches a machine, nor the release of a key pressed then) and gives the
 answer back as `core.answer`.
 
-Only the clean style is composed this way. The phosphor style (SPEC 10.6)
+Only the clean style is composed this way. The phosphor style (SPEC §vector.phosphor)
 is a whole-screen effect across the layers: the light of the terminal's
 characters, the page's text and the shapes adds up on one tube with one
 afterglow. It would need the drivers to give their light (linear, additive)
@@ -780,23 +780,23 @@ reference drivers and core:
 
 | Name | Published by | Subscribed by | Value |
 |---|---|---|---|
-| `vector.outlines` | vector display | page | 1 if figures and filled shapes are drawn as outlines (fill mode 1, or the phosphor style: SPEC 11.4), else 0 |
-| `vector3.list` | vector display | core | device 9's list (SPEC 13), which device 8 (`face`), the shell's scene and the pointer over panels (SPEC 12.2–12.4) look at |
-| `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC 13.1) |
+| `vector.outlines` | vector display | page | 1 if figures and filled shapes are drawn as outlines (fill mode 1, or the phosphor style: SPEC §page.layout), else 0 |
+| `vector3.list` | vector display | core | device 9's list (SPEC §vector3d), which device 8 (`face`), the shell's scene and the pointer over panels (SPEC §machines.calls, §machines.screens and §machines.input) look at |
+| `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |
 | `core.view` | core | vector display | the shell's scene: which Screens are in effect (u8) and the view (12 f64: the linear part by rows, then the translation); empty: none |
 | `core.status` | core | terminal | the line shown over the bottom row (UTF-8): a fault; empty: none |
 | `content.prompt` | content | core | the consent question waiting: the asking machine (u32), the request's handle (u8), how many wait (u32), what is asked (kind and fields); empty: none |
 | `core.answer` | core | content | the answer: the question's machine (u32) and handle (u8), then 1 allow or 0 refuse |
-| `sound.frame` | sound | core | the frame counter after the frame the driver rendered last (u32), then its 800 sample pairs (i16, left and right interleaved; SPEC 18.7); empty before the first |
+| `sound.frame` | sound | core | the frame counter after the frame the driver rendered last (u32), then its 800 sample pairs (i16, left and right interleaved; SPEC §sound.presentation); empty before the first |
 
 `vector3.list` is read in the middle of a frame when device 8's `face`
 needs it: the core sends GET, after the batch, as it would a call.
 
 **Sound.** The sound driver renders a machine's samples at END (SPEC
-18.5: the end of the frame) and plays nothing itself: the core reads
+§sound.render: the end of the frame) and plays nothing itself: the core reads
 `sound.frame` after the machine's frame (GET, in front of which the END
 goes on shared memory), mixes the machines that ran in the system frame
-(SPEC 18.7) and plays or writes the result. The frame counter in the value
+(SPEC §sound.presentation) and plays or writes the result. The frame counter in the value
 tells the core whether the driver rendered since it last asked (a machine
 that did not run renders nothing). So sound, like the picture, is put
 together by the core from what each machine's driver gives, and one
@@ -833,12 +833,12 @@ one.
 ## 9. Host services
 
 A shell's host does more than run machines: it fetches the images the
-shell starts (SPEC 12.2 `start`, `start_program`), and stores its
-snapshots (SPEC 12.7). A core that knows nothing of the network or the
+shell starts (SPEC §machines.calls `start`, `start_program`), and stores its
+snapshots (SPEC §machines.snapshots). A core that knows nothing of the network or the
 store asks a driver that does: a driver names the **services** it gives at
 the handshake, and the core calls them with SERVICE, for the instance on
 whose behalf it asks (a snapshot's owner is the shell's program, SPEC
-12.7). The reference content driver, which holds the run's network node,
+§machines.snapshots). The reference content driver, which holds the run's network node,
 gives:
 
 | Service | Request | Answer |
@@ -846,12 +846,12 @@ gives:
 | `image.fetch` | the machine (u32), the image ID | `1` and the image's bytes, `2` not found, `3` failed |
 | `program.fetch` | the machine, the program (publisher, name as a string), the built-ins (count, IDs) | as `image.fetch`: the current version the host holds |
 | `snapshot.save` | the slot (u8), the snapshot file (STATE.md 4) | `1` stored, `0` not |
-| `snapshot.load` | the machine (u32), the slot | `1`, the image file and the snapshot file (blobs); or `0`, the reason (SPEC 12.2's failure code), whether its image ID follows and it, the message |
+| `snapshot.load` | the machine (u32), the slot | `1`, the image file and the snapshot file (blobs); or `0`, the reason (SPEC §machines.calls's failure code), whether its image ID follows and it, the message |
 | `snapshot.delete` | the slot | nothing |
-| `snapshot.table` | nothing | the 16 slots' `snapshot_info` records (SPEC 12.2) |
+| `snapshot.table` | nothing | the 16 slots' `snapshot_info` records (SPEC §machines.calls) |
 
 The core calls them after the system frame in which the shell asked, and
-the answers take effect at the start of the next (SPEC 12.5), as the
+the answers take effect at the start of the next (SPEC §machines.frames), as the
 built-in hosts do: the call waits for the fetch, so a headless run is
 reproducible. (In a window a fetch from the network holds the frame loop
 for its duration; a core that minds would ask in a thread of its own.)
@@ -868,9 +868,9 @@ The machines that use the driver cannot go on: their devices' state is in
 it, and a frame may have stopped half way through, some of its calls
 carried out and others not. Restarting the driver would not bring that
 state back. Nor can the core make the device absent (calls returning
-`FFFF_FFFFh`): a device's absence is a property of the image (SPEC 2), and
+`FFFF_FFFFh`): a device's absence is a property of the image (SPEC §image), and
 a program that has used a device would see it vanish. And a machine fault
-(SPEC 1.5) is the program's, recorded in the state with a kind SPEC
+(SPEC §stopping) is the program's, recorded in the state with a kind SPEC
 defines; a driver's failure is the host's. So:
 
 - **The run stops.** The core stops running frames, kills every driver it

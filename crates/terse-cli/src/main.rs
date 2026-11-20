@@ -87,7 +87,7 @@ everything).
 feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
 image's title); feed programs lists the current version of each program held (of one feed, or of
 all the feeds held), find --programs searches programs by name.
-Named records (SPEC 9.6), the data programs keep on this machine, are in <data>/records; --data
+Named records (SPEC §content.records), the data programs keep on this machine, are in <data>/records; --data
 defaults to $XDG_DATA_HOME/terse (or ~/.local/share/terse). `run` keeps them there too. `records`
 shows them for inspection: an <owner> is builtin:<title>, program:<feed key>:<name> or
 image:<image id>; without one, `records list` lists every owner.
@@ -107,13 +107,13 @@ profile: devices 1, 2, 4 and 7, and the content operations get, subscriptions, t
 identity, subscribe and unsubscribe; every other content request completes with status 05h
 (refused) without asking. --profile program provides only the program profile: devices 1, 2
 and 3. --without <slot> withholds that device as well. An image that requires a device the run
-does not provide is refused; an optional device it does not provide is absent (SPEC 2).
+does not provide is refused; an optional device it does not provide is absent (SPEC §image).
 pack: --device lists a required device, --optional one the program can run without; `info`
 shows both.
-A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC 12.7).
+A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC §machines.snapshots).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
-set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
---shell runs a system (SPEC 12): the image (default: the built-in shell, programs/shell) is the shell,
+set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
+--shell runs a system (SPEC §machines): the image (default: the built-in shell, programs/shell) is the shell,
 with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo), and each --builtin image after
 them, are put into the store and offered to it. Scripted events are the host's input: `home` is the
 home key, pointer positions are in the whole screen's units, and the system routes them. --dump
@@ -122,22 +122,22 @@ prints the shell's screen, then for each machine whose rectangle is not empty a 
 hash, and --hash-all after it `<handle> <hash>` for each machine the shell has after the last
 frame, in handle order (one it stopped is not listed; `-`: no machine, as its image or snapshot is
 still being fetched or its start failed).
---audio-out writes what the sound device (device 6, SPEC 18) of every machine played, mixed, as a
+--audio-out writes what the sound device (device 6, SPEC §sound) of every machine played, mixed, as a
 WAV file (48,000 Hz, stereo, 16 bits): 800 sample pairs a frame run, silence for a frame in which
 no machine gave any. Nothing is ever played: `run` has no audio output.
 --dump-vectors prints the 2D list (device 3) as shapes and the 3D list (device 9) as commands, then
-`-- 3d: <n> segments, length <l> units --`: what it draws seen from the reference eye (SPEC 13.4).
+`-- 3d: <n> segments, length <l> units --`: what it draws seen from the reference eye (SPEC §vector3d.caps).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
 its height and scroll, then the lines in view (y, height, x, the first span's font, the text).
 `run` exits with the program's exit code (0-255). If the machine stops with a fault
-(SPEC 1.5), it prints the fault and ends by signal SIGTERM, so a parent process can
+(SPEC §stopping), it prints the fault and ends by signal SIGTERM, so a parent process can
 tell a fault from any exit code (a shell's $status shows 143).";
 
 /// Options for commands that use the blob store and relay.
 const NET_OPTIONS: [&str; 4] = ["--relay", "--store", "--config", "--no-feed-relays"];
 
 /// The command line as UTF-8. An argument that is not is refused with the
-/// option it belongs to (an image title, SPEC 2, is UTF-8).
+/// option it belongs to (an image title, SPEC §image, is UTF-8).
 fn utf8_args() -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for a in std::env::args_os().skip(1) {
@@ -244,13 +244,13 @@ impl Args {
     }
 }
 
-/// `--data`, else the default data directory (SPEC 9.6).
+/// `--data`, else the default data directory (SPEC §content.records).
 pub(crate) fn data_dir(args: &Args) -> Result<PathBuf, String> {
     args.get("--data").map(PathBuf::from).or_else(terse_net::default_data_dir).ok_or("no data directory (use --data)".into())
 }
 
 /// `terse records list [<owner>]`, `show <owner> <name>`, `delete <owner>
-/// <name>`: the named records programs keep on this machine (SPEC 9.6).
+/// <name>`: the named records programs keep on this machine (SPEC §content.records).
 fn records(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;
@@ -368,9 +368,9 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
     Script::parse(&text).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The devices the machine's reading profile provides (SPEC 2.1): the system (1), the terminal (2), content (4) and the page (7).
+/// The devices the machine's reading profile provides (SPEC §profiles): the system (1), the terminal (2), content (4) and the page (7).
 const READING_DEVICES: [u8; 4] = [1, 2, 4, 7];
-/// The devices the machine's program profile provides (SPEC 2.1): the system (1), the terminal (2) and the 2D vector display (3).
+/// The devices the machine's program profile provides (SPEC §profiles): the system (1), the terminal (2) and the 2D vector display (3).
 const PROGRAM_DEVICES: [u8; 3] = [1, 2, 3];
 
 /// `--without <slot>`: a device slot, 2 to 255.
@@ -419,7 +419,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if shell && (args.has("--save-state") || args.has("--load-state") || args.has("--record")) {
         return Err("--save-state, --load-state and --record are for a single machine, not --shell".into());
     }
-    // SPEC 2.1: the devices this run provides.
+    // SPEC §profiles: the devices this run provides.
     let profile: Option<(&str, &[u8])> = match args.get("--profile") {
         None => None,
         Some("reading") => Some(("reading", &READING_DEVICES)),
@@ -453,7 +453,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         ([], Some(s)) => load_image(&to_hex(&s.image_id()), &mut net)?,
         _ => load_image(args.one_positional()?, &mut net)?,
     };
-    // SPEC 2: a host refuses an image that requires a device it lacks; an
+    // SPEC §image: a host refuses an image that requires a device it lacks; an
     // optional device it lacks is not granted.
     if let Some(d) = image.devices.iter().find(|d| !d.optional && !provides(d.slot)) {
         return Err(match profile {
@@ -478,10 +478,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some(c) => Consent::parse(c).filter(|&c| c != Consent::Ask).ok_or(format!("bad --consent {c} (allow or deny)"))?,
     };
 
-    // A shell needs the store for the images it starts (SPEC 12.2).
+    // A shell needs the store for the images it starts (SPEC §machines.calls).
     let mut builtins = Vec::new();
     let content = if image.device_set(&grants).has(4) || shell {
-        // SPEC 9.5: the feeds are those of the --config subscriptions, and
+        // SPEC §content.feeds: the feeds are those of the --config subscriptions, and
         // the identity is the one kept there.
         let mut node = net.take()?;
         if shell {
@@ -520,11 +520,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         None if shell => System::new(&image, shell, builtins),
         None => System::with_machine(Machine::with_grants(&image, grants.clone())),
     };
-    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    // The built-in shell has the identity of a built-in (SPEC §machines.calls).
     if shell && args.positional.is_empty() {
         system.set_shell_identity(Some(terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() }));
     }
-    // SPEC 12.7: the shell's snapshots, as this host has them.
+    // SPEC §machines.snapshots: the shell's snapshots, as this host has them.
     if system.is_system() {
         terse_net::snapshots::load_table(&mut system, &data_dir(&args)?);
     }
@@ -662,7 +662,7 @@ fn replay(args: &Args) -> Result<ExitCode, String> {
 }
 
 /// `--audio-out`: the system's samples, frame by frame, written as a WAV
-/// file at the end (SPEC 18.7).
+/// file at the end (SPEC §sound.presentation).
 struct AudioOut {
     path: Option<String>,
     samples: Vec<i16>,
@@ -755,7 +755,7 @@ fn dump(machine: &Machine, args: &Args) {
         Some(t) => print!("{}", t.text()),
         None => eprintln!("terse: image has no terminal device"),
     }
-    // SPEC 10: the list device 3 holds at the end of the last frame, one
+    // SPEC §vector: the list device 3 holds at the end of the last frame, one
     // shape per line, as the host draws it.
     if args.has("--dump-vectors") {
         if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
@@ -767,12 +767,12 @@ fn dump(machine: &Machine, args: &Args) {
                 print!("{}", v.dump());
             }
         }
-        // SPEC 13: the 3D list's commands, and what the reference eye sees.
+        // SPEC §vector3d: the 3D list's commands, and what the reference eye sees.
         if let Some(v) = machine.vector3() {
             print!("{}", v.dump());
         }
     }
-    // SPEC 11.6: the page as the reference layout shows it.
+    // SPEC §page.reference: the page as the reference layout shows it.
     if args.has("--dump-page") {
         match machine.page() {
             Some(page) => {
@@ -833,7 +833,7 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     args.check_known(&NET_OPTIONS)?;
     let path = args.one_positional()?;
     let image = load_image(path, &mut Net { args: &args, node: None, find: true })?;
-    // SPEC 2: required devices, then the optional ones.
+    // SPEC §image: required devices, then the optional ones.
     let list = |optional: bool| -> String {
         let v: Vec<String> = image.devices.iter().filter(|d| d.optional == optional).map(|d| format!("{}:{}", d.slot, d.version)).collect();
         if v.is_empty() { "-".into() } else { v.join(" ") }
@@ -900,7 +900,7 @@ fn hash(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `slot:version`, a version 0 to 127 (SPEC 2).
+/// `slot:version`, a version 0 to 127 (SPEC §image).
 fn parse_device(s: &str, optional: bool) -> Result<DeviceReq, String> {
     let bad = || format!("bad device {s} (want slot:version, a version 0 to 127)");
     let (slot, version) = s.split_once(':').ok_or_else(bad)?;

@@ -21,17 +21,22 @@ Terse has three layers, each with its own specification:
   signed feeds and their entries, profiles and names, search.
 - **(b) Terse articles**, `ARTICLE.md`: the article format and what a reader
   must do with it.
-- **(c) The Terse machine**, `SPEC.md` (with `STATE.md`, the machine state hash):
-  the virtual computer above, and its devices.
+- **(c) The Terse machine**: `SPEC.md`, the core machine (the CPU, the
+  System, Terminal and 2D vector devices: everything a host that only runs
+  programs needs, with a one-page summary of it at the top); one document per
+  further device in `spec/` (content, page, machines, 3D vector display,
+  sound); and `STATE.md`, the machine state hash that conformance compares.
+  Sections are cited by stable ids, `SPEC §terminal.put`
+  (`spec/RENUMBERING.md` maps the old section numbers).
 
 (a) and (b) are **the core**: a native reader with no virtual machine that
 implements them is a complete, conforming Terse client. The machine is optional
 and reuses the core: programs are blobs published in feeds, and the reader that
 comes with this repository is a machine program that shows articles on the page
 device. A machine host that only runs that reader needs just the machine's
-**reading profile** (devices 1, 2, 4 and 7; SPEC 2.1); one that runs programs needs
+**reading profile** (devices 1, 2, 4 and 7; SPEC §profiles); one that runs programs needs
 just the **program profile** (devices 1, 2 and 3), since a program lists the other
-devices it can do without as optional (SPEC 2). This repository is the first
+devices it can do without as optional (SPEC §image). This repository is the first
 prototype of all three layers.
 
 **A second reader.** `native/reader-go/` is such a native reader: a terminal
@@ -80,7 +85,7 @@ page) publishes a test article. See [The reader](#the-reader).
 
 **The consent prompt.** A program may ask the host to subscribe to a feed,
 unsubscribe from one, publish an article or a document in your name, publish your
-profile (your public name) or set a nickname for a feed (SPEC 9.5). The
+profile (your public name) or set a nickname for a feed (SPEC §content.feeds). The
 host then shows its own prompt over the bottom four rows of the screen, over
 every machine's picture, naming the program and what it asks (a feed key such as `3fa9c2…c21e07`;
 the article's or document's title and size; the name and whether search may find
@@ -155,7 +160,7 @@ images were built with clang and LLD 23.1.4.
 `terse` commands:
 
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
-  below runs a system (SPEC 12): the image (default: the built-in shell,
+  below runs a system (SPEC §machines): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
   sparks, fetch, hello, sketch, holo, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
@@ -191,11 +196,11 @@ images were built with clang and LLD 23.1.4.
   scripted press over anchored text is followed by its anchor event.
   Content requests (device 4) are carried out between frames and always complete at
   the start of the next frame, so runs are reproducible. For an image with device 4
-  the feeds (SPEC 9.5) are those subscribed in `--config` (see [Feeds](#feeds)):
+  the feeds (SPEC §content.feeds) are those subscribed in `--config` (see [Feeds](#feeds)):
   with `--relay`, `run` first syncs them until caught up (NETWORK 4.3; a warning and
   the local entries if that fails within 60 s), then keeps following them while the
   machine runs; an entry stored during frame N is announced by a feeds-updated event
-  in frame N + 1. A program's requests to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5)
+  in frame N + 1. A program's requests to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC §content.feeds)
   cannot be asked about headless: `--consent` says how they are answered (default
   `deny`: status Refused). `run` uses a relay only with `--relay`.
   `--hash` prints the machine's state hash ([STATE.md](STATE.md)) after the last
@@ -215,7 +220,7 @@ images were built with clang and LLD 23.1.4.
   again from the image file alone, with no network, store, data directory or events
   (it takes no other option), checking every frame's hash: it stops with an error at
   the first frame that differs, and refuses a recording of another image.
-  `--profile reading` runs the machine with only its reading profile (SPEC 2.1):
+  `--profile reading` runs the machine with only its reading profile (SPEC §profiles):
   devices 1, 2, 4 and 7, and of the content operations only get, subscriptions,
   timeline, names, identity, subscribe and unsubscribe; every other content request
   completes with status 05h (Refused) without asking. `programs/conform-reading` is
@@ -223,11 +228,11 @@ images were built with clang and LLD 23.1.4.
   profile, devices 1, 2 and 3 (`programs/conform-program` is its conformance image),
   and `--without <slot>` withholds one more device. An image that requires a device
   the run does not provide is refused; one it lists as optional is absent, and the
-  program asks the `device` call (SPEC 4) whether it has it. A snapshot (or a
+  program asks the `device` call (SPEC §system) whether it has it. A snapshot (or a
   recording) keeps the devices it was taken with: one taken with content does not
   restore under `--profile program`.
 - **Exit status of `run`.** When the program exits, `terse run` exits with its
-  exit code (0–255). When the machine stops with a fault (SPEC 1.5), it prints
+  exit code (0–255). When the machine stops with a fault (SPEC §stopping), it prints
   `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself
   with signal SIGTERM. Every status from 0 to 255 is a possible exit code, so
   this is as distinct as a process can be: fish reports `terminated by signal
@@ -242,7 +247,7 @@ images were built with clang and LLD 23.1.4.
   find a relay as [Getting started](#getting-started) says when `--relay` is not given.
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`): `--device`
-  lists a device the program requires, `--optional` one it can run without (SPEC 2:
+  lists a device the program requires, `--optional` one it can run without (SPEC §image:
   the top bit of the version byte; required devices first, each in the order given).
 - `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
   [Feeds](#feeds); `feed site` writes a feed as a static website, see
@@ -266,7 +271,7 @@ An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
 `$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Only `ws://` relays
 are supported. `--relay` may be given several times, and every command that takes it
-also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 9.5) is kept in
+also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
 `terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
@@ -288,10 +293,10 @@ nickname: `ask` (the default) shows the
 host's prompt, `allow` and `deny` answer every one without asking. Keys go to the
 host's prompt first, then F12 (the home key, with a shell), then to the machine with
 the focus. Ctrl+V and
-Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC 5),
+Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
 newlines kept and other control characters dropped, fed in only as fast as the event
 queue has room, so none is lost. The screen
-(SPEC 7) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
+(SPEC §screen) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
 scaled uniformly, centred and letterboxed in a window of any other shape. With a shell,
@@ -496,8 +501,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-host/   `terse-host`: winit window, drawn by the GPU or the CPU behind
                          display.rs's Display trait; renderer.rs is the wgpu renderer of
                          one screen (terminal, vectors.rs's shapes, the phosphor tube:
-                         SPEC 10.5, 10.6, and the host's overlay); screens.rs draws a
-                         system's screens together (SPEC 12.3); soft/ is the software
+                         SPEC §vector.layers, §vector.phosphor, and the host's overlay); screens.rs draws a
+                         system's screens together (SPEC §machines.screens); soft/ is the software
                          renderer of the same picture (see Software renderer); page.rs
                          lays the page out with cosmic-text on a worker thread and draws
                          it; consent.rs the consent prompt; setup.rs the relay choice and
@@ -530,8 +535,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
 ## Writing programs
 
 A program is RV32IMC machine code in ROM from `0001_0000h`, with RAM from
-`0010_0000h` (SPEC 1.2). It starts at the first ROM byte with `sp` at the end of
-RAM and all RAM zero, and reaches the devices with `ecall` (SPEC 3): call number
+`0010_0000h` (SPEC §memory). It starts at the first ROM byte with `sp` at the end of
+RAM and all RAM zero, and reaches the devices with `ecall` (SPEC §calls): call number
 in `a7`, arguments in `a0`–`a5`, result in `a0` (and `a1`). There are no
 interrupts: a program does a frame's work and calls `wait_frame`; if it runs out
 of budget it is simply paused until the next frame.
@@ -556,7 +561,7 @@ packed with `terse pack`. For C, `programs/lib` provides:
   `terse_call4` for calls with four arguments, and `memcpy`, `memset`,
   `memmove`, `memcmp`.
   `term_write` repeats the call until every byte is written, since a write stops
-  when the frame's budget runs out (SPEC 8.2).
+  when the frame's budget runs out (SPEC §terminal.calls).
 
 The build (see `programs/reader/build.sh`, which takes `CLANG`, `LLD`, `OBJCOPY`,
 `TERSE` and `CARGO` from the environment):
@@ -572,9 +577,9 @@ The build (see `programs/reader/build.sh`, which takes `CLANG`, `LLD`, `OBJCOPY`
 `--device` lists a device the program requires: a host without it refuses the
 image. A device the program can do without is listed with `--optional` instead
 (`--optional 4:0`, `--optional 6:0`): the program runs on hosts that lack it, and
-asks at start with `terse_has_device(4)` (the `device` call, SPEC 4) whether it
+asks at start with `terse_has_device(4)` (the `device` call, SPEC §system) whether it
 has it. A program meant to run everywhere requires only devices 2 and 3, the
-program profile (SPEC 2.1).
+program profile (SPEC §profiles).
 
 `crt0.S` must come first. There is no C library beyond `terse.c` and no
 compiler runtime: avoid 64-bit division and floating point, or bring the routines
@@ -584,7 +589,7 @@ sources and the same clang give the same image, and each program's test fails if
 its checked-in `.terse` is not what its sources build to (and is skipped when
 clang lacks the riscv32 target).
 
-Costs to keep in mind (SPEC 14): an instruction from ROM costs 1 unit, one from
+Costs to keep in mind (SPEC §charges): an instruction from ROM costs 1 unit, one from
 RAM 4; a call costs 4 on top of its `ecall` (so 5 in all from ROM, 8 from RAM) plus 1 per
 4 bytes it copies, or 64 if it is answered (its result depends on the device's state:
 `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write`
@@ -617,7 +622,7 @@ unit (column × 8, row × 16). With `--shell`, pointer positions are in units of
 whole screen (the shell's), and are mapped into a machine's units when they fall on
 its picture.
 
-A `pad` line connects controller `n` and sets its whole state (SPEC 6) until the
+A `pad` line connects controller `n` and sets its whole state (SPEC §controllers) until the
 next `pad` line for it; controllers are disconnected until their first one.
 `<buttons>` is hexadecimal, byte 1 in bits 0-7 and byte 2 in bits 8-15 (`1` up,
 `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start, `14` A and left); the
@@ -667,7 +672,7 @@ panel:
     ```
 
 The reader shows a table as a grid laid out by the host (the page's Table
-command, SPEC 11.3–11.4: columns as wide as their widest cell, the widest
+command, SPEC §page.document and §page.layout: columns as wide as their widest cell, the widest
 narrowed and wrapped when the table is wider than the column); a reader that does
 not know tables shows its lines as a paragraph.
 
@@ -699,7 +704,7 @@ the reader. After editing the manual:
 entries of your own feed, each with its title, the index last, so that others can
 read it. `cargo test -p terse-cli --test manual` checks the build, that every link
 resolves to a blob every host carries, that the manual names every call, event,
-content operation and status of SPEC.md, and publishing to a relay;
+content operation and status of the machine specification (SPEC.md and spec/), and publishing to a relay;
 `docs/manual/README` has the rules for writing it.
 
 ### The website
@@ -760,7 +765,7 @@ feed_site` checks all this.
 
 ## Named records
 
-A program can keep small data on the machine it runs on: named records (SPEC 9.6),
+A program can keep small data on the machine it runs on: named records (SPEC §content.records),
 each up to 64 KiB, at most 256 records and 1 MiB per program. They belong to the
 program's identity: the feed and name it was published under (or, for a built-in, its
 title), so a new version of a program reads the old version's records; a program run
@@ -770,7 +775,7 @@ leave the machine and no other program can read them. Hosts keep them in
 `~/.local/share/terse`); `terse run` and `terse-host` take `--data`. Sparks keeps its
 high score there, the shell its layout and its session.
 
-The shell's snapshots (SPEC 12.7, below) are kept beside them, in
+The shell's snapshots (SPEC §machines.snapshots, below) are kept beside them, in
 `<data>/snapshots/<owner>/00` … `15` (the owner as for records): private, never sent
 anywhere, one file per slot in the format of STATE.md 4, each written to a temporary
 file, synced and renamed.
@@ -784,7 +789,7 @@ file, synced and renamed.
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (19 KB of ROM, 3 RAM pages) with device 8 (SPEC 12), which starts the host's
+program (19 KB of ROM, 3 RAM pages) with device 8 (SPEC §machines), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
@@ -800,13 +805,13 @@ each one's screen where the shell placed it, and routes input.
   stack (the first machine on the left half, the others stacked on the right; the
   default), grid, zoom (one machine over the whole area, the others hidden but
   still running), and the gallery.
-- **The gallery**: every machine's screen is a panel (a Screen on device 9, SPEC 13.3)
+- **The gallery**: every machine's screen is a panel (a Screen on device 9, SPEC §vector3d.list)
   on a ring behind the glass, in a wireframe monitor case on a stand over a faint
   ground grid, the selected machine at the front on the glass and the others turned
   half way towards the viewer. Left and Right (and the bar's segments) turn the ring
   to the next machine, 20 frames eased; the shell only changes the ring's angles.
   Giving a machine the keyboard (Enter, Esc, a click on its panel, starting a
-  program, which joins the ring) `face`s it (SPEC 12.2): over 20 frames the host
+  program, which joins the ring) `face`s it (SPEC §machines.calls): over 20 frames the host
   moves the whole scene until its panel lies flat over the area below the bar, then
   shows it there as a flat picture, as in zoom; F12 `unface`s it, back to the ring.
   With the launcher open the ring stands right of it.
@@ -818,7 +823,7 @@ each one's screen where the shell placed it, and routes input.
   feeds-updated event), then the machines with their state (a faulted one with the
   fault kind and `pc`, a failed one with the reason: not found, not a valid image,
   needs a device this host does not have, no room). Programs are started by their
-  identity (SPEC 12.2), built-ins too, so their named records follow them. The tiles move to the right of
+  identity (SPEC §machines.calls), built-ins too, so their named records follow them. The tiles move to the right of
   it. Up/Down move the cursor; Enter starts the program under it (the new machine gets
   the keyboard) or gives the keyboard to the machine under it; Esc gives it back to
   the selected machine; Tab or Right / Shift+Tab or Left select the next / previous
@@ -826,7 +831,7 @@ each one's screen where the shell placed it, and routes input.
   goes back); L cycles the layouts; 1–8 select a machine by handle. A click on a
   program starts it, one on a machine selects and focuses it. The layout chosen with
   L and Z is kept in the shell's named record `layout` for the next run.
-- **Sessions** (SPEC 12.7): S in the launcher saves the session: every running or
+- **Sessions** (SPEC §machines.snapshots): S in the launcher saves the session: every running or
   paused machine as a snapshot (its whole state; slots 0, 1, … in handle order) and
   the named record `session` (layout, which machine was selected, how many), with
   "Session saved" or "Could not save the session" in the bar. When the
@@ -843,7 +848,7 @@ each one's screen where the shell placed it, and routes input.
   machine). A machine that exits or faults keeps its tile, with its last picture (a
   fault shown on its bottom row), until X stops it; the keyboard goes back to the
   shell as soon as it exits or faults.
-- **Open requests** (SPEC 4 `open`): a machine may ask the shell to open a program
+- **Open requests** (SPEC §system `open`): a machine may ask the shell to open a program
   (by its identity) or a blob (by its ID); the reader does this when you follow a
   link to a program, an image or a document. The shell takes them one at a time, only
   from the machine that has the keyboard, at most one a second from each, and drops a
@@ -853,7 +858,7 @@ each one's screen where the shell placed it, and routes input.
   `reader asks to start Tool by Alice 3fa9c2…c21e07. Y/N` (the keyboard goes to the
   shell until you answer): Y starts it in a new tile with the keyboard, N or Esc does
   not. For a blob the shell reads its first bytes: an image (`TERS`) is asked about as
-  an unpublished program (its title and short ID); a document (`TDOC`, SPEC 9.7) starts
+  an unpublished program (its title and short ID); a document (`TDOC`, SPEC §content.documents) starts
   its format's program with the document as its argument (a published format is asked
   about the first time in a run); anything else opens in a new reader tile. A failure
   (not found, no free handle) is a brief message in the bar.
@@ -966,7 +971,7 @@ current with Tab or Shift+Tab (it turns amber, the status row shows its target a
 the page scrolls just enough to show its line) and pressing Enter, opens the article
 or the feed's page. After you scroll, Tab starts again from the first link at the
 top of the view (Shift+Tab from the last one above its bottom): the reader finds it
-by asking the page where links are (`locate`, SPEC 11.2), a binary search of one
+by asking the page where links are (`locate`, SPEC §page.calls), a binary search of one
 question a frame. The article opened by a link has the title of the
 timeline's entry for that blob if your host has one, else its ID's short form; one
 that is missing, larger than the 48 KiB the reader shows, or cannot be fetched gets
@@ -1083,7 +1088,7 @@ first use of its font) took up to 23 ms once, rasterising its glyphs.
 
 Figures: `cargo test --release -p terse-host figure_raster_time -- --ignored
 --nocapture` rasterises hostile 64 KiB documents, each figure as costly as the caps
-of SPEC 11.3 allow in one way (full-height curves, 5,000 tiny cubics, 256 small
+of SPEC §page.document allow in one way (full-height curves, 5,000 tiny cubics, 256 small
 paths, strokes 4,096 units wide, narrow full-height strips, many figures). One
 figure takes at most about 11 ms at 2 pixels per unit and 15 ms at 3 (outlines up
 to 14 ms); the figures of the first screen and its margin, the most a scroll asks
@@ -1097,7 +1102,7 @@ max 8.7 ms, 3 MiB of figure textures; no frame dropped in either.
 
 ## Vector display
 
-Device 3 (SPEC 10) draws a display list of lines, circle outlines, discs,
+Device 3 (SPEC §vector) draws a display list of lines, circle outlines, discs,
 rectangles and triangles. A program builds the list in RAM and submits it (1 unit
 per 4 bytes); the device keeps its copy and the host draws it every frame until
 the next submit or clear. Coordinates are sixteenths of a screen unit, so the
@@ -1109,7 +1114,7 @@ colour and width tracked, the list's end rules and the fill cap applied);
 `decode_outlines` gives what the phosphor style and fill mode 1 draw (a disc as a
 circle, a rectangle as four lines, a triangle as three), and `Vector::shapes`
 picks between them. `terse-host`, `terse run --dump-vectors` and the tests all
-draw or print from these. **Fill cap** (SPEC 10.4): the filled shapes of one list
+draw or print from these. **Fill cap** (SPEC §vector.fill-cap): the filled shapes of one list
 may cover at most four screens of area (each counted by its bounding box, clipped
 to the screen); the fill that would go past that, and every fill after it, is not
 drawn, while lines and circles go on. **Fill mode** (`vec_fill(VEC_FILL_OFF)`)
@@ -1119,7 +1124,7 @@ draws every filled shape as its outline in the clean style.
 (round ends, antialiased), rectangles and triangles as plain triangles, blended in
 list order, clipped to the screen, and re-uploads them only when the list changes.
 The screen is the terminal grid's rectangle, which is 4:3, so a circle is round.
-Layers in the clean style (SPEC 10.5): cell backgrounds, then shapes, then glyphs
+Layers in the clean style (SPEC §vector.layers): cell backgrounds, then shapes, then glyphs
 and the cursor, so text is always readable over shapes.
 
 From C (`programs/lib/terse.h`), the builder appends to a buffer you own:
@@ -1138,7 +1143,7 @@ the rest.
 
 ### Phosphor style
 
-`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC 10.6) turns the whole screen into a vector
+`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) turns the whole screen into a vector
 monitor tube: the background is black (cell backgrounds are not drawn), shapes
 are outlines that add light instead of covering, and the terminal's text is light
 on the same tube. What the program shows now is drawn at full brightness each
@@ -1188,7 +1193,7 @@ many pixels across the line are at least 100 and at least 40 (core and bloom):
 | twice | 226 | 6 | 10 | 239 | 12 | 18 |
 | four times | 240 | 8 | 10 | 248 | 14 | 22 |
 
-A program can therefore brighten a line by drawing it more than once (SPEC 10.6);
+A program can therefore brighten a line by drawing it more than once (SPEC §vector.phosphor);
 Sparks does that with its arena border and craft.
 
 `--no-trails` turns the afterglow off, for anyone who finds it distracting;
@@ -1204,7 +1209,7 @@ Try it in Sparks (P switches style):
 
 ## 3D vector display
 
-Device 9 (SPEC 13) draws lines, points and circles placed in depth: the program
+Device 9 (SPEC §vector3d) draws lines, points and circles placed in depth: the program
 gives geometry, the host projects it. Coordinates are sixteenths of a screen unit,
 x right and y down as on the screen and z away from the viewer, with 0 at the glass
 (the screen's plane). The reference eye is at (320, 240, −960); a point is drawn at
@@ -1237,7 +1242,7 @@ list: each places that machine's whole screen as a flat 4:3 panel centred on the
 transform's origin, in its xy plane (with the identity it lies like the glass),
 drawn in perspective from the eye and hiding the shell's lines behind it like a face.
 The shell's screen is then drawn first without its 3D lines, the panels far to near
-over it, the lines over them, and flat pictures over everything (SPEC 12.3). Each
+over it, the lines over them, and flat pictures over everything (SPEC §machines.screens). Each
 panel's machine is drawn into a picture of its own at about the panel's size on the
 screen (a whole glyph cell per 80th, at most the shell's own), mipmapped (both
 renderers: trilinear, and anisotropic on the GPU), so text on a turning panel does
@@ -1247,7 +1252,7 @@ move the whole scene (a rigid motion and scale, eased) until a panel lies flat o
 the glass over a rectangle and then show that machine flat there, pixel for pixel
 as `place` would; the view's progress counts the shell's frames and is in its
 state. `--panels flat` makes the software renderer draw each panel's picture
-upright in the rectangle the panel covers instead (the fallback SPEC 12.3 allows a
+upright in the rectangle the panel covers instead (the fallback SPEC §machines.screens allows a
 host that cannot draw in perspective).
 
 **Faces** (Face, opcode `0Ch`: 3 or 4 corners) draw nothing but hide the lines,
@@ -1357,14 +1362,14 @@ Surfaces and a click through its tilted console from three eyes).
 
 ## Page
 
-Device 7 (SPEC 11) shows typeset prose: proportional fonts, shaped (ligatures,
+Device 7 (SPEC §page) shows typeset prose: proportional fonts, shaped (ligatures,
 Arabic joining), bidirectional, broken into lines at the width of a rectangle the
 program chooses. The program builds a **document** (a short binary list like a
 display list: Text, Font, Size, Colour, Paragraph, Rule, Anchor, Figure, Table, Cell, End table; at most
 65,536 bytes) in ROM or RAM and submits it (1 unit per 4 bytes); it sets the rectangle,
 the scroll value (screen units from the top of the document) and the background.
 The host lays the document out with its own fonts and draws the part in view,
-between the cell backgrounds and the vector shapes (SPEC 10.5). The program learns
+between the cell backgrounds and the vector shapes (SPEC §vector.layers). The program learns
 two facts about the layout, each from input events: the document's height (`08h`),
 which arrives some frames after a submit, a clear or a width change, and, when it
 calls `locate` with an anchor id, the y and height of the first line or figure with
@@ -1379,7 +1384,7 @@ From C (`programs/lib/terse.h`), a builder appends commands to a buffer you own,
 much like the display-list builder (see the header for the exact names).
 
 **Reference layout.** `terse run` has no fonts; it lays documents out with the
-reference layout of SPEC 11.6 (every character half its size wide, a wide one its
+reference layout of SPEC §page.reference (every character half its size wide, a wide one its
 size, lines 1.25 × size high, greedy wrapping at spaces), which is deterministic
 and what the golden tests and the conformance hashes use. It is not what users see.
 `terse run … --dump --dump-page` prints the lines in view:
@@ -1401,7 +1406,7 @@ Quadratic, Cubic and Close, with coordinates in sixteenths of a unit from the
 figure's corner. Each run of subpaths between Fill/Stroke changes is filled
 (non-zero) and then stroked with round joins. Three caps per figure (256 paths, an
 area of 8 × the figure's, a total path length) keep a hostile document cheap to
-draw (SPEC 11.3). With the vector display in the phosphor style or fill mode 1,
+draw (SPEC §page.document). With the vector display in the phosphor style or fill mode 1,
 figures are outlines, and in the phosphor style they glow like the text.
 
 **In `terse-host`.** [cosmic-text](https://crates.io/crates/cosmic-text) lays the
@@ -1483,12 +1488,12 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
 - The high score (`HIGH` in the HUD) is the named record `high-score`, four bytes
   little-endian: asked for in frame 0 and shown when it arrives (the first frame does
   not wait), saved when a game beats it ("New high score!").
-- Content is optional (SPEC 2): sparks requires devices 2 and 3 only, so it runs on a
+- Content is optional (SPEC §image): sparks requires devices 2 and 3 only, so it runs on a
   host of the program profile (`--profile program`); there the high score lasts for
   the session, and the game is otherwise the same.
 
 In the phosphor style Sparks draws the arena border and the craft twice, so they
-shine brighter than the sparks (overdraw adds light, SPEC 10.6); the list is
+shine brighter than the sparks (overdraw adds light, SPEC §vector.phosphor); the list is
 otherwise the same in both styles.
 
 The HUD (row 0) and the title and game-over boxes are terminal text on coloured
@@ -1520,7 +1525,7 @@ ROM 6,464 bytes, 1 RAM page; devices 2, 3 and 4.
 ## Sketch
 
 `programs/sketch` is a small drawing program for the vector display, in C, built in
-so that documents (SPEC 9.7) have a program to open them. Draw strokes with the
+so that documents (SPEC §content.documents) have a program to open them. Draw strokes with the
 pointer (press and drag); 1–6 choose the colour (white, red, yellow, green, blue,
 magenta, shown by the disc at the bottom right), U undoes the last stroke, C clears,
 F switches between the clean and the [phosphor](#phosphor-style) style.
@@ -1543,7 +1548,7 @@ not kept", draws as ever and cannot save or publish. Tests:
 
 ## Sound
 
-Device 6 (SPEC 18) is a 16-voice wavetable synthesizer in the spirit of the MSX SCC,
+Device 6 (SPEC §sound) is a 16-voice wavetable synthesizer in the spirit of the MSX SCC,
 with pairing (one voice moves another's phase), feedback and ring modulation, noise
 and four sample slots; 48,000 Hz stereo, 800 sample pairs a frame, every step integer
 and specified to the bit. It is optional: the reading profile does not have it.
@@ -1601,7 +1606,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   overwrites its own next instructions, an `ecall` from RAM, an instruction pair in
   the last bytes of RAM;
 - the budget, by counting a loop's calls per frame, which a model in `conform.c`
-  predicts from the constants of SPEC 1.4 and 11 (a loop of period p whose call is
+  predicts from the constants of SPEC §frames and §charges (a loop of period p whose call is
   k units in, starting s units into a frame of budget b, makes ⌈(b − s − k) / p⌉
   calls): a ROM loop 17,856 17,856 17,857; the same loop in RAM 7,811 each frame;
   a loop with a scroll in it 758 758 757 (the deficit carried; a host that drops it
@@ -1646,7 +1651,7 @@ What it checks (the frame plan is in `conform.c`'s header comment):
   fill cap stops the fills), frames 79–108 the worst legal case: fills totalling
   just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
   3,268 translucent lines of width 255 across the screen, about 109 screens of line
-  area (lines are not capped, SPEC 17).
+  area (lines are not capped, SPEC §unspecified).
 
 **The reading profile.** `programs/conform-reading/conform-reading.terse` is the
 same source built with `-DREADING` (`programs/conform-reading/build.sh`), for a host
@@ -1713,7 +1718,7 @@ take): the shell's screen, each machine's picture scaled into its tile, the
 consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind the
 `Display` trait both renderers implement (`display.rs`).
 
-- **What it draws.** Every layer of SPEC 10.5 with the GPU shaders' arithmetic:
+- **What it draws.** Every layer of SPEC §vector.layers with the GPU shaders' arithmetic:
   cell backgrounds; the page (background, glyphs rendered with swash at whole-pixel
   positions, rules, figures rasterised with tiny-skia, scrolled and clipped); the
   vector display (lines, circle outlines and discs by their distance from the pixel

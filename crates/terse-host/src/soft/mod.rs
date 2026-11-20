@@ -1,4 +1,4 @@
-//! The software renderer: the whole picture of a system (SPEC 12.3) drawn
+//! The software renderer: the whole picture of a system (SPEC §machines.screens) drawn
 //! by the CPU into a pixel buffer, the same picture the GPU renderer
 //! (`screens.rs`, `renderer.rs`) draws, for machines without a usable GPU
 //! and for the bootable image, which shows the buffer on a KMS/DRM display
@@ -15,7 +15,7 @@
 //! changed.
 //!
 //! A machine with a 3D scene over its glass (the shell's Screens, any
-//! machine's own Surfaces, SPEC 12.3, 13.5) is put together in an image of
+//! machine's own Surfaces, SPEC §machines.screens, §vector3d.presentation) is put together in an image of
 //! its own when anything of it changed: its screen's image with the
 //! Surfaces' sources blacked out, the panels far to near (a Surface from a
 //! pyramid of that same image, before the sources were blacked out), its
@@ -98,7 +98,7 @@ pub struct SoftScreens {
     pool: Pool,
     frame: Pixels,
     damage: Damage,
-    /// The eye for 3D lists, the same for every machine (SPEC 13.1).
+    /// The eye for 3D lists, the same for every machine (SPEC §vector3d.space).
     eye: Eye,
     /// The damage of the frame drawn last, for presenters.
     last_damage: Vec<IRect>,
@@ -324,8 +324,8 @@ impl Display for SoftScreens {
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels, not in its own screen (SPEC 12.3); with its own
-        // Surfaces, over them (SPEC 13.5).
+        // panels, not in its own screen (SPEC §machines.screens); with its own
+        // Surfaces, over them (SPEC §vector3d.presentation).
         let layers = scene_layers(system, eye).or_else(|| surface_layers(shell, eye));
         show(&mut self.shell, shell, layout(0), eye, layers.is_none());
         self.shell.set_excluded(layers.as_ref().map_or(&[][..], |l| &l.rects));

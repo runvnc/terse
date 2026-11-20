@@ -55,7 +55,7 @@ use crate::glyphs::SystemGlyphs;
 /// Font size in logical pixels.
 pub const FONT_PX: f32 = 18.0;
 
-/// The machine frames whose phosphor light (SPEC 10.6) a `--screenshot`
+/// The machine frames whose phosphor light (SPEC §vector.phosphor) a `--screenshot`
 /// draws: a trail fades below 2% within 60 frames at persistence 240, and
 /// below 10% within 600 at 255.
 const PHOSPHOR_FRAMES: u64 = 600;
@@ -78,17 +78,17 @@ const USAGE: &str = "usage:
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
-  3D vector display (device 9, SPEC 13): in a window the eye follows the pointer (parallax): the
+  3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
   puts the eye there for --screenshot and --bench-render (and keeps it there with --parallax off).
   --panels: how the software renderer draws the machines the shell shows as panels in its 3D
-  scene (SPEC 13.3 Screen): in perspective (perspective, auto: the default) or flat, upright in
+  scene (SPEC §vector3d.list Screen): in perspective (perspective, auto: the default) or flat, upright in
   the rectangle the panel covers; the GPU renderer always draws them in perspective.
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
   threads; default one per core).
-  With no image, runs the shell built into terse-host (programs/shell, SPEC 12): it starts the
+  With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
   built-in programs (reader, sparks, fetch, hello, sketch, holo, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
   launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
@@ -106,9 +106,9 @@ const USAGE: &str = "usage:
   --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
   terse: links in it (NETWORK 4.4). --no-program-download: do not download the current version of
   each program of the subscribed feeds as it arrives (NETWORK 4.4).
-  --data: where programs' named records are kept, in records/ (SPEC 9.6; default
+  --data: where programs' named records are kept, in records/ (SPEC §content.records; default
   $XDG_DATA_HOME/terse, else ~/.local/share/terse). They never leave this machine.
-  --consent: how requests by a program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC 9.5) are
+  --consent: how requests by a program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC §content.feeds) are
   answered: ask shows the host's prompt at the bottom of the window, naming the program (Y allows,
   N or Esc refuses); default ask in the window, deny for --screenshot and --selftest (where nobody
   can answer; a --screenshot with ask shows the prompt, unanswered).
@@ -120,7 +120,7 @@ const USAGE: &str = "usage:
   letterboxed in it at 4:3.
   --selftest runs N frames (default 200) in the window with only the scripted input (default:
   the image's name with .events, if that file exists) and prints per-frame timings;
-  --csv writes them per frame. --no-trails: the phosphor display style (SPEC 10.6) without
+  --csv writes them per frame. --no-trails: the phosphor display style (SPEC §vector.phosphor) without
   persistence. --force-phosphor: show the phosphor presentation (the whole screen as a glowing
   tube) whatever style the program sets; for testing. --font: draw the grid with this font (a
   family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
@@ -313,7 +313,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         Some(p) => image_bytes(p, &mut node)?,
     };
     let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-    // SPEC 12.2: the built-in programs, in the store for the shell.
+    // SPEC §machines.calls: the built-in programs, in the store for the shell.
     let mut builtins = Vec::new();
     if shell {
         let extra = extra_builtins.iter().map(|a| image_bytes(a, &mut node)).collect::<Result<Vec<_>, _>>()?;
@@ -330,7 +330,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 Some(node) => node,
                 None => open_node()?,
             };
-            // SPEC 9.5: the feeds are those of the subscription list, which
+            // SPEC §content.feeds: the feeds are those of the subscription list, which
             // the node also follows on the relay (NETWORK 4.4); publishing
             // uses (and if need be creates) the identity in the config
             // directory.
@@ -344,7 +344,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Some(ContentService::start_with_consent(node, consent))
         }
     };
-    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    // The built-in shell has the identity of a built-in (SPEC §machines.calls).
     let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
     let program = Program { image, shell, builtins, identity, data };
 
@@ -414,9 +414,9 @@ pub struct Program {
     pub image: Image,
     pub shell: bool,
     pub builtins: Vec<[u8; 32]>,
-    /// The built-in shell's identity (SPEC 12.2), for its named records.
+    /// The built-in shell's identity (SPEC §machines.calls), for its named records.
     pub identity: Option<terse_core::ProgramId>,
-    /// The data directory: the shell's snapshots (SPEC 12.7).
+    /// The data directory: the shell's snapshots (SPEC §machines.snapshots).
     pub data: PathBuf,
 }
 
@@ -452,14 +452,14 @@ pub struct Looks {
     pub threads: usize,
     /// `--bloom`: the software renderer's phosphor bloom resolution.
     pub bloom: soft::BloomRes,
-    /// `--eye`: where the eye is for 3D lists (SPEC 13.1), screen units
+    /// `--eye`: where the eye is for 3D lists (SPEC §vector3d.space), screen units
     /// from the reference eye; in a window with parallax, where it rests.
     pub eye: display::Eye,
     /// `--parallax pointer` (the default): in a window the eye follows the
     /// pointer; `off`: it stays at `eye`.
     pub parallax: bool,
     /// `--panels`: how the software renderer draws the shell's panels
-    /// (SPEC 12.3); the GPU renderer draws them in perspective.
+    /// (SPEC §machines.screens); the GPU renderer draws them in perspective.
     pub panels: soft::panel::PanelMode,
 }
 
@@ -601,7 +601,7 @@ fn run_headless(
     }
     let mut display = headless_display(&looks)?;
     let bench = matches!(mode, Headless::Bench { .. });
-    // SPEC 11: a screenshot shows the finished page (no scroll animation,
+    // SPEC §page: a screenshot shows the finished page (no scroll animation,
     // figures rasterised at once); a benchmark draws as a window does.
     display.configure(looks.no_trails, looks.force_phosphor, bench);
     display.set_eye(looks.eye);

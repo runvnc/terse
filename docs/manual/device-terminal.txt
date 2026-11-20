@@ -1,6 +1,6 @@
 # The terminal (device 2)
 
-The terminal is a grid of 80 columns by 30 rows of character cells, held by the device rather than in the program's memory. A program writes UTF-8 text to it the way it would to a simple console, or reads and writes the cells directly. It is the text layer of the screen: the host draws it over the vector displays and the page.
+The terminal is a grid of 80 columns by 30 rows of character cells, held by the device rather than in the program's memory. A program writes UTF-8 text to it the way it would to a simple console, or reads and writes the cells directly. It is the text layer of the screen: the host draws it over the vector displays and the page. The exact rules are in SPEC.md, the core machine (§terminal).
 
 ## Getting the device
 

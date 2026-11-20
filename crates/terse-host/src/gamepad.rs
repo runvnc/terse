@@ -1,4 +1,4 @@
-//! Game controllers (SPEC 6) through gilrs.
+//! Game controllers (SPEC §controllers) through gilrs.
 //!
 //! Connected gamepads take the lowest free controller number and keep it
 //! until they disconnect. Without gamepad support (gilrs could not start)
@@ -12,7 +12,7 @@ pub struct Gamepads {
     slots: [Option<GamepadId>; CONTROLLERS],
 }
 
-/// SPEC 6 bytes 1 and 2, in bit order.
+/// SPEC §controllers bytes 1 and 2, in bit order.
 const BUTTONS: [(Button, u16); 16] = [
     (Button::DPadUp, pad::UP),
     (Button::DPadDown, pad::DOWN),

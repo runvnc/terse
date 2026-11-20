@@ -5,7 +5,7 @@ relays, feeds, entries, profiles and names, search. (b) Terse articles,
 `ARTICLE.md`: the article format and what a reader must show for it.
 (a) and (b) are **the core**: a native reader that implements them, with
 no virtual machine, is a complete, conforming Terse client (section 6
-says what it must do). (c) The Terse machine, `SPEC.md` and `STATE.md`:
+says what it must do). (c) The Terse machine, `SPEC.md` (with its device documents, `spec/`) and `STATE.md`:
 an optional layer that reuses the core. Nothing in this document depends
 on (c); what the network means for a machine host is collected in
 section 7, which a reader implementer can skip.
@@ -38,9 +38,9 @@ that points at it (section 4.2) and, for a blob reached without one (by
 an article link, `ARTICLE.md` section 4), by its first bytes:
 
 - a blob that starts with the four bytes `TERS` is a **program image**
-  for the Terse machine (`SPEC.md` section 2);
+  for the Terse machine (`SPEC.md` §image);
 - a blob that starts with the four bytes `TDOC` is a **document**, data
-  for a program (`SPEC.md` section 9.7);
+  for a program (`spec/content.md` §content.documents);
 - any other blob reached as an article is an **article**, UTF-8 text
   (`ARTICLE.md`).
 
@@ -561,21 +561,20 @@ This section concerns only clients that run the Terse machine
 (`SPEC.md`); a reader implementer can skip it.
 
 - Programs never see this protocol. They use the content device
-  (`SPEC.md` section 9); the host speaks the protocol on their behalf.
+  (`spec/content.md` §content); the host speaks the protocol on their behalf.
   Programs never see secret keys.
 - Subscribing, unsubscribing, publishing, setting the profile and
   setting a nickname may be asked for by a program; the host asks the
-  user's consent first (`SPEC.md` section 9.5). The timeline of section
-  4.4 is what a program reads with the timeline operation (`SPEC.md`
-  section 9.5).
+  user's consent first (`spec/content.md` §content.feeds). The timeline of section
+  4.4 is what a program reads with the timeline operation (`spec/content.md` §content.feeds).
 - A host may start a program by image ID: it gets the blob, validates it
-  as an image (`SPEC.md` section 2) and runs it. A program's identity,
-  (feed key, name) of section 4.2, is the one of `SPEC.md` section 12.1;
+  as an image (`SPEC.md` §image) and runs it. A program's identity,
+  (feed key, name) of section 4.2, is the one of `spec/machines.md` §machines.shell;
   a host looks a program up (section 4.8) when a shell starts a program
-  it holds no entry for (`SPEC.md` section 12.2, `start_program`), and
+  it holds no entry for (`spec/machines.md` §machines.calls, `start_program`), and
   downloads programs as section 4.4 says.
 - A host that publishes a document for a program checks first that the
-  blob starts with a document header (`SPEC.md` sections 9.5, 9.7).
+  blob starts with a document header (`spec/content.md` §content.feeds, §content.documents).
 - The built-in reader shows articles by `ARTICLE.md` on the page device
   (`ARTICLE.md` section 11).
 

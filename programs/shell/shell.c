@@ -1,5 +1,5 @@
 /* shell: starts the host's built-in programs as machines of their own and
- * lays their screens out as tiles (device 8, SPEC 12); built with clang
+ * lays their screens out as tiles (device 8, SPEC §machines); built with clang
  * (see build.sh).
  *
  * Row 0 is a bar: the home segment, one segment per machine (handle, a
@@ -9,10 +9,10 @@
  * the right, or a grid; each picture at the top of its tile. The focused machine has a blue frame, drawn with
  * the vector display in the gap around its picture. The fourth layout,
  * the gallery, stands the machines' screens on a ring in the 3D display
- * (device 9 Screens, SPEC 13.3), each in a wireframe box on a stand over a
+ * (device 9 Screens, SPEC §vector3d.list), each in a wireframe box on a stand over a
  * faint ground grid, the selected one at the front on the glass; the ring
  * turns (eased over 20 frames) to bring another to the front, and the
- * machine with the focus is faced (SPEC 12.2 face): its panel flies flat
+ * machine with the focus is faced (SPEC §machines.calls face): its panel flies flat
  * into the area below the bar and is shown there as a zoomed tile; the
  * home key flies it back.
  *
@@ -34,9 +34,9 @@
  * machine by handle. A press on a machine's picture (or panel) or its bar
  * segment focuses it (in the gallery a bar segment turns the ring to it, in
  * command mode); one on the home segment enters command mode. The layout
- * chosen with L and Z is kept in the named record "layout" (SPEC 9.6).
+ * chosen with L and Z is kept in the named record "layout" (SPEC §content.records).
  *
- * Open requests (SPEC 4 `open`, 12.2 `request`): a machine may ask the
+ * Open requests (SPEC §system `open`, 12.2 `request`): a machine may ask the
  * shell to open a program or a blob. The shell takes one request at a
  * time (the others wait, so their machines' `open` returns 0) and only
  * from the machine that has the focus, at most one a second from each;
@@ -56,7 +56,7 @@
  * blob as its argument. Failures (not found, no free handle) are a brief
  * message in the bar.
  *
- * Sessions (SPEC 12.7): S in command mode keeps every running or paused
+ * Sessions (SPEC §machines.snapshots): S in command mode keeps every running or paused
  * machine as a snapshot, in slots 0, 1, ... in handle order, and then the
  * record "session": version 1, layout, before_zoom, the slot of the
  * selected machine (FFh: none) and the number of machines; the bar says
@@ -290,7 +290,7 @@ static uint16_t utf8_next(const uint8_t **p)
 /* --- Layout -------------------------------------------------------------- */
 
 /* Where a 640 x 480 picture lies in r: scaled to fit and centred, exactly
- * as the host does it (SPEC 12.3). */
+ * as the host does it (SPEC §machines.screens). */
 static rect fit(rect r)
 {
     rect p;
@@ -658,7 +658,7 @@ static void draw_bar(void)
     term_cells_write(0, bar, TERM_COLS);
 }
 
-/* Why a start failed (SPEC 12.2), in words. */
+/* Why a start failed (SPEC §machines.calls), in words. */
 static const char *failure_name(uint8_t f)
 {
     static const char *const names[] = { "could not start", "not found", "not a valid image",
@@ -1500,7 +1500,7 @@ static void press(uint16_t x, uint16_t y)
     }
 }
 
-/* The programs records (timeline records, SPEC 9.5) into fprog. */
+/* The programs records (timeline records, SPEC §content.feeds) into fprog. */
 static void take_programs(void)
 {
     uint32_t at = 0, len = progs_req.length;

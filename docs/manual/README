@@ -20,11 +20,12 @@ publish`.
   `build/<name>.txt` and `build/manifest` (`<blob ID> <name> <title>` per
   line). It fails on a link to an unknown name or a cycle. The build is
   checked in: `terse-net` embeds it (every host puts the articles in its
-  store at start), and programs/reader/build.sh compiles the index's ID
-  into the reader, so after a change run, in order:
+  store at start), and programs/reader/build.sh and programs/shell/build.sh compile the index's ID
+  into the reader and the shell, so after a change run, in order:
 
       cargo run -p terse-cli --bin terse -- manual build
       programs/reader/build.sh
+      programs/shell/build.sh
       cargo run -p terse-cli --bin terse -- manual site --out site
 
   The last one regenerates `site/`, the manual as a static website
@@ -32,7 +33,8 @@ publish`.
 
   `cargo test -p terse-cli --test manual` checks that the build and
   `site/` are up to date, that every link resolves, and that the manual names every call,
-  event, content operation and status of SPEC.md; `--test reader` that
+  event, content operation and status of the machine specification (SPEC.md and spec/;
+  `--test spec` checks their ids, citations and tables); `--test reader` that
   the reader holds the current index's ID and shows every article whole.
 - Keep each article under about 14 KB (built, with its links resolved, it
   must stay within the 16,384 bytes a host downloads automatically, which

@@ -3,22 +3,22 @@
  * 2D vector display (device 3) for everything else; built with clang (see
  * build.sh).
  *
- * Coordinates are sixteenths of a screen unit (SPEC 10.1). Angles are 0-255
+ * Coordinates are sixteenths of a screen unit (SPEC §vector.coordinates). Angles are 0-255
  * (a full turn; 0 points right, 64 down), sines come from a table, and
  * fmul() scales by them. All randomness mixes in the host's random bytes,
  * so a run is reproducible from its recorded inputs.
  *
  * Controls: Left/Right turn, Up thrusts, Enter starts, Esc quits, P switches
- * between the clean and the phosphor display style (SPEC 10.6), F turns the
- * fill of filled shapes off and on (outlines; SPEC 10.2). Controller 0:
+ * between the clean and the phosphor display style (SPEC §vector.phosphor), F turns the
+ * fill of filled shapes off and on (outlines; SPEC §vector.calls). Controller 0:
  * d-pad or left stick turns, A, d-pad up or stick up thrusts, A or Start
  * starts, Y switches the style, X the fill.
  *
- * The high score is a named record, "high-score" (SPEC 9.6): four bytes,
+ * The high score is a named record, "high-score" (SPEC §content.records): four bytes,
  * little-endian. It is asked for in the first frame and shown once it
  * arrives; a game that beats it saves the new one.
  *
- * Content (device 4) is optional (SPEC 2; build.sh packs it with
+ * Content (device 4) is optional (SPEC §image; build.sh packs it with
  * --optional): sparks runs on a host of the program profile, devices 1, 2
  * and 3 only. Without device 4 the record calls return TERSE_ERR_UNKNOWN,
  * which is no handle (load_handle keeps its low byte, FFh, and no content
@@ -617,7 +617,7 @@ static void draw(void)
         }
     }
     /* The title and game-over boxes: their cell backgrounds are below every
-     * shape (SPEC 10.5), so a near-opaque panel of the same colour, last in
+     * shape (SPEC §vector.layers), so a near-opaque panel of the same colour, last in
      * the list, keeps the shapes behind the text from showing through. */
     if (state != PLAY) {
         vec_colour(48, 48, 48, 230);

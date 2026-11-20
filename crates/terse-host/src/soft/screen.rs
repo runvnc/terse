@@ -1,6 +1,6 @@
 //! One machine's screen in the software renderer: the terminal, the page
-//! and the vector display combined in the layer order of SPEC 10.5 (or as
-//! one phosphor tube, SPEC 10.6), drawn into an image of the pixels the
+//! and the vector display combined in the layer order of SPEC §vector.layers (or as
+//! one phosphor tube, SPEC §vector.phosphor), drawn into an image of the pixels the
 //! screen covers. The same picture as `renderer.rs` draws on the GPU:
 //!
 //! 1. each pixel takes its cell's background colour (outside the grid, in
@@ -215,7 +215,7 @@ pub struct SoftScreen {
     tube_overlay: u32,
     bloom: BloomRes,
     /// The sources of the machine's Surfaces (screen units), which give no
-    /// phosphor light (SPEC 13.5).
+    /// phosphor light (SPEC §vector3d.presentation).
     excluded: Vec<[u16; 4]>,
 }
 
@@ -260,7 +260,7 @@ impl SoftScreen {
         }
     }
 
-    /// The sources of the machine's Surfaces (SPEC 13.5): in the phosphor
+    /// The sources of the machine's Surfaces (SPEC §vector3d.presentation): in the phosphor
     /// style they give no light (the clean style's glass is blacked out
     /// there when the Surfaces are put together over it).
     pub fn set_excluded(&mut self, rects: &[[u16; 4]]) {
@@ -355,7 +355,7 @@ impl SoftScreen {
         IRect::covering((x, y, w, h)).intersect(&IRect::of_size(viewport)).intersect(&IRect::new(i32::MIN, top.floor() as i32, i32::MAX, i32::MAX))
     }
 
-    /// Takes the terminal (SPEC 8.6: presentation is up to the host).
+    /// Takes the terminal (SPEC §terminal.presentation: presentation is up to the host).
     pub fn update(&mut self, terminal: &Terminal) {
         let (col, row) = terminal.cursor();
         self.cursor = terminal.cursor_visible().then_some((col as u32, row as u32));
@@ -379,7 +379,7 @@ impl SoftScreen {
             let mut col = 0;
             while col < COLS {
                 let cell = terminal.cell(col, row);
-                // SPEC 8.1: a character followed by FFFFh is drawn across both cells.
+                // SPEC §terminal.cells: a character followed by FFFFh is drawn across both cells.
                 let wide = cell.ch != CONTINUATION && col + 1 < COLS && terminal.cell(col + 1, row).ch == CONTINUATION;
                 let slot = if cell.ch == CONTINUATION { 0 } else { self.slot_for(cell.ch, wide) };
                 any |= slot != 0;

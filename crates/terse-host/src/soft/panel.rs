@@ -1,4 +1,4 @@
-//! Panels in the software renderer (SPEC 12.3, 13.3 Screen): a machine's
+//! Panels in the software renderer (SPEC §machines.screens, §vector3d.list Screen): a machine's
 //! picture drawn in perspective onto the shell's screen. The machine is
 //! drawn into an image of its own (`SoftScreen` with a rectangle at the
 //! origin); a pyramid of that image, each level half the one before,
@@ -247,7 +247,7 @@ impl Placed {
 
     /// Flat (the fallback): where the picture is drawn upright, scaled
     /// to fit the bounding rectangle of the projection and centred in it
-    /// (as SPEC 12.3 fits a picture): (x, y, w, h) in pixels.
+    /// (as SPEC §machines.screens fits a picture): (x, y, w, h) in pixels.
     fn fitted(&self) -> (f32, f32, f32, f32) {
         let b = self.bounds();
         let (w, h) = (b.width().saturating_sub(1).max(1) as f32, b.height().saturating_sub(1).max(1) as f32);

@@ -1,4 +1,4 @@
-//! The host's built-in programs (SPEC 12.2 `builtin`) and the shell: the
+//! The host's built-in programs (SPEC §machines.calls `builtin`) and the shell: the
 //! images every host binary carries, put into its store at start so that a
 //! shell can start them by ID.
 

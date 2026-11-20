@@ -177,7 +177,7 @@ fn group(n: usize) -> String {
     out
 }
 
-/// SPEC 9.5: subscribe, publish and identity requests are inputs like any
+/// SPEC §content.feeds: subscribe, publish and identity requests are inputs like any
 /// other completion: the same inputs replay to the same hashes, the pending
 /// records are in the state, and a different answer gives a different state.
 #[test]
@@ -235,7 +235,7 @@ fn feed_operations_replay() {
     assert_ne!(a[1], refused[1], "refused and done differ");
 }
 
-/// SPEC 9.5 and 12: find, set profile and set nickname copy their query or
+/// SPEC §content.feeds and §machines: find, set profile and set nickname copy their query or
 /// name at submit and are charged for it (1 per 4 bytes); names and find are
 /// records requests; the same inputs replay to the same hashes.
 #[test]
@@ -305,7 +305,7 @@ fn names_find_and_profile_operations_replay() {
     assert_ne!(a[0], b[0], "the name lengths are state");
 }
 
-/// `locate` (SPEC 11.2): results, the frame's locates handed to the host
+/// `locate` (SPEC §page.calls): results, the frame's locates handed to the host
 /// (not state), and the two answer events queued together or not at all.
 #[test]
 fn page_locate() {
@@ -338,7 +338,7 @@ fn page_locate() {
     assert_eq!(r.events_dropped, 2);
 }
 
-/// SPEC 9.6: save, load and records requests are inputs like any other
+/// SPEC §content.records: save, load and records requests are inputs like any other
 /// completion: the same answers replay to the same hashes, the pending
 /// records (with the names) are in the state, a save's data is not, and a
 /// different loaded record gives a different state.
@@ -406,7 +406,7 @@ fn named_records_replay() {
     let other_load = run(0x6463_6261, b'k', b"wxyz").1;
     assert_eq!(a[0], other_load[0]);
     assert_ne!(a[1], other_load[1], "what a load delivers is an input");
-    // The save's 4 bytes cost 1 unit at submit (SPEC 14).
+    // The save's 4 bytes cost 1 unit at submit (SPEC §charges).
     let mut empty = Machine::new(&common::program(&assemble(&src(0x6463_6261, b'k').replace("li t1, 4\n    sw t1, 48(t0)", "li t1, 0\n    sw t1, 48(t0)")), 2, &ALL));
     assert_eq!(used - empty.run_frame(&FrameInput::default()).used, 1);
 }

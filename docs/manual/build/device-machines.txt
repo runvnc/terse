@@ -1,6 +1,6 @@
 # The Machines device (device 8)
 
-A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell's.
+A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell's. The exact rules are in spec/machines.md.
 
 ## Who has it
 
@@ -22,7 +22,7 @@ The shell starts machines under handles 1 to 8. Each is a complete, separate mac
 
 Each handle also has a run flag, a rectangle (x, y, width, height in the shell's screen units) and possibly an identity. The focus is a handle, or 0 for the shell. The system also has a view of the shell's 3D scene, set by `face` (see Screens and the view, below).
 
-A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32)).
+A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121)).
 
 ## Calls
 
@@ -114,11 +114,11 @@ The `snapshot_info` record (122 bytes, `mach_snapshot_record`):
 | `0Fh` | Open requested | handle | 0 |
 | `10h` | Snapshot done | slot | 1 stored, 3 failed |
 
-`c` is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted `snapshot`, in call order; failed means the machine was stopped in the same frame or the host could not store it. See [events](terse:fbad2774fb00d4e03bc2b54669a2ed319c903fd00a7c5f768fd2b9edbe77fd4c).
+`c` is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted `snapshot`, in call order; failed means the machine was stopped in the same frame or the host could not store it. See [events](terse:2ff1d91c14260d1a4c8cb78cf69b0cc177e3b69c3a4c7b60dd4362909c06a8ad).
 
 ## Screens and input
 
-A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:e07cd4c8f82a847111ffefc674a8c17bf209b06651123ee50389b7d3603e665b).
+A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:2ced23874196488c6c3681f2ee684d6ac4923a81fff4d60deaec8c6dd9e24fff).
 
 ## The system frame
 
@@ -147,7 +147,7 @@ Each machine is deterministic given its own inputs. The shell's include its devi
 
 ## Charges
 
-Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read) and `snapshot_info` 31, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
+Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read) and `snapshot_info` 31, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).
 
 ## Example: a minimal shell
 

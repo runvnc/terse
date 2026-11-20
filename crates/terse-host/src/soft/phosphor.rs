@@ -1,4 +1,4 @@
-//! The phosphor presentation (SPEC 10.6) on the CPU: the model of
+//! The phosphor presentation (SPEC §vector.phosphor) on the CPU: the model of
 //! `phosphor.rs` with its constants, computed as the GPU renderer's passes
 //! compute it, in linear-light floats the size of the screen:
 //!
@@ -176,7 +176,7 @@ pub struct Light<'a> {
     /// Advance the afterglow (else only the beam is redrawn).
     pub advance: bool,
     /// Rectangles (x0, y0, x1, y1 pixels of the tube) that give no light:
-    /// the sources of the machine's Surfaces (SPEC 13.5).
+    /// the sources of the machine's Surfaces (SPEC §vector3d.presentation).
     pub excluded: &'a [(usize, usize, usize, usize)],
 }
 

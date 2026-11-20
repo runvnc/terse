@@ -1,4 +1,4 @@
-//! Device 6, Sound (SPEC 18): a small wavetable synthesizer with 16
+//! Device 6, Sound (SPEC §sound): a small wavetable synthesizer with 16
 //! voices, specified bit for bit. Pure: it takes the program's command
 //! lists and tables and renders 800 stereo sample pairs at the end of
 //! each frame; a host plays them, writes them to a file or drops them.
@@ -7,7 +7,7 @@
 
 use crate::snapshot::{Reader, RestoreError, bad};
 
-/// The device's slot (SPEC 2).
+/// The device's slot (SPEC §image).
 pub const SLOT: u8 = 6;
 /// Output sample rate, in sample pairs per second.
 pub const RATE: u32 = 48_000;
@@ -26,7 +26,7 @@ pub const MAX_LIST: usize = 4_096;
 /// The envelope's greatest level.
 pub const ENV_MAX: u32 = 0xFF_FFFF;
 /// What the feedback F (the sum of a voice's last two outputs times its
-/// feedback depth) is multiplied by in the table index (SPEC 18.6): the
+/// feedback depth) is multiplied by in the table index (SPEC §sound.sources): the
 /// average × 256, so depth 255 at full output moves the index by about
 /// half a pass (π), the strongest feedback that stays a tone.
 pub const FEEDBACK_SCALE: u32 = 128;
@@ -42,7 +42,7 @@ pub const VOICE_BYTES: usize = 38;
 /// The longest section of the state (STATE.md 1.12).
 pub const MAX_STATE: usize = VOICES * VOICE_BYTES + WAVES * WAVE_LEN + SAMPLE_SLOTS * (8 + MAX_SAMPLE);
 
-/// Command-list opcodes (SPEC 18.3).
+/// Command-list opcodes (SPEC §sound.list).
 pub mod op {
     pub const END: u8 = 0x00;
     pub const VOICE: u8 = 0x01;
@@ -106,7 +106,7 @@ pub fn wav(samples: &[i16]) -> Vec<u8> {
     out
 }
 
-/// One voice (SPEC 18.4).
+/// One voice (SPEC §sound.voices).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Voice {
     pub source: u8,
@@ -171,7 +171,7 @@ impl Voice {
         self.sustain as u32 * 0x01_0101
     }
 
-    /// One envelope step (SPEC 18.5).
+    /// One envelope step (SPEC §sound.render).
     fn step_envelope(&mut self) {
         match self.stage {
             stage::ATTACK => {
@@ -230,7 +230,7 @@ pub struct SampleSlot {
 impl SampleSlot {
     /// A position (16.16, in samples) brought into the sample: as it is,
     /// wrapped into the loop, or `None` past the end of a sample that
-    /// plays once (SPEC 18.6).
+    /// plays once (SPEC §sound.sources).
     fn normalize(&self, p: u64) -> Option<u32> {
         let len = self.data.len() as u64;
         if p < len << 16 {
@@ -245,7 +245,7 @@ impl SampleSlot {
     }
 }
 
-/// The device's state (SPEC 18, STATE.md 1.12) and the last frame's
+/// The device's state (SPEC §sound, STATE.md 1.12) and the last frame's
 /// samples.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sound {
@@ -273,7 +273,7 @@ impl Default for Sound {
 }
 
 impl Sound {
-    /// Carries out a command list (SPEC 18.3) at once: the commands set
+    /// Carries out a command list (SPEC §sound.list) at once: the commands set
     /// the voices' registers, which the next frame's samples use. The list
     /// ends at End, at its last byte, at an unknown opcode, at a command
     /// whose operands are cut off or at an operand out of range; the
@@ -353,7 +353,7 @@ impl Sound {
         s.loop_start = loop_start;
     }
 
-    /// Voice `v`'s output in this sample (SPEC 18.5): `cur` holds the
+    /// Voice `v`'s output in this sample (SPEC §sound.render): `cur` holds the
     /// outputs of voices 0 to v − 1 in this sample; a voice at or above v
     /// is read as it was in the last sample.
     fn voice_sample(&mut self, v: usize, cur: &[i16; VOICES]) -> i16 {
@@ -422,7 +422,7 @@ impl Sound {
         o as i16
     }
 
-    /// Renders the frame's 800 sample pairs (SPEC 18.5): the end of a
+    /// Renders the frame's 800 sample pairs (SPEC §sound.render): the end of a
     /// frame. [`Sound::take_frame`] gives them.
     pub fn render_frame(&mut self) {
         let mut cur = [0i16; VOICES];
@@ -716,9 +716,9 @@ mod tests {
     }
 
     /// A sine (programs/tune's table) at full volume with feedback 255:
-    /// these samples pin SPEC 18.6's feedback, the sum of the voice's last
+    /// these samples pin SPEC §sound.sources's feedback, the sum of the voice's last
     /// two outputs × depth × 128 (the average × 256). An independent model
-    /// of SPEC 18, written in Python, gave them.
+    /// of SPEC §sound, written in Python, gave them.
     #[test]
     fn feedback_samples_exactly() {
         let mut s = Sound::default();
@@ -740,7 +740,7 @@ mod tests {
     /// a voice whose phase repeats exactly locks into an exact cycle even
     /// when its feedback is chaotic; the quarter-sample drift a period
     /// keeps it from that.) Feedback of the last output alone, scaled as
-    /// SPEC 18 first had it, gives a mean difference of 8,000 to 17,000
+    /// SPEC §sound first had it, gives a mean difference of 8,000 to 17,000
     /// here on outputs of about 14,000: it was heard as static.
     #[test]
     fn feedback_stays_periodic() {

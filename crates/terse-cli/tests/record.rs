@@ -186,7 +186,7 @@ fn sparks_session_replays() {
     assert_eq!(replay_ok(&sparks, &rec, &["--hash-every", "1", "--dump", "--dump-vectors"]), recorded);
 }
 
-/// SPEC 2, STATE.md 5: the grants are in the recording, after the
+/// SPEC §image, STATE.md 5: the grants are in the recording, after the
 /// snapshot: sparks without content (`--without 4`, or the program
 /// profile) records 00h and replays without content, on a host that has
 /// it; with content, 01h. Each replays only as it was recorded.

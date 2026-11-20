@@ -1,4 +1,4 @@
-//! Image file format (SPEC 2). Profile 1 is the RV32IMC machine.
+//! Image file format (SPEC §image). Profile 1 is the RV32IMC machine.
 
 use std::fmt;
 
@@ -12,10 +12,10 @@ pub const RAM_PAGES_MAX: u8 = 128;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 /// The top bit of a device entry's version byte: the device is optional
-/// (SPEC 2); the version is the other seven bits, 0 to 127.
+/// (SPEC §image); the version is the other seven bits, 0 to 127.
 pub const OPTIONAL: u8 = 0x80;
 
-/// Device slots and versions this implementation provides (SPEC 2).
+/// Device slots and versions this implementation provides (SPEC §image).
 pub const SUPPORTED_DEVICES: [DeviceReq; 8] = [
     DeviceReq::new(1, 0),
     DeviceReq::new(2, 0),
@@ -27,7 +27,7 @@ pub const SUPPORTED_DEVICES: [DeviceReq; 8] = [
     DeviceReq::new(9, 0),
 ];
 
-/// A device entry of the image header (SPEC 2): a slot, a version (0 to
+/// A device entry of the image header (SPEC §image): a slot, a version (0 to
 /// 127) and whether the device is required or optional.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeviceReq {
@@ -59,7 +59,7 @@ impl DeviceReq {
     }
 }
 
-/// Which of an image's optional devices a machine was given (SPEC 2,
+/// Which of an image's optional devices a machine was given (SPEC §image,
 /// STATE.md 1.5): one flag per optional entry, in header order. Fixed at
 /// reset; part of the machine's state.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -89,7 +89,7 @@ pub enum ImageError {
     LengthMismatch { expected: usize, actual: usize },
     UnsupportedDevice(DeviceReq),
     DuplicateDevice(u8),
-    /// Device 1 or 8 listed as optional (SPEC 2).
+    /// Device 1 or 8 listed as optional (SPEC §image).
     NotOptional(u8),
 }
 
@@ -128,7 +128,7 @@ pub struct Image {
     pub ram_pages: u8,
     pub devices: Vec<DeviceReq>,
     pub rom: Vec<u8>,
-    /// BLAKE3-256 of the whole file (SPEC 2).
+    /// BLAKE3-256 of the whole file (SPEC §image).
     pub id: [u8; 32],
 }
 
@@ -173,7 +173,7 @@ impl Image {
             if devices.iter().any(|d| d.slot == req.slot) {
                 return Err(ImageError::DuplicateDevice(req.slot));
             }
-            // Device 1 is always there; device 8 is the shell's (SPEC 12.1).
+            // Device 1 is always there; device 8 is the shell's (SPEC §machines.shell).
             if req.optional && (req.slot == 1 || req.slot == crate::machines::SLOT) {
                 return Err(ImageError::NotOptional(req.slot));
             }
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(2)));
     }
 
-    /// SPEC 2: the title is the 16 bytes without their trailing 00h bytes;
+    /// SPEC §image: the title is the 16 bytes without their trailing 00h bytes;
     /// a host does not check it (zeros inside, malformed UTF-8 and an
     /// empty title are all accepted). A device slot listed twice is
     /// refused, also slot 1.
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(Image::parse(&file).unwrap().rom.len(), ROM_MAX);
     }
 
-    /// SPEC 2: the top bit of the version byte marks an optional device;
+    /// SPEC §image: the top bit of the version byte marks an optional device;
     /// the version is the other seven bits.
     #[test]
     fn optional_bit() {

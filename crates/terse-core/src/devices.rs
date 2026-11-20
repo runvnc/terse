@@ -26,13 +26,13 @@ pub struct GuestMem<'a> {
     pub ram: &'a mut [u8],
 }
 
-/// What a device call did (SPEC 3.1).
+/// What a device call did (SPEC §calls.convention).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallOutcome {
     pub a0: u32,
     pub a1: Option<u32>,
     /// Units beyond the `ecall` instruction and the call's 4: the rest of
-    /// an answered call's base charge (SPEC 14) included.
+    /// an answered call's base charge (SPEC §charges) included.
     pub charge: u32,
 }
 
@@ -45,12 +45,12 @@ pub mod position {
     pub const AFTER_HOST: u8 = 1;
     /// After the input events.
     pub const AFTER_INPUT: u8 = 2;
-    /// A completion's event (SPEC 9.2), queued after the frame's input.
+    /// A completion's event (SPEC §content.submit), queued after the frame's input.
     pub const COMPLETION: u8 = 3;
 }
 
 /// Event flag: this event and the next of the same device are queued
-/// together or not at all (SPEC 11.5's page located events).
+/// together or not at all (SPEC §page.events's page located events).
 pub const EVENT_PAIR: u8 = 1;
 
 /// An event a device gives at a frame's start.
@@ -66,7 +66,7 @@ pub struct PosEvent {
 #[derive(Clone, Debug, Default)]
 pub struct FrameInputs {
     pub events: Vec<PosEvent>,
-    /// Units subtracted from the frame's budget (content delivered, SPEC 14).
+    /// Units subtracted from the frame's budget (content delivered, SPEC §charges).
     pub charge: u32,
     /// Completions that matched no pending request.
     pub completions_ignored: usize,
@@ -78,7 +78,7 @@ pub struct FrameInputs {
 /// the frame of the state serialization); the devices compute results and
 /// charges and give their inputs and state sections.
 pub trait Devices {
-    /// Step 1 of a frame (SPEC 1.4): the devices' inputs. They may write
+    /// Step 1 of a frame (SPEC §frames): the devices' inputs. They may write
     /// guest memory (content delivered). `frame` is the frame counter.
     fn begin_frame(&mut self, frame: u32, input: &FrameInput, mem: GuestMem) -> Result<FrameInputs, String>;
     /// A frame of a machine that has stopped: nothing runs.
@@ -96,22 +96,22 @@ pub trait Devices {
     /// the section has. `ram_len`: the machine's RAM.
     fn restore_state(&mut self, slot: u8, bytes: &[u8], ram_len: usize) -> Result<usize, RestoreError>;
     /// The samples device 6 rendered at the end of the last frame (SPEC
-    /// 18.7), left and right interleaved, once: `None` if no frame ended
+    /// §sound.presentation), left and right interleaved, once: `None` if no frame ended
     /// since the last call. Only asked of a machine whose image lists
     /// device 6.
     fn take_audio(&mut self) -> Option<Vec<i16>> {
         None
     }
     /// Device 9's list (empty without device 9), which device 8 looks at
-    /// (SPEC 12.2 `face`) and which a host needs for the shell's scene and
-    /// the pointer over panels (SPEC 12.3, 12.4).
+    /// (SPEC §machines.calls `face`) and which a host needs for the shell's scene and
+    /// the pointer over panels (SPEC §machines.screens, §machines.input).
     fn list3(&self) -> Cow<'_, [u8]>;
     /// A new machine for `image`, at reset, with devices of the same kind
-    /// as these (a shell's child, SPEC 12.1): `serial` names it among the
-    /// system's machines; `identity` is the program's (SPEC 12.2), whose
+    /// as these (a shell's child, SPEC §machines.shell): `serial` names it among the
+    /// system's machines; `identity` is the program's (SPEC §machines.calls), whose
     /// named records it reads. `grants`: the optional devices it must have
     /// (a restored machine's, STATE.md 4: reason 3 if one cannot be
-    /// provided), or `None` for every one the host can provide (SPEC 2).
+    /// provided), or `None` for every one the host can provide (SPEC §image).
     fn new_machine(&self, serial: u32, image: &crate::Image, grants: Option<&Grants>, identity: Option<&ProgramId>) -> Result<crate::Machine<Self>, StartFailure>
     where
         Self: Sized;
@@ -161,7 +161,7 @@ impl Memory {
 pub struct InProcess {
     pub(crate) terminal: Option<Terminal>,
     /// Device 3; also there (for the style and persistence it shares with
-    /// device 9, SPEC 13.2) when the image lists only device 9.
+    /// device 9, SPEC §vector3d.calls) when the image lists only device 9.
     pub(crate) vector: Option<Vector>,
     pub(crate) vector3: Option<Vector3>,
     pub(crate) content: Option<Content>,
@@ -172,7 +172,7 @@ pub struct InProcess {
 }
 
 impl InProcess {
-    /// The devices of a machine that has the devices of `has` (SPEC 2).
+    /// The devices of a machine that has the devices of `has` (SPEC §image).
     pub fn new(has: &DeviceSet) -> Self {
         InProcess {
             lists_vector: has.has(3),
@@ -227,7 +227,7 @@ impl Devices for InProcess {
         match &mut self.content {
             Some(content) => {
                 // After a restore, the requests pending in the snapshot fail
-                // first (SPEC 9.2).
+                // first (SPEC §content.submit).
                 let orphans = content.take_orphans();
                 let joined: Vec<Completion>;
                 let completions = if orphans.is_empty() {
@@ -263,7 +263,7 @@ impl Devices for InProcess {
             2 => {
                 let t = self.terminal.as_mut().unwrap();
                 match n {
-                    // The whole buffer, at most 4,096 bytes (SPEC 8.2).
+                    // The whole buffer, at most 4,096 bytes (SPEC §terminal.calls).
                     call::TERM_WRITE => match readable(rom, ram, a0, a1 as usize).filter(|_| a1 <= charge::MAX_WRITE) {
                         None => ERR_BUFFER,
                         Some(bytes) => {
@@ -374,7 +374,7 @@ impl Devices for InProcess {
                         v.clear();
                         0
                     }
-                    // The style and persistence are device 3's (SPEC 13.2).
+                    // The style and persistence are device 3's (SPEC §vector3d.calls).
                     call::V3_STYLE => self.vector.as_mut().unwrap().set_style(a0),
                     call::V3_PERSISTENCE => self.vector.as_mut().unwrap().set_persistence(a0),
                     _ => ERR_UNKNOWN,
@@ -425,7 +425,7 @@ impl Devices for InProcess {
             crate::sound::SLOT => {
                 let s = self.sound.as_mut().unwrap();
                 match n {
-                    // SPEC 18.2: a bad length or a list not wholly in ROM
+                    // SPEC §sound.calls: a bad length or a list not wholly in ROM
                     // or RAM is rejected with 1; the list's bytes cost 2
                     // each, as `write`'s.
                     call::SOUND_SUBMIT => match readable(rom, ram, a0, a1 as usize).filter(|_| (1..=crate::sound::MAX_LIST as u32).contains(&a1)) {
@@ -467,7 +467,7 @@ impl Devices for InProcess {
     }
 
     fn end_frame(&mut self, _frame: u32, _stopped: bool, _mem: GuestMem) -> Result<(), String> {
-        // SPEC 18.5: the frame's samples, with the registers as the
+        // SPEC §sound.render: the frame's samples, with the registers as the
         // frame's calls left them.
         if let Some(s) = &mut self.sound {
             s.render_frame();

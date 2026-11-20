@@ -1,4 +1,4 @@
-//! The page device (SPEC 11) on the CPU: the same quads the GPU renderer
+//! The page device (SPEC §page) on the CPU: the same quads the GPU renderer
 //! draws (`page.rs`): the background, the glyphs of the lines in view at
 //! whole-pixel positions, rules, and the figures near the view rasterised
 //! with tiny-skia (on their thread, or at once for screenshots), all

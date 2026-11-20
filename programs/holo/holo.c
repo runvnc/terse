@@ -1,4 +1,4 @@
-/* holo: a few scenes on the 3D vector display (device 9, SPEC 13): a
+/* holo: a few scenes on the 3D vector display (device 9, SPEC §vector3d): a
  * rotating cube and icosahedron labelled on the glass, nested rotating
  * rings, a starfield receding in depth, a small orrery, a turning city
  * of solid blocks on a ground grid, and a cockpit whose consoles show parts

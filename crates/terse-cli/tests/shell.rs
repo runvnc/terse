@@ -1,5 +1,5 @@
 //! programs/shell/shell.terse: the shell and the machines it starts (SPEC
-//! 12), run as `terse run --shell` runs them, with the built-in programs in a
+//! §machines), run as `terse run --shell` runs them, with the built-in programs in a
 //! temporary store. Golden screens are in programs/shell/expected/ (the
 //! shell's screen, then each placed machine's header line and screen, as
 //! `terse run --shell --dump` prints them; UPDATE_GOLDEN=1 rewrites them).
@@ -645,7 +645,7 @@ fn programs_from_feeds() {
     golden("feed-programs-started", &format!("{}-- launcher --\n{launcher}", s.dump()));
 }
 
-/// The shell keeps its layout in the named record "layout" (SPEC 9.6): L
+/// The shell keeps its layout in the named record "layout" (SPEC §content.records): L
 /// in one run, and the next run tiles four machines as a grid.
 #[test]
 fn the_layout_is_remembered() {
@@ -662,7 +662,7 @@ fn the_layout_is_remembered() {
     assert_ne!(fresh.rect(3).0, fresh.rect(1).0, "master and stack without the record");
 }
 
-// --- The gallery (SPEC 12.2 face, 13.3 Screen) ---------------------------
+// --- The gallery (SPEC §machines.calls face, 13.3 Screen) ---------------------------
 
 /// Starts `n` built-ins from the launcher (reader, sparks, fetch, hello,
 /// sketch in turn), each focused as it starts, then the home key and L
@@ -694,7 +694,7 @@ impl Sys {
         self.run(frame.saturating_sub(now));
     }
 
-    /// The view of the shell's 3D scene (SPEC 12.2 face).
+    /// The view of the shell's 3D scene (SPEC §machines.calls face).
     fn view(&self) -> terse_core::machines::View {
         *self.system.shell().machines().unwrap().view()
     }

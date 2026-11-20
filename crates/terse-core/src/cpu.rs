@@ -1,4 +1,4 @@
-//! The RV32IMC interpreter of machine profile 1 (SPEC 1.1).
+//! The RV32IMC interpreter of machine profile 1 (SPEC §cpu).
 //!
 //! Exactly RV32I + M + C, user mode only: no CSRs, no A/F/D, no FENCE.I.
 //! Every reserved, illegal or unsupported encoding (including all of C's
@@ -12,7 +12,7 @@
 //! that; [`Cpu::run`] decodes as it goes. Both share `decode` and the
 //! execution loop. An instruction fetched from ROM costs 1 budget unit; one
 //! fetched from RAM is decoded afresh every time (so code written to RAM
-//! takes effect at once) and costs [`RAM_INSTRUCTION_COST`] (SPEC 1.4).
+//! takes effect at once) and costs [`RAM_INSTRUCTION_COST`] (SPEC §frames).
 
 use std::fmt;
 

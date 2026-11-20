@@ -1,5 +1,5 @@
 //! Recordings of a single machine's run (STATE.md 5): every input of every
-//! frame (SPEC 4, 9.4, 11.7), so that the run can be replayed exactly, with
+//! frame (SPEC §system, §content.determinism, §page.determinism), so that the run can be replayed exactly, with
 //! no network, store or data directory, and its state hash checked after
 //! every frame.
 //!

@@ -823,7 +823,7 @@ fn carol_profile_with_relays(f: &Fixture) {
 }
 
 /// NETWORK 4.9: the help page shows the own address with the hints the
-/// host gives (identity, SPEC 9.5): the public relays of the profile.
+/// host gives (identity, SPEC §content.feeds): the public relays of the profile.
 #[test]
 fn help_shows_the_own_address_with_hints() {
     let f = Fixture::populated().with_identity(false);
@@ -854,7 +854,7 @@ fn help_shows_the_own_address_with_hints() {
 }
 
 /// NETWORK 4.9: an address pasted into the subscribe entry, as a link,
-/// with its hints, which go with the subscribe (SPEC 9.5).
+/// with its hints, which go with the subscribe (SPEC §content.feeds).
 #[test]
 fn subscribe_by_pasted_address() {
     let mut f = Fixture::populated();
@@ -919,7 +919,7 @@ fn feed_page_from_a_hinted_link() {
 }
 
 /// NETWORK 4.9: a feed followed through a relay its address names is
-/// marked in the feeds view (names flag 08h, SPEC 9.5), over two real
+/// marked in the feeds view (names flag 08h, SPEC §content.feeds), over two real
 /// relays: the host's own (A), which does not hold bob's feed, and B.
 #[test]
 fn feeds_view_marks_a_feed_followed_through_a_hint() {
@@ -2185,7 +2185,7 @@ fn links_with_text_across_frames() {
     assert_eq!(run.page_text().matches("for line").count(), 320);
 }
 
-/// A long title in a list ends in an ellipsis (paragraph flag, SPEC 11.3)
+/// A long title in a list ends in an ellipsis (paragraph flag, SPEC §page.document)
 /// within the list's width.
 #[test]
 fn list_titles_end_in_an_ellipsis() {
@@ -2316,7 +2316,7 @@ fn locate_asked_again_after_restore() {
 }
 
 /// An article with links far apart: Tab and Shift+Tab scroll each just
-/// into view (located by the page, SPEC 11.2); after the user scrolls, Tab
+/// into view (located by the page, SPEC §page.calls); after the user scrolls, Tab
 /// starts from the first link in view, Shift+Tab from the last.
 #[test]
 fn tab_scrolls_links_into_view() {

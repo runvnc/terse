@@ -1,11 +1,11 @@
-//! Host-side networking for the content device (SPEC 9, NETWORK.md).
+//! Host-side networking for the content device (SPEC §content, NETWORK.md).
 //!
 //! - [`article`]: `terse:` links in articles (ARTICLE.md), for prefetch.
 //! - [`article_parse`]: a reference parser for ARTICLE.md and the article
 //!   dump of the test vectors (`vectors/`).
 //! - [`vectors`]: the core test vectors that `terse vectors` writes.
 //! - [`blob`]: blob IDs (BLAKE3-256) and size limits.
-//! - [`builtin`]: the shell and the built-in programs (SPEC 12).
+//! - [`builtin`]: the shell and the built-in programs (SPEC §machines).
 //! - [`store`]: the local blob store, a directory of files named by hex ID.
 //! - [`identity`]: Ed25519 feed identities and the secret key file (NETWORK 4.1).
 //! - [`local`]: finding a relay when none is named.
@@ -18,10 +18,10 @@
 //!   blocking WebSocket transport.
 //! - [`node`]: host behaviour (NETWORK 2, 4.4): store first, then the relay,
 //!   with verification; following and publishing feeds.
-//! - [`records`]: named records, the data programs keep on this host (SPEC 9.6).
-//! - [`snapshots`]: snapshots of the machines a shell runs (SPEC 12.7).
+//! - [`records`]: named records, the data programs keep on this host (SPEC §content.records).
+//! - [`snapshots`]: snapshots of the machines a shell runs (SPEC §machines.snapshots).
 //! - [`service`]: runs a node on a background thread for the frame loop.
-//! - [`timeline`]: the arrival order of entries and the feed records of SPEC 9.5.
+//! - [`timeline`]: the arrival order of entries and the feed records of SPEC §content.feeds.
 
 pub mod address;
 pub mod article;

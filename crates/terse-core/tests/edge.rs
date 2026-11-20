@@ -301,7 +301,7 @@ fn write_takes_the_whole_buffer_and_charges_carry() {
         return;
     }
     // Writes of 4,096 bytes of RAM (zeros) again and again: each takes the
-    // whole buffer (SPEC 8.2) and costs 4 + 2 per byte, so a frame ends
+    // whole buffer (SPEC §terminal.calls) and costs 4 + 2 per byte, so a frame ends
     // with the budget at most one write below zero, which carries.
     let src = "    li s0, 0x100000\n    lui s1, 1\n    li s2, 0\n\
                1:  mv a0, s0\n    mv a1, s1\n    li a7, 0x200\n    ecall\n    add s2, s2, a0\n    j 1b\n";
@@ -344,7 +344,7 @@ fn calls_clobber_only_a0_and_a1() {
     assert_eq!(m.exit_code(), Some(1), "{:?}", m.fault());
 }
 
-/// SPEC 3.1: a buffer of length 0 is valid at any address, for every call
+/// SPEC §calls.convention: a buffer of length 0 is valid at any address, for every call
 /// (address 0, all ones, just past the end of ROM, far past the end of
 /// RAM); a non-empty one is checked as before, and so are a call's other
 /// arguments. Vector and page submits reject a length of 0 with 1 by their
@@ -394,7 +394,7 @@ fn empty_buffers_are_valid_anywhere() {
     assert_eq!(got, [0, 0, 0, 0, 0, 0, 0, bad, bad, bad, 1, 1, 1, 0, 0]);
 }
 
-/// SPEC 1.4 step 1, 4 `wait_frame`: the frame's input events are queued
+/// SPEC §frames step 1, 4 `wait_frame`: the frame's input events are queued
 /// before the content-done events of its completions; and `wait_frame`
 /// always returns in the next frame with that frame's counter, since the
 /// most content one frame can deliver (8 × 16,384 bytes, 32,768 units)
@@ -425,9 +425,9 @@ fn input_events_before_completions_and_wait_frame_returns_next_frame() {
     assert!(r.used > 8 * 4096);
 }
 
-/// SPEC 8.2: a `write` longer than 4,096 bytes returns FFFF_FFFEh and
+/// SPEC §terminal.calls: a `write` longer than 4,096 bytes returns FFFF_FFFEh and
 /// writes nothing (one of 4,096 is taken whole). `palette_set` with `first` above 255 or `count` above 256 returns
-/// FFFF_FFFEh (SPEC 8.2).
+/// FFFF_FFFEh (SPEC §terminal.calls).
 #[test]
 fn write_budget_and_palette_set_arguments() {
     if !common::have_tools() {

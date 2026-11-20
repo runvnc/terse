@@ -15,14 +15,14 @@
 4 wheel -3 2
 4 wheel 127 -127
 5 feeds-updated
-5 feeds-updated   # a second one in the same frame is dropped (SPEC 5)
+5 feeds-updated   # a second one in the same frame is dropped (SPEC §content.events)
 5 down f12 meta
 5 up 0xE7
 
-# Frame 8: 70 text events; the queue holds 64 (SPEC 5), read at frame 9.
+# Frame 8: 70 text events; the queue holds 64 (SPEC §events), read at frame 9.
 8 text 0123456789012345678901234567890123456789012345678901234567890123456789
 
-# Controllers (SPEC 6), read at frames 9 (none), 10, 11, 12 and 13.
+# Controllers (SPEC §controllers), read at frames 9 (none), 10, 11, 12 and 13.
 10 pad 0 2013 -127 127 5 -5
 10 pad 2 ffff 0 0
 12 pad 0 1 0 0

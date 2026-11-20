@@ -1,6 +1,7 @@
 //! The manual (docs/manual): its build is up to date and deterministic,
 //! its links resolve to blobs every host carries, it covers every call,
-//! event, content operation and status of SPEC.md, and `terse manual
+//! event, content operation and status of the machine specification
+//! (SPEC.md and spec/), and `terse manual
 //! publish` puts it on the user's feed.
 
 mod common;
@@ -92,7 +93,7 @@ fn links_resolve() {
     }
 }
 
-/// The rows of the Markdown table of SPEC.md section `heading` (up to the
+/// The rows of the Markdown table of the section `heading` (up to the
 /// next heading): the first two cells of each, without backquotes.
 fn spec_rows(spec: &str, heading: &str) -> Vec<(String, String)> {
     let start = spec.find(heading).unwrap_or_else(|| panic!("{heading}"));
@@ -109,13 +110,14 @@ fn spec_rows(spec: &str, heading: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Every call (number and name) of SPEC 3.2, every event type of SPEC 5,
-/// every content operation (SPEC 9.1, 9.5, 9.6) and status (SPEC 9.3) is
+/// Every call (number and name) of SPEC §index.calls, every event type of SPEC §index.events,
+/// every content operation (SPEC §content.request, §content.feeds, §content.records) and status (SPEC §content.status) is
 /// on one line of the manual with its name, so the manual cannot fall
 /// behind the spec without this failing.
 #[test]
 fn covers_the_spec() {
     let spec = std::fs::read_to_string(common::workspace().join("SPEC.md")).unwrap();
+    let content = std::fs::read_to_string(common::workspace().join("spec/content.md")).unwrap();
     let lines: Vec<String> = builtin::MANUAL
         .iter()
         .flat_map(|(_, _, t)| std::str::from_utf8(t).unwrap().lines().map(str::to_lowercase).collect::<Vec<_>>())
@@ -124,24 +126,24 @@ fn covers_the_spec() {
         let (n, m) = (number.to_lowercase(), name.to_lowercase());
         assert!(lines.iter().any(|l| l.contains(&n) && l.contains(&m)), "{what} {number} {name} is not in the manual");
     };
-    let calls = spec_rows(&spec, "### 3.2 Call table");
+    let calls = spec_rows(&spec, "### §index.calls Calls");
     assert!(calls.len() >= 47, "{}", calls.len());
     for (n, name) in &calls {
         find("call", n, name);
     }
-    let events = spec_rows(&spec, "## 5. Events");
+    let events = spec_rows(&spec, "### §index.events Events");
     assert_eq!(events.len(), 16);
     for (n, name) in &events {
         find("event", n, name);
     }
     let mut ops = vec![("01h".to_string(), "get".to_string()), ("02h".to_string(), "put".to_string())];
-    ops.extend(spec_rows(&spec, "### 9.5 Feeds, names and search"));
-    ops.extend(spec_rows(&spec, "### 9.6 Named records"));
+    ops.extend(spec_rows(&content, "## §content.feeds Feeds, names and search"));
+    ops.extend(spec_rows(&content, "## §content.records Named records"));
     assert_eq!(ops.len(), 17);
     for (n, name) in &ops {
         find("content op", n, name);
     }
-    let statuses = spec_rows(&spec, "### 9.3 Status values");
+    let statuses = spec_rows(&content, "## §content.status Status values");
     assert_eq!(statuses.len(), 7);
     for (n, meaning) in &statuses {
         // The first word of the meaning ("Not found", "No room", ...).

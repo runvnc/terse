@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Terse device 3, the 2D vector display (SPEC.md 10, version 0), and, if
-the core asks for it too, device 9, the 3D vector display (SPEC.md 13,
+"""Terse device 3, the 2D vector display (SPEC.md §vector, version 0), and, if
+the core asks for it too, device 9, the 3D vector display (spec/vector3d.md §vector3d,
 version 0), as a device driver of the device bus (DEVICES.md, protocol
 version 1), in Python 3 with the standard library only. It draws nothing
 (no layers); it keeps each machine's device state (STATE.md 1.7, 1.11) and
@@ -26,7 +26,7 @@ OUTLINES, LIST3 = b"vector.outlines", b"vector3.list"
 
 
 class Instance:
-    """One machine's displays: device 3's state (SPEC 10.7: style,
+    """One machine's displays: device 3's state (SPEC §vector.determinism: style,
     persistence, fill mode, list), there for the shared style also when
     only device 9 is listed, and device 9's list if it is listed."""
 
@@ -57,7 +57,7 @@ class Instance:
                 self.list3 = b""
             return 0, 0
         # The style and persistence are device 3's, also through device 9
-        # (SPEC 13.2); the fill mode is device 3's alone.
+        # (SPEC §vector3d.calls); the fill mode is device 3's alone.
         if fn == 2:
             if a[0] > 1:
                 return 1, 0
@@ -215,7 +215,7 @@ def open_instance(m, served):
     if any(v != 0 for v in mine.values()):
         return None, b"vector.py implements version 0"
     if SLOT3D in mine and SLOT2D not in served:
-        return None, b"device 9 needs this driver to serve device 3 too (SPEC 13.2)"
+        return None, b"device 9 needs this driver to serve device 3 too (SPEC \xc2\xa7vector3d.calls)"
     return Instance(SLOT2D in mine, SLOT3D in mine), None
 
 

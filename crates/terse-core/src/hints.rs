@@ -1,7 +1,7 @@
 //! Relay hints of a feed address (NETWORK.md, Feed addresses): the text
 //! after the `@` of `<key>@<hint>[,<hint>]`, which says where a feed may
 //! be found. Only the grammar lives here (the content device checks the
-//! hints a program gives to subscribe, SPEC 9.5); using a hint to reach a
+//! hints a program gives to subscribe, SPEC §content.feeds); using a hint to reach a
 //! relay is the network's business (terse-net).
 //!
 //! ```text
