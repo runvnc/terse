@@ -2703,6 +2703,7 @@ Each voice has these registers, with these values after reset:
 | Noise register | 15 bits, never 0 | 1 |
 | Ended | flag | clear |
 | Output | the voice's output in the last pair rendered, −32,768 to 32,767 | 0 |
+| Previous output | its output in the pair before that, likewise | 0 |
 
 The **increment** is how far the phase moves each sample. For a
 wavetable voice one turn of the phase (2^32) is one pass through the
@@ -2739,8 +2740,9 @@ its own previous output. For voice v, in this order:
    the reset envelope (0, 0, 255, 0) is a gate, full from the first pair
    after a key on and silent from the first pair after a key off.
 2. **Modulation.** M = cur(m) × depth if the voice has a modulator m,
-   else 0; F = Output(v) × feedback, its own previous output. Each is
-   less than 2^23 in size.
+   else 0, which is less than 2^23 in size; F = (Output(v) + Previous
+   output(v)) × feedback, the sum of its own outputs in the last two
+   pairs, which is less than 2^24 in size.
 3. **Raw sample** r, −128 to 127, from the source (section 18.6), which
    also advances the phase.
 4. **Output.** o = (r × (level >> 8) × volume) >> 16, which lies in
@@ -2751,16 +2753,31 @@ Then the pair: L is the sum, over the voices whose mix is 1, of o × left;
 R likewise with right. The pair's left sample is L >> 10 and its right
 sample R >> 10, each clamped to −32,768 … 32,767. (One voice at full
 volume and pan reaches a quarter of the range, so four can sound at full
-volume before the sum is clamped.) Last, every voice's Output register
-becomes its o.
+volume before the sum is clamped.) Last, every voice's Previous output
+register becomes its Output, and its Output becomes its o.
 
 ### 18.6 Sources
 
-**Wavetable w.** The index is ((phase + M × 1,024 + F × 1,024) mod 2^32)
+**Wavetable w.** The index is ((phase + M × 1,024 + F × 128) mod 2^32)
 >> 26, a number 0–63, and r is wavetable w's sample at that index. Then
 the phase becomes (phase + increment) mod 2^32. M and F move only the
 index, never the phase: with depth 255 and a modulator at full scale the
-index moves by about two passes through the table.
+index moves by about two passes through the table; with feedback 255 and
+the voice at full scale, by about half a pass.
+
+Feedback is the average of the last two outputs (F × 128 is that average
+× feedback × 256, with no rounding), as on FM chips: a voice moved by its
+last output alone settles into an oscillation from one pair to the next
+from a swing of about 1 radian (a sixth of a pass) and is chaotic, heard
+as static, soon after; the average cancels that oscillation. It goes
+unstable in turn, at a 3-pair period, from a swing of about 2 radians
+(about a third of a pass): feedback 165 for a voice at full scale, about
+210 at volume 200. Up to there a sine grows from pure through brassy to
+nearly a sawtooth as the feedback rises; above it the tone gains a shrill
+edge, at most half a pass at 255. Since F follows the output, a voice's
+tone also mellows as its envelope falls. A voice that names itself as its
+own modulator (section 18.3) is moved by its last output alone, at up to
+four times the swing: chaotic from small depths.
 
 **Noise.** r is 127 if bit 0 of the noise register is 1, else −127. Then
 the phase becomes (phase + increment) mod 2^32, and if that addition

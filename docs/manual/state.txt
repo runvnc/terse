@@ -75,7 +75,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.
 
-Sound (device 6): absent unless the image lists device 6; then the 16 voices of 36 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last output), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,656 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:{device-sound}).
+Sound (device 6): absent unless the image lists device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:{device-sound}).
 
 Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 

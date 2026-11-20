@@ -68,10 +68,11 @@ fn samples_are_golden() {
 #[test]
 fn snapshot_mid_note_continues_identically() {
     let image = image();
-    // Sections are 158 frames: 130 is in the plain melody, 700 in the
+    // Sections are 158 frames: 130 is in the plain melody, 400 in the
+    // feedback (its last two outputs are state), 700 in the
     // noise, 903 in the pluck (a sample voice mid-way), 1000 in the last,
     // where all of them sound.
-    for at in [130, 700, 903, 1000] {
+    for at in [130, 400, 700, 903, 1000] {
         let mut a = Machine::new(&image);
         run(&mut a, at);
         let snap = Snapshot::of(&a);

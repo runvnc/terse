@@ -74,7 +74,9 @@ For each pair the voices are computed in order, 0 to 15. Voice v:
 3. makes its output o = (r x (level >> 8) x volume) >> 16;
 4. if it has a ring voice q, o becomes (o x q's output) >> 15.
 
-For a wavetable, the index is the top 6 bits of phase + 1,024 x (M + F), where M is the modulator's output times the depth and F is the voice's own previous output times the feedback. Neither changes the phase itself.
+For a wavetable, the index is the top 6 bits of phase + 1,024 x M + 128 x F, where M is the modulator's output times the depth and F is the sum of the voice's own outputs in the last two pairs times the feedback. Neither changes the phase itself. At full scale, depth 255 moves the index by about two passes through the table and feedback 255 by about half a pass.
+
+Feedback averages the last two outputs, as FM chips do: fed back alone, the last output sets off an oscillation from pair to pair and soon chaos, heard as static. With the average a sine grows from pure through brassy to nearly a sawtooth as the feedback rises, up to about 165 for a voice at full scale (about 210 at volume 200); above that it gains a shrill edge. Since the feedback follows the output, the tone mellows as the envelope falls. A voice that names itself as its own modulator is moved by its last output alone, and turns to noise at small depths.
 
 A voice reads a lower-numbered voice (modulator or ring) as it is in this pair, and a higher-numbered one, or itself, as it was in the previous pair. So pair a carrier with a lower-numbered modulator to hear it at once.
 
@@ -84,7 +86,7 @@ Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n
 
 ## State
 
-The device's state is every voice's registers (36 bytes each), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display's section, and only for an image that lists device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout's place; `programs/tune/expected-audio.txt` holds the hashes of the demonstration's samples.
+The device's state is every voice's registers (38 bytes each, its last two outputs among them), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display's section, and only for an image that lists device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout's place; `programs/tune/expected-audio.txt` holds the hashes of the demonstration's samples.
 
 ## Example
 
