@@ -1,0 +1,8 @@
+# hello: typing (wide characters, a character above FFFFh), Enter, Backspace
+3 text Hi wörld 你好 😀
+6 press enter
+7 text ok
+8 press backspace
+9 down a shift
+9 text A
+10 up a shift
