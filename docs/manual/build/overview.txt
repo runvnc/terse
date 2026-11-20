@@ -7,4 +7,4 @@ websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
 that run on tiny isolated virtual machines.
 
-[Continue to technical details...](terse:76e15ad7e7fe7b5e60a46cde1826ed62e2c375c38f0e4fb17daf27af4452f3a7)
+[Continue to technical details...](terse:ef530ed169d4275ff883076279b1849ba4cf9cbdab682df6c13de0c4972c8df1)
