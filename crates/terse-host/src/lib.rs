@@ -78,6 +78,7 @@ const USAGE: &str = "usage:
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
+  terse-host --version
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
@@ -214,6 +215,10 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 };
             }
             "--demo" => demo = true,
+            "--version" => {
+                println!("terse-host {}", env!("CARGO_PKG_VERSION"));
+                return Ok(ExitCode::SUCCESS);
+            }
             "--shell" => shell_flag = true,
             "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
             "--consent" => {
