@@ -4,6 +4,7 @@ description = "Headless runner and image tools for Terse."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "terse"

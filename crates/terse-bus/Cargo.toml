@@ -4,6 +4,7 @@ description = "Device bus prototype (DEVICES.md): a small core host running one 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "terse-bus"
