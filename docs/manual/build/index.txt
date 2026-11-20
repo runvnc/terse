@@ -8,19 +8,19 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:4c5f422c54aeac9dcbc9be2578e1224bee98d1b879193142d4c6581714949d7c): what Terse is for, in one
+- [What Terse is](terse:b62b8869588ebe1888cfe10eb2eb7a140d3f20a280adad0c92200d081865fd1b): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:c4d3f7e58beb5401d0fe9187409e20057f9dd6c2170a7acbf8f8845ea0df002e): the technical details in
+- [How Terse works](terse:bae9908c052978a6b6ccffeba81851bde6b1edc21642b47f8ebf5554d7198b5b): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:5da01f5f793084dceb119bad34cb906ac33bf051763b090d2d7b54a931739942): the toolchain, the C
+- [Writing a program](terse:4db0ec8a32d39e1a0ec493a7f0e552bf52931b6b9b76427a919013e5c5fe73c3): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:1b3a9799b357e73c1ec6060d7c59de46c1856f20d1c4e5bbdd437efed4216c43): the keys of the
+- [Using the shell and the reader](terse:371d372162411679ce0bec03bfafd12ab1ad0518473e355e3f2cabccf7b983ae): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
 - [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:5231c3a0aa19cb6250605d6f65c221eeb22ddd9fb929b215ba06df7252fb113a): what a machine's state
+- [State, replay and conformance](terse:52fcd7cb8357b85a536baaad5b7b2268b610ba13613b990e260071e6adeb9255): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
@@ -43,7 +43,7 @@ Each article below says what it covers.
 | 4 | Content | [Blobs, requests and statuses](terse:bdc35f9b05aeb4a35ef3bbffb3ad1c70427695c3aa5aeb7810e1056c84eb0062) |
 | 4 | Content | [Feeds, names, search and publishing](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7) |
 | 4 | Content | [Named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32) |
-| 6 | Sound | [The sound device](terse:c248296e19eda15da54d67822d84148b536fa097823c320c9a8d50a7967f74ef) |
+| 6 | Sound | [The sound device](terse:05cc285ef6133053e7fa1fb000e512ddccad99b7b6e8287bfdc2521a99f9a2b1) |
 | 7 | Page | [The page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) |
 | 7 | Page | [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04) |
 | 8 | Machines | [The Machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf) |
