@@ -24,6 +24,10 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # The window's input (keys, paste), for hosts with windows of their own.
 input = ["dep:winit", "dep:arboard"]
 window = ["input", "dep:softbuffer", "dep:gilrs"]
+# Plays the sound device (SPEC 18) in the window (cpal: ALSA, which
+# PipeWire serves). Off by default, so no test or headless run ever opens
+# an audio device; build with `--features audio` to hear it.
+audio = ["window", "dep:cpal"]
 
 [dependencies]
 terse-core.workspace = true
@@ -40,6 +44,7 @@ ttf-parser = "0.25"
 png = "0.18"
 getrandom = "0.4"
 gilrs = { version = "0.11", optional = true }
+cpal = { version = "0.15", optional = true }
 cosmic-text = "0.19"
 swash = "0.2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }

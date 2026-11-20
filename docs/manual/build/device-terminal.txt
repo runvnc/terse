@@ -122,13 +122,13 @@ At reset every cell is a space with foreground 7 and background 0. The cursor is
 | A clear, scroll up or scroll down by `command` | 150 |
 | `cells_read`, `cells_write`, `palette_set` | 1 per 4 bytes copied, rounded up |
 
-The 150 applies to commands `01h`, `02h` and `03h` only: the scrolls and clears a `write` causes (`0Ch`, `0Ah` on the last row, a wrap on the last row) are paid for by its 2 per byte, so a host makes them cheap (a scroll costs it one row at most). Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units and `cells_read` of them 64 + 2,400, on top of the `ecall` instruction. See [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef) for the whole table.
+The 150 applies to commands `01h`, `02h` and `03h` only: the scrolls and clears a `write` causes (`0Ch`, `0Ah` on the last row, a wrap on the last row) are paid for by its 2 per byte, so a host makes them cheap (a scroll costs it one row at most). Copies are charged only when the call succeeds: `cells_write` of all 2,400 cells costs 4 + 2,400 = 2,404 units and `cells_read` of them 64 + 2,400, on top of the `ecall` instruction. See [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c) for the whole table.
 
 ## State
 
 For determinism and snapshots the terminal's state is, in this order: a present flag (1 byte; if `00h` nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with `00h`. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (`C2h`-`F4h`) and the valid continuation bytes received after it.
 
-The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:4ff0f43dbdab83085bddfee6e54af38b170276cab51b8d8e561a112ca3cba3b4) describes the layers.
+The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:4bdeaa36d854ee892aefd80985ef003de279bda756eebcfb2ec9b275676c15dc) describes the layers.
 
 ## Example
 

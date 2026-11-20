@@ -331,6 +331,29 @@ impl<D: Devices> System<D> {
         self.shell.stopped()
     }
 
+    /// The samples of the system frame just run (SPEC 18.7): every
+    /// machine's whose frame ended since the last call (the shell's and
+    /// its children's that ran), added and clamped to 16 bits into `out`, 800
+    /// pairs, left and right interleaved. Returns whether any machine gave
+    /// samples (`out` is all zero if none did).
+    pub fn take_audio(&mut self, out: &mut [i16; 2 * crate::sound::FRAME_SAMPLES]) -> bool {
+        let mut sum = [0i32; 2 * crate::sound::FRAME_SAMPLES];
+        let mut any = false;
+        let children = self.children.iter_mut().filter_map(|c| c.as_mut().and_then(|c| c.machine.as_mut()));
+        for m in std::iter::once(&mut self.shell).chain(children) {
+            if let Some(frame) = m.take_audio() {
+                any = true;
+                for (o, s) in sum.iter_mut().zip(frame) {
+                    *o += s as i32;
+                }
+            }
+        }
+        for (o, s) in out.iter_mut().zip(sum) {
+            *o = s.clamp(-32768, 32767) as i16;
+        }
+        any
+    }
+
     /// Runs one frame of the system (SPEC 12.5): latches what changed,
     /// routes `events` (the host's input, in the shell's screen units), runs
     /// the shell, carries out its starts and stops, then runs each running

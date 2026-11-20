@@ -14,6 +14,7 @@ device-terminal
 device-vector
 device-vector3
 device-vector3-surfaces
+device-sound
 device-page
 device-page-figures
 device-machines

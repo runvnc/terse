@@ -114,6 +114,11 @@ pub mod call {
     pub const V3_STYLE: u32 = 0x902;
     pub const V3_PERSISTENCE: u32 = 0x903;
 
+    pub const SOUND_SUBMIT: u32 = 0x600;
+    pub const SOUND_WAVE: u32 = 0x601;
+    pub const SOUND_SAMPLE: u32 = 0x602;
+    pub const SOUND_INFO: u32 = 0x603;
+
     /// The answered calls (SPEC 14): a device's calls whose result or
     /// charge depends on the device's state. Every other call of devices
     /// 2–7 and 9 is deferred; System and Machines calls are the machine's
@@ -220,7 +225,7 @@ pub struct Machine<D: Devices = InProcess> {
     /// whether the shell has been told of it (SPEC 4). Not machine state.
     open_request: Option<([u8; crate::machines::REQUEST_BYTES], bool)>,
     /// The blob ID the shell gave the machine before its first frame
-    /// (STATE.md 1.12).
+    /// (STATE.md 1.13).
     argument: Option<[u8; 32]>,
 }
 
@@ -263,6 +268,9 @@ impl Machine {
         self.write_machines_state(&mut out);
         if let Some(v) = &d.vector3 {
             v.write_state(&mut out);
+        }
+        if let Some(s) = &d.sound {
+            s.write_state(&mut out);
         }
         self.write_argument(&mut out);
         out
@@ -316,6 +324,11 @@ impl Machine {
         self.devices.content()
     }
 
+    /// Device 6, if the image lists it.
+    pub fn sound(&self) -> Option<&crate::sound::Sound> {
+        self.devices.sound()
+    }
+
     /// Content requests submitted since the last call.
     pub fn take_content_requests(&mut self) -> Vec<Request> {
         self.devices.take_content_requests()
@@ -358,6 +371,16 @@ impl<D: Devices> Machine<D> {
         if self.listed[crate::machines::SLOT as usize] {
             self.machines = Some(Machines::new(builtins));
         }
+    }
+
+    /// The samples device 6 rendered at the end of the last frame (800
+    /// pairs, left and right interleaved), once; `None` without device 6,
+    /// or if no frame ended since the last call (SPEC 18.7).
+    pub fn take_audio(&mut self) -> Option<Vec<i16>> {
+        if !self.listed[crate::sound::SLOT as usize] {
+            return None;
+        }
+        self.devices.take_audio()
     }
 
     /// Device 9's list (empty without device 9).
@@ -665,8 +688,10 @@ impl<D: Devices> Machine<D> {
             }
         }
         self.write_machines_state(&mut out);
-        if self.listed[crate::vector3::SLOT as usize] {
-            self.devices.write_state(crate::vector3::SLOT, &mut out)?;
+        for slot in [crate::vector3::SLOT, crate::sound::SLOT] {
+            if self.listed[slot as usize] {
+                self.devices.write_state(slot, &mut out)?;
+            }
         }
         self.write_argument(&mut out);
         Ok(out)
@@ -722,7 +747,7 @@ impl<D: Devices> Machine<D> {
         }
     }
 
-    /// STATE.md 1.12: only for a machine given an argument.
+    /// STATE.md 1.13: only for a machine given an argument.
     fn write_argument(&self, out: &mut Vec<u8>) {
         if let Some(id) = &self.argument {
             out.extend_from_slice(id);
@@ -889,9 +914,11 @@ impl<D: Devices> Machine<D> {
         if self.listed[crate::machines::SLOT as usize] && r.u8()? != 0 {
             return Err(bad("the state of a shell cannot be restored"));
         }
-        if self.listed[crate::vector3::SLOT as usize] {
-            let n = self.devices.restore_state(crate::vector3::SLOT, r.rest(), ram_len)?;
-            r.take(n)?;
+        for slot in [crate::vector3::SLOT, crate::sound::SLOT] {
+            if self.listed[slot as usize] {
+                let n = self.devices.restore_state(slot, r.rest(), ram_len)?;
+                r.take(n)?;
+            }
         }
         self.argument = match r.remaining() {
             0 => None,

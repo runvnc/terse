@@ -47,6 +47,14 @@ pub fn run(
     system.set_shell_identity(program.identity);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let looks_eye = looks.eye;
+    // A self-test never makes a sound (it runs unattended, often in a
+    // headless compositor); nor does a host told TERSE_AUDIO=off.
+    #[cfg(feature = "audio")]
+    let audio = if selftest.is_some() || std::env::var_os("TERSE_AUDIO").is_some_and(|v| v == "off") {
+        crate::audio::Audio::disabled()
+    } else {
+        crate::audio::Audio::default()
+    };
     let mut app = App {
         system,
         io: HashMap::new(),
@@ -76,6 +84,8 @@ pub fn run(
         refresh_hz: None,
         trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
         fault_shown: false,
+        #[cfg(feature = "audio")]
+        audio,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -552,6 +562,10 @@ struct App {
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
     trace: bool,
     fault_shown: bool,
+    /// The sound device's output (SPEC 18.7), opened when a machine
+    /// first gives samples.
+    #[cfg(feature = "audio")]
+    audio: crate::audio::Audio,
 }
 
 use terse_net::service::image_from;
@@ -641,6 +655,8 @@ impl App {
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
+        #[cfg(feature = "audio")]
+        self.audio.frame(&mut self.system);
         self.pending.clear();
         let emulate = start.elapsed();
         let start = Instant::now();

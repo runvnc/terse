@@ -114,15 +114,16 @@ pub struct BusSystem {
 
 /// The default drivers, programs next to `dir` (this program's): the
 /// terminal (2), the vector displays (3 and 9, one process: SPEC 13.2),
-/// content (4, with `content` as its options) and the page (7), for the
+/// content (4, with `content` as its options), sound (6) and the page (7), for the
 /// slots in `slots`; `overrides` (slots, command line) replace the
 /// default driver of those slots.
 pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u8>, Vec<String>)]) -> Result<Vec<Driven>, String> {
     let exe = |name: &str| dir.join(name).display().to_string();
-    let defaults: [(Vec<u8>, Vec<String>); 4] = [
+    let defaults: [(Vec<u8>, Vec<String>); 5] = [
         (vec![2], vec![exe("terse-dev-terminal")]),
         (vec![3, terse_core::vector3::SLOT], vec![exe("terse-dev-vector")]),
         (vec![4], [vec![exe("terse-dev-content")], content.to_vec()].concat()),
+        (vec![terse_core::sound::SLOT], vec![exe("terse-dev-sound")]),
         (vec![7], vec![exe("terse-dev-page")]),
     ];
     let mut out: Vec<Driven> = Vec::new();
@@ -152,7 +153,7 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
 /// shares), or, for a shell, every device a machine it starts may list.
 pub fn needed_slots(image: &Image, shell: bool) -> Vec<u8> {
     if shell {
-        return vec![2, 3, 4, 7, terse_core::vector3::SLOT];
+        return vec![2, 3, 4, terse_core::sound::SLOT, 7, terse_core::vector3::SLOT];
     }
     let mut v: Vec<u8> = image.devices.iter().map(|d| d.slot).filter(|&s| s != 1 && s != terse_core::machines::SLOT).collect();
     if v.contains(&terse_core::vector3::SLOT) && !v.contains(&3) {

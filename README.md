@@ -448,7 +448,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          (device 9: its decoder and the one projection every renderer
                          draws), content.rs,
                          page.rs (device 7: the document decoder, the reference layout, when
-                         to report the height), machines.rs (device 8); shell.rs: the
+                         to report the height), sound.rs (device 6: the synthesizer, integer
+                         and bit-exact), machines.rs (device 8); shell.rs: the
                          System (the shell and its machines: frame order, latching, input
                          routing), driven by a host's Driver.
                          wide.rs holds the Unicode 16.0 East Asian Width W/F table. No GUI,
@@ -493,6 +494,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     programs/sketch/     a drawing program for the vector display and documents, in C
     programs/holo/       scenes on the 3D vector display (device 9), in C: holo.c,
                          build.sh, the built holo.terse and the golden screens in expected/
+    programs/tune/       a short piece for the sound device (device 6), in C: tune.c,
+                         build.sh, tune.terse and its golden samples, expected-audio.txt
     programs/conform/    the conformance and responsiveness image (C and assembly),
                          build.sh, conform.terse, its input conform.events, and
                          expected-hashes.txt and expected-screen.txt
@@ -1442,6 +1445,31 @@ The data is a list of strokes (colour, point count, points in screen units), at 
 8,192 bytes, so a published sketch stays under the automatic download limit; the
 exact layout is in the header comment of `sketch.c`. ROM 4,544 bytes, 4 RAM pages;
 devices 2, 3 and 4. Tests: `crates/terse-cli/tests/sketch.rs`.
+
+## Sound
+
+Device 6 (SPEC 18) is a 16-voice wavetable synthesizer in the spirit of the MSX SCC,
+with pairing (one voice moves another's phase), feedback and ring modulation, noise
+and four sample slots; 48,000 Hz stereo, 800 sample pairs a frame, every step integer
+and specified to the bit. It is optional: the reading profile does not have it.
+`programs/tune` plays a short piece through each kind of voice in turn (about 18 s,
+then it exits):
+
+    terse run programs/tune/tune.terse --audio-out tune.wav     # write it, play nothing
+
+`terse-bus --audio-out` does the same with the device as a driver process
+(`terse-dev-sound`). `terse-host` plays the sound only when built with the `audio`
+feature (cpal, so ALSA, which PipeWire serves):
+
+    scripts/cargo build --release -p terse-host --features audio
+
+Without the feature, and in `--selftest` or with `TERSE_AUDIO=off`, the device is
+there and runs as usual but nothing is heard; the audio output is opened only when a
+machine first gives samples. Tests: `crates/terse-core/src/sound.rs` (the
+synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
+snapshot in the middle of a note, `--audio-out`, the reading profile),
+`crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the
+same samples).
 
 ## Conformance image
 

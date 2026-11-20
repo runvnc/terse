@@ -29,11 +29,11 @@ const USAGE: &str = "usage:
             [--bench] [--realtime] [--frame-times <file>] [--pin] [--spin-us N] [--spin fixed|adaptive]
             [--driver-timeout S] [--start-timeout S] [--record <file>] [--replay <file>]
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
-            [--profile reading] [--no-feed-relays] [--no-program-download]
+            [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
 
 Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
 (slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
---consent, --profile) and terse-dev-page (7), from this program's directory; --driver replaces the
+--consent, --profile), terse-dev-sound (6) and terse-dev-page (7), from this program's directory; --driver replaces the
 driver of the slots it names (the command line is split at spaces). --shell runs the image (default:
 the shell built into terse) as the shell (SPEC 12): one driver process per device serves every
 machine. --transport socket offers drivers only the socket (default: shared memory is offered and
@@ -53,7 +53,9 @@ on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; driver
 (TERSE_BUS_SPIN=fixed and TERSE_BUS_SPIN_US for theirs). --driver-timeout (default 30 s): a driver
 that does not answer in time is given up as hung; --start-timeout (default 10 s): for it to start.
 A driver that fails ends the run (exit status 3). --record writes the bus's recording of a single
-machine; --replay runs one again, checking every frame's hash.";
+machine; --replay runs one again, checking every frame's hash. --audio-out writes what the sound
+devices played (SPEC 18.7: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
+is ever played.";
 
 struct Opts {
     image: Option<String>,
@@ -90,6 +92,7 @@ struct Opts {
     start_timeout: f64,
     record: Option<PathBuf>,
     replay: Option<PathBuf>,
+    audio_out: Option<PathBuf>,
     content: ContentOptions,
 }
 
@@ -129,6 +132,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         start_timeout: 10.0,
         record: None,
         replay: None,
+        audio_out: None,
         content: ContentOptions::default(),
     };
     let mut it = args.into_iter();
@@ -198,6 +202,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             "--threads" => o.threads = value()?.parse().map_err(|_| "bad --threads")?,
             "--bench" => o.bench = true,
             "--realtime" => o.realtime = true,
+            "--audio-out" => o.audio_out = Some(value()?.into()),
             "--frame-times" => {
                 o.frame_times = Some(value()?.into());
                 o.bench = true;
@@ -372,6 +377,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
         None => opts.frames.unwrap_or(60 * 60 * 10),
     };
     let mut tick = Instant::now();
+    let mut audio = Vec::new();
     for i in 0..total {
         if signals::stop_requested() {
             eprintln!("terse-bus: stopped by a signal");
@@ -399,6 +405,11 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
         let start = Instant::now();
         bs.frame(&events, controllers)?;
         let took = start.elapsed();
+        if opts.audio_out.is_some() {
+            let mut frame = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
+            bs.system.take_audio(&mut frame);
+            audio.extend_from_slice(&frame);
+        }
         if opts.bench {
             times.push(took.as_secs_f64() * 1000.0);
         }
@@ -432,6 +443,9 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
         if bs.system.stopped().is_some() {
             break;
         }
+    }
+    if let Some(path) = &opts.audio_out {
+        std::fs::write(path, terse_core::sound::wav(&audio)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if let (Some(path), Some(bytes)) = (&opts.record, &recording) {
         std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -542,12 +556,16 @@ fn report(bs: &BusSystem) {
 /// `--in-process`: a single machine with the devices compiled in.
 fn in_process(opts: &Opts, core: &mut Machine<InProcessHost>, script: &Script, startup: Duration) -> Result<ExitCode, String> {
     let mut times = Vec::new();
+    let mut audio = Vec::new();
     for _ in 0..opts.frames.unwrap_or(60 * 60 * 10) {
         let frame = core.frame();
         let events: Vec<Event> = script.events(frame).to_vec();
         let start = Instant::now();
         core.try_run_frame(&FrameInput { events: &events, controllers: script.controllers(frame), ..Default::default() })?;
         times.push(start.elapsed().as_secs_f64() * 1000.0);
+        if opts.audio_out.is_some() {
+            audio.extend(core.take_audio().unwrap_or_else(|| vec![0; 2 * terse_core::sound::FRAME_SAMPLES]));
+        }
         if let Some(n) = opts.hash_every
             && core.frame() % n == 0
         {
@@ -560,6 +578,9 @@ fn in_process(opts: &Opts, core: &mut Machine<InProcessHost>, script: &Script, s
     if opts.bench {
         let (p50, p99, max) = spread(&mut times);
         eprintln!("bench: {} frames, emulation per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms; start-up {:.1} ms", times.len(), startup.as_secs_f64() * 1000.0);
+    }
+    if let Some(path) = &opts.audio_out {
+        std::fs::write(path, terse_core::sound::wav(&audio)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if opts.hash {
         println!("{}", hex(&core.try_state_hash()?));

@@ -264,4 +264,4 @@ Every event is an input. The events of each frame, with the Unix time,
 the random bytes, the controller states and the content completions, are
 what a host records to replay a run exactly; `terse run --events <file>`
 reads such input from a text file. Reading an event costs 4 units plus 1
-for the copied record; see [charges](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).
+for the copied record; see [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).

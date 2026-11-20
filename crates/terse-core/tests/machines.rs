@@ -673,7 +673,7 @@ child: .fill 32, 1, 0
 /// SPEC 4 `open` and `argument`, SPEC 12.2 `request` and `argument`: one
 /// request waits at a time until the shell reads it; the shell is told
 /// once per request; the shell's own `open` and a machine run alone get 0;
-/// the argument is the child's state (STATE.md 1.12).
+/// the argument is the child's state (STATE.md 1.13).
 #[test]
 fn open_requests_and_arguments() {
     if !common::have_tools() {

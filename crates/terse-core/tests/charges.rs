@@ -102,6 +102,13 @@ fn cases() -> Vec<Case> {
             1,
         ),
         c("vector style", call_loop("", "    li a0, 1\n", 0x302), 1),
+        // The sound device (SPEC 18): a list of key-ons, interpreted at
+        // once (2 per byte); a wavetable and a whole sample slot, copied.
+        // These machines also render 800 pairs at the end of each frame.
+        c("sound submit 4096 key-ons", call_loop(&fill_ram(4096, 0x09), "    li a0, 0x100000\n    lui a1, 1\n", 0x600), 1),
+        c("sound submit 2 (voice 3)", call_loop("    li t0, 0x100000\n    li t1, 0x0301\n    sh t1, 0(t0)\n", "    li a0, 0x100000\n    li a1, 2\n", 0x600), 1),
+        c("sound wave", call_loop("", "    li a0, 7\n    li a1, 0x100000\n", 0x601), 1),
+        c("sound sample 65536", call_loop("", "    li a0, 1\n    li a1, 0x100000\n    lui a2, 16\n    li a3, 0\n", 0x602), 9),
         c(
             "content put 16384",
             call_loop(&block(2, 16384), "    li a0, 0x100000\n    addi s0, s0, 1\n    li t0, 0x101000\n    sb s0, 0(t0)\n", 0x400),
@@ -153,7 +160,11 @@ fn run(m: &mut Machine, frames: u32, random: &[u8]) -> (f64, u64) {
 
 fn machine(case: &Case) -> Machine {
     let rom = common::assemble(&case.src);
-    Machine::new(&common::program(&rom, case.ram_pages, &[common::TERMINAL, common::VECTOR, common::CONTENT]))
+    let mut devices = vec![common::TERMINAL, common::VECTOR, common::CONTENT];
+    if case.name.starts_with("sound") {
+        devices.push(terse_core::DeviceReq { slot: terse_core::sound::SLOT, version: 0 });
+    }
+    Machine::new(&common::program(&rom, case.ram_pages, &devices))
 }
 
 #[test]
