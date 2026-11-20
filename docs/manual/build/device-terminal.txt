@@ -134,7 +134,7 @@ The 150 applies to commands `01h`, `02h` and `03h` only: the scrolls and clears 
 
 For determinism and snapshots the terminal's state is, in this order: a present flag (1 byte; if `00h` nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with `00h`. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (`C2h`-`F4h`) and the valid continuation bytes received after it.
 
-The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:94a70a146c03632e7b355c88af61144b8b7a7f418f02b691adb6e99f654c81c6) describes the layers.
+The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; [the 2D vector display](terse:8ce12cdb9d786b6feb93e9cdaff437b3bb4f4d9d05537a7ed6def60951203e78) describes the layers.
 
 ## Example
 

@@ -1022,11 +1022,16 @@ oscilloscope tube:
   repeated lines add up to visibly brighter light, so a program can brighten
   a line by drawing it more than once.
 - The terminal's characters and cursor are light on the same tube, in their
-  foreground colour, drawn in the same way as the shapes. So are the page's
-  text and figures (as outlines), in their colours; the page's background
-  is not drawn.
-- The beam is a sharp line with a faint bloom: its bright core is narrower
-  than the stated width, and the glow around it is dim and short.
+  foreground colour, and so are the page's text and figures (as outlines),
+  in their colours; the page's background is not drawn. Text is not beam
+  light: it is there to be read, so a host should draw it in its own
+  colours and antialiasing, as sharp as in the clean style, and let it add
+  at most a little to the wide glow.
+- The beam is a thin, sharp line on a faint, wide glow. A host should give
+  it a bright core whose width follows the stated width but is never
+  thinner than about a pixel, and a glow that is dim but spreads far (the
+  halation of the glass), faint enough that the gaps between close lines
+  and inside letters stay dark.
 - Light lingers. What the current list and text show is drawn at full
   brightness each frame; in addition, an afterglow of what was shown before
   fades away: quickly at first, then with a dim tail that is multiplied by
@@ -1036,11 +1041,11 @@ oscilloscope tube:
   and only moves, its afterglow is a continuous smear rather than separate
   copies.
 
-The exact brightness, core width, glow, decay of the fast part, tone curve
-and where an outline sits on a shape's edge are up to the host. The
-afterglow is part of how the host presents the display, not machine state,
-and the program cannot observe it. A host should let the user turn the
-afterglow off. In the clean style the persistence value has no effect.
+The exact brightness, core width, glow, how much text adds to it, decay of
+the fast part, tone curve, tint and where an outline sits on a shape's edge
+are up to the host. The afterglow is part of how the host presents the
+display, not machine state, and the program cannot observe it. A host
+should let the user turn the afterglow off. In the clean style the persistence value has no effect.
 
 ### §vector.determinism Determinism
 

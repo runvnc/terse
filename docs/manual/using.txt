@@ -12,7 +12,7 @@ builds everything, sets up four sample articles and opens the shell. The first t
 
 Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:{network}).
 
-The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective).
+The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective). Programs in the phosphor style (every program, with `--force-phosphor`) are drawn on a colour vector monitor; `--tube p31`, `amber` or `vectrex` gives a green, amber or white tube instead (`xy` is the default), `--vignette` darkens its corners and `--no-trails` turns the afterglow off.
 
 ## The shell
 
