@@ -227,7 +227,7 @@ were before device 9 existed.
 section 1.7; the eye a host draws from (SPEC 13.1) is presentation and is
 not included.
 
-### 1.12 Sound (0 or 2,656 + s bytes)
+### 1.12 Sound (0 or 2,688 + s bytes)
 
 This section is there only if the image lists device 6 (SPEC 18); for any
 other image it is empty, so the hashes of images without device 6 are as
@@ -235,11 +235,11 @@ they were before device 6 existed. `U` is the offset after section 1.11.
 
 | Offset | Size | Field |
 |---|---|---|
-| U | 16 × 36 | Voice 0, then 1, …, 15 |
-| U + 576 | 32 × 64 | Wavetables 0 to 31, 64 signed bytes each |
-| U + 2,624 | … | Sample slots 0 to 3, each: its length len (u32, 0–65,536), its loop start (u32, as given to `sample`), then its len bytes |
+| U | 16 × 38 | Voice 0, then 1, …, 15 |
+| U + 608 | 32 × 64 | Wavetables 0 to 31, 64 signed bytes each |
+| U + 2,656 | … | Sample slots 0 to 3, each: its length len (u32, 0–65,536), its loop start (u32, as given to `sample`), then its len bytes |
 
-s is the sum of the four lengths. Each voice is 36 bytes (SPEC 18.4):
+s is the sum of the four lengths. Each voice is 38 bytes (SPEC 18.4):
 
 | Offset | Size | Field |
 |---|---|---|
@@ -265,6 +265,7 @@ s is the sum of the four lengths. Each voice is 36 bytes (SPEC 18.4):
 | 31 | 2 | Noise register (u16), 1 to `7FFFh` |
 | 33 | 1 | Ended (flag) |
 | 34 | 2 | Output (i16): the voice's output in the last pair rendered |
+| 36 | 2 | Previous output (i16): its output in the pair before that |
 
 The samples a frame rendered are presentation (SPEC 18.7) and are not
 included; everything they are computed from is.
@@ -290,7 +291,7 @@ first frame, SPEC 12.2, or by the snapshot it was restored from).
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
-83r (machines), 0 or 4 + m (3D vector), 0 or 2,656 + s (sound) and 0
+83r (machines), 0 or 4 + m (3D vector), 0 or 2,688 + s (sound) and 0
 or 32 (argument).
 
 ## 2. What is left out, and why
@@ -407,7 +408,7 @@ A host keeps a snapshot (SPEC 12.7) in a file:
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
-N is below 200 or above 1,423,043 (the longest serialization: 1 MiB of
+N is below 200 or above 1,423,075 (the longest serialization: 1 MiB of
 RAM, a full queue, every device at its largest and an argument), whose L
 is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥

@@ -25,6 +25,11 @@ pub const MAX_SAMPLE: usize = 65_536;
 pub const MAX_LIST: usize = 4_096;
 /// The envelope's greatest level.
 pub const ENV_MAX: u32 = 0xFF_FFFF;
+/// What the feedback F (the sum of a voice's last two outputs times its
+/// feedback depth) is multiplied by in the table index (SPEC 18.6): the
+/// average × 256, so depth 255 at full output moves the index by about
+/// half a pass (π), the strongest feedback that stays a tone.
+pub const FEEDBACK_SCALE: u32 = 128;
 /// "No voice" in a Modulator or Ring command.
 pub const NONE: u8 = 0xFF;
 /// Capabilities `info` reports: bit 0, sample playback.
@@ -33,7 +38,7 @@ pub const CAPS: u32 = 1;
 pub const RESULT_DONE: u32 = 0;
 pub const RESULT_REJECTED: u32 = 1;
 /// Bytes of one voice in the state (STATE.md 1.12).
-pub const VOICE_BYTES: usize = 36;
+pub const VOICE_BYTES: usize = 38;
 /// The longest section of the state (STATE.md 1.12).
 pub const MAX_STATE: usize = VOICES * VOICE_BYTES + WAVES * WAVE_LEN + SAMPLE_SLOTS * (8 + MAX_SAMPLE);
 
@@ -126,6 +131,8 @@ pub struct Voice {
     pub ended: bool,
     /// The voice's output in the last sample rendered.
     pub out: i16,
+    /// Its output in the sample before that (feedback averages the two).
+    pub prev: i16,
 }
 
 impl Default for Voice {
@@ -153,6 +160,7 @@ impl Default for Voice {
             lfsr: 1,
             ended: false,
             out: 0,
+            prev: 0,
         }
     }
 }
@@ -363,8 +371,10 @@ impl Sound {
         voice.step_envelope();
         let raw: i32 = match voice.source {
             source::WAVE => {
-                let feedback = (voice.out as i32 * voice.feedback as i32) as u32;
-                let p = voice.phase.wrapping_add(modulation.wrapping_mul(1024)).wrapping_add(feedback.wrapping_mul(1024));
+                // The sum of the last two outputs (twice their average), so
+                // × 128 is the average × 256: at most about half a turn.
+                let feedback = ((voice.out as i32 + voice.prev as i32) * voice.feedback as i32) as u32;
+                let p = voice.phase.wrapping_add(modulation.wrapping_mul(1024)).wrapping_add(feedback.wrapping_mul(FEEDBACK_SCALE));
                 let r = self.waves[voice.wave as usize][(p >> 26) as usize] as i32;
                 voice.phase = voice.phase.wrapping_add(voice.incr);
                 r
@@ -426,6 +436,7 @@ impl Sound {
                     l += o as i32 * voice.pan[0] as i32;
                     r += o as i32 * voice.pan[1] as i32;
                 }
+                voice.prev = voice.out;
                 voice.out = o;
             }
             self.out[2 * n] = (l >> 10).clamp(-32768, 32767) as i16;
@@ -457,6 +468,7 @@ impl Sound {
             out.extend_from_slice(&v.lfsr.to_le_bytes());
             out.push(v.ended as u8);
             out.extend_from_slice(&v.out.to_le_bytes());
+            out.extend_from_slice(&v.prev.to_le_bytes());
         }
         for w in &self.waves {
             out.extend(w.iter().map(|&b| b as u8));
@@ -500,6 +512,7 @@ impl Sound {
                 lfsr: r.u16()?,
                 ended: r.flag()?,
                 out: r.u16()? as i16,
+                prev: r.u16()? as i16,
             };
             if v.stage > stage::RELEASE || v.env > ENV_MAX || !voice_or_none(v.modulator) || !voice_or_none(v.ring) || !(1..=0x7FFF).contains(&v.lfsr) {
                 return Err(bad("a sound voice's field out of range"));
@@ -526,6 +539,26 @@ impl Sound {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// round(127 sin(2π i / 64)), programs/tune's table.
+    fn sine() -> [u8; 64] {
+        std::array::from_fn(|i| (127.0 * (2.0 * std::f64::consts::PI * i as f64 / 64.0).sin()).round() as i8 as u8)
+    }
+
+    /// programs/tune's feedback depth (its brass, section 3).
+    const TUNE_FEEDBACK: u8 = 192;
+
+    /// Voice 0's outputs over `n` samples, rendered as `render_frame` does.
+    fn render(s: &mut Sound, n: usize) -> Vec<i16> {
+        (0..n)
+            .map(|_| {
+                let o = s.voice_sample(0, &[0; VOICES]);
+                s.voices[0].prev = s.voices[0].out;
+                s.voices[0].out = o;
+                o
+            })
+            .collect()
+    }
 
     fn square() -> [u8; 64] {
         std::array::from_fn(|i| if i < 32 { 100 } else { (-100i8) as u8 })
@@ -658,11 +691,12 @@ mod tests {
         s.submit(&[op::FEEDBACK, 200, op::KEY_ON, op::VOICE, 1, op::WAVE, 1, op::RING, 0, op::KEY_ON]);
         let mut cur = [0i16; VOICES];
         let mut outs = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..4 {
             for v in 0..2 {
                 cur[v] = s.voice_sample(v, &cur);
             }
             for v in 0..2 {
+                s.voices[v].prev = s.voices[v].out;
                 s.voices[v].out = cur[v];
             }
             outs.push(cur);
@@ -670,12 +704,58 @@ mod tests {
         let o = |raw: i32| (raw * 65535 * 255) >> 16;
         // Sample 0: no feedback yet; ramp[0] = -32.
         assert_eq!(outs[0][0] as i32, o(-32));
-        let fb_idx = |prev: i32| (((prev * 200) as u32).wrapping_mul(1024) >> 26) as i32;
-        assert_eq!(outs[1][0] as i32, o(fb_idx(outs[0][0] as i32) - 32));
-        assert_eq!(outs[2][0] as i32, o(fb_idx(outs[1][0] as i32) - 32));
+        // The index moves by (the sum of the last two outputs × 200) × 128.
+        let fb_idx = |a: i16, b: i16| ((((a as i32 + b as i32) * 200) as u32).wrapping_mul(FEEDBACK_SCALE) >> 26) as i32;
+        assert_eq!(outs[1][0] as i32, o(fb_idx(outs[0][0], 0) - 32));
+        assert_eq!(outs[2][0] as i32, o(fb_idx(outs[1][0], outs[0][0]) - 32));
+        assert_eq!(outs[3][0] as i32, o(fb_idx(outs[2][0], outs[1][0]) - 32));
         // Ring: (square × voice 0 of this sample) >> 15.
-        for k in 0..3 {
+        for k in 0..4 {
             assert_eq!(outs[k][1] as i32, (o(100) * outs[k][0] as i32) >> 15);
+        }
+    }
+
+    /// A sine (programs/tune's table) at full volume with feedback 255:
+    /// these samples pin SPEC 18.6's feedback, the sum of the voice's last
+    /// two outputs × depth × 128 (the average × 256). An independent model
+    /// of SPEC 18, written in Python, gave them.
+    #[test]
+    fn feedback_samples_exactly() {
+        let mut s = Sound::default();
+        s.load_wave(0, &sine());
+        // round(2^32 / 160.25): a period of 160.25 samples.
+        let mut list = vec![op::FEEDBACK, 255, op::FREQUENCY];
+        list.extend(26_801_668u32.to_le_bytes());
+        list.push(op::KEY_ON);
+        s.submit(&list);
+        let outs = render(&mut s, 1000);
+        assert_eq!(outs[..12], [0, 0, 0, 3059, 9434, 22949, 31874, 9434, 24989, 29834, 6374, 27029]);
+        assert_eq!(outs[500..508], [-29835, -31110, -27030, -29835, -31110, -29835, -29835, -31110]);
+        assert_eq!((s.voices[0].out, s.voices[0].prev), (outs[999], outs[998]));
+    }
+
+    /// Feedback at programs/tune's depth stays a tone. A note of period
+    /// 160.25 samples: once settled, each sample is close to the one 160
+    /// later. (A whole-number period would not do: in integer arithmetic
+    /// a voice whose phase repeats exactly locks into an exact cycle even
+    /// when its feedback is chaotic; the quarter-sample drift a period
+    /// keeps it from that.) Feedback of the last output alone, scaled as
+    /// SPEC 18 first had it, gives a mean difference of 8,000 to 17,000
+    /// here on outputs of about 14,000: it was heard as static.
+    #[test]
+    fn feedback_stays_periodic() {
+        for depth in [0u8, 128, TUNE_FEEDBACK] {
+            let mut s = Sound::default();
+            s.load_wave(0, &sine());
+            let mut list = vec![op::FEEDBACK, depth, op::VOLUME, 200, op::FREQUENCY];
+            list.extend(26_801_668u32.to_le_bytes());
+            list.push(op::KEY_ON);
+            s.submit(&list);
+            let outs = render(&mut s, 9600);
+            let level = outs[4800..6080].iter().map(|&x| (x as i64).abs()).sum::<i64>() / 1280;
+            let diff = (4800..6080).map(|n| (outs[n] as i64 - outs[n + 160] as i64).abs()).sum::<i64>() / 1280;
+            assert!(level > 10_000, "depth {depth}: level {level}");
+            assert!(diff < 2_000, "depth {depth}: mean difference between periods {diff}");
         }
     }
 

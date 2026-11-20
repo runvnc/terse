@@ -75,7 +75,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.
 
-Sound (device 6): absent unless the image lists device 6; then the 16 voices of 36 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last output), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,656 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:c248296e19eda15da54d67822d84148b536fa097823c320c9a8d50a7967f74ef).
+Sound (device 6): absent unless the image lists device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:05cc285ef6133053e7fa1fb000e512ddccad99b7b6e8287bfdc2521a99f9a2b1).
 
 Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 
@@ -133,7 +133,7 @@ The snapshot file:
 | ... | N - 200 - L | The rest of S |
 | ... | 32 | The state hash of S |
 
-A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,043 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
+A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,075 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
 `terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf).
 

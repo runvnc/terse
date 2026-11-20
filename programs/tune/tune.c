@@ -44,6 +44,11 @@ static const uint32_t notes[61] = {
 #define W_SAW 2
 #define W_TRI 3
 
+/* The brass's feedback depth. Feedback stays a clean tone up to a phase
+ * swing of about 2 radians, which at volume 200 is depth ~210 (SPEC
+ * 18.6): 192 is brassy, near a sawtooth, with a margin. */
+#define FEEDBACK 192
+
 static int8_t wave[64];
 #define PLUCK_LEN 2048
 static int8_t pluck[PLUCK_LEN];
@@ -123,20 +128,24 @@ static void setup(void)
     voice(1, W_SQUARE, 150, 160, 255);
     snd_envelope(0xFFFF, 300, 120, 2000);
     /* 2: the bell's carrier, its phase moved by 3 (muted: only heard
-     * through 2), at 3.5 times its frequency. */
+     * through 2), at 3.5 times its frequency. It rings for seconds, but
+     * the release (key off at the end of the section) is fast enough to
+     * fall silent within the half-second gap after it, as the clang's
+     * does: the next section is heard alone. */
     voice(2, W_SINE, 230, 230, 230);
-    snd_envelope(0xFFFF, 60, 0, 60);
+    snd_envelope(0xFFFF, 60, 0, 800);
     snd_modulator(3, 90);
     voice(3, W_SINE, 255, 0, 0);
     snd_mix(0);
-    snd_envelope(0xFFFF, 120, 0, 120);
-    /* 4: brass, a sine with feedback. */
+    snd_envelope(0xFFFF, 120, 0, 1600);
+    /* 4: brass, a sine with feedback: bright while the level is high,
+     * mellower as it decays, with a short swell at the start. */
     voice(4, W_SINE, 200, 220, 220);
     snd_envelope(0x0800, 200, 180, 1500);
-    snd_feedback(150);
+    snd_feedback(FEEDBACK);
     /* 5 times 6 (muted): ring modulation. */
     voice(5, W_SINE, 255, 220, 220);
-    snd_envelope(0xFFFF, 150, 0, 150);
+    snd_envelope(0xFFFF, 150, 0, 800);
     snd_ring(6);
     voice(6, W_SINE, 255, 0, 0);
     snd_mix(0);
