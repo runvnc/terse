@@ -177,15 +177,19 @@ OPEN:
 | 36 | 4 | `R`: ROM length |
 | 40 | 4 | `L`: RAM length |
 | 44 | 2 + … | The instance's memory file (section 4.1); empty unless the driver chose shared memory |
-| … | 1 + … | The driver's slots the image lists: a count (u8), then (slot, version) pairs |
+| … | 1 + … | The driver's slots the machine has: a count (u8), then (slot, version) pairs. These are the devices the image requires and the optional ones granted (SPEC 2); a device the machine was not granted is not listed, so the driver treats it as absent |
 | … | 1 + … | The program's identity (SPEC 12.2), if it was started as one: `0`, or `1`, the publisher (32 bytes) and the name (u16 length and bytes) |
 | … | `R` | The ROM, so that a driver can read ROM without asking |
 
 The reply is `83h`, then `01h` if the driver took the instance or `00h` if
 not, 2 reserved bytes and a reason (a string). The core refuses to start a
 machine (SPEC 12.5: `start` fails with "needs a device") that a driver will
-not take, or whose image lists a device no driver serves, or a version a
-driver does not implement.
+not take, or whose image requires a device no driver serves, or a version a
+driver does not implement. An optional device no driver serves (in the
+version listed) is not granted, and the machine starts without it; a
+restored machine (SPEC 12.7) gets exactly the devices its snapshot's
+grants say, and fails with "needs a device" if one of them has no
+driver.
 
 An instance's devices start at reset (SPEC 1.3). Each instance has its
 own memory file on shared memory, and its own state in the driver; a
@@ -379,7 +383,11 @@ driver that has not exited 2 seconds later.
 `terse-dev-sound` for 6 and `terse-dev-page` for 7, from its own directory, each only if a machine of
 the run may list one of its slots (for a shell, all of them); `--driver
 <slots>=<command line>` replaces the driver of those slots (`--driver
-2=...`, `--driver 3,9=...`).
+2=...`, `--driver 3,9=...`). For a single machine, a driver whose slots
+only optional devices of the image use is not started if its program is
+not installed (and no `--driver` names it) or `--without <slot>`
+withholds them: the run goes on without those devices (SPEC 2). A
+required device whose driver is missing still stops the run.
 
 ---
 
@@ -812,7 +820,9 @@ feeds-updated flag; the page driver's is the events it reported. A driver
 with no inputs gives none.
 
 The bus recording file is the core's own (`terse-bus --record`, a single
-machine): `TBRC`, version 0, the image ID, then per frame: the frame
+machine): `TBRC`, version 0, the image ID, the machine's grants (one byte,
+`00h` or `01h`, per optional device the image lists, as `STATE.md` 5;
+none for most images), then per frame: the frame
 counter, the Unix time, the 32 controller bytes, the host's events (count
 and events), the random bytes taken (count and bytes), the drivers' records
 (count; then the driver's lowest slot, length, bytes for each) and the

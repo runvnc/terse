@@ -22,6 +22,7 @@
 #define CALL_EXIT 0x106
 #define CALL_OPEN 0x107
 #define CALL_ARGUMENT 0x108
+#define CALL_DEVICE 0x109
 #define CALL_TERM_WRITE 0x200
 #define CALL_TERM_COMMAND 0x201
 #define CALL_TERM_SET_CURSOR 0x202
@@ -238,6 +239,14 @@ static inline uint32_t terse_open(const void *request) { return terse_call(CALL_
 /* The blob ID the shell gave this machine when it started it, into 32
  * bytes of RAM: 1, or 0 if it has none. */
 static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGUMENT, (uint32_t)id, 0, 0); }
+/* Optional devices (SPEC 2): an image lists a device as optional with
+ * `terse pack --optional <slot>:<version>` (build.sh) instead of --device,
+ * and runs whether or not the host has it. terse_device gives the version
+ * of device `slot` if this machine has it, TERSE_ERR_UNKNOWN if not; the
+ * answer never changes while the machine runs, so ask once at the start.
+ * Calls to a device the machine does not have return TERSE_ERR_UNKNOWN. */
+static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVICE, slot, 0, 0); }
+static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
 
 /* Controllers (SPEC 6): the 8-byte state. */
 typedef struct {

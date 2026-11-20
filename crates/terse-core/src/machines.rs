@@ -106,6 +106,20 @@ impl StartFailure {
     }
 }
 
+/// A machine of `image` cannot have optional device `d` (`None`: grants
+/// that do not fit the image), which a restored machine was granted: reason
+/// 3 (SPEC 12.2 `restore`).
+pub fn needs_device(image: &crate::image::Image, d: Option<crate::image::DeviceReq>) -> StartFailure {
+    StartFailure {
+        reason: failure::NEEDS_DEVICE,
+        image: Some(image.id),
+        message: match d {
+            Some(d) => format!("the machine had device {} version {}, which this host does not provide", d.slot, d.version),
+            None => "grants that do not fit the image".into(),
+        },
+    }
+}
+
 /// Checks `bytes` as an image a machine can start (SPEC 2): not an image is
 /// reason 2, an image that needs a device (slot, version) this host does
 /// not provide reason 3.

@@ -17,7 +17,7 @@ use terse_core::{
 
 const SHELL: &[u8] = include_bytes!("../../../programs/shell/shell.terse");
 const HELLO: &[u8] = include_bytes!("../../../programs/hello/hello.terse");
-const MACHINES: DeviceReq = DeviceReq { slot: 8, version: 0 };
+const MACHINES: DeviceReq = DeviceReq::new(8, 0);
 
 fn words(code: &[u32]) -> Vec<u8> {
     code.iter().flat_map(|w| w.to_le_bytes()).collect()
@@ -530,7 +530,7 @@ long:   .fill 32, 1, 0x22
     // The built-in arrives at once; the device check fails one image; the
     // host holds no "absent". The tool's image arrives three frames later.
     system.deliver_image(2, Ok(hello.clone()));
-    let mut bytes = Image::build("needs", 1, &[DeviceReq { slot: 2, version: 0 }], &[0x6F, 0, 0, 0]);
+    let mut bytes = Image::build("needs", 1, &[DeviceReq::new(2, 0)], &[0x6F, 0, 0, 0]);
     bytes[32] = 5; // device 5 (messages): not one this host provides
     system.deliver_image(3, terse_core::load_image(&bytes));
     system.deliver_image(4, Err(StartFailure::not_found("no such program")));

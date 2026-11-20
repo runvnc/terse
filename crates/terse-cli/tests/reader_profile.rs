@@ -130,7 +130,7 @@ fn the_reading_profile_refuses_other_devices() {
             .unwrap();
         assert_eq!(out.status.code(), Some(2), "{program}");
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains(&format!("lists device {device}, which the reading profile does not provide")), "{program}: {err}");
+        assert!(err.contains(&format!("requires device {device}, which the reading profile does not provide")), "{program}: {err}");
     }
     let out = common::terse_command().args(["run", "--shell", "--profile", "reading", "--frames", "1"]).output().unwrap();
     assert_eq!(out.status.code(), Some(2));

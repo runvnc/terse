@@ -109,7 +109,7 @@ A rejected submit copies nothing and costs only the 4. Drawing, decoding and the
 
 ## State
 
-The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the image lists device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
+The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
 
 ## Example
 

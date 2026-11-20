@@ -157,16 +157,18 @@ pub fn encode_completion(c: &Completion, out: &mut Vec<u8>) {
     }
 }
 
-/// The header: the image's ID, and the snapshot file (STATE.md 4) the
-/// machine starts from, if it does not start from reset.
-pub fn encode_header(image_id: &[u8; 32], snapshot: Option<&[u8]>) -> Vec<u8> {
+/// The header: the image's ID, the snapshot file (STATE.md 4) the
+/// machine starts from, if it does not start from reset, and the machine's
+/// grants (none for an image without optional devices).
+pub fn encode_header(image_id: &[u8; 32], snapshot: Option<&[u8]>, grants: &crate::image::Grants) -> Vec<u8> {
     let snapshot = snapshot.unwrap_or_default();
-    let mut out = Vec::with_capacity(HEADER_LEN + snapshot.len());
+    let mut out = Vec::with_capacity(HEADER_LEN + snapshot.len() + grants.0.len());
     out.extend_from_slice(&MAGIC);
     out.push(VERSION);
     out.extend_from_slice(image_id);
     out.extend_from_slice(&(snapshot.len() as u32).to_le_bytes());
     out.extend_from_slice(snapshot);
+    out.extend(grants.0.iter().map(|&g| g as u8));
     out
 }
 
@@ -233,6 +235,22 @@ impl<'a> Recording<'a> {
 
     fn id(&mut self) -> Result<[u8; 32], RecordError> {
         Ok(self.take(32)?.try_into().unwrap())
+    }
+
+    /// The grants of the recorded machine, `k` flags after the snapshot
+    /// (STATE.md 5): `k` is the number of optional devices the image
+    /// lists. Read before the first frame.
+    pub fn grants(&mut self, k: usize) -> Result<crate::image::Grants, RecordError> {
+        let mut out = Vec::with_capacity(k);
+        for _ in 0..k {
+            let at = self.at;
+            out.push(match self.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(RecordError::Malformed(at)),
+            });
+        }
+        Ok(crate::image::Grants(out))
     }
 
     /// The next frame and the state hash after it; `None` at the end.
@@ -329,10 +347,11 @@ mod tests {
             .map(|(i, outcome)| Completion { handle: i as u8 + 1, outcome })
             .collect(),
         };
-        let mut bytes = encode_header(&[1; 32], Some(b"snap"));
+        let mut bytes = encode_header(&[1; 32], Some(b"snap"), &crate::image::Grants::default());
         bytes.extend(frame.encode(&[6; 32]));
         let mut r = Recording::parse(&bytes).unwrap();
         assert_eq!((r.image_id, r.snapshot), ([1; 32], Some(&b"snap"[..])));
+        assert_eq!(r.grants(0), Ok(crate::image::Grants::default()));
         assert_eq!(r.next_frame(), Some(Ok((frame.clone(), [6; 32]))));
         assert_eq!(r.next_frame(), None);
         // The controllers come back as the machine saw them.
@@ -346,5 +365,15 @@ mod tests {
         let mut v1 = bytes.clone();
         v1[4] = 1;
         assert_eq!(Recording::parse(&v1).err(), Some(RecordError::Version(1)));
+        // The grants follow the snapshot: one flag per optional device.
+        let grants = crate::image::Grants(vec![true, false]);
+        let mut bytes = encode_header(&[1; 32], None, &grants);
+        assert_eq!(&bytes[HEADER_LEN..], &[1, 0]);
+        bytes.extend(frame.encode(&[6; 32]));
+        let mut r = Recording::parse(&bytes).unwrap();
+        assert_eq!(r.grants(2), Ok(grants));
+        assert_eq!(r.next_frame(), Some(Ok((frame.clone(), [6; 32]))));
+        bytes[HEADER_LEN] = 2;
+        assert_eq!(Recording::parse(&bytes).unwrap().grants(2), Err(RecordError::Malformed(HEADER_LEN)));
     }
 }

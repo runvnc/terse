@@ -27,7 +27,7 @@ fn crash_image() -> Vec<u8> {
     ];
     let mut rom: Vec<u8> = code.iter().flat_map(|w| w.to_le_bytes()).collect();
     rom.extend_from_slice(b"crash");
-    Image::build("crash", 1, &[terse_core::DeviceReq { slot: 2, version: 0 }], &rom)
+    Image::build("crash", 1, &[terse_core::DeviceReq::new(2, 0)], &rom)
 }
 
 /// A blob ID that is in no store.
@@ -573,7 +573,7 @@ fn image_is_up_to_date() {
 fn feed_programs() -> Vec<(String, Vec<u8>, bool)> {
     let hello = Image::parse(builtin::PROGRAMS[3]).unwrap();
     let greeter = Image::build("greeter", hello.ram_pages, &hello.devices, &hello.rom);
-    let mut broken = Image::build("broken", 1, &[terse_core::DeviceReq { slot: 2, version: 0 }], &[0x6F, 0, 0, 0]);
+    let mut broken = Image::build("broken", 1, &[terse_core::DeviceReq::new(2, 0)], &[0x6F, 0, 0, 0]);
     broken[32] = 5;
     let sparks = Image::parse(builtin::PROGRAMS[1]).unwrap();
     let racer = Image::build("racer", sparks.ram_pages, &sparks.devices, &sparks.rom);

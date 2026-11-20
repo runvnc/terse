@@ -390,6 +390,6 @@ fn report(what: &str, used: &[u64]) {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["sketch/sketch.c"], true, "sketch", RAM_PAGES, &[(2, 0), (3, 0), (4, 0)]);
+    common::check_up_to_date(IMAGE, &["sketch/sketch.c"], true, "sketch", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80)]);
 }
 

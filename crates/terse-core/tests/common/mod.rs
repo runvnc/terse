@@ -86,11 +86,11 @@ pub fn assemble(src: &str) -> Vec<u8> {
     build(&[path], "-O0", false)
 }
 
-pub const TERMINAL: DeviceReq = DeviceReq { slot: 2, version: 0 };
-pub const VECTOR: DeviceReq = DeviceReq { slot: 3, version: 0 };
-pub const CONTENT: DeviceReq = DeviceReq { slot: 4, version: 0 };
+pub const TERMINAL: DeviceReq = DeviceReq::new(2, 0);
+pub const VECTOR: DeviceReq = DeviceReq::new(3, 0);
+pub const CONTENT: DeviceReq = DeviceReq::new(4, 0);
 #[allow(dead_code)]
-pub const PAGE: DeviceReq = DeviceReq { slot: 7, version: 0 };
+pub const PAGE: DeviceReq = DeviceReq::new(7, 0);
 
 pub fn program(rom: &[u8], ram_pages: u8, devices: &[DeviceReq]) -> Image {
     Image::parse(&Image::build("test", ram_pages, devices, rom)).unwrap()

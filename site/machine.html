@@ -12,7 +12,7 @@
 <article>
 <h1 id="the-machine">The machine</h1>
 <p>This article describes machine profile 1, the only profile so far: the CPU, the memory map, how frames and the budget work, how a machine stops, the image file a program is shipped in, and how programs call devices, with the complete table of calls. Each device&#39;s calls are described in full in that device&#39;s article.</p>
-<p>The machine is the optional third layer of Terse: the network and the article format are the core, and a reader can implement them without it. A machine host that only wants to run the reader may provide the machine&#39;s reading profile: the machine and devices 1, 2, 4 and 7, with every content operation the reader needs (get, subscriptions, timeline, names, identity, subscribe, unsubscribe); it may answer the others with status 05h, and lacks devices 3, 8 and 9, so it refuses an image that lists them. <code>terse run --profile reading</code> runs a machine that way.</p>
+<p>The machine is the optional third layer of Terse: the network and the article format are the core, and a reader can implement them without it. Which devices a host provides (the reading and the program profile) and how a program does without some is in <a href="device-system.html">the system device</a>.</p>
 <h2 id="cpu">CPU</h2>
 <p>The CPU executes exactly RV32I with the M (multiply and divide) and C (compressed) extensions, little-endian, in user mode. There is no A, F, D or B extension, no Zicsr or Zifencei, and no privileged architecture: no control and status registers, counters or traps are visible.</p>
 <div class="table"><table>
@@ -85,7 +85,7 @@
 </tbody></table></div>
 <p>The numbers are those of the state serialization and of the shell&#39;s <code>info</code> record.</p>
 <h2 id="the-image-format">The image format</h2>
-<p>A program is one file (suggested extension <code>.terse</code>): a 32-byte header, the device requirements, then the ROM. All numbers are little-endian.</p>
+<p>A program is one file (suggested extension <code>.terse</code>): a 32-byte header, the device entries, then the ROM. All numbers are little-endian.</p>
 <div class="table"><table>
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
 <tbody>
@@ -94,38 +94,38 @@
 <tr><td>5</td><td>1</td><td>Machine profile: 1</td></tr>
 <tr><td>6</td><td>3</td><td><code>rom_len</code>: 1 to 131,072</td></tr>
 <tr><td>9</td><td>1</td><td><code>ram_pages</code>: 8 KiB pages of RAM, 1 to 128</td></tr>
-<tr><td>10</td><td>1</td><td><code>n_dev</code>: device requirements, 0 to 16</td></tr>
+<tr><td>10</td><td>1</td><td><code>n_dev</code>: device entries, 0 to 16</td></tr>
 <tr><td>11</td><td>5</td><td>Reserved, zero</td></tr>
 <tr><td>16</td><td>16</td><td>Title, UTF-8, padded with <code>00h</code></td></tr>
-<tr><td>32</td><td>2 × <code>n_dev</code></td><td>(device slot, device version) pairs</td></tr>
+<tr><td>32</td><td>2 × <code>n_dev</code></td><td>(device slot, version byte) pairs</td></tr>
 <tr><td>32 + 2 × <code>n_dev</code></td><td><code>rom_len</code></td><td>ROM; byte 0 is at <code>0001_0000h</code></td></tr>
 </tbody></table></div>
 <ul>
 <li>The file length must be exactly 32 + 2 × <code>n_dev</code> + <code>rom_len</code>.</li>
 <li>The image ID is the BLAKE3-256 hash of the whole file. It names the program everywhere: an image is a blob, and its ID is its blob ID.</li>
-<li>A slot may be listed at most once; a host refuses an image that lists one twice. Device 1 is always present and need not be listed.</li>
+<li>A version byte is the device&#39;s version (0 to 127), with the top bit (<code>80h</code>) set if the device is optional. A slot may be listed at most once. Devices 1 and 8 are never optional; device 1 is always present.</li>
 <li>The title is the 16 bytes without their trailing <code>00h</code> bytes. Hosts do not check it (<code>terse pack</code> refuses one that is not UTF-8); a built-in whose title is not a valid display name cannot be started by name, only by its image ID.</li>
-<li>A host refuses an image whose profile or listed device versions it does not implement (also when a shell starts it). A device not listed behaves as absent: its calls return <code>FFFF_FFFFh</code>.</li>
-<li><code>terse pack --rom &lt;bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; --device 2:0 -o &lt;out&gt;</code> builds an image; give <code>--device S:V</code> once per device.</li>
+<li>A host refuses an image whose profile or required device versions it does not implement (also when a shell starts it). An optional device it lacks, like a device not listed, is absent: its calls return <code>FFFF_FFFFh</code>.</li>
+<li>`terse pack --rom &lt;bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; --device 2:0 --optional 4:0 -o &lt;out&gt;<code> builds an image: </code>--device S:V` per required device, <code>--optional S:V</code> per optional one.</li>
 </ul>
 <div class="table"><table>
-<thead><tr><th>Slot</th><th>Device</th><th>Version</th><th>Status</th></tr></thead>
+<thead><tr><th>Slot</th><th>Device</th><th>Version</th><th>In profile</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>System</td><td>0</td><td>specified; reading profile</td></tr>
-<tr><td>2</td><td>Terminal</td><td>0</td><td>specified; reading profile</td></tr>
-<tr><td>3</td><td>2D vector display</td><td>0</td><td>specified</td></tr>
-<tr><td>4</td><td>Content</td><td>0</td><td>specified; reading profile</td></tr>
+<tr><td>1</td><td>System</td><td>0</td><td>reading, program</td></tr>
+<tr><td>2</td><td>Terminal</td><td>0</td><td>reading, program</td></tr>
+<tr><td>3</td><td>2D vector display</td><td>0</td><td>program</td></tr>
+<tr><td>4</td><td>Content</td><td>0</td><td>reading</td></tr>
 <tr><td>5</td><td>Messages</td><td>none</td><td>reserved</td></tr>
-<tr><td>6</td><td>Sound</td><td>0</td><td>specified; optional</td></tr>
-<tr><td>7</td><td>Page</td><td>0</td><td>specified; reading profile</td></tr>
-<tr><td>8</td><td>Machines</td><td>0</td><td>specified; only the shell of a system has it</td></tr>
-<tr><td>9</td><td>3D vector display</td><td>0</td><td>specified</td></tr>
+<tr><td>6</td><td>Sound</td><td>0</td><td>none</td></tr>
+<tr><td>7</td><td>Page</td><td>0</td><td>reading</td></tr>
+<tr><td>8</td><td>Machines</td><td>0</td><td>none: the shell of a system only</td></tr>
+<tr><td>9</td><td>3D vector display</td><td>0</td><td>none</td></tr>
 </tbody></table></div>
 <p>Slots 0 and 10 to 255 are not devices.</p>
 <h2 id="calls">Calls</h2>
 <p>A program reaches a device with <code>ecall</code>. Register <code>a7</code> holds the call number, (device slot &lt;&lt; 8) | function; arguments are in <code>a0</code> to <code>a5</code>; the result is in <code>a0</code>, and a second result in <code>a1</code> where listed. A call changes no other register and no memory but the buffers it is said to write; <code>pc</code> continues after the <code>ecall</code>.</p>
 <ul>
-<li>An unknown call, or a call to a device the image does not list, returns <code>FFFF_FFFFh</code> (<code>TERSE_ERR_UNKNOWN</code>) and does nothing else.</li>
+<li>An unknown call, or a call to a device the machine does not have, returns <code>FFFF_FFFFh</code> (<code>TERSE_ERR_UNKNOWN</code>) and does nothing else.</li>
 <li>A buffer is a pointer and a length. A buffer a device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. A buffer of length 0 is valid at any address, for every call. Otherwise the call returns <code>FFFF_FFFEh</code> (<code>TERSE_ERR_BUFFER</code>) and does nothing else. This is not a fault.</li>
 <li>Exceptions: a vector display list not wholly in RAM is rejected (result 1, as for a bad length); a content request block not in RAM is rejected with handle 0, and a data range of the block that is not where it must be makes the request invalid (status <code>04h</code>); page <code>submit</code> returns 1 for a bad length before it looks at the buffer.</li>
 <li>A call checks its buffer before its other arguments: a bad buffer gives <code>FFFF_FFFEh</code> whatever they are (page <code>submit</code> aside).</li>
@@ -147,6 +147,7 @@
 <tr><td><code>106h</code></td><td><code>exit</code></td><td><code>a0</code> = exit code (low 8 bits)</td><td>does not return</td></tr>
 <tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td></tr>
 <tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td></tr>
+<tr><td><code>109h</code></td><td><code>device</code></td><td><code>a0</code> = device slot</td><td>its version, or <code>FFFF_FFFFh</code> if absent</td></tr>
 </tbody></table></div>
 <p><a href="device-terminal.html">The terminal</a>, slot 2:</p>
 <div class="table"><table>

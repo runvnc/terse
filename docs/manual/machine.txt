@@ -8,12 +8,9 @@ full in that device's article.
 
 The machine is the optional third layer of Terse: the network and the
 article format are the core, and a reader can implement them without
-it. A machine host that only wants to run the reader may provide the
-machine's reading profile: the machine and devices 1, 2, 4 and 7, with
-every content operation the reader needs (get, subscriptions, timeline,
-names, identity, subscribe, unsubscribe); it may answer the others with
-status 05h, and lacks devices 3, 8 and 9, so it refuses an image that
-lists them. `terse run --profile reading` runs a machine that way.
+it. Which devices a host provides (the reading and the program profile)
+and how a program does without some is in
+[the system device](terse:{device-system}).
 
 ## CPU
 
@@ -119,7 +116,7 @@ The numbers are those of the state serialization and of the shell's
 ## The image format
 
 A program is one file (suggested extension `.terse`): a 32-byte header,
-the device requirements, then the ROM. All numbers are little-endian.
+the device entries, then the ROM. All numbers are little-endian.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -128,38 +125,41 @@ the device requirements, then the ROM. All numbers are little-endian.
 | 5 | 1 | Machine profile: 1 |
 | 6 | 3 | `rom_len`: 1 to 131,072 |
 | 9 | 1 | `ram_pages`: 8 KiB pages of RAM, 1 to 128 |
-| 10 | 1 | `n_dev`: device requirements, 0 to 16 |
+| 10 | 1 | `n_dev`: device entries, 0 to 16 |
 | 11 | 5 | Reserved, zero |
 | 16 | 16 | Title, UTF-8, padded with `00h` |
-| 32 | 2 × `n_dev` | (device slot, device version) pairs |
+| 32 | 2 × `n_dev` | (device slot, version byte) pairs |
 | 32 + 2 × `n_dev` | `rom_len` | ROM; byte 0 is at `0001_0000h` |
 
 - The file length must be exactly 32 + 2 × `n_dev` + `rom_len`.
 - The image ID is the BLAKE3-256 hash of the whole file. It names the
   program everywhere: an image is a blob, and its ID is its blob ID.
-- A slot may be listed at most once; a host refuses an image that lists
-  one twice. Device 1 is always present and need not be listed.
+- A version byte is the device's version (0 to 127), with the top bit
+  (`80h`) set if the device is optional. A slot may be listed at most
+  once. Devices 1 and 8 are never optional; device 1 is always present.
 - The title is the 16 bytes without their trailing `00h` bytes. Hosts do
   not check it (`terse pack` refuses one that is not UTF-8); a built-in
   whose title is not a valid display name cannot be started by name,
   only by its image ID.
-- A host refuses an image whose profile or listed device versions it does
-  not implement (also when a shell starts it). A device not listed behaves
-  as absent: its calls return `FFFF_FFFFh`.
-- `terse pack --rom <bin> --title <t> --ram-pages <n> --device 2:0 -o <out>`
-  builds an image; give `--device S:V` once per device.
+- A host refuses an image whose profile or required device versions it
+  does not implement (also when a shell starts it). An optional device it
+  lacks, like a device not listed, is absent: its calls return
+  `FFFF_FFFFh`.
+- `terse pack --rom <bin> --title <t> --ram-pages <n> --device 2:0
+  --optional 4:0 -o <out>` builds an image: `--device S:V` per required
+  device, `--optional S:V` per optional one.
 
-| Slot | Device | Version | Status |
+| Slot | Device | Version | In profile |
 |---|---|---|---|
-| 1 | System | 0 | specified; reading profile |
-| 2 | Terminal | 0 | specified; reading profile |
-| 3 | 2D vector display | 0 | specified |
-| 4 | Content | 0 | specified; reading profile |
+| 1 | System | 0 | reading, program |
+| 2 | Terminal | 0 | reading, program |
+| 3 | 2D vector display | 0 | program |
+| 4 | Content | 0 | reading |
 | 5 | Messages | none | reserved |
-| 6 | Sound | 0 | specified; optional |
-| 7 | Page | 0 | specified; reading profile |
-| 8 | Machines | 0 | specified; only the shell of a system has it |
-| 9 | 3D vector display | 0 | specified |
+| 6 | Sound | 0 | none |
+| 7 | Page | 0 | reading |
+| 8 | Machines | 0 | none: the shell of a system only |
+| 9 | 3D vector display | 0 | none |
 
 Slots 0 and 10 to 255 are not devices.
 
@@ -171,7 +171,7 @@ result is in `a0`, and a second result in `a1` where listed. A call
 changes no other register and no memory but the buffers it is said to
 write; `pc` continues after the `ecall`.
 
-- An unknown call, or a call to a device the image does not list, returns
+- An unknown call, or a call to a device the machine does not have, returns
   `FFFF_FFFFh` (`TERSE_ERR_UNKNOWN`) and does nothing else.
 - A buffer is a pointer and a length. A buffer a device reads must lie
   wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. A
@@ -211,6 +211,7 @@ device's state). System and Machines calls cost 4.
 | `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return |
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
+| `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
 [The terminal](terse:{device-terminal}), slot 2:
 

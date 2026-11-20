@@ -16,7 +16,8 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
-            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading] [--audio-out <file.wav>]
+            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--without <slot>]...
+            [--audio-out <file.wav>]
   terse run <image> --replay <file> [--frames N] [--dump ...] [--hash] [--hash-every N] [--bench] [--save-state <file>]
             [--audio-out <file.wav>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
@@ -24,7 +25,8 @@ const USAGE: &str = "usage:
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse get <id> [-o <file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse hash <file>
-  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>
+  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]...
+             -o <out.terse>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>]
   terse feed publish --program <image.terse> [--name <n>]
@@ -101,9 +103,13 @@ the one the snapshot names, by ID); its hash is then the hash at the moment of t
 --replay runs such a recording again from <image> (a file) alone: no network, store, data
 directory or events, every frame's hash checked (it stops at the first that differs), and it
 refuses a recording of another image. --profile reading provides only the machine's reading
-profile: devices 1, 2, 4 and 7 (an image that lists another is refused), and the content
-operations get, subscriptions, timeline, names, identity, subscribe and unsubscribe; every other
-content request completes with status 05h (refused) without asking.
+profile: devices 1, 2, 4 and 7, and the content operations get, subscriptions, timeline, names,
+identity, subscribe and unsubscribe; every other content request completes with status 05h
+(refused) without asking. --profile program provides only the program profile: devices 1, 2
+and 3. --without <slot> withholds that device as well. An image that requires a device the run
+does not provide is refused; an optional device it does not provide is absent (SPEC 2).
+pack: --device lists a required device, --optional one the program can run without; `info`
+shows both.
 A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC 12.7).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC 9.5), since nobody can be asked (default deny).
@@ -364,6 +370,13 @@ pub fn load_script(path: Option<&str>) -> Result<Script, String> {
 
 /// The devices the machine's reading profile provides (SPEC 2.1): the system (1), the terminal (2), content (4) and the page (7).
 const READING_DEVICES: [u8; 4] = [1, 2, 4, 7];
+/// The devices the machine's program profile provides (SPEC 2.1): the system (1), the terminal (2) and the 2D vector display (3).
+const PROGRAM_DEVICES: [u8; 3] = [1, 2, 3];
+
+/// `--without <slot>`: a device slot, 2 to 255.
+fn parse_slot(s: &str) -> Result<u8, String> {
+    s.parse().ok().filter(|&n: &u8| n >= 2).ok_or(format!("bad --without {s} (a device slot, 2 to 255)"))
+}
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-all", "--bench", "--shell"])?;
@@ -393,6 +406,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--load-state",
         "--record",
         "--profile",
+        "--without",
         "--audio-out",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
@@ -405,14 +419,24 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if shell && (args.has("--save-state") || args.has("--load-state") || args.has("--record")) {
         return Err("--save-state, --load-state and --record are for a single machine, not --shell".into());
     }
-    let reading = match args.get("--profile") {
-        None => false,
-        Some("reading") => true,
-        Some(p) => return Err(format!("unknown profile {p} (the only one is reading)")),
+    // SPEC 2.1: the devices this run provides.
+    let profile: Option<(&str, &[u8])> = match args.get("--profile") {
+        None => None,
+        Some("reading") => Some(("reading", &READING_DEVICES)),
+        Some("program") => Some(("program", &PROGRAM_DEVICES)),
+        Some(p) => return Err(format!("unknown profile {p} (reading or program)")),
     };
-    if reading && shell {
-        return Err("the reading profile has no device 8: it runs a single machine, not --shell".into());
+    let reading = profile.is_some_and(|p| p.0 == "reading");
+    if let Some((name, _)) = profile
+        && shell
+    {
+        return Err(format!("the {name} profile has no device 8: it runs a single machine, not --shell"));
     }
+    let without = args.all("--without").map(parse_slot).collect::<Result<Vec<u8>, _>>()?;
+    if shell && !without.is_empty() {
+        return Err("--without is for a single machine, not --shell".into());
+    }
+    let provides = |slot: u8| profile.is_none_or(|(_, p)| p.contains(&slot)) && !without.contains(&slot);
     let script = load_script(args.get("--events"))?;
     let mut net = Net { args: &args, node: None, find: false };
     // STATE.md 4: a machine started from a snapshot.
@@ -429,13 +453,23 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         ([], Some(s)) => load_image(&to_hex(&s.image_id()), &mut net)?,
         _ => load_image(args.one_positional()?, &mut net)?,
     };
-    // SPEC 2: a host refuses an image that lists a device it lacks.
-    if reading && let Some(d) = image.devices.iter().find(|d| !READING_DEVICES.contains(&d.slot)) {
-        return Err(format!(
-            "the image lists device {}, which the reading profile does not provide (it has devices 1, 2, 4 and 7)",
-            d.slot
-        ));
+    // SPEC 2: a host refuses an image that requires a device it lacks; an
+    // optional device it lacks is not granted.
+    if let Some(d) = image.devices.iter().find(|d| !d.optional && !provides(d.slot)) {
+        return Err(match profile {
+            Some((name, p)) if !p.contains(&d.slot) => format!(
+                "the image requires device {}, which the {name} profile does not provide (it has devices {})",
+                d.slot,
+                p.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
+            ),
+            _ => format!("the image requires device {}, which this run does not provide (--without {})", d.slot, d.slot),
+        });
     }
+    let grants = match &snapshot {
+        // STATE.md 4: a restored machine has the snapshot's devices.
+        Some(s) => s.grants(&image).map_err(|e| format!("{}: {e}", args.get("--load-state").unwrap_or_default()))?,
+        None => image.grants(|d| provides(d.slot)),
+    };
     let frames = frame_count(&args)?;
     let hash_every = hash_every(&args)?;
 
@@ -446,7 +480,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 
     // A shell needs the store for the images it starts (SPEC 12.2).
     let mut builtins = Vec::new();
-    let content = if image.has_device(4) || shell {
+    let content = if image.device_set(&grants).has(4) || shell {
         // SPEC 9.5: the feeds are those of the --config subscriptions, and
         // the identity is the one kept there.
         let mut node = net.take()?;
@@ -481,9 +515,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     let mut system = match &snapshot {
         Some(s) => {
             let path = args.get("--load-state").unwrap_or_default();
-            System::with_machine(s.restore(&image).map_err(|e| format!("{path}: {e}"))?)
+            System::with_machine(s.restore_where(&image, |d| provides(d.slot)).map_err(|e| format!("{path}: {e}"))?)
         }
-        None => System::new(&image, shell, builtins),
+        None if shell => System::new(&image, shell, builtins),
+        None => System::with_machine(Machine::with_grants(&image, grants.clone())),
     };
     // The built-in shell has the identity of a built-in (SPEC 12.2).
     if shell && args.positional.is_empty() {
@@ -501,7 +536,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             headless.record();
             let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
             let mut out = std::io::BufWriter::new(file);
-            out.write_all(&terse_core::record::encode_header(&image.id, snapshot_file.as_deref()))
+            out.write_all(&terse_core::record::encode_header(&image.id, snapshot_file.as_deref(), &grants))
                 .map_err(|e| format!("{path}: {e}"))?;
             Some((path, out))
         }
@@ -577,12 +612,20 @@ fn replay(args: &Args) -> Result<ExitCode, String> {
     if image.id != recording.image_id {
         return Err(format!("{path}: a recording of image {}, not {image_path} ({})", to_hex(&recording.image_id), image.id_hex()));
     }
+    // STATE.md 5: the grants follow the snapshot.
+    let grants = recording.grants(image.optional().count()).map_err(|e| format!("{path}: {e}"))?;
     let machine = match recording.snapshot {
         Some(file) => terse_core::Snapshot::decode(file)
             .and_then(|s| s.restore(&image))
             .map_err(|e| format!("{path}: its snapshot: {e}"))?,
-        None => Machine::new(&image),
+        None => match image.check_grants(&grants) {
+            Ok(()) => Machine::with_grants(&image, grants.clone()),
+            Err(d) => return Err(format!("{path}: {}", terse_core::machines::needs_device(&image, d).message)),
+        },
     };
+    if machine.grants() != &grants {
+        return Err(format!("{path}: the grants differ from its snapshot's"));
+    }
     let mut system = System::with_machine(machine);
     let frames = frame_count(args)?;
     let hash_every = hash_every(args)?;
@@ -718,7 +761,7 @@ fn dump(machine: &Machine, args: &Args) {
         if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
             println!("{line}");
         }
-        if machine.lists_vector() {
+        if machine.has_vector() {
             println!("-- vectors: {} list bytes --", machine.vector_list().len());
             if let Some(v) = machine.vector() {
                 print!("{}", v.dump());
@@ -790,15 +833,19 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     args.check_known(&NET_OPTIONS)?;
     let path = args.one_positional()?;
     let image = load_image(path, &mut Net { args: &args, node: None, find: true })?;
-    let devices: Vec<String> =
-        image.devices.iter().map(|d| format!("{}:{}", d.slot, d.version)).collect();
+    // SPEC 2: required devices, then the optional ones.
+    let list = |optional: bool| -> String {
+        let v: Vec<String> = image.devices.iter().filter(|d| d.optional == optional).map(|d| format!("{}:{}", d.slot, d.version)).collect();
+        if v.is_empty() { "-".into() } else { v.join(" ") }
+    };
     println!("file:      {path}");
     println!("title:     {}", image.title_lossy());
     println!("format:    {}", terse_core::image::FORMAT_VERSION);
     println!("profile:   {}", terse_core::image::PROFILE);
     println!("rom_len:   {} bytes", image.rom.len());
     println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
-    println!("devices:   {}", if devices.is_empty() { "-".into() } else { devices.join(" ") });
+    println!("devices:   {}", list(false));
+    println!("optional:  {}", list(true));
     println!("id:        {}", image.id_hex());
     Ok(ExitCode::SUCCESS)
 }
@@ -853,18 +900,17 @@ fn hash(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn parse_device(s: &str) -> Result<DeviceReq, String> {
-    let bad = || format!("bad device {s} (want slot:version)");
+/// `slot:version`, a version 0 to 127 (SPEC 2).
+fn parse_device(s: &str, optional: bool) -> Result<DeviceReq, String> {
+    let bad = || format!("bad device {s} (want slot:version, a version 0 to 127)");
     let (slot, version) = s.split_once(':').ok_or_else(bad)?;
-    Ok(DeviceReq {
-        slot: slot.parse().map_err(|_| bad())?,
-        version: version.parse().map_err(|_| bad())?,
-    })
+    let version: u8 = version.parse().ok().filter(|&v: &u8| v < terse_core::image::OPTIONAL).ok_or_else(bad)?;
+    Ok(DeviceReq { slot: slot.parse().map_err(|_| bad())?, version, optional })
 }
 
 fn pack(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "-o"])?;
+    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "--optional", "-o"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.to_string());
     }
@@ -875,7 +921,12 @@ fn pack(args: &[String]) -> Result<ExitCode, String> {
     }
     let ram_pages = args.require("--ram-pages")?;
     let ram_pages: u8 = ram_pages.parse().map_err(|_| format!("bad RAM page count {ram_pages}"))?;
-    let devices = args.all("--device").map(parse_device).collect::<Result<Vec<_>, _>>()?;
+    // Required devices first, then the optional ones, each in the order given.
+    let devices = args
+        .all("--device")
+        .map(|d| parse_device(d, false))
+        .chain(args.all("--optional").map(|d| parse_device(d, true)))
+        .collect::<Result<Vec<_>, _>>()?;
     if devices.len() > terse_core::image::MAX_DEVICES {
         return Err("more than 16 devices".into());
     }

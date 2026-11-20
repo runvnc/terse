@@ -29,7 +29,9 @@ implements them is a complete, conforming Terse client. The machine is optional
 and reuses the core: programs are blobs published in feeds, and the reader that
 comes with this repository is a machine program that shows articles on the page
 device. A machine host that only runs that reader needs just the machine's
-**reading profile** (devices 1, 2, 4 and 7; SPEC 2.1). This repository is the first
+**reading profile** (devices 1, 2, 4 and 7; SPEC 2.1); one that runs programs needs
+just the **program profile** (devices 1, 2 and 3), since a program lists the other
+devices it can do without as optional (SPEC 2). This repository is the first
 prototype of all three layers.
 
 Shell commands below are written for fish; they also work in bash and zsh
@@ -164,7 +166,7 @@ images were built with clang and LLD 23.1.4.
   for one that has no machine: its image or snapshot is still being fetched, or its
   start failed). `--hash-every` prints the shell's hashes. The exit status is the shell's. Without `--shell`, an image runs alone,
   as follows.
-- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading] [--no-feed-relays] [--no-program-download]`
+- `run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench] [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--without <slot>]... [--no-feed-relays] [--no-program-download]`
   runs headless (input only from `--events`, see [Scripted input](#scripted-input);
   Unix time 0, no random bytes (so `random` gives zeros), controllers only from
   `pad` lines) for N frames or until the program stops (capped at 36,000
@@ -209,10 +211,16 @@ images were built with clang and LLD 23.1.4.
   (it takes no other option), checking every frame's hash: it stops with an error at
   the first frame that differs, and refuses a recording of another image.
   `--profile reading` runs the machine with only its reading profile (SPEC 2.1):
-  devices 1, 2, 4 and 7 (an image that lists another device is refused), and of the
-  content operations only get, subscriptions, timeline, names, identity, subscribe
-  and unsubscribe; every other content request completes with status 05h (Refused)
-  without asking. `programs/conform-reading` is the conformance image for it.
+  devices 1, 2, 4 and 7, and of the content operations only get, subscriptions,
+  timeline, names, identity, subscribe and unsubscribe; every other content request
+  completes with status 05h (Refused) without asking. `programs/conform-reading` is
+  the conformance image for it. `--profile program` runs it with only the program
+  profile, devices 1, 2 and 3 (`programs/conform-program` is its conformance image),
+  and `--without <slot>` withholds one more device. An image that requires a device
+  the run does not provide is refused; one it lists as optional is absent, and the
+  program asks the `device` call (SPEC 4) whether it has it. A snapshot (or a
+  recording) keeps the devices it was taken with: one taken with content does not
+  restore under `--profile program`.
 - **Exit status of `run`.** When the program exits, `terse run` exits with its
   exit code (0–255). When the machine stops with a fault (SPEC 1.5), it prints
   `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself
@@ -221,13 +229,16 @@ images were built with clang and LLD 23.1.4.
   SIGTERM`, a parent that waits for the process sees the signal, and only a
   shell's numeric status (143 in fish and bash) could be mistaken for a program
   that exits with 143.
-- `info <image|id>` prints the header fields and the image ID (BLAKE3-256).
+- `info <image|id>` prints the header fields, the required and the optional
+  devices, and the image ID (BLAKE3-256).
 - `put <file>` stores a blob (and sends it to the relay) and prints its ID;
   `get <id> [-o <file>]` fetches one; `hash <file>` prints a file's blob ID.
   `info`, `put` and `get` take `--relay ws://...|none`, `--store` and `--config`, and
   find a relay as [Getting started](#getting-started) says when `--relay` is not given.
-- `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>`
-  builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
+- `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>`
+  builds an image from a raw ROM (the bytes loaded at `0001_0000h`): `--device`
+  lists a device the program requires, `--optional` one it can run without (SPEC 2:
+  the top bit of the version byte; required devices first, each in the order given).
 - `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
   [Feeds](#feeds); `feed site` writes a feed as a static website, see
   [Any feed as a website](#any-feed-as-a-website).
@@ -507,6 +518,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     programs/conform/    the conformance and responsiveness image (C and assembly),
                          build.sh, conform.terse, its input conform.events, and
                          expected-hashes.txt and expected-screen.txt
+    programs/conform-reading/, programs/conform-program/
+                         the same source built for the reading and the program
+                         profile, each with its build.sh, events and expected files
 
 ## Writing programs
 
@@ -549,6 +563,13 @@ The build (see `programs/reader/build.sh`, which takes `CLANG`, `LLD`, `OBJCOPY`
     ld.lld -T programs/lib/terse.ld --gc-sections 0.o 1.o 2.o -o prog.elf
     llvm-objcopy -O binary prog.elf prog.bin
     target/debug/terse pack --rom prog.bin --title prog --ram-pages 4 --device 2:0 -o prog.terse
+
+`--device` lists a device the program requires: a host without it refuses the
+image. A device the program can do without is listed with `--optional` instead
+(`--optional 4:0`, `--optional 6:0`): the program runs on hosts that lack it, and
+asks at start with `terse_has_device(4)` (the `device` call, SPEC 4) whether it
+has it. A program meant to run everywhere requires only devices 2 and 3, the
+program profile (SPEC 2.1).
 
 `crt0.S` must come first. There is no C library beyond `terse.c` and no
 compiler runtime: avoid 64-bit division and floating point, or bring the routines
@@ -1457,6 +1478,9 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
 - The high score (`HIGH` in the HUD) is the named record `high-score`, four bytes
   little-endian: asked for in frame 0 and shown when it arrives (the first frame does
   not wait), saved when a game beats it ("New high score!").
+- Content is optional (SPEC 2): sparks requires devices 2 and 3 only, so it runs on a
+  host of the program profile (`--profile program`); there the high score lasts for
+  the session, and the game is otherwise the same.
 
 In the phosphor style Sparks draws the arena border and the craft twice, so they
 shine brighter than the sparks (overdraw adds light, SPEC 10.6); the list is
@@ -1507,8 +1531,10 @@ F switches between the clean and the [phosphor](#phosphor-style) style.
 
 The data is a list of strokes (colour, point count, points in screen units), at most
 8,192 bytes, so a published sketch stays under the automatic download limit; the
-exact layout is in the header comment of `sketch.c`. ROM 4,544 bytes, 4 RAM pages;
-devices 2, 3 and 4. Tests: `crates/terse-cli/tests/sketch.rs`.
+exact layout is in the header comment of `sketch.c`. ROM 4,988 bytes, 4 RAM pages;
+devices 2 and 3, and 4 (content) as optional: without content it says "Drawings are
+not kept", draws as ever and cannot save or publish. Tests:
+`crates/terse-cli/tests/sketch.rs`.
 
 ## Sound
 
@@ -1633,6 +1659,19 @@ and under `--profile reading`:
     cargo run -p terse-cli -- run programs/conform-reading/conform-reading.terse --events programs/conform-reading/conform-reading.events --store /tmp/conform-reading/store --config /tmp/conform-reading/config --frames 200 --hash-every 10 --profile reading
 
 `cargo test -p terse-cli --test conform_reading` does this, on both hosts.
+
+**The program profile.** `programs/conform-program/conform-program.terse` is the
+same source built with `-DPROGRAM` (`programs/conform-program/build.sh`), for a host
+that offers only the machine's program profile: devices 2 and 3, 16 RAM pages. The
+3D display, content and the page are left out and their calls checked as calls to
+absent devices, and a section checks the `device` call. It needs no store: run it
+with `programs/conform-program/conform-program.events` and compare with its
+`expected-hashes.txt` and `expected-screen.txt` (`--dump --dump-vectors`); it gives
+the same on a full host and under `--profile program`:
+
+    cargo run -p terse-cli -- run programs/conform-program/conform-program.terse --events programs/conform-program/conform-program.events --frames 200 --hash-every 10 --profile program
+
+`cargo test -p terse-cli --test conform_program` does this, on both hosts.
 
 **Responsiveness (window).** `terse-host --selftest` runs the image in the normal
 window with vsync and the same script, and prints for each machine frame the

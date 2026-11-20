@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use terse_bus::bus::BusConfig;
 use terse_bus::compose::{Compositor, write_png};
-use terse_bus::host::{self, BusSystem, Start, needed_slots};
+use terse_bus::host::{self, BusSystem, Start};
 use terse_bus::inproc::{ContentOptions, InProcessHost};
 use terse_bus::record::{self, FrameRecord};
 use terse_bus::signals;
@@ -30,6 +30,7 @@ const USAGE: &str = "usage:
             [--driver-timeout S] [--start-timeout S] [--record <file>] [--replay <file>]
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
             [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
+            [--without <slot>]...
 
 Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
 (slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
@@ -55,7 +56,9 @@ that does not answer in time is given up as hung; --start-timeout (default 10 s)
 A driver that fails ends the run (exit status 3). --record writes the bus's recording of a single
 machine; --replay runs one again, checking every frame's hash. --audio-out writes what the sound
 devices played (SPEC 18.7: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
-is ever played.";
+is ever played. --without withholds an optional device (SPEC 2: the machine runs without it); a
+device only optional devices use whose driver is not installed is left out the same way, while a
+required device without a driver stops the run.";
 
 struct Opts {
     image: Option<String>,
@@ -94,6 +97,8 @@ struct Opts {
     replay: Option<PathBuf>,
     audio_out: Option<PathBuf>,
     content: ContentOptions,
+    /// Optional devices withheld (SPEC 2).
+    without: Vec<u8>,
 }
 
 fn parse(args: Vec<String>) -> Result<Opts, String> {
@@ -134,6 +139,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         replay: None,
         audio_out: None,
         content: ContentOptions::default(),
+        without: Vec::new(),
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -218,6 +224,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             }
             "--driver-timeout" => o.driver_timeout = value()?.parse().map_err(|_| "bad --driver-timeout")?,
             "--start-timeout" => o.start_timeout = value()?.parse().map_err(|_| "bad --start-timeout")?,
+            "--without" => o.without.push(value()?.parse().ok().filter(|&s: &u8| s >= 2).ok_or("bad --without (a device slot, 2 to 255)")?),
             "--record" => o.record = Some(value()?.into()),
             "--replay" => o.replay = Some(value()?.into()),
             "--help" | "-h" => return Err(USAGE.into()),
@@ -284,20 +291,19 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     if opts.pin {
         transport::pin_to(1);
     }
-    let replay = match &opts.replay {
+    let (replay, replay_grants) = match &opts.replay {
         Some(p) => {
-            let (id, frames) = record::parse(&read(p)?)?;
-            if id != image.id {
-                return Err(format!("{}: a recording of another image", p.display()));
-            }
-            Some(frames)
+            let (_, grants, frames) = record::parse(&read(p)?, &image).map_err(|e| format!("{}: {e}", p.display()))?;
+            (Some(frames), Some(grants))
         }
-        None => None,
+        None => (None, None),
     };
     if opts.in_process {
-        let service = if image.has_device(4) { Some(opts.content.start()?) } else { None };
+        // SPEC 2: every optional device compiled in, less those withheld.
+        let grants = image.grants(|d| !opts.without.contains(&d.slot));
+        let service = if image.device_set(&grants).has(4) { Some(opts.content.start()?) } else { None };
         let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
-        let mut core = Machine::with_devices(&image, memory, InProcessHost::new(&image, service));
+        let mut core = Machine::with_devices(&image, grants.clone(), memory, InProcessHost::new(&image, &grants, service));
         let startup = started.elapsed();
         return in_process(&opts, &mut core, &script, startup);
     }
@@ -314,7 +320,11 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let identity = (opts.shell && opts.image.is_none()).then(|| host::shell_identity(&image));
     let dir = std::env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("no directory")?.to_path_buf();
     let overrides: Vec<(Vec<u8>, Vec<String>)> = opts.drivers.iter().map(|(s, c)| (s.clone(), terse_bus::bus::split_command(c))).collect();
-    let drivers = host::drivers(&dir, &needed_slots(&image, opts.shell), &opts.content.args(), &overrides)?;
+    if opts.shell && !opts.without.is_empty() {
+        return Err("--without is for a single machine, not --shell".into());
+    }
+    let slots = host::installed_slots(&dir, &image, opts.shell, &opts.without, &overrides);
+    let drivers = host::drivers(&dir, &slots, &opts.content.args(), &overrides)?;
     let presents = opts.screenshot.is_some() || opts.present_every || opts.window;
     let mut config = BusConfig::new(PathBuf::new());
     config.shm = !opts.socket_only;
@@ -325,7 +335,16 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     config.driver_cpus = if opts.pin { (2..2 + drivers.len()).collect() } else { Vec::new() };
     config.reply_timeout = Duration::from_secs_f64(opts.driver_timeout);
     config.start_timeout = Duration::from_secs_f64(opts.start_timeout);
-    let start = Start { config, drivers, image: &image, shell: builtins, identity, snapshot: snapshot.as_ref() };
+    let start = Start {
+        config,
+        drivers,
+        image: &image,
+        shell: builtins,
+        identity,
+        snapshot: snapshot.as_ref(),
+        grants: replay_grants,
+        without: opts.without.clone(),
+    };
     let mut bs = start.start()?;
     let startup = started.elapsed();
     if opts.bench {
@@ -368,7 +387,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
     let picture = opts.size.unwrap_or(native);
     let mut times = Vec::new();
     let mut present_times = Vec::new();
-    let mut recording = opts.record.as_ref().map(|_| record::header(bs.system.shell().image_id()));
+    let mut recording = opts.record.as_ref().map(|_| record::header(bs.system.shell().image_id(), bs.system.shell().grants()));
     if (opts.record.is_some() || replay.is_some()) && bs.system.is_system() {
         return Err("--record and --replay are for a single machine".into());
     }
@@ -507,7 +526,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
 
 /// A machine's terminal text, from its driver's state section.
 fn screen(m: &mut Machine<terse_bus::bus::BusDevices>) -> Result<String, String> {
-    if !m.lists(2) {
+    if !m.has_device(2) {
         return Ok(String::new());
     }
     let section = m.devices_mut().state(2)?;

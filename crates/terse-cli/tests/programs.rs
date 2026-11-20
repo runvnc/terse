@@ -88,7 +88,7 @@ fn publish_follow_list_and_find_programs() {
     assert!(author.fails(&["feed", "publish", "--program", junk.to_str().unwrap(), "--relay", &url]).contains("not a Terse image"));
     assert!(author.fails(&["feed", "publish", "--program", hello.to_str().unwrap(), "--name", " x", "--relay", &url]).contains("not a valid name"));
     // A new version of sparks (another image under the same name).
-    let v2 = Image::build("sparks", 1, &[terse_core::DeviceReq { slot: 2, version: 0 }], &[0x6F, 0, 0, 0]);
+    let v2 = Image::build("sparks", 1, &[terse_core::DeviceReq::new(2, 0)], &[0x6F, 0, 0, 0]);
     let v2_path = dir.path().join("v2.terse");
     std::fs::write(&v2_path, &v2).unwrap();
     author.ok(&["feed", "publish", "--program", v2_path.to_str().unwrap(), "--relay", &url]);

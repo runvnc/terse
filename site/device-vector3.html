@@ -119,7 +119,7 @@
 </ul>
 <h2 id="charges-and-state">Charges and state</h2>
 <p>Every call costs 4; an accepted <code>submit</code> also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host&#39;s work. See <a href="charges.html">charges</a>.</p>
-<p>The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell&#39;s device 8 records, and only for what is shown; <code>face</code> reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display&#39;s state section, which is present when the image lists device 3 or device 9.</p>
+<p>The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell&#39;s device 8 records, and only for what is shown; <code>face</code> reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display&#39;s state section, which is present when the machine has device 3 or device 9.</p>
 <h2 id="example">Example</h2>
 <p>A square that turns about its vertical axis, in front of a circle it partly hides:</p>
 <pre>#include &quot;terse.h&quot;

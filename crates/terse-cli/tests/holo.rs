@@ -108,7 +108,7 @@ fn keys() {
     let (m, _) = run("5 press p\n", 10);
     assert!(m.vector().unwrap().phosphor());
     assert_eq!(m.vector().unwrap().persistence(), 200);
-    assert!(m.vector_list().is_empty() && !m.lists_vector());
+    assert!(m.vector_list().is_empty() && !m.has_vector());
     golden("phosphor.txt", &screen(&m));
     let (m, _) = run("5 press p\n6 press p\n", 10);
     assert!(!m.vector().unwrap().phosphor());

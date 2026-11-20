@@ -8,6 +8,7 @@
 use std::borrow::Cow;
 
 use crate::content::{Completion, Content, ram_range, readable};
+use crate::image::{DeviceSet, Grants};
 use crate::machines::{ProgramId, StartFailure};
 use crate::snapshot::{Reader, RestoreError, bad};
 use crate::machine::{ERR_BUFFER, ERR_UNKNOWN, FrameInput, call, charge, copy_charge};
@@ -108,8 +109,10 @@ pub trait Devices {
     /// A new machine for `image`, at reset, with devices of the same kind
     /// as these (a shell's child, SPEC 12.1): `serial` names it among the
     /// system's machines; `identity` is the program's (SPEC 12.2), whose
-    /// named records it reads.
-    fn new_machine(&self, serial: u32, image: &crate::Image, identity: Option<&ProgramId>) -> Result<crate::Machine<Self>, StartFailure>
+    /// named records it reads. `grants`: the optional devices it must have
+    /// (a restored machine's, STATE.md 4: reason 3 if one cannot be
+    /// provided), or `None` for every one the host can provide (SPEC 2).
+    fn new_machine(&self, serial: u32, image: &crate::Image, grants: Option<&Grants>, identity: Option<&ProgramId>) -> Result<crate::Machine<Self>, StartFailure>
     where
         Self: Sized;
 }
@@ -164,20 +167,21 @@ pub struct InProcess {
     pub(crate) content: Option<Content>,
     pub(crate) page: Option<Page>,
     pub(crate) sound: Option<Sound>,
-    /// The image lists device 3 (not only device 9).
+    /// The machine has device 3 (not only device 9).
     lists_vector: bool,
 }
 
 impl InProcess {
-    pub fn new(image: &crate::Image) -> Self {
+    /// The devices of a machine that has the devices of `has` (SPEC 2).
+    pub fn new(has: &DeviceSet) -> Self {
         InProcess {
-            lists_vector: image.has_device(3),
-            terminal: image.has_device(2).then(Terminal::default),
-            vector: (image.has_device(3) || image.has_device(crate::vector3::SLOT)).then(Vector::default),
-            vector3: image.has_device(crate::vector3::SLOT).then(Vector3::default),
-            content: image.has_device(4).then(Content::default),
-            page: image.has_device(7).then(Page::default),
-            sound: image.has_device(crate::sound::SLOT).then(Sound::default),
+            lists_vector: has.has(3),
+            terminal: has.has(2).then(Terminal::default),
+            vector: (has.has(3) || has.has(crate::vector3::SLOT)).then(Vector::default),
+            vector3: has.has(crate::vector3::SLOT).then(Vector3::default),
+            content: has.has(4).then(Content::default),
+            page: has.has(7).then(Page::default),
+            sound: has.has(crate::sound::SLOT).then(Sound::default),
         }
     }
 
@@ -513,8 +517,15 @@ impl Devices for InProcess {
         Ok(r.position())
     }
 
-    fn new_machine(&self, _serial: u32, image: &crate::Image, identity: Option<&ProgramId>) -> Result<crate::Machine, StartFailure> {
-        let mut m = crate::Machine::new(image);
+    fn new_machine(&self, _serial: u32, image: &crate::Image, grants: Option<&Grants>, identity: Option<&ProgramId>) -> Result<crate::Machine, StartFailure> {
+        let grants = match grants {
+            None => image.all_grants(),
+            Some(g) => {
+                image.check_grants(g).map_err(|d| crate::machines::needs_device(image, d))?;
+                g.clone()
+            }
+        };
+        let mut m = crate::Machine::with_grants(image, grants);
         m.set_identity(identity.cloned());
         Ok(m)
     }

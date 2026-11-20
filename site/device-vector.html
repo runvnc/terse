@@ -100,7 +100,7 @@
 </tbody></table></div>
 <p>A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host&#39;s work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See <a href="charges.html">charges</a>.</p>
 <h2 id="state">State</h2>
-<p>The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the image lists device 3 or device 9; if <code>00h</code> nothing follows), the style (<code>00h</code> clean, <code>01h</code> phosphor), the persistence, the fill mode (<code>00h</code> fill, <code>01h</code> outlines), the list&#39;s length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is <code>00h</code> and m is 0. The afterglow is not included.</p>
+<p>The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if <code>00h</code> nothing follows), the style (<code>00h</code> clean, <code>01h</code> phosphor), the persistence, the fill mode (<code>00h</code> fill, <code>01h</code> outlines), the list&#39;s length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is <code>00h</code> and m is 0. The afterglow is not included.</p>
 <h2 id="example">Example</h2>
 <pre>#include &quot;terse.h&quot;
 

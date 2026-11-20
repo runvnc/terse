@@ -8,24 +8,24 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:b05a2a447a42b97211d0921adaf532804e2dc443f60068c78f45029e3499ebdf): what Terse is for, in one
+- [What Terse is](terse:e046f9d71fd63fe686348ffcb114001691e411623ff19b006b25f3c39d3d09ef): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:accc3c69a04c7cbfe03c1c7102371e11800c993f820baf57775c072f33247788): the technical details in
+- [How Terse works](terse:085a00336e4ca45bcd19eece1e4189adfd3e15a834ddf81b67b2c2d0c772e748): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:7204704df8189ca354246c3cf1a891c6b7c2741c04dcd33f074b7134b5ec79b8): the toolchain, the C
+- [Writing a program](terse:f26ef1ae2d5daccce214a09d468d77eaa672b08e615cc30066c735a0e2bf6d6b): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:8530f43137ac19bafc67db7fba1e7ea7ad37358e75c4466535962b0ebd081cdf): the keys of the
+- [Using the shell and the reader](terse:1823a1dcb512982320f091420d51298ab8f80420790e2da67b08c6c3124ff0bd): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
 - [Writing an article](terse:7a1608758c30131d63598142f26d342b98cbf1c3046b68e7b0be9d8cc93c5f55): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:52fcd7cb8357b85a536baaad5b7b2268b610ba13613b990e260071e6adeb9255): what a machine's state
+- [State, replay and conformance](terse:d7f67059be6fa22c61a51d29c13db78bdd913ee1c710d7fbcc3b3e5df5db6ecd): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
 
-- [The machine](terse:6fddfda54458ccb17d5f6a9b189fe3b563804ba8f2934d911f6802296d9be32d): the CPU, the memory map, reset, frames
+- [The machine](terse:45ab3f06127afab64c2cfed8f0831144b93c2b71c89e9c07ecbbb87c3ea89cf4): the CPU, the memory map, reset, frames
   and the budget, faults, the image format, the call convention and the
   whole call table.
 - [Events and input](terse:fbad2774fb00d4e03bc2b54669a2ed319c903fd00a7c5f768fd2b9edbe77fd4c): every event, the queue, keys,
@@ -37,18 +37,18 @@ Each article below says what it covers.
 
 | Slot | Device | Article |
 |---|---|---|
-| 1 | System | [The system device](terse:54efead3e80d65f5f83c3ddb57477c8d5fca4962638bebdd2ce333acaacb6d5e) |
-| 2 | Terminal | [The terminal](terse:4627bcdef9c7dad04c783c1c88acde0eaba5c22f529ad2c839d1fbb4ab106db8) |
-| 3 | 2D vector display | [The 2D vector display](terse:4bdeaa36d854ee892aefd80985ef003de279bda756eebcfb2ec9b275676c15dc) |
-| 4 | Content | [Blobs, requests and statuses](terse:bdc35f9b05aeb4a35ef3bbffb3ad1c70427695c3aa5aeb7810e1056c84eb0062) |
+| 1 | System | [The system device](terse:a54e536056d91e095c370355be0ca18c2a3854589d8bc5009aa6eed65e21a502) |
+| 2 | Terminal | [The terminal](terse:63260d0e0eae2fbae1eacaccda629ff834a4a6cb56c48c75846f48f03184989a) |
+| 3 | 2D vector display | [The 2D vector display](terse:5e4acc8ceff9efc26dd4204e657bfec0b777e41a7d5677412d8fc435b9548ddc) |
+| 4 | Content | [Blobs, requests and statuses](terse:bd0dad360531ad9c22a31d8fcfa851de40b4d20b3508a33b3a0779eabd6a3fe8) |
 | 4 | Content | [Feeds, names, search and publishing](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7) |
 | 4 | Content | [Named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32) |
-| 6 | Sound | [The sound device](terse:05cc285ef6133053e7fa1fb000e512ddccad99b7b6e8287bfdc2521a99f9a2b1) |
+| 6 | Sound | [The sound device](terse:970caf8209865f7d129bfc1abc1efbd3987c060d59d8a78d0c9d7c5e2c61c814) |
 | 7 | Page | [The page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) |
 | 7 | Page | [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04) |
 | 8 | Machines | [The Machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf) |
 | 8 | Machines | [Screens, panels and input](terse:e07cd4c8f82a847111ffefc674a8c17bf209b06651123ee50389b7d3603e665b) |
-| 9 | 3D vector display | [The 3D vector display](terse:190d28e9cc326cd54c61be74cc7f667e5b6c0112b078e408a68e2ef2d50a1832) |
+| 9 | 3D vector display | [The 3D vector display](terse:b8a5c87609b481164badc9f7cb9a7ffa4f0e0ff271918906960065a6d38090bc) |
 
 - The system device: frames, events, time, random bytes, controllers,
   exit, and asking the shell to open something.

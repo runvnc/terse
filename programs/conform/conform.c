@@ -31,6 +31,13 @@
  * to hold (programs/conform-reading/blobs, the bytes conform puts), and the
  * stress phase rewrites the terminal only.
  *
+ * Built with -DPROGRAM (programs/conform-program/build.sh) it is the
+ * conformance image of the machine's program profile: devices 2 and 3
+ * only. The 3D display (device 9), content and the page (devices 4 and 7)
+ * are left out and their calls checked as calls to absent devices; a
+ * section checks the `device` call (SPEC 4) instead of content, and the
+ * page phase is skipped.
+ *
  * Frames (the scripted input of conform.events is in the frames named):
  *   0-5     CPU, RAM code, terminal, vector displays, system calls
  *   6       the events of frames 2-5;  9: the 70 text events of frame 8
@@ -86,6 +93,7 @@ enum {
     C_SUBMIT = 0x400,
     P_SUBMIT = 0x700, P_CLEAR, P_REGION, P_SCROLL, P_BACKGROUND, P_LOCATE,
     V3_SUBMIT = 0x900, V3_CLEAR, V3_STYLE, V3_PERSISTENCE,
+    DEVICE = 0x109,
 };
 
 static inline uint32_t call(uint32_t n, uint32_t x, uint32_t y, uint32_t z)
@@ -959,6 +967,7 @@ static void t_vector(void)
     report("vector: submit, reject, style, fill");
 }
 
+#ifndef PROGRAM
 /* ========================================================= 7b. 3D vector */
 
 #define XYZ(x, y, z) XY(x, y), (uint8_t)(z), (uint8_t)((z) >> 8)
@@ -1024,6 +1033,7 @@ static void t_vector3(void)
     report("3D vector: submit, reject, shared style");
 }
 #endif
+#endif
 
 /* ===================================================== 5. system calls */
 
@@ -1081,6 +1091,10 @@ static void t_system(void)
         /* The reading profile has no vector displays. */
         0x300, 0x302, 0x304, 0x900, 0x902, 0x903,
 #endif
+#ifdef PROGRAM
+        /* The program profile has no content, page or 3D display. */
+        0x400, 0x700, 0x701, 0x705, 0x900, 0x902, 0x903,
+#endif
     };
     for (uint32_t i = 0; i < sizeof unknown / sizeof unknown[0]; i++) {
         uint32_t a1, r = call2(unknown[i], 0x1234, 0x5678, &a1);
@@ -1088,6 +1102,30 @@ static void t_system(void)
     }
     report("unknown calls, absent devices");
 }
+
+#ifdef PROGRAM
+/* ========================================================== 5b. devices */
+
+/* SPEC 4 `device`: version 0 of devices 1, 2 and 3, which the image
+ * requires; FFFF_FFFFh for every other slot (device 8 is only a shell's)
+ * and for a number that is no slot; a1 unchanged. */
+static void t_devices(void)
+{
+    begin();
+    static const uint32_t has[] = { 1, 2, 3 };
+    static const uint32_t lacks[] = { 0, 4, 5, 6, 7, 8, 9, 10, 255, 256, 0x102, 0xFFFFFFFF };
+    uint32_t a1, r;
+    for (uint32_t i = 0; i < sizeof has / sizeof has[0]; i++) {
+        r = call2(DEVICE, has[i], 0x5678, &a1);
+        ck(r == 0 && a1 == 0x5678);
+    }
+    for (uint32_t i = 0; i < sizeof lacks / sizeof lacks[0]; i++) {
+        r = call2(DEVICE, lacks[i], 0x5678, &a1);
+        ck(r == ERR_UNKNOWN && a1 == 0x5678);
+    }
+    report("device: the devices it has");
+}
+#endif
 
 /* =================================================== 4. events, pads */
 
@@ -2034,19 +2072,28 @@ int main(void)
     wait();
 #ifndef READING
     t_vector();
+#ifndef PROGRAM
     t_vector3();
 #endif
+#endif
     t_system();
+#ifdef PROGRAM
+    t_devices();
+#endif
     show_all();
     t_events();
     t_pads();
     show_all();
     t_budget();
     show_all();
+#ifndef PROGRAM
     t_content();
     show_all();
+#endif
     t_stress();
+#ifndef PROGRAM
     t_page();
+#endif
 
     /* The results. */
     uint32_t failed = 0;
