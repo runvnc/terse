@@ -1,6 +1,6 @@
 # The network
 
-Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md and STATE.md) is an optional third layer that reuses them.
+Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.
 
 Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.
 
@@ -156,4 +156,4 @@ Entries of kinds it does not handle (programs and documents, for a client withou
 
 ## For machine hosts
 
-Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:fbad2774fb00d4e03bc2b54669a2ed319c903fd00a7c5f768fd2b9edbe77fd4c)) and cost budget ([charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c)).
+Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:2ff1d91c14260d1a4c8cb78cf69b0cc177e3b69c3a4c7b60dd4362909c06a8ad)) and cost budget ([charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100)).

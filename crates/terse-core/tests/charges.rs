@@ -1,5 +1,5 @@
 //! Host cost per budget unit of each kind of call, against plain ROM
-//! instructions (SPEC 14): a frame spent entirely in one call type should
+//! instructions (SPEC §charges): a frame spent entirely in one call type should
 //! cost the host about what a frame of instructions costs. `measure` prints
 //! the table (run in release; it is ignored by default):
 //!
@@ -102,7 +102,7 @@ fn cases() -> Vec<Case> {
             1,
         ),
         c("vector style", call_loop("", "    li a0, 1\n", 0x302), 1),
-        // The sound device (SPEC 18): a list of key-ons, interpreted at
+        // The sound device (SPEC §sound): a list of key-ons, interpreted at
         // once (2 per byte); a wavetable and a whole sample slot, copied.
         // These machines also render 800 pairs at the end of each frame.
         c("sound submit 4096 key-ons", call_loop(&fill_ram(4096, 0x09), "    li a0, 0x100000\n    lui a1, 1\n", 0x600), 1),

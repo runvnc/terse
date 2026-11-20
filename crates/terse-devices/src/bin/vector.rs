@@ -1,7 +1,7 @@
-//! `terse-dev-vector`: the 2D and 3D vector displays (SPEC 10, slot 3;
-//! SPEC 13, slot 9) as one driver (DEVICES.md 1.1: one process serves
+//! `terse-dev-vector`: the 2D and 3D vector displays (SPEC §vector, slot 3;
+//! SPEC §vector3d, slot 9) as one driver (DEVICES.md 1.1: one process serves
 //! both slots, because device 9's `style` and `persistence` are device
-//! 3's, SPEC 13.2, one section of the state). terse-core's `Vector` and
+//! 3's, SPEC §vector3d.calls, one section of the state). terse-core's `Vector` and
 //! `Vector3` for the state; per machine two layers drawn with terse-host's
 //! shapes in the clean style: the 2D list (z 30) and the 3D list's
 //! segments seen from the eye (z 35). It publishes the figures-as-outlines
@@ -34,7 +34,7 @@ fn table2() -> Vec<CallEntry> {
     ]
 }
 
-/// Device 9 (SPEC 13.2): `submit` (1 to 16,384 bytes in RAM; both
+/// Device 9 (SPEC §vector3d.calls): `submit` (1 to 16,384 bytes in RAM; both
 /// failures 1), `clear`, and `style` and `persistence`, device 3's.
 fn table3() -> Vec<CallEntry> {
     let e = CallEntry::plain;
@@ -173,7 +173,7 @@ impl Device for VectorDriver {
 
     fn open(&mut self, instance: u32, open: &Open, _: &Session) -> Result<(), String> {
         if open.lists(SLOT3) && !self.slots.contains(&3) {
-            return Err("device 9 needs this driver to serve device 3 too (SPEC 13.2)".into());
+            return Err("device 9 needs this driver to serve device 3 too (SPEC §vector3d.calls)".into());
         }
         let inst = Inst {
             v: Vector::default(),
@@ -219,7 +219,7 @@ impl Device for VectorDriver {
                 i.v3.as_mut().unwrap().clear();
                 (0, 0)
             }
-            // The style and persistence are device 3's (SPEC 13.2).
+            // The style and persistence are device 3's (SPEC §vector3d.calls).
             (3 | SLOT3, 2) => (i.v.set_style(c.args[0]), 0),
             (3 | SLOT3, 3) => (i.v.set_persistence(c.args[0]), 0),
             (3, 4) => (i.v.set_fill(c.args[0]), 0),

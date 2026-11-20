@@ -162,6 +162,7 @@ The devices a reading host provides (the reading profile):
 | 2 | Terminal: 80 × 30 character cells |
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
+| 10 | Full text: every character in the terminal |
 
 The devices a program host provides (the program profile):
 
@@ -170,6 +171,11 @@ The devices a program host provides (the program profile):
 | 1 | System (always present) |
 | 2 | Terminal |
 | 3 | 2D vector display: lines and filled shapes from a display list |
+
+A program host's terminal need draw only 351 characters (ASCII,
+Latin-1, box drawing and blocks); a machine without full text shows
+every other character as a placeholder box, though it holds the same
+text.
 
 The other devices, each of which a host may leave out:
 
@@ -182,6 +188,13 @@ The other devices, each of which a host may leave out:
 A host may provide device 1 and any set of the others; it needs neither
 content nor the page to run programs. A program meant to run everywhere
 requires only devices 1, 2 and 3 and lists the rest as optional.
+
+The exact rules are in SPEC.md, the core machine: the CPU, frames,
+images, calls, and devices 1, 2 and 3, which is everything a program
+host implements, with a one-page summary of that at its top. Each other
+device has a document of its own in spec/ (content, page, machines, 3D
+vector display, sound), and STATE.md defines the state hash that
+compares two hosts.
 
 Devices present and transport; they do not compute for the program, and
 nothing a host draws can be read back. The screen is 640 × 480 units for

@@ -1,7 +1,7 @@
 //! The composed picture in a window (softbuffer), and the window's input as
-//! the machines' events (SPEC 5): keys (F12 is the home key), text, paste
+//! the machines' events (SPEC §events): keys (F12 is the home key), text, paste
 //! (Ctrl+V, Shift+Insert), the pointer in the shell's screen units (the
-//! system maps it to tiles and panels, SPEC 12.4), the wheel; the eye
+//! system maps it to tiles and panels, SPEC §machines.input), the wheel; the eye
 //! follows the pointer (parallax). `--selftest` runs a number of frames
 //! with the scripted input only and prints the emulation, bus,
 //! composition and present-interval timings.
@@ -104,7 +104,7 @@ impl App {
             let n = room.min(self.paste.len());
             events.extend(self.paste.drain(..n).map(Event::text));
         }
-        // SPEC 9.5: while a question is asked the keyboard is the host's.
+        // SPEC §content.feeds: while a question is asked the keyboard is the host's.
         let events = self.bs.input(events)?;
         let bus_before = self.bus_ms();
         let start = Instant::now();
@@ -167,7 +167,7 @@ impl App {
             PhysicalKey::Code(code) => hid_usage(code),
             _ => None,
         };
-        // SPEC 12.4: the home key is the host's, never a key event.
+        // SPEC §machines.input: the home key is the host's, never a key event.
         if self.bs.system.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
             if pressed && !event.repeat {
                 self.pending.push(Event::home());
@@ -355,7 +355,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
                 return;
             }
-            // Virtual time lags rather than catching up (SPEC 1.4).
+            // Virtual time lags rather than catching up (SPEC §frames).
             self.next = (self.next + FRAME).max(now);
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next));

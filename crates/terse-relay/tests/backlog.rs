@@ -1,6 +1,6 @@
 //! A subscriber that arrives late gets the whole backlog (NETWORK 4.3,
 //! 4.4): an author publishes five articles before the subscriber exists;
-//! the subscriber's program then subscribes with op 05h (SPEC 9.5, consent
+//! the subscriber's program then subscribes with op 05h (SPEC §content.feeds, consent
 //! allowed), receives all five entries and downloads the articles.
 
 use std::net::TcpListener;

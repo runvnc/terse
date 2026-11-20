@@ -1,6 +1,6 @@
 # The Machines device (device 8)
 
-A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell's.
+A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell's. The exact rules are in spec/machines.md.
 
 ## Who has it
 

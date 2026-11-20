@@ -160,8 +160,9 @@ the device entries, then the ROM. All numbers are little-endian.
 | 7 | Page | 0 | reading |
 | 8 | Machines | 0 | none: the shell of a system only |
 | 9 | 3D vector display | 0 | none |
+| 10 | Full text (no calls) | 0 | reading |
 
-Slots 0 and 10 to 255 are not devices.
+Slots 0 and 11 to 255 are not devices.
 
 ## Calls
 

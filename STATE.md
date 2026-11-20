@@ -3,21 +3,21 @@
 Terse has three layers: (a) the network (`NETWORK.md`) and (b) articles
 (`ARTICLE.md`), which together are the core, so that a native reader with
 no virtual machine that implements them is a complete, conforming Terse
-client; and (c) the machine (`SPEC.md` and this document), an optional
+client; and (c) the machine (`SPEC.md`, the device documents in `spec/`, and this document), an optional
 layer that reuses them. This document belongs to layer (c).
 
-Status: part of SPEC section 15 (Conformance). It lets two implementations of
+Status: part of SPEC §conformance (Conformance). It lets two implementations of
 machine profile 1 be compared frame by frame: run the same image with the same
 recorded inputs on both, and compare the state hash after every frame (or every
 Nth). The first frame whose hashes differ is where the implementations diverge.
-The serialization is also a machine's snapshot (SPEC 12.7): section 4 says how
+The serialization is also a machine's snapshot (SPEC §machines.snapshots): section 4 says how
 a machine is restored from it.
 
 The **state hash** is the BLAKE3-256 hash (unkeyed, 32 bytes) of the **state
 serialization** defined below, written as 64 lowercase hexadecimal digits. The
 serialization covers everything that can influence later frames or what is
 presented, and nothing else. It is defined only **between frames**: after step 3
-of a frame (SPEC 1.4) and before step 1 of the next. A machine that has just
+of a frame (SPEC §frames) and before step 1 of the next. A machine that has just
 been reset (before frame 0) is also between frames.
 
 All integers are little-endian. `u8`, `u32` are unsigned; `i32` is two's
@@ -32,7 +32,7 @@ says otherwise, so the layout has fixed offsets up to the RAM.
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 13 | The ASCII bytes `terse-state-1` (no terminator) |
-| 13 | 32 | Image ID (SPEC 2: BLAKE3-256 of the image file) |
+| 13 | 32 | Image ID (SPEC §image: BLAKE3-256 of the image file) |
 
 The image ID stands for the ROM, the declared RAM size and the device list,
 which never change.
@@ -49,13 +49,13 @@ which never change.
 | Offset | Size | Field |
 |---|---|---|
 | 173 | 4 | Frame counter (u32): the value `frame_count` returns in the next frame |
-| 177 | 1 | Stopped: `00h` running, `01h` exited, `02h` faulted (SPEC 1.5) |
+| 177 | 1 | Stopped: `00h` running, `01h` exited, `02h` faulted (SPEC §stopping) |
 | 178 | 1 | Exit code, or `00h` if not exited |
 | 179 | 1 | Fault kind, or `00h` if not faulted: `01h` illegal instruction, `02h` breakpoint, `03h` fetch, `04h` load, `05h` store, `06h` misaligned |
 | 180 | 4 | Illegal instruction: its encoding (u32; a 16-bit encoding in the low half). Otherwise zero. |
 | 184 | 4 | Fault `pc` (u32), or zero |
-| 188 | 4 | Fault address (u32, SPEC 1.5), or zero |
-| 192 | 4 | Budget (i32): the budget carried into the next frame; zero or negative (SPEC 1.4) |
+| 188 | 4 | Fault address (u32, SPEC §stopping), or zero |
+| 192 | 4 | Budget (i32): the budget carried into the next frame; zero or negative (SPEC §frames) |
 
 ### 1.4 RAM and grants (4 + L + k bytes)
 
@@ -63,7 +63,10 @@ which never change.
 |---|---|---|
 | 196 | 4 | L (u32): RAM size in bytes, `ram_pages × 8192` |
 | 200 | L | All of RAM, from address `0010_0000h` |
-| 200 + L | k | The grants: one flag for each device the image lists as optional (SPEC 2), in header order: `01h` granted, `00h` not |
+| 200 + L | k | The grants: one flag for each device the image lists as optional (SPEC §image), in header order: `01h` granted, `00h` not |
+
+A capability, such as device 10 (full text, SPEC §terminal.text), has a
+grant flag like any optional device and no section of its own below.
 
 k is the number of optional devices in the image's header, 0 to 16. An
 image with none has no grant bytes, so its state is laid out exactly as
@@ -93,7 +96,7 @@ Let `T = S + 37 + 4n`.
 | Offset | Size | Field |
 |---|---|---|
 | T | 1 | Present (flag): the machine has device 2. If `00h`, the section ends here. |
-| T + 1 | 9,600 | The grid: cells 0 to 2,399, four bytes each (SPEC 8.1) |
+| T + 1 | 9,600 | The grid: cells 0 to 2,399, four bytes each (SPEC §terminal.cells) |
 | T + 9,601 | 1 | Cursor column |
 | T + 9,602 | 1 | Cursor row |
 | T + 9,603 | 1 | Foreground index |
@@ -108,7 +111,7 @@ The incomplete sequence is a valid lead byte (`C2h`–`F4h`) and the valid
 continuation bytes received after it, while the character is not yet complete;
 it may have been started by an earlier `write` call. It is empty at reset and
 after a character completes. A byte that is not a valid continuation ends the
-sequence (one `FFFDh`) and is then decoded afresh (SPEC 8.3), so the sequence
+sequence (one `FFFDh`) and is then decoded afresh (SPEC §terminal.put), so the sequence
 becomes that byte if it is a lead byte, and empty otherwise.
 
 Let `V` be the offset after this section.
@@ -124,11 +127,11 @@ Let `V` be the offset after this section.
 | V + 4 | 4 | m (u32): length of the list the device holds, 0–16,384 |
 | V + 8 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
 
-The style and the persistence are also those device 9 sets (SPEC 13.2):
+The style and the persistence are also those device 9 sets (SPEC §vector3d.calls):
 they are held here once. For a machine that has device 9 and not device
 3 the fill mode is `00h` and m is 0 (nothing can set them).
 
-The afterglow (SPEC 10.6) is presentation and is not included.
+The afterglow (SPEC §vector.phosphor) is presentation and is not included.
 
 Let `C` be the offset after this section.
 
@@ -158,7 +161,7 @@ Let `P` be the offset after this section.
 | Offset | Size | Field |
 |---|---|---|
 | P | 1 | Present (flag): the machine has device 7. If `00h`, the section ends here. |
-| P + 1 | 2 | Rectangle x (u16), as clamped by `region` (SPEC 11.2) |
+| P + 1 | 2 | Rectangle x (u16), as clamped by `region` (SPEC §page.calls) |
 | P + 3 | 2 | Rectangle y (u16) |
 | P + 5 | 2 | Rectangle width (u16) |
 | P + 7 | 2 | Rectangle height (u16) |
@@ -168,7 +171,7 @@ Let `P` be the offset after this section.
 | P + 21 | d | The document (the bytes of the last accepted submit) |
 
 Nothing about the layout is included: the height a host computed, the lines,
-the anchors' positions. They reach the machine only as events (SPEC 11.5),
+the anchors' positions. They reach the machine only as events (SPEC §page.events),
 which are in the queue and RAM like any other input.
 
 Let `M` be the offset after this section.
@@ -181,27 +184,27 @@ were before device 8 existed.
 
 | Offset | Size | Field |
 |---|---|---|
-| M | 1 | Present (flag): the machine has device 8 (it is the shell of a system, SPEC 12.1). If `00h`, the section ends here. |
+| M | 1 | Present (flag): the machine has device 8 (it is the shell of a system, SPEC §machines.shell). If `00h`, the section ends here. |
 | M + 1 | 1 | Focus: a handle 1–8, or 0 for the shell |
 | M + 2 | 8 × 138 | Handle 1, then 2, …, 8 |
 | M + 1,106 | 1 | b: the number of built-in programs, 0–255 |
 | M + 1,107 | 32 × b | Their image IDs, in `builtin` order |
-| M + 1,107 + 32b | 1 | r: the number of open requests the shell has been told of and has not read (SPEC 12.2 `request`), 0–8 |
+| M + 1,107 + 32b | 1 | r: the number of open requests the shell has been told of and has not read (SPEC §machines.calls `request`), 0–8 |
 | M + 1,108 + 32b | 83 × r | Each: the handle (1), then the 82 bytes `request` would write; in increasing handle order |
-| M + 1,108 + 32b + 83r | 18 | The view (SPEC 12.2 `face`), below |
+| M + 1,108 + 32b + 83r | 18 | The view (SPEC §machines.calls `face`), below |
 
 Each handle's record is 138 bytes:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | State (SPEC 12.1) |
+| 0 | 1 | State (SPEC §machines.shell) |
 | 1 | 1 | Run flag |
 | 2 | 2 | Rectangle x (u16), as clamped by `place` |
 | 4 | 2 | Rectangle y (u16) |
 | 6 | 2 | Rectangle width (u16) |
 | 8 | 2 | Rectangle height (u16) |
-| 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC 12.2): exit code, fault kind, failure reason, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
-| 57 | 81 | The identity given to `start_program`, as `identity` writes it (SPEC 12.2), or all zero if the handle has none |
+| 10 | 47 | Bytes 1 to 47 of the `info` record (SPEC §machines.calls): exit code, fault kind, failure reason, units, frame counter, fault `pc`, image ID, as latched in the frame just run and changed by the shell's calls since |
+| 57 | 81 | The identity given to `start_program`, as `identity` writes it (SPEC §machines.calls), or all zero if the handle has none |
 
 The view is 18 bytes, all zero for none:
 
@@ -231,12 +234,12 @@ were before device 9 existed.
 | D + 4 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
 
 `D` is the offset after section 1.10. The style and persistence are in
-section 1.7; the eye a host draws from (SPEC 13.1) is presentation and is
+section 1.7; the eye a host draws from (SPEC §vector3d.space) is presentation and is
 not included.
 
 ### 1.12 Sound (0 or 2,688 + s bytes)
 
-This section is there only if the machine has device 6 (SPEC 18); for any
+This section is there only if the machine has device 6 (SPEC §sound); for any
 other image it is empty, so the hashes of images without device 6 are as
 they were before device 6 existed. `U` is the offset after section 1.11.
 
@@ -246,7 +249,7 @@ they were before device 6 existed. `U` is the offset after section 1.11.
 | U + 608 | 32 × 64 | Wavetables 0 to 31, 64 signed bytes each |
 | U + 2,656 | … | Sample slots 0 to 3, each: its length len (u32, 0–65,536), its loop start (u32, as given to `sample`), then its len bytes |
 
-s is the sum of the four lengths. Each voice is 38 bytes (SPEC 18.4):
+s is the sum of the four lengths. Each voice is 38 bytes (SPEC §sound.voices):
 
 | Offset | Size | Field |
 |---|---|---|
@@ -274,14 +277,14 @@ s is the sum of the four lengths. Each voice is 38 bytes (SPEC 18.4):
 | 34 | 2 | Output (i16): the voice's output in the last pair rendered |
 | 36 | 2 | Previous output (i16): its output in the pair before that |
 
-The samples a frame rendered are presentation (SPEC 18.7) and are not
+The samples a frame rendered are presentation (SPEC §sound.presentation) and are not
 included; everything they are computed from is.
 
 ### 1.13 Argument (0 or 32 bytes)
 
 | Offset | Size | Field |
 |---|---|---|
-| A | 32 | The machine's argument (SPEC 4 `argument`); there only if the shell gave it one |
+| A | 32 | The machine's argument (SPEC §system `argument`); there only if the shell gave it one |
 
 `A` is the offset after section 1.12. A machine with no argument (every
 machine run on its own, and every shell) has nothing here, so its hash is
@@ -293,7 +296,7 @@ sections 1.1 to 1.12 finds the argument there exactly when 32 bytes
 remain, none when 0 remain, and refuses any other remainder. The writer
 is the machine's own serialization: it writes the section exactly when
 the machine was given an argument (by its shell's `argument` before its
-first frame, SPEC 12.2, or by the snapshot it was restored from).
+first frame, SPEC §machines.calls, or by the snapshot it was restored from).
 
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + k + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
@@ -306,7 +309,7 @@ or 32 (argument).
 - **ROM, title and device list**: fixed for the image, covered by the image ID.
   Which optional devices were granted is not (the host chooses at reset),
   so the grants are in 1.4.
-- **This frame's random bytes**: an input consumed within the frame (SPEC 4);
+- **This frame's random bytes**: an input consumed within the frame (SPEC §system);
   a new set is latched at step 1 of every frame, so nothing of them outlives
   the frame.
 - **Requests not yet handed to the host**, the bytes a put or a save
@@ -316,33 +319,33 @@ or 32 (argument).
   matter through their ID, which the completion writes; a save's data, a
   title, query or name only through what the host does with it, which
   reaches the machine as later inputs).
-- **Named records** (SPEC 9.6) and a machine's identity: the records are
+- **Named records** (SPEC §content.records) and a machine's identity: the records are
   the host's; what a load delivers is an input. A started machine's
   identity is in the shell's handle record (1.10), not in its own state. Whether a
-  request waits for the user's consent (SPEC 9.5) is host state; to the
+  request waits for the user's consent (SPEC §content.feeds) is host state; to the
   machine it is pending.
-- **Whether a machine's open request waits** (SPEC 4 `open`): it stops
+- **Whether a machine's open request waits** (SPEC §system `open`): it stops
   waiting when the shell reads it, which the machine cannot see; what
-  `open` returns is an input to the machine (SPEC 12.6). The shell's side,
+  `open` returns is an input to the machine (SPEC §machines.determinism). The shell's side,
   the requests it has been told of and not read, is in 1.10.
 - **Host bookkeeping**: counters that tell a host the display list changed,
   per-frame statistics (units used, events dropped), the decoded form of ROM,
   caches.
-- **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
-  10.6), the eye the 3D display is seen from (SPEC 13.1), the samples the
-  sound device rendered and how a host plays or mixes them (SPEC 18.7). The vector list
+- **Presentation**: fonts, pixels, blending, the afterglow (SPEC §terminal.presentation, §vector.layers,
+  §vector.phosphor), the eye the 3D display is seen from (SPEC §vector3d.space), the samples the
+  sound device rendered and how a host plays or mixes them (SPEC §sound.presentation). The vector list
   bytes are included; how they are drawn is not.
-- **A system's host bookkeeping** (SPEC 12): which machines exist, their
+- **A system's host bookkeeping** (SPEC §machines): which machines exist, their
   images while they load, the order of their frames, what the host shows.
   The shell sees all of it that it can observe through device 8's records
   and events, which are in its state and queue.
-- **The page's layout** (SPEC 11.4): it depends on the host's fonts. The
+- **The page's layout** (SPEC §page.layout): it depends on the host's fonts. The
   document bytes (with its figures' path commands), rectangle, scroll value
   and background are included; how figures are drawn is not; the height a
-  host reports is an input event. The locates a program made (SPEC 11.2)
+  host reports is an input event. The locates a program made (SPEC §page.calls)
   are not included either: a host takes them after the frame, and the
   answers are input events.
-- **The shell's snapshot slots** (SPEC 12.7): host data; what
+- **The shell's snapshot slots** (SPEC §machines.snapshots): host data; what
   `snapshot_info` tells and the snapshot done events are the shell's
   inputs.
 
@@ -350,13 +353,14 @@ or 32 (argument).
 
 From this repository's implementation (the reference):
 
-- `programs/hello/hello.terse` at reset (no frame run): serialization
-  18,811 bytes, hash
-  `0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be`.
+- `programs/hello/hello.terse` (which lists device 10, full text, as
+  optional: one grant byte, granted) at reset (no frame run): serialization
+  18,812 bytes, hash
+  `2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18`.
 - The same after 1 frame with no input:
-  `d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe`;
+  `8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42`;
   after 30 frames:
-  `066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83`.
+  `cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
 
@@ -382,10 +386,10 @@ the one in S's header. The restored machine has the devices S's grants
 (1.4) say, whatever the restoring host could grant otherwise: an
 optional device the host has and S says was not granted stays absent,
 and if S says a device was granted that the host cannot provide, the
-restore fails (SPEC 12.2 `restore`, reason 3) and nothing runs. S is
+restore fails (SPEC §machines.calls `restore`, reason 3) and nothing runs. S is
 read section by section as section 1 lays it out, with the sections the
 image's device list and the grants imply; it is refused
-(SPEC 12.2 `restore`, reason 5) if it is cut short or longer, if its image
+(SPEC §machines.calls `restore`, reason 5) if it is cut short or longer, if its image
 ID is another, if section 1.10 is present (a shell), or if serializing the
 restored machine would not give S again, byte for byte (so every field is
 in range: a flag is `00h` or `01h`, the stopped and fault fields agree, the
@@ -402,17 +406,17 @@ S's hash, and it is between frames: its next frame is the one whose number
 is S's frame counter.
 
 Everything else a machine needs is in S. Host bookkeeping starts afresh:
-the content requests pending in S fail in the next frame (SPEC 9.2), the
+the content requests pending in S fail in the next frame (SPEC §content.submit), the
 page is laid out and its height reported as for a new document, and the
 afterglow is empty.
 
-A host keeps a snapshot (SPEC 12.7) in a file:
+A host keeps a snapshot (SPEC §machines.snapshots) in a file:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | Magic: `54h 53h 4Eh 50h` (`TSNP`) |
 | 4 | 1 | Version: `0` |
-| 5 | 81 | The identity, as SPEC 12.2 `identity` writes it; all zero for none |
+| 5 | 81 | The identity, as SPEC §machines.calls `identity` writes it; all zero for none |
 | 86 | 4 | The Unix time latched for the machine's last frame (u32) |
 | 90 | 4 | N (u32): the length of S |
 | 94 | 200 | Bytes 0–199 of S: header, CPU, frame loop and L |
@@ -439,7 +443,7 @@ same inputs.
 ## 5. Recordings
 
 A **recording** holds every input of every frame of one machine's run
-(SPEC 4, 9.4, 11.5), so that the run can be replayed exactly without the
+(SPEC §system, §content.determinism, §page.events), so that the run can be replayed exactly without the
 host that made it: no network, no blob store, no data directory. It also
 holds the state hash after each frame, so a replay can tell the first frame
 at which it differs. `terse run <image> --record <file>` writes one for a
@@ -463,13 +467,13 @@ A frame record:
 |---|---|
 | 4 | The frame counter as the frame starts (u32): reset or the snapshot's counter for the first record, one more for each next |
 | 4 | The Unix time latched for the frame (u32) |
-| 32 | Controllers 0–3, eight bytes each, as `controller` writes them (SPEC 6): all zero for one not connected; else byte 0 is `01h`, bytes 3–6 are never `80h` and byte 7 is `00h` |
-| 4 | e (u32): the number of events the host appended to the queue in step 1 of SPEC 1.4 |
+| 32 | Controllers 0–3, eight bytes each, as `controller` writes them (SPEC §controllers): all zero for one not connected; else byte 0 is `01h`, bytes 3–6 are never `80h` and byte 7 is `00h` |
+| 4 | e (u32): the number of events the host appended to the queue in step 1 of SPEC §frames |
 | 4e | The events, four bytes each (type, `a`, `b`, `c`), in the order appended, including those the machine then drops (a full queue, a second feeds-updated event, the second half of a located anchor) |
 | 4 | r (u32): the number of random bytes the program took (at most 463,872) |
-| r | Those bytes, in order. A replay supplies exactly these; the program read zeros beyond the host's bytes either way (SPEC 4) |
+| r | Those bytes, in order. A replay supplies exactly these; the program read zeros beyond the host's bytes either way (SPEC §system) |
 | 4 | c (u32): the number of completions the host gave |
-| … | c completions, in the order given (the machine applies them in increasing handle order, SPEC 9.2) |
+| … | c completions, in the order given (the machine applies them in increasing handle order, SPEC §content.submit) |
 | 32 | The state hash after the frame |
 
 A completion: one byte, the handle; one byte, its kind; then the kind's
@@ -483,7 +487,7 @@ fields:
 | `04h` | Done (subscribe, unsubscribe, set nickname, save, delete) | — |
 | `05h` | Publish or set profile succeeded | seq (u32) |
 | `06h` | Identity succeeded | the feed key (32) |
-| `0Ch` | Identity succeeded, with the hints of the host's own address (SPEC 9.5) | the feed key (32), n (u32), the n bytes of the hint list (1 to 161) |
+| `0Ch` | Identity succeeded, with the hints of the host's own address (SPEC §content.feeds) | the feed key (32), n (u32), the n bytes of the hint list (1 to 161) |
 | `07h` | Not found | — |
 | `08h` | Failed | — |
 | `09h` | Refused | — |
@@ -492,16 +496,16 @@ fields:
 
 These are what the host hands the machine; the machine derives everything
 it writes to the request block from them and the pending request (SPEC
-9.2), and queues the content-done events itself, so neither is recorded. A
+§content.submit), and queues the content-done events itself, so neither is recorded. A
 completion that matches no pending request is recorded like any other and
 ignored again on replay. The requests pending in a start snapshot fail in
-the first frame (SPEC 9.2) without a record of it: they follow from the
+the first frame (SPEC §content.submit) without a record of it: they follow from the
 snapshot.
 
 A replay makes the machine with the recorded grants (or the snapshot's),
 on a host that can provide them, or refuses. Nothing else is an input of
 a single machine: `open` always returns 0
-(or `FFFF_FFFEh`) for a machine no shell started (SPEC 4), its argument is
+(or `FFFF_FFFEh`) for a machine no shell started (SPEC §system), its argument is
 in the snapshot (section 1.13; none from reset), and the page's layout
 reaches it only as events. A recording is read to its end; a file that ends
 inside a header or record, has a kind or controller bytes out of range, or a

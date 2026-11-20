@@ -1,6 +1,6 @@
 # The network
 
-Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md and STATE.md) is an optional third layer that reuses them.
+Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.
 
 Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.
 

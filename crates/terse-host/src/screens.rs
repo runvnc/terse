@@ -1,11 +1,11 @@
-//! The screens of a system's machines drawn together (SPEC 12.3): the
+//! The screens of a system's machines drawn together (SPEC §machines.screens): the
 //! shell's screen over the whole window, then each machine's picture in its
 //! rectangle, in increasing handle order, each a complete screen with its
 //! own layers, glyphs rasterised for its size and its own phosphor tube;
 //! then the host's consent prompt over everything. A single machine is the
 //! shell's screen alone, drawn exactly as before.
 //!
-//! A machine whose 3D list has Surfaces in effect (SPEC 13.5) is drawn as
+//! A machine whose 3D list has Surfaces in effect (SPEC §vector3d.presentation) is drawn as
 //! its glass (its renderer, without its 3D list), the Surfaces' sources
 //! blacked out on it, its Surfaces (its 2D layers drawn again by a second
 //! renderer into a texture of the size they need, when they changed, and
@@ -43,7 +43,7 @@ struct Shown {
     surfaced: Option<Surfaced>,
 }
 
-/// A machine's own Surfaces as drawn (SPEC 13.5): its 2D layers drawn by a
+/// A machine's own Surfaces as drawn (SPEC §vector3d.presentation): its 2D layers drawn by a
 /// renderer of their own into a texture of the size the Surfaces need
 /// (again when they changed), and what goes over its glass: the sources
 /// blacked out, the Surfaces, its 3D lines.
@@ -223,11 +223,11 @@ fn update_surfaced(
 pub struct Screens {
     /// The shell's screen (or the single machine's).
     pub shell: Renderer,
-    /// The shell's own Surfaces (SPEC 13.5), if it has any in effect.
+    /// The shell's own Surfaces (SPEC §vector3d.presentation), if it has any in effect.
     shell_surfaced: Option<Surfaced>,
     /// The children shown, by serial.
     children: HashMap<u32, Shown>,
-    /// The shell's 3D scene when Screens are in effect (SPEC 12.3), and
+    /// The shell's 3D scene when Screens are in effect (SPEC §machines.screens), and
     /// what draws it: the panels' quads and the shell's 3D lines over them.
     scene: Option<SceneLayers>,
     scene_quads: Option<PanelQuads>,
@@ -238,7 +238,7 @@ pub struct Screens {
     no_trails: bool,
     force_phosphor: bool,
     animate_page: bool,
-    /// The eye for 3D lists, the same for every machine (SPEC 13.1).
+    /// The eye for 3D lists, the same for every machine (SPEC §vector3d.space).
     eye: Eye,
 }
 
@@ -280,7 +280,7 @@ impl Screens {
     }
 
     /// The page anchor under (x, y) in machine `serial`'s screen units, as
-    /// its page was last shown (SPEC 11.5).
+    /// its page was last shown (SPEC §page.events).
     pub fn anchor(&self, serial: u32, x: u16, y: u16) -> u16 {
         let r = if serial == 0 { Some(&self.shell) } else { self.children.get(&serial).map(|c| &c.renderer) };
         r.map_or(0, |r| r.page_anchor_at_units(x as f32 + 0.5, y as f32 + 0.5))
@@ -322,8 +322,8 @@ impl Screens {
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels, not in its own screen (SPEC 12.3); with Surfaces, over
-        // them (SPEC 13.5). The shell's Surfaces are then among the
+        // panels, not in its own screen (SPEC §machines.screens); with Surfaces, over
+        // them (SPEC §vector3d.presentation). The shell's Surfaces are then among the
         // scene's panels, or drawn over its glass on their own.
         let layers = scene_layers(system, eye);
         let shell_surfaces = match &layers {

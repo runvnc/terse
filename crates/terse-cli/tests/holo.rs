@@ -185,7 +185,7 @@ fn cockpit_surfaces() {
 }
 
 /// A click on a row of the list on the tilted right-hand console reaches
-/// holo as a pointer inside the list's region of the terminal (SPEC 13.3
+/// holo as a pointer inside the list's region of the terminal (SPEC §vector3d.list
 /// Surface), from any eye: the row is selected. The press is found by the
 /// core's own mapping, then checked by running holo as a single machine
 /// in a system, which routes it.
@@ -293,7 +293,7 @@ fn city_hides() {
     assert_ne!(a, b);
 }
 
-/// A command's bytes (SPEC 13.3).
+/// A command's bytes (SPEC §vector3d.list).
 fn encode(c: &terse_core::vector3::Command) -> Vec<u8> {
     use terse_core::vector3::Command;
     let xyz = |p: &[i16; 3]| p.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();

@@ -1,5 +1,5 @@
 //! programs/conform-program: the conformance image of the machine's program
-//! profile (SPEC 2.1, 15), programs/conform's sources built with
+//! profile (SPEC §profiles, §conformance), programs/conform's sources built with
 //! `-DPROGRAM`: devices 2 and 3 only, and a section for the `device` call.
 //! Its state hash every 10 frames of the scripted run must match
 //! `expected-hashes.txt`, the final screen and display list

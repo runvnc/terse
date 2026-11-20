@@ -95,7 +95,7 @@ impl SystemGlyphs {
             missing: HashSet::new(),
             found: HashMap::new(),
         };
-        // SPEC 7: screen units are square and a cell is 8 x 16 of them, so
+        // SPEC §screen: screen units are square and a cell is 8 x 16 of them, so
         // the cell is exactly 1:2. Its width is the monospace font's advance
         // (for a proportional font, the default monospace font's, else 0.6
         // of the size); the text body (ascent to descent) is centred in the

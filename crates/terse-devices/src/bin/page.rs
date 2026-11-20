@@ -1,11 +1,11 @@
-//! `terse-dev-page`: the page (SPEC 11, slot 7) as a driver (DEVICES.md):
+//! `terse-dev-page`: the page (SPEC §page, slot 7) as a driver (DEVICES.md):
 //! per machine, terse-core's `Page` for the state and the layout events
 //! (height, anchor, located) from terse-core's `PageInput`, laid out
 //! between frames with the reference layout, or, when the core presents,
 //! with real fonts (terse-host's typesetter, shared by every machine, as
 //! `terse-host --screenshot` does); one layer (z 20) drawn by terse-host's
 //! software page renderer. It subscribes to the vector display's
-//! figures-as-outlines flag (SPEC 11.4).
+//! figures-as-outlines flag (SPEC §page.layout).
 //!
 //! Options: `--fonts` or `--reference` force the layout; `--page-sans`,
 //! `--page-serif`, `--page-mono` name the fonts.

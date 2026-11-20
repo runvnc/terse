@@ -1,9 +1,9 @@
-//! Device 2, Terminal (SPEC 8). Its operations return how many clears and
+//! Device 2, Terminal (SPEC §terminal). Its operations return how many clears and
 //! scrolls they did, which the machine charges for when a command does them
-//! (SPEC 14; inside a `write` they are not charged).
+//! (SPEC §charges; inside a `write` they are not charged).
 //!
 //! A scroll or a clear costs a host time proportional to one row at most
-//! (SPEC 8.6): the rows are a ring (`top` is the stored row shown first), and
+//! (SPEC §terminal.presentation): the rows are a ring (`top` is the stored row shown first), and
 //! a row that a scroll or clear blanked is only filled when something is
 //! written to it.
 
@@ -15,7 +15,7 @@ pub const CELL_BYTES: usize = 4;
 pub const CELLS: usize = COLS * ROWS; // 2,400
 pub const CELL_MEMORY: usize = CELLS * CELL_BYTES; // 9,600
 
-/// The right cell of a wide character (SPEC 8.1).
+/// The right cell of a wide character (SPEC §terminal.cells).
 pub const CONTINUATION: u16 = 0xFFFF;
 const REPLACEMENT: u16 = 0xFFFD;
 const SPACE: u16 = 0x0020;
@@ -27,7 +27,7 @@ pub struct Cell {
     pub bg: u8,
 }
 
-/// Incremental UTF-8 decoder for `write` (SPEC 8.3).
+/// Incremental UTF-8 decoder for `write` (SPEC §terminal.put).
 ///
 /// Malformed input becomes U+FFFD following the "maximal subpart" practice
 /// (Unicode ch. 3, WHATWG): an invalid lead byte gives one U+FFFD; a sequence
@@ -104,15 +104,19 @@ pub struct Terminal {
     fg: u8,
     bg: u8,
     cursor_visible: bool,
-    /// SPEC 8.3: the next printed character starts a new row first.
+    /// SPEC §terminal.put: the next printed character starts a new row first.
     pending_wrap: bool,
     palette: [[u8; 3]; 256],
     decoder: Utf8Decoder,
+    /// Whether the machine has full text (SPEC §terminal.text, device 10):
+    /// how a host draws the cells, not machine state. A terminal of the
+    /// host's own (a prompt, a status line) has it.
+    full_text: bool,
 }
 
 impl Default for Terminal {
     fn default() -> Self {
-        // SPEC 8.5
+        // SPEC §terminal.reset
         let mut t = Terminal {
             cells: vec![0; CELL_MEMORY],
             top: 0,
@@ -128,6 +132,7 @@ impl Default for Terminal {
             pending_wrap: false,
             palette: xterm_palette(),
             decoder: Utf8Decoder::default(),
+            full_text: true,
         };
         t.fill_rows(0..ROWS);
         t
@@ -148,6 +153,22 @@ impl Eq for Terminal {}
 const ROW_BYTES: usize = COLS * CELL_BYTES;
 
 impl Terminal {
+    /// A terminal at reset, of a machine that has full text or not (SPEC
+    /// §terminal.text).
+    pub fn with_full_text(full_text: bool) -> Self {
+        Terminal { full_text, ..Terminal::default() }
+    }
+
+    /// Whether the cells are drawn with full text; without it, with the
+    /// basic repertoire and the placeholder (SPEC §terminal.text).
+    pub fn full_text(&self) -> bool {
+        self.full_text
+    }
+
+    pub fn set_full_text(&mut self, full_text: bool) {
+        self.full_text = full_text;
+    }
+
     /// The stored row that is row `row`.
     #[inline(always)]
     fn stored(&self, row: usize) -> usize {
@@ -195,7 +216,7 @@ impl Terminal {
         Cell { ch: u16::from_le_bytes([c[0], c[1]]), fg: c[2], bg: c[3] }
     }
 
-    /// The cell memory, 4 bytes per cell (SPEC 8.1).
+    /// The cell memory, 4 bytes per cell (SPEC §terminal.cells).
     pub fn cell_bytes(&self) -> Vec<u8> {
         let mut out = vec![0; CELL_MEMORY];
         self.cells_read(0, &mut out);
@@ -300,7 +321,7 @@ impl Terminal {
         Ok(())
     }
 
-    /// Put character (SPEC 8.3) for each byte of a UTF-8 stream; a sequence
+    /// Put character (SPEC §terminal.put) for each byte of a UTF-8 stream; a sequence
     /// may continue in the next call. Returns the clears and scrolls done.
     pub fn write(&mut self, bytes: &[u8]) -> u32 {
         let mut ops = 0;
@@ -322,7 +343,7 @@ impl Terminal {
                 let i = col * CELL_BYTES;
                 let here = u16::from_le_bytes([r[i], r[i + 1]]);
                 let next = u16::from_le_bytes([r[i + 4], r[i + 5]]);
-                // Not part of a wide pair (no neighbour to blank, SPEC 8.3
+                // Not part of a wide pair (no neighbour to blank, SPEC §terminal.put
                 // step 3) and no wrap: just the cell and the cursor.
                 if here != CONTINUATION && next != CONTINUATION {
                     r[i..i + CELL_BYTES].copy_from_slice(&[b, 0, fg, bg]);
@@ -338,7 +359,7 @@ impl Terminal {
         ops
     }
 
-    /// Moves the cursor, clamping to the grid (SPEC 8.2); clears pending wrap.
+    /// Moves the cursor, clamping to the grid (SPEC §terminal.calls); clears pending wrap.
     pub fn set_cursor(&mut self, col: u32, row: u32) {
         self.col = col.min(COLS as u32 - 1) as u8;
         self.row = row.min(ROWS as u32 - 1) as u8;
@@ -352,7 +373,7 @@ impl Terminal {
     }
 
     /// Copies cells from cell `first` (0-2399) into `out` (4 bytes each,
-    /// SPEC 8.1), wrapping from the last cell to the first.
+    /// SPEC §terminal.cells), wrapping from the last cell to the first.
     pub fn cells_read(&self, first: usize, out: &mut [u8]) {
         let mut at = first * CELL_BYTES % CELL_MEMORY;
         let mut done = 0;
@@ -380,7 +401,7 @@ impl Terminal {
     }
 
     /// Writes cells from cell `first`, the reverse of `cells_read`. The
-    /// bytes are not checked (SPEC 8.2).
+    /// bytes are not checked (SPEC §terminal.calls).
     pub fn cells_write(&mut self, first: usize, data: &[u8]) {
         let mut at = first * CELL_BYTES % CELL_MEMORY;
         let mut done = 0;
@@ -401,7 +422,7 @@ impl Terminal {
         }
     }
 
-    /// A command (SPEC 8.4); returns the clears and scrolls done (0 or 1).
+    /// A command (SPEC §terminal.commands); returns the clears and scrolls done (0 or 1).
     pub fn command(&mut self, value: u8) -> u32 {
         match value {
             0x01 => self.clear(),
@@ -414,7 +435,7 @@ impl Terminal {
             0x04 => {
                 // Starting on the right half of a wide pair breaks the pair:
                 // its left half becomes a space and keeps its colours, as in
-                // SPEC 8.3 step 3.
+                // SPEC §terminal.put step 3.
                 let (col, row) = (self.col as usize, self.row as usize);
                 if col > 0 && self.is_pair(col - 1, row) {
                     let i = (col - 1) * CELL_BYTES;
@@ -437,7 +458,7 @@ impl Terminal {
         }
     }
 
-    /// SPEC 8.3; returns the clears and scrolls done.
+    /// SPEC §terminal.put; returns the clears and scrolls done.
     fn put_char(&mut self, cp: u32) -> u32 {
         let charge = match cp {
             0x08 => {
@@ -467,7 +488,7 @@ impl Terminal {
         charge
     }
 
-    /// Prints one character (SPEC 8.3 steps 1-4); returns the scrolls done.
+    /// Prints one character (SPEC §terminal.put steps 1-4); returns the scrolls done.
     fn print(&mut self, ch: u16) -> u32 {
         const LAST: usize = COLS - 1;
         let width = if is_wide(ch) { 2 } else { 1 };
@@ -493,7 +514,7 @@ impl Terminal {
 
     /// Writes `chars` from `col` in the cursor row with the current colours.
     /// A wide pair cut in two loses its other half, which becomes a space and
-    /// keeps its colours (SPEC 8.3 step 3).
+    /// keeps its colours (SPEC §terminal.put step 3).
     fn write_cells(&mut self, col: usize, chars: &[u16]) {
         let row = self.row as usize;
         let end = col + chars.len();
@@ -558,7 +579,7 @@ impl Terminal {
     }
 }
 
-/// The xterm 256-colour palette (SPEC 8.5).
+/// The xterm 256-colour palette (SPEC §terminal.reset).
 pub fn xterm_palette() -> [[u8; 3]; 256] {
     const BASE: [[u8; 3]; 16] = [
         [0x00, 0x00, 0x00],
@@ -780,7 +801,7 @@ mod tests {
         assert_eq!((ch(&t, 0, 6), ch(&t, 1, 6)), (0x597D, CONTINUATION));
     }
 
-    /// SPEC 8.3 step 1: a wide character at column 79 over the right half
+    /// SPEC §terminal.put step 1: a wide character at column 79 over the right half
     /// of a wide pair at 78-79: column 79 becomes a space in the current
     /// colours, and the pair's left half at 78 a space keeping its colours.
     #[test]
@@ -797,7 +818,7 @@ mod tests {
         assert_eq!((t.cell(0, 1).ch, t.cell(1, 1).ch), (0x597D, CONTINUATION));
     }
 
-    /// SPEC 8.4: commands 02h-06h leave the cursor and pending wrap as they
+    /// SPEC §terminal.commands: commands 02h-06h leave the cursor and pending wrap as they
     /// are; 01h moves the cursor to (0, 0) and clears pending wrap.
     #[test]
     fn commands_keep_the_cursor_and_pending_wrap() {
@@ -1030,7 +1051,7 @@ mod tests {
     }
 
     /// Scrolls and clears turn the ring and blank rows lazily; what the
-    /// program and the state see is the grid as SPEC 8 says.
+    /// program and the state see is the grid as SPEC §terminal says.
     #[test]
     fn scrolls_and_clears_keep_the_grid() {
         let mut t = Terminal::default();

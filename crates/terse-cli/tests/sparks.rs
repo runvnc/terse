@@ -130,7 +130,7 @@ fn controller_session() {
 }
 
 /// `sessions/phosphor.txt`: the keyboard session with P pressed (phosphor
-/// style, SPEC 10.6), then controller Y twice. The style is the program's
+/// style, SPEC §vector.phosphor), then controller Y twice. The style is the program's
 /// state but changes nothing else: the game is the keyboard session's.
 #[test]
 fn phosphor_session() {
@@ -153,7 +153,7 @@ fn phosphor_session() {
     // The shapes are drawn as outlines; the HUD is that of the keyboard
     // session, and so is the list, except that in the phosphor style the
     // arena border and the craft's four lines are drawn twice (overdraw is
-    // brighter there, SPEC 10.6).
+    // brighter there, SPEC §vector.phosphor).
     let mut k = Machine::new(&Image::parse(IMAGE).unwrap());
     let (mut h, _dir) = headless(&recorded("keys.txt"));
     for _ in 0..900 {
@@ -304,7 +304,7 @@ fn budget() {
     }
 }
 
-/// SPEC 9.6: the high score is the named record "high-score", saved when a
+/// SPEC §content.records: the high score is the named record "high-score", saved when a
 /// game beats it and loaded at start, without delaying the first frame. A
 /// second run with the same data directory shows the first run's score.
 #[test]
@@ -349,7 +349,7 @@ fn high_score_persists() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80)]);
+    common::check_up_to_date(IMAGE, &["sparks/sparks.c"], true, "sparks", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80), (10, 0x80)]);
 }
 
 /// Records programs/sparks/sessions/{keys,pad}.txt: a player that reads only

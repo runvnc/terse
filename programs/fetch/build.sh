@@ -38,4 +38,4 @@ for src in "$lib/crt0.S" "$here/fetch.c" "$lib/terse.c"; do
 done
 "${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o 1.o 2.o -o fetch.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary fetch.elf fetch.bin
-terse pack --rom fetch.bin --title fetch --ram-pages 1 --device 2:0 --device 4:0 -o "$out/fetch.terse"
+terse pack --rom fetch.bin --title fetch --ram-pages 1 --device 2:0 --device 4:0 --optional 10:0 -o "$out/fetch.terse"

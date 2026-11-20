@@ -278,7 +278,7 @@ pub mod access {
 /// Entry flags.
 pub mod entry_flags {
     pub const SETS_A1: u8 = 1;
-    /// Deferred (SPEC 14): computable by the core, so batchable; without
+    /// Deferred (SPEC §charges): computable by the core, so batchable; without
     /// it a call is answered.
     pub const BATCHABLE: u8 = 2;
     pub const BUFFER: u8 = 4;
@@ -431,7 +431,7 @@ impl CallEntry {
     }
 
     /// The units the core charges beyond the call's 4 before the driver's
-    /// own charge (SPEC 14): the rest of an answered call's 64.
+    /// own charge (SPEC §charges): the rest of an answered call's 64.
     pub fn base_extra(&self) -> u32 {
         if self.batchable() { 0 } else { terse_core::charge::ANSWERED - terse_core::charge::CALL }
     }
@@ -554,16 +554,16 @@ pub mod z {
 pub mod property {
     /// Published by the vector display: 1 if figures and filled shapes are
     /// drawn as outlines (fill mode 1, or the phosphor style), else 0; the
-    /// page subscribes (SPEC 11.4).
+    /// page subscribes (SPEC §page.layout).
     pub const OUTLINES: &str = "vector.outlines";
-    /// Published by the 3D display: its list (SPEC 13), which the core
-    /// needs for device 8 and the shell's scene (SPEC 12.2–12.4).
+    /// Published by the 3D display: its list (SPEC §vector3d), which the core
+    /// needs for device 8 and the shell's scene (SPEC §machines.calls, §machines.screens and §machines.input).
     pub const LIST3: &str = "vector3.list";
     /// Published by the core: the eye (two f32, screen units from the
-    /// reference eye, SPEC 13.1).
+    /// reference eye, SPEC §vector3d.space).
     pub const EYE: &str = "core.eye";
     /// Published by the core for the 3D display of a machine whose scene
-    /// has Screens in effect (SPEC 12.3): which (u8) and the view (12 f64:
+    /// has Screens in effect (SPEC §machines.screens): which (u8) and the view (12 f64:
     /// the linear part by rows, then the translation); empty otherwise.
     pub const VIEW: &str = "core.view";
     /// Published by the core: the line the terminal shows over its bottom
@@ -579,7 +579,7 @@ pub mod property {
     pub const ANSWER: &str = "core.answer";
     /// Published by the sound driver: the frame counter after the frame
     /// it rendered last (u32), then that frame's 800 sample pairs (i16,
-    /// left and right interleaved, SPEC 18.7); empty before the first.
+    /// left and right interleaved, SPEC §sound.presentation); empty before the first.
     /// The core reads it after each of the machine's frames.
     pub const SOUND_FRAME: &str = "sound.frame";
 }
@@ -738,7 +738,7 @@ pub struct Open {
     pub memory_path: String,
     /// The driver's slots the image lists, with the versions it lists.
     pub listed: Vec<(u8, u8)>,
-    /// The program's identity (SPEC 12.2): publisher and name.
+    /// The program's identity (SPEC §machines.calls): publisher and name.
     pub identity: Option<([u8; 32], Vec<u8>)>,
     pub rom: Vec<u8>,
 }

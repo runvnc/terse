@@ -1,7 +1,7 @@
 /* hostile.S - a deliberately hostile program for the device bus
  * (DEVICES.md): it spends every frame's whole budget on device calls, the
  * cheapest of each kind (1 for the ecall, and 4 for a deferred call or 64
- * for an answered one, SPEC 14), in phases of 60 frames, then exits:
+ * for an answered one, SPEC §charges), in phases of 60 frames, then exits:
  *
  *   frames   0- 59  terminal get_cursor    (answered: never batched)
  *   frames  60-119  vector clear           (deferred: batched)

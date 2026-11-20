@@ -1,4 +1,4 @@
-//! A system of machines (SPEC 12): the shell, which has device 8, and the
+//! A system of machines (SPEC §machines): the shell, which has device 8, and the
 //! machines it starts. The system decides the order of frames, routes the
 //! host's input and keeps device 8's records up to date; a [`Driver`]
 //! (headless or windowed) supplies everything else a machine's frame needs
@@ -41,7 +41,7 @@ pub trait Driver<D: Devices = InProcess> {
     /// Machine `serial` ceased to exist (the shell stopped it).
     fn removed(&mut self, serial: u32);
     /// Store `snapshot` in slot `slot` of the snapshots of `shell` (SPEC
-    /// 12.7), durably. Returns the result if it is known at once; else the
+    /// §machines.snapshots), durably. Returns the result if it is known at once; else the
     /// host reports it later with [`System::snapshot_done`]. The default
     /// keeps no snapshots.
     fn save_snapshot(&mut self, shell: &Machine<D>, slot: u8, snapshot: Snapshot) -> Option<bool> {
@@ -75,9 +75,9 @@ pub struct Child<D: Devices = InProcess> {
     pub title: String,
     /// Why the start failed, if it did.
     pub error: Option<String>,
-    /// The argument the shell gave it before its first frame (SPEC 12.2).
+    /// The argument the shell gave it before its first frame (SPEC §machines.calls).
     pub argument: Option<[u8; 32]>,
-    /// The image, delivered but not yet latched (SPEC 12.5).
+    /// The image, delivered but not yet latched (SPEC §machines.frames).
     delivered: Option<Result<Image, StartFailure>>,
     /// The snapshot slot it is restored from (`restore`), and the snapshot
     /// once delivered with its image.
@@ -107,12 +107,12 @@ pub struct System<D: Devices = InProcess> {
     saving: Vec<(u8, SnapshotInfo)>,
     /// Snapshot results to report at the next latch: slot, stored.
     saved: Vec<(u8, bool)>,
-    /// The eye the host draws the 3D scene from (SPEC 13.1), for routing
+    /// The eye the host draws the 3D scene from (SPEC §vector3d.space), for routing
     /// the pointer over panels.
     eye: (f32, f32),
 }
 
-/// The shell's 3D scene as the host shows it after a frame (SPEC 12.3):
+/// The shell's 3D scene as the host shows it after a frame (SPEC §machines.screens):
 /// which Screens are in effect, the view of the whole scene, the panels as
 /// seen from the eye (far to near; not the machine a finished view shows
 /// flat) and whether the view is moving.
@@ -156,7 +156,7 @@ impl<D: Devices> System<D> {
     }
 
     /// The shell's snapshot slots as the host has them when the system
-    /// starts (SPEC 12.7).
+    /// starts (SPEC §machines.snapshots).
     pub fn set_snapshot_table(&mut self, table: [Option<SnapshotInfo>; SLOTS]) {
         if let Some(dev) = self.shell.machines_mut() {
             for (slot, info) in table.into_iter().enumerate() {
@@ -166,7 +166,7 @@ impl<D: Devices> System<D> {
     }
 
     /// The host stored the snapshot it was given for `slot` (or could not):
-    /// reported to the shell at the start of the next frame (SPEC 12.5).
+    /// reported to the shell at the start of the next frame (SPEC §machines.frames).
     pub fn snapshot_done(&mut self, slot: u8, stored: bool) {
         self.saved.push((slot, stored));
     }
@@ -190,8 +190,8 @@ impl<D: Devices> System<D> {
         &mut self.shell
     }
 
-    /// The shell's identity (a built-in shell's, SPEC 12.2), whose named
-    /// records it reads (SPEC 9.6).
+    /// The shell's identity (a built-in shell's, SPEC §machines.calls), whose named
+    /// records it reads (SPEC §content.records).
     pub fn set_shell_identity(&mut self, identity: Option<ProgramId>) {
         self.shell.set_identity(identity);
     }
@@ -239,15 +239,15 @@ impl<D: Devices> System<D> {
         self.shell.machines().map_or(0, |m| m.focus())
     }
 
-    /// The eye the host draws the 3D scene from (SPEC 13.1): screen units
-    /// from the reference eye. Panels are hit as seen from it (SPEC 12.4).
+    /// The eye the host draws the 3D scene from (SPEC §vector3d.space): screen units
+    /// from the reference eye. Panels are hit as seen from it (SPEC §machines.input).
     pub fn set_eye(&mut self, eye: (f32, f32)) {
         self.eye = eye;
     }
 
     /// The children's pictures as the host shows them flat: handle,
     /// rectangle of the picture in the shell's units, in drawing order
-    /// (SPEC 12.3); the machine a finished view shows flat in its
+    /// (SPEC §machines.screens); the machine a finished view shows flat in its
     /// rectangle among them.
     pub fn pictures(&self) -> Vec<(u8, crate::page::Region)> {
         let Some(dev) = self.shell.machines() else { return Vec::new() };
@@ -279,14 +279,14 @@ impl<D: Devices> System<D> {
     }
 
     /// The handles whose Screens in the shell's 3D list are in effect (SPEC
-    /// 13.3): bit h − 1 for handle h.
+    /// §vector3d.list): bit h − 1 for handle h.
     pub fn panel_mask(&self) -> u8 {
         let Some(dev) = self.shell.machines() else { return 0 };
         dev.panel_mask(&self.shell.list3(), |h| self.child(h).is_some_and(|c| c.machine.is_some()))
     }
 
     /// The shell's 3D scene as the host shows it now, seen from `eye`
-    /// (SPEC 12.2 `face`, 12.3). `None` when no Screen is in effect: the
+    /// (SPEC §machines.calls `face`, 12.3). `None` when no Screen is in effect: the
     /// shell's screen is drawn as a single machine's.
     pub fn scene(&self, eye: (f32, f32)) -> Option<Scene> {
         let mask = self.panel_mask();
@@ -319,7 +319,7 @@ impl<D: Devices> System<D> {
     }
 
     /// The image for machine `serial` arrived, or could not be had; it is
-    /// taken into account at the start of the next frame (SPEC 12.5).
+    /// taken into account at the start of the next frame (SPEC §machines.frames).
     pub fn deliver_image(&mut self, serial: u32, image: Result<Image, StartFailure>) {
         if let Some(c) = self.children.iter_mut().flatten().find(|c| c.serial == serial && c.machine.is_none()) {
             c.delivered = Some(image);
@@ -331,7 +331,7 @@ impl<D: Devices> System<D> {
         self.shell.stopped()
     }
 
-    /// The samples of the system frame just run (SPEC 18.7): every
+    /// The samples of the system frame just run (SPEC §sound.presentation): every
     /// machine's whose frame ended since the last call (the shell's and
     /// its children's that ran), added and clamped to 16 bits into `out`, 800
     /// pairs, left and right interleaved. Returns whether any machine gave
@@ -354,7 +354,7 @@ impl<D: Devices> System<D> {
         any
     }
 
-    /// Runs one frame of the system (SPEC 12.5): latches what changed,
+    /// Runs one frame of the system (SPEC §machines.frames): latches what changed,
     /// routes `events` (the host's input, in the shell's screen units), runs
     /// the shell, carries out its starts and stops, then runs each running
     /// child in increasing handle order. `controllers` go to the machine
@@ -371,7 +371,7 @@ impl<D: Devices> System<D> {
         // The shell. The focus as routing left it (a home key included)
         // decides who reads the controllers this frame, the shell's and the
         // children's alike: a `focus` the shell makes now takes effect at
-        // the next frame's routing (SPEC 12.5 step 5).
+        // the next frame's routing (SPEC §machines.frames step 5).
         let focus = self.focus();
         let shell_controllers = if focus == 0 { controllers } else { NO_CONTROLLERS };
         out.shell = Some(driver.frame(Who { handle: 0, serial: 0 }, &mut self.shell, shell_events, shell_controllers));
@@ -380,7 +380,7 @@ impl<D: Devices> System<D> {
         // frames.
         let mut at_end = Vec::new();
         // A view whose machine is no longer a panel returns at once (SPEC
-        // 12.2 `face`).
+        // §machines.calls `face`).
         let list = self.shell.list3().into_owned();
         if let Some(dev) = self.shell.machines_mut() {
             dev.check_view(&list);
@@ -469,7 +469,7 @@ impl<D: Devices> System<D> {
         }
 
         // Snapshots and deletes, in the order the shell asked for them
-        // (SPEC 12.5 step 6).
+        // (SPEC §machines.frames step 6).
         for command in at_end {
             match command {
                 Command::Snapshot { handle, slot } => {
@@ -492,7 +492,7 @@ impl<D: Devices> System<D> {
         out
     }
 
-    /// Step 1 (SPEC 12.5): images delivered and machines that stopped
+    /// Step 1 (SPEC §machines.frames): images delivered and machines that stopped
     /// become the handles' new states, and each record takes the machine's
     /// latest numbers. Returns the machine-changed events for the shell.
     fn latch(&mut self) -> Vec<Event> {
@@ -505,7 +505,7 @@ impl<D: Devices> System<D> {
             let mut new = None;
             match record_state {
                 state::LOADING => match child.delivered.take() {
-                    // A restore: the machine as it was (SPEC 12.7), with its
+                    // A restore: the machine as it was (SPEC §machines.snapshots), with its
                     // image ID and identity.
                     Some(Ok(image)) if let Some(snapshot) = child.snapshot.take() => {
                         child.title = image.title_lossy();
@@ -523,7 +523,7 @@ impl<D: Devices> System<D> {
                             Err(e) => {
                                 child.error = Some(e.to_string());
                                 // A device the machine had and this host
-                                // lacks: as for `start` (SPEC 12.2).
+                                // lacks: as for `start` (SPEC §machines.calls).
                                 s.failure = if matches!(e, crate::RestoreError::NeedsDevice(_)) { failure::NEEDS_DEVICE } else { failure::SNAPSHOT };
                                 new = Some(state::FAILED);
                             }
@@ -587,7 +587,7 @@ impl<D: Devices> System<D> {
                 s.frames = m.frame();
             }
         }
-        // Open requests made in the last frame (SPEC 12.5), after the
+        // Open requests made in the last frame (SPEC §machines.frames), after the
         // changes of state.
         for (i, slot) in self.children.iter_mut().enumerate() {
             let Some(machine) = slot.as_mut().and_then(|c| c.machine.as_mut()) else { continue };
@@ -597,7 +597,7 @@ impl<D: Devices> System<D> {
             }
         }
         // Snapshots stored (or not) since the last frame, and the slots
-        // as they are now (SPEC 12.5).
+        // as they are now (SPEC §machines.frames).
         for (slot, stored) in std::mem::take(&mut self.saved) {
             if let Some(i) = self.saving.iter().position(|s| s.0 == slot) {
                 let (_, info) = self.saving.remove(i);
@@ -610,12 +610,12 @@ impl<D: Devices> System<D> {
         events
     }
 
-    /// Step 2 (SPEC 12.4): each input event goes to the shell or to one
+    /// Step 2 (SPEC §machines.input): each input event goes to the shell or to one
     /// child, by the focus and the pictures as they are now.
     fn route(&mut self, events: &[Event], shell: &mut Vec<Event>, routed: &mut [Vec<Event>; MAX_MACHINES]) {
         let eye = self.eye;
         // A pointer over a machine's own Surface goes to the point of its
-        // source rectangle (SPEC 13.3 Surface), the list as shown now.
+        // source rectangle (SPEC §vector3d.list Surface), the list as shown now.
         let own = |m: &Machine<D>, x: u16, y: u16| {
             let list = m.list3();
             if list.is_empty() { (x, y) } else { crate::vector3::surface_pointer(&list, eye, x, y) }
@@ -646,7 +646,7 @@ impl<D: Devices> System<D> {
                     let pressed = buttons & !self.buttons != 0;
                     self.buttons = buttons;
                     // The topmost picture under the pointer: the highest
-                    // handle; then the nearest panel (SPEC 12.4).
+                    // handle; then the nearest panel (SPEC §machines.input).
                     let mut hit = pictures.iter().rev().find_map(|&(h, p)| Some((h, map_into(p, x, y)?)));
                     // The shell's own Surfaces are panels of its scene
                     // (handle 0) when it has one.

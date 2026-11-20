@@ -1,4 +1,4 @@
-//! Device 8 (SPEC 12): the calls, by hand in assembly (skipped without the
+//! Device 8 (SPEC §machines): the calls, by hand in assembly (skipped without the
 //! RISC-V tools); and the system with the checked-in shell (programs/shell)
 //! and hand-made machines: frame order, routing, latching, a machine that
 //! cannot use device 8.
@@ -392,7 +392,7 @@ fn calls() {
     assert_eq!(absent.last(), Some(&0));
 }
 
-/// Charges (SPEC 14): 4 per call, plus 1 per 4 bytes copied.
+/// Charges (SPEC §charges): 4 per call, plus 1 per 4 bytes copied.
 #[test]
 fn charges() {
     if !common::have_tools() {
@@ -434,7 +434,7 @@ impl Driver for Programs {
     fn removed(&mut self, _: u32) {}
 }
 
-/// `start_program` (807h) and `identity` (808h) (SPEC 12.2): the host is
+/// `start_program` (807h) and `identity` (808h) (SPEC §machines.calls): the host is
 /// asked for the program by its identity (a built-in with the zero key);
 /// the handle loads until the image arrives, possibly frames later; a
 /// start fails with its reason (1 not found, 3 needs a device the host
@@ -670,7 +670,7 @@ child: .fill 32, 1, 0
     program(&rom, 1, &[MACHINES])
 }
 
-/// SPEC 4 `open` and `argument`, SPEC 12.2 `request` and `argument`: one
+/// SPEC §system `open` and `argument`, SPEC §machines.calls `request` and `argument`: one
 /// request waits at a time until the shell reads it; the shell is told
 /// once per request; the shell's own `open` and a machine run alone get 0;
 /// the argument is the child's state (STATE.md 1.13).
@@ -753,7 +753,7 @@ fn idle() -> Image {
     program(&assemble("1:  li a7, 0x100\n    ecall\n    j 1b\n"), 1, &[])
 }
 
-/// SPEC 12.4, 12.5 step 5: a `focus` takes effect at the next frame's
+/// SPEC §machines.input, §machines.frames step 5: a `focus` takes effect at the next frame's
 /// routing for every input, the controllers included: in the frame of the
 /// call the shell (focus 0) still reads them and the newly focused machine
 /// reads none; from the next frame on, only that machine. With the focus
@@ -793,7 +793,7 @@ fn focus_moves_the_controllers_at_the_next_frame() {
     }
 }
 
-/// SPEC 12.4: a press over a machine's picture gives the shell a machine
+/// SPEC §machines.input: a press over a machine's picture gives the shell a machine
 /// pressed event whatever the machine's state; the pointer event itself
 /// goes to the machine only if it runs (here it is paused: to nobody).
 #[test]
@@ -813,7 +813,7 @@ fn machine_pressed_also_for_a_machine_that_does_not_run() {
     assert!(r.got(1).is_none(), "a paused machine runs no frame");
 }
 
-/// SPEC 12.4: outside a system (an image run on its own) the home key
+/// SPEC §machines.input: outside a system (an image run on its own) the home key
 /// does nothing; every other input goes to the machine unchanged.
 #[test]
 fn home_key_outside_a_system_does_nothing() {
@@ -827,7 +827,7 @@ fn home_key_outside_a_system_does_nothing() {
     assert_eq!(rec.log[0].2, [Event::text('a'), Event::feeds_updated()]);
 }
 
-/// SPEC 12.4: input other than keys, text, wheel, pointer and the home
+/// SPEC §machines.input: input other than keys, text, wheel, pointer and the home
 /// key (here a feeds-updated event in the host's input) goes to the shell
 /// unchanged, whatever the focus.
 #[test]

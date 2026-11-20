@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-machines-device-device-8">The Machines device (device 8)</h1>
-<p>A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell&#39;s.</p>
+<p>A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell&#39;s. The exact rules are in spec/machines.md.</p>
 <h2 id="who-has-it">Who has it</h2>
 <p>The shell has device 8 if its image lists (8, 0) (<code>terse pack --device 8:0</code>) and the host starts it as the shell (<code>terse run --shell &lt;image&gt;</code>, <code>terse-host --shell &lt;image&gt;</code>). For every other machine, and an image run alone, every call returns <code>FFFF_FFFFh</code>. At reset no handle is in use, the focus is 0 and there is no view.</p>
 <h2 id="handles-and-states">Handles and states</h2>

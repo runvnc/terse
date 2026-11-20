@@ -1,4 +1,4 @@
-//! The page device (SPEC 11) in the host: layout with real fonts
+//! The page device (SPEC §page) in the host: layout with real fonts
 //! ([cosmic-text](https://crates.io/crates/cosmic-text): shaping, the
 //! Unicode bidirectional algorithm and line breaking, font fallback), on a
 //! worker thread so the frame loop never waits, and drawing: glyphs
@@ -44,7 +44,7 @@ use crate::vectors::PHOSPHOR_FORMAT;
 /// The smallest line height the host uses, as a multiple of the size; a
 /// font whose own (ascent + descent + gap) is tighter is given this.
 const MIN_LINE_HEIGHT: f32 = 1.3;
-/// The thickness of a rule in screen units (SPEC 11.3: about one).
+/// The thickness of a rule in screen units (SPEC §page.document: about one).
 pub(crate) const RULE_THICKNESS: f32 = 1.0;
 /// Atlas size in texels (RGBA: coverage masks in alpha, colour glyphs as
 /// they are).
@@ -68,7 +68,7 @@ const FIGURE_UPLOADS: usize = 32;
 #[cfg(feature = "gpu")]
 const FIGURE_UPLOAD_BYTES: usize = 8 << 20;
 
-/// The fonts of the three faces (SPEC 11.3): family names as given (or as
+/// The fonts of the three faces (SPEC §page.document): family names as given (or as
 /// loaded from a file), `None` for the system's default of that kind.
 #[derive(Clone, Debug, Default)]
 pub struct PageFonts {
@@ -180,7 +180,7 @@ impl Typesetter {
         )
     }
 
-    /// Lays `doc` out at `width` screen units (SPEC 11.4).
+    /// Lays `doc` out at `width` screen units (SPEC §page.layout).
     pub fn layout(&mut self, key: LayoutKey, doc: &[u8], width: u16) -> HostLayout {
         let width = width as f32;
         let mut out =
@@ -203,7 +203,7 @@ impl Typesetter {
                 continue;
             }
             if let Some(f) = &p.figure {
-                // SPEC 11.3: a block of its own, aligned in the rectangle and
+                // SPEC §page.document: a block of its own, aligned in the rectangle and
                 // cut at its right edge; drawn from the decoded paths.
                 let b = FigureBox::place(f, p.align, width as u32);
                 out.figures.push(HostFigure {
@@ -303,7 +303,7 @@ impl Typesetter {
         let mut buffer = Buffer::new(fonts, Metrics::new(first_size, first_size * 1.25));
         buffer.set_wrap(if p.nowrap { Wrap::None } else { Wrap::WordOrGlyph });
         if p.ellipsis {
-            // SPEC 11.3: a no-wrap line that does not fit ends in an ellipsis.
+            // SPEC §page.document: a no-wrap line that does not fit ends in an ellipsis.
             buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
         }
         buffer.set_size(Some(avail), None);
@@ -317,7 +317,7 @@ impl Typesetter {
         buffer.set_rich_text(spans, &default, Shaping::Advanced, align);
         span_every_byte(&mut buffer);
         buffer.shape_until_scroll(fonts, false);
-        // SPEC 11.3: indent from the start edge, which is the right for a
+        // SPEC §page.document: indent from the start edge, which is the right for a
         // right-to-left paragraph.
         let rtl = buffer.is_rtl(0).unwrap_or(false);
         let x = if rtl { 0.0 } else { indent };
@@ -365,7 +365,7 @@ impl Typesetter {
         (buffer, natural)
     }
 
-    /// Lays out a table (SPEC 11.4) with its top at `y`; returns its bottom.
+    /// Lays out a table (SPEC §page.layout) with its top at `y`; returns its bottom.
     fn table(&mut self, t: &Table, width: f32, y: f32, out: &mut HostLayout) -> f32 {
         let n = t.columns as usize;
         let (pad_x, pad_y) = (core_page::CELL_PAD_X as f32, core_page::CELL_PAD_Y as f32);
@@ -429,7 +429,7 @@ impl Typesetter {
     }
 }
 
-/// The columns' widths (SPEC 11.4 step 3) in screen units: the natural
+/// The columns' widths (SPEC §page.layout step 3) in screen units: the natural
 /// widths if they fit in `width`, else each narrowed to a common cap, the
 /// largest that fits but at least `floor`.
 pub(crate) fn column_widths(natural: &[f32], width: f32, floor: f32) -> Vec<f32> {
@@ -541,7 +541,7 @@ pub struct HostLayout {
 }
 
 impl HostLayout {
-    /// The height SPEC 11.5 reports: whole screen units, rounded up.
+    /// The height SPEC §page.events reports: whole screen units, rounded up.
     pub fn reported_height(&self) -> u32 {
         self.height.ceil().clamp(0.0, u32::MAX as f32) as u32
     }
@@ -565,7 +565,7 @@ impl HostLayout {
         0
     }
 
-    /// Where anchor `id` is (SPEC 11.5): the top of the first line or
+    /// Where anchor `id` is (SPEC §page.events): the top of the first line or
     /// figure that carries it, rounded down, and its height, with the
     /// bottom rounded up.
     pub fn locate(&self, id: u16) -> Option<(u32, u32)> {
@@ -647,7 +647,7 @@ impl PageThread {
                     Err(e) => eprintln!("terse-host: page fonts: {e}"),
                 }
                 while let Ok(job) = rx.recv() {
-                    // Only each worker's latest request matters (SPEC 11.5).
+                    // Only each worker's latest request matters (SPEC §page.events).
                     let mut batch = vec![job];
                     loop {
                         match rx.try_recv() {
@@ -713,7 +713,7 @@ impl PageWorker {
     /// Before a frame: takes finished layouts. Returns the events to queue
     /// first in this frame: the height event, if a layout of the current
     /// page finished, then the answers to the locates whose document is
-    /// laid out (SPEC 11.5); an error if the fonts could not be loaded.
+    /// laid out (SPEC §page.events); an error if the fonts could not be loaded.
     pub fn poll(&mut self, page: Option<&Page>) -> Result<Vec<Event>, String> {
         let mut event = None;
         loop {
@@ -749,7 +749,7 @@ impl PageWorker {
     pub fn after_frame(&mut self, page: Option<&Page>) -> Option<Event> {
         let page = page?;
         // Locates of the document current at the end of the frame wait for
-        // its layout (SPEC 11.5); at most 8.
+        // its layout (SPEC §page.events); at most 8.
         self.locates.extend(page.locates().iter().filter(|l| l.0 == page.generation()));
         let n = self.locates.len();
         self.locates.drain(..n.saturating_sub(core_page::MAX_PENDING_LOCATES));
@@ -1138,7 +1138,7 @@ impl PageLayer {
         self.sync_figures = !animate;
     }
 
-    /// Whether filled shapes are drawn as outlines (SPEC 10.3, fill mode 1).
+    /// Whether filled shapes are drawn as outlines (SPEC §vector.list, fill mode 1).
     pub fn set_outlines(&mut self, outlines: bool) {
         self.outlines = outlines;
     }

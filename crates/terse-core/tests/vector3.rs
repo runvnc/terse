@@ -1,4 +1,4 @@
-//! Device 9, the 3D vector display (SPEC 13): its calls' results and
+//! Device 9, the 3D vector display (SPEC §vector3d): its calls' results and
 //! charges, the style and persistence it shares with device 3, its state
 //! (STATE.md 1.11) and a snapshot's round trip.
 
@@ -73,7 +73,7 @@ fn calls_and_shared_style() {
 }
 
 /// A submit costs the call and a unit per 4 bytes copied, a rejected one
-/// the call only (SPEC 14).
+/// the call only (SPEC §charges).
 #[test]
 fn charges() {
     if !common::have_tools() {
@@ -136,7 +136,7 @@ fn state_and_snapshots() {
     assert_eq!(without.state().len(), 45 + 128 + 23 + 4 + l + 37 + 4);
 }
 
-/// Builds a display list (SPEC 13.3).
+/// Builds a display list (SPEC §vector3d.list).
 #[derive(Default)]
 struct List(Vec<u8>);
 
@@ -276,7 +276,7 @@ fn face_cost() {
     time("typical: 20 boxes on a grid", &l.0);
 }
 
-/// SPEC 13.3, 13.4: a circle of radius 0 is 64 chords of length 0 (64
+/// SPEC §vector3d.list, §vector3d.caps: a circle of radius 0 is 64 chords of length 0 (64
 /// segments, no length); Scale 0 puts every later point at the
 /// transform's origin; a line wholly beyond the screen grown by 32 units
 /// is counted by the caps (one segment) but gives no piece, one within
@@ -309,7 +309,7 @@ fn radius_0_scale_0_and_the_margin() {
     assert_eq!(count(&l), (1, 0.0), "within the margin, counted length 0");
 }
 
-/// SPEC 13.3: a piece with a cut end shorter than 1/2 unit is not drawn
+/// SPEC §vector3d.list: a piece with a cut end shorter than 1/2 unit is not drawn
 /// unless the whole line is that short, the whole line being its part in
 /// front of the near plane, on the glass, before it is clipped to the
 /// screen: here a line 1,000 units long, of which 0.4 units on the screen

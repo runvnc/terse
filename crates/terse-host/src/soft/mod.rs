@@ -1,4 +1,4 @@
-//! The software renderer: the whole picture of a system (SPEC 12.3) drawn
+//! The software renderer: the whole picture of a system (SPEC §machines.screens) drawn
 //! by the CPU into a pixel buffer, the same picture the GPU renderer
 //! (`screens.rs`, `renderer.rs`) draws, for machines without a usable GPU
 //! and for the bootable image, which shows the buffer on a KMS/DRM display
@@ -15,7 +15,7 @@
 //! changed.
 //!
 //! A machine with a 3D scene over its glass (the shell's Screens, any
-//! machine's own Surfaces, SPEC 12.3, 13.5) is put together in an image of
+//! machine's own Surfaces, SPEC §machines.screens, §vector3d.presentation) is put together in an image of
 //! its own when anything of it changed: its screen's image with the
 //! Surfaces' sources blacked out, the panels far to near (a Surface from a
 //! pyramid of that same image, before the sources were blacked out), its
@@ -98,7 +98,7 @@ pub struct SoftScreens {
     pool: Pool,
     frame: Pixels,
     damage: Damage,
-    /// The eye for 3D lists, the same for every machine (SPEC 13.1).
+    /// The eye for 3D lists, the same for every machine (SPEC §vector3d.space).
     eye: Eye,
     /// The damage of the frame drawn last, for presenters.
     last_damage: Vec<IRect>,
@@ -324,8 +324,8 @@ impl Display for SoftScreens {
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels, not in its own screen (SPEC 12.3); with its own
-        // Surfaces, over them (SPEC 13.5).
+        // panels, not in its own screen (SPEC §machines.screens); with its own
+        // Surfaces, over them (SPEC §vector3d.presentation).
         let layers = scene_layers(system, eye).or_else(|| surface_layers(shell, eye));
         show(&mut self.shell, shell, layout(0), eye, layers.is_none());
         self.shell.set_excluded(layers.as_ref().map_or(&[][..], |l| &l.rects));
@@ -576,6 +576,38 @@ mod tests {
         show(&mut s, &t, &v, &pool);
         assert_eq!(s.image.data, fresh(&t, &v, &pool), "palette");
         assert!(show(&mut s, &t, &v, &pool).is_empty());
+    }
+
+    /// SPEC §terminal.text: a machine without full text is drawn with the
+    /// basic repertoire, every other character (each half of a wide one
+    /// included) as the one placeholder; with full text as the glyphs.
+    #[test]
+    fn basic_text_draws_placeholders() {
+        let pool = Pool::new(2);
+        let v = Vector::default();
+        let draw = |full: bool, text: &str| {
+            let mut t = Terminal::with_full_text(full);
+            t.write(text.as_bytes());
+            fresh(&t, &v, &pool)
+        };
+        // Without full text, 你 (two cells), €€ and two U+FFFD look the same,
+        // and unlike full text's 你; basic characters are drawn as glyphs.
+        let basic_wide = draw(false, "a你é");
+        assert_eq!(basic_wide, draw(false, "a€€é"));
+        assert_eq!(basic_wide, draw(false, "a\u{FFFD}\u{FFFD}é"));
+        assert_ne!(basic_wide, draw(true, "a你é"));
+        assert_eq!(draw(false, "a─é"), draw(true, "a─é"), "box drawing is basic");
+        assert_ne!(basic_wide, draw(false, "a  é"), "a placeholder is drawn");
+        // An incremental screen that switches machines redraws.
+        let mut s = SoftScreen::new(Box::new(Blocks(8)));
+        let (mut a, mut b) = (Terminal::with_full_text(true), Terminal::with_full_text(false));
+        a.write("ab你".as_bytes());
+        b.write("ab你".as_bytes());
+        show(&mut s, &a, &v, &pool);
+        show(&mut s, &b, &v, &pool);
+        let f = fresh(&b, &v, &pool);
+        let diff: Vec<usize> = s.image.data.iter().zip(&f).enumerate().filter(|(_, (x, y))| x != y).map(|(i, _)| i).collect();
+        assert!(diff.is_empty(), "{} differ, first at {:?}, last {:?}", diff.len(), diff.first().map(|i| (i % 700, i / 700)), diff.last().map(|i| (i % 700, i / 700)));
     }
 
     /// The 3D display's segments are drawn bit by bit as from scratch too,

@@ -59,7 +59,7 @@ pub fn read_fetch_program(b: &[u8]) -> Result<(u32, ProgramId, Vec<[u8; 32]>), S
     Ok((tag, ProgramId { publisher, name }, builtins))
 }
 
-/// A fetch's answer as the image to start, or why not (SPEC 12.2: a
+/// A fetch's answer as the image to start, or why not (SPEC §machines.calls: a
 /// missing blob, or one that is not an image this host can run, fails the
 /// start).
 pub fn fetched_image(answer: &[u8]) -> Result<Image, StartFailure> {
@@ -126,7 +126,7 @@ pub fn read_restored(b: &[u8]) -> Result<(Image, Snapshot), StartFailure> {
 }
 
 /// `snapshot.table`'s answer: each slot's `snapshot_info` record (SPEC
-/// 12.2: all zero for an empty slot).
+/// §machines.calls: all zero for an empty slot).
 pub fn table(t: &[Option<SnapshotInfo>; SLOTS]) -> Vec<u8> {
     t.iter().flat_map(|i| i.as_ref().map_or([0; INFO_BYTES], SnapshotInfo::record)).collect()
 }

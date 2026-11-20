@@ -1,5 +1,5 @@
 //! Restoring a machine from its state serialization and snapshot files
-//! (STATE.md 4, SPEC 12.7): round trips, what a restore refuses, and the
+//! (STATE.md 4, SPEC §machines.snapshots): round trips, what a restore refuses, and the
 //! pending content requests that fail in the first frame after it.
 
 mod common;
@@ -271,7 +271,7 @@ fn a_table_document_round_trips() {
 /// malformed S: N below 200 or above the longest serialization
 /// (1,423,091 bytes), L that is 0, not a multiple of 8,192, above
 /// 1,048,576 or past N, and a page-map bit past the last page. And SPEC
-/// 12.2 `snapshot_info`: the time is the one latched for the machine's
+/// §machines.calls `snapshot_info`: the time is the one latched for the machine's
 /// last frame as its state holds it, so a restored machine snapshotted
 /// before it runs again keeps the time of the first snapshot.
 #[test]

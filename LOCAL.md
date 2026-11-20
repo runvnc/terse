@@ -245,7 +245,7 @@ Publishing, the user's identity and profile, and the machine's
 consent prompts. A node that publishes would take the article and title
 and sign the entry itself, so that secret keys never reach a reader.
 
-**Machine hosts.** A machine host's content driver (`SPEC.md` section 9,
+**Machine hosts.** A machine host's content driver (`spec/content.md` §content,
 the Content device) speaks the network on behalf of programs; it is the
 same kind of client of a node as a reader is, and could use this
 protocol instead of a network stack of its own. That is not specified

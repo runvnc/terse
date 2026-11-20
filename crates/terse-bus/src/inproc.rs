@@ -20,7 +20,7 @@ pub struct InProcessHost {
 }
 
 impl InProcessHost {
-    /// The devices of a machine of `image` with `grants` (SPEC 2).
+    /// The devices of a machine of `image` with `grants` (SPEC §image).
     pub fn new(image: &Image, grants: &terse_core::Grants, service: Option<ContentService>) -> Self {
         InProcessHost {
             image_id: image.id,
@@ -126,7 +126,7 @@ pub struct ContentOptions {
     pub config: Option<std::path::PathBuf>,
     pub data: Option<std::path::PathBuf>,
     pub relays: Vec<String>,
-    /// How requests that need consent are answered (SPEC 9.5): deny (the
+    /// How requests that need consent are answered (SPEC §content.feeds): deny (the
     /// default headless), allow, or ask (the core shows the question).
     pub consent: Option<terse_net::Consent>,
     pub reading: bool,

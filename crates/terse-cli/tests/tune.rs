@@ -1,4 +1,4 @@
-//! programs/tune/tune.terse, the sound device's demonstration (SPEC 18):
+//! programs/tune/tune.terse, the sound device's demonstration (SPEC §sound):
 //! its samples frame by frame, hashed, are the golden ones
 //! (programs/tune/expected-audio.txt: a conformance check of the
 //! synthesis, which is specified bit for bit), with the state hashes
@@ -108,7 +108,7 @@ fn audio_out_writes_the_samples() {
     assert_eq!(&wav[44..], &samples[..]);
 }
 
-/// SPEC 2.1: sound is not in the reading profile; a reading host refuses
+/// SPEC §profiles: sound is not in the reading profile; a reading host refuses
 /// an image that requires it (and conform-reading lists only devices 2, 4
 /// and 7: its own test runs it unchanged).
 #[test]

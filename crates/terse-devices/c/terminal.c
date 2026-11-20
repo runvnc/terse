@@ -1,10 +1,10 @@
 /*
  * Build: clang -std=c11 -O2 -Wall -Wextra -o terse-dev-terminal-c terminal.c
  *
- * Terse device 2, the terminal (SPEC.md 8, version 0), as a device driver
+ * Terse device 2, the terminal (SPEC.md §terminal, version 0), as a device driver
  * of the device bus (DEVICES.md), in C11 with libc only. It draws nothing:
  * no layers, no native size. It keeps the device state and answers the
- * calls with their exact results and charges (SPEC.md 14), so that a run
+ * calls with their exact results and charges (SPEC.md §charges), so that a run
  * with it gives the same state hashes (STATE.md 1.6) as the built-in
  * terminal of crates/terse-core.
  *
@@ -83,7 +83,7 @@ static int is_wide(unsigned ch) {
     return 0;
 }
 
-/* The UTF-8 decoder of `write` (SPEC 8.3): WHATWG's, keeping the bytes of
+/* The UTF-8 decoder of `write` (SPEC §terminal.put): WHATWG's, keeping the bytes of
  * the incomplete sequence (STATE.md 1.6). */
 typedef struct {
     uint32_t cp;
@@ -93,7 +93,7 @@ typedef struct {
 
 /* The rows are a ring: stored row (top + r) % ROWS is row r. A scroll or a
  * clear only marks rows blank (one cell for the whole row); a blank row is
- * filled when it is written to (SPEC 8.6: a scroll costs one row at most). A
+ * filled when it is written to (SPEC §terminal.presentation: a scroll costs one row at most). A
  * stored row whose stamp is below `clears` holds clear_cell. */
 typedef struct {
     uint8_t cells[CELL_MEMORY];
@@ -167,7 +167,7 @@ static uint8_t *row_mut(int row) {
     t->stamp[p] = t->clears;
     return r;
 }
-/* Byte i of the grid (SPEC 8.1 order). */
+/* Byte i of the grid (SPEC §terminal.cells order). */
 static uint8_t grid_byte(uint32_t i) {
     int p = stored((int)(i / ROW_BYTES));
     const uint8_t *b = blank_of(p);
@@ -232,7 +232,7 @@ static unsigned next_row(void) {
 
 /* Writes n (1 or 2) codes from col in the cursor row; a wide pair cut in
  * two loses its other half, which becomes a space keeping its colours
- * (SPEC 8.3 step 3). */
+ * (SPEC §terminal.put step 3). */
 static void write_cells(int col, const unsigned *chars, int n) {
     int row = t->row, end = col + n;
     int left = col > 0 && is_pair(col - 1, row) ? col - 1 : -1;
@@ -242,7 +242,7 @@ static void write_cells(int col, const unsigned *chars, int n) {
     for (int i = 0; i < n; i++) set_cell(col + i, row, chars[i]);
 }
 
-/* SPEC 8.3 steps 1-4; returns the scrolls done. */
+/* SPEC §terminal.put steps 1-4; returns the scrolls done. */
 static unsigned print_char(unsigned ch) {
     int width = is_wide(ch) ? 2 : 1;
     unsigned ops = 0;
@@ -291,7 +291,7 @@ static unsigned put_byte(uint8_t b) {
     return ops;
 }
 
-/* `write` (SPEC 8.2): every byte; scrolls and clears are not charged. */
+/* `write` (SPEC §terminal.calls): every byte; scrolls and clears are not charged. */
 static void write_bytes(const uint8_t *bytes, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) put_byte(bytes[i]);
 }
@@ -858,14 +858,16 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
 
 /* ----------------------------------------------------------------- main */
 
-/* HELLO (DEVICES.md 1.1): the core must ask for slot 2 alone. */
+/* HELLO (DEVICES.md 1.1): the core must ask for slot 2, and may ask for
+ * slot 10 with it (full text, SPEC §terminal.text). */
 static void hello(const uint8_t *m, size_t n, Buf *r) {
     char bus_path[4096], session[4096];
     if (n < 9 || m[1] != 1) fail("HELLO: not protocol version 1");
     uint32_t flags = rd32(m + 4);
     size_t at = 9 + (size_t)m[8];
     if (at > n) fail("HELLO: malformed");
-    if (m[8] != 1 || m[9] != 2) fail("this is the terminal's driver: it serves slot 2 alone");
+    int full_text = m[8] == 2 && ((m[9] == 2 && m[10] == 10) || (m[9] == 10 && m[10] == 2));
+    if (!(m[8] == 1 && m[9] == 2) && !full_text) fail("this is the terminal's driver: it serves slot 2 (and 10)");
     if (!get_str(m, n, &at, session, sizeof session) || !get_str(m, n, &at, bus_path, sizeof bus_path))
         fail("HELLO: malformed");
     const char *want = getenv("TERSE_C_SHM");
@@ -875,10 +877,14 @@ static void hello(const uint8_t *m, size_t n, Buf *r) {
     put8(r, 1); put8(r, (uint8_t)use_shm); put8(r, 0);
     putstr(r, "terminal (C)");
     put16(r, 0); put16(r, 0);           /* no native size */
-    put8(r, 1);                         /* one slot: */
+    put8(r, full_text ? 2 : 1);         /* one or two slots: */
     put8(r, 2); put8(r, 0); put8(r, 0); /* 2, version 0, no layers, */
-    put8(r, TABLE_LEN);                 /* and its call table */
+    put8(r, TABLE_LEN);                 /* and its call table; */
     for (int i = 0; i < TABLE_LEN; i++) put_entry(r, &TABLE[i]);
+    /* 10, full text (SPEC §terminal.text), version 0: a capability with no
+     * layers and no calls. This driver draws nothing, so it lacks no
+     * character. */
+    if (full_text) { put8(r, 10); put8(r, 0); put8(r, 0); put8(r, 0); }
     put8(r, 0); put8(r, 0); put8(r, 0); /* no properties published or subscribed, no services */
     send_msg(r); /* on the socket: shm is not chosen yet */
     shm = use_shm;

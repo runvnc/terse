@@ -1,4 +1,4 @@
-//! `terse-dev-content`: the content device (SPEC 9, slot 4) as a driver
+//! `terse-dev-content`: the content device (SPEC §content, slot 4) as a driver
 //! (DEVICES.md): per machine, terse-core's `Content` for the state; one
 //! terse-net content service for every machine (one node, one store), run
 //! as `terse run` and terse-host run it (every request completed at the
@@ -247,7 +247,7 @@ impl Device for ContentDriver {
             return Reply { a0: 0, a1: None, charge: 0 };
         }
         i.shadow[at..at + BLOCK_LEN].copy_from_slice(c.buf);
-        // The data range a submit reads (SPEC 9.1): a put's or save's data,
+        // The data range a submit reads (SPEC §content.request): a put's or save's data,
         // a title, a find's query, a name. Only bytes in RAM need fetching
         // (ROM came with OPEN).
         let b = c.buf;
@@ -272,7 +272,7 @@ impl Device for ContentDriver {
         // A system frame starts with instance 0's (the shell's, or the
         // single machine's): feeds updated since the last one are
         // announced to every machine that ran in it, in this frame (SPEC
-        // 5), as terse-net's headless hosts do after each system frame.
+        // §events), as terse-net's headless hosts do after each system frame.
         // Before any machine has run, nothing is taken.
         if (instance == 0 || !self.inst.contains_key(&0))
             && self.inst.values().any(|i| i.begun)

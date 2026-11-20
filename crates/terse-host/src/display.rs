@@ -14,7 +14,7 @@ use crate::page::HostLayout;
 
 /// Supplies glyph coverage bitmaps, one or two terminal cells in size.
 pub trait GlyphSource {
-    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC 7:
+    /// Cell size in pixels (width, height). Should be exactly 1:2 (SPEC §screen:
     /// square screen units); the renderer shows the grid at 4:3 regardless,
     /// so glyphs from a cell of another shape are stretched.
     fn cell_size(&self) -> (u32, u32);
@@ -48,7 +48,7 @@ pub fn screen_pos(rect: (f32, f32, f32, f32), x: f64, y: f64) -> (u16, u16) {
     (unit(x, ox, w, SCREEN_WIDTH), unit(y, oy, h, SCREEN_HEIGHT))
 }
 
-/// The shell's screen in a system (SPEC 12.3): the whole viewport at 4:3,
+/// The shell's screen in a system (SPEC §machines.screens): the whole viewport at 4:3,
 /// with glyphs rasterised for that size, rather than the largest whole
 /// multiple of the native grid.
 pub fn system_rect(viewport: (u32, u32)) -> (f32, f32, f32, f32) {
@@ -58,7 +58,7 @@ pub fn system_rect(viewport: (u32, u32)) -> (f32, f32, f32, f32) {
     (((vw - w) / 2.0).floor(), ((vh - h) / 2.0).floor(), w, h)
 }
 
-/// A machine's picture (SPEC 12.3, in the shell's units) in pixels, given
+/// A machine's picture (SPEC §machines.screens, in the shell's units) in pixels, given
 /// the shell's screen rectangle.
 pub fn picture_rect(shell: (f32, f32, f32, f32), p: terse_core::Region) -> (f32, f32, f32, f32) {
     let (ox, oy, w, _) = shell;
@@ -101,11 +101,11 @@ pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
 }
 
 /// Most shapes the vector layer draws: a 2D list's primitives and a 3D
-/// list's segments (SPEC 13.4).
+/// list's segments (SPEC §vector3d.caps).
 pub const MAX_SHAPES: usize = MAX_PRIMITIVES + terse_core::vector3::SEGMENT_CAP;
 
 /// The eye the host sees 3D lists from: screen units from the reference
-/// eye (SPEC 13.1), each at most 160.
+/// eye (SPEC §vector3d.space), each at most 160.
 pub type Eye = (f32, f32);
 
 /// What a machine's vector layer shows: its 2D list (as [`decode_shapes`]
@@ -156,7 +156,7 @@ impl VectorScene<'_> {
     }
 }
 
-/// A machine's 3D scene as the host draws it over its glass (SPEC 12.3,
+/// A machine's 3D scene as the host draws it over its glass (SPEC §machines.screens,
 /// 13.5): the shell's when Screens are in effect, or any machine's when
 /// Surfaces are. The panels, far to near (Screens, not the machine a
 /// finished view shows flat, and the machine's own Surfaces, handle 0),
@@ -191,7 +191,7 @@ pub fn scene_layers<D: terse_core::devices::Devices>(system: &System<D>, eye: Ey
 }
 
 /// A machine's own scene seen from `eye` when its 3D list has Surfaces in
-/// effect (SPEC 13.5): its Surfaces, its 3D segments and the rectangles
+/// effect (SPEC §vector3d.presentation): its Surfaces, its 3D segments and the rectangles
 /// left off its glass.
 pub fn surface_layers<D: terse_core::devices::Devices>(machine: &terse_core::Machine<D>, eye: Eye) -> Option<SceneLayers> {
     surface_layers_of(&machine.list3(), eye)
@@ -254,7 +254,7 @@ pub fn eye_point(eye: Eye) -> (f64, f64) {
 
 /// A point of the scene on a screen drawn into `rect` (pixels): its pixel
 /// position and its w = (960 + z) / 960, by which a GPU divides (SPEC
-/// 13.1), for a point in front of the near plane.
+/// §vector3d.space), for a point in front of the near plane.
 pub fn to_pixels(p: [f64; 3], eye: (f64, f64), rect: (f32, f32, f32, f32)) -> (f64, f64, f64) {
     let (gx, gy) = terse_core::vector3::to_glass(p, eye);
     let s = rect.2 as f64 / SCREEN_WIDTH as f64;
@@ -294,7 +294,7 @@ pub fn panel_cell_width(width: f64, cap: u32, current: Option<u32>) -> u32 {
     }
 }
 
-/// The colour of a panel seen from behind (SPEC 12.3): opaque, dark.
+/// The colour of a panel seen from behind (SPEC §machines.screens): opaque, dark.
 pub const PANEL_BACK: [u8; 3] = [24, 26, 32];
 
 /// The host's consent prompt as the screens show it: the prompt, how many
@@ -321,7 +321,7 @@ impl RendererChoice {
     }
 }
 
-/// The screens of a system (SPEC 12.3) as a renderer shows them: the
+/// The screens of a system (SPEC §machines.screens) as a renderer shows them: the
 /// host gives it what every machine shows after each frame and asks it for
 /// the picture. Both renderers draw the same picture.
 pub trait Display {
@@ -337,7 +337,7 @@ pub trait Display {
         layout: &dyn Fn(u32) -> Option<Arc<HostLayout>>,
         prompt: ShownPrompt,
     );
-    /// Where the eye is for 3D lists (SPEC 13.1): screen units from the
+    /// Where the eye is for 3D lists (SPEC §vector3d.space): screen units from the
     /// reference eye, the same for every machine. Takes effect at the next
     /// `update`.
     fn set_eye(&mut self, eye: Eye);
@@ -355,9 +355,9 @@ pub trait Display {
     /// Whether the shell's screen is in the phosphor presentation.
     fn shell_phosphor(&self) -> bool;
     /// The page anchor under (x, y) in machine `serial`'s screen units, as
-    /// its page was last shown (SPEC 11.5).
+    /// its page was last shown (SPEC §page.events).
     fn anchor(&self, serial: u32, x: u16, y: u16) -> u16;
-    /// A viewport position in the shell's screen units (SPEC 7).
+    /// A viewport position in the shell's screen units (SPEC §screen).
     fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16);
     /// The height of one terminal row of the shell's screen in pixels.
     fn row_height(&self, viewport: (u32, u32)) -> f64;
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(rect, (50.0, 50.0, 1600.0, 1200.0));
         assert_eq!(screen_pos(rect, 50.0, 50.0), (0, 0));
         assert_eq!(screen_pos(rect, 1649.9, 1249.9), (639, 479));
-        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC 7).
+        // Cell (column 3, row 2) starts at screen (24, 32) (SPEC §screen).
         assert_eq!(screen_pos(rect, 50.0 + 3.0 * 20.0, 50.0 + 2.0 * 40.0), (24, 32));
         // Outside the grid: clamped.
         assert_eq!(screen_pos(rect, 0.0, 2000.0), (0, 479));
@@ -473,7 +473,7 @@ mod tests {
     }
 
     /// Whatever the window's shape, the grid is 4:3 and centred, so a screen
-    /// unit is as wide as it is high (SPEC 7), and the pointer maps back
+    /// unit is as wide as it is high (SPEC §screen), and the pointer maps back
     /// through the same rectangle.
     #[test]
     fn grid_stays_four_by_three() {

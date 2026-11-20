@@ -186,7 +186,7 @@ fn sparks_session_replays() {
     assert_eq!(replay_ok(&sparks, &rec, &["--hash-every", "1", "--dump", "--dump-vectors"]), recorded);
 }
 
-/// SPEC 2, STATE.md 5: the grants are in the recording, after the
+/// SPEC §image, STATE.md 5: the grants are in the recording, after the
 /// snapshot: sparks without content (`--without 4`, or the program
 /// profile) records 00h and replays without content, on a host that has
 /// it; with content, 01h. Each replays only as it was recorded.
@@ -199,10 +199,10 @@ fn recordings_carry_the_grants() {
     let session = session.to_str().unwrap();
     let args = ["--events", session, "--frames", "300", "--hash-every", "1", "--store", &path("st"), "--data", &path("d"), "--config", &path("c")];
     let with = terse_ok(&[&["run", &sparks, "--record", &path("with")][..], &args].concat());
-    let without = terse_ok(&[&["run", &sparks, "--without", "4", "--record", &path("without")][..], &args].concat());
+    let without = terse_ok(&[&["run", &sparks, "--without", "4", "--without", "10", "--record", &path("without")][..], &args].concat());
     let program = terse_ok(&[&["run", &sparks, "--profile", "program", "--record", &path("program")][..], &args].concat());
     assert_ne!(with, without, "the grants are in the state");
-    assert_eq!(without, program, "--without 4 is the program profile for sparks");
+    assert_eq!(without, program, "--without 4 --without 10 is the program profile for sparks");
     for (name, flag) in [("with", 1u8), ("without", 0), ("program", 0)] {
         let bytes = std::fs::read(path(name)).unwrap();
         assert_eq!(bytes[terse_core::record::HEADER_LEN], flag, "{name}");

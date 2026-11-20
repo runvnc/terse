@@ -1,4 +1,4 @@
-//! Device 4, Content (SPEC 9).
+//! Device 4, Content (SPEC §content).
 //!
 //! The core only validates requests, copies bytes and writes request blocks.
 //! The host reads submitted requests with [`Content::take_requests`] and
@@ -7,13 +7,13 @@
 use crate::cpu::{RAM_BASE, ROM_BASE};
 use crate::system::{Event, System};
 
-/// Most requests pending at once; handles are 1 to 8 (SPEC 9.2).
+/// Most requests pending at once; handles are 1 to 8 (SPEC §content.submit).
 pub const MAX_PENDING: usize = 8;
-/// Size of a request block (SPEC 9.1).
+/// Size of a request block (SPEC §content.request).
 pub const BLOCK_LEN: usize = 52;
-/// Largest blob (SPEC 9).
+/// Largest blob (SPEC §content).
 pub const MAX_BLOB: usize = 1_048_576;
-/// Largest `length` of a get or a records request (SPEC 9.1).
+/// Largest `length` of a get or a records request (SPEC §content.request).
 pub const MAX_GET_LENGTH: usize = 16_384;
 
 pub const OP_GET: u8 = 0x01;
@@ -34,16 +34,16 @@ pub const OP_LOAD: u8 = 0x0F;
 pub const OP_DELETE: u8 = 0x10;
 pub const OP_RECORDS: u8 = 0x11;
 
-/// Entry kinds a program may publish (SPEC 9.5, NETWORK 4.2).
+/// Entry kinds a program may publish (SPEC §content.feeds, NETWORK 4.2).
 pub const ENTRY_ARTICLE: u8 = 1;
 pub const ENTRY_DOCUMENT: u8 = 4;
-/// A document starts with these bytes (SPEC 9.7).
+/// A document starts with these bytes (SPEC §content.documents).
 pub const DOCUMENT_MAGIC: &[u8; 4] = b"TDOC";
 /// Bytes of a document header before the format name: magic, version,
 /// owner key, name length.
 pub const DOCUMENT_HEAD: usize = 38;
 
-/// The format of a document (SPEC 9.7): the owner's key and the format
+/// The format of a document (SPEC §content.documents): the owner's key and the format
 /// name, and where the data starts; `None` if `blob` does not start with a
 /// valid document header.
 pub fn document_format(blob: &[u8]) -> Option<([u8; 32], &[u8], usize)> {
@@ -55,27 +55,27 @@ pub fn document_format(blob: &[u8]) -> Option<([u8; 32], &[u8], usize)> {
     valid_display_name(name).then(|| (blob[5..37].try_into().unwrap(), name, DOCUMENT_HEAD + n))
 }
 
-/// Largest named record (SPEC 9.6).
+/// Largest named record (SPEC §content.records).
 pub const MAX_RECORD: usize = 65_536;
-/// Longest record name, in bytes (SPEC 9.6).
+/// Longest record name, in bytes (SPEC §content.records).
 pub const MAX_RECORD_NAME: usize = 32;
-/// A records record: the name, zero padded, and the size (SPEC 9.6).
+/// A records record: the name, zero padded, and the size (SPEC §content.records).
 pub const RECORDS_RECORD: usize = 36;
 
-/// A subscriptions record: feed key and highest `seq` (SPEC 9.5).
+/// A subscriptions record: feed key and highest `seq` (SPEC §content.feeds).
 pub const SUBSCRIPTION_RECORD: usize = 36;
 /// Bytes of an entry before its title (NETWORK 4.2).
 pub const ENTRY_HEAD: usize = 109;
 /// Longest entry title (NETWORK 4.2).
 pub const MAX_TITLE: usize = 120;
 /// Longest timeline record: `L`, flags and an entry with a 120-byte title,
-/// without its signature (SPEC 9.5).
+/// without its signature (SPEC §content.feeds).
 pub const MAX_TIMELINE_RECORD: usize = 2 + ENTRY_HEAD + MAX_TITLE;
 /// Timeline record flag: the article blob is in the host's store.
 pub const FLAG_LOCAL: u8 = 0x01;
-/// Longest display name, nickname or search query, in bytes (SPEC 9.5).
+/// Longest display name, nickname or search query, in bytes (SPEC §content.feeds).
 pub const MAX_NAME: usize = 48;
-/// Bytes of a names record after `L` and flags: the feed key (SPEC 9.5).
+/// Bytes of a names record after `L` and flags: the feed key (SPEC §content.feeds).
 pub const NAMES_HEAD: usize = 32;
 /// Longest names record: `L`, flags, key and a 48-byte name.
 pub const MAX_NAMES_RECORD: usize = 2 + NAMES_HEAD + MAX_NAME;
@@ -96,7 +96,7 @@ pub const FIND_PROGRAMS: u8 = 3;
 /// Most results a find completes with.
 pub const MAX_FIND_RESULTS: u32 = 16;
 
-/// Status values (SPEC 9.3).
+/// Status values (SPEC §content.status).
 pub mod status {
     pub const PENDING: u8 = 0x00;
     pub const DONE: u8 = 0x01;
@@ -107,7 +107,7 @@ pub mod status {
     pub const NO_ROOM: u8 = 0x06;
 }
 
-// Request block field offsets (SPEC 9.1).
+// Request block field offsets (SPEC §content.request).
 pub const OP: usize = 0;
 pub const STATUS: usize = 1;
 pub const ID: usize = 4;
@@ -118,7 +118,7 @@ pub const SIZE: usize = 48;
 
 /// The RAM offset of `[addr, addr + len)` if it lies wholly in RAM.
 ///
-/// A range of length 0 is valid at any address (SPEC 3.1); its offset is
+/// A range of length 0 is valid at any address (SPEC §calls.convention); its offset is
 /// then 0, and only ever used for an empty slice.
 pub fn ram_range(ram_len: usize, addr: u32, len: usize) -> Option<usize> {
     if len == 0 {
@@ -129,7 +129,7 @@ pub fn ram_range(ram_len: usize, addr: u32, len: usize) -> Option<usize> {
 }
 
 /// The bytes `[addr, addr + len)` if they lie wholly in ROM or wholly in
-/// RAM; empty for a length of 0, at any address (SPEC 3.1).
+/// RAM; empty for a length of 0, at any address (SPEC §calls.convention).
 pub fn readable<'a>(rom: &'a [u8], ram: &'a [u8], addr: u32, len: usize) -> Option<&'a [u8]> {
     if let Some(off) = ram_range(ram.len(), addr, len) {
         return Some(&ram[off..off + len]);
@@ -138,7 +138,7 @@ pub fn readable<'a>(rom: &'a [u8], ram: &'a [u8], addr: u32, len: usize) -> Opti
     (off <= rom.len() && rom.len() - off >= len).then(|| &rom[off..off + len])
 }
 
-/// Whether `b` is a valid display name or nickname (SPEC 9.5): UTF-8, 1 to
+/// Whether `b` is a valid display name or nickname (SPEC §content.feeds): UTF-8, 1 to
 /// 48 bytes, no control characters, no leading or trailing whitespace.
 pub fn valid_display_name(b: &[u8]) -> bool {
     let Ok(s) = std::str::from_utf8(b) else { return false };
@@ -148,7 +148,7 @@ pub fn valid_display_name(b: &[u8]) -> bool {
         && !s.ends_with(char::is_whitespace)
 }
 
-/// The length of the record name in `id` (SPEC 9.6), if it is one: 1 to 32
+/// The length of the record name in `id` (SPEC §content.records), if it is one: 1 to 32
 /// bytes of UTF-8 without control characters, then zeros to the end.
 pub fn record_name_len(id: &[u8; 32]) -> Option<usize> {
     let len = id.iter().position(|&b| b == 0).unwrap_or(MAX_RECORD_NAME);
@@ -173,11 +173,11 @@ pub enum RequestKind {
     Get { id: [u8; 32], offset: u32, length: u16 },
     /// The bytes to publish, copied at submit time.
     Put { data: Vec<u8> },
-    /// Subscription records from index `offset`, at most `length` bytes (SPEC 9.5).
+    /// Subscription records from index `offset`, at most `length` bytes (SPEC §content.feeds).
     Subscriptions { offset: u32, length: u16 },
-    /// Timeline records from index `offset`, at most `length` bytes (SPEC 9.5).
+    /// Timeline records from index `offset`, at most `length` bytes (SPEC §content.feeds).
     Timeline { offset: u32, length: u16 },
-    /// Subscribe to the feed `feed`; needs the user's consent (SPEC 9.5).
+    /// Subscribe to the feed `feed`; needs the user's consent (SPEC §content.feeds).
     /// `hints`: the hint list of its address (NETWORK.md 4.9), copied at
     /// submit and valid; empty if none was given.
     Subscribe { feed: [u8; 32], hints: Vec<u8> },
@@ -187,16 +187,16 @@ pub enum RequestKind {
     /// `title` (valid UTF-8, at most 120 bytes, copied at submit); needs the
     /// user's consent.
     /// `kind` is the entry's kind: [`ENTRY_ARTICLE`] or [`ENTRY_DOCUMENT`]
-    /// (SPEC 9.5).
+    /// (SPEC §content.feeds).
     Publish { blob: [u8; 32], title: Vec<u8>, kind: u8 },
     /// The host's own feed key.
     Identity,
-    /// Names records from index `offset`, at most `length` bytes (SPEC 9.5).
+    /// Names records from index `offset`, at most `length` bytes (SPEC §content.feeds).
     Names { offset: u32, length: u16 },
     /// Search the relays: `scope` 1 (feeds), 2 (articles and documents) or
     /// 3 (programs), the query
     /// (1 to 48 bytes of UTF-8, copied at submit), results in at most
-    /// `length` bytes (SPEC 9.5).
+    /// `length` bytes (SPEC §content.feeds).
     Find { scope: u8, query: Vec<u8>, length: u16 },
     /// Publish a new profile for the host's feed with display name `name`
     /// (copied at submit); needs the user's consent.
@@ -205,10 +205,10 @@ pub enum RequestKind {
     /// needs the user's consent.
     SetNickname { feed: [u8; 32], name: Vec<u8> },
     /// The current programs of the subscribed feeds: records from index
-    /// `offset`, at most `length` bytes (SPEC 9.5).
+    /// `offset`, at most `length` bytes (SPEC §content.feeds).
     Programs { offset: u32, length: u16 },
     /// Save the named record `name` (1 to 32 bytes) with `data` (copied at
-    /// submit), replacing it (SPEC 9.6).
+    /// submit), replacing it (SPEC §content.records).
     Save { name: Vec<u8>, data: Vec<u8> },
     /// Up to `length` bytes of the named record from `offset`.
     Load { name: Vec<u8>, offset: u32, length: u16 },
@@ -219,8 +219,8 @@ pub enum RequestKind {
     Records { offset: u32, length: u16 },
 }
 
-/// The host's answer to a pending request (SPEC 9.2), an input to the machine
-/// (SPEC 9.4).
+/// The host's answer to a pending request (SPEC §content.submit), an input to the machine
+/// (SPEC §content.determinism).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completion {
     pub handle: u8,
@@ -239,7 +239,7 @@ pub enum Outcome {
     /// A subscriptions, timeline, names, programs or records request
     /// succeeded: the number of records that exist and the whole records
     /// delivered from the requested index, as many as fit in `length` (SPEC
-    /// 9.5, 9.6). A find: the number of
+    /// §content.feeds, §content.records). A find: the number of
     /// results (at most 16) and as many whole records as fit.
     Records { total: u32, data: Vec<u8> },
     /// A subscribe, unsubscribe, set nickname, save or delete succeeded.
@@ -253,17 +253,17 @@ pub enum Outcome {
     /// An identity request succeeded: the host's feed key and the hint
     /// list of its own feed address (NETWORK.md 4.9; 1 to 161 bytes, valid),
     /// of which the device writes the whole hints that fit in the
-    /// program's buffer, if it gave one (SPEC 9.5).
+    /// program's buffer, if it gave one (SPEC §content.feeds).
     IdentityHints { key: [u8; 32], hints: Vec<u8> },
     NotFound,
     Failed,
     /// The user (or the host) did not allow a subscribe, unsubscribe,
-    /// publish, set profile or set nickname (SPEC 9.5).
+    /// publish, set profile or set nickname (SPEC §content.feeds).
     Refused,
-    /// A save would exceed the owner's limits (SPEC 9.6).
+    /// A save would exceed the owner's limits (SPEC §content.records).
     NoRoom,
     /// A document publish whose blob has no valid document header (SPEC
-    /// 9.5): status 04h.
+    /// §content.feeds): status 04h.
     BadRequest,
 }
 
@@ -305,7 +305,7 @@ pub struct Content {
 }
 
 /// How many bytes of a hint list are its whole hints that fit in `room`
-/// bytes (SPEC 9.5, identity): all of it, or the first hint, or none.
+/// bytes (SPEC §content.feeds, identity): all of it, or the first hint, or none.
 pub fn hints_that_fit(hints: &[u8], room: usize) -> usize {
     if hints.len() <= room {
         return hints.len();
@@ -317,7 +317,7 @@ pub fn hints_that_fit(hints: &[u8], room: usize) -> usize {
 }
 
 /// Whether `data` can be the answer to a subscriptions, timeline, names or
-/// find request (SPEC 9.5): whole, well-formed records, no more than fit in
+/// find request (SPEC §content.feeds): whole, well-formed records, no more than fit in
 /// `length` or exist after `offset`, and as many as fit. Subscription
 /// records have a fixed size, so their count is exact. Other records' sizes
 /// are only known from their bytes: the records must tile `data` exactly,
@@ -358,7 +358,7 @@ pub fn records_fit(op: u8, offset: u32, length: u16, total: u32, data: &[u8]) ->
 }
 
 impl Content {
-    /// Submits the block at guest address `block_addr` (SPEC 9.2 steps
+    /// Submits the block at guest address `block_addr` (SPEC §content.submit steps
     /// 1-4). Returns the handle (1-8, or 0 if rejected) and the number of
     /// bytes copied (a put's data, a publish title, a find query, a name),
     /// for the charge.
@@ -400,7 +400,7 @@ impl Content {
                 let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
                 Some((Pending::Feed { op: OP_UNSUBSCRIBE, id, offset: 0, len: 0 }, RequestKind::Unsubscribe { feed: id }))
             }
-            // SPEC 9.5: the hints, if any, are a valid hint list of at most
+            // SPEC §content.feeds: the hints, if any, are a valid hint list of at most
             // 161 bytes in ROM or RAM, copied after step 3.
             OP_SUBSCRIBE => (length == 0
                 || (length as usize <= crate::hints::MAX_HINT_LIST
@@ -409,13 +409,13 @@ impl Content {
                 let id: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
                 (Pending::Feed { op: OP_SUBSCRIBE, id, offset: 0, len: length as u8 }, RequestKind::Subscribe { feed: id, hints: Vec::new() })
             }),
-            // SPEC 9.5: a buffer for the own address's hints, if `length`
+            // SPEC §content.feeds: a buffer for the own address's hints, if `length`
             // is not 0.
             OP_IDENTITY => (length == 0 || ((1..=MAX_GET_LENGTH as u32).contains(&length) && in_ram(length as usize)))
                 .then(|| (Pending::Identity { length: length as u16, addr: if length == 0 { 0 } else { addr } }, RequestKind::Identity)),
             // The title is copied (and charged) only once the request is
             // accepted, after step 3.
-            // SPEC 9.5: the kind is 0 or 1 (article) or 4 (document).
+            // SPEC §content.feeds: the kind is 0 or 1 (article) or 4 (document).
             OP_PUBLISH => (length as usize <= MAX_TITLE
                 && matches!(offset, 0 | 1 | 4)
                 && readable(rom, ram, addr, length as usize).is_some_and(|t| std::str::from_utf8(t).is_ok()))
@@ -428,7 +428,7 @@ impl Content {
             }),
             // The query and the names are copied (and charged) after step 3,
             // like a publish title. A find's query and results share `addr`.
-            // SPEC 9.6: the name is checked first; the data (a save's, in ROM
+            // SPEC §content.records: the name is checked first; the data (a save's, in ROM
             // or RAM; a load's buffer, in RAM) is copied after step 3.
             OP_SAVE | OP_LOAD | OP_DELETE => {
                 let name: [u8; 32] = b[ID..ID + 32].try_into().unwrap();
@@ -506,7 +506,7 @@ impl Content {
         (handle as u32, taken)
     }
 
-    /// Applies completions in increasing handle order (SPEC 9.2). A
+    /// Applies completions in increasing handle order (SPEC §content.submit). A
     /// completion that does not fit a pending request (unknown or already
     /// completed handle, wrong kind, wrong byte count, size out of range,
     /// wrong put ID) is ignored and the request stays pending. Returns
@@ -610,7 +610,7 @@ impl Content {
                 }
                 status::DONE
             }
-            // SPEC 9.5: the whole hints that fit in the buffer.
+            // SPEC §content.feeds: the whole hints that fit in the buffer.
             (&Pending::Identity { length, addr }, Outcome::IdentityHints { key, hints }) => {
                 if hints.len() > crate::hints::MAX_HINT_LIST || crate::hints::parse_hints(hints).is_err() {
                     return None;
@@ -631,7 +631,7 @@ impl Content {
             ) => status::REFUSED,
             // NETWORK 4.7: the relays refused the search.
             (Pending::Find { .. }, Outcome::Refused) => status::REFUSED,
-            // SPEC 2.1: operations outside the machine's reading profile,
+            // SPEC §profiles: operations outside the machine's reading profile,
             // which such a host may refuse without carrying them out.
             (Pending::Put { .. } | Pending::Named { .. } | Pending::Records { op: OP_PROGRAMS | OP_RECORDS, .. }, Outcome::Refused) => {
                 status::REFUSED
@@ -725,7 +725,7 @@ impl Content {
     }
 
     /// After a restore: a failed completion for each request that was
-    /// pending in the snapshot, once (SPEC 9.2).
+    /// pending in the snapshot, once (SPEC §content.submit).
     pub fn take_orphans(&mut self) -> Vec<Completion> {
         if !std::mem::take(&mut self.orphaned) {
             return Vec::new();
@@ -820,7 +820,7 @@ mod tests {
         Completion { handle, outcome: Outcome::Records { total, data: data.to_vec() } }
     }
 
-    /// A timeline record (SPEC 9.5) whose entry has an `n`-byte title.
+    /// A timeline record (SPEC §content.feeds) whose entry has an `n`-byte title.
     fn timeline_record(n: usize, flags: u8, fill: u8) -> Vec<u8> {
         let mut r = vec![(1 + ENTRY_HEAD + n) as u8, flags];
         r.extend(std::iter::repeat_n(fill, ENTRY_HEAD - 1));
@@ -853,7 +853,7 @@ mod tests {
         assert!(rig.content.take_requests().is_empty());
     }
 
-    /// SPEC 9.2: a block that is already pending may be submitted again:
+    /// SPEC §content.submit: a block that is already pending may be submitted again:
     /// two requests, each writing the same block when it completes (in
     /// handle order within a frame). A get at or beyond the end of the blob
     /// completes with 01h, length 0 and the blob's size. Bytes delivered in
@@ -1213,9 +1213,9 @@ mod tests {
         Completion { handle, outcome }
     }
 
-    /// SPEC 9.5: a publish's `offset` is the kind (0 or 1 article, 4
+    /// SPEC §content.feeds: a publish's `offset` is the kind (0 or 1 article, 4
     /// document; others are bad requests); a document whose blob has no
-    /// header completes with 04h. SPEC 9.7: the document header.
+    /// header completes with 04h. SPEC §content.documents: the document header.
     #[test]
     fn publish_kinds_and_documents() {
         let mut rig = Rig::new();
@@ -1244,7 +1244,7 @@ mod tests {
         assert_eq!(document_format(b"TERS\0\x01"), None);
     }
 
-    /// SPEC 9.5: subscribe, unsubscribe, publish and identity are submitted
+    /// SPEC §content.feeds: subscribe, unsubscribe, publish and identity are submitted
     /// like the other requests and complete with their own outcomes.
     #[test]
     fn subscribe_unsubscribe_publish_identity() {
@@ -1317,7 +1317,7 @@ mod tests {
         assert_eq!(rig.complete(&[done(1, Outcome::Refused)]), (1, 0));
     }
 
-    /// SPEC 2.1, 9.3: every operation outside the reading profile (put,
+    /// SPEC §profiles, §content.status: every operation outside the reading profile (put,
     /// publish, find, set profile, set nickname, programs, save, load,
     /// delete, records) may complete with 05h; those inside it that need
     /// no consent (get, subscriptions, timeline, names, identity) may not.
@@ -1374,13 +1374,13 @@ mod tests {
         }
         assert!(rig.content.pending_handles().is_empty());
         assert_eq!(rig.submit(BLOCK, Some(&feed_op(OP_PUBLISH, [1; 32], 120, DATA + 16))), (1, 120));
-        // SPEC 3.1: an empty title is valid at any address.
+        // SPEC §calls.convention: an empty title is valid at any address.
         for addr in [0, ram_end + 1, u32::MAX] {
             assert_ne!(rig.submit(BLOCK + 64, Some(&feed_op(OP_PUBLISH, [1; 32], 0, addr))).0, 0, "{addr:#x}");
         }
     }
 
-    /// SPEC 9.5: a subscribe may carry the hints of the feed's address, a
+    /// SPEC §content.feeds: a subscribe may carry the hints of the feed's address, a
     /// valid hint list of at most 161 bytes in ROM or RAM, copied at
     /// submit; anything else makes the request invalid.
     #[test]
@@ -1422,7 +1422,7 @@ mod tests {
         assert_eq!(rig.submit(BLOCK + 256, Some(&feed_op(OP_UNSUBSCRIBE, [6; 32], 999, 0x10))).0, 4);
     }
 
-    /// SPEC 9.5: identity with a buffer (`length` > 0, in RAM) also gets
+    /// SPEC §content.feeds: identity with a buffer (`length` > 0, in RAM) also gets
     /// the whole hints of the host's own address that fit, and `length`
     /// says how many bytes were written.
     #[test]
@@ -1506,7 +1506,7 @@ mod tests {
         assert_eq!(again, out);
     }
 
-    /// A names record (SPEC 9.5) with an `n`-byte name.
+    /// A names record (SPEC §content.feeds) with an `n`-byte name.
     fn names_record(n: usize, flags: u8, key: u8) -> Vec<u8> {
         let mut r = vec![(1 + NAMES_HEAD + n) as u8, flags];
         r.extend([key; 32]);
@@ -1818,7 +1818,7 @@ mod tests {
             set_nickname([1; 32], 48, DATA + 64),
             set_nickname([1; 32], 2, ram_end - 2),
             set_nickname([1; 32], 4, DATA + 1), // "lead"
-            // SPEC 3.1: an empty name (removing a nickname) is valid at
+            // SPEC §calls.convention: an empty name (removing a nickname) is valid at
             // any address.
             set_nickname([1; 32], 0, 0),
             set_nickname([1; 32], 0, ram_end + 1),
@@ -1883,7 +1883,7 @@ mod tests {
         assert_eq!(record_name_len(&gap), None, "not zero padded");
     }
 
-    /// SPEC 9.6: save copies its data at submit (ROM or RAM, 0 to 65,536
+    /// SPEC §content.records: save copies its data at submit (ROM or RAM, 0 to 65,536
     /// bytes); load, delete and records are submitted like get; bad names
     /// and ranges are bad requests.
     #[test]
@@ -1942,7 +1942,7 @@ mod tests {
         long[ID..ID + 32].fill(b'n');
         let mut rig = Rig { ram: vec![0; MAX_RECORD + 64], ..Rig::new() };
         assert_eq!(rig.submit(RAM_BASE + MAX_RECORD as u32, Some(&long)), (1, MAX_RECORD));
-        // SPEC 3.1: an empty record is valid at any address.
+        // SPEC §calls.convention: an empty record is valid at any address.
         for addr in [0, u32::MAX] {
             assert_eq!(rig.submit(RAM_BASE + MAX_RECORD as u32, Some(&named(OP_SAVE, "e", 0, 0, addr, 0))).1, 0);
         }

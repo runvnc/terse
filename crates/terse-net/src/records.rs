@@ -1,4 +1,4 @@
-//! Named records (SPEC 9.6): small data a program keeps on this machine,
+//! Named records (SPEC §content.records): small data a program keeps on this machine,
 //! under its identity (a published program's feed key and name, a built-in
 //! program's zero key and title) or, for a machine with no identity, its
 //! exact image ID. Records never leave the host.
@@ -35,7 +35,7 @@ pub enum Owner {
 
 impl Owner {
     /// The owner of a machine's records: its identity if it has one, else
-    /// its image ID (SPEC 9.6).
+    /// its image ID (SPEC §content.records).
     pub fn of(machine: &Machine) -> Owner {
         match machine.identity() {
             Some(id) => Owner::Program { publisher: id.publisher, name: id.name.clone() },
@@ -154,7 +154,7 @@ impl Records {
     pub fn save(&self, owner: &Owner, name: &[u8], data: &[u8]) -> io::Result<Saved> {
         // A machine never gets here with more than MAX_RECORD bytes: the
         // content device rejects such a save at submit with status 04h
-        // (SPEC 9.2, 9.6). This check guards the store's other callers,
+        // (SPEC §content.submit, §content.records). This check guards the store's other callers,
         // and answers them as an over-limit save is answered (06h).
         if data.len() > MAX_RECORD {
             return Ok(Saved::NoRoom);
@@ -245,7 +245,7 @@ pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// The records request's answer (SPEC 9.6): `(name, size)` records of 36
+/// The records request's answer (SPEC §content.records): `(name, size)` records of 36
 /// bytes from index `offset`, as many as fit in `length`, and how many
 /// there are.
 pub fn list_records(list: &[(Vec<u8>, u32)], offset: u32, length: u16) -> (u32, Vec<u8>) {

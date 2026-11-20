@@ -1,5 +1,5 @@
 //! Screen renderer: the terminal and the vector display, combined in the
-//! layer order of SPEC 10.5. Independent of windowing and of where glyph
+//! layer order of SPEC §vector.layers. Independent of windowing and of where glyph
 //! bitmaps come from, so a browser front end can reuse it.
 //!
 //! Two passes of one full-screen terminal shader (over the cells, glyph
@@ -15,7 +15,7 @@
 //! With no shapes the layer holds exactly the background colours, so the
 //! result is the same as the earlier single pass.
 //!
-//! The phosphor style (SPEC 10.6; the model and its constants are in
+//! The phosphor style (SPEC §vector.phosphor; the model and its constants are in
 //! `phosphor.rs`) treats the whole screen as one tube. Cell backgrounds are
 //! not drawn. Once per machine frame (`accumulate`) the glyphs and cursor
 //! are drawn as light in their foreground colour (a third mode of the same
@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use terse_core::{COLS, CONTINUATION, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
+use terse_core::{COLS, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, Vector};
 
 pub use crate::display::GlyphSource;
 use crate::display::{VectorScene, grid_rect, outlined, screen_pos};
@@ -326,7 +326,7 @@ struct Atlas {
 }
 
 /// A device and its shader modules, each compiled the first time it is
-/// asked for: every machine's screen has a renderer of its own (SPEC 12.3),
+/// asked for: every machine's screen has a renderer of its own (SPEC §machines.screens),
 /// and the renderers of one device share their shaders through clones of
 /// this. The modules are kept with their device, not in a table keyed by
 /// it: wgpu's device ids are per instance, so a second instance's device
@@ -385,11 +385,11 @@ pub struct Renderer {
     /// The layer of backgrounds and shapes, its size, and the glyph-mode
     /// bind group that reads it; made for the viewport on first use.
     layer: Option<(((u32, u32), (u32, u32)), wgpu::TextureView, wgpu::BindGroup)>,
-    /// The phosphor textures (SPEC 10.6), the size of the grid rectangle of
+    /// The phosphor textures (SPEC §vector.phosphor), the size of the grid rectangle of
     /// the layer's viewport; made with the layer.
     phosphor: Option<PhosphorTextures>,
     vectors: VectorLayer,
-    /// The page device (SPEC 11): between the backgrounds and the shapes.
+    /// The page device (SPEC §page): between the backgrounds and the shapes.
     page: PageLayer,
     /// The presentation: phosphor or clean, and the persistence.
     style: (bool, u8),
@@ -409,12 +409,12 @@ pub struct Renderer {
     /// everything in its own colours; 0 for none.
     overlay: u32,
     /// Where the screen is drawn in the target, if not the grid rectangle
-    /// of the whole viewport (a machine's tile, SPEC 12.3).
+    /// of the whole viewport (a machine's tile, SPEC §machines.screens).
     rect: Option<(f32, f32, f32, f32)>,
     /// The glyph pass clears the target first (the screen drawn first).
     clears: bool,
     /// The sources of the machine's Surfaces (screen units), which give no
-    /// phosphor light on its glass (SPEC 13.5).
+    /// phosphor light on its glass (SPEC §vector3d.presentation).
     excluded: Vec<[u16; 4]>,
     /// 1 × 1 stand-ins for the textures a pass does not read.
     unused: wgpu::Texture,
@@ -628,7 +628,7 @@ impl Renderer {
         self.clears = clears;
     }
 
-    /// The sources of the machine's Surfaces (SPEC 13.5): in the phosphor
+    /// The sources of the machine's Surfaces (SPEC §vector3d.presentation): in the phosphor
     /// style they give no light (the clean style's glass is blacked out
     /// there by whoever draws the Surfaces).
     pub fn set_excluded(&mut self, rects: &[[u16; 4]]) {
@@ -707,10 +707,10 @@ impl Renderer {
         device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("terminal"), layout, entries: &entries })
     }
 
-    /// Takes the vector display's style (SPEC 10.6) and uploads its list
-    /// (SPEC 10) as `Vector::shapes` gives it (outlines in the phosphor
+    /// Takes the vector display's style (SPEC §vector.phosphor) and uploads its list
+    /// (SPEC §vector) as `Vector::shapes` gives it (outlines in the phosphor
     /// presentation even if only forced), unless the list's generation shows
-    /// it is unchanged, and the 3D list's segments over it (SPEC 13).
+    /// it is unchanged, and the 3D list's segments over it (SPEC §vector3d).
     /// `vector` `None`: the image has no vector display.
     pub fn update_vectors(&mut self, queue: &wgpu::Queue, scene: &VectorScene) {
         let vector = scene.vector;
@@ -747,7 +747,7 @@ impl Renderer {
         self.page.anchor_at(x, y)
     }
 
-    /// Treat the persistence as 0 (the user turned trails off, SPEC 10.6).
+    /// Treat the persistence as 0 (the user turned trails off, SPEC §vector.phosphor).
     pub fn set_no_trails(&mut self, no_trails: bool) {
         self.no_trails = no_trails;
     }
@@ -842,7 +842,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.light_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        // The page's text is light on the same tube (SPEC 10.6); no background.
+        // The page's text is light on the same tube (SPEC §vector.phosphor); no background.
         self.page.prepare(device, queue, (0.0, 0.0, w, h), t.size, true);
         if self.page.quads() > 0 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -902,37 +902,25 @@ impl Renderer {
     }
 
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
-    /// screen units are square (SPEC 7) whatever the glyph source's cell.
+    /// screen units are square (SPEC §screen) whatever the glyph source's cell.
     pub fn grid_size(&self) -> (u32, u32) {
         let width = COLS as u32 * self.cell_px.0;
         (width, width * SCREEN_HEIGHT as u32 / SCREEN_WIDTH as u32)
     }
 
-    /// Uploads the terminal state (SPEC 8.6: presentation is up to the host).
+    /// Uploads the terminal state (SPEC §terminal.presentation: presentation is up to the host).
     pub fn update(&mut self, queue: &wgpu::Queue, terminal: &Terminal) {
         if self.atlas.next + COLS * ROWS > ATLAS_SLOTS {
             // Atlas full: start over; the screen needs at most COLS * ROWS slots.
             self.atlas.slots.clear();
             self.atlas.next = 1;
         }
-        for row in 0..ROWS {
-            let mut col = 0;
-            while col < COLS {
-                let cell = terminal.cell(col, row);
-                // SPEC 8.1: a character followed by FFFFh is drawn across both cells.
-                let wide = cell.ch != CONTINUATION
-                    && col + 1 < COLS
-                    && terminal.cell(col + 1, row).ch == CONTINUATION;
-                let slot = if cell.ch == CONTINUATION { BLANK_SLOT } else { self.slot_for(queue, cell.ch, wide) };
-                for half in 0..1 + wide as usize {
-                    let c = terminal.cell(col + half, row);
-                    let s = if slot == BLANK_SLOT { BLANK_SLOT } else { slot + half as u16 };
-                    let i = (row * COLS + col + half) * 4;
-                    let [lo, hi] = s.to_le_bytes();
-                    self.cell_data[i..i + 4].copy_from_slice(&[lo, hi, c.fg, c.bg]);
-                }
-                col += 1 + wide as usize;
-            }
+        // SPEC §terminal.cells, §terminal.text: wide characters across two
+        // cells, or, without full text, the basic repertoire and the placeholder.
+        let cells = terse_core::text::draw_cells(terminal, |code, wide| self.slot_for(queue, code, wide) as u32);
+        for (i, &(slot, fg, bg)) in cells.iter().enumerate() {
+            let [lo, hi] = (slot as u16).to_le_bytes();
+            self.cell_data[i * 4..i * 4 + 4].copy_from_slice(&[lo, hi, fg, bg]);
         }
         write_texture(queue, &self.cell_texture, (0, 0), (COLS as u32, ROWS as u32), 4, &self.cell_data);
 
@@ -951,6 +939,7 @@ impl Renderer {
 
     /// The atlas slot for `code` (for a wide glyph, the slot of its left half).
     fn slot_for(&mut self, queue: &wgpu::Queue, code: u16, wide: bool) -> u16 {
+        let placeholder = code == terse_core::text::PLACEHOLDER_CODE;
         let ch = match char::from_u32(code as u32) {
             Some(c) if c != ' ' => c,
             _ => return BLANK_SLOT,
@@ -964,7 +953,11 @@ impl Renderer {
         let (w, h) = self.cell_px;
         let glyph = &mut self.glyph_scratch[..(cells * w * h) as usize];
         glyph.fill(0);
-        self.glyphs.rasterize(ch, cells, glyph);
+        if placeholder {
+            terse_core::text::placeholder(w, h, glyph);
+        } else {
+            self.glyphs.rasterize(ch, cells, glyph);
+        }
         let mut half = vec![0; (w * h) as usize];
         for i in 0..cells {
             for (y, row) in half.chunks_exact_mut(w as usize).enumerate() {
@@ -988,7 +981,7 @@ impl Renderer {
         self.grid_rect(viewport)
     }
 
-    /// A viewport position in screen units (SPEC 7), through the same
+    /// A viewport position in screen units (SPEC §screen), through the same
     /// transform that places the grid, clamped to the screen.
     pub fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16) {
         screen_pos(self.grid_rect(viewport), x, y)
@@ -1076,7 +1069,7 @@ impl Renderer {
     }
 
     /// Records the draw into `encoder`, covering all of `target`
-    /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC 10.5).
+    /// (`viewport` pixels): backgrounds, shapes, then glyphs (SPEC §vector.layers).
     /// With a rectangle set (`set_rect`), only that rectangle is drawn,
     /// over what the target holds.
     pub fn render(
@@ -1143,7 +1136,7 @@ impl Renderer {
                 pass.set_scissor_rect(x, y, w, h);
             }
             pass.draw(0..3, 0..1);
-            // SPEC 10.5: the page lies between the backgrounds and the shapes.
+            // SPEC §vector.layers: the page lies between the backgrounds and the shapes.
             self.page.draw(&mut pass, false);
             self.vectors.draw(queue, &mut pass, viewport, rect);
         }
@@ -1165,7 +1158,7 @@ impl Renderer {
     }
 
     /// Draws the host's overlay rows again over what the target holds (the
-    /// other machines' screens drawn after this one, SPEC 12.3); after
+    /// other machines' screens drawn after this one, SPEC §machines.screens); after
     /// `render` in the same frame.
     pub fn render_overlay(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, viewport: (u32, u32)) {
         let Some((_, _, group)) = &self.layer else { return };

@@ -1,5 +1,5 @@
 //! The machine: the RV32IMC core, ROM and RAM, the frame loop and the
-//! devices reached through `ecall` (SPEC 1, 3, 14).
+//! devices reached through `ecall` (SPEC §profile, §calls, §charges).
 
 use std::fmt;
 
@@ -17,15 +17,15 @@ use crate::vector3::Vector3;
 /// Leading domain string of the state serialization (STATE.md).
 pub const STATE_DOMAIN: &[u8] = b"terse-state-1";
 
-/// Budget units added each frame (SPEC 1.4). Provisional.
+/// Budget units added each frame (SPEC §frames). Provisional.
 pub const BUDGET_PER_FRAME: i64 = 125_000;
 
-/// The charges of SPEC 14, in budget units. Provisional.
+/// The charges of SPEC §charges, in budget units. Provisional.
 pub mod charge {
     /// Every call, on top of the `ecall` instruction itself: the base
     /// charge of a deferred call, and of every System and Machines call.
     pub const CALL: u32 = 4;
-    /// The base charge of an answered call (SPEC 14: [`super::call::answered`]).
+    /// The base charge of an answered call (SPEC §charges: [`super::call::answered`]).
     pub const ANSWERED: u32 = 64;
     /// Terminal `write`, per byte.
     pub const WRITE_BYTE: u32 = 2;
@@ -39,7 +39,7 @@ pub mod charge {
     pub const SCROLL_CLEAR: u32 = 150;
 }
 
-/// The longest `random` request (SPEC 4).
+/// The longest `random` request (SPEC §system).
 pub const MAX_RANDOM_PER_CALL: u32 = 256;
 
 /// The most random bytes a program can take in one frame: each `random`
@@ -59,7 +59,7 @@ pub fn copy_charge(bytes: usize) -> u32 {
     bytes.div_ceil(charge::COPY_BYTES_PER_UNIT) as u32
 }
 
-/// The fault kind's number (STATE.md 1.3; SPEC 12.2 `info`).
+/// The fault kind's number (STATE.md 1.3; SPEC §machines.calls `info`).
 pub fn fault_number(f: &Fault) -> u8 {
     match f.kind {
         FaultKind::Illegal(_) => 1,
@@ -71,7 +71,7 @@ pub fn fault_number(f: &Fault) -> u8 {
     }
 }
 
-/// Call numbers: `a7 = (device slot << 8) | function` (SPEC 3.2).
+/// Call numbers: `a7 = (device slot << 8) | function` (SPEC §calls.table).
 pub mod call {
     pub const WAIT_FRAME: u32 = 0x100;
     pub const NEXT_EVENT: u32 = 0x101;
@@ -120,7 +120,7 @@ pub mod call {
     pub const SOUND_SAMPLE: u32 = 0x602;
     pub const SOUND_INFO: u32 = 0x603;
 
-    /// The answered calls (SPEC 14): a device's calls whose result or
+    /// The answered calls (SPEC §charges): a device's calls whose result or
     /// charge depends on the device's state. Every other call of devices
     /// 2–7 and 9 is deferred; System and Machines calls are the machine's
     /// own, never carried to a device elsewhere, and charged as deferred.
@@ -129,7 +129,7 @@ pub mod call {
     }
 }
 
-/// Why the machine stopped (SPEC 1.5): the program exited, or a fault.
+/// Why the machine stopped (SPEC §stopping): the program exited, or a fault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stopped {
     Exit(u8),
@@ -145,7 +145,7 @@ impl fmt::Display for Stopped {
     }
 }
 
-/// Inputs for one frame (SPEC 1.4 step 1, 4, 6, 9.4).
+/// Inputs for one frame (SPEC §frames step 1, 4, 6, 9.4).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInput<'a> {
     pub events: &'a [Event],
@@ -154,9 +154,9 @@ pub struct FrameInput<'a> {
     /// beyond the end get zeros; supply `MAX_RANDOM_PER_FRAME` bytes to never
     /// run out (`FrameResult::random_used` says how many were taken).
     pub random: &'a [u8],
-    /// Content requests the host finished (SPEC 9.2), applied before the CPU runs.
+    /// Content requests the host finished (SPEC §content.submit), applied before the CPU runs.
     pub completions: &'a [Completion],
-    /// The four controllers (SPEC 6), latched for the frame.
+    /// The four controllers (SPEC §controllers), latched for the frame.
     pub controllers: [Controller; CONTROLLERS],
 }
 
@@ -171,7 +171,7 @@ pub struct FrameResult {
     /// discarded.
     pub waited: bool,
     /// Events dropped because the queue was full, and feeds-updated events
-    /// beyond the first in this frame's input (SPEC 5: at most one per frame).
+    /// beyond the first in this frame's input (SPEC §events: at most one per frame).
     pub events_dropped: usize,
     /// How many bytes of `FrameInput::random` were consumed (for recording).
     pub random_used: usize,
@@ -192,7 +192,7 @@ impl FrameResult {
     }
 }
 
-/// A machine (SPEC 1): the CPU, ROM and RAM, the budget and the frame loop,
+/// A machine (SPEC §profile): the CPU, ROM and RAM, the budget and the frame loop,
 /// the System device and, for a shell, the Machines device. Every other
 /// device is behind [`Devices`]: compiled in ([`InProcess`], the default)
 /// or elsewhere (terse-bus's driver processes).
@@ -204,12 +204,12 @@ pub struct Machine<D: Devices = InProcess> {
     system: System,
     devices: D,
     /// The devices the machine has: the image's required devices and the
-    /// optional ones granted (SPEC 2), and device 8 if the image lists it
+    /// optional ones granted (SPEC §image), and device 8 if the image lists it
     /// (granted only to a shell, `machines`).
     has: DeviceSet,
     /// Which of the image's optional devices were granted (STATE.md 1.4).
     grants: Grants,
-    /// Device 8, only for the shell (SPEC 12.1).
+    /// Device 8, only for the shell (SPEC §machines.shell).
     machines: Option<Machines>,
     /// The budget; zero or negative between frames (a negative remainder
     /// carries into the next frame).
@@ -220,14 +220,14 @@ pub struct Machine<D: Devices = InProcess> {
     instructions: u64,
     /// Device calls made since reset (not machine state).
     calls: u64,
-    /// The program's identity (SPEC 12.2), if it was started as one; whose
-    /// named records it reads (SPEC 9.6). Not machine state.
+    /// The program's identity (SPEC §machines.calls), if it was started as one; whose
+    /// named records it reads (SPEC §content.records). Not machine state.
     identity: Option<ProgramId>,
-    /// The machine was started by a shell (SPEC 12.1), so `open` can pass
+    /// The machine was started by a shell (SPEC §machines.shell), so `open` can pass
     /// a request to it.
     in_system: bool,
     /// The request `open` passed that the shell has not read yet, and
-    /// whether the shell has been told of it (SPEC 4). Not machine state.
+    /// whether the shell has been told of it (SPEC §system). Not machine state.
     open_request: Option<([u8; crate::machines::REQUEST_BYTES], bool)>,
     /// The blob ID the shell gave the machine before its first frame
     /// (STATE.md 1.13).
@@ -235,13 +235,13 @@ pub struct Machine<D: Devices = InProcess> {
 }
 
 impl Machine {
-    /// The machine at reset (SPEC 1.3), with the devices compiled in.
+    /// The machine at reset (SPEC §reset), with the devices compiled in.
     /// Every optional device this implementation has is granted.
     pub fn new(image: &Image) -> Self {
         Machine::with_grants(image, image.all_grants())
     }
 
-    /// The machine at reset with these grants (SPEC 2): `grants` fits the
+    /// The machine at reset with these grants (SPEC §image): `grants` fits the
     /// image and grants only devices this implementation supports
     /// ([`Image::check_grants`]).
     pub fn with_grants(image: &Image, grants: Grants) -> Self {
@@ -250,7 +250,7 @@ impl Machine {
         Machine::with_devices(image, grants, memory, devices)
     }
 
-    /// The machine at reset as the shell (SPEC 12.1): device 8 is granted
+    /// The machine at reset as the shell (SPEC §machines.shell): device 8 is granted
     /// if the image lists it; `builtins` are the IDs `builtin` returns.
     pub fn new_shell(image: &Image, builtins: Vec<[u8; 32]>) -> Self {
         let mut m = Machine::new(image);
@@ -258,7 +258,7 @@ impl Machine {
         m
     }
 
-    /// Runs one frame (SPEC 1.4). Does nothing once the machine has stopped.
+    /// Runs one frame (SPEC §frames). Does nothing once the machine has stopped.
     pub fn run_frame(&mut self, input: &FrameInput) -> FrameResult {
         self.try_run_frame(input).expect("the devices compiled in do not fail")
     }
@@ -350,7 +350,7 @@ impl Machine {
 }
 
 impl<D: Devices> Machine<D> {
-    /// The machine at reset (SPEC 1.3) with these devices and memory
+    /// The machine at reset (SPEC §reset) with these devices and memory
     /// (`memory` holds the image's ROM and a zeroed RAM of its size).
     /// `grants` says which optional devices it has (and `devices` must be
     /// those).
@@ -377,7 +377,7 @@ impl<D: Devices> Machine<D> {
         }
     }
 
-    /// Grants device 8 (SPEC 12.1) if the image lists it: the machine is
+    /// Grants device 8 (SPEC §machines.shell) if the image lists it: the machine is
     /// a shell; `builtins` are the IDs `builtin` returns.
     pub fn grant_machines(&mut self, builtins: Vec<[u8; 32]>) {
         if self.has.has(crate::machines::SLOT) {
@@ -387,7 +387,7 @@ impl<D: Devices> Machine<D> {
 
     /// The samples device 6 rendered at the end of the last frame (800
     /// pairs, left and right interleaved), once; `None` without device 6,
-    /// or if no frame ended since the last call (SPEC 18.7).
+    /// or if no frame ended since the last call (SPEC §sound.presentation).
     pub fn take_audio(&mut self) -> Option<Vec<i16>> {
         if !self.has.has(crate::sound::SLOT) {
             return None;
@@ -420,13 +420,13 @@ impl<D: Devices> Machine<D> {
         &mut self.devices
     }
 
-    /// The machine is one a shell started (SPEC 12.1): `open` passes its
+    /// The machine is one a shell started (SPEC §machines.shell): `open` passes its
     /// requests to the shell.
     pub fn set_in_system(&mut self, on: bool) {
         self.in_system = on;
     }
 
-    /// Its argument (SPEC 4, 12.2), set before its first frame.
+    /// Its argument (SPEC §system, §machines.calls), set before its first frame.
     pub fn set_argument(&mut self, argument: Option<[u8; 32]>) {
         self.argument = argument;
     }
@@ -435,13 +435,13 @@ impl<D: Devices> Machine<D> {
         self.argument.as_ref()
     }
 
-    /// The open request waiting for the shell (SPEC 4), if any, and whether
+    /// The open request waiting for the shell (SPEC §system), if any, and whether
     /// the shell has been told of it.
     pub fn open_request(&self) -> Option<&([u8; crate::machines::REQUEST_BYTES], bool)> {
         self.open_request.as_ref()
     }
 
-    /// The shell has been told of the waiting request (SPEC 12.5).
+    /// The shell has been told of the waiting request (SPEC §machines.frames).
     pub fn announce_open_request(&mut self) -> Option<[u8; crate::machines::REQUEST_BYTES]> {
         let (bytes, told) = self.open_request.as_mut()?;
         (!std::mem::replace(told, true)).then_some(*bytes)
@@ -452,7 +452,7 @@ impl<D: Devices> Machine<D> {
         self.open_request = None;
     }
 
-    /// The identity the host started the machine with (SPEC 12.2).
+    /// The identity the host started the machine with (SPEC §machines.calls).
     pub fn set_identity(&mut self, identity: Option<ProgramId>) {
         self.identity = identity;
     }
@@ -461,7 +461,7 @@ impl<D: Devices> Machine<D> {
         self.identity.as_ref()
     }
 
-    /// Runs one frame (SPEC 1.4). Does nothing once the machine has
+    /// Runs one frame (SPEC §frames). Does nothing once the machine has
     /// stopped. An error is the devices' (a driver that failed).
     pub fn try_run_frame(&mut self, input: &FrameInput) -> Result<FrameResult, String> {
         let mut result = FrameResult {
@@ -495,7 +495,7 @@ impl<D: Devices> Machine<D> {
             merged.extend(placed(position::AFTER_HOST).filter(|e| e.index as usize == i).map(|e| (e.event, e.flags, false)));
         }
         merged.extend(placed(position::AFTER_INPUT).map(|e| (e.event, e.flags, false)));
-        // SPEC 5: at most one feeds-updated event a frame. SPEC 11.5: the
+        // SPEC §content.events: at most one feeds-updated event a frame. SPEC §page.events: the
         // two events of a located anchor are queued together or not at
         // all (a host's pair by kind, a device's by its flag).
         let mut feeds_updated = false;
@@ -585,7 +585,7 @@ impl<D: Devices> Machine<D> {
         Ok(result)
     }
 
-    /// Carries out the call in a7 (SPEC 3); returns (units charged beyond
+    /// Carries out the call in a7 (SPEC §calls); returns (units charged beyond
     /// the `ecall` instruction, whether the program waits for the next
     /// frame). System and Machines calls are the machine's own; the rest go
     /// to the devices.
@@ -651,7 +651,7 @@ impl<D: Devices> Machine<D> {
                         }
                     }
                 },
-                // SPEC 4: the version of a device the machine has.
+                // SPEC §system: the version of a device the machine has.
                 call::DEVICE => {
                     let present = match a0 {
                         s if s == crate::machines::SLOT as u32 => self.machines.is_some(),
@@ -868,7 +868,7 @@ impl Machine {
     /// given the same inputs it runs as the machine it was taken of. A
     /// shell's state (section 1.10 present) is not restorable. Content
     /// requests that were pending complete with status 03h (failed) in its
-    /// first frame (SPEC 9.2). The identity and whether it is in a system
+    /// first frame (SPEC §content.submit). The identity and whether it is in a system
     /// are the caller's to set.
     /// The machine has the devices the state says it was granted; a
     /// device this implementation does not support is

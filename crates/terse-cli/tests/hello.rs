@@ -64,5 +64,5 @@ fn exits_on_escape() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["hello/hello.S"], false, "hello", 1, &[(2, 0)]);
+    common::check_up_to_date(IMAGE, &["hello/hello.S"], false, "hello", 1, &[(2, 0), (10, 0x80)]);
 }

@@ -1,4 +1,4 @@
-//! A machine's 3D scene put together over its glass (SPEC 12.3, 13.5): the
+//! A machine's 3D scene put together over its glass (SPEC §machines.screens, §vector3d.presentation): the
 //! image of its screen with its Surfaces' sources blacked out, the panels
 //! far to near (a Surface from a pyramid of that same image, before the
 //! sources were blacked out; a Screen from the pyramid of another
@@ -22,7 +22,7 @@ pub trait Top: Sync {
     fn draw(&self, band: &mut [u32], area: IRect, y0: i32, clip: IRect);
 }
 
-/// A machine's 3D scene put together over its glass (SPEC 12.3, 13.5): its
+/// A machine's 3D scene put together over its glass (SPEC §machines.screens, §vector3d.presentation): its
 /// screen's image, the panels over it, its 3D lines over them.
 pub struct SceneImage {
     pub layers: SceneLayers,

@@ -1,4 +1,4 @@
-//! Figures on the page (SPEC 11.3): paths rasterised with tiny-skia at the
+//! Figures on the page (SPEC §page.document): paths rasterised with tiny-skia at the
 //! target's pixel size, antialiased, on a worker thread. The page layer asks
 //! for the figures near the view and keeps only those (see `page.rs`), so
 //! the textures stay bounded whatever the document holds.

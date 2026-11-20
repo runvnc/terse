@@ -1,6 +1,6 @@
 //! Lookup (NETWORK 4.8): a feed's current program of a name, for any feed,
 //! listed or not; rate-limited with the finds; and a host that starts a
-//! program it does not hold (SPEC 12.2 `start_program`) looks it up first.
+//! program it does not hold (SPEC §machines.calls `start_program`) looks it up first.
 //! Documents (kind 4) are found by entry search (scope 2).
 
 use std::net::TcpListener;
@@ -71,7 +71,7 @@ fn lookup_answers_and_rate_limit() {
     assert_eq!(got[3..], [RelayReply::Found(Vec::new()), RelayReply::Refused], "the fifth in a second");
 }
 
-/// SPEC 12.2: `start_program` for a feed the host does not follow and a
+/// SPEC §machines.calls: `start_program` for a feed the host does not follow and a
 /// program it does not hold: looked up on the relay, then its image
 /// fetched; not found after that if the relay has none.
 #[test]

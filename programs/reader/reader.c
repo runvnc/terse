@@ -1,16 +1,16 @@
 /* reader.c: a feed reader for Terse (machine profile 1, RV32IMC).
  *
- * Shows the timeline of the feeds the host subscribes to (SPEC 9), newest
+ * Shows the timeline of the feeds the host subscribes to (SPEC §content), newest
  * first, the subscribed feeds, a feed's page, search results, a help page
  * and articles (ARTICLE.md: text with headings, lists, preformatted
- * blocks, figures and links), all on the page device (SPEC 11) in the sans
+ * blocks, figures and links), all on the page device (SPEC §page) in the sans
  * face. The terminal shows only the status row (29: key hints, the reading
  * position, the outcome of a request) and, while something is being typed
  * (a feed key, a nickname, a public name, a search), the entry row (28).
  * The rows under the page are blank, in the colour of the page's
  * background (xterm 234, (28, 28, 28)), which is opaque.
  *
- * Started with an argument (a blob ID the shell gave it, SPEC 4), the
+ * Started with an argument (a blob ID the shell gave it, SPEC §system), the
  * reader shows that blob as an article at once, as if opened from the
  * timeline (titled by its entry if the timeline has one, else by the ID's
  * short form); Esc then goes to the timeline.
@@ -56,7 +56,7 @@
  * wholly visible. Until a height arrives e is estimated (1.35 x the sizes);
  * a height that is not a whole number of slots, or gives an implausible
  * slot, belongs to another document and is ignored. Titles are cut at the
- * rectangle's edge with an ellipsis (no wrap, ellipsis: SPEC 11.3); control
+ * rectangle's edge with an ellipsis (no wrap, ellipsis: SPEC §page.document); control
  * characters and line or paragraph
  * separators in them become spaces, so a slot always has two lines. Each
  * entry is an anchor (its index + 1): a click on it opens it (timeline) or
@@ -140,7 +140,7 @@
  *     scroll value), and the status row shows its target (a program link:
  *     program “name” by the feed's name and short key); Enter or a click
  *     follows it. The reader then asks the page where the link's line is
- *     (locate, SPEC 11.2; the answer comes in a later frame) and scrolls
+ *     (locate, SPEC §page.calls; the answer comes in a later frame) and scrolls
  *     just enough to show it whole, MARGIN units from the edges. After the
  *     user scrolled, Tab goes to the first link at or below the top of the
  *     view and Shift+Tab to the last above its bottom instead, found by a
@@ -282,7 +282,7 @@
 #define ENTRY_ROW 28
 #define STATUS_ROW 29
 
-/* xterm palette indexes (SPEC 8.5). */
+/* xterm palette indexes (SPEC §terminal.reset). */
 #define C_TEXT 252
 #define C_DIM 244
 #define C_BG 234 /* (28, 28, 28): the page's background */
@@ -294,7 +294,7 @@
 #define C_ERROR 210
 #define C_INFO 229
 
-/* Timeline records (SPEC 9.5): L, flags, then the entry (NETWORK 4.2). */
+/* Timeline records (SPEC §content.feeds): L, flags, then the entry (NETWORK 4.2). */
 #define R_FLAGS 1
 #define R_FEED 2
 #define R_SEQ 34
@@ -3013,7 +3013,7 @@ static void timeline_done(uint8_t status)
         tl_count = n;
         tl_total = total > 0xFFFF ? 0xFFFF : total;
         if (tl_refresh && tl_loaded) {
-            /* New entries arrive at index 0 (SPEC 9.5): the selection keeps
+            /* New entries arrive at index 0 (SPEC §content.feeds): the selection keeps
              * its entry, found by its identity or else moved down by the
              * arrivals. */
             if (tl_total > old_total)
@@ -3696,7 +3696,7 @@ static void ls_fill(void)
 }
 
 /* A page of the timeline is in. Entries that arrived since the search
- * began are at its start (SPEC 9.5): the page then begins with entries
+ * began are at its start (SPEC §content.feeds): the page then begins with entries
  * already taken, which are passed over (and the new ones not searched). */
 static void ls_tl_done(uint8_t st)
 {

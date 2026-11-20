@@ -106,7 +106,7 @@ impl Twin {
         Twin::start_with_grants(s, None)
     }
 
-    /// The same with the machine's grants (SPEC 2) given, as the test's
+    /// The same with the machine's grants (SPEC §image) given, as the test's
     /// machine has them; `None`: every optional device a driver gives.
     pub fn start_with_grants(s: Setup, grants: Option<terse_core::Grants>) -> Option<Twin> {
         let dir = drivers_dir()?;
@@ -204,7 +204,7 @@ impl Twin {
         assert_eq!(hex(&got), hex(&m.state_hash()), "the machine's hash on the bus after frame {frame}");
     }
 
-    /// Where the eye is (SPEC 13.1), for the pointer over Surfaces.
+    /// Where the eye is (SPEC §vector3d.space), for the pointer over Surfaces.
     pub fn set_eye(&mut self, eye: (f32, f32)) {
         self.bs.system.set_eye(eye);
     }

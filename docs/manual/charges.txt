@@ -1,6 +1,6 @@
 # Charges and limits
 
-This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC section 16 lists them all); every other value is fixed for version 0.
+This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC §provisional lists the core's, and each device document in spec/ its own); every other value is fixed for version 0.
 
 ## The budget, in one line
 

@@ -16,7 +16,7 @@ use terse_net::{BlobStore, Consent, ContentService, FeedStore, Identity, Node, O
 const IMAGE: &[u8] = include_bytes!("../../../programs/sketch/sketch.terse");
 const RAM_PAGES: u8 = 4;
 
-/// The document header of a sketch (SPEC 9.7): "TDOC", version 0, a zero
+/// The document header of a sketch (SPEC §content.documents): "TDOC", version 0, a zero
 /// owner key (a built-in program's format), the name "sketch".
 fn header() -> Vec<u8> {
     let mut h = b"TDOC\0".to_vec();

@@ -1,6 +1,6 @@
 # The 2D vector display (device 3)
 
-The 2D vector display draws lines, circles and simple filled shapes from a display list: a short sequence of drawing commands that the program builds in RAM and hands to the device. The device keeps its own copy, and the host draws it every frame until the program submits another list or clears it. The device does no geometry for the program: it does not rotate, scale or clip against anything but the screen, and nothing it draws can be read back.
+The 2D vector display draws lines, circles and simple filled shapes from a display list: a short sequence of drawing commands that the program builds in RAM and hands to the device. The device keeps its own copy, and the host draws it every frame until the program submits another list or clears it. The device does no geometry for the program: it does not rotate, scale or clip against anything but the screen, and nothing it draws can be read back. The exact rules are in SPEC.md, the core machine (§vector).
 
 ## Getting the device
 
@@ -80,7 +80,7 @@ Worked numbers: a rectangle covering the whole screen counts 10240 x 7680 / 256 
 In the clean style the host combines the displays in a fixed order, from the bottom:
 
 - 1. the terminal's cell backgrounds;
-- 2. [the page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0): its background, then its text;
+- 2. [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6): its background, then its text;
 - 3. the vector displays: device 3's shapes, then device 9's;
 - 4. the terminal's characters and cursor.
 
@@ -105,7 +105,7 @@ The exact brightness, core width, glow, fast decay, tone curve and where an outl
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).
 
 ## State
 
@@ -138,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:b8a5c87609b481164badc9f7cb9a7ffa4f0e0ff271918906960065a6d38090bc), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:2fb193248c09d094e6bac8b8313011ec675af721e13e841ab77e54866213372e), shares this display's style and layers.

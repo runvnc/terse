@@ -1,4 +1,4 @@
-//! Open requests end to end (SPEC 4 `open`, 12.2 `request` and `argument`,
+//! Open requests end to end (SPEC §system `open`, 12.2 `request` and `argument`,
 //! 9.7 documents): the shell, the reader and Sketch run as `terse run
 //! --shell` runs them, with temporary stores, records and (where a program
 //! is looked up or a sketch travels between hosts) an ephemeral relay.

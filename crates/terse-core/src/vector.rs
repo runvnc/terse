@@ -1,31 +1,31 @@
-//! Device 3, 2D vector display (SPEC 10).
+//! Device 3, 2D vector display (SPEC §vector).
 //!
 //! The device only validates and copies the display list. [`decode`] turns a
 //! stored list into resolved primitives (origin applied, drawing state
-//! tracked, SPEC 10.3 termination rules, the fill cap of SPEC 10.4); hosts
+//! tracked, SPEC §vector.list termination rules, the fill cap of SPEC §vector.fill-cap); hosts
 //! and tests draw from it rather than parsing the list themselves.
 
 use std::fmt;
 
-/// Longest list a submit accepts (SPEC 10.2).
+/// Longest list a submit accepts (SPEC §vector.calls).
 pub const MAX_LIST: usize = 16_384;
 
 /// Results of `submit` (and of `style`, `persistence`, `fill`).
 pub const RESULT_DONE: u32 = 0;
 pub const RESULT_REJECTED: u32 = 1;
-/// Styles (SPEC 10.6).
+/// Styles (SPEC §vector.phosphor).
 pub const STYLE_CLEAN: u8 = 0x00;
 pub const STYLE_PHOSPHOR: u8 = 0x01;
-/// Persistence after reset (SPEC 10.2).
+/// Persistence after reset (SPEC §vector.calls).
 pub const DEFAULT_PERSISTENCE: u8 = 160;
 /// Total area, in square screen units, that the filled shapes of one list
-/// may cover (SPEC 10.4). Provisional.
+/// may cover (SPEC §vector.fill-cap). Provisional.
 pub const FILL_CAP: u64 = 4 * 640 * 480;
-/// The screen in sixteenths of a screen unit (SPEC 10.1).
+/// The screen in sixteenths of a screen unit (SPEC §vector.coordinates).
 const SCREEN_W16: i32 = 640 * 16;
 const SCREEN_H16: i32 = 480 * 16;
 
-/// Display-list opcodes (SPEC 10.3).
+/// Display-list opcodes (SPEC §vector.list).
 pub mod op {
     pub const END: u8 = 0x00;
     pub const COLOUR: u8 = 0x01;
@@ -39,7 +39,7 @@ pub mod op {
     pub const TRIANGLE: u8 = 0x09;
 }
 
-/// The device state (SPEC 10.7): style, persistence, fill mode and the
+/// The device state (SPEC §vector.determinism): style, persistence, fill mode and the
 /// list copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vector {
@@ -54,7 +54,7 @@ pub struct Vector {
 }
 
 impl Default for Vector {
-    /// The state after reset (SPEC 10.2).
+    /// The state after reset (SPEC §vector.calls).
     fn default() -> Self {
         Vector { style: STYLE_CLEAN, persistence: DEFAULT_PERSISTENCE, fill: true, list: Vec::new(), generation: 0 }
     }
@@ -128,12 +128,12 @@ impl Vector {
         self.style
     }
 
-    /// True in the phosphor style (SPEC 10.6).
+    /// True in the phosphor style (SPEC §vector.phosphor).
     pub fn phosphor(&self) -> bool {
         self.style == STYLE_PHOSPHOR
     }
 
-    /// The persistence, 0-255 (SPEC 10.6).
+    /// The persistence, 0-255 (SPEC §vector.phosphor).
     pub fn persistence(&self) -> u8 {
         self.persistence
     }
@@ -256,8 +256,8 @@ impl fmt::Display for Primitive {
     }
 }
 
-/// Decodes a display list (SPEC 10.3), leaving out the filled shapes that
-/// the fill cap (SPEC 10.4) stops.
+/// Decodes a display list (SPEC §vector.list), leaving out the filled shapes that
+/// the fill cap (SPEC §vector.fill-cap) stops.
 pub fn decode(list: &[u8]) -> Decoder<'_> {
     Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), cap: true, filled: 0, capped: false }
 }
@@ -268,7 +268,7 @@ fn decode_uncapped(list: &[u8]) -> Decoder<'_> {
     Decoder { cap: false, ..decode(list) }
 }
 
-/// The area a filled shape counts against the fill cap (SPEC 10.4): its
+/// The area a filled shape counts against the fill cap (SPEC §vector.fill-cap): its
 /// bounding box (a disc's bounding square) clipped to the screen, in
 /// sixteenths squared, divided by 256 and rounded up.
 pub fn fill_area(p: &Primitive) -> u64 {
@@ -402,7 +402,7 @@ pub fn dump(list: &[u8]) -> String {
     decode(list).map(|p| format!("{p}\n")).collect()
 }
 
-/// The list as outlines (SPEC 10.3: the phosphor style, and fill off): nothing is filled. A
+/// The list as outlines (SPEC §vector.list: the phosphor style, and fill off): nothing is filled. A
 /// disc becomes a circle, a rectangle four lines and a triangle three lines,
 /// each with the width in effect at that command; lines and circles pass
 /// through. Every host draws phosphor shapes from this, so they agree on

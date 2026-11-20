@@ -1,11 +1,11 @@
-Terse conformance • All sections pass.  Esc: exit (code = sections failed).
+Terse conformance · All sections pass.  Esc: exit (code = sections failed).
 PASS cpu: RV32I
 PASS cpu: M extension
 PASS cpu: compressed
 PASS RAM: run code, rewrite it, run again
 PASS terminal: print, cursor, controls
 PASS terminal: pending wrap
-PASS terminal: wide characters
+PASS terminal: wide characters, basic text
 PASS terminal: malformed UTF-8
 PASS terminal: commands
 PASS terminal: cells, palette, buffers

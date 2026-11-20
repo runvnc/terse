@@ -1,5 +1,5 @@
 //! programs/conform-reading: the conformance image of the machine's reading
-//! profile (SPEC 15), programs/conform's sources built with `-DREADING`:
+//! profile (SPEC §conformance), programs/conform's sources built with `-DREADING`:
 //! devices 2, 4 and 7 only, no optional content operation. Its state hash
 //! every 10 frames of the scripted run must match `expected-hashes.txt`,
 //! the final screen and page `expected-screen.txt`, and every section must

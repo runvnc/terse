@@ -207,7 +207,7 @@ fn reader_image() -> std::path::PathBuf {
 /// `terse run` with a relay: the feeds are synced (NETWORK 4.3 caught up)
 /// before frame 0, so the reader's first timeline already holds them; an
 /// entry published while the machine runs reaches it as a feeds-updated
-/// event (SPEC 5) and the list refreshes by itself.
+/// event (SPEC §events) and the list refreshes by itself.
 #[test]
 fn reader_follows_feeds_while_running() {
     let relay_dir = tempfile::tempdir().unwrap();

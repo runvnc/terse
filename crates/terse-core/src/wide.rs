@@ -1,4 +1,4 @@
-//! Character width for the terminal (SPEC 8.1).
+//! Character width for the terminal (SPEC §terminal.cells).
 //!
 //! `WIDE` lists the code points U+0000-U+FFFF whose Unicode 16.0.0 East Asian
 //! Width property is W or F, including unassigned code points in the ranges
@@ -29,7 +29,7 @@ const WIDE: [(u16, u16); 59] = [
     (0xFE68, 0xFE6B), (0xFF01, 0xFF60), (0xFFE0, 0xFFE6),
 ];
 
-/// Whether `ch` occupies two terminal cells (SPEC 8.1).
+/// Whether `ch` occupies two terminal cells (SPEC §terminal.cells).
 pub fn is_wide(ch: u16) -> bool {
     WIDE.binary_search_by(|&(lo, hi)| {
         if hi < ch {

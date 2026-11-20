@@ -1,4 +1,4 @@
-//! Panels on the GPU (SPEC 12.3, 13.3 Screen): each panel's machine is
+//! Panels on the GPU (SPEC §machines.screens, §vector3d.list Screen): each panel's machine is
 //! drawn into a texture of its own (`PANEL_FORMAT`, at a size from the
 //! panel's projection, `display::panel_cell_width`), its mipmaps made by
 //! halving with linear filtering (in linear light, the texture is sRGB),

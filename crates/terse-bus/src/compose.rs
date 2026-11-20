@@ -1,5 +1,5 @@
 //! The core's compositor (DEVICES.md 7): the picture of a system (SPEC
-//! 12.3) or of a single machine, put together from the drivers' layers
+//! §machines.screens) or of a single machine, put together from the drivers' layers
 //! as terse-host's software renderer puts its screens together (the clean
 //! style): each machine's layers composed into its screen's image at the
 //! size it is shown at (the drivers draw each machine at that size), the
@@ -82,7 +82,7 @@ pub struct Screen {
     top_changed: bool,
 }
 
-/// The layer of device 9 (SPEC 13).
+/// The layer of device 9 (SPEC §vector3d).
 const LAYER3: (u8, u8) = (terse_core::vector3::SLOT, 0);
 
 impl Screen {
@@ -250,7 +250,7 @@ impl Child {
     }
 }
 
-/// The host's consent prompt (SPEC 9.5) as the core draws it: a terminal
+/// The host's consent prompt (SPEC §content.feeds) as the core draws it: a terminal
 /// of the prompt's rows drawn by terse-host's grid renderer in the
 /// overlay's colours, over everything.
 struct Overlay {
@@ -371,7 +371,7 @@ impl Compositor {
         }
         let shell_rect = self.shell.screen_rect(self.native, viewport);
         // With Screens in effect the shell's 3D lines are drawn over the
-        // panels (SPEC 12.3); with its own Surfaces, over them (SPEC 13.5).
+        // panels (SPEC §machines.screens); with its own Surfaces, over them (SPEC §vector3d.presentation).
         let scene = system.scene(eye);
         let layers: Option<SceneLayers> = scene_layers(system, eye).or_else(|| surface_layers(system.shell(), eye));
         let view = scene.as_ref().map_or_else(Vec::new, |s| view_bytes(&s.view));

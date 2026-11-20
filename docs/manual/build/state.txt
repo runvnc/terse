@@ -76,7 +76,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the machine has device 9; then m (u32, 0-16,384) and the list.
 
-Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:970caf8209865f7d129bfc1abc1efbd3987c060d59d8a78d0c9d7c5e2c61c814).
+Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:efda3848b09961bc0ab71259e5ff14e6bd7171c27be085b157ba11c5c86bcced).
 
 Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 
@@ -95,12 +95,12 @@ The sections that may be absent were added so that the hashes of older images di
 
 The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as 64 lowercase hex digits. Test vectors from the reference implementation, with no input:
 
-`programs/hello/hello.terse` at reset (serialization 18,811 bytes), after 1 frame and after 30 frames:
+`programs/hello/hello.terse` at reset (serialization 18,812 bytes), after 1 frame and after 30 frames:
 
 ```
-0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be
-d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe
-066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83
+2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18
+8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42
+cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d
 ```
 
 "No input" means no events, Unix time 0, no random bytes (so `random` gives zeros), controllers disconnected and no completions. That is what `terse run` supplies, apart from its `--events` script.
@@ -136,7 +136,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,091 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:1a699ef2f4a468fd6d66f6c086bf2995fd5e9c1eef17102b2aa43420c07d5930).
 
 ## The conformance image
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:4eb28bce02b0c7069880f49585c401962636db9c0c3644042daef56d65fa1e11) for frames and the budget, and [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
+See [the machine](terse:42cf8e5bd485e11d04aa9b0e641df60d9edc6c40484f3b65782e45fbd9735bd7) for frames and the budget, and [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).

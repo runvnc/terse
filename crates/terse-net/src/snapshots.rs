@@ -1,6 +1,6 @@
-//! Snapshots (SPEC 12.7): the machines a shell asked to keep, private to
+//! Snapshots (SPEC §machines.snapshots): the machines a shell asked to keep, private to
 //! this host, in slots 0-15 per shell (by the shell's owner, as named
-//! records are, SPEC 9.6). They are never sent anywhere.
+//! records are, SPEC §content.records). They are never sent anywhere.
 //!
 //! Layout under the snapshots directory (`<data>/snapshots`): the owner's
 //! directory as for records (`program/<publisher hex>/<name hex>` or
@@ -93,7 +93,7 @@ impl Snapshots {
 }
 
 /// Gives the shell of `system` its snapshot slots as they are in the data
-/// directory `data` (SPEC 12.7); nothing for a single machine.
+/// directory `data` (SPEC §machines.snapshots); nothing for a single machine.
 pub fn load_table(system: &mut terse_core::System, data: &Path) {
     if system.is_system() {
         let owner = Owner::of(system.shell());

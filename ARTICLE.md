@@ -5,7 +5,7 @@ relays, feeds, entries, profiles and names, search. (b) Terse articles,
 this document: the article format and what a reader must show for it.
 (a) and (b) are **the core**: a native reader that implements them, with
 no virtual machine, is a complete, conforming Terse client. (c) The Terse
-machine, `SPEC.md` and `STATE.md`: an optional layer that reuses the core.
+machine, `SPEC.md` (with its device documents, `spec/`) and `STATE.md`: an optional layer that reuses the core.
 Nothing in this document depends on (c); the notes for machine hosts at
 the end (section 11) can be skipped by anyone writing a reader.
 
@@ -601,20 +601,18 @@ This section concerns only hosts that run the Terse machine (`SPEC.md`).
 A reader implementer can skip it.
 
 - The built-in reader, `programs/reader`, is a machine program that
-  shows articles by this document through the page device (`SPEC.md`
-  section 11); it is the **reference reader** that the sections above
+  shows articles by this document through the page device (`spec/page.md` §page); it is the **reference reader** that the sections above
   cite. Its choices: a 512-unit column, body text 15 units (sans),
   headings 21 and subheadings 17 (bold), preformatted text, fences and
   code spans in monospace, list items indented 10 units behind a bullet,
   figures centred at one screen unit per unit (natural size: the column
   has the recommended width, section 6.2) and scaled down to the column
   if wider, tables laid out by the page
-  device (`SPEC.md` section 11.4: columns narrowed to no less than 48
+  device (`spec/page.md` §page.layout: columns narrowed to no less than 48
   units, then cut off at the column's edge), at most 48 KiB of an
   article and 1,024 cells of a table, and the page device's figure caps
-  (`SPEC.md` section 11.3).
-- One unit of section 6.2 is one screen unit of the machine (`SPEC.md`
-  section 7), and the reader's `fg` is its body text colour.
+  (`spec/page.md` §page.document).
+- One unit of section 6.2 is one screen unit of the machine (`SPEC.md` §screen), and the reader's `fg` is its body text colour.
 - Following a link to a program image or a document, or a program link,
-  the reader asks the shell to open it (`SPEC.md` section 4, `open`);
+  the reader asks the shell to open it (`SPEC.md` §system, `open`);
   without a shell it says that this needs the shell.

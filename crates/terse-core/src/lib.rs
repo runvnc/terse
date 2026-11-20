@@ -20,6 +20,7 @@ pub mod snapshot;
 pub mod sound;
 pub mod system;
 pub mod terminal;
+pub mod text;
 pub mod vector;
 pub mod vector3;
 pub mod wide;

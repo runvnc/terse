@@ -1,4 +1,4 @@
-//! winit physical keys to USB HID keyboard usage IDs (SPEC 5), and the
+//! winit physical keys to USB HID keyboard usage IDs (SPEC §events), and the
 //! window input the hosts share: the home key, paste, the consent
 //! prompt's answer.
 
@@ -93,7 +93,7 @@ pub fn modifier_bits(m: ModifiersState) -> u8 {
 /// The most pasted characters held for delivery.
 pub const MAX_PASTE: usize = 1 << 20;
 
-/// The host's home key (SPEC 12.4) when it runs a shell.
+/// The host's home key (SPEC §machines.input) when it runs a shell.
 pub const HOME_KEY: KeyCode = KeyCode::F12;
 
 /// The characters of pasted text the program receives: newlines (a CR LF

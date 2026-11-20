@@ -36,7 +36,7 @@ Runs the devices as driver processes: by default terse-dev-terminal (slot 2), te
 (slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
 --consent, --profile), terse-dev-sound (6) and terse-dev-page (7), from this program's directory; --driver replaces the
 driver of the slots it names (the command line is split at spaces). --shell runs the image (default:
-the shell built into terse) as the shell (SPEC 12): one driver process per device serves every
+the shell built into terse) as the shell (SPEC §machines): one driver process per device serves every
 machine. --transport socket offers drivers only the socket (default: shared memory is offered and
 the Rust drivers take it). --no-batch sends every call at once. --in-process runs a single machine
 with the devices compiled in, for comparison.
@@ -55,8 +55,8 @@ on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; driver
 that does not answer in time is given up as hung; --start-timeout (default 10 s): for it to start.
 A driver that fails ends the run (exit status 3). --record writes the bus's recording of a single
 machine; --replay runs one again, checking every frame's hash. --audio-out writes what the sound
-devices played (SPEC 18.7: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
-is ever played. --without withholds an optional device (SPEC 2: the machine runs without it); a
+devices played (SPEC §sound.presentation: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
+is ever played. --without withholds an optional device (SPEC §image: the machine runs without it); a
 device only optional devices use whose driver is not installed is left out the same way, while a
 required device without a driver stops the run.";
 
@@ -97,7 +97,7 @@ struct Opts {
     replay: Option<PathBuf>,
     audio_out: Option<PathBuf>,
     content: ContentOptions,
-    /// Optional devices withheld (SPEC 2).
+    /// Optional devices withheld (SPEC §image).
     without: Vec<u8>,
 }
 
@@ -299,7 +299,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         None => (None, None),
     };
     if opts.in_process {
-        // SPEC 2: every optional device compiled in, less those withheld.
+        // SPEC §image: every optional device compiled in, less those withheld.
         let grants = image.grants(|d| !opts.without.contains(&d.slot));
         let service = if image.device_set(&grants).has(4) { Some(opts.content.start()?) } else { None };
         let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
@@ -308,7 +308,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         return in_process(&opts, &mut core, &script, startup);
     }
 
-    // SPEC 12.2: the built-in programs, in the store for the shell.
+    // SPEC §machines.calls: the built-in programs, in the store for the shell.
     let builtins = if opts.shell {
         let store = BlobStore::open(store_dir.as_ref().ok_or("no store directory (use --store)")?, None).map_err(|e| e.to_string())?;
         let extra = opts.builtins.iter().map(|p| read(Path::new(p))).collect::<Result<Vec<_>, _>>()?;
@@ -316,7 +316,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     } else {
         None
     };
-    // The built-in shell has the identity of a built-in (SPEC 12.2).
+    // The built-in shell has the identity of a built-in (SPEC §machines.calls).
     let identity = (opts.shell && opts.image.is_none()).then(|| host::shell_identity(&image));
     let dir = std::env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("no directory")?.to_path_buf();
     let overrides: Vec<(Vec<u8>, Vec<String>)> = opts.drivers.iter().map(|(s, c)| (s.clone(), terse_bus::bus::split_command(c))).collect();
@@ -418,7 +418,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
                 bs.system.shell_mut().devices_mut().replay = Some(f.drivers.clone());
                 (f.events.clone(), f.controllers())
             }
-            // SPEC 9.5: while a question is asked the keyboard is the host's.
+            // SPEC §content.feeds: while a question is asked the keyboard is the host's.
             None => (bs.input(script.events(frame).to_vec())?, script.controllers(frame)),
         };
         let start = Instant::now();

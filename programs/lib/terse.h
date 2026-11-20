@@ -1,6 +1,6 @@
 /* terse.h: the Terse machine (SPEC.md, profile 1: RV32IMC) for C programs
  * built with clang. Devices are reached with `ecall`: a7 = (slot << 8) |
- * function, arguments in a0-a5, result in a0 (and a1); SPEC 3. */
+ * function, arguments in a0-a5, result in a0 (and a1); SPEC §calls. */
 
 #ifndef TERSE_H
 #define TERSE_H
@@ -8,11 +8,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Memory (SPEC 1.2). */
+/* Memory (SPEC §memory). */
 #define TERSE_ROM_BASE 0x00010000u
 #define TERSE_RAM_BASE 0x00100000u
 
-/* Call numbers (SPEC 3.2). */
+/* Call numbers (SPEC §calls.table). */
 #define CALL_WAIT_FRAME 0x100
 #define CALL_NEXT_EVENT 0x101
 #define CALL_FRAME 0x102
@@ -134,7 +134,7 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
     return a0;
 }
 
-/* Event types (SPEC 5). */
+/* Event types (SPEC §events). */
 #define EV_NONE 0x00
 #define EV_KEY_DOWN 0x01
 #define EV_KEY_UP 0x02
@@ -145,7 +145,7 @@ static inline uint32_t terse_call2(uint32_t n, uint32_t x, uint32_t y, uint32_t 
 #define EV_FEEDS_UPDATED 0x07
 #define EV_PAGE_LAID_OUT 0x08
 #define EV_PAGE_ANCHOR 0x09
-/* For the shell (device 8, SPEC 12): machine a is now in state b; the
+/* For the shell (device 8, SPEC §machines): machine a is now in state b; the
  * host's home key; a pointer press (buttons b) over machine a's picture. */
 #define EV_MACHINE_CHANGED 0x0A
 #define EV_HOME 0x0B
@@ -205,7 +205,7 @@ typedef struct {
  * (and leaves *e alone) if the queue is empty. */
 uint8_t terse_event_pop(terse_event *e);
 
-/* Gives up the rest of this frame's budget (wait_frame, SPEC 4) and
+/* Gives up the rest of this frame's budget (wait_frame, SPEC §system) and
  * returns when the machine runs again. Returns wait_frame's result less
  * the previous call's (the first call: the result itself), at most 255:
  * usually 1, more if the work in between ran out of budget. The result is
@@ -218,7 +218,7 @@ uint8_t terse_wait_frame(void);
 static inline uint32_t terse_frame(void) { return terse_call(CALL_FRAME, 0, 0, 0); }
 static inline uint32_t terse_time(void) { return terse_call(CALL_TIME, 0, 0, 0); }
 static inline void terse_exit(uint32_t code) { terse_call(CALL_EXIT, code, 0, 0); }
-/* Fills buf (in RAM) with the host's random bytes, 256 per call (SPEC 4). */
+/* Fills buf (in RAM) with the host's random bytes, 256 per call (SPEC §system). */
 void terse_random(void *buf, uint32_t len);
 static inline uint8_t terse_random_byte(void)
 {
@@ -227,7 +227,7 @@ static inline uint8_t terse_random_byte(void)
     return b;
 }
 
-/* Asks the shell to open something (SPEC 4): `request` (ROM or RAM) is
+/* Asks the shell to open something (SPEC §system): `request` (ROM or RAM) is
  * OPEN_BLOB and a blob ID (32), or OPEN_PROGRAM, a feed key (32; zero: a
  * built-in), the name's length (1) and the name (1-48). 1 if the request
  * was passed to a shell; 0 if there is none (the machine runs on its own)
@@ -239,7 +239,7 @@ static inline uint32_t terse_open(const void *request) { return terse_call(CALL_
 /* The blob ID the shell gave this machine when it started it, into 32
  * bytes of RAM: 1, or 0 if it has none. */
 static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGUMENT, (uint32_t)id, 0, 0); }
-/* Optional devices (SPEC 2): an image lists a device as optional with
+/* Optional devices (SPEC §image): an image lists a device as optional with
  * `terse pack --optional <slot>:<version>` (build.sh) instead of --device,
  * and runs whether or not the host has it. terse_device gives the version
  * of device `slot` if this machine has it, TERSE_ERR_UNKNOWN if not; the
@@ -247,8 +247,18 @@ static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGU
  * Calls to a device the machine does not have return TERSE_ERR_UNKNOWN. */
 static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVICE, slot, 0, 0); }
 static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
+/* Full text (SPEC §terminal.text): device 10, a capability with no calls.
+ * Every host draws the basic repertoire in the terminal (ASCII, the
+ * Latin-1 Supplement, box drawing and block elements); a machine without
+ * full text shows every other character as a placeholder box (the cells,
+ * widths and cursor are the same either way). A program that prints other
+ * characters lists device 10: `terse pack --device 10:0` if it cannot do
+ * without, `--optional 10:0` if a placeholder will do, and may ask
+ * terse_has_full_text() at the start to choose what it prints. */
+#define DEV_FULL_TEXT 10
+static inline int terse_has_full_text(void) { return terse_has_device(DEV_FULL_TEXT); }
 
-/* Controllers (SPEC 6): the 8-byte state. */
+/* Controllers (SPEC §controllers): the 8-byte state. */
 typedef struct {
     uint8_t connected;
     uint8_t buttons;  /* up, down, left, right, A, B, X, Y from bit 0 */
@@ -274,7 +284,7 @@ static inline void terse_pad_read(uint8_t n, terse_pad *pad) { terse_call(CALL_C
 #define PAD_L3 0x40
 #define PAD_R3 0x80
 
-/* Device 2, terminal (SPEC 8). */
+/* Device 2, terminal (SPEC §terminal). */
 #define TERM_COLS 80
 #define TERM_ROWS 30
 
@@ -286,10 +296,10 @@ static inline void terse_pad_read(uint8_t n, terse_pad *pad) { terse_call(CALL_C
 #define TERM_CURSOR_OFF 0x06
 #define TERM_CONTINUATION 0xFFFF
 
-/* The longest write call (SPEC 8.2). */
+/* The longest write call (SPEC §terminal.calls). */
 #define TERM_WRITE_MAX 4096
 
-/* Put character for each of `len` bytes (SPEC 8.3). A write call takes
+/* Put character for each of `len` bytes (SPEC §terminal.put). A write call takes
  * its whole buffer, at most TERM_WRITE_MAX bytes, whatever the budget (2
  * units a byte); this splits a longer text into such calls. */
 void term_write(const void *p, uint32_t len);
@@ -320,7 +330,7 @@ static inline void term_size(uint8_t *cols, uint8_t *rows)
 /* Sets `count` palette entries (at most 256) from entry `first` (0-255)
  * on, wrapping from 255 to 0, from 3 x count bytes of red, green, blue at
  * `rgb` (ROM or RAM): the count, or TERSE_ERR_BUFFER if `first` or `count`
- * is out of range or the bytes are not wholly in ROM or RAM (SPEC 8.2). */
+ * is out of range or the bytes are not wholly in ROM or RAM (SPEC §terminal.calls). */
 static inline uint32_t term_palette_set(uint32_t first, const void *rgb, uint32_t count)
 {
     return terse_call(CALL_TERM_PALETTE_SET, first, (uint32_t)rgb, count);
@@ -334,12 +344,12 @@ void term_fg(uint8_t fg);
 uint32_t term_put_ascii(uint32_t max, const uint8_t *p);
 /* Writes one code point as UTF-8 (1 to 4 bytes); a surrogate or a value
  * above 10FFFFh is written as FFFDh. The terminal shows FFFDh for a code
- * point above FFFFh too (SPEC 8.3), in one cell. */
+ * point above FFFFh too (SPEC §terminal.put), in one cell. */
 void term_put_cp(uint32_t cp);
 /* Writes `n` cells of `ch` (narrow) with colours fg/bg from (col, row); the
  * cursor does not move. */
 void term_fill(uint8_t col, uint8_t row, uint8_t n, uint16_t ch, uint8_t fg, uint8_t bg);
-/* Cells in the 4-byte format of SPEC 8.1, from cell index `index`. */
+/* Cells in the 4-byte format of SPEC §terminal.cells, from cell index `index`. */
 static inline void term_cells_write(uint32_t index, const void *cells, uint32_t count)
 {
     terse_call(CALL_TERM_CELLS_WRITE, index, (uint32_t)cells, count);
@@ -348,10 +358,10 @@ static inline void term_cells_read(uint32_t index, void *cells, uint32_t count)
 {
     terse_call(CALL_TERM_CELLS_READ, index, (uint32_t)cells, count);
 }
-/* Whether a code point takes two cells (SPEC 8.1, Unicode 16.0 W/F). */
+/* Whether a code point takes two cells (SPEC §terminal.cells, Unicode 16.0 W/F). */
 uint8_t term_is_wide(uint32_t cp);
 
-/* Device 3, 2D vector display (SPEC 10). */
+/* Device 3, 2D vector display (SPEC §vector). */
 #define VEC_DONE 0x00
 #define VEC_REJECTED 0x01
 #define VEC_MAX_LIST 16384
@@ -396,7 +406,7 @@ void vec_end(void);
 static inline uint8_t vec_submit(const void *list, uint32_t len) { return terse_call(CALL_VEC_SUBMIT, (uint32_t)list, len, 0); }
 #define vec_submit_list(buf) vec_submit((buf), vec_length(buf))
 static inline void vec_clear(void) { terse_call(CALL_VEC_CLEAR, 0, 0, 0); }
-/* Display style (SPEC 10.6), persistence 0-255, and fill (SPEC 10.2):
+/* Display style (SPEC §vector.phosphor), persistence 0-255, and fill (SPEC §vector.calls):
  * each returns VEC_DONE, or VEC_REJECTED for a value out of range. */
 #define VEC_STYLE_CLEAN 0
 #define VEC_STYLE_PHOSPHOR 1
@@ -406,7 +416,7 @@ static inline uint8_t vec_style(uint32_t s) { return terse_call(CALL_VEC_STYLE, 
 static inline uint8_t vec_persistence(uint32_t p) { return terse_call(CALL_VEC_PERSISTENCE, p, 0, 0); }
 static inline uint8_t vec_fill(uint32_t f) { return terse_call(CALL_VEC_FILL, f, 0, 0); }
 
-/* Device 9, 3D vector display (SPEC 13). Coordinates are sixteenths of a
+/* Device 9, 3D vector display (SPEC §vector3d). Coordinates are sixteenths of a
  * screen unit: x right, y down, z away from the viewer, 0 at the glass.
  * Transforms apply to later coordinates, the last given first. A rotation
  * angle is in 1/65,536 of a turn: a positive angle about x turns y towards
@@ -484,7 +494,7 @@ static inline void v3_clear(void) { terse_call(CALL_V3_CLEAR, 0, 0, 0); }
 static inline uint8_t v3_style(uint32_t s) { return terse_call(CALL_V3_STYLE, s, 0, 0); }
 static inline uint8_t v3_persistence(uint32_t p) { return terse_call(CALL_V3_PERSISTENCE, p, 0, 0); }
 
-/* Device 4, content (SPEC 9). */
+/* Device 4, content (SPEC §content). */
 #define CONTENT_GET 0x01
 #define CONTENT_PUT 0x02
 #define CONTENT_SUBSCRIPTIONS 0x03
@@ -518,7 +528,7 @@ typedef struct {
 
 uint32_t get24(const uint8_t *p);
 
-/* Submits the request (SPEC 9.2): its handle (1-8), 0 if it was rejected
+/* Submits the request (SPEC §content.submit): its handle (1-8), 0 if it was rejected
  * (r->status is STATUS_BAD_REQUEST if it was invalid; unchanged if eight
  * requests are pending or the block is not in RAM), or TERSE_ERR_UNKNOWN
  * if the image does not list the content device. Every content_* and
@@ -533,7 +543,7 @@ uint32_t content_feed(content_req *r, uint8_t op, uint32_t first, uint32_t lengt
 uint32_t content_put(content_req *r, const void *data, uint32_t size);
 /* Subscribes to (CONTENT_SUBSCRIBE) or unsubscribes from
  * (CONTENT_UNSUBSCRIBE) the feed `key` (32 bytes). The host asks the user;
- * STATUS_REFUSED if the answer is no (SPEC 9.5). */
+ * STATUS_REFUSED if the answer is no (SPEC §content.feeds). */
 uint32_t content_follow(content_req *r, uint8_t op, const uint8_t *key);
 /* Subscribes to the feed `key` with the hint list of its address (`len`
  * bytes at `hints`, ROM or RAM, copied at submit; NETWORK 4.9), e.g.
@@ -555,7 +565,7 @@ uint32_t content_publish(content_req *r, const uint8_t *blob, const void *title,
 #define ENTRY_PROGRAM 3
 #define ENTRY_DOCUMENT 4
 uint32_t content_publish_kind(content_req *r, const uint8_t *blob, const void *title, uint32_t len, uint8_t kind);
-/* A document (SPEC 9.7) starts with "TDOC", version 0, the format owner's
+/* A document (SPEC §content.documents) starts with "TDOC", version 0, the format owner's
  * feed key (32; zero: a built-in program's format), the format name's
  * length (1) and the name (1-48), then the data. */
 #define TDOC_HEAD 38
@@ -568,7 +578,7 @@ uint32_t content_identity(content_req *r);
  * key). */
 uint32_t content_identity_hints(content_req *r, void *buf, uint32_t len);
 
-/* Content: names, search, profile and nicknames (SPEC 9.5). */
+/* Content: names, search, profile and nicknames (SPEC §content.feeds). */
 #define CONTENT_NAMES 0x09
 #define CONTENT_FIND 0x0A
 #define CONTENT_SET_PROFILE 0x0B
@@ -609,7 +619,7 @@ uint32_t content_set_profile(content_req *r, const void *name, uint32_t len, uin
  * `name`, or removes it if `len` is 0. The host asks the user. */
 uint32_t content_set_nickname(content_req *r, const uint8_t *key, const void *name, uint32_t len);
 
-/* Content: programs and named records (SPEC 9.5, 9.6). */
+/* Content: programs and named records (SPEC §content.feeds, §content.records). */
 #define CONTENT_PROGRAMS 0x0D
 #define CONTENT_SAVE 0x0E
 #define CONTENT_LOAD 0x0F
@@ -622,7 +632,7 @@ uint32_t content_set_nickname(content_req *r, const uint8_t *key, const void *na
  * without its signature: the name is the title). By feed key, then name. */
 uint32_t content_programs(content_req *r, uint32_t first, uint32_t length, void *buf);
 /* Named records: data this program keeps on this machine, under its
- * identity (SPEC 9.6). `name` is 1 to 32 bytes up to its 0 (no control
+ * identity (SPEC §content.records). `name` is 1 to 32 bytes up to its 0 (no control
  * characters); a longer one is not cut: the call returns 0 and r->status
  * is STATUS_BAD_REQUEST, as for any invalid name. A save copies `size` bytes (0 to 65,536, ROM or RAM) at
  * submit and replaces the record; STATUS_NO_ROOM if the program would keep
@@ -637,7 +647,7 @@ uint32_t record_delete(content_req *r, const char *name);
  * bytes each, the name (zero padded to 32) and the size (4), by name. */
 uint32_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf);
 
-/* Device 6, sound (SPEC 18): 16 voices of a wavetable synthesizer,
+/* Device 6, sound (SPEC §sound): 16 voices of a wavetable synthesizer,
  * 48,000 Hz stereo, 800 sample pairs a frame. A program sets the voices
  * with a command list; the commands take effect from the next samples the
  * device renders (at the end of the frame). */
@@ -668,7 +678,7 @@ uint32_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf)
 #define SND_OP_RING 0x0D
 #define SND_OP_MIX 0x0E
 
-/* The phase increment of a wavetable or noise voice for `hz` (SPEC 18.4):
+/* The phase increment of a wavetable or noise voice for `hz` (SPEC §sound.voices):
  * round(hz * 2^32 / 48,000). A constant expression for a constant `hz`
  * (folded by the compiler: no floating point at run time). */
 #define SND_HZ(hz) ((uint32_t)((double)(hz) * 89478.48533333333 + 0.5))
@@ -720,7 +730,7 @@ static inline uint32_t snd_load_sample(uint32_t slot, const int8_t *data, uint32
 /* The number of voices; *caps gets the capabilities (SND_CAP_SAMPLES). */
 static inline uint32_t snd_info(uint32_t *caps) { return terse_call2(CALL_SND_INFO, 0, 0, caps); }
 
-/* Device 7, page (SPEC 11): typeset text in a rectangle. */
+/* Device 7, page (SPEC §page): typeset text in a rectangle. */
 #define PAGE_DONE 0x00
 #define PAGE_REJECTED 0x01
 #define PAGE_MAX_DOC 65536u
@@ -764,7 +774,7 @@ static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
     terse_call(CALL_PAGE_BACKGROUND, r | (uint32_t)g << 8 | (uint32_t)b << 16 | (uint32_t)a << 24, 0, 0);
 }
 
-/* Document opcodes (SPEC 11.3). */
+/* Document opcodes (SPEC §page.document). */
 #define DOC_OP_END 0x00
 #define DOC_OP_TEXT 0x01
 #define DOC_OP_FONT 0x02
@@ -821,7 +831,7 @@ void doc_end(void);
 #define DOC_FIGURE_HEAD 8
 void doc_figure(uint16_t width, uint16_t height, uint8_t align, const void *path, uint16_t n);
 
-/* Path commands of a figure (SPEC 11.3): coordinates in sixteenths of a
+/* Path commands of a figure (SPEC §page.document): coordinates in sixteenths of a
  * screen unit from the figure's top left. */
 #define PATH_FILL 0x01
 #define PATH_STROKE 0x02
@@ -850,7 +860,7 @@ void path_close(void);
  * alternating in `xy`. */
 void path_points(uint8_t op, uint32_t n, const int16_t *xy);
 
-/* Device 8, machines (SPEC 12): only the shell has it. Handles 1-8. */
+/* Device 8, machines (SPEC §machines): only the shell has it. Handles 1-8. */
 #define MACH_MAX 8
 #define MACH_NONE 0
 #define MACH_LOADING 1
@@ -913,7 +923,7 @@ static inline uint32_t mach_request(uint32_t h, uint8_t *out) { return terse_cal
  * 1, or 0 if h is not loading. */
 static inline uint32_t mach_argument(uint32_t h, const uint8_t *id) { return terse_call(CALL_MACH_ARGUMENT, h, (uint32_t)id, 0); }
 
-/* Snapshots (SPEC 12.7): slots 0-15 of the host's snapshots for this
+/* Snapshots (SPEC §machines.snapshots): slots 0-15 of the host's snapshots for this
  * shell. mach_snapshot keeps machine h (running or paused) in a slot at
  * the end of this frame; EV_SNAPSHOT_DONE tells how it went. 1 if
  * accepted. */
@@ -940,7 +950,7 @@ static inline uint32_t mach_snapshot_info(uint32_t slot, mach_snapshot_record *r
 }
 static inline uint32_t mach_snapshot_delete(uint32_t slot) { return terse_call(CALL_MACH_SNAPSHOT_DELETE, slot, 0, 0); }
 
-/* Facing a panel (SPEC 12.2): over `frames` (0-600) the host moves its
+/* Facing a panel (SPEC §machines.calls): over `frames` (0-600) the host moves its
  * view of the whole 3D scene until machine h's panel (a Screen in the
  * list submitted now) lies flat in the rectangle, shown there as by
  * mach_place; 1, or 0 if h has no panel or the arguments are bad.
@@ -951,7 +961,7 @@ static inline uint32_t mach_face(uint32_t h, uint32_t frames, uint32_t x, uint32
 }
 static inline uint32_t mach_unface(uint32_t frames) { return terse_call(CALL_MACH_UNFACE, frames, 0, 0); }
 
-/* --- Page tables (SPEC 11.3, 11.4) -------------------------------------
+/* --- Page tables (SPEC §page.document, §page.layout) -------------------------------------
  * A table is a block of cells laid out by the host: doc_table starts it
  * (1-8 columns, DOC_TABLE_HEADER makes the first row a header, `align`
  * gives each column's DOC_START, DOC_CENTRE or DOC_END, or 0 for all

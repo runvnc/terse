@@ -6,7 +6,7 @@ controllers, stops the machine, lets a machine that a shell started
 ask the shell to open something and read the argument the shell gave it,
 and tells a program which devices it has.
 It is slot 1, version 0. Every machine has it: an image need not list it
-(listing (1, 0) is allowed too), and it cannot be absent.
+(listing (1, 0) is allowed too), and it cannot be absent. The exact rules are in SPEC.md, the core machine (§system, §events, §controllers).
 
 ## Reset state
 

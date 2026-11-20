@@ -1,4 +1,4 @@
-/* fetch.c - Terse content device demo (SPEC 9).
+/* fetch.c - Terse content device demo (SPEC §content).
  *
  * Gets the blob whose ID build.sh writes to message_id.h (the BLAKE3-256 of
  * message.txt), shows its status, size and text, then puts a 256-byte

@@ -10,7 +10,7 @@ cargo run --release -p terse-host -- --demo
 
 builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (`~/.config/terse/identity.key`), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, `cargo run --release -p terse-host` with no image named opens the shell.
 
-Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:0fff72a7d6367dec873b06db4277523cd5bf951f7b72e177e12b234c2385c762).
+Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:118f755141d03ebc32d3e63788969d4581a9b6929f09a92ad11081dd4bc85508).
 
 The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective).
 
@@ -45,7 +45,7 @@ holo shows the 3D vector display: 1 to 6 (or Space) choose a scene, the arrows t
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:0f546679d57fa528ae3281d039e146422dd4e8bd43fa67abaa2299abd201ed22).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:5fd861c27b0d400dbfdf31f91e0ce401d753ba601a50ed7b9e0dc9c531717f7f).
 
 ## Open requests
 
@@ -114,7 +114,7 @@ Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and wheth
 
 ## Reading an article
 
-The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:b699b04eb25655ff1a5754a6368953434f712e272d783a0d933dbc3715393121) describes. The status row shows how far you have scrolled, from 0% to 100%.
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:47bd766c9350c98d9c4e47dbec0ef64ad3e7a1ce9b048070aeb7dfe6406b7d8a) describes. The status row shows how far you have scrolled, from 0% to 100%.
 
 | Key | In an article |
 |---|---|
@@ -132,4 +132,4 @@ The reader also gets the first 8 article links of an article as you open it, so 
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:b699b04eb25655ff1a5754a6368953434f712e272d783a0d933dbc3715393121). How the shell's devices work: [The machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf). Feeds and consent from a program's side: [Feeds](terse:24e3bc68253cd45be8ef03eda35f3de6a0c5f8a241d11c9db4f2a9d6f01ec1b1).
+How articles are written: [Writing an article](terse:47bd766c9350c98d9c4e47dbec0ef64ad3e7a1ce9b048070aeb7dfe6406b7d8a). How the shell's devices work: [The machines device](terse:1a699ef2f4a468fd6d66f6c086bf2995fd5e9c1eef17102b2aa43420c07d5930). Feeds and consent from a program's side: [Feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa).

@@ -15,7 +15,7 @@ pub const KIND_PROFILE: u8 = 2;
 /// A program (NETWORK 4.2): the title is the program's name (a display
 /// name) and the blob a Terse image.
 pub const KIND_PROGRAM: u8 = 3;
-/// A document (NETWORK 4.2, SPEC 9.7): the title is the document's name
+/// A document (NETWORK 4.2, SPEC §content.documents): the title is the document's name
 /// and the blob starts with a document header.
 pub const KIND_DOCUMENT: u8 = 4;
 /// Reserved kinds (NETWORK 4.2): an entry of either is invalid. Every
@@ -28,7 +28,7 @@ pub const KIND_RESERVED_255: u8 = 255;
 pub fn known_kind(kind: u8) -> bool {
     matches!(kind, KIND_ARTICLE | KIND_PROFILE | KIND_PROGRAM | KIND_DOCUMENT)
 }
-/// The largest Terse image (SPEC 2): a header, 16 device pairs and 128 KiB
+/// The largest Terse image (SPEC §image): a header, 16 device pairs and 128 KiB
 /// of ROM. Programs are downloaded automatically up to this size.
 pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 131_072;
 pub const MAX_TITLE: usize = 120;

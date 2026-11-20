@@ -25,7 +25,7 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # The window's input (keys, paste), for hosts with windows of their own.
 input = ["dep:winit", "dep:arboard"]
 window = ["input", "dep:softbuffer", "dep:gilrs"]
-# Plays the sound device (SPEC 18) in the window (cpal: ALSA, which
+# Plays the sound device (SPEC §sound) in the window (cpal: ALSA, which
 # PipeWire serves). Off by default, so no test or headless run ever opens
 # an audio device; build with `--features audio` to hear it.
 audio = ["window", "dep:cpal"]

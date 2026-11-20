@@ -1,6 +1,6 @@
 /* sketch: draw with the pointer on the 2D vector display (device 3) and keep
- * the drawing as a named record (SPEC 9.6) or publish it as a document
- * (SPEC 9.7). The terminal's bottom row holds the status and the keys;
+ * the drawing as a named record (SPEC §content.records) or publish it as a document
+ * (SPEC §content.documents). The terminal's bottom row holds the status and the keys;
  * built with clang (see build.sh).
  *
  * Drawing: the primary button pressed starts a stroke, moving with it held
@@ -10,14 +10,14 @@
  * Keys: 1-6 choose the colour (white, red, yellow, green, blue, magenta;
  * the disc at the bottom right shows it), U undoes the last stroke, C
  * clears every stroke, F switches between the clean and the phosphor
- * display style (SPEC 10.6), S saves the drawing as the record "drawing",
+ * display style (SPEC §vector.phosphor), S saves the drawing as the record "drawing",
  * P publishes it as a document entry (the host asks the user).
  *
  * Drawing data: a list of strokes and nothing else, at most 8,192 bytes
  * (an empty drawing is 0 bytes). Each stroke is its colour (1 byte, 0-5:
  * the keys 1-6 less one), its number of points n (2 bytes, little-endian,
  * 1 or more), then n points, each x (2 bytes, little-endian, 0-639) and y
- * (2 bytes, little-endian, 0-479) in screen units (SPEC 7). A stroke is
+ * (2 bytes, little-endian, 0-479) in screen units (SPEC §screen). A stroke is
  * drawn as a move to its first point and a line to each of its points in
  * turn (so a stroke of one point is a dot), 2 screen units wide. Data that
  * breaks any of these rules is not a drawing. The display list of a stroke
@@ -41,14 +41,14 @@
  * machine, kept as the record "published" (4 bytes, little-endian; missing
  * means 0) and saved again after each publish that succeeds.
  *
- * Started with an argument (a blob ID, SPEC 4), sketch gets that blob and,
+ * Started with an argument (a blob ID, SPEC §system), sketch gets that blob and,
  * if it is a sketch document, shows its drawing read-only instead of the
  * record "drawing": U, C, S and P do nothing ("Draw to edit a copy"). The
  * first press of the primary button makes it an ordinary drawing, a copy
  * that S saves as "drawing" like any other. If the blob cannot be got or is
  * not a sketch document, sketch says so and loads the record as usual.
  *
- * Content (device 4) is optional (SPEC 2; build.sh packs it with
+ * Content (device 4) is optional (SPEC §image; build.sh packs it with
  * --optional): on a host without it, such as one of the program profile
  * (devices 1, 2 and 3), sketch says "Drawings are not kept", loads
  * nothing, ignores an argument, and S and P only say that they cannot

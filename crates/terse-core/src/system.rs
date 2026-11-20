@@ -1,16 +1,16 @@
-//! Device 1, System (SPEC 5, 6): events, the frame counter, the clock,
+//! Device 1, System (SPEC §events, §controllers): events, the frame counter, the clock,
 //! random bytes and controllers.
 
 use std::collections::VecDeque;
 
 pub const QUEUE_CAPACITY: usize = 64;
-/// Screen size in screen units (SPEC 7).
+/// Screen size in screen units (SPEC §screen).
 pub const SCREEN_WIDTH: u16 = 640;
 pub const SCREEN_HEIGHT: u16 = 480;
-/// Number of game controllers (SPEC 6).
+/// Number of game controllers (SPEC §controllers).
 pub const CONTROLLERS: usize = 4;
 
-/// One input event (SPEC 5): a type byte and three parameter bytes.
+/// One input event (SPEC §events): a type byte and three parameter bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Event {
     pub kind: u8,
@@ -64,7 +64,7 @@ impl Event {
         Event { kind: Self::TEXT, a: v as u8, b: (v >> 8) as u8, c: (v >> 16) as u8 }
     }
 
-    /// A pointer position in screen units (SPEC 5, 7), clamped to 0-639 and
+    /// A pointer position in screen units (SPEC §events, §screen), clamped to 0-639 and
     /// 0-479, and the button bits (`buttons::*`).
     pub fn pointer(x: u16, y: u16, buttons: u8) -> Self {
         let (x, y) = (x.min(SCREEN_WIDTH - 1), y.min(SCREEN_HEIGHT - 1));
@@ -84,19 +84,19 @@ impl Event {
         Event { kind: Self::WHEEL, a: vertical as u8, b: horizontal as u8, c: 0 }
     }
 
-    /// The host stored new feed entries since the previous frame (SPEC 5, 9.5).
+    /// The host stored new feed entries since the previous frame (SPEC §content.events, §content.feeds).
     pub fn feeds_updated() -> Self {
         Event { kind: Self::FEEDS_UPDATED, a: 0, b: 0, c: 0 }
     }
 
-    /// The page's height in screen units (SPEC 11.5), at most 24 bits.
+    /// The page's height in screen units (SPEC §page.events), at most 24 bits.
     pub fn page_laid_out(height: u32) -> Self {
         let h = height.min(0xFF_FFFF);
         Event { kind: Self::PAGE_LAID_OUT, a: h as u8, b: (h >> 8) as u8, c: (h >> 16) as u8 }
     }
 
     /// A pointer button was pressed over text or a figure with anchor `id`
-    /// (SPEC 11.5): the buttons (`buttons::*`) in bits 3-5 of `c`, as in a
+    /// (SPEC §page.events): the buttons (`buttons::*`) in bits 3-5 of `c`, as in a
     /// pointer event; the other bits zero.
     pub fn page_anchor(id: u16, buttons: u8) -> Self {
         Event { kind: Self::PAGE_ANCHOR, a: id as u8, b: (id >> 8) as u8, c: (buttons & 0x07) << 3 }
@@ -107,7 +107,7 @@ impl Event {
         self.c >> 3 & 0x07
     }
 
-    /// The answer to a `locate` of anchor `id` (SPEC 11.5), as the pair of
+    /// The answer to a `locate` of anchor `id` (SPEC §page.events), as the pair of
     /// events that carries it: the anchor and the line's height (at most
     /// 255), then its y (at most 24 bits). `None`: the document has no such
     /// anchor (height 0, y FFFFFFh).
@@ -119,39 +119,39 @@ impl Event {
         ]
     }
 
-    /// Machine `handle` is now in `state` (SPEC 12.4), for the shell.
+    /// Machine `handle` is now in `state` (SPEC §machines.input), for the shell.
     pub fn machine_changed(handle: u8, state: u8) -> Self {
         Event { kind: Self::MACHINE_CHANGED, a: handle, b: state, c: 0 }
     }
 
-    /// The host's home key was pressed (SPEC 12.4). Also the host's input
+    /// The host's home key was pressed (SPEC §machines.input). Also the host's input
     /// to [`crate::System`] for that key.
     pub fn home() -> Self {
         Event { kind: Self::HOME, a: 0, b: 0, c: 0 }
     }
 
-    /// A pointer button was pressed over machine `handle`'s picture (SPEC 12.4).
+    /// A pointer button was pressed over machine `handle`'s picture (SPEC §machines.input).
     pub fn machine_pressed(handle: u8, buttons: u8) -> Self {
         Event { kind: Self::MACHINE_PRESSED, a: handle, b: buttons & 0x07, c: 0 }
     }
 
-    /// Machine `handle` asked the shell to open something (SPEC 12.4).
+    /// Machine `handle` asked the shell to open something (SPEC §machines.input).
     pub fn open_requested(handle: u8) -> Self {
         Event { kind: Self::OPEN_REQUESTED, a: handle, b: 0, c: 0 }
     }
 
-    /// The snapshot for `slot` was stored (status 1) or not (3) (SPEC 12.4).
+    /// The snapshot for `slot` was stored (status 1) or not (3) (SPEC §machines.input).
     pub fn snapshot_done(slot: u8, status: u8) -> Self {
         Event { kind: Self::SNAPSHOT_DONE, a: slot, b: status, c: 0 }
     }
 
-    /// A content request finished (SPEC 9.2).
+    /// A content request finished (SPEC §content.submit).
     pub fn content_done(handle: u8, status: u8) -> Self {
         Event { kind: Self::CONTENT_DONE, a: handle, b: status, c: 0 }
     }
 }
 
-/// One game controller's state for a frame (SPEC 6).
+/// One game controller's state for a frame (SPEC §controllers).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Controller {
     pub connected: bool,
@@ -163,7 +163,7 @@ pub struct Controller {
     pub right: (i8, i8),
 }
 
-/// Controller button bits for `Controller::buttons` (SPEC 6, bytes 1 and 2).
+/// Controller button bits for `Controller::buttons` (SPEC §controllers, bytes 1 and 2).
 pub mod pad {
     pub const UP: u16 = 1 << 0;
     pub const DOWN: u16 = 1 << 1;
@@ -201,7 +201,7 @@ pub struct System {
     time: u32,
     random: Vec<u8>,
     random_used: usize,
-    /// Controller bytes latched for this frame (SPEC 6).
+    /// Controller bytes latched for this frame (SPEC §controllers).
     controllers: [[u8; 8]; CONTROLLERS],
 }
 
@@ -234,7 +234,7 @@ impl System {
     }
 
     /// Latches the clock, this frame's random bytes and the controllers
-    /// (SPEC 1.4 step 1).
+    /// (SPEC §frames step 1).
     pub fn latch(&mut self, unix_time: u32, random: &[u8], controllers: &[Controller; CONTROLLERS]) {
         self.controllers = controllers.map(|c| c.bytes());
         self.time = unix_time;
@@ -258,7 +258,7 @@ impl System {
         self.random_used.min(self.random.len())
     }
 
-    /// Controller `n`'s eight bytes for this frame (SPEC 6); zeros for a
+    /// Controller `n`'s eight bytes for this frame (SPEC §controllers); zeros for a
     /// controller that is not connected or does not exist.
     pub fn controller(&self, n: u32) -> [u8; 8] {
         self.controllers.get(n as usize).copied().unwrap_or([0; 8])
@@ -385,7 +385,7 @@ mod tests {
         }
     }
 
-    /// SPEC 5, 11.5: a page anchor event carries the buttons in bits 3-5 of
+    /// SPEC §events, §page.events: a page anchor event carries the buttons in bits 3-5 of
     /// `c`, the same bits as a pointer event; bits 0-2 and 6-7 are zero
     /// (and a pointer event's bits 6-7 are zero too).
     #[test]

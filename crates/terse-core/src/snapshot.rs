@@ -1,4 +1,4 @@
-//! Snapshots (STATE.md 4, SPEC 12.7): a machine's state serialization and
+//! Snapshots (STATE.md 4, SPEC §machines.snapshots): a machine's state serialization and
 //! what is needed to recreate it, and restoring a machine from them.
 //!
 //! Restoring reads the `terse-state-1` serialization back
@@ -11,9 +11,9 @@ use std::fmt;
 use crate::machine::{Machine, STATE_DOMAIN};
 use crate::machines::{IDENTITY_BYTES, MAX_PROGRAM_NAME, ProgramId};
 
-/// Snapshot slots a shell has (SPEC 12.2 `snapshot`): 0 to 15.
+/// Snapshot slots a shell has (SPEC §machines.calls `snapshot`): 0 to 15.
 pub const SLOTS: usize = 16;
-/// The record `snapshot_info` writes (SPEC 12.2).
+/// The record `snapshot_info` writes (SPEC §machines.calls).
 pub const INFO_BYTES: usize = 1 + 32 + IDENTITY_BYTES + 4 + 4;
 /// A snapshot file starts with these bytes (STATE.md 4).
 pub const MAGIC: &[u8; 4] = b"TSNP";
@@ -42,7 +42,7 @@ pub enum RestoreError {
     /// It is the state of another image.
     WrongImage,
     /// The machine had an optional device (STATE.md 1.4) this host does
-    /// not provide (SPEC 12.2 `restore`, reason 3); a message for people.
+    /// not provide (SPEC §machines.calls `restore`, reason 3); a message for people.
     NeedsDevice(String),
 }
 
@@ -147,7 +147,7 @@ pub fn identity_from_record(r: &[u8; IDENTITY_BYTES]) -> Result<Option<ProgramId
     Ok(Some(ProgramId { publisher: r[..32].try_into().unwrap(), name: r[33..33 + n].to_vec() }))
 }
 
-/// What `snapshot_info` tells of a snapshot (SPEC 12.2).
+/// What `snapshot_info` tells of a snapshot (SPEC §machines.calls).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotInfo {
     pub image: [u8; 32],

@@ -1,4 +1,4 @@
-/* conform.c: the Terse conformance image (SPEC 15), RV32IMC.
+/* conform.c: the Terse conformance image (SPEC §conformance), RV32IMC.
  *
  * Run with conform.events (README, "Conformance image"). Each section checks
  * what the program itself can observe and records one PASS or FAIL line; a
@@ -17,7 +17,7 @@
  * the same document at the same width gives the same height, a narrower
  * rectangle a height no smaller, a clear 0, presses over the big anchored
  * text at the top left give its id and buttons. The exact heights and the
- * frames they arrive in (the reference layout, SPEC 11.6, in a headless
+ * frames they arrive in (the reference layout, SPEC §page.reference, in a headless
  * run) are in RAM, so the state hashes cover them.
  *
  * Self-contained: its own crt0.S and conform.ld, no programs/lib, so that
@@ -35,7 +35,7 @@
  * conformance image of the machine's program profile: devices 2 and 3
  * only. The 3D display (device 9), content and the page (devices 4 and 7)
  * are left out and their calls checked as calls to absent devices; a
- * section checks the `device` call (SPEC 4) instead of content, and the
+ * section checks the `device` call (SPEC §system) instead of content, and the
  * page phase is skipped.
  *
  * Frames (the scripted input of conform.events is in the frames named):
@@ -59,7 +59,7 @@
 
 /* ---------------------------------------------------------------- machine */
 
-/* SPEC 1.4, 11 and 14: the provisional values (listed in SPEC 16). The
+/* SPEC §frames and §charges: the provisional values (listed in SPEC §provisional). The
  * budget section predicts its loop counts from these (model_*), so if the
  * machine's constants are retuned, change them here, rebuild (build.sh) and regenerate the expected
  * files (UPDATE_GOLDEN=1 cargo test -p terse-cli --test conform). */
@@ -292,7 +292,7 @@ static void show_all(void)
 {
     colours(7, 0);
     cmd(1);
-    tw("Terse conformance image \xE2\x80\xA2 conform.events");
+    tw("Terse conformance image \xC2\xB7 conform.events");
     for (uint32_t i = 0; i < n_results; i++) {
         tw("\n");
         show_result(&results[i]);
@@ -542,6 +542,8 @@ static void wide_setup(void)
     colours(3, 4);
 }
 
+static void text_checks(void);
+
 static void t_wide(void)
 {
     begin();
@@ -580,7 +582,7 @@ static void t_wide(void)
     CH(79, 7, 'z');
     CH(0, 8, 0x597D);
     CH(1, 8, 0xFFFF);
-    /* Overwriting half of a wide pair (SPEC 8.3 step 3): pairs at 0-1 and
+    /* Overwriting half of a wide pair (SPEC §terminal.put step 3): pairs at 0-1 and
      * 2-3 in colours 1/2, then text in 3/4. */
     wide_setup();
     at(0, 10);
@@ -625,7 +627,8 @@ static void t_wide(void)
     CUR(2, 12);
     tw("\xEF\xBF\xBE"); /* U+FFFE is printed as itself */
     CH(2, 12, 0xFFFE);
-    report("terminal: wide characters");
+    text_checks();
+    report("terminal: wide characters, basic text");
 }
 
 static void t_utf8(void)
@@ -827,6 +830,37 @@ static void t_cells(void)
     report("terminal: cells, palette, buffers");
 }
 
+/* SPEC §terminal.text: what the terminal holds does not depend on which
+ * characters a host draws. This image does not list device 10 (full text),
+ * so it is drawn with the basic repertoire and placeholders everywhere;
+ * the cells and the cursor are as on any host: a character of the basic
+ * repertoire and one outside it take a cell each, a wide one two. */
+static void text_checks(void)
+{
+    cmd(1);
+    tw("A~\xC2\xA0\xC3\xA9\xC3\xBF\xE2\x94\x80\xE2\x96\x9F"); /* A ~ nbsp é ÿ ─ ▟: basic */
+    CH(0, 0, 'A');
+    CH(1, 0, '~');
+    CH(2, 0, 0xA0);
+    CH(3, 0, 0xE9);
+    CH(4, 0, 0xFF);
+    CH(5, 0, 0x2500);
+    CH(6, 0, 0x259F);
+    CUR(7, 0);
+    tw("\xE2\x82\xAC\xE2\x80\xA6\xE2\x96\xA0\xC6\x80"); /* € … ■ ƀ: not basic, narrow */
+    CH(7, 0, 0x20AC);
+    CH(8, 0, 0x2026);
+    CH(9, 0, 0x25A0);
+    CH(10, 0, 0x180);
+    CUR(11, 0);
+    tw("\xE4\xBD\xA0"); /* 你: not basic, wide */
+    CH(11, 0, 0x4F60);
+    CH(12, 0, 0xFFFF);
+    CUR(13, 0);
+    uint32_t a1, r = call2(DEVICE, 10, 0x5678, &a1); /* not listed: absent */
+    ck(r == ERR_UNKNOWN && a1 == 0x5678);
+}
+
 static void t_terminal(void)
 {
     t_print();
@@ -869,7 +903,7 @@ static const uint8_t showcase[] = {
     0x07, R16(64),                      /* a disc in the top left corner, partly off screen */
 };
 
-/* The fill cap (SPEC 10.4), after the showcase's own fills (93,128 square
+/* The fill cap (SPEC §vector.fill-cap), after the showcase's own fills (93,128 square
  * units): three full-screen rectangles fit (1,014,728 in all); the fourth
  * would pass 1,228,800 and is not drawn, nor is the small disc after it,
  * which would fit; the line and the circle after them are drawn. The two
@@ -972,7 +1006,7 @@ static void t_vector(void)
 
 #define XYZ(x, y, z) XY(x, y), (uint8_t)(z), (uint8_t)((z) >> 8)
 
-/* Every opcode (SPEC 13.3): a cube 80 units wide at (570, 250), half in
+/* Every opcode (SPEC §vector3d.list): a cube 80 units wide at (570, 250), half in
  * front of the glass, turned so that three faces show, in a ring on the
  * glass, with a dot at its centre; then an End and a command after it. */
 static const uint8_t cube3d[] = {
@@ -1064,7 +1098,7 @@ static void t_system(void)
     ck(call(RANDOM, A(sbuf), 0, 0) == 0);
     ck(call(RANDOM, A(sbuf), 0xFFFFFFFF, 0) == ERR_BUFFER);
     ck(call(RANDOM, ROM_BASE, 4, 0) == ERR_BUFFER);
-    ck(call(RANDOM, 0, 0, 0) == 0); /* empty: valid at any address (SPEC 3.1) */
+    ck(call(RANDOM, 0, 0, 0) == 0); /* empty: valid at any address (SPEC §calls.convention) */
     ck(call(RANDOM, RAM_END - 8, 16, 0) == ERR_BUFFER);
     ck(call(RANDOM, RAM_END - 4, 4, 0) == 4);
     ck(call(RANDOM, RAM_END, 0, 0) == 0);
@@ -1106,7 +1140,7 @@ static void t_system(void)
 #ifdef PROGRAM
 /* ========================================================== 5b. devices */
 
-/* SPEC 4 `device`: version 0 of devices 1, 2 and 3, which the image
+/* SPEC §system `device`: version 0 of devices 1, 2 and 3, which the image
  * requires; FFFF_FFFFh for every other slot (device 8 is only a shell's)
  * and for a number that is no slot; a1 unchanged. */
 static void t_devices(void)
@@ -1203,7 +1237,7 @@ static void t_pads(void)
 
 /* ============================================================ 3. budget */
 
-/* The model: the rules of SPEC 1.4 applied to the instructions of the timed
+/* The model: the rules of SPEC §frames applied to the instructions of the timed
  * loops in cpu.S. An instruction runs if the budget is above zero before
  * it, and costs its fetch (ROM 1, RAM 4) plus, for an ecall, the call's
  * charge; when the budget is zero or below the frame ends, and the next
@@ -1878,7 +1912,7 @@ static const struct {
 };
 static uint8_t page_ram[sizeof page_doc];
 
-/* A figure (SPEC 11.3) 200 x 100 units, end-aligned and anchored: a filled
+/* A figure (SPEC §page.document) 200 x 100 units, end-aligned and anchored: a filled
  * triangle with a stroke. It takes the place of the empty first paragraph,
  * so it is the first 100 units of any host's layout, at x 360-560 of the
  * wide rectangle; then the text of page_doc. */
@@ -2103,7 +2137,7 @@ int main(void)
     /* The verdict on the title's row (the results fill the others). */
     call(T_SET_CURSOR, 0, 0, 0);
     cmd(4);
-    tw("Terse conformance \xE2\x80\xA2 ");
+    tw("Terse conformance \xC2\xB7 ");
     if (failed) {
         colours(9, 0x100);
         tw("Sections failed: ");

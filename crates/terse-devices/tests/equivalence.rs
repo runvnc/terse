@@ -160,7 +160,7 @@ fn python_vector() -> Option<Vec<String>> {
 fn hello_matches_the_state_vectors() {
     // STATE.md 3: hello after 30 frames with no input.
     let img = image(&programs().join("hello/hello.terse"));
-    let want = "30 066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83";
+    let want = "30 cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d";
     for socket in [false, true] {
         let got = bus_hashes(&img, &Script::default(), 30, 30, &Run { socket, ..Default::default() }, &ContentOptions::default());
         assert_eq!(got, [want], "socket {socket}");
@@ -262,25 +262,30 @@ fn bus_hashes_with(image: &Image, dir: &Path, without: &[u8], script: &Script, f
     Ok(out)
 }
 
-/// SPEC 2: sparks lists content (device 4) as optional. On the bus with
-/// content, with content withheld (`without`), and with no content driver
-/// installed, it gives the hashes of the devices compiled in with the same
-/// grants; without content they are the golden `program-hashes.txt`. An
-/// image that requires content (fetch) still cannot start without its
-/// driver.
+/// SPEC §image: sparks lists content (device 4) and full text (10) as
+/// optional. On the bus with content, with content withheld (`without`),
+/// and with no content driver installed, it gives the hashes of the
+/// devices compiled in with the same grants; without either (the program
+/// profile) they are the golden `program-hashes.txt`. An image that
+/// requires content (fetch) still cannot start without its driver.
 #[test]
 fn optional_devices_on_the_bus() {
     let img = image(&programs().join("sparks/sparks.terse"));
     let s = script(&programs().join("sparks/sessions/keys.txt"));
-    let with = terse_core::Grants(vec![true]);
-    let without = terse_core::Grants(vec![false]);
+    let with = terse_core::Grants(vec![true, true]);
+    let without = terse_core::Grants(vec![false, true]);
+    let program = terse_core::Grants(vec![false, false]);
     let dirs = Dirs::new();
     let want_with = reference_hashes_granted(&img, &with, &s, 900, 30, &dirs.options());
     let dirs = Dirs::new();
     let want_without = reference_hashes_granted(&img, &without, &s, 900, 30, &dirs.options());
     assert_ne!(want_with, want_without);
+    let dirs = Dirs::new();
+    let want_program = reference_hashes_granted(&img, &program, &s, 900, 30, &dirs.options());
     let golden: Vec<String> = std::fs::read_to_string(programs().join("sparks/expected/program-hashes.txt")).unwrap().lines().take(2).map(str::to_string).collect();
-    assert_eq!(golden, [want_without[0].clone(), want_without[29].clone()]);
+    assert_eq!(golden, [want_program[0].clone(), want_program[29].clone()]);
+    let dirs = Dirs::new();
+    assert_eq!(bus_hashes_with(&img, &bin_dir(), &[4, 10], &s, 900, 30, &dirs.options()).unwrap(), want_program, "the program profile");
 
     let dirs = Dirs::new();
     assert_eq!(bus_hashes_with(&img, &bin_dir(), &[], &s, 900, 30, &dirs.options()).unwrap(), want_with, "content granted");
@@ -291,7 +296,7 @@ fn optional_devices_on_the_bus() {
     for name in ["terse-dev-terminal", "terse-dev-vector"] {
         std::os::unix::fs::symlink(bin_dir().join(name), partial.path().join(name)).unwrap();
     }
-    assert_eq!(host::installed_slots(partial.path(), &img, false, &[], &[]), [2, 3, 9]);
+    assert_eq!(host::installed_slots(partial.path(), &img, false, &[], &[]), [2, 3, 9, 10]);
     let dirs = Dirs::new();
     assert_eq!(bus_hashes_with(&img, partial.path(), &[], &s, 900, 30, &dirs.options()).unwrap(), want_without, "no content driver");
     let fetch = image(&programs().join("fetch/fetch.terse"));
@@ -561,7 +566,7 @@ fn driver_failures() {
     let cmd = format!("env TERSE_CRASH=slow TERSE_CRASH_THEN={} {exe}", env!("CARGO_BIN_EXE_terse-dev-terminal"));
     let out = bus_output([&hello, "--frames", "30", "--hash", "--driver", &format!("2={cmd}")]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d");
     // ... and too slow for a one-second limit.
     let out = bus_output([&hello, "--frames", "30", "--driver", &format!("2={cmd}"), "--start-timeout", "1"]);
     assert!(!out.status.success());

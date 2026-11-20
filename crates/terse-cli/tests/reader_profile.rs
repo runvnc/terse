@@ -117,7 +117,7 @@ fn reader_runs_on_the_reading_profile() {
 }
 
 /// The reading profile refuses images that list a device it does not
-/// provide (SPEC 2), and a system (it has no device 8).
+/// provide (SPEC §image), and a system (it has no device 8).
 #[test]
 fn the_reading_profile_refuses_other_devices() {
     let dir = tempfile::tempdir().unwrap();

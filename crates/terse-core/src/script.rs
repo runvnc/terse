@@ -4,7 +4,7 @@
 //! lines and text after `#` are ignored (except in `text`).
 //!
 //! ```text
-//! 10 down <key> [shift] [ctrl] [alt] [meta]   key down (SPEC 5 type 01h)
+//! 10 down <key> [shift] [ctrl] [alt] [meta]   key down (SPEC §events type 01h)
 //! 10 up <key> [modifiers]                     key up (02h)
 //! 10 press <key> [modifiers]                  key down and key up in the same frame
 //! 10 text <rest of the line>                  one text event (03h) per character
@@ -12,8 +12,8 @@
 //! 10 click <x> <y>                            pointer with the primary button, then released
 //! 10 wheel <vertical> [<horizontal>]          wheel steps (06h); positive is down and right
 //! 10 feeds-updated                            feeds updated (07h)
-//! 10 home                                     the host's home key (SPEC 12.4; a system only)
-//! 10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]    controller n (0-3) state (SPEC 6)
+//! 10 home                                     the host's home key (SPEC §machines.input; a system only)
+//! 10 pad <n> <buttons> <lx> <ly> [<rx> <ry>]    controller n (0-3) state (SPEC §controllers)
 //! 10 pad <n> off                               controller n disconnected
 //! ```
 //!
