@@ -22,5 +22,11 @@ terse-relay = { path = "crates/terse-relay" }
 terse-bus = { path = "crates/terse-bus", default-features = false }
 terse-host = { path = "crates/terse-host", default-features = false }
 
+# Debug info is off to keep target/ small: with it on, each test binary was
+# about 270 MB. For a build that needs a debugger, turn it on for that build:
+#   CARGO_PROFILE_DEV_DEBUG=true cargo build ...
+[profile.dev]
+debug = false
+
 [profile.dev.package.terse-core]
 opt-level = 3

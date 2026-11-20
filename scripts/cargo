@@ -1,0 +1,28 @@
+#!/bin/sh
+# Run cargo without starving the rest of the machine, then prune old builds.
+#
+#     scripts/cargo build --release
+#     scripts/cargo test --workspace
+#
+# Same arguments as cargo. It adds three things:
+#   - a cap on how fast the build may write to disk, so a big link cannot
+#     freeze the desktop (nice and ionice do not limit disk writes here)
+#   - low CPU priority and at most 4 parallel jobs
+#   - scripts/sweep-target.py afterwards, which keeps the last 3 builds
+#
+# TERSE_WRITE_CAP changes the cap (default 60M per second).
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+cap=${TERSE_WRITE_CAP:-60M}
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+
+if systemd-run --user --scope --quiet -p "IOWriteBandwidthMax=$root $cap" true 2>/dev/null; then
+    systemd-run --user --scope --quiet -p "IOWriteBandwidthMax=$root $cap" nice -n 15 cargo "$@"
+else
+    echo "scripts/cargo: no write cap available, running without it" >&2
+    nice -n 15 cargo "$@"
+fi
+status=$?
+
+"$root/scripts/sweep-target.py" >&2
+exit $status
