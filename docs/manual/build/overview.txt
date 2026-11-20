@@ -5,6 +5,6 @@ with diagrams where they help, without the bloat of web browsers
 (JavaScript, ads, tracking) and without the centralised control of
 websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
-that run on a small isolated virtual machine.
+that run on tiny isolated virtual machines.
 
 [Continue to technical details...](terse:76e15ad7e7fe7b5e60a46cde1826ed62e2c375c38f0e4fb17daf27af4452f3a7)

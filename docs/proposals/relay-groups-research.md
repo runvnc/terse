@@ -2,7 +2,7 @@
 
 A research report for `docs/proposals/relay-groups.md`; claims were checked only as far as section 5 says.
 
-I read `/home/runvnc/terse/NETWORK.md` and `/home/runvnc/terse/docs/proposals/relay-groups.md`. No repository files were changed. Every non-obvious claim has a URL. "Recent" means published since about November 2025. Section 5 lists what I could not check.
+I read `NETWORK.md` and `docs/proposals/relay-groups.md`. No repository files were changed. Every non-obvious claim has a URL. "Recent" means published since about November 2025. Section 5 lists what I could not check.
 
 ## 1. One-page summary
 

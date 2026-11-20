@@ -8,7 +8,7 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:d73ae98c338498d0917075a319b3590715ad0fa5c5ebaccb763c651b4282197a): what Terse is for, in one
+- [What Terse is](terse:ac0a0d9a4038cb65fbd3d5ebcdcc2e4b93fb2df7260e0fe71644245e1dcc0a68): what Terse is for, in one
   paragraph.
 - [How Terse works](terse:76e15ad7e7fe7b5e60a46cde1826ed62e2c375c38f0e4fb17daf27af4452f3a7): the technical details in
   three pages: sharing articles and programs, the network, the machine
