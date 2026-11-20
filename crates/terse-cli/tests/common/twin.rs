@@ -103,6 +103,12 @@ pub struct Twin {
 impl Twin {
     /// The twin, if this build has the drivers.
     pub fn start(s: Setup) -> Option<Twin> {
+        Twin::start_with_grants(s, None)
+    }
+
+    /// The same with the machine's grants (SPEC 2) given, as the test's
+    /// machine has them; `None`: every optional device a driver gives.
+    pub fn start_with_grants(s: Setup, grants: Option<terse_core::Grants>) -> Option<Twin> {
         let dir = drivers_dir()?;
         let dirs = tempfile::tempdir().unwrap();
         let (store, config, data) = (dirs.path().join("store"), dirs.path().join("config"), dirs.path().join("data"));
@@ -141,7 +147,7 @@ impl Twin {
         let drivers = host::drivers(&dir, &slots, &content.args(), &overrides).unwrap();
         let mut config = BusConfig::new(PathBuf::new());
         config.shm = !socket;
-        let start = Start { config, drivers, image: s.image, shell: s.shell, identity: s.identity, snapshot: None };
+        let start = Start { config, drivers, image: s.image, shell: s.shell, identity: s.identity, snapshot: None, grants, without: Vec::new() };
         let bs = start.start().unwrap_or_else(|e| panic!("the bus twin: {e}"));
         if std::env::var_os("TERSE_TWIN_KEEP").is_some() {
             let kept = dirs.keep();

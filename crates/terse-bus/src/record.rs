@@ -19,10 +19,13 @@ pub struct FrameRecord {
     pub hash: [u8; 32],
 }
 
-pub fn header(image_id: &[u8; 32]) -> Vec<u8> {
+/// The header: the image ID, then the machine's grants (SPEC 2), a flag
+/// per optional device the image lists (none for most images).
+pub fn header(image_id: &[u8; 32], grants: &terse_core::Grants) -> Vec<u8> {
     let mut v = MAGIC.to_vec();
     v.push(0);
     v.extend_from_slice(image_id);
+    v.extend(grants.0.iter().map(|&g| g as u8));
     v
 }
 
@@ -58,13 +61,25 @@ impl FrameRecord {
     }
 }
 
-/// Parses a recording: the image ID and the frames.
-pub fn parse(bytes: &[u8]) -> Result<([u8; 32], Vec<FrameRecord>), String> {
+/// Parses a recording of a machine of `image`: the image ID, the grants
+/// and the frames.
+pub fn parse(bytes: &[u8], image: &terse_core::Image) -> Result<([u8; 32], terse_core::Grants, Vec<FrameRecord>), String> {
     let mut r = Reader::new(bytes);
     if r.take(4)? != MAGIC || r.u8()? != 0 {
         return Err("not a terse-bus recording".into());
     }
     let id: [u8; 32] = r.take(32)?.try_into().unwrap();
+    if id != image.id {
+        return Err("a recording of another image".into());
+    }
+    let mut grants = Vec::new();
+    for _ in image.optional() {
+        grants.push(match r.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("a grant that is not 0 or 1".into()),
+        });
+    }
     let mut frames = Vec::new();
     while !r.clone().rest().is_empty() {
         let mut f = FrameRecord { frame: r.u32()?, time: r.u32()?, ..Default::default() };
@@ -85,5 +100,5 @@ pub fn parse(bytes: &[u8]) -> Result<([u8; 32], Vec<FrameRecord>), String> {
         f.hash = r.take(32)?.try_into().unwrap();
         frames.push(f);
     }
-    Ok((id, frames))
+    Ok((id, terse_core::Grants(grants), frames))
 }

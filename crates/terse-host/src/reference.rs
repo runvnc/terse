@@ -85,7 +85,7 @@ fn render(image: Option<&[u8]>, events: &str, frames: u64, consent: Consent) -> 
         None => (builtin::SHELL.to_vec(), true),
     };
     let image = Image::parse(&bytes).unwrap();
-    let content = (image.has_device(4) || shell).then(|| ContentService::start_with_consent(node, consent));
+    let content = (image.lists(4) || shell).then(|| ContentService::start_with_consent(node, consent));
     let program = Program { image, shell, builtins: if shell { builtins } else { Vec::new() }, identity: None, data: dir.path().join("data") };
     let script = Script::parse(events).unwrap();
     let (pixels, size, _) = run_headless(program, content, script, Headless::Screenshot { frames }, Some(SIZE), looks).unwrap()?;

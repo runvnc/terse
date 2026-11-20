@@ -16,7 +16,7 @@ use terse_core::content::{ram_range, readable};
 use terse_core::devices::{Backing, CallOutcome, Devices, FrameInputs, GuestMem, Memory};
 use terse_core::machines::{ProgramId, StartFailure, failure};
 use terse_core::snapshot::{RestoreError, bad};
-use terse_core::{ERR_UNKNOWN, Event, FrameInput, Image, Machine};
+use terse_core::{DeviceReq, ERR_UNKNOWN, Event, FrameInput, Grants, Image, Machine};
 
 use crate::proto::{self, Addr, CallEntry, DeviceInfo, Hello, LayerDecl, Open, PosEvent, Reader, Writer, access, hello_flags, msg, property};
 use crate::stats::Histogram;
@@ -464,20 +464,36 @@ impl Bus {
         Ok(())
     }
 
+    /// Whether a driver gives device `d` (its slot, in its version).
+    pub fn provides(&self, d: &DeviceReq) -> bool {
+        self.by_slot[d.slot as usize].is_some_and(|p| self.procs[p].info.slots.iter().any(|s| s.slot == d.slot && s.version == d.version))
+    }
+
     /// Opens a machine instance on the drivers (OPEN): `image` with its
-    /// memory file (`memory`) and identity. The image's devices other than
-    /// System and Machines must all have drivers (SPEC 2).
+    /// memory file (`memory`) and identity. The image's required devices
+    /// other than System and Machines must all have drivers (SPEC 2), and
+    /// so must the optional ones `grants` grants; `None`: every optional
+    /// device a driver gives is granted.
     pub fn open_instance(
         this: &Rc<RefCell<Bus>>,
         instance: u32,
         image: &Image,
+        grants: Option<&Grants>,
         identity: Option<&ProgramId>,
     ) -> Result<Machine<BusDevices>, StartFailure> {
         let mut bus = this.borrow_mut();
+        let grants = match grants {
+            Some(g) => {
+                image.check_grants(g).map_err(|d| terse_core::machines::needs_device(image, d))?;
+                g.clone()
+            }
+            None => image.grants(|d| bus.provides(d)),
+        };
+        let has = image.device_set(&grants);
         let mut slot_proc = [None; 256];
         let mut procs: Vec<usize> = Vec::new();
         for d in &image.devices {
-            if d.slot == 1 || d.slot == terse_core::machines::SLOT {
+            if d.slot == 1 || d.slot == terse_core::machines::SLOT || !has.has(d.slot) {
                 continue;
             }
             let Some(p) = bus.by_slot[d.slot as usize] else {
@@ -497,7 +513,7 @@ impl Bus {
             }
         }
         // Device 9's style lives with device 3 (SPEC 13.2).
-        if image.has_device(terse_core::vector3::SLOT) && slot_proc[3].is_none() {
+        if has.has(terse_core::vector3::SLOT) && slot_proc[3].is_none() {
             let p = slot_proc[terse_core::vector3::SLOT as usize];
             if bus.by_slot[3] != p {
                 return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: "devices 3 and 9 need one driver".into() });
@@ -514,7 +530,8 @@ impl Bus {
                 rom_len: image.rom.len() as u32,
                 ram_len: memory.ram_len as u32,
                 memory_path: if shm { path.display().to_string() } else { String::new() },
-                listed: image.devices.iter().filter(|d| bus.procs[p].slots.contains(&d.slot)).map(|d| (d.slot, d.version)).collect(),
+                // Only the devices the machine has (SPEC 2).
+                listed: image.devices.iter().filter(|d| has.has(d.slot) && bus.procs[p].slots.contains(&d.slot)).map(|d| (d.slot, d.version)).collect(),
                 identity: identity.map(|i| (i.publisher, i.name.clone())),
                 rom: image.rom.clone(),
             };
@@ -560,7 +577,7 @@ impl Bus {
             records: Vec::new(),
             audio_frame: None,
         };
-        Ok(Machine::with_devices(image, Memory::Backed(Box::new(memory)), devices))
+        Ok(Machine::with_devices(image, grants, Memory::Backed(Box::new(memory)), devices))
     }
 }
 
@@ -1094,7 +1111,7 @@ impl Devices for BusDevices {
         Cow::Owned(list)
     }
 
-    fn new_machine(&self, serial: u32, image: &Image, identity: Option<&ProgramId>) -> Result<Machine<Self>, StartFailure> {
-        Bus::open_instance(&self.bus, serial, image, identity)
+    fn new_machine(&self, serial: u32, image: &Image, grants: Option<&Grants>, identity: Option<&ProgramId>) -> Result<Machine<Self>, StartFailure> {
+        Bus::open_instance(&self.bus, serial, image, grants, identity)
     }
 }

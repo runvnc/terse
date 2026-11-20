@@ -91,12 +91,14 @@ pub fn build_rom(sources: &[PathBuf], with_lib: bool) -> Vec<u8> {
 }
 
 /// Checks that the checked-in image is what its build.sh makes from the
-/// sources: the same ROM, and the header given. Skipped without the tools.
+/// sources: the same ROM, and the header given (each device as its header
+/// entry: slot, version byte, whose top bit marks an optional device).
+/// Skipped without the tools.
 pub fn check_up_to_date(image: &[u8], sources: &[&str], with_lib: bool, title: &str, ram_pages: u8, devices: &[(u8, u8)]) {
     let image = Image::parse(image).unwrap();
     assert_eq!(image.title, title.as_bytes());
     assert_eq!(image.ram_pages, ram_pages, "{title}: RAM pages");
-    let devs: Vec<(u8, u8)> = image.devices.iter().map(|d| (d.slot, d.version)).collect();
+    let devs: Vec<(u8, u8)> = image.devices.iter().map(|d| (d.slot, d.version_byte())).collect();
     assert_eq!(devs, devices, "{title}: devices");
     if !have_tools() {
         return;

@@ -86,7 +86,7 @@ fn start(image: &Image, run: &Run, content: &ContentOptions, presents: bool, rep
     config.presents = presents;
     config.replay = replay;
     config.batching = !run.no_batch;
-    Start { config, drivers, image, shell: None, identity: None, snapshot: None }.start().unwrap()
+    Start { config, drivers, image, shell: None, identity: None, snapshot: None, grants: None, without: Vec::new() }.start().unwrap()
 }
 
 /// Runs `frames` frames with the script; the hash after every frame that
@@ -110,7 +110,7 @@ fn bus_hashes(image: &Image, script: &Script, frames: u32, every: u32, run: &Run
 
 /// The same with the devices built in, as `terse run` runs a machine.
 fn reference_hashes(image: &Image, script: &Script, frames: u32, every: u32, content: &ContentOptions) -> Vec<String> {
-    let service = image.has_device(4).then(|| content.start().unwrap());
+    let service = image.lists(4).then(|| content.start().unwrap());
     let mut system = System::new(image, false, Vec::new());
     let mut headless = HeadlessSystem::new(service, script.clone());
     let mut out = Vec::new();
@@ -332,7 +332,7 @@ fn state_restore() {
     drop(bs);
     let config = BusConfig::new(PathBuf::new());
     let drivers = host::drivers(&bin_dir(), &host::needed_slots(&img, false), &dirs.options().args(), &[]).unwrap();
-    let mut again = Start { config, drivers, image: &img, shell: None, identity: None, snapshot: Some(&snapshot) }.start().unwrap();
+    let mut again = Start { config, drivers, image: &img, shell: None, identity: None, snapshot: Some(&snapshot), grants: None, without: Vec::new() }.start().unwrap();
     assert_eq!(again.system.shell_mut().try_state().unwrap(), state);
 }
 

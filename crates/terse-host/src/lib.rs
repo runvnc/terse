@@ -323,7 +323,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         };
         builtins = builtin::install(n.store(), &extra)?;
     }
-    let content = match image.has_device(4) || shell {
+    let content = match image.lists(4) || shell {
         false => None,
         true => {
             let mut node = match node {
@@ -617,7 +617,7 @@ fn run_headless(
     // Each machine's page has its own layouter; the fonts are shared.
     type Latest = Arc<Mutex<Option<Arc<page::HostLayout>>>>;
     let latest: Arc<Mutex<HashMap<u32, Latest>>> = Arc::default();
-    if image.has_device(7) || program.shell {
+    if image.lists(7) || program.shell {
         let typesetter = page::Typesetter::new(&looks.page_fonts)?;
         eprintln!("terse-host: page fonts: {}", typesetter.describe());
         let typesetter = Arc::new(Mutex::new(typesetter));

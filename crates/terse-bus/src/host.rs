@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use terse_core::machines::{ProgramId, StartFailure, failure};
 use terse_core::system::{CONTROLLERS, Controller};
-use terse_core::{Driver, Event, FrameInput, FrameResult, Image, Machine, Snapshot, System, SystemFrame, Who};
+use terse_core::{Driver, Event, FrameInput, FrameResult, Grants, Image, Machine, Snapshot, System, SystemFrame, Who};
 use terse_net::Prompt;
 
 use crate::bus::{Bus, BusConfig, BusDevices, Wanted as Driven};
@@ -119,13 +119,13 @@ pub struct BusSystem {
 /// default driver of those slots.
 pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u8>, Vec<String>)]) -> Result<Vec<Driven>, String> {
     let exe = |name: &str| dir.join(name).display().to_string();
-    let defaults: [(Vec<u8>, Vec<String>); 5] = [
-        (vec![2], vec![exe("terse-dev-terminal")]),
-        (vec![3, terse_core::vector3::SLOT], vec![exe("terse-dev-vector")]),
-        (vec![4], [vec![exe("terse-dev-content")], content.to_vec()].concat()),
-        (vec![terse_core::sound::SLOT], vec![exe("terse-dev-sound")]),
-        (vec![7], vec![exe("terse-dev-page")]),
-    ];
+    let defaults: [(Vec<u8>, Vec<String>); 5] = DEFAULT_DRIVERS.map(|(s, name)| {
+        let mut cmd = vec![exe(name)];
+        if s.contains(&4) {
+            cmd.extend_from_slice(content);
+        }
+        (s.to_vec(), cmd)
+    });
     let mut out: Vec<Driven> = Vec::new();
     let mut covered: Vec<u8> = Vec::new();
     for (s, cmd) in overrides {
@@ -146,6 +146,49 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
         return Err(format!("no driver for device {s} (SPEC 2)"));
     }
     Ok(out)
+}
+
+/// The default drivers: the slots each serves and its program's name.
+const DEFAULT_DRIVERS: [(&[u8], &str); 5] = [
+    (&[2], "terse-dev-terminal"),
+    (&[3, terse_core::vector3::SLOT], "terse-dev-vector"),
+    (&[4], "terse-dev-content"),
+    (&[terse_core::sound::SLOT], "terse-dev-sound"),
+    (&[7], "terse-dev-page"),
+];
+
+/// The slots whose drivers a single machine's run starts (SPEC 2): those
+/// of [`needed_slots`], less the slots only optional devices use that are
+/// withheld (`without`) or whose driver is not installed (no override and
+/// no default driver in `dir`): such a device is absent. A slot the image
+/// requires stays, so that a missing driver still stops the run. A shell
+/// gets every slot, as before.
+pub fn installed_slots(dir: &Path, image: &Image, shell: bool, without: &[u8], overrides: &[(Vec<u8>, Vec<String>)]) -> Vec<u8> {
+    let slots = needed_slots(image, shell);
+    if shell {
+        return slots;
+    }
+    let partner = |s: u8| match s {
+        3 => Some(terse_core::vector3::SLOT),
+        s if s == terse_core::vector3::SLOT => Some(3),
+        _ => None,
+    };
+    // A slot is wanted if the image requires it, or requires the device it
+    // shares a driver with, or lists it optional and does not withhold it.
+    let wanted = |s: u8| {
+        image.requires(s) || partner(s).is_some_and(|p| image.requires(p)) || (image.lists(s) && !without.contains(&s)) || partner(s).is_some_and(|p| image.lists(p) && !without.contains(&p))
+    };
+    let installed = |s: u8| {
+        overrides.iter().any(|(o, _)| o.contains(&s))
+            || DEFAULT_DRIVERS.iter().any(|(d, name)| d.contains(&s) && dir.join(name).exists())
+    };
+    slots
+        .into_iter()
+        .filter(|&s| {
+            let required = image.requires(s) || partner(s).is_some_and(|p| image.requires(p));
+            required || (wanted(s) && installed(s))
+        })
+        .collect()
 }
 
 /// The slots whose drivers a run needs: every device but System and
@@ -177,6 +220,12 @@ pub struct Start<'a> {
     pub identity: Option<ProgramId>,
     /// Restored from this snapshot (STATE.md 4).
     pub snapshot: Option<&'a Snapshot>,
+    /// The machine's grants (SPEC 2), as a recording or snapshot gives
+    /// them; `None`: every optional device a driver gives and `without`
+    /// does not name.
+    pub grants: Option<Grants>,
+    /// Optional devices withheld (`--without`).
+    pub without: Vec<u8>,
 }
 
 impl Start<'_> {
@@ -188,7 +237,15 @@ impl Start<'_> {
         config.session = session.0.clone();
         let bus = Rc::new(RefCell::new(Bus::start(&config, &self.drivers)?));
         let identity = self.snapshot.map_or(self.identity.clone(), |s| s.identity.clone());
-        let mut machine = Bus::open_instance(&bus, 0, self.image, identity.as_ref()).map_err(|f| f.message)?;
+        let grants = match (self.snapshot, self.grants) {
+            (Some(s), _) => s.grants(self.image).map_err(|e| e.to_string())?,
+            (None, Some(g)) => g,
+            (None, None) => {
+                let b = bus.borrow();
+                self.image.grants(|d| b.provides(d) && !self.without.contains(&d.slot))
+            }
+        };
+        let mut machine = Bus::open_instance(&bus, 0, self.image, Some(&grants), identity.as_ref()).map_err(|f| f.message)?;
         machine.set_identity(identity);
         if let Some(builtins) = self.shell {
             machine.grant_machines(builtins);

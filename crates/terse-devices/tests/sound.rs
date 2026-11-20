@@ -25,7 +25,7 @@ fn start(image: &Image, socket: bool, batching: bool, snapshot: Option<&Snapshot
     let mut config = BusConfig::new(PathBuf::new());
     config.shm = !socket;
     config.batching = batching;
-    Start { config, drivers, image, shell: None, identity: None, snapshot }.start().unwrap()
+    Start { config, drivers, image, shell: None, identity: None, snapshot, grants: None, without: Vec::new() }.start().unwrap()
 }
 
 /// The in-process machine's next `frames` frames: samples and state hash

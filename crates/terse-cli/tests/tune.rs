@@ -109,16 +109,16 @@ fn audio_out_writes_the_samples() {
 }
 
 /// SPEC 2.1: sound is not in the reading profile; a reading host refuses
-/// an image that lists it (and conform-reading lists only devices 2, 4
+/// an image that requires it (and conform-reading lists only devices 2, 4
 /// and 7: its own test runs it unchanged).
 #[test]
 fn reading_profile_refuses_sound() {
     let image_path = common::programs().join("tune/tune.terse");
     let out = common::terse_command().args(["run", image_path.to_str().unwrap(), "--profile", "reading", "--frames", "1"]).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("lists device 6"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("requires device 6"), "{}", String::from_utf8_lossy(&out.stderr));
     let reading = Image::parse(include_bytes!("../../../programs/conform-reading/conform-reading.terse")).unwrap();
-    assert!(!reading.has_device(terse_core::sound::SLOT));
+    assert!(!reading.lists(terse_core::sound::SLOT));
 }
 
 #[test]

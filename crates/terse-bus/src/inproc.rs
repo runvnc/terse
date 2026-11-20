@@ -20,10 +20,11 @@ pub struct InProcessHost {
 }
 
 impl InProcessHost {
-    pub fn new(image: &Image, service: Option<ContentService>) -> Self {
+    /// The devices of a machine of `image` with `grants` (SPEC 2).
+    pub fn new(image: &Image, grants: &terse_core::Grants, service: Option<ContentService>) -> Self {
         InProcessHost {
             image_id: image.id,
-            devices: InProcess::new(image),
+            devices: InProcess::new(&image.device_set(grants)),
             page_input: PageInput::default(),
             service,
             completions: Vec::new(),
@@ -97,9 +98,22 @@ impl Devices for InProcessHost {
         self.devices.restore_state(slot, bytes, ram_len)
     }
 
-    fn new_machine(&self, _serial: u32, image: &Image, identity: Option<&terse_core::ProgramId>) -> Result<terse_core::Machine<Self>, terse_core::StartFailure> {
+    fn new_machine(
+        &self,
+        _serial: u32,
+        image: &Image,
+        grants: Option<&terse_core::Grants>,
+        identity: Option<&terse_core::ProgramId>,
+    ) -> Result<terse_core::Machine<Self>, terse_core::StartFailure> {
+        let grants = match grants {
+            None => image.all_grants(),
+            Some(g) => {
+                image.check_grants(g).map_err(|d| terse_core::machines::needs_device(image, d))?;
+                g.clone()
+            }
+        };
         let memory = terse_core::devices::Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
-        let mut m = terse_core::Machine::with_devices(image, memory, InProcessHost::new(image, None));
+        let mut m = terse_core::Machine::with_devices(image, grants.clone(), memory, InProcessHost::new(image, &grants, None));
         m.set_identity(identity.cloned());
         Ok(m)
     }
