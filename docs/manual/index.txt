@@ -8,9 +8,11 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:{overview}): the overall picture in two pages:
-  the machine and its frame budget, the devices, determinism, the
-  network and the shell.
+- [What Terse is](terse:{overview}): what Terse is for, in one
+  paragraph.
+- [How Terse works](terse:{how-it-works}): the technical details in
+  three pages: sharing articles and programs, the network, the machine
+  and its frame budget, the devices, determinism and the shell.
 - [Writing a program](terse:{writing-programs}): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
