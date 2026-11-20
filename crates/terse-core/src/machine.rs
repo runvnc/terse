@@ -6,7 +6,7 @@ use std::fmt;
 use crate::content::{Completion, Content, Request, ram_range};
 use crate::devices::{Devices, EVENT_PAIR, FrameInputs, GuestMem, InProcess, Memory, position};
 use crate::cpu::{Bus, Code, Cpu, Fault, FaultKind, RAM_BASE, ROM_BASE, Stop};
-use crate::image::Image;
+use crate::image::{DeviceSet, Grants, Image};
 use crate::machines::{Machines, ProgramId};
 use crate::page::Page;
 use crate::system::{CONTROLLERS, Controller, Event, System};
@@ -82,6 +82,7 @@ pub mod call {
     pub const EXIT: u32 = 0x106;
     pub const OPEN: u32 = 0x107;
     pub const ARGUMENT: u32 = 0x108;
+    pub const DEVICE: u32 = 0x109;
 
     pub const TERM_WRITE: u32 = 0x200;
     pub const TERM_COMMAND: u32 = 0x201;
@@ -202,8 +203,12 @@ pub struct Machine<D: Devices = InProcess> {
     memory: Memory,
     system: System,
     devices: D,
-    /// Which slots the image lists.
-    listed: [bool; 256],
+    /// The devices the machine has: the image's required devices and the
+    /// optional ones granted (SPEC 2), and device 8 if the image lists it
+    /// (granted only to a shell, `machines`).
+    has: DeviceSet,
+    /// Which of the image's optional devices were granted (STATE.md 1.4).
+    grants: Grants,
     /// Device 8, only for the shell (SPEC 12.1).
     machines: Option<Machines>,
     /// The budget; zero or negative between frames (a negative remainder
@@ -231,9 +236,18 @@ pub struct Machine<D: Devices = InProcess> {
 
 impl Machine {
     /// The machine at reset (SPEC 1.3), with the devices compiled in.
+    /// Every optional device this implementation has is granted.
     pub fn new(image: &Image) -> Self {
+        Machine::with_grants(image, image.all_grants())
+    }
+
+    /// The machine at reset with these grants (SPEC 2): `grants` fits the
+    /// image and grants only devices this implementation supports
+    /// ([`Image::check_grants`]).
+    pub fn with_grants(image: &Image, grants: Grants) -> Self {
         let memory = Memory::Owned { rom: image.rom.clone(), ram: vec![0; image.ram_pages as usize * 8192] };
-        Machine::with_devices(image, memory, InProcess::new(image))
+        let devices = InProcess::new(&image.device_set(&grants));
+        Machine::with_devices(image, grants, memory, devices)
     }
 
     /// The machine at reset as the shell (SPEC 12.1): device 8 is granted
@@ -289,10 +303,10 @@ impl Machine {
         self.devices.vector()
     }
 
-    /// Whether the image lists device 3 (a machine with only device 9 has
+    /// Whether the machine has device 3 (a machine with only device 9 has
     /// a [`Vector`] for the shared style, but no 2D list).
-    pub fn lists_vector(&self) -> bool {
-        self.listed[3]
+    pub fn has_vector(&self) -> bool {
+        self.has.has(3)
     }
 
     /// Device 9, if the image lists it.
@@ -338,20 +352,18 @@ impl Machine {
 impl<D: Devices> Machine<D> {
     /// The machine at reset (SPEC 1.3) with these devices and memory
     /// (`memory` holds the image's ROM and a zeroed RAM of its size).
-    pub fn with_devices(image: &Image, memory: Memory, devices: D) -> Self {
+    /// `grants` says which optional devices it has (and `devices` must be
+    /// those).
+    pub fn with_devices(image: &Image, grants: Grants, memory: Memory, devices: D) -> Self {
         let ram_end = RAM_BASE + image.ram_pages as u32 * 8192;
-        let mut listed = [false; 256];
-        for d in &image.devices {
-            listed[d.slot as usize] = true;
-        }
-        listed[1] = true;
         Machine {
             cpu: Cpu::new(ROM_BASE, ram_end),
             code: Code::new(&image.rom),
             memory,
             system: System::default(),
             devices,
-            listed,
+            has: image.device_set(&grants),
+            grants,
             machines: None,
             budget: 0,
             stopped: None,
@@ -368,7 +380,7 @@ impl<D: Devices> Machine<D> {
     /// Grants device 8 (SPEC 12.1) if the image lists it: the machine is
     /// a shell; `builtins` are the IDs `builtin` returns.
     pub fn grant_machines(&mut self, builtins: Vec<[u8; 32]>) {
-        if self.listed[crate::machines::SLOT as usize] {
+        if self.has.has(crate::machines::SLOT) {
             self.machines = Some(Machines::new(builtins));
         }
     }
@@ -377,7 +389,7 @@ impl<D: Devices> Machine<D> {
     /// pairs, left and right interleaved), once; `None` without device 6,
     /// or if no frame ended since the last call (SPEC 18.7).
     pub fn take_audio(&mut self) -> Option<Vec<i16>> {
-        if !self.listed[crate::sound::SLOT as usize] {
+        if !self.has.has(crate::sound::SLOT) {
             return None;
         }
         self.devices.take_audio()
@@ -388,9 +400,15 @@ impl<D: Devices> Machine<D> {
         self.devices.list3()
     }
 
-    /// Whether the image lists device `slot`.
-    pub fn lists(&self, slot: u8) -> bool {
-        self.listed[slot as usize]
+    /// Whether the machine has device `slot` (for slot 8: whether the
+    /// image lists it; only a shell is granted it, [`Machine::machines`]).
+    pub fn has_device(&self, slot: u8) -> bool {
+        self.has.has(slot)
+    }
+
+    /// Which of the image's optional devices the machine was granted.
+    pub fn grants(&self) -> &Grants {
+        &self.grants
     }
 
     /// The devices.
@@ -633,6 +651,16 @@ impl<D: Devices> Machine<D> {
                         }
                     }
                 },
+                // SPEC 4: the version of a device the machine has.
+                call::DEVICE => {
+                    let present = match a0 {
+                        s if s == crate::machines::SLOT as u32 => self.machines.is_some(),
+                        s @ 0..=255 => self.has.has(s as u8),
+                        _ => false,
+                    };
+                    // Every device of profile 1 is version 0.
+                    if present { 0 } else { ERR_UNKNOWN }
+                }
                 call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
                     None => ERR_BUFFER,
                     Some(at) => match &self.argument {
@@ -658,7 +686,7 @@ impl<D: Devices> Machine<D> {
                 }
                 None => ERR_UNKNOWN,
             }
-        } else if slot < 256 && self.listed[slot as usize] {
+        } else if slot < 256 && self.has.has(slot as u8) {
             let budget = self.budget - units as i64;
             let (rom, ram) = self.memory.split();
             let out = self.devices.call(slot as u8, n as u8, args, budget, GuestMem { rom, ram })?;
@@ -681,7 +709,7 @@ impl<D: Devices> Machine<D> {
         let mut out = Vec::with_capacity(64 * 1024 + self.memory.ram().len());
         self.write_core_state(&mut out);
         for slot in [2u8, 3, 4, 7] {
-            let present = self.listed[slot as usize] || (slot == 3 && self.listed[crate::vector3::SLOT as usize]);
+            let present = self.has.has(slot) || (slot == 3 && self.has.has(crate::vector3::SLOT));
             out.push(present as u8);
             if present {
                 self.devices.write_state(slot, &mut out)?;
@@ -689,7 +717,7 @@ impl<D: Devices> Machine<D> {
         }
         self.write_machines_state(&mut out);
         for slot in [crate::vector3::SLOT, crate::sound::SLOT] {
-            if self.listed[slot as usize] {
+            if self.has.has(slot) {
                 self.devices.write_state(slot, &mut out)?;
             }
         }
@@ -734,12 +762,14 @@ impl<D: Devices> Machine<D> {
         let ram = self.memory.ram();
         out.extend_from_slice(&(ram.len() as u32).to_le_bytes());
         out.extend_from_slice(ram);
+        // The grants: none for an image without optional devices.
+        out.extend(self.grants.0.iter().map(|&g| g as u8));
         self.system.write_state(out);
     }
 
     /// STATE.md 1.10: only for an image that lists device 8.
     fn write_machines_state(&self, out: &mut Vec<u8>) {
-        if self.listed[crate::machines::SLOT as usize] {
+        if self.has.has(crate::machines::SLOT) {
             out.push(self.machines.is_some() as u8);
             if let Some(m) = &self.machines {
                 m.write_state(out);
@@ -840,8 +870,23 @@ impl Machine {
     /// requests that were pending complete with status 03h (failed) in its
     /// first frame (SPEC 9.2). The identity and whether it is in a system
     /// are the caller's to set.
+    /// The machine has the devices the state says it was granted; a
+    /// device this implementation does not support is
+    /// [`crate::snapshot::RestoreError::NeedsDevice`].
     pub fn restore(image: &Image, state: &[u8]) -> Result<Machine, crate::snapshot::RestoreError> {
-        let mut m = Machine::new(image);
+        Machine::restore_where(image, state, |_| true)
+    }
+
+    /// The same on a host that provides the optional devices `provides`
+    /// accepts: one the state says was granted and the host does not
+    /// provide is [`crate::snapshot::RestoreError::NeedsDevice`]; one the
+    /// host has and the state says was not granted stays absent.
+    pub fn restore_where(image: &Image, state: &[u8], provides: impl Fn(&crate::DeviceReq) -> bool) -> Result<Machine, crate::snapshot::RestoreError> {
+        let grants = crate::snapshot::grants_of(image, state)?;
+        if let Some((d, _)) = image.optional().zip(&grants.0).find(|(d, g)| **g && !(d.supported() && provides(d))) {
+            return Err(crate::snapshot::RestoreError::NeedsDevice(crate::machines::needs_device(image, Some(*d)).message));
+        }
+        let mut m = Machine::with_grants(image, grants);
         m.load_state(state)?;
         Ok(m)
     }
@@ -895,9 +940,15 @@ impl<D: Devices> Machine<D> {
             return Err(bad("RAM size"));
         }
         self.memory.split().1.copy_from_slice(r.take(ram_len)?);
+        // The machine was made with the grants the state holds.
+        for &g in &self.grants.0 {
+            if r.flag()? != g {
+                return Err(bad("grants other than this machine's"));
+            }
+        }
         self.system.restore(frame, &mut r)?;
         for slot in [2u8, 3, 4, 7] {
-            let present = self.listed[slot as usize] || (slot == 3 && self.listed[crate::vector3::SLOT as usize]);
+            let present = self.has.has(slot) || (slot == 3 && self.has.has(crate::vector3::SLOT));
             if r.flag()? != present {
                 return Err(bad(match slot {
                     2 => "terminal present",
@@ -911,11 +962,11 @@ impl<D: Devices> Machine<D> {
                 r.take(n)?;
             }
         }
-        if self.listed[crate::machines::SLOT as usize] && r.u8()? != 0 {
+        if self.has.has(crate::machines::SLOT) && r.u8()? != 0 {
             return Err(bad("the state of a shell cannot be restored"));
         }
         for slot in [crate::vector3::SLOT, crate::sound::SLOT] {
-            if self.listed[slot as usize] {
+            if self.has.has(slot) {
                 let n = self.devices.restore_state(slot, r.rest(), ram_len)?;
                 r.take(n)?;
             }

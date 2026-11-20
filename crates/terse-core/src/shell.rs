@@ -522,7 +522,9 @@ impl<D: Devices> System<D> {
                             }
                             Err(e) => {
                                 child.error = Some(e.to_string());
-                                s.failure = failure::SNAPSHOT;
+                                // A device the machine had and this host
+                                // lacks: as for `start` (SPEC 12.2).
+                                s.failure = if matches!(e, crate::RestoreError::NeedsDevice(_)) { failure::NEEDS_DEVICE } else { failure::SNAPSHOT };
                                 new = Some(state::FAILED);
                             }
                         }
@@ -531,7 +533,7 @@ impl<D: Devices> System<D> {
                         child.title = image.title_lossy();
                         child.image = image.id;
                         dev.slot_mut(h).image = image.id;
-                        match like.new_machine(child.serial, &image, child.identity.as_ref()) {
+                        match like.new_machine(child.serial, &image, None, child.identity.as_ref()) {
                             Ok(mut machine) => {
                                 machine.set_identity(child.identity.clone());
                                 machine.set_in_system(true);

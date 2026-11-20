@@ -162,7 +162,7 @@ fn machine(case: &Case) -> Machine {
     let rom = common::assemble(&case.src);
     let mut devices = vec![common::TERMINAL, common::VECTOR, common::CONTENT];
     if case.name.starts_with("sound") {
-        devices.push(terse_core::DeviceReq { slot: terse_core::sound::SLOT, version: 0 });
+        devices.push(terse_core::DeviceReq::new(terse_core::sound::SLOT, 0));
     }
     Machine::new(&common::program(&rom, case.ram_pages, &devices))
 }

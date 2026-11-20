@@ -30,7 +30,8 @@ const PAGE: usize = 8192;
 const PAGE_MAP: usize = 16;
 /// The longest serialization: header, CPU, frame loop, 1 MiB of RAM, a
 /// full queue, every device at its largest, and an argument.
-const MAX_STATE: usize = 200 + 1_048_576 + 37 + 4 * 64 + 10_379 + 8 + 16_384 + 425 + 21 + 65_536 + 1 + 4 + 16_384 + crate::sound::MAX_STATE + 32;
+const MAX_STATE: usize =
+    200 + 1_048_576 + crate::image::MAX_DEVICES + 37 + 4 * 64 + 10_379 + 8 + 16_384 + 425 + 21 + 65_536 + 1 + 4 + 16_384 + crate::sound::MAX_STATE + 32;
 
 /// Why a snapshot or a serialization could not be restored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +41,9 @@ pub enum RestoreError {
     Malformed(&'static str),
     /// It is the state of another image.
     WrongImage,
+    /// The machine had an optional device (STATE.md 1.4) this host does
+    /// not provide (SPEC 12.2 `restore`, reason 3); a message for people.
+    NeedsDevice(String),
 }
 
 impl fmt::Display for RestoreError {
@@ -47,6 +51,7 @@ impl fmt::Display for RestoreError {
         match self {
             RestoreError::Malformed(why) => write!(f, "not a valid snapshot: {why}"),
             RestoreError::WrongImage => write!(f, "the snapshot is of another image"),
+            RestoreError::NeedsDevice(why) => write!(f, "{why}"),
         }
     }
 }
@@ -55,6 +60,21 @@ impl std::error::Error for RestoreError {}
 
 pub fn bad(why: &'static str) -> RestoreError {
     RestoreError::Malformed(why)
+}
+
+/// The grants a serialization of a machine of `image` holds (STATE.md
+/// 1.4): one flag per optional device of the image, after the RAM.
+pub fn grants_of(image: &crate::Image, state: &[u8]) -> Result<crate::image::Grants, RestoreError> {
+    let mut r = Reader::new(state);
+    r.take(IMAGE_AT)?;
+    if r.array::<32>()? != image.id {
+        return Err(RestoreError::WrongImage);
+    }
+    r.take(BEFORE_RAM - IMAGE_AT - 32 - 4)?;
+    let ram_len = r.u32()? as usize;
+    r.take(ram_len)?;
+    let k = image.optional().count();
+    Ok(crate::image::Grants((0..k).map(|_| r.flag()).collect::<Result<_, _>>()?))
 }
 
 /// Reads a serialization field by field.
@@ -214,9 +234,20 @@ impl Snapshot {
 
     /// The machine it was taken of, with its identity: same state hash.
     pub fn restore(&self, image: &crate::Image) -> Result<Machine, RestoreError> {
-        let mut m = Machine::restore(image, &self.state)?;
+        self.restore_where(image, |_| true)
+    }
+
+    /// The same on a host that provides the optional devices `provides`
+    /// accepts ([`Machine::restore_where`]).
+    pub fn restore_where(&self, image: &crate::Image, provides: impl Fn(&crate::DeviceReq) -> bool) -> Result<Machine, RestoreError> {
+        let mut m = Machine::restore_where(image, &self.state, provides)?;
         m.set_identity(self.identity.clone());
         Ok(m)
+    }
+
+    /// The grants of the machine it was taken of (STATE.md 1.4).
+    pub fn grants(&self, image: &crate::Image) -> Result<crate::image::Grants, RestoreError> {
+        grants_of(image, &self.state)
     }
 
     /// The same with devices like `like`'s (a sibling of the machine whose
@@ -225,7 +256,10 @@ impl Snapshot {
         if self.image_id() != image.id {
             return Err(RestoreError::WrongImage);
         }
-        let mut m = like.new_machine(serial, image, self.identity.as_ref()).map_err(|_| bad("the devices could not be started"))?;
+        let grants = grants_of(image, &self.state)?;
+        let mut m = like.new_machine(serial, image, Some(&grants), self.identity.as_ref()).map_err(|f| {
+            if f.reason == crate::machines::failure::NEEDS_DEVICE { RestoreError::NeedsDevice(f.message) } else { bad("the devices could not be started") }
+        })?;
         m.load_state(&self.state)?;
         m.set_identity(self.identity.clone());
         Ok(m)

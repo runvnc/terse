@@ -26,7 +26,7 @@ pub mod wide;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
 pub use cpu::{Cpu, Fault, FaultKind, RAM_BASE, RAM_INSTRUCTION_COST, ROM_BASE};
-pub use image::{DeviceReq, Image, ImageError};
+pub use image::{DeviceReq, DeviceSet, Grants, Image, ImageError};
 pub use machines::{ProgramId, StartFailure, load_image};
 pub use machine::{
     BUDGET_PER_FRAME, ERR_BUFFER, ERR_UNKNOWN, FrameInput, FrameResult, MAX_RANDOM_PER_FRAME, Machine, STATE_DOMAIN,

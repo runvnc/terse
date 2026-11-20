@@ -142,7 +142,7 @@ fn another_image_is_refused() {
 
 #[test]
 fn a_shell_is_not_restored() {
-    let image = common::program(&[0x01, 0x00], 1, &[DeviceReq { slot: 8, version: 0 }]);
+    let image = common::program(&[0x01, 0x00], 1, &[DeviceReq::new(8, 0)]);
     let shell = Machine::new_shell(&image, Vec::new());
     assert!(matches!(Machine::restore(&image, &shell.state()), Err(RestoreError::Malformed(_))));
     // The same image not run as a shell has the section as 00h.
@@ -269,7 +269,7 @@ fn a_table_document_round_trips() {
 
 /// STATE.md 4: what a reader of a snapshot file refuses besides a
 /// malformed S: N below 200 or above the longest serialization
-/// (1,423,075 bytes), L that is 0, not a multiple of 8,192, above
+/// (1,423,091 bytes), L that is 0, not a multiple of 8,192, above
 /// 1,048,576 or past N, and a page-map bit past the last page. And SPEC
 /// 12.2 `snapshot_info`: the time is the one latched for the machine's
 /// last frame as its state holds it, so a restored machine snapshotted
@@ -289,7 +289,7 @@ fn snapshot_file_fields_and_time() {
     };
     let malformed = |why| Some(RestoreError::Malformed(why));
     assert_eq!(with(90, 199), malformed("state length"));
-    assert_eq!(with(90, 1_423_076), malformed("state length"));
+    assert_eq!(with(90, 1_423_092), malformed("state length"));
     assert_eq!(with(94 + 196, 0), malformed("RAM size"));
     assert_eq!(with(94 + 196, 8193), malformed("RAM size"));
     assert_eq!(with(94 + 196, 129 * 8192), malformed("RAM size"));

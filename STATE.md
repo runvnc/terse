@@ -408,7 +408,7 @@ A host keeps a snapshot (SPEC 12.7) in a file:
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
-N is below 200 or above 1,423,075 (the longest serialization: 1 MiB of
+N is below 200 or above 1,423,091 (the longest serialization: 1 MiB of
 RAM, a full queue, every device at its largest and an argument), whose L
 is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥

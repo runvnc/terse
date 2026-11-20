@@ -11,24 +11,69 @@ pub const RAM_PAGES_MIN: u8 = 1;
 pub const RAM_PAGES_MAX: u8 = 128;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
+/// The top bit of a device entry's version byte: the device is optional
+/// (SPEC 2); the version is the other seven bits, 0 to 127.
+pub const OPTIONAL: u8 = 0x80;
 
 /// Device slots and versions this implementation provides (SPEC 2).
 pub const SUPPORTED_DEVICES: [DeviceReq; 8] = [
-    DeviceReq { slot: 1, version: 0 },
-    DeviceReq { slot: 2, version: 0 },
-    DeviceReq { slot: 3, version: 0 },
-    DeviceReq { slot: 4, version: 0 },
-    DeviceReq { slot: 6, version: 0 },
-    DeviceReq { slot: 7, version: 0 },
-    DeviceReq { slot: 8, version: 0 },
-    DeviceReq { slot: 9, version: 0 },
+    DeviceReq::new(1, 0),
+    DeviceReq::new(2, 0),
+    DeviceReq::new(3, 0),
+    DeviceReq::new(4, 0),
+    DeviceReq::new(6, 0),
+    DeviceReq::new(7, 0),
+    DeviceReq::new(8, 0),
+    DeviceReq::new(9, 0),
 ];
 
-/// A (device slot, device version) requirement from the image header.
+/// A device entry of the image header (SPEC 2): a slot, a version (0 to
+/// 127) and whether the device is required or optional.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeviceReq {
     pub slot: u8,
     pub version: u8,
+    /// Use the device if the host has it, run without it otherwise.
+    pub optional: bool,
+}
+
+impl DeviceReq {
+    /// A required device.
+    pub const fn new(slot: u8, version: u8) -> Self {
+        DeviceReq { slot, version, optional: false }
+    }
+
+    /// An optional device.
+    pub const fn optional(slot: u8, version: u8) -> Self {
+        DeviceReq { slot, version, optional: true }
+    }
+
+    /// Whether this implementation provides the device in this version.
+    pub fn supported(&self) -> bool {
+        SUPPORTED_DEVICES.iter().any(|d| d.slot == self.slot && d.version == self.version)
+    }
+
+    /// The entry's second byte: the version, with the top bit set if optional.
+    pub fn version_byte(&self) -> u8 {
+        self.version | if self.optional { OPTIONAL } else { 0 }
+    }
+}
+
+/// Which of an image's optional devices a machine was given (SPEC 2,
+/// STATE.md 1.5): one flag per optional entry, in header order. Fixed at
+/// reset; part of the machine's state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Grants(pub Vec<bool>);
+
+/// The device slots a machine has: device 1, the image's required devices
+/// and the optional ones it was granted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceSet([bool; 256]);
+
+impl DeviceSet {
+    pub fn has(&self, slot: u8) -> bool {
+        self.0[slot as usize]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +89,8 @@ pub enum ImageError {
     LengthMismatch { expected: usize, actual: usize },
     UnsupportedDevice(DeviceReq),
     DuplicateDevice(u8),
+    /// Device 1 or 8 listed as optional (SPEC 2).
+    NotOptional(u8),
 }
 
 impl fmt::Display for ImageError {
@@ -66,6 +113,7 @@ impl fmt::Display for ImageError {
                 write!(f, "device {} version {} is not implemented", d.slot, d.version)
             }
             Self::DuplicateDevice(s) => write!(f, "device slot {s} listed twice"),
+            Self::NotOptional(s) => write!(f, "device {s} cannot be listed as optional"),
         }
     }
 }
@@ -121,11 +169,17 @@ impl Image {
 
         let mut devices: Vec<DeviceReq> = Vec::with_capacity(n_dev as usize);
         for pair in file[HEADER_LEN..rom_start].chunks_exact(2) {
-            let req = DeviceReq { slot: pair[0], version: pair[1] };
+            let req = DeviceReq { slot: pair[0], version: pair[1] & !OPTIONAL, optional: pair[1] & OPTIONAL != 0 };
             if devices.iter().any(|d| d.slot == req.slot) {
                 return Err(ImageError::DuplicateDevice(req.slot));
             }
-            if !SUPPORTED_DEVICES.contains(&req) {
+            // Device 1 is always there; device 8 is the shell's (SPEC 12.1).
+            if req.optional && (req.slot == 1 || req.slot == crate::machines::SLOT) {
+                return Err(ImageError::NotOptional(req.slot));
+            }
+            // A host refuses an image only for a required device it lacks;
+            // an optional one it lacks is simply not granted.
+            if !req.optional && !req.supported() {
                 return Err(ImageError::UnsupportedDevice(req));
             }
             devices.push(req);
@@ -158,14 +212,64 @@ impl Image {
         t[..n].copy_from_slice(&title[..n]);
         out.extend_from_slice(&t);
         for d in devices {
-            out.extend_from_slice(&[d.slot, d.version]);
+            out.extend_from_slice(&[d.slot, d.version_byte()]);
         }
         out.extend_from_slice(rom);
         out
     }
 
-    pub fn has_device(&self, slot: u8) -> bool {
+    /// Whether the header lists device `slot`, required or optional
+    /// (device 1 always counts as listed).
+    pub fn lists(&self, slot: u8) -> bool {
         slot == 1 || self.devices.iter().any(|d| d.slot == slot)
+    }
+
+    /// Whether the header lists device `slot` as required.
+    pub fn requires(&self, slot: u8) -> bool {
+        slot == 1 || self.devices.iter().any(|d| d.slot == slot && !d.optional)
+    }
+
+    /// The optional entries, in header order.
+    pub fn optional(&self) -> impl Iterator<Item = &DeviceReq> {
+        self.devices.iter().filter(|d| d.optional)
+    }
+
+    /// The grants of a machine on a host that provides the devices
+    /// `provides` accepts (and this implementation supports): an optional
+    /// device is granted exactly when both do.
+    pub fn grants(&self, provides: impl Fn(&DeviceReq) -> bool) -> Grants {
+        Grants(self.optional().map(|d| d.supported() && provides(d)).collect())
+    }
+
+    /// Every optional device this implementation supports granted.
+    pub fn all_grants(&self) -> Grants {
+        self.grants(|_| true)
+    }
+
+    /// The first optional device `grants` grants that this implementation
+    /// does not support, or `Err(None)` if `grants` does not fit the image
+    /// (a flag per optional entry).
+    pub fn check_grants(&self, grants: &Grants) -> Result<(), Option<DeviceReq>> {
+        if grants.0.len() != self.optional().count() {
+            return Err(None);
+        }
+        match self.optional().zip(&grants.0).find(|(d, g)| **g && !d.supported()) {
+            Some((d, _)) => Err(Some(*d)),
+            None => Ok(()),
+        }
+    }
+
+    /// The devices a machine of this image with `grants` has.
+    pub fn device_set(&self, grants: &Grants) -> DeviceSet {
+        let mut set = [false; 256];
+        set[1] = true;
+        let mut g = grants.0.iter();
+        for d in &self.devices {
+            if !d.optional || g.next().copied().unwrap_or(false) {
+                set[d.slot as usize] = true;
+            }
+        }
+        DeviceSet(set)
     }
 
     pub fn title_lossy(&self) -> String {
@@ -182,7 +286,7 @@ mod tests {
     use super::*;
 
     fn valid() -> Vec<u8> {
-        Image::build("hi", 4, &[DeviceReq { slot: 2, version: 0 }], &[0x76])
+        Image::build("hi", 4, &[DeviceReq::new(2, 0)], &[0x76])
     }
 
     #[test]
@@ -192,8 +296,8 @@ mod tests {
         assert_eq!(img.title, b"hi");
         assert_eq!(img.ram_pages, 4);
         assert_eq!(img.rom, [0x76]);
-        assert!(img.has_device(1) && img.has_device(2));
-        assert!(!img.has_device(0) && !img.has_device(3));
+        assert!(img.lists(1) && img.lists(2));
+        assert!(!img.lists(0) && !img.lists(3));
         assert_eq!(img.id, *blake3::hash(&file).as_bytes());
     }
 
@@ -215,14 +319,14 @@ mod tests {
         check(&|f| f[10] = 17, ImageError::DeviceCount(17));
         check(&|f| f[15] = 1, ImageError::ReservedNotZero);
         check(&|f| f.push(0), ImageError::LengthMismatch { expected: 35, actual: 36 });
-        check(&|f| f[33] = 1, ImageError::UnsupportedDevice(DeviceReq { slot: 2, version: 1 }));
-        check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq { slot: 5, version: 0 }));
-        check(&|f| f[32] = 0, ImageError::UnsupportedDevice(DeviceReq { slot: 0, version: 0 }));
+        check(&|f| f[33] = 1, ImageError::UnsupportedDevice(DeviceReq::new(2, 1)));
+        check(&|f| f[32] = 5, ImageError::UnsupportedDevice(DeviceReq::new(5, 0)));
+        check(&|f| f[32] = 0, ImageError::UnsupportedDevice(DeviceReq::new(0, 0)));
     }
 
     #[test]
     fn rejects_duplicate_device() {
-        let d = DeviceReq { slot: 2, version: 0 };
+        let d = DeviceReq::new(2, 0);
         let file = Image::build("", 4, &[d, d], &[0]);
         assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(2)));
     }
@@ -238,7 +342,7 @@ mod tests {
         assert_eq!(Image::parse(&file).unwrap().title, b"a\0\xFF\xFEb");
         file[16..32].fill(0);
         assert_eq!(Image::parse(&file).unwrap().title, b"");
-        let one = DeviceReq { slot: 1, version: 0 };
+        let one = DeviceReq::new(1, 0);
         assert!(Image::parse(&Image::build("", 1, &[one], &[0])).is_ok());
         assert_eq!(Image::parse(&Image::build("", 1, &[one, one], &[0])), Err(ImageError::DuplicateDevice(1)));
     }
@@ -252,5 +356,76 @@ mod tests {
     fn max_rom_accepted() {
         let file = Image::build("", 128, &[], &vec![0; ROM_MAX]);
         assert_eq!(Image::parse(&file).unwrap().rom.len(), ROM_MAX);
+    }
+
+    /// SPEC 2: the top bit of the version byte marks an optional device;
+    /// the version is the other seven bits.
+    #[test]
+    fn optional_bit() {
+        let file = Image::build("", 1, &[DeviceReq::new(2, 0), DeviceReq::optional(4, 0)], &[0]);
+        assert_eq!(&file[32..36], &[2, 0x00, 4, 0x80]);
+        let img = Image::parse(&file).unwrap();
+        assert_eq!(img.devices, [DeviceReq::new(2, 0), DeviceReq::optional(4, 0)]);
+        assert!(img.lists(4) && !img.requires(4) && img.requires(2) && img.requires(1));
+        assert_eq!(img.optional().count(), 1);
+        // An image without the bit is byte for byte what it always was.
+        assert_eq!(Image::build("", 1, &[DeviceReq::new(2, 0)], &[0]), valid_one(&[2, 0]));
+    }
+
+    fn valid_one(entry: &[u8; 2]) -> Vec<u8> {
+        let mut f = Image::build("", 1, &[], &[0]);
+        f[10] = 1;
+        f.splice(32..32, entry.iter().copied());
+        f
+    }
+
+    /// Version 127 is the highest; 128 is version 0, optional. A required
+    /// device this host lacks (in any version) is refused; an optional one
+    /// is accepted and simply not granted.
+    #[test]
+    fn version_boundary_and_refusal() {
+        let p = |e: [u8; 2]| Image::parse(&valid_one(&e));
+        assert_eq!(p([2, 127]), Err(ImageError::UnsupportedDevice(DeviceReq::new(2, 127))));
+        let img = p([2, 128]).unwrap();
+        assert_eq!(img.devices, [DeviceReq::optional(2, 0)]);
+        assert_eq!(img.all_grants(), Grants(vec![true]));
+        let img = p([2, 255]).unwrap();
+        assert_eq!(img.devices, [DeviceReq::optional(2, 127)]);
+        assert_eq!(img.all_grants(), Grants(vec![false]));
+        assert!(!img.device_set(&img.all_grants()).has(2));
+        // Reserved and unknown slots: refused when required, absent when optional.
+        assert_eq!(p([5, 0]), Err(ImageError::UnsupportedDevice(DeviceReq::new(5, 0))));
+        assert_eq!(p([5, 0x80]).unwrap().all_grants(), Grants(vec![false]));
+        assert_eq!(p([200, 0x83]).unwrap().all_grants(), Grants(vec![false]));
+        // Device 1 and device 8 cannot be optional.
+        assert_eq!(p([1, 0x80]), Err(ImageError::NotOptional(1)));
+        assert_eq!(p([8, 0x80]), Err(ImageError::NotOptional(8)));
+    }
+
+    /// A slot is listed once, whether required or optional.
+    #[test]
+    fn duplicate_slots_with_the_optional_bit() {
+        let file = Image::build("", 1, &[DeviceReq::new(3, 0), DeviceReq::optional(3, 0)], &[0]);
+        assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(3)));
+        let file = Image::build("", 1, &[DeviceReq::optional(6, 0), DeviceReq::optional(6, 1)], &[0]);
+        assert_eq!(Image::parse(&file), Err(ImageError::DuplicateDevice(6)));
+    }
+
+    /// Grants, one per optional entry in header order, and the devices a
+    /// machine with them has.
+    #[test]
+    fn grants_and_device_sets() {
+        let devs = [DeviceReq::optional(6, 0), DeviceReq::new(2, 0), DeviceReq::optional(4, 0), DeviceReq::optional(3, 0)];
+        let img = Image::parse(&Image::build("", 1, &devs, &[0])).unwrap();
+        assert_eq!(img.all_grants(), Grants(vec![true, true, true]));
+        let g = img.grants(|d| d.slot != 4);
+        assert_eq!(g, Grants(vec![true, false, true]));
+        let set = img.device_set(&g);
+        assert!(set.has(1) && set.has(2) && set.has(3) && set.has(6) && !set.has(4) && !set.has(7));
+        assert_eq!(img.check_grants(&g), Ok(()));
+        assert_eq!(img.check_grants(&Grants(vec![true])), Err(None));
+        let odd = Image::parse(&Image::build("", 1, &[DeviceReq::optional(5, 0)], &[0])).unwrap();
+        assert_eq!(odd.check_grants(&Grants(vec![true])), Err(Some(DeviceReq::optional(5, 0))));
+        assert_eq!(odd.check_grants(&Grants(vec![false])), Ok(()));
     }
 }

@@ -324,7 +324,7 @@ fn opener(id: &[u8; 32]) -> Vec<u8> {
         ),
     )
     .unwrap();
-    Image::build("opener", 1, &[terse_core::DeviceReq { slot: 2, version: 0 }], &common::build_rom(&[src], true))
+    Image::build("opener", 1, &[terse_core::DeviceReq::new(2, 0)], &common::build_rom(&[src], true))
 }
 
 /// A request for an article (a blob that is neither an image nor a

@@ -6,7 +6,7 @@ mod common;
 
 use terse_core::{DeviceReq, Machine, Snapshot};
 
-const V3: DeviceReq = DeviceReq { slot: 9, version: 0 };
+const V3: DeviceReq = DeviceReq::new(9, 0);
 
 /// Stores a0 at RAM offset `at` (from s0 = the start of RAM).
 fn keep(at: u32) -> String {
