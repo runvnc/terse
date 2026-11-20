@@ -4,6 +4,7 @@ description = "Host-side content for Terse: blob store, relay protocol and clien
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 terse-core.workspace = true

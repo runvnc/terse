@@ -1752,3 +1752,10 @@ Host cost per budget unit, for a frame spent entirely in one kind of call
 | vector `submit` 100 / 16,384 bytes | 1.4 / 0.21 | 0.32 / 0.05 |
 | content put 16 KiB (8 accepted a frame) / 1 MiB | 4.1 / 1.3 | 0.94 / 0.30 |
 | content get, 16 KiB delivered per completion | 4.0 | 0.93 |
+
+## Licence
+
+Apache License 2.0; see `LICENSE`. That covers the code, the specifications
+(`NETWORK.md`, `ARTICLE.md`, `SPEC.md`, `STATE.md`, `DEVICES.md`), the manual and
+the programs in this repository. Anyone may write their own implementation
+of the specifications.
