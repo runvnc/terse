@@ -10,16 +10,16 @@ state hash. Every other device stays in the **reference drivers**
 over the device bus's socket transport (`DEVICES.md`). It is headless: no
 window, no sound.
 
-About 1,450 lines of C11, five files, nothing but libc and POSIX:
+About 1,520 lines of C11, five files, nothing but libc and POSIX:
 
 | File | Lines | What |
 |---|---|---|
 | `cpu.c` | 262 | RV32IMC, every faulting encoding of SPEC §cpu |
 | `machine.c` | 195 | image, memory map, System device, queue, state serialization |
-| `bus.c` | 580 | the core side of the bus: drivers, call tables, batching, frames, STATE |
-| `main.c` | 261 | command line, the events-file format, `--dump`, `--bench` |
+| `bus.c` | 614 | the core side of the bus: drivers, call tables, batching, frames, STATE |
+| `main.c` | 309 | command line, the events file (STATE.md 6.2), `--dump` (6.3), `--bench` |
 | `blake3.c` | 76 | BLAKE3-256, one-shot |
-| `core.h` | 71 | the machine structure |
+| `core.h` | 68 | the machine structure |
 
 The core proper (CPU, machine, BLAKE3) is about 530 lines; the bus client
 is the largest part.
@@ -47,7 +47,9 @@ devices unchanged. Both hold:
   tables agree with what the drivers themselves answer (`--no-batch`).
 
 `SPEC-FINDINGS.md` lists every question the documents left open (31; three
-first guesses were wrong, found by comparing with the reference).
+first guesses were wrong, found by comparing with the reference). All 31
+are now settled in the documents, and `tcore` follows each written rule
+(its "Resolved" table says where).
 
 ## Building and running
 
@@ -55,8 +57,10 @@ first guesses were wrong, found by comparing with the reference).
     ./tcore programs/hello/hello.terse --frames 30 --dump --drivers target/release
 
 The reference drivers are built with the workspace
-(`scripts/cargo build --release -p terse-devices -p terse-cli`). `tcore`
-looks for them in `--drivers <dir>` (or `TERSE_DRIVERS`), else on `PATH`.
+(`scripts/cargo build --release -p terse-devices -p terse-cli -p terse-bus`).
+`tcore` looks for them as DEVICES.md 2.1 says: in one directory,
+`--drivers <dir>` (or `TERSE_DRIVERS`), by default its own; never on
+`PATH`. A `--driver` program is a path or a name on `PATH`.
 
     tcore <image.terse> [--frames N] [--events <file>] [--hash] [--hash-every N]
           [--dump] [--state <file>] [--drivers <dir>] [--driver <slots>=<command line>]...
@@ -64,24 +68,28 @@ looks for them in `--drivers <dir>` (or `TERSE_DRIVERS`), else on `PATH`.
 
 - `--frames N` (default 30), stopping earlier if the program exits or faults.
 - `--events <file>`: the scripted input of `terse run --events`
-  (writing-programs.txt): `down`, `up`, `press`, `text`, `pointer`, `click`,
-  `wheel`, `feeds-updated`, `pad`. Time is 0 and there are no random bytes,
-  as in `terse run`.
+  (STATE.md 6.2): `down`, `up`, `press`, `text`, `pointer`, `click`,
+  `wheel`, `feeds-updated`, `home` (dropped: no shell), `pad`. Time is 0
+  and there are no random bytes, as in `terse run` (STATE.md 6.1).
 - `--hash`, `--hash-every N`: as `terse run` (STATE.md 3). `--state <file>`
   writes the final serialization itself.
 - `--dump`: the terminal's grid after the last frame, from the terminal
-  driver's STATE section, in `terse run --dump`'s format.
-- `--driver 4="terse-dev-content --store … --config … --data …"`: replaces
-  the driver of those slots (the content driver needs its directories).
+  driver's STATE section, as STATE.md 6.3 says.
+- `--driver 4="/path/terse-dev-content --store … --config … --data …"`:
+  replaces the driver of those slots (the content driver needs its
+  directories: without them it uses the user's own). A `--driver` that
+  cannot be started refuses the run (status 2).
 - `--without <slot>`: withholds an optional device. An optional device whose
-  driver is not installed is not granted; a required one is refused
-  (status 2).
+  default driver is not installed is not granted; a required one is
+  refused (status 2).
 - `--no-batch`: send deferred calls one at a time and check the driver's
   answer against the call table.
 - `--bench`: frames per second, units per second, messages by type.
 
-Exit status: the program's exit code; 143 after a fault (with the fault on
-standard error); 2 for a refused image; 3 if a driver fails.
+Exit status (STATE.md 6.4): the program's exit code; 143 after a fault
+(with the fault on standard error); 2 if the run did not start (a refused
+image, a bad events file, a missing required driver, a driver whose
+handshake failed); 3 if a driver fails while the machine runs.
 
 `./test.sh` (or `make test`) runs everything above against the expected
 files and the reference `terse run`, in a temporary directory (HOME, store,
@@ -136,11 +144,12 @@ The order that worked, with the traps:
    positive, keep a negative remainder, drop a positive one. `wait_frame`
    returns the next frame counter. `exit` leaves `a0` = 0 (a trap). A buffer
    of length 0 is valid anywhere; a written buffer must be in RAM.
-4. **The bus.** HELLO, OPEN, then per frame BEGIN (its replay field is
-   always there: a trap), the calls, END; STATE when hashing. Apply the call
-   table's checks yourself and charge 4 or 64 even when a check fails. Ask
-   the vector driver for slot 3 whenever you ask it for 9 (a trap), and the
-   terminal's for slot 10 when the image lists it.
+4. **The bus.** DEVICES.md 12 is the list: HELLO, OPEN, then per frame
+   BEGIN (its replay field is always there), the calls, END; STATE when
+   hashing, in the order of DEVICES.md 1.7's table. Apply the call table's
+   checks yourself and charge 4 or 64 even when a check fails. Ask the
+   vector driver for slots 3 and 9 together, and the terminal's for slot
+   10 when the image lists it.
 5. **Events and the queue**: 64 at most, one feeds-updated a frame, drivers'
    events by position. Then `conform-program` with its script: if a PASS line
    fails the screen says which section; if a hash differs, `--state` and a

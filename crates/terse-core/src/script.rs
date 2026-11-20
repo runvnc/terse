@@ -8,7 +8,7 @@
 //! 10 up <key> [modifiers]                     key up (02h)
 //! 10 press <key> [modifiers]                  key down and key up in the same frame
 //! 10 text <rest of the line>                  one text event (03h) per character
-//! 10 pointer <x> <y> [<buttons>]              pointer (04h) in screen units; buttons 0-7
+//! 10 pointer <x> <y> [<buttons>]              pointer (04h) in screen units, clamped; buttons 0-7
 //! 10 click <x> <y>                            pointer with the primary button, then released
 //! 10 wheel <vertical> [<horizontal>]          wheel steps (06h); positive is down and right
 //! 10 feeds-updated                            feeds updated (07h)
@@ -24,7 +24,8 @@
 //! right stick defaults to 0 0. Controllers are disconnected until their
 //! first `pad` line.
 //!
-//! `<key>` is a USB HID usage ID (decimal or `0x28`) or a name: `a`-`z`,
+//! The format is specified in STATE.md 6.2. `<key>` is a USB HID usage ID
+//! (two or more decimal digits, or `0x28`) or a name: `a`-`z`,
 //! `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`,
 //! `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`,
 //! `delete`. Events of one frame are delivered in the order written.
@@ -168,7 +169,10 @@ impl Script {
                 events.extend([Event::key_down(k, m), Event::key_up(k, m)]);
             }
             "pointer" => {
-                let b = if words.len() > 2 { number(words.get(2), "buttons")? } else { 0 };
+                let b: u8 = if words.len() > 2 { number(words.get(2), "buttons")? } else { 0 };
+                if b > 7 {
+                    return Err(format!("bad buttons {b} (0-7)"));
+                }
                 events.push(Event::pointer(number(words.first(), "x")?, number(words.get(1), "y")?, b));
             }
             "click" => {
@@ -176,8 +180,13 @@ impl Script {
                 events.extend([Event::pointer(x, y, buttons::PRIMARY), Event::pointer(x, y, 0)]);
             }
             "wheel" => {
-                let h = if words.len() > 1 { number(words.get(1), "horizontal steps")? } else { 0 };
-                events.push(Event::wheel(number(words.first(), "vertical steps")?, h));
+                // SPEC §events: each -127 to 127.
+                let steps = |w: Option<&&str>, what: &str| -> Result<i8, String> {
+                    let v: i8 = number(w, what)?;
+                    if v == -128 { Err(format!("bad {what} -128")) } else { Ok(v) }
+                };
+                let h = if words.len() > 1 { steps(words.get(1), "horizontal steps")? } else { 0 };
+                events.push(Event::wheel(steps(words.first(), "vertical steps")?, h));
             }
             "feeds-updated" => events.push(Event::feeds_updated()),
             "home" => events.push(Event::home()),
@@ -256,7 +265,7 @@ mod tests {
 
     #[test]
     fn key_names() {
-        for (name, code) in [("a", 4), ("Z", 0x1D), ("1", 0x1E), ("0", 0x27), ("esc", 0x29), ("pagedown", 0x4E), ("40", 40)] {
+        for (name, code) in [("a", 4), ("Z", 0x1D), ("1", 0x1E), ("0", 0x27), ("5", 0x22), ("05", 5), ("esc", 0x29), ("Escape", 0x29), ("pagedown", 0x4E), ("40", 40), ("0x28", 0x28), ("F12", 0x45)] {
             assert_eq!(key_code(name), Some(code), "{name}");
         }
         assert_eq!(key_code("f13"), None);
@@ -269,6 +278,12 @@ mod tests {
         assert!(Script::parse("1 jump").unwrap_err().contains("unknown command"));
         assert!(Script::parse("1 press nokey").unwrap_err().contains("unknown key"));
         assert!(Script::parse("1 wheel 200").unwrap_err().contains("bad vertical steps"));
+        // STATE.md 6.2: the ranges of SPEC §events.
+        assert!(Script::parse("1 wheel -128").unwrap_err().contains("bad vertical steps"));
+        assert!(Script::parse("1 wheel 1 -128").unwrap_err().contains("bad horizontal steps"));
+        assert!(Script::parse("1 pointer 1 2 8").unwrap_err().contains("bad buttons"));
+        assert!(Script::parse("1 pointer -1 2").unwrap_err().contains("bad x"));
+        assert!(Script::parse("1 wheel -127 127\n1 pointer 1 2 7").is_ok());
         assert!(Script::parse("1 down a hyper").unwrap_err().contains("unknown modifier"));
     }
 }

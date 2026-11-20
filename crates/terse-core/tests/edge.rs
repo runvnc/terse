@@ -123,6 +123,24 @@ fn faults() {
     assert_eq!(single_fault(&jr, 64, ROM_BASE, &[(11, RAM_BASE + 64)]).kind, FaultKind::Fetch);
 }
 
+/// SPEC §stopping: alignment is checked first; SPEC §cpu: a 48-bit or longer
+/// encoding is fetched as 32 bits and is illegal with those bits, or a fetch
+/// fault at its second parcel when that is outside ROM and RAM.
+#[test]
+fn misaligned_before_outside_and_long_encodings() {
+    let lw = [0x03, 0xA5, 0x05, 0x00];
+    assert_eq!(single_fault(&lw, 64, ROM_BASE, &[(11, 2)]), Fault { kind: FaultKind::Misaligned, pc: ROM_BASE, addr: 2 });
+    let sw = [0x23, 0xA0, 0xA5, 0x00];
+    assert_eq!(single_fault(&sw, 64, ROM_BASE, &[(11, 0x2000_0001)]).kind, FaultKind::Misaligned);
+    assert_eq!(single_fault(&sw, 64, ROM_BASE, &[(11, ROM_BASE + 2)]).kind, FaultKind::Misaligned);
+    // 48-bit (low bits 011111) and 64-bit (0111111) encodings.
+    for (lo, enc) in [(0x1Fu8, 0x0000_001Fu32), (0x3F, 0x0000_003F), (0x7F, 0xFFFF_007F)] {
+        let rom = [lo, 0x00, enc.to_le_bytes()[2], enc.to_le_bytes()[3], 0x00, 0x00];
+        assert_eq!(single_fault(&rom, 64, ROM_BASE, &[]), Fault { kind: FaultKind::Illegal(enc), pc: ROM_BASE, addr: ROM_BASE });
+        assert_eq!(single_fault(&rom[..2], 64, ROM_BASE, &[]), Fault { kind: FaultKind::Fetch, pc: ROM_BASE, addr: ROM_BASE + 2 });
+    }
+}
+
 #[test]
 fn a_fault_stops_the_machine() {
     if !common::have_tools() {

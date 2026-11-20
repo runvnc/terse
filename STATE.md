@@ -27,6 +27,12 @@ says otherwise, so the layout has fixed offsets up to the RAM.
 
 ## 1. Layout
 
+Sections 1.1–1.5 and 1.13 are the core machine's (SPEC.md); 1.6–1.12
+belong to devices, in a fixed order, each with its own rule for when it
+is there. A host whose devices are separate drivers (`DEVICES.md`) asks
+each driver for its section and must still know that order and those
+rules: `DEVICES.md` 1.7 gives them as one table.
+
 ### 1.1 Header (45 bytes)
 
 | Offset | Size | Field |
@@ -56,6 +62,11 @@ which never change.
 | 184 | 4 | Fault `pc` (u32), or zero |
 | 188 | 4 | Fault address (u32, SPEC §stopping), or zero |
 | 192 | 4 | Budget (i32): the budget carried into the next frame; zero or negative (SPEC §frames) |
+
+After an `exit` the CPU section holds `pc` after the `ecall` and `a0` =
+0 (SPEC §system `exit`: the call's result), and the budget is settled as
+after any frame: 0, or the negative remainder (SPEC §frames). After a
+fault `pc` is the faulting instruction's and no register has changed.
 
 ### 1.4 RAM and grants (4 + L + k bytes)
 
@@ -361,8 +372,17 @@ From this repository's implementation (the reference):
   `8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42`;
   after 30 frames:
   `cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d`.
+- `exit`: the 42-byte image
+  `5445525300010a000001000000000000657869740000000000000000000000001d459308601073000000`
+  (no devices, one RAM page, title `exit`; ROM `c.li a0, 7`,
+  `addi a7, x0, 106h`, `ecall`). At reset: serialization 8,433 bytes,
+  hash `9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a`.
+  After 1 frame, in which it exits with code 7 (`pc` = `0001_000Ah`, `a0`
+  = 0, `a7` = `106h`, stopped `01h`, exit code `07h`, budget 0):
+  `3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b`.
 - `programs/conform/expected-hashes.txt`: the conformance image with its
   scripted input, every 10 frames to frame 200 (README, "Conformance image").
+  Likewise `programs/conform-program` and `programs/conform-reading`.
 
 "No input" means: no events, Unix time 0, no random bytes (so `random` gives
 zeros), all controllers disconnected, no completions — what `terse run` uses.
@@ -371,7 +391,11 @@ zeros), all controllers disconnected, no completions — what `terse run` uses.
 `--hash-every N` prints `<frame counter> <hash>` after every frame that
 leaves the frame counter at a multiple of N: from reset, after the first
 N frames, 2N frames, …; a run started from a snapshot goes by the counter,
-not by the frames it has run. For a system (`terse run --shell`) these are
+not by the frames it has run. The frame in which the machine exits or
+faults ends the run; it is printed only if its counter is a multiple of
+N (with `--hash` the last hash is printed in any case). Section 6 gives
+the rest of a headless run's command line, which the other
+implementations in this repository share. For a system (`terse run --shell`) these are
 the shell's hashes; `--hash-all`, after the last frame only, prints the
 shell's hash and then `<handle> <hash>` for each machine the shell has at
 that moment, in handle order: one it has stopped is not listed, and `-`
@@ -514,3 +538,95 @@ an error at the first frame whose hash differs. A frame record is only
 written for a frame that ran: once the machine stops, `terse run` stops
 too, so the last record is that of the frame in which it exited or
 faulted.
+
+## 6. Headless runs: scripted input, the screen dump, exit status
+
+The expected files of this repository (`expected-hashes.txt`,
+`expected-screen.txt`) are made by headless runs with scripted input. Every
+implementation that checks itself against them (`terse run`, `terse-bus`,
+`native/core-c`'s `tcore`) reads the same events file and prints the same
+dump, as this section says; a new implementation that wants to use them
+does the same.
+
+### 6.1 Inputs of a headless run
+
+Each frame's Unix time is 0, no random bytes are supplied (`random`
+writes zeros, SPEC §system), there are no inputs but the events file's,
+and content requests complete at the start of the next frame (the content
+device's rule for a reproducible run, SPEC §content.determinism). A
+controller is not connected until a `pad` line connects it.
+
+### 6.2 The events file (`--events <file>`)
+
+UTF-8 text; lines end with LF or CR LF. Each line is blank, a comment (its
+first word starts with `#`), or an event line: a frame number (decimal, 0
+to 4,294,967,295), whitespace, a command, and the command's arguments
+separated by whitespace. Except in `text`, everything from a `#` to the
+end of the line is ignored. A line that is not one of these, an unknown
+command or key, a missing argument or a value out of range makes the whole
+file invalid: the run does not start (exit status 2).
+
+The events of frame N are appended in step 1 of the frame whose counter is
+N (SPEC §frames), in the order their lines appear in the file; lines need
+not be in frame order. Lines for a frame that is never run are ignored.
+
+| Command | Arguments | Events appended (SPEC §events) |
+|---|---|---|
+| `down` | key, then any of the modifiers `shift`, `ctrl` (or `control`), `alt`, `meta` | one key down (`01h`) with that key code and the modifier bits |
+| `up` | key, modifiers | one key up (`02h`) |
+| `press` | key, modifiers | a key down, then a key up, both in this frame; no text event |
+| `text` | the rest of the line | one text event (`03h`) per Unicode scalar value of the rest of the line, which starts after the single whitespace character that follows `text` and includes `#`, spaces and everything else up to the line end; none if it is empty |
+| `pointer` | x, y, then optionally buttons | one pointer event (`04h`); x and y are decimal 0–65,535, clamped to 639 and 479; buttons decimal 0–7 (bit 0 primary), default 0 |
+| `click` | x, y | a pointer event with buttons 1, then one with buttons 0, at the same position (clamped as above) |
+| `wheel` | vertical, then optionally horizontal | one wheel event (`06h`); each decimal −127 to 127, default 0 |
+| `feeds-updated` | — | one feeds-updated event (`07h`); queued as SPEC §events says (at most one a frame), on any machine |
+| `home` | — | the host's home key (SPEC §machines.input), for a system; dropped when a single machine runs |
+| `pad` | n, buttons, lx, ly, then optionally rx, ry | no event: controller n (0–3) is connected with this state from this frame on, until the next `pad` line for n. Buttons are hexadecimal (an optional `0x`), 0 to `FFFF`: byte 1 of the state in bits 0–7, byte 2 in bits 8–15 (SPEC §controllers). The sticks are decimal −127 to 127 (−128 is out of range); rx and ry default to 0, and there are exactly four or six arguments |
+| `pad` | n, `off` | controller n is not connected from this frame on |
+
+**Keys.** A key is a name or a USB HID usage ID, case-insensitive:
+
+- a single character `a`–`z` is that letter's key (`04h`–`1Dh`), and a
+  single digit is that digit's key (`1`–`9`: `1Eh`–`26h`, `0`: `27h`): so
+  `5` is the key 5, not usage 5;
+- `f1`–`f12` (`3Ah`–`45h`), `enter` (`28h`), `esc` or `escape` (`29h`),
+  `backspace` (`2Ah`), `tab` (`2Bh`), `space` (`2Ch`), `insert` (`49h`),
+  `home` (`4Ah`), `pageup` (`4Bh`), `delete` (`4Ch`), `end` (`4Dh`),
+  `pagedown` (`4Eh`), `right`, `left`, `down`, `up` (`4Fh`–`52h`);
+- two or more decimal digits are a usage ID, 0–255 (`40` is `28h`;
+  `05` is usage 5), and `0x` and one or two hexadecimal digits are one
+  (`0x28`).
+
+### 6.3 The screen dump (`--dump`)
+
+After the last frame, the terminal's grid (device 2's cells, SPEC
+§terminal.cells) as text, 30 lines, row 0 first, each ended by LF. A row
+is its 80 cells from column 0, each written as follows, then stripped of
+trailing U+0020 spaces:
+
+- a cell holding `FFFFh` right after a cell that does not (the right half
+  of a wide pair) is skipped: the wide character before it already stands
+  for both;
+- any other `FFFFh` (in column 0, or after another `FFFFh`) is a space;
+- every other code is that character in UTF-8, control codes included; a
+  surrogate code (`D800h`–`DFFFh`) is written as U+FFFD.
+
+Nothing else (cursor, colours, palette) is shown. A machine without device
+2 dumps nothing to standard output. `terse run --dump` and `terse-bus
+--dump` print this; `--dump-vectors` and `--dump-page` (terse run only)
+add lines after it.
+
+### 6.4 The command line and exit status
+
+`terse run`, `terse-bus` and `tcore` take, for a single machine: the image
+file, `--frames N` (the most frames to run; the run ends earlier when the
+machine exits or faults), `--events <file>`, `--hash` and `--hash-every N`
+(section 3), `--dump`, and `--without <slot>` (an optional device
+withheld, SPEC §image). They end with:
+
+| Status | When |
+|---|---|
+| the exit code, 0–255 | the program exited; 0 also when it is still running after the last frame |
+| ended by signal `SIGTERM` (a shell shows 143) | the machine faulted (SPEC §stopping: a fault is never shown as an exit code); the fault is printed on standard error |
+| 2 | the run did not start: a bad command line or events file, an image refused (SPEC §image: malformed, or a required device or version not provided), a driver that could not be started or whose handshake failed (`DEVICES.md` 1.1, 2) |
+| 3 | a driver failed while the machine ran (`DEVICES.md` 10) |

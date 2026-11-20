@@ -164,6 +164,30 @@ fn hello_test_vectors() {
     assert!(text.contains(&format!("{} bytes", group(hashes[0].0))), "STATE.md does not give the length {}", hashes[0].0);
 }
 
+/// STATE.md 3's `exit` vector: `exit` leaves `a0` = 0 and `pc` after the
+/// `ecall` (SPEC §system), the budget 0 (SPEC §frames).
+#[test]
+fn exit_test_vector() {
+    let hex_image = "5445525300010a000001000000000000657869740000000000000000000000001d459308601073000000";
+    let bytes: Vec<u8> = (0..hex_image.len()).step_by(2).map(|i| u8::from_str_radix(&hex_image[i..i + 2], 16).unwrap()).collect();
+    let image = Image::parse(&bytes).unwrap();
+    let mut m = Machine::new(&image);
+    let reset = (m.state().len(), hex(&m.state_hash()));
+    let r = m.run_frame(&FrameInput::default());
+    assert_eq!(r.stopped, Some(terse_core::Stopped::Exit(7)));
+    let s = m.state();
+    let word = |at: usize| u32::from_le_bytes(s[at..at + 4].try_into().unwrap());
+    assert_eq!(word(45), 0x1_000A, "pc after the ecall");
+    assert_eq!(word(49 + 4 * 9), 0, "a0 (x10) is 0 after exit");
+    assert_eq!(word(49 + 4 * 16), 0x106, "a7 (x17) as it was");
+    assert_eq!(&s[177..179], &[1, 7], "exited, code 7");
+    assert_eq!(word(192), 0, "the budget left is dropped");
+    let text = std::fs::read_to_string(common::workspace().join("STATE.md")).unwrap();
+    for quoted in [hex_image.to_string(), reset.1, hex(&m.state_hash()), format!("{} bytes", group(reset.0))] {
+        assert!(text.contains(&quoted), "STATE.md does not quote {quoted}");
+    }
+}
+
 /// 43295 -> "43,295".
 fn group(n: usize) -> String {
     let s = n.to_string();

@@ -21,6 +21,46 @@ the `hello` vectors, all 20 hashes of `conform-program`, `conform` and
 random CPU images. The CPU, the System device, the budget, the charges,
 `BLAKE3` and the serialization were right on the first run.
 
+## Resolved
+
+Every finding below has since been settled in the documents, and both
+cores (the Rust reference and `tcore`) follow the written rule. "test.sh"
+is this directory's; Rust tests are named by file.
+
+| # | Decision | Where | Tests and vectors | Code changed |
+|---|---|---|---|---|
+| 1 | BEGIN's replay field is always present: a u32 length, 0 unless flag bit 0 | DEVICES 1.5 | every run of test.sh; `native/driver-example` parses it | none |
+| 2 | Slots that share state (3 and 9) are asked for together whenever a machine lists either; OPEN lists only the slots the machine has; STATE of a machine with only 9 asks slot 3's section | DEVICES 1.1, 1.7 (table), 12 | test.sh: `holo`, `conform-program` | C core: asks for [3, 9] in both cases (it asked [9, 3] for holo but [3] for an image with 3 only) |
+| 3 | `exit` writes 0 to `a0`, leaves `pc` after the `ecall`, is charged 4 | SPEC §system, STATE 1.3 | STATE 3 `exit` vector (a 42-byte image, two hashes); `terse-core/tests/state.rs` `exit_test_vector`; test.sh "exit vector" | none (C core fixed while it was written) |
+| 4 | After `exit` the budget is min(budget, 0): a negative remainder is kept | SPEC §frames | `tests/exitneg0`–`4` | none |
+| 5 | Alignment is checked first: misaligned and outside is a misaligned fault | SPEC §stopping | `terse-core/tests/edge.rs` `misaligned_before_outside_and_long_encodings`; `tests/misout` | none |
+| 6 | Low bits `11`: both parcels are fetched; a 48-bit or longer encoding is an illegal instruction with its 32 bits, or a fetch fault at the second parcel | SPEC §cpu | `edge.rs` (as 5); `tests/wide` | none |
+| 7 | An unknown call, a call to a device the machine lacks, and `a7` above `FFFFh` cost 4 | SPEC §charges, §calls.convention | `tests/sysonly` | none |
+| 8 | At most one feeds-updated event a frame, on every machine, whoever sent it | SPEC §events | `conform-program.events` frame 5; `tests/script.events` | none |
+| 9 | Keys are case-insensitive; one character is a name (`5` is the key 5), two or more digits a usage ID, `0x` hex | STATE 6.2 | `tests/script.events`; `script.rs` `key_names` | C core: case, `escape`, `control`, `05` (was octal-capable `strtol`) |
+| 10 | `press` sends no text; `click` is buttons 1 then 0 in the frame; `text` is the rest after one whitespace character, `#` included; positions are clamped, negatives refused; lines in any frame order | STATE 6.2 | `tests/script.events` (and as CR LF) | C core: a tab after `text`, negative positions refused, lines sorted by frame |
+| 11 | Out-of-range values refuse the file (status 2): sticks −128, buttons above `FFFF`, pointer buttons above 7, wheel −128. The clamping guess was wrong | STATE 6.2 | test.sh "refused:" (14 lines, both cores); `script.rs` `errors_name_the_line` | Rust: wheel −128 and pointer buttons above 7 refused (were accepted). C core: refuses instead of clamping |
+| 12 | CALL's budget: after the `ecall`'s own cost, less 4, for every call | DEVICES 1.4 | — (no driver reads it) | none |
+| 13 | The checked argument is checked for every call that has one, with or without a buffer | DEVICES 5 | — | none |
+| 14 | A driver answers for exactly the slots asked, or all but 10; else the run does not start (status 2). The guess (unserved slots) was wrong | DEVICES 1.1 | test.sh "wrong slots" (both cores) | C core: refuses a driver that leaves a slot out |
+| 15 | Every reference driver's options and environment, with the content driver's defaults (the user's own directories) | DEVICES 2.1 | — | test.sh gives the content driver by path |
+| 16 | `--dump`: a continuation after a non-continuation is skipped, any other is a space, control codes as they are, surrogates as U+FFFD | STATE 6.3 | `tests/dump.py` (both cores and terse-bus) | C core: control codes were spaces, lone continuations skipped, surrogates written raw |
+| 17 | A bus core needs no Unicode tables or palette: UTF-8 and White_Space only | SPEC §minimal | — | none |
+| 18 | The minimal core's and minimal driver's message lists | DEVICES 12, 13 | `native/driver-example` | none |
+| 19 | One drivers directory (by default the core's own; never PATH for the defaults); `--driver` a path or a name on PATH; optional device without its default driver is absent; a `--driver` that cannot start refuses the run; slots that are no device are never asked | DEVICES 2.1 | test.sh: no content driver, empty directory, `--driver` to nothing (both cores) | C core: default directory (was PATH), `--driver` lookup, refusal; Rust: `terse-bus` never asks for a slot that is no device |
+| 20 | The session directory is always given and exists | DEVICES 1.1 | — | none |
+| 21 | The core's one device-specific table: sections' order and presence | DEVICES 1.7, STATE 1, DEVICES 14 (open question) | — | none |
+| 22 | Device 8 on a machine run alone: not refused, absent, section `00h` | SPEC §image, DEVICES 1.7 | test.sh `shell run alone` | none |
+| 23 | Calls to 8 (not a shell), 10 and slots that are no device return `FFFF_FFFFh` | SPEC §calls.convention | `tests/sysonly` | none |
+| 24 | `open`'s checks in order, each reading only what the last showed | SPEC §system | `tests/sysonly` | none |
+| 25 | Every driver gets every host event of the frame | DEVICES 1.5 | — | none |
+| 26 | A position-1 event whose index is no host event's is dropped | DEVICES 1.5 | — | none |
+| 27 | Status 2: the run did not start (image, events file, driver missing or failing its handshake); 3: a driver failed while running; a fault ends the process by SIGTERM | STATE 6.4, DEVICES 2.1, 10 | test.sh status checks; "a fault ends terse-bus and terse run by SIGTERM" | Rust: `terse-bus` ends by SIGTERM after a fault and prints it (exited 255, an exit code). C core: handshake failures 2 (were 3) |
+| 28 | The stopping frame is printed only if its counter is a multiple of N | STATE 3 | — | none |
+| 29 | Already clear | — | — | none |
+| 30 | The core reads only the fields an entry uses; three argument numbers are `FFh` when unused | DEVICES 5 | — | none |
+| 31 | Headless: time 0, no random bytes, controllers from the script | SPEC §minimal, STATE 6.1 | — | none |
+
 ## Blocking (found only by running the reference drivers)
 
 1. **DEVICES 1.5, BEGIN: is the replay field always there?** The table

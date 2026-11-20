@@ -202,13 +202,16 @@ pub fn installed_slots(dir: &Path, image: &Image, shell: bool, without: &[u8], o
 }
 
 /// The slots whose drivers a run needs: every device but System and
-/// Machines the image lists (device 9 brings device 3, whose style it
+/// Machines the image lists (slots that are no device left out) (device 9 brings device 3, whose style it
 /// shares), or, for a shell, every device a machine it starts may list.
 pub fn needed_slots(image: &Image, shell: bool) -> Vec<u8> {
     if shell {
         return vec![2, 3, 4, terse_core::sound::SLOT, 7, terse_core::vector3::SLOT, FULL_TEXT];
     }
-    let mut v: Vec<u8> = image.devices.iter().map(|d| d.slot).filter(|&s| s != 1 && s != terse_core::machines::SLOT).collect();
+    // Only slots that are devices (SPEC §image: 0, 5 and 11-255 are not, and
+    // an optional one is never granted, whatever driver a --driver names).
+    let device = |s: u8| terse_core::image::SUPPORTED_DEVICES.iter().any(|d| d.slot == s);
+    let mut v: Vec<u8> = image.devices.iter().map(|d| d.slot).filter(|&s| s != 1 && s != terse_core::machines::SLOT && device(s)).collect();
     if v.contains(&terse_core::vector3::SLOT) && !v.contains(&3) {
         v.push(3);
     }

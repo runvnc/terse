@@ -64,5 +64,5 @@ extern int bus_nobatch;
 extern const char *bus_driver_dir;
 void bus_set_driver(const char *slots_eq_cmd);
 extern int bus_withheld[256];
-void die(int status, const char *fmt, ...);
+_Noreturn void die(int status, const char *fmt, ...);
 #endif
