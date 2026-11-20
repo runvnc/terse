@@ -176,8 +176,7 @@ impl Gfx {
         // in a live window: see README, Software renderer.)
         let context = softbuffer::Context::new(window.clone()).map_err(|e| format!("softbuffer: {e}"))?;
         let surface = softbuffer::Surface::new(&context, window.clone()).map_err(|e| format!("softbuffer: {e}"))?;
-        let mut display = SoftScreens::new(Box::new(glyphs), looks.threads);
-        display.set_bloom(looks.bloom);
+        let display = SoftScreens::new(Box::new(glyphs), looks.threads);
         eprintln!("terse-host: renderer {}", display.name());
         let mut gfx = Self::with(window, Presenter::Soft { surface, display, size: (0, 0), history: VecDeque::new() }, looks);
         gfx.resize(PhysicalSize::new(size.0, size.1));
@@ -191,6 +190,7 @@ impl Gfx {
             Presenter::Soft { display, .. } => display,
         };
         d.configure(looks.no_trails, looks.force_phosphor, true);
+        d.set_look(looks.look);
         Gfx { window, presenter }
     }
 

@@ -2,66 +2,52 @@
 //! `phosphor.rs` with its constants, computed as the GPU renderer's passes
 //! compute it, in linear-light floats the size of the screen:
 //!
-//! 1. the glyph light: each glyph and the cursor in its foreground colour,
-//!    times `GLYPH`, plus the average of eight copies shifted by
-//!    `GLYPH_BLOOM_RADIUS` times `GLYPH_BLOOM` (the GPU samples the glyphs at
-//!    those offsets; here the light image is shifted by whole pixels);
-//! 2. the page's text and figures as light, and the shapes' beam (core,
-//!    halo, vertex dwell), all added up;
+//! 1. the text: each glyph and the cursor in its foreground colour, and the
+//!    page's text and figures, times `GLYPH`;
+//! 2. the beam: the shapes' Gaussian light (`shapes.rs`), added up;
 //! 3. the afterglow: both components faded (× their factor, − `EPSILON`),
-//!    then the beam deposited with `max`, then the smear of moving shapes;
-//! 4. the bloom: the light (whitened above one stroke) blurred by a
-//!    separable Gaussian, horizontally then vertically;
-//! 5. light + `BLOOM` × bloom, spilled into white where far brighter than
-//!    one stroke, through the tone curve to sRGB.
+//!    then beam + text deposited with `max`, then the smear of moving
+//!    shapes;
+//! 4. the halo's pyramid: what it blurs (`max(beam + TEXT_HALO × text,
+//!    afterglow)`, whitened above one stroke) averaged 4 × 4 into the
+//!    first level (a quarter of the resolution), and each level from the
+//!    one before down to 1/32; each of `HALO`'s Gaussians blurred on its level
+//!    (`phosphor::halo_blurs`) and added, times its weight, to that level's
+//!    sum; each level's sum then takes the one below it, sampled up
+//!    bilinearly;
+//! 5. `max(beam + text, afterglow)` plus the halo (the first level's sum, sampled
+//!    up), tinted for a monochrome tube, spilled into white where far
+//!    brighter than one stroke, through the tone curve, the glass, to sRGB.
 //!
 //! The differences from the GPU are of rounding: the GPU keeps the light
-//! in 16-bit floats, samples the glyph halo at fractional offsets, and
-//! converts to sRGB exactly where this uses a 4,096-entry table.
+//! in 16-bit floats and converts to sRGB exactly where this uses a
+//! 4,096-entry table.
 //!
-//! Work is limited to where there is light: each row keeps, per buffer, a
-//! bit mask of the blocks of columns where it may be non-zero (and keeps
-//! it zero elsewhere), so a dark screen with a few shapes costs those
-//! shapes and their glow, not the whole screen.
+//! Work at full resolution is limited to where there is light: each row
+//! keeps, per buffer, a bit mask of the blocks of columns where it may be
+//! non-zero (and keeps it zero elsewhere), so a dark screen with a few
+//! shapes costs those shapes and their halo, not the whole screen. The
+//! pyramid's levels are small and computed whole.
 
-use std::f32::consts::FRAC_PI_4;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::base::{IRect, Pool, pack};
 use super::page::PageQuads;
 use super::screen::Grid;
 use super::shapes::{Geom, Mode, Shape, visit};
 use crate::phosphor::{
-    BLOOM, BLOOM_MAX_TAPS, BLOOM_SIGMA, BLOOM_WHITE, BLOOM_WHITE_FROM, DEPOSIT, EPSILON, FAST_DECAY, FAST_SHARE, GLYPH,
-    GLYPH_BLOOM, GLYPH_BLOOM_RADIUS, SPILL, SPILL_FROM, TONE_KNEE,
+    BLOOM_WHITE, BLOOM_WHITE_FROM, DEPOSIT, EPSILON, FAST_SHARE, GLYPH, HALO_FIRST, HALO_LEVELS, HaloBlur, Look, SPILL, SPILL_FROM,
+    TEXT_HALO, halo_blurs, kernel, level_size, tinted, tone_scale, up, vignette,
 };
 
-/// Rows handed to a thread at a time (even, so a band holds whole rows
-/// of a half-resolution bloom).
+/// Halo light below this is left out of the picture's masks: on its own
+/// it shows as 0 in 8-bit sRGB.
+const HALO_FLOOR: f32 = 1.2e-4;
+
+/// Rows handed to a thread at a time (even, so a band holds whole rows of
+/// the pyramid's first level).
 const BAND: usize = 16;
 
-/// How the bloom is computed (`--bloom`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BloomRes {
-    /// At the screen's resolution, as the GPU renderer does.
-    Full,
-    /// At half the resolution in each direction: the light averaged over
-    /// 2 × 2 pixels, blurred with half the radius (less the spread the
-    /// averaging and the upsampling add), and sampled back bilinearly.
-    /// About an eighth of the blur's work.
-    Half,
-    /// Half from `HALF_BLOOM_FROM` pixels wide, else full.
-    Auto,
-}
-
-/// From this width (pixels) `BloomRes::Auto` computes the bloom at half
-/// resolution: its radius (`BLOOM_SIGMA` scaled) is then at least 2.6
-/// pixels, wide enough that the difference does not show.
-pub const HALF_BLOOM_FROM: usize = 1200;
-
-/// The variance (in pixels²) that averaging 2 × 2 pixels (0.25) and
-/// sampling back bilinearly (about 0.67) add to the half-resolution blur,
-/// taken off its own.
-const HALF_SPREAD: f32 = 0.92;
 
 /// A row's blocks of columns that may hold light: bit i covers columns
 /// `i << shift` up to the next block.
@@ -142,12 +128,18 @@ fn srgb_table() -> Vec<u8> {
     (0..=SRGB_STEPS).map(|i| (to_srgb(i as f32 / SRGB_STEPS as f32) * 255.0 + 0.5) as u8).collect()
 }
 
-/// The tone curve of `phosphor.rs`, without branches (it vectorises).
+/// The entry of the sRGB table for tone-mapped light `v` (0–1): the
+/// nearest step.
 #[inline]
-fn tone(x: f32) -> f32 {
-    let u = (x - TONE_KNEE).max(0.0) / (1.0 - TONE_KNEE);
-    let soft = TONE_KNEE + (1.0 - TONE_KNEE) * u / (1.0 + u);
-    if x <= TONE_KNEE { x } else { soft }
+fn index(v: f32) -> usize {
+    step(v.clamp(0.0, 1.0) * SRGB_STEPS as f32)
+}
+
+/// `v` (0 to 2²²) rounded to the nearest integer by the float trick (adding
+/// 1.5 × 2²³ leaves it in the low bits), cheaper than a saturating cast.
+#[inline]
+fn step(v: f32) -> usize {
+    ((v + 12_582_912.0).to_bits() & 0x3F_FFFF) as usize
 }
 
 /// One afterglow deposit of a moving shape (`phosphor::deposits`): the
@@ -166,11 +158,11 @@ pub struct Light<'a> {
     pub page: &'a PageQuads,
     pub shapes: &'a [Shape],
     pub smears: &'a [Smear],
-    /// Width of the screen in pixels (the halo and the bloom scale with it).
-    pub width: f32,
     pub lin: &'a [f32; 256],
     /// Persistence 0–255 (0: no trails).
     pub persistence: u8,
+    /// The tube's preset and glass.
+    pub look: Look,
     /// Start the afterglow afresh.
     pub clear: bool,
     /// Advance the afterglow (else only the beam is redrawn).
@@ -180,32 +172,46 @@ pub struct Light<'a> {
     pub excluded: &'a [(usize, usize, usize, usize)],
 }
 
+/// One level of the halo's pyramid: the light averaged down to it, a
+/// blur's first pass, and its sum (its own blurs and the levels below).
+struct Level {
+    size: (usize, usize),
+    down: Vec<f32>,
+    tmp: Vec<f32>,
+    sum: Vec<f32>,
+}
+
 /// One screen's tube: the light textures of the GPU renderer as floats,
 /// linear RGB, three floats a texel.
 pub struct Tube {
     pub size: (usize, usize),
     blocks: Blocks,
-    /// The bloom at half resolution: its buffers (`hblur`, `bloom` and
-    /// their masks) are then `bsize`, and a mask bit covers the same
-    /// columns as one of the screen's.
-    half: bool,
-    bsize: (usize, usize),
-    bblocks: Blocks,
     beam: Vec<f32>,
+    text: Vec<f32>,
     fast: Vec<f32>,
     slow: Vec<f32>,
-    glyph: Vec<f32>,
-    hblur: Vec<f32>,
-    bloom: Vec<f32>,
     /// Per row: the blocks where each buffer may be non-zero (it is zero
-    /// elsewhere; the glyph light is only read inside its mask), and those
-    /// the last composite left non-black.
+    /// elsewhere), and those the last composite left non-black.
     beam_m: Vec<Mask>,
+    text_m: Vec<Mask>,
     glow_m: Vec<Mask>,
-    h_m: Vec<Mask>,
-    bloom_m: Vec<Mask>,
-    glyph_m: Vec<Mask>,
     shown_m: Vec<Mask>,
+    /// The pyramid, levels `HALO_FIRST` to `HALO_LEVELS`, the blurs on it,
+    /// and per row of its first level the blocks (of the screen's columns)
+    /// where its sum, the halo, shows.
+    levels: Vec<Level>,
+    blurs: Vec<(HaloBlur, Vec<f32>)>,
+    halo_m: Vec<Mask>,
+    /// Per row of the first level: the blocks (of the screen's columns)
+    /// where the light averaged into it may be non-zero, and where a blur's
+    /// first pass may be.
+    down_m: Vec<Mask>,
+    tmp_m: Vec<Mask>,
+    /// For each column of the screen, the columns of the first level it
+    /// samples and the second's weight.
+    cols: Vec<(u32, u32, f32)>,
+    /// The pyramid holds light (else it is all zero).
+    halo_lit: bool,
     srgb: Vec<u8>,
 }
 
@@ -215,107 +221,108 @@ struct Band<'a> {
     beam: &'a mut [f32],
     fast: &'a mut [f32],
     slow: &'a mut [f32],
-    hblur: &'a mut [f32],
+    down: &'a mut [f32],
+    down_m: &'a mut [Mask],
     beam_m: &'a mut [Mask],
     glow_m: &'a mut [Mask],
-    h_m: &'a mut [Mask],
 }
 
+/// Runs `f(y, row)` on every row of `data` (rows `stride` floats), a band
+/// of rows per thread, or all on this one if there is little to do: `work`
+/// is about how many operations `f` does per float.
+fn par_rows(pool: &Pool, data: &mut [f32], stride: usize, work: usize, f: impl Fn(usize, &mut [f32]) + Sync + Send) {
+    if data.len() * work < 1 << 18 {
+        for (y, row) in data.chunks_mut(stride).enumerate() {
+            f(y, row);
+        }
+        return;
+    }
+    let bands: Vec<(usize, &mut [f32])> = data.chunks_mut(BAND * stride).enumerate().map(|(i, c)| (i * BAND, c)).collect();
+    pool.each(bands, |(y0, chunk)| {
+        for (j, row) in chunk.chunks_mut(stride).enumerate() {
+            f(y0 + j, row);
+        }
+    });
+}
+
+/// The pyramid's first level is this many pixels of the screen across.
+const FIRST: usize = 1 << HALO_FIRST;
+
 impl Tube {
-    pub fn new(size: (usize, usize), bloom: BloomRes) -> Self {
+    pub fn new(size: (usize, usize)) -> Self {
         let n = size.0 * size.1 * 3;
         let rows = size.1;
         let blocks = Blocks::new(size.0);
-        let half = match bloom {
-            BloomRes::Full => false,
-            BloomRes::Half => true,
-            BloomRes::Auto => size.0 >= HALF_BLOOM_FROM,
-        };
-        let (bsize, bblocks) = if half {
-            let bsize = (size.0.div_ceil(2), size.1.div_ceil(2));
-            (bsize, Blocks { shift: blocks.shift - 1, width: bsize.0 })
-        } else {
-            (size, blocks)
-        };
-        let bn = bsize.0 * bsize.1 * 3;
+        let levels: Vec<Level> = (HALO_FIRST..=HALO_LEVELS)
+            .map(|k| {
+                let s = level_size(size, k);
+                let n = s.0 * s.1 * 3;
+                Level { size: s, down: vec![0.0; n], tmp: vec![0.0; n], sum: vec![0.0; n] }
+            })
+            .collect();
+        let blurs = halo_blurs(size.1 as f32).into_iter().map(|b| (b, kernel(&b))).collect();
         Tube {
             size,
             blocks,
-            half,
-            bsize,
-            bblocks,
             beam: vec![0.0; n],
+            text: vec![0.0; n],
             fast: vec![0.0; n],
             slow: vec![0.0; n],
-            glyph: vec![0.0; n],
-            hblur: vec![0.0; bn],
-            bloom: vec![0.0; bn],
             beam_m: vec![0; rows],
+            text_m: vec![0; rows],
             glow_m: vec![0; rows],
-            h_m: vec![0; bsize.1],
-            bloom_m: vec![0; bsize.1],
-            glyph_m: vec![0; rows],
             shown_m: vec![blocks.all(); rows],
+            halo_m: vec![0; levels[0].size.1],
+            down_m: vec![0; levels[0].size.1],
+            tmp_m: vec![0; levels[0].size.1],
+            cols: (0..size.0).map(|x| up(x, levels[0].size.0, FIRST)).map(|(a, b, t)| (a as u32, b as u32, t)).collect(),
+            levels,
+            blurs,
+            halo_lit: false,
             srgb: srgb_table(),
         }
     }
 
     /// One frame of light (or with `advance` false, the beam redrawn).
     pub fn frame(&mut self, l: &Light, pool: &Pool) {
-        let (tw, th) = self.size;
+        let (tw, _) = self.size;
         let stride = tw * 3;
         let blocks = self.blocks;
-        self.glyph_light(l, pool);
+        self.text_light(l, pool);
 
-        // The halo's offsets: eight directions at the radius, whole pixels.
-        let r = GLYPH_BLOOM_RADIUS * l.width / 640.0;
-        let offsets: Vec<(i32, i32)> = (0..8)
-            .map(|i| {
-                let a = i as f32 * FRAC_PI_4;
-                ((0.5 + r * a.cos()).floor() as i32, (0.5 + r * a.sin()).floor() as i32)
-            })
-            .collect();
         let trails = l.persistence > 0;
         let slow_decay = crate::phosphor::slow_decay(l.persistence);
-        let geom = Geom::for_rect((0.0, 0.0, tw as f32, th as f32));
-        let sigma = (BLOOM_SIGMA * l.width / 640.0).max(0.5);
-        // The blur in the bloom's own pixels.
-        let (f, sigma) = if self.half { (2, (sigma * sigma - HALF_SPREAD).max(0.25).sqrt() / 2.0) } else { (1, sigma) };
-        let taps = (3.0 * sigma).ceil().min(BLOOM_MAX_TAPS / f as f32) as usize;
-        let mut weights: Vec<f32> = (-(taps as i32)..=taps as i32).map(|i| (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()).collect();
-        let total: f32 = weights.iter().sum();
-        weights.iter_mut().for_each(|w| *w /= total);
-        let (bw, bh) = self.bsize;
-        let bstride = bw * 3;
-        let bblocks = self.bblocks;
-        let band_b = BAND / f;
-        // Blocks within the blur's reach of a block.
-        let reach = taps.div_ceil(1 << bblocks.shift) as u32;
+        let fast_decay = l.look.preset.fast_decay();
+        let geom = Geom::for_rect((0.0, 0.0, tw as f32, self.size.1 as f32));
         let shift = blocks.shift;
+        let (lw, _) = self.levels[0].size;
+        let lstride = lw * 3;
 
-        // Pass 1: beam, afterglow and the horizontal blur, band by band.
+        // Pass 1: beam, afterglow and the halo's first level, band by band.
+        let changed = AtomicBool::new(false);
         {
-            let glyph = &self.glyph;
-            let glyph_m = &self.glyph_m;
+            let changed = &changed;
+            let text = &self.text;
+            let text_m = &self.text_m;
             let bands: Vec<Band> = self
                 .beam
                 .chunks_mut(BAND * stride)
                 .zip(self.fast.chunks_mut(BAND * stride))
                 .zip(self.slow.chunks_mut(BAND * stride))
-                .zip(self.hblur.chunks_mut(band_b * bstride))
+                .zip(self.levels[0].down.chunks_mut(BAND / FIRST * lstride))
+                .zip(self.down_m.chunks_mut(BAND / FIRST))
                 .zip(self.beam_m.chunks_mut(BAND))
                 .zip(self.glow_m.chunks_mut(BAND))
-                .zip(self.h_m.chunks_mut(band_b))
                 .enumerate()
-                .map(|(i, ((((((beam, fast), slow), hblur), beam_m), glow_m), h_m))| Band {
+                .map(|(i, ((((((beam, fast), slow), down), down_m), beam_m), glow_m))| Band {
                     y0: i * BAND,
                     beam,
                     fast,
                     slow,
-                    hblur,
+                    down,
+                    down_m,
                     beam_m,
                     glow_m,
-                    h_m,
                 })
                 .collect();
             pool.each(bands, |b| {
@@ -328,49 +335,6 @@ impl Tube {
                     }
                     b.beam_m[j] = 0;
                 }
-                // Glyph light and its halo.
-                for j in 0..rows {
-                    let y = b.y0 + j;
-                    let row = &mut b.beam[j * stride..(j + 1) * stride];
-                    let own = glyph_m[y];
-                    if own != 0 {
-                        let src = &glyph[y * stride..][..stride];
-                        for (x0, x1) in blocks.runs(own) {
-                            for (o, s) in row[x0 * 3..x1 * 3].iter_mut().zip(&src[x0 * 3..x1 * 3]) {
-                                *o += GLYPH * s;
-                            }
-                        }
-                        b.beam_m[j] |= own;
-                    }
-                    for &(dx, dy) in &offsets {
-                        let sy = y as i32 + dy;
-                        if sy < 0 || sy >= th as i32 {
-                            continue;
-                        }
-                        let m = glyph_m[sy as usize];
-                        if m == 0 {
-                            continue;
-                        }
-                        let src = &glyph[sy as usize * stride..][..stride];
-                        let k = GLYPH_BLOOM / 8.0;
-                        for (s0, s1) in blocks.runs(m) {
-                            // Output x takes source x + dx.
-                            let lo = (s0 as i32 - dx).max(0) as usize;
-                            let hi = ((s1 as i32 - dx).min(tw as i32)).max(0) as usize;
-                            if lo >= hi {
-                                continue;
-                            }
-                            let out = &mut row[lo * 3..hi * 3];
-                            let inp = &src[(lo as i32 + dx) as usize * 3..(hi as i32 + dx) as usize * 3];
-                            for (o, s) in out.iter_mut().zip(inp) {
-                                *o += k * s;
-                            }
-                            b.beam_m[j] |= blocks.of(lo, hi);
-                        }
-                    }
-                }
-                // The page's light.
-                l.page.draw_light(b.beam, b.y0 as i32, tw, run, b.beam_m, shift, l.lin);
                 // The shapes' beam.
                 for s in l.shapes {
                     let [r, g, bl, a] = s.rgba();
@@ -387,21 +351,26 @@ impl Tube {
                 }
                 if l.advance {
                     let (df, ds) = (DEPOSIT * FAST_SHARE, DEPOSIT * (1.0 - FAST_SHARE));
-                    let (kf, ks) = if l.clear { (0.0, 0.0) } else { (FAST_DECAY, slow_decay) };
+                    let (kf, ks) = if l.clear { (0.0, 0.0) } else { (fast_decay, slow_decay) };
                     let eps = if l.clear { 0.0 } else { EPSILON };
                     for j in 0..rows {
-                        let m = b.glow_m[j] | b.beam_m[j];
+                        let y = b.y0 + j;
+                        let lit = b.beam_m[j] | text_m[y];
+                        let m = b.glow_m[j] | lit;
                         for (x0, x1) in blocks.runs(m) {
                             let (lo, hi) = (j * stride + x0 * 3, j * stride + x1 * 3);
-                            let (beam, fast, slow) = (&b.beam[lo..hi], &mut b.fast[lo..hi], &mut b.slow[lo..hi]);
-                            if trails {
-                                for ((f, s), &bm) in fast.iter_mut().zip(slow.iter_mut()).zip(beam) {
-                                    *f = (*f * kf - eps).max(bm * df);
-                                    *s = (*s * ks - eps).max(bm * ds);
-                                }
-                            } else {
+                            let (fast, slow) = (&mut b.fast[lo..hi], &mut b.slow[lo..hi]);
+                            if !trails {
                                 fast.fill(0.0);
                                 slow.fill(0.0);
+                                continue;
+                            }
+                            let beam = &b.beam[lo..hi];
+                            let tx = &text[y * stride + x0 * 3..y * stride + x1 * 3];
+                            for (((f, s), &bm), &t) in fast.iter_mut().zip(slow.iter_mut()).zip(beam).zip(tx) {
+                                let v = bm + t;
+                                *f = (*f * kf - eps).max(v * df);
+                                *s = (*s * ks - eps).max(v * ds);
                             }
                         }
                         b.glow_m[j] = if trails { m } else { 0 };
@@ -432,7 +401,9 @@ impl Tube {
                             m &= m - 1;
                             let (x0, x1) = ((i as usize) << shift, (((i + 1) as usize) << shift).min(tw));
                             let (lo, hi) = (j * stride + x0 * 3, j * stride + x1 * 3);
-                            if b.fast[lo..hi].iter().chain(&b.slow[lo..hi]).any(|&v| v > 0.0) {
+                            // (Without stopping early: it vectorises.)
+                            let lit = |v: &[f32]| v.iter().fold(false, |a, &v| a | (v > 0.0));
+                            if lit(&b.slow[lo..hi]) || lit(&b.fast[lo..hi]) {
                                 keep |= 1 << i;
                             } else {
                                 // Exactly zero, as outside the mask.
@@ -443,138 +414,254 @@ impl Tube {
                         b.glow_m[j] = keep;
                     }
                 }
-                // The horizontal blur of the whitened light (averaged over
-                // f × f pixels for a half-resolution bloom), over the lit
-                // blocks and those within its reach.
-                let (mut src, mut rowsum, mut light) = (Vec::new(), Vec::new(), Vec::new());
-                for jj in 0..b.h_m.len() {
-                    let ja = jj * f;
-                    let pair = if f == 2 && ja + 1 < rows { ja..ja + 2 } else { ja..ja + 1 };
-                    let lit = pair.clone().fold(0, |m, j| m | b.beam_m[j] | b.glow_m[j]);
-                    let out_m = bblocks.dilate(lit, reach);
-                    // Keep the blur zero outside its mask.
-                    for (x0, x1) in bblocks.runs(b.h_m[jj] & !out_m) {
-                        b.hblur[jj * bstride + x0 * 3..jj * bstride + x1 * 3].fill(0.0);
+                // The halo's first level: what it blurs, whitened, averaged
+                // over FIRST × FIRST pixels; zero where no light is. Whether
+                // it changed is noted: if not, nor does the halo.
+                let mut any = false;
+                let (mut src, mut row) = (Vec::new(), Vec::new());
+                for jj in 0..b.down_m.len() {
+                    let out = &mut b.down[jj * lstride..(jj + 1) * lstride];
+                    let pair = (jj * FIRST)..(jj * FIRST + FIRST).min(rows);
+                    let lit = pair.clone().fold(0, |m, j| m | b.beam_m[j] | b.glow_m[j] | text_m[b.y0 + j]);
+                    for (x0, x1) in blocks.runs(b.down_m[jj] & !lit) {
+                        let gone = &mut out[x0 / FIRST * 3..x1.div_ceil(FIRST) * 3];
+                        if gone.iter().any(|&v| v != 0.0) {
+                            changed.store(true, Ordering::Relaxed);
+                        }
+                        gone.fill(0.0);
                     }
-                    b.h_m[jj] = out_m;
-                    let n = taps;
-                    for (lo, hi) in bblocks.runs(out_m) {
-                        // The source over the run, zero-padded by the taps on
-                        // each side: column x at index x - lo + n.
+                    b.down_m[jj] = lit;
+                    for (x0, x1) in blocks.runs(lit) {
+                        // Columns x0..x1 of the screen, x0 a multiple of FIRST
+                        // (blocks are).
                         src.clear();
-                        src.resize((hi - lo + 2 * n) * 3, 0.0);
-                        // The whitened light of each full row over the run's
-                        // columns (a vectorised sum, then the whitening).
-                        let (c0, c1) = (lo * f, (hi * f).min(tw));
-                        rowsum.clear();
-                        rowsum.resize((c1 - c0) * 3, 0.0);
-                        let rows_in = pair.len() as f32;
+                        src.resize((x1 - x0) * 3, 0.0);
                         for j in pair.clone() {
-                            let (s0, s1) = (j * stride + c0 * 3, j * stride + c1 * 3);
-                            light.clear();
-                            light.extend(b.beam[s0..s1].iter().zip(&b.fast[s0..s1]).zip(&b.slow[s0..s1]).map(|((bm, f), s)| bm + f + s));
-                            // What the machine's Surfaces show does not
-                            // bloom onto its glass.
                             let y = b.y0 + j;
-                            for &(x0, y0, x1, y1) in l.excluded {
-                                let (a, z) = (x0.max(c0), x1.min(c1));
-                                if y >= y0 && y < y1 && a < z {
-                                    light[(a - c0) * 3..(z - c0) * 3].fill(0.0);
+                            let (lo, hi) = (j * stride + x0 * 3, j * stride + x1 * 3);
+                            let (bm, fa, sl) = (&b.beam[lo..hi], &b.fast[lo..hi], &b.slow[lo..hi]);
+                            let tx = &text[y * stride + x0 * 3..y * stride + x1 * 3];
+                            row.clear();
+                            row.extend(bm.iter().zip(tx).zip(fa.iter().zip(sl)).map(|((b, t), (f, s))| (b + TEXT_HALO * t).max(f + s)));
+                            // What the machine's Surfaces show does not
+                            // glow onto its glass.
+                            for &(ex0, ey0, ex1, ey1) in l.excluded {
+                                let (a, z) = (ex0.max(x0), ex1.min(x1));
+                                if y >= ey0 && y < ey1 && a < z {
+                                    row[(a - x0) * 3..(z - x0) * 3].fill(0.0);
                                 }
                             }
-                            for (acc, c) in rowsum.chunks_exact_mut(3).zip(light.chunks_exact(3)) {
+                            for (acc, c) in src.chunks_exact_mut(3).zip(row.chunks_exact(3)) {
                                 let white = (c[0].max(c[1]).max(c[2]) - BLOOM_WHITE_FROM).max(0.0) * BLOOM_WHITE;
                                 acc[0] += c[0] + white;
                                 acc[1] += c[1] + white;
                                 acc[2] += c[2] + white;
                             }
                         }
-                        let dst = &mut src[n * 3..(n + hi - lo) * 3];
-                        if f == 1 {
-                            dst.copy_from_slice(&rowsum);
-                        } else {
-                            // The mean of each 2 x 2 (fewer at an odd edge).
-                            for (x, d) in dst.chunks_exact_mut(3).enumerate() {
-                                let a = &rowsum[x * 6..x * 6 + 3];
-                                let (b2, k) = match rowsum.get(x * 6 + 3..x * 6 + 6) {
-                                    Some(b2) => (b2, 0.5 / rows_in),
-                                    None => (&[0.0f32; 3][..], 1.0 / rows_in),
-                                };
-                                d[0] = (a[0] + b2[0]) * k;
-                                d[1] = (a[1] + b2[1]) * k;
-                                d[2] = (a[2] + b2[2]) * k;
+                        // The mean of each FIRST × FIRST (fewer at an edge).
+                        let rows_in = pair.len() as f32;
+                        for (x, d) in out[x0 / FIRST * 3..x1.div_ceil(FIRST) * 3].chunks_exact_mut(3).enumerate() {
+                            let cells = &src[x * FIRST * 3..((x + 1) * FIRST * 3).min(src.len())];
+                            let k = 1.0 / (cells.len() / 3) as f32 / rows_in;
+                            let mut acc = [0.0; 3];
+                            for c in cells.chunks_exact(3) {
+                                acc[0] += c[0];
+                                acc[1] += c[1];
+                                acc[2] += c[2];
                             }
-                        }
-                        let out = &mut b.hblur[jj * bstride + lo * 3..jj * bstride + hi * 3];
-                        out.fill(0.0);
-                        for (i, &w) in weights.iter().enumerate() {
-                            // Output x reads source x + i - n, at index x - lo + i.
-                            let inp = &src[i * 3..i * 3 + out.len()];
-                            for (o, s) in out.iter_mut().zip(inp) {
-                                *o += w * s;
+                            let v = [acc[0] * k, acc[1] * k, acc[2] * k];
+                            if d != v {
+                                d.copy_from_slice(&v);
+                                any = true;
                             }
                         }
                     }
+                }
+                if any {
+                    changed.store(true, Ordering::Relaxed);
                 }
             });
         }
+        self.halo(changed.into_inner(), pool);
+    }
 
-        // Pass 2: the vertical blur.
-        let hblur = &self.hblur;
-        let h_m = &self.h_m;
-        let n = taps as i32;
-        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
-            .bloom
-            .chunks_mut(BAND * bstride)
-            .zip(self.bloom_m.chunks_mut(BAND))
-            .enumerate()
-            .map(|(i, (bloom, m))| (i * BAND, bloom, m))
-            .collect();
-        pool.each(bands, |(y0, bloom, bloom_m)| {
-            for j in 0..bloom_m.len() {
-                let y = (y0 + j) as i32;
-                let mut m = 0;
-                for i in (y - n).max(0)..(y + n + 1).min(bh as i32) {
-                    m |= h_m[i as usize];
-                }
-                for (x0, x1) in bblocks.runs(bloom_m[j] & !m) {
-                    bloom[j * bstride + x0 * 3..j * bstride + x1 * 3].fill(0.0);
-                }
-                bloom_m[j] = m;
-                for (x0, x1) in bblocks.runs(m) {
-                    let out = &mut bloom[j * bstride + x0 * 3..j * bstride + x1 * 3];
-                    out.fill(0.0);
-                    for (k, &w) in weights.iter().enumerate() {
-                        let sy = y + k as i32 - n;
-                        if sy < 0 || sy >= bh as i32 || h_m[sy as usize] & bblocks.of(x0, x1) == 0 {
-                            continue;
-                        }
-                        let row = &hblur[sy as usize * bstride + x0 * 3..sy as usize * bstride + x1 * 3];
-                        for (o, s) in out.iter_mut().zip(row) {
-                            *o += w * s;
+    /// The halo's pyramid from its first level (`frame`): the levels
+    /// below, the blurs, the sums up from the smallest level, and where the
+    /// halo shows; nothing if the first level is as it was (`changed`
+    /// false).
+    fn halo(&mut self, changed: bool, pool: &Pool) {
+        let lit = self.beam_m.iter().chain(&self.text_m).chain(&self.glow_m).any(|&m| m != 0);
+        if (!lit && !self.halo_lit) || (!changed && lit == self.halo_lit) {
+            return;
+        }
+        self.halo_lit = lit;
+        if !lit {
+            for level in &mut self.levels {
+                level.sum.fill(0.0);
+            }
+            self.halo_m.fill(0);
+            return;
+        }
+        // Each level the 2 × 2 mean of the one above (fewer at an odd edge).
+        for k in 1..self.levels.len() {
+            let (above, below) = self.levels.split_at_mut(k);
+            let src = &above[k - 1];
+            let dst = &mut below[0];
+            let ((sw, sh), (dw, _)) = (src.size, dst.size);
+            par_rows(pool, &mut dst.down, dw * 3, 4, |y, row| {
+                let rows: &[usize] = if 2 * y + 1 < sh { &[2 * y, 2 * y + 1] } else { &[2 * y] };
+                for (x, d) in row.chunks_exact_mut(3).enumerate() {
+                    let cols: &[usize] = if 2 * x + 1 < sw { &[2 * x, 2 * x + 1] } else { &[2 * x] };
+                    let k = 1.0 / (rows.len() * cols.len()) as f32;
+                    let mut acc = [0.0; 3];
+                    for &r in rows {
+                        for &c in cols {
+                            let p = &src.down[(r * sw + c) * 3..][..3];
+                            acc[0] += p[0];
+                            acc[1] += p[1];
+                            acc[2] += p[2];
                         }
                     }
+                    d.copy_from_slice(&[acc[0] * k, acc[1] * k, acc[2] * k]);
                 }
+            });
+        }
+        // From the smallest level up: the level below sampled up, then the
+        // level's own blurs added.
+        for k in (0..self.levels.len()).rev() {
+            let (here, rest) = self.levels.split_at_mut(k + 1);
+            let level = &mut here[k];
+            let (w, h) = level.size;
+            let stride = w * 3;
+            match rest.first() {
+                Some(lower) => {
+                    let (lw, lh) = lower.size;
+                    let ls = &lower.sum;
+                    let cols: Vec<(usize, usize, f32)> = (0..w).map(|x| up(x, lw, 2)).collect();
+                    par_rows(pool, &mut level.sum, stride, 6, |y, out| {
+                        let (r0, r1, ty) = up(y, lh, 2);
+                        let (a, z) = (&ls[r0 * lw * 3..][..lw * 3], &ls[r1 * lw * 3..][..lw * 3]);
+                        for (o, &(c0, c1, tx)) in out.chunks_exact_mut(3).zip(&cols) {
+                            for ch in 0..3 {
+                                let top = a[c0 * 3 + ch] + (a[c1 * 3 + ch] - a[c0 * 3 + ch]) * tx;
+                                let bottom = z[c0 * 3 + ch] + (z[c1 * 3 + ch] - z[c0 * 3 + ch]) * tx;
+                                o[ch] = top + (bottom - top) * ty;
+                            }
+                        }
+                    });
+                }
+                None => level.sum.fill(0.0),
             }
-        });
+            // On the first level the blurs work only where light is (each
+            // row's blocks, in the screen's columns: the level's are as many,
+            // FIRST times narrower); the smaller levels are blurred whole.
+            let all = (k > 0).then(|| vec![Mask::MAX; h]);
+            let bblocks = if k == 0 { Blocks { shift: self.blocks.shift - HALO_FIRST as u32, width: w } } else { Blocks { shift: 7, width: w } };
+            for (b, weights) in self.blurs.iter().filter(|(b, _)| b.level == k + HALO_FIRST) {
+                let n = b.taps as usize;
+                let reach = (n as u32).div_ceil(1 << bblocks.shift);
+                let down_m: &[Mask] = all.as_deref().unwrap_or(&self.down_m);
+                // Along x, zero beyond the edges and outside the mask.
+                let down = &level.down;
+                let tmp_m = &mut self.tmp_m;
+                for (m, &d) in tmp_m.iter_mut().zip(down_m) {
+                    *m = bblocks.dilate(d, reach);
+                }
+                let tmp_m = &self.tmp_m;
+                let tmp_m: &[Mask] = if k == 0 { tmp_m } else { all.as_deref().unwrap() };
+                par_rows(pool, &mut level.tmp, stride, weights.len(), |y, out| {
+                    let src = &down[y * stride..(y + 1) * stride];
+                    out.fill(0.0);
+                    for (x0, x1) in bblocks.runs(tmp_m[y]) {
+                        for (i, &wt) in weights.iter().enumerate() {
+                            // Output x reads source x + i - n.
+                            let lo = x0.max(n.saturating_sub(i));
+                            let hi = (w + n).saturating_sub(i).min(x1);
+                            if lo >= hi {
+                                continue;
+                            }
+                            let o = &mut out[lo * 3..hi * 3];
+                            let s = &src[(lo + i - n) * 3..(hi + i - n) * 3];
+                            for (o, s) in o.iter_mut().zip(s) {
+                                *o += wt * s;
+                            }
+                        }
+                    }
+                });
+                // Along y, times the weight, into the sum.
+                let tmp = &level.tmp;
+                let weight = b.weight;
+                par_rows(pool, &mut level.sum, stride, weights.len(), |y, out| {
+                    let rows = y.saturating_sub(n)..(y + n + 1).min(h);
+                    let m = rows.fold(0, |m, r| m | tmp_m[r]);
+                    for (x0, x1) in bblocks.runs(m) {
+                        for (i, &wt) in weights.iter().enumerate() {
+                            let sy = y as isize + i as isize - n as isize;
+                            if sy < 0 || sy >= h as isize || tmp_m[sy as usize] & bblocks.of(x0, x1) == 0 {
+                                continue;
+                            }
+                            let s = &tmp[sy as usize * stride + x0 * 3..sy as usize * stride + x1 * 3];
+                            let wt = wt * weight;
+                            for (o, s) in out[x0 * 3..x1 * 3].iter_mut().zip(s) {
+                                *o += wt * s;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        // Where the first level's sum shows, in blocks of the screen's columns.
+        let first = &self.levels[0];
+        let stride = first.size.0 * 3;
+        let blocks = self.blocks;
+        let scan = |(rows, masks): (&[f32], &mut [Mask])| {
+            for (row, m) in rows.chunks(stride).zip(masks.iter_mut()) {
+                let mut bits: Mask = 0;
+                for (x, p) in row.chunks_exact(3).enumerate() {
+                    if p[0].max(p[1]).max(p[2]) > HALO_FLOOR {
+                        // The screen's pixels that sample it (bilinearly).
+                        let x0 = (x * FIRST).saturating_sub(FIRST / 2);
+                        bits |= blocks.of(x0, (x * FIRST + FIRST + FIRST / 2).min(blocks.width));
+                    }
+                }
+                *m = bits;
+            }
+        };
+        if first.sum.len() < 1 << 16 {
+            scan((&first.sum, &mut self.halo_m));
+        } else {
+            pool.each(first.sum.chunks(BAND * stride).zip(self.halo_m.chunks_mut(BAND)).collect(), scan);
+        }
     }
 
     /// Writes the picture of the light (what the last `frame` left) into
     /// `image`, whose rows are `stride` pixels and which shows the tube's
     /// top left at (`ox`, `oy`) of its own pixels; only rows `rows` of the
     /// tube, and only where light is or was.
-    pub fn composite(&mut self, image: &mut [u32], stride: usize, ox: usize, oy: usize, rows: std::ops::Range<usize>, pool: &Pool) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn composite(&mut self, image: &mut [u32], stride: usize, ox: usize, oy: usize, rows: std::ops::Range<usize>, look: Look, pool: &Pool) {
         let (tw, th) = self.size;
         let tstride = tw * 3;
         let blocks = self.blocks;
         let rows = rows.start.min(th)..rows.end.min(th);
-        let (beam, fast, slow, bloom) = (&self.beam, &self.fast, &self.slow, &self.bloom);
-        let (beam_m, glow_m, bloom_m) = (&self.beam_m, &self.glow_m, &self.bloom_m);
+        let (beam, text, fast, slow) = (&self.beam, &self.text, &self.fast, &self.slow);
+        let (beam_m, text_m, glow_m, halo_m) = (&self.beam_m, &self.text_m, &self.glow_m, &self.halo_m);
+        let halo_lit = self.halo_lit;
+        let first = &self.levels[0];
+        let ((hw, hh), halo) = (first.size, &first.sum);
+        // Where the pixels of each FIRST sample the first level, from the
+        // one under them: the pair after it or before it, and the weight.
+        let steps: [(bool, f32); FIRST] = std::array::from_fn(|r| {
+            let (_, b, t) = up(FIRST + r, 3, FIRST);
+            (b == 2, t)
+        });
+        let cols = &self.cols;
+        let hstride = hw * 3;
         let srgb = &self.srgb;
-        let (half, (bw, bh)) = (self.half, self.bsize);
-        let bstride = bw * 3;
-        let first = (oy + rows.start) * stride;
-        let image = &mut image[first..first + rows.len() * stride];
+        let [tr, tg, tb, glass] = look.uniform();
+        let tint = look.preset.tint().map(|_| [tr, tg, tb]);
+        let first_row = (oy + rows.start) * stride;
+        let image = &mut image[first_row..first_row + rows.len() * stride];
         let shown = &mut self.shown_m[rows.clone()];
         let bands: Vec<(usize, &mut [u32], &mut [Mask])> = image
             .chunks_mut(BAND * stride)
@@ -585,19 +672,13 @@ impl Tube {
         pool.each(bands, |(y0, img, shown)| {
             let mut light = vec![0.0f32; tstride];
             let mut glow = vec![0.0f32; tstride];
-            let mut vrow = Vec::new();
+            let (mut vrow, mut srow) = (Vec::new(), Vec::new());
             for j in 0..shown.len() {
                 let y = y0 + j;
-                // The bloom's rows for this row (two, weighted, at half
-                // resolution: centres at (2i + 1) / 2).
-                let (r0, r1, fy) = if half {
-                    let yf = (y as f32 + 0.5) / 2.0 - 0.5;
-                    let r0 = yf.floor().max(0.0) as usize;
-                    (r0, (r0 + 1).min(bh - 1), (yf - r0 as f32).clamp(0.0, 1.0))
-                } else {
-                    (y, y, 0.0)
-                };
-                let now = beam_m[y] | glow_m[y] | bloom_m[r0] | bloom_m[r1];
+                // The halo's rows for this row, weighted.
+                let (r0, r1, fy) = up(y, hh, FIRST);
+                let halo_here = if halo_lit { halo_m[r0] | halo_m[r1] } else { 0 };
+                let now = beam_m[y] | text_m[y] | glow_m[y] | halo_here;
                 let out = &mut img[j * stride + ox..j * stride + ox + tw];
                 // Black where there was light and is none now.
                 for (x0, x1) in blocks.runs(shown[j] & !now) {
@@ -605,56 +686,75 @@ impl Tube {
                 }
                 shown[j] = now;
                 let at = y * tstride;
-                for (x0, x1) in blocks.runs(now) {
-                    // In three passes over the run, the first and last of
-                    // which vectorise: the light, the spill (per pixel), and
-                    // the tone curve to an index into the sRGB table.
+                if halo_here != 0 {
+                    // The first level's two rows for this row, mixed.
+                    let (row0, row1) = (&halo[r0 * hstride..][..hstride], &halo[r1 * hstride..][..hstride]);
+                    vrow.clear();
+                    vrow.extend(row0.iter().zip(row1).map(|(a, b)| a + (b - a) * fy));
+                }
+                let srgb: &[u8; SRGB_STEPS + 1] = srgb[..].try_into().expect("the table");
+                let to = |v: f32| srgb[index(v)];
+                // Where only the halo is (far below the knee and the spill):
+                // it alone, sampled up.
+                let lit = beam_m[y] | text_m[y] | glow_m[y];
+                let plain = tint.is_none() && glass == 0.0;
+                let only_halo = if plain { now & !lit } else { 0 };
+                if only_halo != 0 {
+                    // The row in steps of the sRGB table (the halo is never
+                    // below 0).
+                    srow.clear();
+                    srow.extend(vrow.iter().map(|v| v * SRGB_STEPS as f32));
+                }
+                let at_step = |v: f32| srgb[step(v).min(SRGB_STEPS)];
+                for (x0, x1) in blocks.runs(only_halo) {
+                    // x0 is a multiple of FIRST: each FIRST pixels lie around
+                    // one column c of the first level, the first half between
+                    // c - 1 and c, the rest between c and c + 1 (`steps`).
+                    for (i, group) in out[x0..x1].chunks_mut(FIRST).enumerate() {
+                        let c = x0 / FIRST + i;
+                        let v = |k: usize| -> &[f32; 3] { srow[k * 3..k * 3 + 3].try_into().expect("three") };
+                        let (before, here, after) = (v(c.saturating_sub(1)), v(c), v((c + 1).min(hw - 1)));
+                        for (o, &(second, t)) in group.iter_mut().zip(&steps) {
+                            let (a, b) = if second { (here, after) } else { (before, here) };
+                            *o = pack(at_step(a[0] + (b[0] - a[0]) * t), at_step(a[1] + (b[1] - a[1]) * t), at_step(a[2] + (b[2] - a[2]) * t));
+                        }
+                    }
+                }
+                for (x0, x1) in blocks.runs(now & !only_halo) {
                     let (lo, hi) = (at + x0 * 3, at + x1 * 3);
                     let g = &mut glow[..hi - lo];
-                    if half {
-                        // Bilinear from the half-resolution bloom: first
-                        // between its two rows (edges repeated), then each
-                        // pixel 3:1 between the two nearest columns.
-                        let (row0, row1) = (&bloom[r0 * bstride..][..bstride], &bloom[r1 * bstride..][..bstride]);
-                        let xlo = (x0 / 2) as isize - 1;
-                        let xhi = ((x1 - 1) / 2) as isize + 1;
-                        vrow.clear();
-                        for c in xlo..=xhi {
-                            let c = c.clamp(0, bw as isize - 1) as usize * 3;
-                            for ch in 0..3 {
-                                vrow.push(row0[c + ch] + (row1[c + ch] - row0[c + ch]) * fy);
-                            }
-                        }
-                        for (k, p) in g.chunks_exact_mut(3).enumerate() {
-                            let x = x0 + k;
-                            let c = (x / 2) as isize - xlo;
-                            let (ia, ib, wa) = if x % 2 == 0 { (c - 1, c, 0.25) } else { (c, c + 1, 0.75) };
+                    if halo_here & blocks.of(x0, x1) != 0 {
+                        // Each pixel between its two columns of the first level.
+                        for (p, &(ia, ib, t)) in g.chunks_exact_mut(3).zip(&cols[x0..x1]) {
                             let (va, vb) = (&vrow[ia as usize * 3..][..3], &vrow[ib as usize * 3..][..3]);
-                            for ch in 0..3 {
-                                p[ch] = va[ch] * wa + vb[ch] * (1.0 - wa);
-                            }
+                            p[0] = va[0] + (vb[0] - va[0]) * t;
+                            p[1] = va[1] + (vb[1] - va[1]) * t;
+                            p[2] = va[2] + (vb[2] - va[2]) * t;
                         }
                     } else {
-                        g.copy_from_slice(&bloom[lo..hi]);
+                        g.fill(0.0);
                     }
+                    // The light, then per pixel the tint, the spill, the
+                    // tone curve and the glass.
                     let c = &mut light[..hi - lo];
-                    let (bm, fa, sl) = (&beam[lo..hi], &fast[lo..hi], &slow[lo..hi]);
-                    for ((((c, b), f), s), g) in c.iter_mut().zip(bm).zip(fa).zip(sl).zip(g.iter()) {
-                        *c = b + f + s + BLOOM * g;
+                    let (bm, tx, fa, sl) = (&beam[lo..hi], &text[lo..hi], &fast[lo..hi], &slow[lo..hi]);
+                    for (((((c, b), t), f), s), g) in c.iter_mut().zip(bm).zip(tx).zip(fa).zip(sl).zip(g.iter()) {
+                        *c = (b + t).max(f + s) + g;
                     }
-                    for p in c.chunks_exact_mut(3) {
-                        let spill = (p[0].max(p[1]).max(p[2]) - SPILL_FROM).max(0.0) * SPILL;
-                        p[0] += spill;
-                        p[1] += spill;
-                        p[2] += spill;
-                    }
-                    for v in c.iter_mut() {
-                        *v = tone(*v).min(1.0) * SRGB_STEPS as f32;
-                    }
-                    let srgb: &[u8; SRGB_STEPS + 1] = srgb[..].try_into().expect("the table");
-                    for (o, p) in out[x0..x1].iter_mut().zip(c.chunks_exact(3)) {
-                        let at = |v: f32| srgb[(v as usize).min(SRGB_STEPS)];
-                        *o = pack(at(p[0]), at(p[1]), at(p[2]));
+                    for (k, (o, p)) in out[x0..x1].iter_mut().zip(c.chunks_exact(3)).enumerate() {
+                        let mut v = [p[0], p[1], p[2]];
+                        if let Some(t) = tint {
+                            v = tinted(v, t);
+                        }
+                        let spill = (v[0].max(v[1]).max(v[2]) - SPILL_FROM).max(0.0) * SPILL;
+                        let v = [v[0] + spill, v[1] + spill, v[2] + spill];
+                        let mut scale = tone_scale(v[0].max(v[1]).max(v[2]));
+                        if glass > 0.0 {
+                            let gx = 2.0 * (x0 + k) as f32 / tw as f32 - 1.0;
+                            let gy = 2.0 * y as f32 / th as f32 - 1.0;
+                            scale *= vignette(gx, gy, glass);
+                        }
+                        *o = pack(to(v[0] * scale), to(v[1] * scale), to(v[2] * scale));
                     }
                 }
             }
@@ -667,22 +767,26 @@ impl Tube {
         self.shown_m[rows.start.min(end)..end].fill(0);
     }
 
-    /// The glyph light: each pixel's glyph (or cursor) coverage times its
-    /// foreground colour, linear; rows without glyphs are skipped.
-    fn glyph_light(&mut self, l: &Light, pool: &Pool) {
+    /// The text's light: each pixel's glyph (or cursor) coverage times its
+    /// foreground colour, linear, and the page's light over it.
+    fn text_light(&mut self, l: &Light, pool: &Pool) {
         let (tw, _) = self.size;
         let stride = tw * 3;
         let grid = &l.grid;
-        let shift = self.blocks.shift;
+        let blocks = self.blocks;
+        let shift = blocks.shift;
         let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
-            .glyph
+            .text
             .chunks_mut(BAND * stride)
-            .zip(self.glyph_m.chunks_mut(BAND))
+            .zip(self.text_m.chunks_mut(BAND))
             .enumerate()
             .map(|(i, (g, m))| (i * BAND, g, m))
             .collect();
         pool.each(bands, |(y0, rows, masks)| {
             for j in 0..masks.len() {
+                for (x0, x1) in blocks.runs(masks[j]) {
+                    rows[j * stride + x0 * 3..j * stride + x1 * 3].fill(0.0);
+                }
                 masks[j] = 0;
                 let Some((row, gy)) = grid.row(y0 + j) else { continue };
                 if !grid.row_has_glyphs(row) {
@@ -691,18 +795,14 @@ impl Tube {
                 let out = &mut rows[j * stride..(j + 1) * stride];
                 let mut m = 0;
                 for x in 0..tw {
-                    let o = &mut out[x * 3..x * 3 + 3];
-                    let Some((col, gx)) = grid.col(x) else {
-                        o.fill(0.0);
-                        continue;
-                    };
+                    let Some((col, gx)) = grid.col(x) else { continue };
                     let (cov, fg) = grid.coverage(row, gy, col, gx);
                     if cov == 0 {
-                        o.fill(0.0);
                         continue;
                     }
-                    let k = cov as f32 / 255.0;
+                    let k = cov as f32 / 255.0 * GLYPH;
                     let c = &grid.lin[fg as usize];
+                    let o = &mut out[x * 3..x * 3 + 3];
                     o[0] = c[0] * k;
                     o[1] = c[1] * k;
                     o[2] = c[2] * k;
@@ -710,6 +810,8 @@ impl Tube {
                 }
                 masks[j] = m;
             }
+            let run = IRect::new(0, y0 as i32, tw as i32, (y0 + masks.len()) as i32);
+            l.page.draw_light(rows, y0 as i32, tw, run, masks, shift, l.lin);
         });
     }
 }
@@ -729,7 +831,7 @@ mod tests {
         // The table agrees with the exact conversion within one step.
         for i in 0..=255 {
             let v = lin[i];
-            let got = srgb[(v * SRGB_STEPS as f32) as usize] as i32;
+            let got = srgb[(v * SRGB_STEPS as f32 + 0.5) as usize] as i32;
             assert!((got - i as i32).abs() <= 1, "{i}: {got}");
         }
     }
@@ -750,3 +852,4 @@ mod tests {
         assert_eq!(wide.runs(Mask::MAX).collect::<Vec<_>>(), vec![(0, 3840)]);
     }
 }
+

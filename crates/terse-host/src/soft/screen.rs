@@ -27,7 +27,8 @@ use terse_core::{COLS, Primitive, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, V
 
 use super::base::{Damage, IRect, Pixels, Pool, TILE, mix, over, pack, tile_rows};
 use super::page::{PageKey, PageQuads, SoftPage};
-use super::phosphor::{BloomRes, Light, Smear, Tube, linear_table};
+use super::phosphor::{Light, Smear, Tube, linear_table};
+use crate::phosphor::Look;
 use super::shapes::{Geom, Mode, Shape, visit};
 use crate::display::{GlyphSource, SceneKey, VectorScene, grid_rect, outlined, screen_pos};
 use crate::page::HostLayout;
@@ -217,7 +218,8 @@ pub struct SoftScreen {
     tube: Option<Tube>,
     /// The overlay drawn last over the phosphor picture.
     tube_overlay: u32,
-    bloom: BloomRes,
+    /// How the phosphor style is drawn (`--tube`, `--vignette`).
+    look: Look,
     /// The sources of the machine's Surfaces (screen units), which give no
     /// phosphor light (SPEC §vector3d.presentation).
     excluded: Vec<[u16; 4]>,
@@ -260,7 +262,7 @@ impl SoftScreen {
             drawn: Drawn::default(),
             tube: None,
             tube_overlay: 0,
-            bloom: BloomRes::Auto,
+            look: Look::default(),
             excluded: Vec::new(),
         }
     }
@@ -274,11 +276,11 @@ impl SoftScreen {
         }
     }
 
-    /// At which resolution the phosphor bloom is computed.
-    pub fn set_bloom(&mut self, bloom: BloomRes) {
-        if bloom != self.bloom {
-            self.bloom = bloom;
-            self.tube = None;
+    /// How the phosphor style is drawn: the tube's preset and its glass.
+    pub fn set_look(&mut self, look: Look) {
+        if look != self.look {
+            self.look = look;
+            self.drawn.valid = false;
         }
     }
 
@@ -531,7 +533,7 @@ impl SoftScreen {
         let rect = self.screen_rect(viewport);
         let size = ((rect.2.ceil() as usize).max(1), (rect.3.ceil() as usize).max(1));
         if self.tube.is_none() {
-            self.tube = Some(Tube::new(size, self.bloom));
+            self.tube = Some(Tube::new(size));
             self.phosphor_stale = true;
         }
         self.page.prepare((0.0, 0.0, rect.2, rect.3), (size.0 as u32, size.1 as u32), true);
@@ -542,7 +544,8 @@ impl SoftScreen {
         if advance && persistence > 0 {
             let smear = !clear && v.opcodes == v.prev_opcodes;
             let mut deposits = Vec::new();
-            crate::phosphor::deposits(&v.prev_shapes, &v.shapes, smear, crate::phosphor::slow_decay(persistence), &mut deposits);
+            let (fast, slow) = (self.look.preset.fast_decay(), crate::phosphor::slow_decay(persistence));
+            crate::phosphor::deposits(&v.prev_shapes, &v.shapes, smear, fast, slow, &mut deposits);
             smears = deposits.iter().map(|d| Smear { shape: Shape::new(&d.shape, v.dwell[d.index]), fast: d.fast, slow: d.slow }).collect();
         }
         let mut tube = self.tube.take().expect("made above");
@@ -562,9 +565,9 @@ impl SoftScreen {
             page: &self.page.quads,
             shapes: &self.vectors.prepared,
             smears: &smears,
-            width: rect.2,
             lin: &self.lin,
             persistence,
+            look: self.look,
             clear,
             advance,
         };
@@ -587,7 +590,7 @@ impl SoftScreen {
         let rows = 0..size.1.min(area.height().saturating_sub(oy.max(0) as usize));
         let cols_fit = (ox.max(0) as usize + size.0) <= stride;
         if cols_fit && ox >= 0 && oy >= 0 {
-            tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, rows, pool);
+            tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, rows, self.look, pool);
         }
         self.tube = Some(tube);
         self.tube_overlay = u32::MAX;
@@ -614,7 +617,7 @@ impl SoftScreen {
             if let Some(mut tube) = self.tube.take() {
                 let end = tube.size.1;
                 tube.forget_shown(start..end);
-                tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, start..end, &Pool::new(1));
+                tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, start..end, self.look, &Pool::new(1));
                 self.tube = Some(tube);
             }
         }

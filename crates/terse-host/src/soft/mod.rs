@@ -27,10 +27,11 @@
 pub mod base;
 pub mod page;
 pub mod panel;
+#[cfg(test)]
+mod look;
 mod phosphor;
 pub mod scene;
 
-pub use phosphor::BloomRes;
 pub mod screen;
 pub mod shapes;
 
@@ -94,7 +95,7 @@ pub struct SoftScreens {
     no_trails: bool,
     force_phosphor: bool,
     animate_page: bool,
-    bloom: BloomRes,
+    look: crate::phosphor::Look,
     pool: Pool,
     frame: Pixels,
     damage: Damage,
@@ -118,7 +119,7 @@ impl SoftScreens {
             no_trails: false,
             force_phosphor: false,
             animate_page: true,
-            bloom: BloomRes::Auto,
+            look: crate::phosphor::Look::default(),
             pool: Pool::new(threads),
             frame: Pixels::default(),
             damage: Damage::default(),
@@ -157,10 +158,13 @@ impl SoftScreens {
         self.shell.set_page_animation(on);
     }
 
-    /// At which resolution the phosphor bloom is computed (`--bloom`).
-    pub fn set_bloom(&mut self, bloom: BloomRes) {
-        self.bloom = bloom;
-        self.shell.set_bloom(bloom);
+    /// How the phosphor style is drawn (`--tube`, `--vignette`).
+    pub fn set_look(&mut self, look: crate::phosphor::Look) {
+        self.look = look;
+        self.shell.set_look(look);
+        for c in self.children.values_mut() {
+            c.screen.set_look(look);
+        }
     }
 
     /// Brings the frame up to date for `viewport`: each screen draws what
@@ -335,13 +339,13 @@ impl Display for SoftScreens {
         }
         let shell_rect = self.shell.screen_rect(viewport);
         let mut keep = Vec::new();
-        let (no_trails, force, animate, bloom) = (self.no_trails, self.force_phosphor, self.animate_page, self.bloom);
+        let (no_trails, force, animate, look) = (self.no_trails, self.force_phosphor, self.animate_page, self.look);
         let fresh_screen = |shell_s: &SoftScreen, width: u32| {
             let mut s = SoftScreen::new(shell_s.glyphs_for(width));
             s.set_no_trails(no_trails);
             s.set_force_phosphor(force);
             s.set_page_animation(animate);
-            s.set_bloom(bloom);
+            s.set_look(look);
             s
         };
         for (h, p) in system.pictures() {
@@ -420,6 +424,10 @@ impl Display for SoftScreens {
 
     fn set_eye(&mut self, eye: Eye) {
         self.eye = eye;
+    }
+
+    fn set_look(&mut self, look: crate::phosphor::Look) {
+        SoftScreens::set_look(self, look);
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {
