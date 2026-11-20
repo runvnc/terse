@@ -118,6 +118,7 @@ fn feed_site_incremental() {
     assert!(!e.contains("rewritten"), "{e}");
     let first = snapshot(&site);
     assert_eq!(first.len(), 36);
+    eprintln!("the site: {} files, {} bytes", first.len(), first.values().map(|(b, _)| b.len()).sum::<usize>());
     check_site(&site, &key);
     let html = |name: &str| String::from_utf8(std::fs::read(site.join(name)).unwrap()).unwrap();
     // The profile gives the title and description; the links resolve.
