@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content: blobs, requests and statuses (device 4) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="content-blobs-requests-and-statuses-device-4">Content: blobs, requests and statuses (device 4)</h1>
+<p>The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user&#39;s feeds, and small named records kept on the host. Everything goes through one call, <code>submit</code> (<code>400h</code>), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in <a href="network.html">the network</a>.</p>
+<p>An image gets the device by listing slot 4, version 0 in its header&#39;s device requirements (<code>terse pack ... --device 4:0</code>). If the image does not list it, <code>submit</code> returns <code>FFFF_FFFFh</code> and does nothing else. At reset no request is pending.</p>
+<h2 id="blobs">Blobs</h2>
+<p>A blob is 1 to 1,048,576 bytes, named by its ID: the BLAKE3-256 hash of its bytes (32 bytes). A program image is a blob, so an image ID is a blob ID. A blob is immutable; a different content is a different blob.</p>
+<h2 id="the-request-block">The request block</h2>
+<p>A request is a 52-byte block that must lie wholly in RAM, at any alignment. Multi-byte fields are little-endian. In C it is <code>content_req</code>. The op table below says which fields each op uses; &quot;submit&quot; means the device reads the field when the request is submitted, &quot;completion&quot; that it writes it when the request completes.</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th><th>Written by</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td><code>op</code>: the operation, <code>01h</code> to <code>11h</code></td><td>program</td></tr>
+<tr><td>1</td><td>1</td><td><code>status</code></td><td>device</td></tr>
+<tr><td>2</td><td>2</td><td>reserved, ignored</td><td>none</td></tr>
+<tr><td>4</td><td>32</td><td><code>id</code></td><td>both</td></tr>
+<tr><td>36</td><td>4</td><td><code>offset</code></td><td>program</td></tr>
+<tr><td>40</td><td>4</td><td><code>length</code></td><td>both</td></tr>
+<tr><td>44</td><td>4</td><td><code>addr</code></td><td>program</td></tr>
+<tr><td>48</td><td>4</td><td><code>size</code></td><td>both</td></tr>
+</tbody></table></div>
+<p>What each field means, per op:</p>
+<div class="table"><table>
+<thead><tr><th>Field</th><th>Op</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>get, publish</td><td>the blob ID</td></tr>
+<tr><td><code>id</code></td><td>put</td><td>the blob ID, written on completion</td></tr>
+<tr><td><code>id</code></td><td>subscribe, unsubscribe, set nickname</td><td>a feed key</td></tr>
+<tr><td><code>id</code></td><td>identity</td><td>the host&#39;s feed key, written on completion</td></tr>
+<tr><td><code>id</code></td><td>save, load, delete</td><td>the record&#39;s name</td></tr>
+<tr><td><code>offset</code></td><td>get, load</td><td>byte offset into the blob or record</td></tr>
+<tr><td><code>offset</code></td><td>subscriptions, timeline, names, programs, records</td><td>index of the first record wanted</td></tr>
+<tr><td><code>offset</code></td><td>find</td><td>the scope, 1 to 3</td></tr>
+<tr><td><code>offset</code></td><td>publish</td><td>the entry&#39;s kind: 0 or 1 (article), 4 (document)</td></tr>
+<tr><td><code>offset</code></td><td>set profile</td><td>bit 0: listed; other bits ignored</td></tr>
+<tr><td><code>length</code></td><td>get, load, the five record lists, find</td><td>buffer size, 1 to 16,384; on completion, bytes delivered</td></tr>
+<tr><td><code>length</code></td><td>publish</td><td>the title&#39;s length, 0 to 120, read at submit</td></tr>
+<tr><td><code>length</code></td><td>set profile</td><td>the name&#39;s length, 1 to 48, read at submit</td></tr>
+<tr><td><code>length</code></td><td>set nickname</td><td>the name&#39;s length, 0 to 48, read at submit</td></tr>
+<tr><td><code>addr</code></td><td>get, load, record lists, find</td><td>the buffer, <code>length</code> bytes wholly in RAM</td></tr>
+<tr><td><code>addr</code></td><td>put, save</td><td>the data, <code>size</code> bytes wholly in ROM or wholly in RAM</td></tr>
+<tr><td><code>addr</code></td><td>publish</td><td>the title, UTF-8, wholly in ROM or wholly in RAM</td></tr>
+<tr><td><code>addr</code></td><td>find</td><td>also the query, <code>size</code> bytes in RAM</td></tr>
+<tr><td><code>addr</code></td><td>set profile, set nickname</td><td>the name, wholly in ROM or wholly in RAM</td></tr>
+<tr><td><code>size</code></td><td>get, load</td><td>the blob&#39;s or record&#39;s size, written on completion</td></tr>
+<tr><td><code>size</code></td><td>put</td><td>1 to 1,048,576, read at submit</td></tr>
+<tr><td><code>size</code></td><td>save</td><td>0 to 65,536, read at submit</td></tr>
+<tr><td><code>size</code></td><td>record lists</td><td>number of records that exist, written on completion</td></tr>
+<tr><td><code>size</code></td><td>find</td><td>query length 1 to 48 at submit; number of results on completion</td></tr>
+<tr><td><code>size</code></td><td>publish, set profile</td><td>the new entry&#39;s <code>seq</code>, written on completion</td></tr>
+</tbody></table></div>
+<p>Fields an op does not use are ignored.</p>
+<h2 id="operations">Operations</h2>
+<div class="table"><table>
+<thead><tr><th><code>op</code></th><th>Operation</th><th>Details</th></tr></thead>
+<tbody>
+<tr><td><code>01h</code></td><td>Get</td><td>below</td></tr>
+<tr><td><code>02h</code></td><td>Put</td><td>below</td></tr>
+<tr><td><code>03h</code></td><td>Subscriptions</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>04h</code></td><td>Timeline</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>05h</code></td><td>Subscribe</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>06h</code></td><td>Unsubscribe</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>07h</code></td><td>Publish</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>08h</code></td><td>Identity</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>09h</code></td><td>Names</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>0Ah</code></td><td>Find</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>0Bh</code></td><td>Set profile</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>0Ch</code></td><td>Set nickname</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>0Dh</code></td><td>Programs</td><td><a href="content-feeds.html">feeds</a></td></tr>
+<tr><td><code>0Eh</code></td><td>Save</td><td><a href="content-records.html">named records</a></td></tr>
+<tr><td><code>0Fh</code></td><td>Load</td><td><a href="content-records.html">named records</a></td></tr>
+<tr><td><code>10h</code></td><td>Delete</td><td><a href="content-records.html">named records</a></td></tr>
+<tr><td><code>11h</code></td><td>Records</td><td><a href="content-records.html">named records</a></td></tr>
+</tbody></table></div>
+<p>Get (<code>01h</code>) asks for up to <code>length</code> bytes of blob <code>id</code> starting at <code>offset</code>, delivered to <code>addr</code>. On success <code>length</code> is the number of bytes delivered (fewer if the blob ends first) and <code>size</code> is the blob&#39;s size. A get whose <code>offset</code> is at or beyond the end of the blob completes with <code>01h</code>, <code>length</code> 0 and <code>size</code> the blob&#39;s size.</p>
+<p>Put (<code>02h</code>) stores the <code>size</code> bytes at <code>addr</code> as a blob, on this host and on its relays. The bytes are copied at submit, so the program may reuse the memory at once. On success <code>id</code> is the blob&#39;s ID.</p>
+<h2 id="submit">Submit</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>400h</code></td><td><code>submit</code></td><td><code>a0</code> = address of a request block</td><td>a handle 1 to 8, or 0 if rejected</td></tr>
+</tbody></table></div>
+<p>The device takes these steps in order:</p>
+<ul>
+<li>1. If the 52 bytes at <code>a0</code> do not lie wholly in RAM, the call returns 0 and nothing is written. (This is not the usual <code>FFFF_FFFEh</code> bad-buffer result.)</li>
+<li>2. If the request is invalid, the device writes status <code>04h</code> into the block and returns 0. Invalid means: an unknown <code>op</code>; a length, size, scope or publish kind out of range; a data range not where the field table requires; a publish title or find query that is not valid UTF-8; a name that is not a valid display name; a record name that is not valid.</li>
+<li>3. If eight requests are already pending, the call returns 0 and the block is not changed (as in step 1: a program tells the two apart by counting its pending requests).</li>
+</ul>
+<p>The device does not look at the other pending requests: a block already pending may be submitted again, and then both requests write that block when they complete (the higher handle last). A data range of length 0 is valid at any address.</p>
+<ul>
+<li>4. Otherwise the device writes status <code>00h</code>, assigns the lowest free handle (1 to 8) and returns it; the request is pending. At this moment it copies the data of a put or save, the title of a publish, the query of a find and the name of a set profile or set nickname.</li>
+</ul>
+<p>So a 0 result with status <code>04h</code> means a bad request, and a 0 result with the block untouched means the block was not in RAM or all eight handles were in use. Check the block&#39;s own status before the submit if you need to tell them apart, for example by setting it to <code>FFh</code> first.</p>
+<h2 id="completion">Completion</h2>
+<p>A request never completes in the frame it was submitted in. At the start of a later frame, before the program runs, the host may complete any pending requests. Completing one:</p>
+<div class="table"><table>
+<thead><tr><th>Op</th><th>On success, also writes</th></tr></thead>
+<tbody>
+<tr><td>get, load</td><td>the bytes to <code>addr</code>; <code>length</code> and <code>size</code></td></tr>
+<tr><td>subscriptions, timeline, names, programs, records, find</td><td>the records to <code>addr</code>; <code>length</code> and <code>size</code></td></tr>
+<tr><td>put</td><td><code>id</code></td></tr>
+<tr><td>publish, set profile</td><td><code>size</code> (the entry&#39;s <code>seq</code>)</td></tr>
+<tr><td>identity</td><td><code>id</code></td></tr>
+<tr><td>subscribe, unsubscribe, set nickname, save, delete</td><td>nothing more</td></tr>
+</tbody></table></div>
+<p>In every case, success or not, the device writes <code>status</code>, frees the handle and queues a content-done event (type <code>05h</code>: <code>a</code> = handle, <code>b</code> = status; see <a href="events.html">events</a>). If the event queue is full the event is dropped but the block is still updated, so a program that polls <code>status</code> never misses a completion. A failed request writes only <code>status</code>.</p>
+<p>The device writes to the block at the address given at submit, whatever the program has done with that memory since; keep the block (and any result buffer) alive and unused until the request completes. Completions in one frame are applied in increasing handle order.</p>
+<p>After a restore. A machine restored from a snapshot has the requests that were pending when the snapshot was taken, and no host will carry them out. Each completes with status <code>03h</code> in the machine&#39;s first frame after the restore, in increasing handle order, before any other completion of that frame; so does a request that was waiting for the user&#39;s consent. Nothing else of the block is written.</p>
+<h2 id="status-values">Status values</h2>
+<div class="table"><table>
+<thead><tr><th>Value</th><th>C name</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>00h</code></td><td><code>STATUS_PENDING</code></td><td>pending</td></tr>
+<tr><td><code>01h</code></td><td><code>STATUS_DONE</code></td><td>done</td></tr>
+<tr><td><code>02h</code></td><td><code>STATUS_NOT_FOUND</code></td><td>not found</td></tr>
+<tr><td><code>03h</code></td><td><code>STATUS_FAILED</code></td><td>failed: network error or timeout (the host decides when to give up), a host that cannot keep records, a restored request</td></tr>
+<tr><td><code>04h</code></td><td><code>STATUS_BAD_REQUEST</code></td><td>bad request</td></tr>
+<tr><td><code>05h</code></td><td><code>STATUS_REFUSED</code></td><td>refused: the user said no, the host does not permit it, the host does not provide the operation (reading profile), or the relays refused a find</td></tr>
+<tr><td><code>06h</code></td><td><code>STATUS_NO_ROOM</code></td><td>no room: a save would exceed the owner&#39;s limits</td></tr>
+</tbody></table></div>
+<h2 id="determinism">Determinism</h2>
+<p>Completions (which handle, in which frame, with what status, size and bytes) are inputs to the machine, like events and the clock. A host that records them per frame can replay a run exactly, without the network or the records directory. A request waiting for the user&#39;s consent is simply pending; the answer reaches the machine only as its completion. The failed completions after a restore are inputs like any other.</p>
+<h2 id="documents">Documents</h2>
+<p>A document is a blob that says which program reads it. It starts with a header:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>4</td><td>magic <code>54h 44h 4Fh 43h</code> (<code>TDOC</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>version: 0</td></tr>
+<tr><td>5</td><td>32</td><td>the format owner&#39;s feed key; all zero for a built-in program&#39;s format</td></tr>
+<tr><td>37</td><td>1</td><td>n: the format name&#39;s length, 1 to 48</td></tr>
+<tr><td>38</td><td>n</td><td>the format name, a valid display name</td></tr>
+<tr><td>38 + n</td><td>rest</td><td>the data, in the format&#39;s own layout (possibly empty)</td></tr>
+</tbody></table></div>
+<p>The header is valid if all of it is present and every field is as above (<code>TDOC_HEAD</code> is 38). The format (owner key, name) is the identity of the program that defines it: a shell opens a document by starting that program with the document as its argument. A blob that starts with <code>TERS</code> is an image; a blob with neither is an article. A document is published as an entry of kind 4.</p>
+<h2 id="charges">Charges</h2>
+<div class="table"><table>
+<thead><tr><th>What</th><th>Charge</th></tr></thead>
+<tbody>
+<tr><td>any <code>submit</code>, also a rejected one</td><td>4, plus the <code>ecall</code></td></tr>
+<tr><td>an accepted put or save (its <code>size</code> bytes), publish (its title), find (its query), set profile or set nickname (its name)</td><td>1 per 4 bytes, rounded up, at submit</td></tr>
+<tr><td>bytes a get, load, record list or find writes to <code>addr</code></td><td>1 per 4 bytes: all of a frame&#39;s completions added up, rounded up once</td></tr>
+</tbody></table></div>
+<p>The delivery charge is taken from the budget of the frame the completions arrive in, before the program runs; the reference machine adds up the bytes of all that frame&#39;s completions and rounds once. A rejected submit copies nothing, and the fields a completion writes to the block are free. See <a href="charges.html">charges</a>.</p>
+<h2 id="state">State</h2>
+<p>The machine&#39;s state (used for the state hash and snapshots) holds, if the image lists device 4, one 53-byte record per handle 1 to 8:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td><code>op</code> of the pending request, or <code>00h</code> if the handle is free (then all else is zero)</td></tr>
+<tr><td>1</td><td>4</td><td>address of its request block</td></tr>
+<tr><td>5</td><td>32</td><td><code>id</code> as read at submit (get, subscribe, unsubscribe, publish, set nickname), the record name (save, load, delete), the put&#39;s blob ID; else zero</td></tr>
+<tr><td>37</td><td>4</td><td><code>offset</code> as read (reads, find, publish kind); set profile&#39;s listed bit; else zero</td></tr>
+<tr><td>41</td><td>4</td><td><code>length</code> as read (reads, find, publish, set profile, set nickname); else zero</td></tr>
+<tr><td>45</td><td>4</td><td><code>addr</code> as read (get, load, record lists, find); else zero</td></tr>
+<tr><td>49</td><td>4</td><td><code>size</code> as read (put, save, find&#39;s query length); else zero</td></tr>
+</tbody></table></div>
+<p>The copied data itself (a put&#39;s bytes, a title) is not part of the state.</p>
+<h2 id="example-a-get">Example: a get</h2>
+<p>Fetch the first 1,024 bytes of a blob and wait for them.</p>
+<pre>#include &quot;terse.h&quot;
+
+static content_req req;
+static uint8_t buf[1024];
+
+void fetch(const uint8_t *id)
+{
+    terse_event ev;
+    uint8_t h = content_get(&amp;req, id, 0, sizeof buf, buf);
+    if (h == 0)
+        return; /* req.status 04h: bad request */
+    for (;;) {
+        while (terse_event_pop(&amp;ev))
+            if (ev.type == EV_CONTENT_DONE &amp;&amp; ev.a == h)
+                goto done;
+        terse_wait_frame();
+    }
+done:
+    if (req.status == STATUS_DONE)
+        term_write(buf, req.length); /* req.size: blob size */
+}</pre>
+<p><code>content_get</code> fills the block and calls <code>content_submit</code>. A program with other work polls <code>req.status</code> or handles the event in its main loop instead of waiting. Note that <code>content_submit</code> returns <code>uint8_t</code>, so on an image without device 4 the <code>FFFF_FFFFh</code> result reads as 255, not 0.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-machines-screens.html">← Screens, panels and input (device 8)</a><a rel="next" href="content-feeds.html">Content: feeds, names, search and publishing →</a></nav></footer>
+</body>
+</html>

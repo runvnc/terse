@@ -41,6 +41,7 @@ const USAGE: &str = "usage:
   terse find [--entries|--programs] <text>
   terse records list [<owner>] | show <owner> <name> | delete <owner> <name>   [--data <dir>]
   terse manual build|check [--dir <docs/manual>]
+  terse manual site --out <dir> [--dir <docs/manual>]   (the manual as a static website)
   terse manual publish   (the manual built into terse, as articles of your feed)
   terse vectors [--dir <vectors>]   (the core test vectors: blobs, entries, profiles, relay messages, articles)
   terse relay add|remove|set <ws://host:port>

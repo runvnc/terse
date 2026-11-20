@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The terminal (device 2) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-terminal-device-2">The terminal (device 2)</h1>
+<p>The terminal is a grid of 80 columns by 30 rows of character cells, held by the device rather than in the program&#39;s memory. A program writes UTF-8 text to it the way it would to a simple console, or reads and writes the cells directly. It is the text layer of the screen: the host draws it over the vector displays and the page.</p>
+<h2 id="getting-the-device">Getting the device</h2>
+<p>The terminal is slot 2, version 0. An image gets it by listing (2, 0) among the device requirements in its header, which <code>terse pack ... --device 2:0</code> does. In an image that does not list it, every call from <code>200h</code> to <code>2FFh</code> returns <code>FFFF_FFFFh</code> and does nothing else. With the device present, a call number in that range that is not one of the ten below (<code>20Ah</code> and up) also returns <code>FFFF_FFFFh</code>.</p>
+<h2 id="the-grid">The grid</h2>
+<p>The grid is 2,400 cells (9,600 bytes). Cell number <code>row * 80 + column</code> is the cell at (column, row), with (0, 0) at the top left. On the 640 by 480 unit screen a cell is 8 units wide and 16 high, so the cell at (column, row) covers x from <code>column * 8</code> and y from <code>row * 16</code>.</p>
+<p>Each cell is four bytes:</p>
+<div class="table"><table>
+<thead><tr><th>Byte</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Character code, low byte</td></tr>
+<tr><td>1</td><td>Character code, high byte</td></tr>
+<tr><td>2</td><td>Foreground palette index</td></tr>
+<tr><td>3</td><td>Background palette index</td></tr>
+</tbody></table></div>
+<p>The character code is a Unicode code point from <code>0000h</code> to <code>FFFFh</code>. A character is wide if its Unicode 16.0 East Asian Width property is W or F (including unassigned code points that Unicode gives W by default, such as U+FA6E); every other character is narrow. A wide character takes two cells of a row: the left cell holds its code and the right cell holds the continuation code <code>FFFFh</code> (<code>TERM_CONTINUATION</code> in terse.h; <code>term_is_wide</code> tells whether a code point is wide). Combining marks get no special treatment: each takes a cell.</p>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>200h</code></td><td><code>write</code></td><td><code>a0</code> buffer, <code>a1</code> length (at most 4,096)</td><td>the length</td><td>deferred</td></tr>
+<tr><td><code>201h</code></td><td><code>command</code></td><td><code>a0</code> command</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>202h</code></td><td><code>set_cursor</code></td><td><code>a0</code> column, <code>a1</code> row</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>203h</code></td><td><code>get_cursor</code></td><td>none</td><td><code>a0</code> column, <code>a1</code> row</td><td>answered</td></tr>
+<tr><td><code>204h</code></td><td><code>set_colours</code></td><td><code>a0</code> fg, <code>a1</code> bg</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>205h</code></td><td><code>get_colours</code></td><td>none</td><td><code>a0</code> fg, <code>a1</code> bg</td><td>answered</td></tr>
+<tr><td><code>206h</code></td><td><code>cells_read</code></td><td><code>a0</code> first, <code>a1</code> buffer, <code>a2</code> count</td><td>count</td><td>answered</td></tr>
+<tr><td><code>207h</code></td><td><code>cells_write</code></td><td><code>a0</code> first, <code>a1</code> buffer, <code>a2</code> count</td><td>count</td><td>deferred</td></tr>
+<tr><td><code>208h</code></td><td><code>palette_set</code></td><td><code>a0</code> first, <code>a1</code> buffer, <code>a2</code> count</td><td>count</td><td>deferred</td></tr>
+<tr><td><code>209h</code></td><td><code>size</code></td><td>none</td><td><code>a0</code> = 80, <code>a1</code> = 30</td><td>deferred</td></tr>
+</tbody></table></div>
+<p>An answered call (its result depends on the terminal&#39;s state) costs 64, a deferred one 4; see Charges below.</p>
+<p>A buffer the device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM; an empty one may be anywhere. Otherwise the call returns <code>FFFF_FFFEh</code> (a bad buffer) and does nothing else.</p>
+<ul>
+<li><code>write</code> puts characters (below) from all the bytes of the buffer, in order, and returns the length. The buffer holds 0 to 4,096 bytes, in ROM or RAM; a longer one is a bad buffer (<code>FFFF_FFFEh</code>, nothing written). The whole buffer is taken whatever the budget: the call costs 4 plus 2 per byte, and nothing more for the scrolls and clears its bytes cause, so a write that starts with little budget left can take the budget below zero (by at most 8,199 units), which the next frame pays. A UTF-8 sequence may be split across calls: the device keeps the incomplete part. <code>term_write</code> in the C library splits a longer text into writes of 4,096 bytes (<code>TERM_WRITE_MAX</code>).</li>
+<li><code>command</code> carries out a command (table below). A value above 255, or one not in the table, does nothing; the result is 0 either way.</li>
+<li><code>set_cursor</code> moves the cursor to (<code>a0</code>, <code>a1</code>), each clamped to 79 and 29 (the arguments are unsigned, so any larger value gives the last column or row), and clears pending wrap.</li>
+<li><code>set_colours</code> sets the current foreground and background palette indexes. A value above 255 leaves that colour as it is, so <code>term_fg</code> passes <code>100h</code> as the background to change only the foreground.</li>
+<li><code>get_cursor</code> and <code>get_colours</code> return the current values in <code>a0</code> and <code>a1</code>.</li>
+<li><code>cells_read</code> copies <code>count</code> cells (<code>4 * count</code> bytes) of the grid, from cell <code>first</code> on, wrapping from cell 2,399 to cell 0, into the buffer (in RAM). <code>cells_write</code> copies the buffer (ROM or RAM) into the grid the same way. <code>first</code> must be below 2,400 and <code>count</code> at most 2,400, else the call returns <code>FFFF_FFFEh</code> and does nothing. Neither moves the cursor or changes pending wrap. Written cells are not checked: the host draws a wide character across two cells when the next cell in the row holds <code>FFFFh</code>; how it draws any other arrangement is not specified.</li>
+<li><code>palette_set</code> sets <code>count</code> palette entries from entry <code>first</code> on, wrapping from 255 to 0, from <code>3 * count</code> bytes of red, green, blue (0 to 255 each), in ROM or RAM. <code>first</code> must be below 256 and <code>count</code> at most 256, else the call returns <code>FFFF_FFFEh</code> and does nothing.</li>
+<li><code>size</code> returns 80 in <code>a0</code> and 30 in <code>a1</code>.</li>
+</ul>
+<h2 id="put-character">Put character</h2>
+<p>The bytes given to <code>write</code> are decoded as UTF-8. When a character is complete it is handled by this table:</p>
+<div class="table"><table>
+<thead><tr><th>Character</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td><code>08h</code></td><td>Cursor left one column, stopping at column 0</td></tr>
+<tr><td><code>09h</code></td><td>Cursor to the next column that is a multiple of 8, stopping at column 79</td></tr>
+<tr><td><code>0Ah</code></td><td>Cursor to column 0 of the next row; scrolls up if on the last row</td></tr>
+<tr><td><code>0Ch</code></td><td>Clear the grid and move the cursor to (0, 0)</td></tr>
+<tr><td><code>0Dh</code></td><td>Cursor to column 0</td></tr>
+<tr><td>other below <code>20h</code>, and <code>7Fh</code></td><td>Ignored</td></tr>
+<tr><td>anything else</td><td>Printed</td></tr>
+</tbody></table></div>
+<p>Printing a character takes four steps:</p>
+<ul>
+<li>1. If the pending wrap flag is set, or the character is wide and the cursor is at column 79, the cursor first moves to column 0 of the next row, scrolling up if on the last row. In the second case the cell at column 79 is first set to a space with the current colours; if it was the right half of a wide pair, the left half at column 78 becomes a space and keeps its colours.</li>
+<li>2. The character is written at the cursor with the current colours. A wide character also writes <code>FFFFh</code> with the current colours to the next cell.</li>
+<li>3. If a cell written in step 2 was half of a wide pair, the other half of that pair becomes a space and keeps its colours.</li>
+<li>4. The cursor moves right by the character&#39;s width (1 or 2). If that would pass column 79, the cursor stays at column 79 and pending wrap is set.</li>
+</ul>
+<p>So writing in the last column does not scroll at once: the wrap happens only when the next printable character arrives. Pending wrap is cleared by step 1, by the control characters <code>08h</code>, <code>09h</code>, <code>0Ah</code>, <code>0Ch</code> and <code>0Dh</code>, by <code>set_cursor</code>, and by command <code>01h</code>. Ignored control characters leave it set.</p>
+<p>The code point <code>FFFFh</code> is written as <code>FFFDh</code>, so put character never creates a continuation cell on its own.</p>
+<p>Malformed UTF-8 and code points above <code>FFFFh</code> are written as <code>FFFDh</code>. Each maximal invalid prefix of a sequence produces one <code>FFFDh</code> (the WHATWG rule), and the byte that interrupted the sequence is decoded afresh. Overlong forms and surrogates are malformed. In terms of bytes:</p>
+<div class="table"><table>
+<thead><tr><th>Lead byte</th><th>Second byte allowed</th><th>Bytes</th></tr></thead>
+<tbody>
+<tr><td><code>00h</code>-<code>7Fh</code></td><td>none</td><td>1</td></tr>
+<tr><td><code>C2h</code>-<code>DFh</code></td><td><code>80h</code>-<code>BFh</code></td><td>2</td></tr>
+<tr><td><code>E0h</code></td><td><code>A0h</code>-<code>BFh</code></td><td>3</td></tr>
+<tr><td><code>E1h</code>-<code>ECh</code>, <code>EEh</code>-<code>EFh</code></td><td><code>80h</code>-<code>BFh</code></td><td>3</td></tr>
+<tr><td><code>EDh</code></td><td><code>80h</code>-<code>9Fh</code></td><td>3</td></tr>
+<tr><td><code>F0h</code></td><td><code>90h</code>-<code>BFh</code></td><td>4 (gives <code>FFFDh</code>)</td></tr>
+<tr><td><code>F1h</code>-<code>F3h</code></td><td><code>80h</code>-<code>BFh</code></td><td>4 (gives <code>FFFDh</code>)</td></tr>
+<tr><td><code>F4h</code></td><td><code>80h</code>-<code>8Fh</code></td><td>4 (gives <code>FFFDh</code>)</td></tr>
+</tbody></table></div>
+<p>Later bytes of a sequence must be <code>80h</code>-<code>BFh</code>. Any other lead byte (<code>80h</code>-<code>C1h</code>, <code>F5h</code>-<code>FFh</code>) gives one <code>FFFDh</code>. For example the bytes <code>E2h 82h 41h</code> give <code>FFFDh</code> and then <code>A</code>; a complete valid four-byte sequence gives a single <code>FFFDh</code>.</p>
+<h2 id="commands">Commands</h2>
+<div class="table"><table>
+<thead><tr><th>Value</th><th>Command</th></tr></thead>
+<tbody>
+<tr><td><code>01h</code></td><td>Clear: every cell becomes a space with the current colours; cursor to (0, 0)</td></tr>
+<tr><td><code>02h</code></td><td>Scroll up one row; the bottom row is cleared</td></tr>
+<tr><td><code>03h</code></td><td>Scroll down one row; the top row is cleared</td></tr>
+<tr><td><code>04h</code></td><td>Clear from the cursor to the end of the row (see below)</td></tr>
+<tr><td><code>05h</code></td><td>Show the cursor</td></tr>
+<tr><td><code>06h</code></td><td>Hide the cursor</td></tr>
+</tbody></table></div>
+<p>&quot;Cleared&quot; means a space (<code>0020h</code>) with the current colours. For <code>04h</code>, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands <code>02h</code> to <code>06h</code> leave the cursor and pending wrap as they are; <code>01h</code> clears pending wrap. In terse.h the values are <code>TERM_CLEAR</code>, <code>TERM_SCROLL_UP</code>, <code>TERM_SCROLL_DOWN</code>, <code>TERM_CLEAR_EOL</code>, <code>TERM_CURSOR_ON</code> and <code>TERM_CURSOR_OFF</code>; <code>term_cmd</code> sends one.</p>
+<h2 id="reset-state-and-palette">Reset state and palette</h2>
+<p>At reset every cell is a space with foreground 7 and background 0. The cursor is at (0, 0) and shown, pending wrap is clear and no UTF-8 sequence is pending. The palette is the xterm 256-colour palette:</p>
+<div class="table"><table>
+<thead><tr><th>Entries</th><th>Colours</th></tr></thead>
+<tbody>
+<tr><td>0-7</td><td><code>000000</code>, <code>CD0000</code>, <code>00CD00</code>, <code>CDCD00</code>, <code>0000EE</code>, <code>CD00CD</code>, <code>00CDCD</code>, <code>E5E5E5</code></td></tr>
+<tr><td>8-15</td><td><code>7F7F7F</code>, <code>FF0000</code>, <code>00FF00</code>, <code>FFFF00</code>, <code>5C5CFF</code>, <code>FF00FF</code>, <code>00FFFF</code>, <code>FFFFFF</code></td></tr>
+<tr><td>16-231</td><td>cube: entry <code>16 + 36r + 6g + b</code>, each of r, g, b 0-5 meaning <code>00h 5Fh 87h AFh D7h FFh</code></td></tr>
+<tr><td>232-255</td><td>grey: entry <code>232 + i</code> has each component <code>8 + 10i</code></td></tr>
+</tbody></table></div>
+<h2 id="charges">Charges</h2>
+<div class="table"><table>
+<thead><tr><th>What</th><th>Charge</th></tr></thead>
+<tbody>
+<tr><td>Any call, also one that fails</td><td>4; 64 for <code>get_cursor</code>, <code>get_colours</code> and <code>cells_read</code> (answered)</td></tr>
+<tr><td><code>write</code>: each byte of the buffer</td><td>2</td></tr>
+<tr><td>A clear, scroll up or scroll down by <code>command</code></td><td>150</td></tr>
+<tr><td><code>cells_read</code>, <code>cells_write</code>, <code>palette_set</code></td><td>1 per 4 bytes copied, rounded up</td></tr>
+</tbody></table></div>
+<p>The 150 applies to commands <code>01h</code>, <code>02h</code> and <code>03h</code> only: the scrolls and clears a <code>write</code> causes (<code>0Ch</code>, <code>0Ah</code> on the last row, a wrap on the last row) are paid for by its 2 per byte, so a host makes them cheap (a scroll costs it one row at most). Copies are charged only when the call succeeds: <code>cells_write</code> of all 2,400 cells costs 4 + 2,400 = 2,404 units and <code>cells_read</code> of them 64 + 2,400, on top of the <code>ecall</code> instruction. See <a href="charges.html">charges</a> for the whole table.</p>
+<h2 id="state">State</h2>
+<p>For determinism and snapshots the terminal&#39;s state is, in this order: a present flag (1 byte; if <code>00h</code> nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with <code>00h</code>. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (<code>C2h</code>-<code>F4h</code>) and the valid continuation bytes received after it.</p>
+<p>The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; <a href="device-vector.html">the 2D vector display</a> describes the layers.</p>
+<h2 id="example">Example</h2>
+<pre>#include &quot;terse.h&quot;
+
+int main(void)
+{
+    static const uint8_t navy[3] = {0, 0, 64};
+    uint32_t col, row;
+
+    /* Redefine entry 4, then clear the grid in it. */
+    terse_call(CALL_TERM_PALETTE_SET, 4, (uint32_t)navy, 1);
+    term_color(15, 4);
+    term_cmd(TERM_CLEAR);
+    term_cmd(TERM_CURSOR_OFF);
+
+    term_goto(2, 1);
+    /* two wide characters, U+4E16 and U+754C */
+    term_puts(&quot;Hello, \xE4\xB8\x96\xE7\x95\x8C\n&quot;);
+    col = terse_call2(CALL_TERM_GET_CURSOR, 0, 0, &amp;row);
+    /* col = 0, row = 2 */
+
+    term_fill(0, 29, 80, &#39;-&#39;, 11, 4);   /* by cells_write */
+    for (;;)
+        terse_wait_frame();
+}</pre>
+<p>After the <code>puts</code>, the cursor is at (0, 2): the newline moved it to the next row. The two Chinese characters take four cells, columns 9 to 12 of row 1.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-system.html">← The system device (device 1)</a><a rel="next" href="device-vector.html">The 2D vector display (device 3) →</a></nav></footer>
+</body>
+</html>

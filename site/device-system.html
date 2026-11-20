@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The system device (device 1) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-system-device-device-1">The system device (device 1)</h1>
+<p>The system device is the machine&#39;s link to time and input: it ends frames, hands out events, reads the clock, random bytes and game controllers, stops the machine, and lets a machine that a shell started ask the shell to open something and read the argument the shell gave it. It is slot 1, version 0. Every machine has it: an image need not list it (listing (1, 0) is allowed too), and it cannot be absent.</p>
+<h2 id="reset-state">Reset state</h2>
+<div class="table"><table>
+<thead><tr><th>Item</th><th>At reset</th></tr></thead>
+<tbody>
+<tr><td>Frame counter</td><td>0</td></tr>
+<tr><td>Event queue</td><td>empty (it holds at most 64 events)</td></tr>
+<tr><td>Time latch</td><td>0 until the first frame latches it</td></tr>
+<tr><td>Controllers</td><td>all four read as not connected until the first frame latches them</td></tr>
+<tr><td>Argument</td><td>the blob ID its shell gave it, or none</td></tr>
+<tr><td>Open request</td><td>none waiting</td></tr>
+</tbody></table></div>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Charge</th></tr></thead>
+<tbody>
+<tr><td><code>100h</code></td><td><code>wait_frame</code></td><td>none</td><td>the frame counter in the frame it returns in</td><td>4</td></tr>
+<tr><td><code>101h</code></td><td><code>next_event</code></td><td><code>a0</code> = buffer (4 bytes, written)</td><td>1 and the event, or 0 if the queue is empty</td><td>4, plus 1 when an event is written</td></tr>
+<tr><td><code>102h</code></td><td><code>frame_count</code></td><td>none</td><td>the frame counter</td><td>4</td></tr>
+<tr><td><code>103h</code></td><td><code>unix_time</code></td><td>none</td><td>the Unix time latched at the start of the frame</td><td>4</td></tr>
+<tr><td><code>104h</code></td><td><code>random</code></td><td><code>a0</code> = buffer (written), <code>a1</code> = length, at most 256</td><td>the length</td><td>4, plus 1 per 4 bytes</td></tr>
+<tr><td><code>105h</code></td><td><code>controller</code></td><td><code>a0</code> = controller number, <code>a1</code> = buffer (8 bytes, written)</td><td>byte 0 of the state</td><td>4, plus 2</td></tr>
+<tr><td><code>106h</code></td><td><code>exit</code></td><td><code>a0</code> = exit code (low 8 bits)</td><td>does not return</td><td>4</td></tr>
+<tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td><td>4, plus 1 per 4 bytes read</td></tr>
+<tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td><td>4, plus 8 when written</td></tr>
+</tbody></table></div>
+<p>The charge is in budget units on top of the <code>ecall</code> instruction itself (1 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing. Every buffer a call writes must lie wholly in RAM; one it reads (only <code>open</code>&#39;s) wholly in ROM or wholly in RAM. A bad buffer gives <code>FFFF_FFFEh</code> and nothing else happens. A call number from <code>109h</code> to <code>1FFh</code> is unknown and returns <code>FFFF_FFFFh</code>.</p>
+<h2 id="wait-frame">wait_frame</h2>
+<p><code>wait_frame</code> ends the machine&#39;s work for this frame: the rest of the budget is discarded, and the call returns at the start of the next frame with one more than the frame counter at the call. The next frame always runs (the most content a frame can deliver costs 32,768 units), so that is the counter of the frame it returns in. Unused budget never carries over, but a negative one does: the call costs 5 units from ROM, so a <code>wait_frame</code> started with 2 units left leaves a debt of 3 for the next frame.</p>
+<p>In C, <code>terse_wait_frame()</code> makes the call and returns how many frames passed since its previous call (at most 255): 1 normally, more when the work in between ran out of budget and was paused.</p>
+<h2 id="next-event">next_event</h2>
+<p><code>next_event</code> removes the event at the head of the queue and writes its four bytes, type, <code>a</code>, <code>b</code>, <code>c</code>, to the buffer, and returns 1. If the queue is empty it writes nothing and returns 0. The buffer is checked first: a buffer not wholly in RAM gives <code>FFFF_FFFEh</code> and removes no event. Event types and their bytes are in <a href="events.html">Events and input</a>. In C, <code>terse_event_pop(&amp;e)</code> returns the event&#39;s type, or <code>EV_NONE</code> (0) when the queue is empty.</p>
+<h2 id="frame-count-and-unix-time">frame_count and unix_time</h2>
+<p><code>frame_count</code> returns the frame counter: N throughout frame N, frame 0 being the first frame after reset. It increases at the end of every frame and wraps from <code>FFFF_FFFFh</code> to 0. In a system, a paused machine&#39;s counter does not advance.</p>
+<p><code>unix_time</code> returns the low 32 bits of the Unix time in seconds that the host latched at the start of the frame; it does not change within a frame. A headless run (<code>terse run</code>) latches 0. In C: <code>terse_frame()</code> and <code>terse_time()</code>.</p>
+<h2 id="random">random</h2>
+<p><code>random</code> fills the buffer with the next bytes of the random bytes the host supplied for this frame, in order, and returns the length. A length above 256 is a bad buffer (<code>FFFF_FFFEh</code>), whatever the address. A length of 0 returns 0 and writes nothing.</p>
+<p>The host must supply enough bytes for any frame: 463,872 cover the worst case, every <code>random</code> call that can start in a frame taking 256 bytes. A host that supplies fewer gives zeros once its bytes are used up; a headless run supplies none, so <code>random</code> gives zeros there. The bytes are an input: a program that wants the same run twice must be replayed with the same bytes.</p>
+<p>In C, <code>terse_random(buf, len)</code> takes any length and makes one call per 256 bytes; <code>terse_random_byte()</code> returns one byte.</p>
+<h2 id="controller">controller</h2>
+<p><code>controller</code> writes the eight bytes of controller <code>a0</code>&#39;s state, as latched at the start of the frame, and returns byte 0 (1 if connected, else 0). Controllers are numbered 0 to 3; a number above 3 reads as a controller that is not connected (eight zero bytes, result 0). The layout of the eight bytes is in <a href="events.html">Events and input</a>. In a system only the machine with the focus (the shell when the focus is 0) sees the controllers; every other machine reads all four as not connected. A new focus takes effect at the next frame. In C: <code>terse_pad_read(n, &amp;pad)</code> with a <code>terse_pad</code>.</p>
+<h2 id="exit">exit</h2>
+<p><code>exit</code> stops the machine with exit code <code>a0 &amp; FFh</code>. The machine stops at once: the rest of the frame&#39;s budget is dropped, the frame still counts, and nothing runs in later frames. An exit is never confused with a fault, which has no exit code. In C, returning from <code>main</code> exits with its value (the startup code calls <code>exit</code>); <code>terse_exit(code)</code> exits from anywhere.</p>
+<h2 id="open">open</h2>
+<p><code>open</code> asks the shell of a system to open a blob or a program. <code>a0</code> is the address of an open request, which must lie wholly in ROM or wholly in RAM:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>Kind: 1 a blob, 2 a program</td></tr>
+<tr><td>1</td><td>32</td><td>Kind 1: the blob ID. Kind 2: the publisher&#39;s feed key, all zero for a built-in program</td></tr>
+<tr><td>33</td><td>1</td><td>Kind 2: the name&#39;s length n, 1 to 48</td></tr>
+<tr><td>34</td><td>n</td><td>Kind 2: the name, a valid display name</td></tr>
+</tbody></table></div>
+<p>A kind 1 request is 33 bytes; a kind 2 request is 34 + n bytes. A display name is 1 to 48 bytes of UTF-8 with no control characters and no whitespace as its first or last character. The call is decided in this order:</p>
+<div class="table"><table>
+<thead><tr><th>Case</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>a kind other than 1 or 2, a request not wholly in ROM or wholly in RAM, or a kind 2 name that is not valid</td><td><code>FFFF_FFFEh</code></td></tr>
+<tr><td>the machine was not started by a shell (it runs on its own, or it is the shell)</td><td>0, nothing else happens</td></tr>
+<tr><td>a request this machine made earlier still waits (the shell has not read it with <code>request</code>)</td><td>0, nothing else happens</td></tr>
+<tr><td>otherwise</td><td>1: the request waits for the shell</td></tr>
+</tbody></table></div>
+<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:5b35b7…0430bf</a>).</p>
+<p>In C, <code>terse_open(request)</code> with the kinds <code>OPEN_BLOB</code> and <code>OPEN_PROGRAM</code>:</p>
+<pre>#include &quot;terse.h&quot;
+
+/* Ask the shell to start the built-in program &quot;sparks&quot;. */
+uint32_t open_sparks(void)
+{
+    uint8_t req[34 + 6];
+    memset(req, 0, sizeof req); /* zero key: a built-in */
+    req[0] = OPEN_PROGRAM;
+    req[33] = 6;
+    memcpy(req + 34, &quot;sparks&quot;, 6);
+    return terse_open(req);     /* 1 passed, 0 not */
+}</pre>
+<h2 id="argument">argument</h2>
+<p><code>argument</code> writes the machine&#39;s argument, the blob ID its shell gave it before its first frame (with the machines device&#39;s <code>argument</code> call), to the 32-byte buffer and returns 1. A machine that has none (the shell gave none, it runs on its own, or it is the shell) gets 0 and nothing is written. The argument never changes during the machine&#39;s life and is part of its state; a machine restored from a snapshot has the argument it had when the snapshot was taken. The built-in shell, for example, starts a document&#39;s program with the document&#39;s blob ID as the argument. In C: <code>terse_argument(id)</code>.</p>
+<h2 id="determinism-replay-and-state">Determinism, replay and state</h2>
+<p>Events, the latched Unix time, the random bytes and the controller state are the only inputs from this device. With the content completions (see <a href="content-blobs.html">blobs</a>), they are what a host records per frame to replay a run exactly. For a machine a shell started, whether <code>open</code> passes a request on depends on whether the shell has read the previous one, and is an input like a completion.</p>
+<div class="table"><table>
+<thead><tr><th>In the machine&#39;s state</th><th>Not in it</th></tr></thead>
+<tbody>
+<tr><td>the frame counter</td><td>this frame&#39;s random bytes (consumed within the frame)</td></tr>
+<tr><td>the time latch of the frame just run</td><td>whether an open request still waits</td></tr>
+<tr><td>the queued events, from the head</td><td></td></tr>
+<tr><td>the eight bytes of each controller as latched</td><td></td></tr>
+<tr><td>the argument, if the machine has one</td><td></td></tr>
+</tbody></table></div>
+<h2 id="example">Example</h2>
+<pre>#include &quot;terse.h&quot;
+
+int main(void)
+{
+    terse_event e;
+    terse_pad pad;
+    uint8_t seed[16];
+    terse_random(seed, sizeof seed);
+    for (;;) {
+        while (terse_event_pop(&amp;e) != EV_NONE)
+            if (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
+                return 0;              /* exit code 0 */
+        terse_pad_read(0, &amp;pad);
+        if (pad.connected &amp;&amp; (pad.buttons &amp; PAD_A))
+            seed[0]++;
+        terse_wait_frame();
+    }
+}</pre>
+<p>The charges of all devices are listed together in <a href="charges.html">charges</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="machine.html">← The machine</a><a rel="next" href="device-terminal.html">The terminal (device 2) →</a></nav></footer>
+</body>
+</html>

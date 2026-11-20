@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surfaces: a program&#39;s own screen in its 3D scene - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="surfaces-a-program-s-own-screen-in-its-3d-scene">Surfaces: a program&#39;s own screen in its 3D scene</h1>
+<p>A Surface is a command of the 3D vector display&#39;s list (device 9) that shows a rectangle of the program&#39;s own screen as a flat panel in its 3D scene: a console in a cockpit, a sign on a wall, an instrument on a dashboard. What it shows is the program&#39;s 2D layers (the terminal, the page and the 2D vector display), drawn as usual; what it adds is where they appear. No other machine is involved and nothing can nest: a Surface never shows the 3D display itself.</p>
+<h2 id="the-command">The command</h2>
+<div class="table"><table>
+<thead><tr><th>Op</th><th>Command</th><th>Operands (bytes)</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>0Eh</code></td><td>Surface</td><td>x, y, width, height (2 each, unsigned, screen units), panel width w (2, unsigned, sixteenths)</td><td>Shows that rectangle of the screen as a panel</td></tr>
+</tbody></table></div>
+<p>The command is 11 bytes with its opcode; the C builder is <code>v3_surface(x, y, w, h, width)</code>. The rectangle, the **source**, is clamped so it lies on the screen, as the page&#39;s rectangle is: x to at most 640, y to at most 480, the width to at most 640 - x and the height to at most 480 - y.</p>
+<p>The panel is w/16 units wide and as high as the source&#39;s shape makes it, h&#39; = w * height / width (in sixteenths), centred on the transform&#39;s origin in its xy plane. With M the transform in force its corners are</p>
+<pre>    top left      M(-w/32, -h&#39;/32, 0)
+    top right     M( w/32, -h&#39;/32, 0)
+    bottom right  M( w/32,  h&#39;/32, 0)
+    bottom left   M(-w/32,  h&#39;/32, 0)</pre>
+<p>so it lies as a Screen does: with the identity, like the glass, its front towards the viewer. The point a fraction u along its top edge and v down its left edge shows the point (x + u * width, y + v * height) of the screen. It does not change the current point, and it is seen from behind as a Screen is (an opaque dark plate).</p>
+<h2 id="which-surfaces-take-effect">Which Surfaces take effect</h2>
+<p>Any program with device 9 may use them. A Surface is in effect if its source, after clamping, has a width and a height, its w is not 0, and fewer than 4 Surfaces before it in the list are in effect. Any other Surface is decoded and does nothing: it draws nothing, hides nothing, is not counted and leaves the glass alone. A Surface in effect counts as one face toward the caps of the 3D display; if a cap stops it, it is not in effect either.</p>
+<h2 id="how-the-screen-is-drawn">How the screen is drawn</h2>
+<p>A program whose list has no Surface in effect is drawn exactly as without them. One that has Surfaces in effect is drawn, from the bottom:</p>
+<p>1. the glass: its 2D layers in their usual order and style, without its 3D lines, and black wherever a pixel lies in the source of a Surface in effect: what a Surface shows is not also on the glass; 2. its Surfaces, from the farthest to the nearest (by the distance from the eye to their centres; the earlier in the list first where two are as far), each covering what is below it; 3. its 3D lines, points and circles, each Surface hiding what is behind it exactly as a Face of its four corners does. Lines in front of a Surface are drawn over it.</p>
+<p>So text outside the sources stays on the glass as a heads-up line, and the instrument panels move onto their consoles. In the phosphor style the 2D layers on a Surface glow as they would on the glass, their afterglow included; the afterglow belongs to the screen, so it moves with the panel, and a moving Surface leaves no trail. How the 3D lines are lit over the Surfaces is up to the host.</p>
+<p>Wherever the program&#39;s screen is shown it is this complete picture: on its own, in a tile of the shell, or as a panel in the shell&#39;s gallery. The shell&#39;s own Surfaces, when its scene has panels, are drawn among them, far to near.</p>
+<p>A host that cannot draw in perspective may draw each source flat, scaled into the rectangle around the panel&#39;s projection. The resolution a source is drawn at for a Surface and its filtering are the host&#39;s.</p>
+<h2 id="the-pointer">The pointer</h2>
+<p>A pointer position over the front of a Surface (the ray from the eye through it meets the panel in front of the near plane; of several, the nearest counts) is delivered to the program as an ordinary pointer event at the corresponding point of the source: at (x + floor(u * width), y + floor(v * height)). A position over no Surface, or over one seen from behind, is delivered as its position on the glass, as before. So text and anchors shown on a console can be pressed without the program doing any geometry; a page anchor pressed on a Surface sends its anchor event as on the glass.</p>
+<p>The eye is the host&#39;s, and the program is not told where it is, nor whether a pointer event was mapped.</p>
+<h2 id="charges-caps-and-state">Charges, caps and state</h2>
+<p>Nothing more is charged: a Surface is 11 bytes of the list, which a submit charges 1 unit per 4 bytes. At most 4 take effect in a list, each one face of the 256. The state is the list as submitted: which Surfaces are in effect depends on the list alone.</p>
+<h2 id="example">Example</h2>
+<p>A console below the middle of the screen, tilted back, showing the terminal&#39;s rows 4 to 11, columns 1 to 28; the text there stays where the program writes it:</p>
+<pre>#define U V3_UNIT
+
+v3_begin(list, sizeof list);
+v3_push();
+v3_translate(320 * U, 380 * U, 0);
+v3_rotate(V3_AXIS_X, 59164);  /* -35 degrees */
+v3_surface(8, 64, 224, 128, 220 * U);
+v3_pop();
+v3_end();
+v3_submit_list(list);</pre>
+<p>A click on the console arrives as a pointer event between (8, 64) and (231, 191). The holo program&#39;s cockpit (scene 6) has three such consoles: instruments that change every frame, a log, and a list chosen with the pointer.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-vector3.html">← The 3D vector display (device 9)</a><a rel="next" href="device-sound.html">The sound device (device 6) →</a></nav></footer>
+</body>
+</html>

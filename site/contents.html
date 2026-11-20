@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Terse manual - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-terse-manual">The Terse manual</h1>
+<p>This manual describes the whole Terse system: the machine, its devices, the network that carries articles and programs, and the programs that come with it. It is written as Terse articles, so you can read it in the reader, follow its links with Tab and Enter, and publish it to a feed. Each article below says what it covers.</p>
+<h2 id="start-here">Start here</h2>
+<ul>
+<li><a href="index.html">What Terse is</a>: what Terse is for, in one paragraph.</li>
+<li><a href="how-it-works.html">How Terse works</a>: the technical details in three pages: sharing articles and programs, the network, the machine and its frame budget, the devices, determinism and the shell.</li>
+<li><a href="writing-programs.html">Writing a program</a>: the toolchain, the C library, building, running a program headless and in the host, and publishing it in a feed.</li>
+<li><a href="using.html">Using the shell and the reader</a>: the keys of the shell and the reader, layouts, sessions and the consent prompts.</li>
+<li><a href="writing-articles.html">Writing an article</a>: the article format, every construct shown as source and as it is shown.</li>
+<li><a href="state.html">State, replay and conformance</a>: what a machine&#39;s state is, its hash, snapshots and the conformance image.</li>
+</ul>
+<h2 id="the-machine">The machine</h2>
+<ul>
+<li><a href="machine.html">The machine</a>: the CPU, the memory map, reset, frames and the budget, faults, the image format, the call convention and the whole call table.</li>
+<li><a href="events.html">Events and input</a>: every event, the queue, keys, text, the pointer, the wheel and controllers.</li>
+<li><a href="charges.html">Charges and limits</a>: every charge and every numeric limit on one page.</li>
+</ul>
+<h2 id="the-devices">The devices</h2>
+<div class="table"><table>
+<thead><tr><th>Slot</th><th>Device</th><th>Article</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>System</td><td><a href="device-system.html">The system device</a></td></tr>
+<tr><td>2</td><td>Terminal</td><td><a href="device-terminal.html">The terminal</a></td></tr>
+<tr><td>3</td><td>2D vector display</td><td><a href="device-vector.html">The 2D vector display</a></td></tr>
+<tr><td>4</td><td>Content</td><td><a href="content-blobs.html">Blobs, requests and statuses</a></td></tr>
+<tr><td>4</td><td>Content</td><td><a href="content-feeds.html">Feeds, names, search and publishing</a></td></tr>
+<tr><td>4</td><td>Content</td><td><a href="content-records.html">Named records</a></td></tr>
+<tr><td>6</td><td>Sound</td><td><a href="device-sound.html">The sound device</a></td></tr>
+<tr><td>7</td><td>Page</td><td><a href="device-page.html">The page</a></td></tr>
+<tr><td>7</td><td>Page</td><td><a href="device-page-figures.html">Figures on the page</a></td></tr>
+<tr><td>8</td><td>Machines</td><td><a href="device-machines.html">The Machines device</a></td></tr>
+<tr><td>8</td><td>Machines</td><td><a href="device-machines-screens.html">Screens, panels and input</a></td></tr>
+<tr><td>9</td><td>3D vector display</td><td><a href="device-vector3.html">The 3D vector display</a></td></tr>
+</tbody></table></div>
+<ul>
+<li>The system device: frames, events, time, random bytes, controllers, exit, and asking the shell to open something.</li>
+<li>The terminal: an 80 by 30 grid of character cells.</li>
+<li>The 2D vector display: lines and filled shapes from a display list, in a clean or a phosphor style.</li>
+<li>Content: blobs fetched and published by hash, the feeds the host follows, search, and named records kept on the host.</li>
+<li>Sound: a 16-voice wavetable synthesizer, with pairing, feedback, ring modulation, noise and samples; optional, and bit-exact.</li>
+<li>The page: typeset proportional text, figures and tables in a rectangle of the screen.</li>
+<li>Machines: the shell&#39;s device, which starts other machines and lays out their screens, flat or as panels in its 3D scene.</li>
+<li>The 3D vector display: lines, points and circles in a box behind and in front of the screen, seen from an eye the host chooses.</li>
+</ul>
+<h2 id="the-network">The network</h2>
+<ul>
+<li><a href="network.html">The network</a>: blobs and relays, feeds and entries, profiles, names and search, programs, and relays that mirror each other.</li>
+<li><a href="native-reader.html">Writing a reader without the machine</a>: what a native reader must do to be a complete Terse client, with only the network and the article format.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="next" href="index.html">What Terse is →</a></nav></footer>
+</body>
+</html>

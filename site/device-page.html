@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The page (device 7) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-page-device-7">The page (device 7)</h1>
+<p>The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (<code>terse pack --device 7:0</code>). Without it, and for the unknown functions <code>706h</code>..<code>7FFh</code>, a call returns <code>FFFF_FFFFh</code>.</p>
+<p>Layout differs between hosts, because fonts differ. A program learns only two facts about it, both as input events: the document&#39;s height and, when it asks, where an anchor is. So a recorded run replays exactly whatever the fonts.</p>
+<h2 id="rectangle-and-scrolling">Rectangle and scrolling</h2>
+<p>The page is drawn inside its rectangle (x, y, width, height in screen units) and nothing of it outside, above the terminal&#39;s cell backgrounds and below the vector shapes and terminal characters. The document is one column as wide as the rectangle. The scroll value is the distance from the top of the document to the top of the rectangle. A width or height of 0 hides the page.</p>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>700h</code></td><td><code>submit</code></td><td><code>a0</code> = document, <code>a1</code> = length</td><td>0 done, 1 rejected</td></tr>
+<tr><td><code>701h</code></td><td><code>clear</code></td><td>none</td><td>0</td></tr>
+<tr><td><code>702h</code></td><td><code>region</code></td><td><code>a0</code> x, <code>a1</code> y, <code>a2</code> width, <code>a3</code> height</td><td>0</td></tr>
+<tr><td><code>703h</code></td><td><code>scroll</code></td><td><code>a0</code> = y</td><td>0</td></tr>
+<tr><td><code>704h</code></td><td><code>background</code></td><td><code>a0</code> = colour</td><td>0</td></tr>
+<tr><td><code>705h</code></td><td><code>locate</code></td><td><code>a0</code> = anchor id</td><td>0 done, 1 rejected</td></tr>
+</tbody></table></div>
+<ul>
+<li><code>submit</code> copies <code>a1</code> bytes from <code>a0</code>, replacing the document, sets the scroll value to 0 and returns 0. A length of 0 or above 65,536 returns 1 (checked first); bytes not wholly in ROM or wholly in RAM return <code>FFFF_FFFEh</code>; either changes nothing. The same bytes again are still a new document.</li>
+<li><code>clear</code> removes the document (the background stays); the scroll value is kept.</li>
+<li><code>region</code> sets the rectangle, clamped onto the screen: x to at most 640, y to at most 480, the width to at most 640 - x, the height to at most 480 - y.</li>
+<li><code>scroll</code> stores <code>a0</code> as given (32 bits). When presenting, the host reads it as signed and clamps it to 0 .. max(0, height - rectangle height); the stored value does not change.</li>
+<li><code>background</code> sets the colour behind the text: <code>a0</code> = r, g &lt;&lt; 8, b &lt;&lt; 16 and a &lt;&lt; 24 ORed together, a the opacity (255 opaque; 0 lets the terminal&#39;s cell backgrounds show).</li>
+<li><code>locate</code> asks where anchor <code>a0</code> is laid out in the current document; the answer comes later as two events. It returns 1, asking nothing, if <code>a0</code> is 0 or above 65,535, if there is no document, or if the program already made 8 locates this frame.</li>
+</ul>
+<p>After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background <code>FF00_0000h</code> (opaque black).</p>
+<h2 id="the-document">The document</h2>
+<p>A document is 1 to 65,536 bytes of commands, each an opcode byte and its operands, little-endian. It ends at End, at the end of the bytes, at an unknown opcode, at a command whose operands are cut off, or at a Table command whose column count is 0 or above 8. The commands before that are used.</p>
+<div class="table"><table>
+<thead><tr><th>Op</th><th>Command</th><th>Operands</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>00h</code></td><td>End</td><td>none</td><td>Ends the document</td></tr>
+<tr><td><code>01h</code></td><td>Text</td><td>n (2 bytes), n bytes of UTF-8</td><td>Adds text to the current paragraph or cell in the current style</td></tr>
+<tr><td><code>02h</code></td><td>Font</td><td>face (0 sans, 1 serif, 2 mono), flags (bit 0 bold, bit 1 italic)</td><td>Font for later text; an unknown face is 0</td></tr>
+<tr><td><code>03h</code></td><td>Size</td><td>size (1 byte)</td><td>Font size in screen units, clamped to 6..96</td></tr>
+<tr><td><code>04h</code></td><td>Colour</td><td>r, g, b</td><td>Text colour</td></tr>
+<tr><td><code>05h</code></td><td>Paragraph</td><td>align, indent, space, flags (1 byte each)</td><td>Starts a paragraph</td></tr>
+<tr><td><code>06h</code></td><td>Rule</td><td>none</td><td>A paragraph that is a horizontal line</td></tr>
+<tr><td><code>07h</code></td><td>Anchor</td><td>id (2 bytes)</td><td>Later text and figures belong to <code>id</code>; 0 is none</td></tr>
+<tr><td><code>08h</code></td><td>Figure</td><td>width (2), height (2), align (1), n (2), n bytes of path commands</td><td>A figure block, see <a href="device-page-figures.html">figures on the page</a></td></tr>
+<tr><td><code>09h</code></td><td>Table</td><td>columns (1, 1..8), flags (bit 0 header), one align byte per column</td><td>Starts a table block</td></tr>
+<tr><td><code>0Ah</code></td><td>Cell</td><td>none</td><td>Starts the table&#39;s next cell</td></tr>
+<tr><td><code>0Bh</code></td><td>End table</td><td>none</td><td>Ends the table</td></tr>
+</tbody></table></div>
+<p>Align is 0 start, 1 centre, 2 end, anything else 0. Other flag bits are ignored.</p>
+<p>At the start of a document: sans, no flags, size 14, colour (229, 229, 229), anchor 0, and an implicit first paragraph: start-aligned, indent 0, space 0, wrapping. Font, size, colour and anchor carry on across paragraphs, tables and figures.</p>
+<h2 id="text">Text</h2>
+<p>Each Text command is decoded on its own: malformed UTF-8 becomes U+FFFD as on the terminal (so a sequence split across two Text commands is malformed in both), but code points above U+FFFF are kept. U+000A breaks the line; U+0009 is a space; other control characters (U+0000..U+001F, U+007F..U+009F) are ignored. Consecutive spaces are kept.</p>
+<h2 id="paragraphs-and-rules">Paragraphs and rules</h2>
+<ul>
+<li>Indent is in screen units from the start edge, for every line.</li>
+<li>Space is the gap above the paragraph, also for the first one and also for a paragraph with no text, which takes no other room: an empty paragraph is a vertical gap.</li>
+<li>Flag bit 0, no wrap: lines break only at U+000A, and a line wider than the rectangle is cut off at its edge. Flag bit 1, ellipsis, only with no wrap: a line wider than the rectangle less the indent ends in a wholly shown ellipsis (U+2026) where it is cut.</li>
+<li>Start and end follow each paragraph&#39;s direction, from its first strong character: left for left-to-right text, right for right-to-left. Indent is measured from the start.</li>
+<li>A line is as high as the host&#39;s natural line height for its largest text. A line break at the end of a paragraph gives an empty last line.</li>
+<li>A Rule is a paragraph 8 units high with a line about one unit thick across the whole rectangle at its middle, in the current colour, with no space above (put an empty Paragraph before it for a gap). Text after a rule, a figure or a table starts a new paragraph with the properties of the latest Paragraph command (or of the implicit first one).</li>
+<li>Anchors mark text and figures for presses and <code>locate</code>; anchored text looks like other text.</li>
+</ul>
+<h2 id="tables">Tables</h2>
+<p>A Table command ends the current paragraph and starts a block with the space of the latest Paragraph command above it; if the current paragraph has no text yet, the table takes its place and its space. Each Cell command starts the next cell in row order, rows of <code>columns</code> cells; missing cells of the last row are empty. Text before the first Cell is ignored. Text adds to the current cell (U+000A breaks a line in it); Font, Size, Colour and Anchor work as anywhere.</p>
+<p>A table ends at End table, and also at a Paragraph, Rule, Figure or Table command (which then does what it does) and at the end of the document. A table with no cells takes its space and nothing else. The colour at the Table command is the colour of its rules. With flag bit 0 the first row is a header: drawn bold whatever the font&#39;s flag, with a rule under it. Cell or End table outside a table does nothing.</p>
+<p>Limits: 1,024 cells per table and 4,096 per document. A Cell that would pass either limit, and the text after it up to the end of its table, are ignored (Font, Size, Colour and Anchor still change the state).</p>
+<p>Layout, in screen units:</p>
+<ul>
+<li>1. Padding: 6 units left and right of each cell, 3 above and below.</li>
+<li>2. Natural widths: a cell&#39;s widest line, broken only at U+000A, plus 12 (12 for an empty cell). A column&#39;s is the largest of its cells&#39;.</li>
+<li>3. Column widths: if the natural widths add up to at most the rectangle&#39;s width W, each column gets its natural width. Otherwise each column is the smaller of its natural width and a cap C, the largest C for which the widths add up to at most W, but C is never less than 48 (the table may then be wider than W and is cut off at the right edge).</li>
+<li>4. Rows: each cell&#39;s text is laid out as a paragraph (wrapped, no indent, aligned as its column says) at the column width less 12, its first line 3 units below the row&#39;s top. A row is as high as its tallest cell text plus 6 (an empty cell counts 0). The table is as high as its rows.</li>
+<li>5. Placing: columns side by side from the rectangle&#39;s left edge, first column leftmost; rows one below another.</li>
+<li>6. Rules take no room: a line about one unit thick across the table, centred on a row boundary. The rule under a header row is in the rule colour (if the header is the only row, that rule is under the table&#39;s last row); between other rows it is faint, about a third of the colour&#39;s strength.</li>
+</ul>
+<p>A line of a cell counts as a line for presses and <code>locate</code>; a row&#39;s lines are taken left to right.</p>
+<h2 id="layout-and-presentation">Layout and presentation</h2>
+<p>The host chooses fonts for the three faces and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine&#39;s frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.</p>
+<h2 id="events">Events</h2>
+<div class="table"><table>
+<thead><tr><th>Type</th><th>Name</th><th><code>a</code></th><th><code>b</code></th><th><code>c</code></th></tr></thead>
+<tbody>
+<tr><td><code>08h</code></td><td>Page laid out</td><td>height bits 0..7</td><td>8..15</td><td>16..23</td></tr>
+<tr><td><code>09h</code></td><td>Page anchor</td><td>id low</td><td>id high</td><td>bits 3..5 buttons</td></tr>
+<tr><td><code>0Dh</code></td><td>Page located</td><td>id low</td><td>id high</td><td>line height</td></tr>
+<tr><td><code>0Eh</code></td><td>Page located y</td><td>y bits 0..7</td><td>8..15</td><td>16..23</td></tr>
+</tbody></table></div>
+<ul>
+<li><code>08h</code> gives the document&#39;s height at the rectangle&#39;s current width (FFFFFFh if larger), at the start of a frame after one with a submit, after a clear (height 0), and when a change of width changes the height. While the width is 0 it waits. A host may skip intermediate layouts but must eventually report the latest document and width once they stay unchanged. At most one per frame.</li>
+<li><code>09h</code> follows the pointer event of a button press over text whose anchor is not 0 (within the glyphs&#39; extent along the line and the line&#39;s height) or over a figure whose anchor is not 0 (its box as shown), as the page was last shown. <code>c</code> holds the buttons in bits 3..5, the same bits as in a pointer event (primary, secondary, middle), and its other bits are 0.</li>
+<li><code>0Dh</code> and <code>0Eh</code> answer a <code>locate</code>, always as a pair, in that order: the height of the first line or figure carrying the anchor (255 if larger) and its y from the top of the document (FFFFFFh if larger). If nothing carries it, the height is 0 and y FFFFFFh. Tops are rounded down, a bottom up. If the queue has room for only one, neither is queued.</li>
+<li>A locate is answered from the layout of the document current at the call, the same layout as the latest height event: at the start of a later frame, after that document&#39;s height event if it is still due. Answers come in call order. A locate whose document is replaced (also later in the same frame) is dropped. While the width is 0 answers wait; a host keeps at least the 8 latest waiting locates.</li>
+</ul>
+<p>A height event describes an earlier frame&#39;s document and width; after a newer submit another follows. Use it for clamping and progress, never for anything that must be exact.</p>
+<h2 id="reference-layout">Reference layout</h2>
+<p>A host without fonts, such as <code>terse run</code>, uses this pure function of document and width, a stand-in for tests.</p>
+<ul>
+<li>Every character advances 0.5 x size; a wide character (every code point above U+FFFF counts) 1.0 x size. No shaping, kerning or reordering: start is left.</li>
+<li>A line is ceil(1.25 x size) high for its largest size; an empty line uses the size at its break.</li>
+<li>Greedy wrapping at U+0020 in the width less the indent; spaces at a break are dropped, those at a paragraph&#39;s start or after U+000A kept. A word wider than a line is split between characters, at least one per line.</li>
+<li>Centre puts the leftover width, halved and rounded down, before a line; end puts all of it. A rule is 8 high; a figure is a line as high as the figure.</li>
+<li>No wrap with ellipsis: characters are dropped from the end until the rest and an ellipsis (in the last dropped character&#39;s style) fit, or none is left.</li>
+<li>Tables follow the steps above in half units (C the largest that fits); rules have height 0.</li>
+<li><code>locate</code> gives the first line with a character or figure of the anchor, table lines in order of y, then left to right. The height is the sum of the spaces and the heights of lines, rules, figures and tables.</li>
+</ul>
+<h2 id="state-and-charges">State and charges</h2>
+<p>State (for the hash and snapshots): a present flag, the clamped rectangle (four 2-byte values), the stored scroll value (4), the background (4), the document&#39;s length (4, 0 for none) and its bytes. Layout and pending locates are not state.</p>
+<p>Each call costs 4 units; an accepted <code>submit</code> 1 more per 4 bytes, rounded up. Layout is free.</p>
+<h2 id="example">Example</h2>
+<p>A heading, a paragraph with an anchored word and a table. The library has no builder for the table commands, so <code>op</code> appends their bytes: 09h, 2 columns, flags 1 (header), aligns start and end; 0Ah before each cell; 0Bh.</p>
+<pre>#include &quot;terse.h&quot;
+#define T(s) doc_text(s, sizeof(s) - 1)
+static uint8_t doc[1024];
+static void op(const uint8_t *p, uint32_t n) {
+    if (doc_ptr + n &lt;= doc_limit)
+        while (n--) *doc_ptr++ = *p++;
+}
+static const uint8_t table[] = {9, 2, 1, DOC_START, DOC_END};
+static const uint8_t cell = 0x0A, endt = 0x0B;
+int main(void) {
+    terse_event e;
+    doc_begin(doc, sizeof doc);
+    doc_size(21); doc_font(DOC_SANS, DOC_BOLD); T(&quot;Hello&quot;);
+    doc_size(15); doc_font(DOC_SANS, 0);
+    doc_paragraph(DOC_START, 0, 10, 0); T(&quot;Press &quot;);
+    doc_anchor(1); doc_colour(120, 170, 255); T(&quot;here&quot;);
+    doc_anchor(0); doc_colour(229, 229, 229); T(&quot; to quit.&quot;);
+    op(table, 5);
+    op(&amp;cell, 1); T(&quot;Key&quot;);  op(&amp;cell, 1); T(&quot;Does&quot;);
+    op(&amp;cell, 1); T(&quot;Esc&quot;);  op(&amp;cell, 1); T(&quot;nothing&quot;);
+    op(&amp;endt, 1);
+    doc_end();
+    page_region(64, 0, 512, 480);
+    page_submit_doc(doc);
+    for (;;) {
+        while (terse_event_pop(&amp;e) != EV_NONE)
+            if (e.type==EV_PAGE_ANCHOR &amp;&amp; EV_ANCHOR_ID(e)==1)
+                return 0;
+        terse_wait_frame();
+    }
+}</pre>
+<p>The program never learns where &quot;here&quot; was drawn; a press on it arrives as event 09h with anchor 1.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-sound.html">← The sound device (device 6)</a><a rel="next" href="device-page-figures.html">Figures on the page →</a></nav></footer>
+</body>
+</html>

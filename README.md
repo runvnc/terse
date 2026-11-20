@@ -230,8 +230,8 @@ images were built with clang and LLD 23.1.4.
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
 - `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
   [Feeds](#feeds).
-- `manual build|check [--dir <docs/manual>]` and `manual publish`: the manual, see
-  [Manual](#manual).
+- `manual build|check [--dir <docs/manual>]`, `manual site --out <dir>` and `manual
+  publish`: the manual, see [Manual](#manual) and [The website](#the-website).
 - `vectors [--dir <dir>]` writes the core's test vectors (default `vectors/`):
   blob IDs, signed entries valid and invalid, profile documents, a relay session
   and an article corpus with the expected parse, for anyone implementing
@@ -674,6 +674,26 @@ read it. `cargo test -p terse-cli --test manual` checks the build, that every li
 resolves to a blob every host carries, that the manual names every call, event,
 content operation and status of SPEC.md, and publishing to a relay;
 `docs/manual/README` has the rules for writing it.
+
+### The website
+
+`site/` is the manual as a static website, so that it can be read before
+installing Terse: one HTML page per article (the overview, "What Terse is", is
+`index.html`; the manual's index is `contents.html`), made from the same sources by
+the reference article parser, with figures as inline SVG. It is plain static files:
+no JavaScript, nothing loaded from anywhere else (no fonts, no images, no
+analytics), one small `style.css`, light and dark following the system. Any file
+host can serve the directory as it is, and it reads straight from disk too. Links
+between articles of the manual lead to their pages; other `terse:` links (feeds,
+programs, articles outside the manual) cannot be followed on the web and are shown
+as their address. After changing the manual, regenerate it (the output is
+deterministic, and it is checked in):
+
+    cargo run -p terse-cli --bin terse -- manual site --out site
+
+`cargo test -p terse-cli --test manual` checks that `site/` is up to date, that
+every link resolves to a page of it, and that no page holds a script or a web
+address.
 
 ## Named records
 

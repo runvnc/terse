@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The network - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-network">The network</h1>
+<p>Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see &quot;Writing an article&quot;) are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md and STATE.md) is an optional third layer that reuses them.</p>
+<p>Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.</p>
+<h2 id="blobs">Blobs</h2>
+<p>A blob is 1 to 1,048,576 bytes. Its ID is the BLAKE3-256 hash of its bytes: 32 bytes, written as 64 lowercase hex digits. A program image is a blob, so an image ID is a blob ID.</p>
+<p>A client keeps a local blob store (a cache) and uses it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then uses it. A blob that fails the check counts as not found on that relay. A put stores the blob locally and sends it to every connected relay. Clients never trust relays: every blob is verified on receipt.</p>
+<p>A blob reached without an entry (by a link) tells what it is by its first four bytes: <code>TERS</code> is a program image, <code>TDOC</code> a document (data for a program), anything else an article.</p>
+<h2 id="relay-protocol">Relay protocol</h2>
+<p>All messages are binary WebSocket messages; multi-byte integers are little-endian. <code>req</code> is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.</p>
+<div class="table"><table>
+<thead><tr><th>Message</th><th>Direction</th><th>Layout</th></tr></thead>
+<tbody>
+<tr><td>Get</td><td>client to relay</td><td><code>01h</code>, <code>req</code> (4), blob ID (32)</td></tr>
+<tr><td>Get reply</td><td>relay to client</td><td><code>81h</code>, <code>req</code>, status (1), then the blob if status is 1</td></tr>
+<tr><td>Put</td><td>client to relay</td><td><code>02h</code>, <code>req</code>, the blob&#39;s bytes</td></tr>
+<tr><td>Put reply</td><td>relay to client</td><td><code>82h</code>, <code>req</code>, status, then the ID (32) if status is 1</td></tr>
+<tr><td>Publish</td><td>client to relay</td><td><code>03h</code>, <code>req</code>, entry</td></tr>
+<tr><td>Publish reply</td><td>relay to client</td><td><code>83h</code>, <code>req</code>, status</td></tr>
+<tr><td>Subscribe</td><td>client to relay</td><td><code>04h</code>, <code>req</code>, feed key (32), <code>after</code> (4)</td></tr>
+<tr><td>Subscribe reply</td><td>relay to client</td><td><code>84h</code>, <code>req</code>, status, then <code>highest</code> (4) if status is 1</td></tr>
+<tr><td>Unsubscribe</td><td>client to relay</td><td><code>05h</code>, <code>req</code>, feed key (32)</td></tr>
+<tr><td>Unsubscribe reply</td><td>relay to client</td><td><code>85h</code>, <code>req</code>, status</td></tr>
+<tr><td>Find</td><td>client to relay</td><td><code>06h</code>, <code>req</code>, scope (1), <code>n</code> (1), query (<code>n</code>)</td></tr>
+<tr><td>Find reply</td><td>relay to client</td><td><code>86h</code>, <code>req</code>, status, <code>count</code> (1), then per result: length (2), entry</td></tr>
+<tr><td>Peer</td><td>relay to relay</td><td><code>07h</code>, no body, no reply</td></tr>
+<tr><td>Lookup</td><td>client to relay</td><td><code>08h</code>, <code>req</code>, feed key (32), kind (1), <code>n</code> (1), name (<code>n</code>)</td></tr>
+<tr><td>Lookup reply</td><td>relay to client</td><td><code>88h</code>, <code>req</code>, status, then the entry if status is 1</td></tr>
+<tr><td>Entry</td><td>relay to client</td><td><code>90h</code>, entry</td></tr>
+</tbody></table></div>
+<div class="table"><table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>done</td></tr>
+<tr><td>2</td><td>not found (get, lookup)</td></tr>
+<tr><td>3</td><td>refused (a put: too large, empty, store full or malformed; find, lookup: a bad request or asked too often)</td></tr>
+</tbody></table></div>
+<p>A find the relay carries out is answered with status 1 and its results, none if nothing matches.</p>
+<p>The relay computes a put&#39;s ID itself. It must refuse blobs over 1,048,576 bytes and may limit its store. It closes the connection on a text message or an unparsable message of a known type, and ignores unknown types and replies or pushed entries from a non-peer.</p>
+<h2 id="feeds">Feeds</h2>
+<p>A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is a curve point that is not of small order. Only the author&#39;s client holds the secret key.</p>
+<h2 id="the-entry">The entry</h2>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>32</td><td>feed key</td></tr>
+<tr><td>32</td><td>4</td><td><code>seq</code>: 1 for the first entry, then increasing</td></tr>
+<tr><td>36</td><td>4</td><td>time: Unix seconds, as claimed by the author</td></tr>
+<tr><td>40</td><td>1</td><td>kind: 1 article, 2 profile, 3 program, 4 document; 0 and 255 reserved; 5 to 254 not yet defined</td></tr>
+<tr><td>41</td><td>3</td><td>size of the blob in bytes</td></tr>
+<tr><td>44</td><td>32</td><td>blob ID</td></tr>
+<tr><td>76</td><td>32</td><td>reply-to: the blob ID this entry responds to, or all zero</td></tr>
+<tr><td>108</td><td>1</td><td><code>n</code>: title length, 0 to 120</td></tr>
+<tr><td>109</td><td><code>n</code></td><td>title, UTF-8</td></tr>
+<tr><td>109 + <code>n</code></td><td>64</td><td>signature</td></tr>
+</tbody></table></div>
+<p>The signature is Ed25519 over the 13 ASCII bytes <code>terse-entry-0</code> followed by bytes 0 to 108 + <code>n</code> of the entry. An entry is at most 293 bytes.</p>
+<p>An entry is valid if: <code>n</code> is at most 120 and the entry&#39;s length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); <code>seq</code> is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and <code>seq</code>, the one received first is kept. <code>seq</code> values need not be consecutive, and the time is not checked.</p>
+<div class="table"><table>
+<thead><tr><th>Kind</th><th>Entry</th><th>Title</th><th>Blob</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>article</td><td>any title</td><td>UTF-8 text (see &quot;Writing an article&quot;)</td></tr>
+<tr><td>2</td><td>profile</td><td>the feed&#39;s display name</td><td>the profile document</td></tr>
+<tr><td>3</td><td>program</td><td>the program&#39;s name, a display name</td><td>a Terse image</td></tr>
+<tr><td>4</td><td>document</td><td>any title</td><td>a document (starts with <code>TDOC</code>)</td></tr>
+</tbody></table></div>
+<p>Program and document entries are valid whatever their blob holds; that is found out on use. A feed&#39;s current version of a program is its valid program entry with that name and the highest <code>seq</code> the client or relay holds. A program&#39;s identity is (feed key, name).</p>
+<p>An entry of a kind not listed here (5 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (<code>terse feed list</code> shows <code>[kind 9: title]</code>).</p>
+<h2 id="relay-feed-messages">Relay feed messages</h2>
+<ul>
+<li>The relay verifies an entry before storing it. Publishing an entry the relay already holds succeeds; publishing a different entry with a <code>seq</code> it already holds is refused.</li>
+<li>After a successful subscribe the relay sends the reply with <code>highest</code>, the highest <code>seq</code> it holds for the feed (or 0); then every entry it holds with <code>seq</code> greater than <code>after</code>, in increasing order; then each new entry as it is published, until the client unsubscribes or disconnects. Each entry is sent once.</li>
+<li>The client has caught up with the feed when it has received an entry whose <code>seq</code> is <code>highest</code> or greater (valid or not), or at once if <code>highest</code> is not greater than <code>after</code>.</li>
+<li>Unsubscribing from a feed that was not subscribed succeeds.</li>
+<li>A relay may keep only the most recent entries of a feed (at least 256), but always keeps the feed&#39;s latest profile entry, however old.</li>
+</ul>
+<h2 id="clients-and-feeds">Clients and feeds</h2>
+<ul>
+<li>The client keeps a list of subscribed feeds and every valid entry received for them. On connecting to a relay it subscribes to each feed with <code>after</code> = the highest <code>seq</code> it holds.</li>
+<li>Subscribing (when the user asks) adds the feed and subscribes at once when connected; for a feed it holds nothing of, <code>after</code> is 0, so the relay sends all it holds. Unsubscribing removes the feed and unsubscribes on the connection. Only valid keys are subscribed to.</li>
+<li>Automatic download: for each entry of a subscribed feed whose size is at most 16,384 bytes (a user setting), the client gets the blob unasked, profiles and documents included (not programs, below, or kinds not listed above). A blob whose length differs from the entry&#39;s size is not associated with it. Larger blobs are fetched on request.</li>
+<li>Program download (a client that runs programs): once a feed is caught up, and when a program entry arrives, the client gets the image of the current version of each of its programs it lacks (any size up to the largest image), never older ones. The user may turn this off.</li>
+<li>Prefetch: when automatic download stores an article (kind 1), the client gets the first 8 distinct article links in it whose blobs it lacks, within the automatic limit; never program links or images, and prefetched blobs are not scanned. The user may turn this off.</li>
+<li>Arrival order: the client records the order in which it first stored each entry, across restarts; it is the order of its timeline (kinds 1 and 4), newest first. Unsubscribing hides a feed&#39;s entries from the timeline; subscribing again puts them back where they were.</li>
+<li>Publishing an article or document: the client puts the blob, then signs and publishes an entry with the next <code>seq</code> (one more than the highest it holds or has used for its own feed). The entry is stored like a received one; if the client subscribes to its own feed, it is in the timeline at once.</li>
+</ul>
+<h2 id="feed-addresses">Feed addresses</h2>
+<p>A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: <code>&lt;key&gt;@relay.example.org</code> or <code>&lt;key&gt;@relay.example:9000,[2001:db8::7]</code>. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and a port (7878 if left out), at most 80 bytes, meaning <code>ws&#58;//host:port</code>. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.</p>
+<p>A client keeps the hints with the subscription. If none of its own relays holds an entry of the feed (each answers <code>highest</code> 0), it follows the feed on the hinted relays too, as feed relays (below: same address checks, same switch, same cap), until the feed&#39;s profile has <code>relay</code> lines. Its user&#39;s own address takes its hints from their profile&#39;s <code>relay</code> lines, then the client&#39;s relays, public ones only; with none, only people on the same relays find the feed.</p>
+<h2 id="profiles-display-names-and-nicknames">Profiles, display names and nicknames</h2>
+<p>A profile is a kind 2 entry. Its title is the feed&#39;s display name; its blob is the profile document. The profile in force is the feed&#39;s valid profile entry with the highest <code>seq</code>.</p>
+<p>A display name is 1 to 48 bytes of UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F) and no character of the Unicode White_Space property (U+0020, U+00A0, U+3000 and others) first or last.</p>
+<p>The profile document is UTF-8 text of at most 4,096 bytes, lines ending with <code>0Ah</code>: header lines <code>field: value</code>, then optionally an empty line and a free-text description to the end. A header line without <code>: </code> makes the document invalid. Unknown fields are ignored.</p>
+<div class="table"><table>
+<thead><tr><th>Field</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>listed</code></td><td><code>yes</code>: search may find the name; anything else, or no line, means not listed</td></tr>
+<tr><td><code>relay</code></td><td>a <code>ws&#58;//</code> or <code>wss&#58;//</code> URL of a relay where the author publishes; 0 to 4 lines; readers take the first four that are URLs</td></tr>
+</tbody></table></div>
+<p>A client writing its user&#39;s profile adds a <code>relay</code> line for each of its non-loopback relays. Names are self-declared and not unique, so a feed&#39;s name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the client&#39;s configuration, never sent anywhere, and shown in preference to the declared name.</p>
+<h2 id="search">Search</h2>
+<p>A find&#39;s scope is 1 (feeds by display name), 2 (article and document titles) or 3 (program names); the query is 1 to 48 bytes of UTF-8. Another scope or a bad query is refused (status 3, <code>count</code> 0). The query matches if it occurs as a contiguous run of bytes in the name or title after A to Z are changed to a to z on both sides; nothing else is folded.</p>
+<div class="table"><table>
+<thead><tr><th>Scope</th><th>Relay returns</th><th>Order</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>the profile in force of each feed whose document says <code>listed: yes</code> and whose name matches</td><td>names starting with the query first, then the rest; each group by increasing feed key</td></tr>
+<tr><td>2</td><td>article and document entries of feeds with a listed profile in force</td><td>newest first by the order the relay stored them</td></tr>
+<tr><td>3</td><td>program entries, current versions only, of feeds with a listed profile</td><td>newest first by store order</td></tr>
+</tbody></table></div>
+<p>A relay returns at most 16 results from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.</p>
+<p>Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and <code>seq</code>. Scope 1 keeps the highest <code>seq</code> of each feed, ordered as above; scopes 2 and 3 go by rank (each relay&#39;s first result, then each one&#39;s second, and so on), and scope 3 drops a program another result has a higher <code>seq</code> of. The first 16 are kept. NETWORK.md 4.7 has the rest.</p>
+<h2 id="lookup">Lookup</h2>
+<p>A lookup&#39;s kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed&#39;s program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest <code>seq</code> (stored, not subscribed), then gets the image (a machine host, when a shell starts a program it holds no entry for).</p>
+<h2 id="several-relays">Several relays</h2>
+<p>A client&#39;s relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has <code>relay</code> lines, up to two of those not already among its own (else up to two hints of its address, above): the feed relays, which may be turned off. A client keeps at most 16 relay connections. It ignores a <code>relay</code> line that names <code>localhost</code> (or a name under it) or a loopback, unspecified, private or link-local address (NETWORK.md 5.1 lists the ranges), does not connect if a name resolves to one, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.</p>
+<p>Put and publish go to every connected relay and succeed when one accepts (an article&#39;s entry once a relay has its blob); subscribe goes to every connected relay that serves the feed (the client&#39;s own and the feed&#39;s relays); find and lookup go to all. A get asks the feed&#39;s relays first, then the rest two at a time, and is not found only when every connected relay said so or failed.</p>
+<h2 id="relays-that-mirror-each-other">Relays that mirror each other</h2>
+<p>A relay may be given other relays as peers: it connects to each and sends Peer (<code>07h</code>). It passes every entry, and every blob up to 16,384 bytes, that it newly stores to its other peers, subscribes on them to the feeds its clients follow and asks them for blobs it lacks. NETWORK.md 5.2 has the details.</p>
+<h2 id="what-a-reading-client-must-and-may-do">What a reading client must and may do</h2>
+<p>A reading client shows people the articles of the feeds they follow: a native reader, or a machine host running the reader program.</p>
+<p>It must hold blobs by ID and verify each one, talk to at least one relay, verify entries, subscribe and unsubscribe by key or address, keep the timeline in arrival order, show articles by ARTICLE.md and show every name with its key. It may publish, set a profile and nicknames, search, use several relays and hints, download automatically and prefetch.</p>
+<p>Entries of kinds it does not handle (programs and documents, for a client without the machine; kinds not yet defined, for every client) are kept or skipped without error and shown, if at all, as something it cannot open; so are links to programs, and links to blobs that turn out to be images or documents. &quot;Writing a reader without the machine&quot; walks through building one.</p>
+<h2 id="for-machine-hosts">For machine hosts</h2>
+<p>Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events (<a href="events.html">events</a>) and cost budget (<a href="charges.html">charges</a>).</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="content-records.html">← Content: named records</a><a rel="next" href="events.html">Events and input →</a></nav></footer>
+</body>
+</html>

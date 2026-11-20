@@ -186,3 +186,182 @@ fn publish_to_a_relay() {
         assert!(list.contains(title), "{title}: {list}");
     }
 }
+
+// --- The website (site/) ------------------------------------------------------
+
+fn site_dir() -> PathBuf {
+    common::workspace().join("site")
+}
+
+/// The checked-in site is what the sources make, file for file, and
+/// `terse manual site` writes the same bytes.
+#[test]
+fn site_is_up_to_date() {
+    let built = manual::build(&manual::read_sources(&dir()).unwrap()).unwrap();
+    let files = terse_net::manual_site::site(&built);
+    let stale = "site/ is stale: run `terse manual site --out site`";
+    let mut on_disk: Vec<String> =
+        std::fs::read_dir(site_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    on_disk.sort();
+    let mut names: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+    names.sort();
+    assert_eq!(on_disk, names, "{stale}");
+    for (name, data) in &files {
+        assert!(std::fs::read_to_string(site_dir().join(name)).unwrap() == *data, "{name}: {stale}");
+    }
+    // Every manifest article has a page.
+    for b in &built {
+        assert!(names.contains(&terse_net::manual_site::page_of(&b.name)), "{}", b.name);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let out = terse(&["manual", "site", "--dir", dir().to_str().unwrap(), "--out", tmp.path().to_str().unwrap()]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    for (name, data) in &files {
+        assert_eq!(std::fs::read_to_string(tmp.path().join(name)).unwrap(), *data, "{name}");
+    }
+}
+
+/// The values of every `name="..."` attribute in `html`.
+fn attrs<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
+    let key = format!(" {name}=\"");
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = html[at..].find(&key) {
+        let start = at + i + key.len();
+        let end = start + html[start..].find('"').unwrap();
+        out.push(&html[start..end]);
+        at = end;
+    }
+    out
+}
+
+/// Whether `xml` is well formed, as far as a figure needs: every tag is
+/// closed in order, attributes are quoted, no stray `<`, `>` or `&`.
+fn well_formed(xml: &str) -> Result<(), String> {
+    let mut stack: Vec<&str> = Vec::new();
+    let mut rest = xml;
+    while let Some(i) = rest.find(['<', '&']) {
+        if rest[..i].contains('>') {
+            return Err(format!("stray > in {:?}", &rest[..i]));
+        }
+        rest = &rest[i..];
+        if rest.starts_with('&') {
+            let end = rest.find(';').ok_or("unterminated reference")?;
+            rest = &rest[end + 1..];
+            continue;
+        }
+        let end = rest.find('>').ok_or("unterminated tag")?;
+        let tag = &rest[1..end];
+        rest = &rest[end + 1..];
+        if let Some(name) = tag.strip_prefix('/') {
+            if stack.pop() != Some(name) {
+                return Err(format!("</{name}> closes nothing open"));
+            }
+            continue;
+        }
+        let empty = tag.ends_with('/');
+        let tag = tag.trim_end_matches('/');
+        let (name, mut a) = tag.split_once(' ').unwrap_or((tag, ""));
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(format!("bad tag name {name:?}"));
+        }
+        // name="value" pairs.
+        loop {
+            a = a.trim_start();
+            if a.is_empty() {
+                break;
+            }
+            let eq = a.find("=\"").ok_or(format!("unquoted attribute in <{tag}>"))?;
+            let key = &a[..eq];
+            if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b':') {
+                return Err(format!("bad attribute {key:?}"));
+            }
+            let v = &a[eq + 2..];
+            let close = v.find('"').ok_or("unterminated attribute")?;
+            if v[..close].contains(['<', '>']) {
+                return Err("< or > in an attribute".into());
+            }
+            a = &v[close + 1..];
+        }
+        if !empty {
+            stack.push(name);
+        }
+    }
+    if rest.contains('>') || !stack.is_empty() {
+        return Err(format!("unclosed: {stack:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn well_formed_catches_mistakes() {
+    assert!(well_formed("<svg a=\"1\"><path d=\"M0 0\"/></svg>").is_ok());
+    assert!(well_formed("<svg><path d=\"M0 0\"></svg>").is_err());
+    assert!(well_formed("<svg a=1></svg>").is_err());
+    assert!(well_formed("<svg>a > b</svg>").is_err());
+}
+
+/// The site is self-contained: every link leads to a page of it (and a
+/// fragment to an id there), nothing is loaded from elsewhere, there is
+/// no script and no web address, and every figure is well-formed SVG.
+#[test]
+fn site_is_self_contained() {
+    let files: Vec<(String, String)> = std::fs::read_dir(site_dir())
+        .unwrap()
+        .map(|e| {
+            let e = e.unwrap();
+            (e.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(e.path()).unwrap())
+        })
+        .collect();
+    let page = |name: &str| files.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str());
+    let css = page("style.css").unwrap();
+    assert!(css.len() < 8192, "a small stylesheet");
+    let mut figures = 0;
+    for (name, html) in &files {
+        let lower = html.to_lowercase();
+        for bad in ["<script", "javascript:", "http://", "https://", "@import", "url(", " src=", "<iframe", "<object", "<embed", "<img", "<link rel=\"pre"] {
+            assert!(!lower.contains(bad), "{name} contains {bad}");
+        }
+        if !name.ends_with(".html") {
+            continue;
+        }
+        assert!(html.starts_with("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">"), "{name}");
+        assert!(html.contains("<meta name=\"viewport\"") && html.contains("<title>"), "{name}");
+        assert_eq!(attrs(html, "href").iter().filter(|h| h.ends_with(".css")).count(), 1, "{name}: one stylesheet");
+        for href in attrs(html, "href") {
+            assert!(!href.contains(':') && !href.starts_with('/') && !href.contains("//"), "{name}: {href} is not relative");
+            let (file, fragment) = href.split_once('#').unwrap_or((href, ""));
+            let file = if file.is_empty() { name.as_str() } else { file };
+            let target = page(file).unwrap_or_else(|| panic!("{name}: {href} leads nowhere"));
+            if !fragment.is_empty() {
+                assert!(target.contains(&format!(" id=\"{fragment}\"")), "{name}: {href}: no such id");
+            }
+        }
+        let ids = attrs(html, "id");
+        assert_eq!(ids.len(), ids.iter().collect::<std::collections::HashSet<_>>().len(), "{name}: ids are unique");
+        let mut at = 0;
+        while let Some(i) = html[at..].find("<svg") {
+            let start = at + i;
+            let end = start + html[start..].find("</svg>").unwrap() + 6;
+            well_formed(&html[start..end]).unwrap_or_else(|e| panic!("{name}: figure: {e}"));
+            figures += 1;
+            at = end;
+        }
+    }
+    // Every figure of the manual is drawn (the indented sources of
+    // figures in writing-articles and device-page-figures are not figures).
+    let sources: usize =
+        builtin::MANUAL.iter().map(|(_, _, t)| std::str::from_utf8(t).unwrap().matches("\n```path ").count()).sum();
+    assert!(sources >= 4);
+    assert_eq!(figures, sources, "every figure is drawn");
+    // The landing page shows the overview and lists every article.
+    let index = page("index.html").unwrap();
+    assert!(index.contains(&format!(">{}</h1>", builtin::MANUAL[1].2.split(|&b| b == b'\n').next().map(|l| std::str::from_utf8(&l[2..]).unwrap()).unwrap())));
+    for (name, title, _) in builtin::MANUAL {
+        let title = title.replace('&', "&amp;").replace('\'', "&#39;").replace('<', "&lt;");
+        assert!(
+            index.contains(&format!("<li><a href=\"{}\">{}</a></li>", terse_net::manual_site::page_of(name), title)),
+            "{name} is listed on index.html"
+        );
+    }
+}

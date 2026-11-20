@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content: named records - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="content-named-records">Content: named records</h1>
+<p>Named records are small pieces of data a program keeps on the host it runs on: a high score, settings, a saved game, a shell&#39;s layout. Four operations of the content device (device 4) save, load, delete and list them. They use the same request block, <code>submit</code> call (<code>400h</code>), handles, completion rules and statuses as get and put, described in &quot;Content: blobs, requests and statuses&quot;, which comes before this article. Records never leave the host: they are not sent to a relay, to another host or to another program.</p>
+<div class="table"><table>
+<thead><tr><th><code>op</code></th><th>Operation</th><th>C helper</th></tr></thead>
+<tbody>
+<tr><td><code>0Eh</code></td><td>Save</td><td><code>record_save(r, name, data, size)</code></td></tr>
+<tr><td><code>0Fh</code></td><td>Load</td><td><code>record_load(r, name, offset, length, buf)</code></td></tr>
+<tr><td><code>10h</code></td><td>Delete</td><td><code>record_delete(r, name)</code></td></tr>
+<tr><td><code>11h</code></td><td>Records</td><td><code>record_list(r, first, length, buf)</code></td></tr>
+</tbody></table></div>
+<h2 id="names">Names</h2>
+<p>For save, load and delete, the block&#39;s <code>id</code> field (32 bytes at offset 4) holds the record&#39;s name: 1 to 32 bytes of UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), then <code>00h</code> to the end of the 32 bytes. Any other <code>id</code> (empty, not UTF-8, a control character, a non-zero byte after the first <code>00h</code>) makes the request a bad request: the submit returns 0 and writes status <code>04h</code>. For records (<code>11h</code>) <code>id</code> is not used.</p>
+<p>The C helpers take a zero-terminated string and copy at most 32 bytes of it, padding with zeros; a longer string is cut at 32 bytes without warning, which can also cut a UTF-8 character in half (then the submit fails with <code>04h</code>).</p>
+<h2 id="owner">Owner</h2>
+<p>The records a machine reaches belong to an owner, and a program cannot reach another owner&#39;s records.</p>
+<div class="table"><table>
+<thead><tr><th>How the machine was started</th><th>Owner</th></tr></thead>
+<tbody>
+<tr><td>by a shell with <code>start_program</code></td><td>the program&#39;s identity, (feed key, name); for a built-in, the all-zero key and its title. Every version shares the records</td></tr>
+<tr><td>by the host, as its built-in shell</td><td>the shell&#39;s identity, as above</td></tr>
+<tr><td>with <code>start</code> by image ID, or from a file</td><td>the exact image ID: a rebuilt image has new, empty records</td></tr>
+</tbody></table></div>
+<p>So publishing a new version of a program under the same name keeps its records, while a program run from a file during development has records of its own. Moving records from one owner to another (for example when a program run from a file is later published) is not specified yet.</p>
+<h2 id="operations">Operations</h2>
+<div class="table"><table>
+<thead><tr><th>Operation</th><th>Fields</th><th>Completion</th></tr></thead>
+<tbody>
+<tr><td>Save <code>0Eh</code></td><td><code>addr</code> and <code>size</code>: the data, 0 to 65,536 bytes, wholly in ROM or wholly in RAM, copied at submit</td><td><code>01h</code> once the record is replaced and durably stored; <code>06h</code> if it would exceed the limits, and nothing changes</td></tr>
+<tr><td>Load <code>0Fh</code></td><td><code>offset</code>; <code>length</code> 1 to 16,384; <code>addr</code>, <code>length</code> bytes in RAM</td><td>as a get: the bytes from <code>offset</code> to <code>addr</code>, <code>length</code> = bytes delivered, <code>size</code> = the record&#39;s size; <code>02h</code> if there is no such record</td></tr>
+<tr><td>Delete <code>10h</code></td><td>none besides <code>id</code></td><td><code>01h</code>, whether or not the record existed</td></tr>
+<tr><td>Records <code>11h</code></td><td><code>offset</code> (first index), <code>length</code> 1 to 16,384, <code>addr</code> in RAM</td><td>records of 36 bytes, in increasing order of name (byte order); <code>length</code> = bytes delivered, <code>size</code> = number of records</td></tr>
+</tbody></table></div>
+<p>A save of 0 bytes is allowed and makes an empty record. A save always replaces the whole record; there is no append. A load whose <code>offset</code> is at or beyond the end of the record completes with <code>01h</code>, <code>length</code> 0 and <code>size</code> the record&#39;s size.</p>
+<p>Each record of the records list:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>32</td><td>the name, padded with <code>00h</code></td></tr>
+<tr><td>32</td><td>4</td><td>the record&#39;s size in bytes</td></tr>
+</tbody></table></div>
+<p>&quot;Durably stored&quot; means the host wrote the data to a temporary file, synced it, and renamed it into place, so a record is replaced as a whole or not at all.</p>
+<h2 id="limits">Limits</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>name</td><td>1 to 32 bytes</td></tr>
+<tr><td>one record</td><td>0 to 65,536 bytes</td></tr>
+<tr><td>records per owner</td><td>256</td></tr>
+<tr><td>data per owner</td><td>1,048,576 bytes in all</td></tr>
+<tr><td>bytes per load or list request</td><td>16,384</td></tr>
+</tbody></table></div>
+<p>A save that would exceed either per-owner limit, counting the record it replaces as gone, completes with <code>06h</code> (<code>STATUS_NO_ROOM</code>) and changes nothing. A record larger than 16,384 bytes is loaded in several requests with increasing <code>offset</code>.</p>
+<h2 id="statuses">Statuses</h2>
+<div class="table"><table>
+<thead><tr><th>Status</th><th>When</th></tr></thead>
+<tbody>
+<tr><td><code>01h</code></td><td>done</td></tr>
+<tr><td><code>02h</code></td><td>load: no such record</td></tr>
+<tr><td><code>03h</code></td><td>the host cannot keep records (no data directory, an I/O error); also any request pending when the machine was restored from a snapshot</td></tr>
+<tr><td><code>04h</code></td><td>at submit: a bad name, a size or length out of range, a buffer not where required</td></tr>
+<tr><td><code>06h</code></td><td>save: over the owner&#39;s limits</td></tr>
+</tbody></table></div>
+<p>No consent is asked for any of the four. A host that offers only the machine&#39;s reading profile may complete all four with <code>05h</code> without carrying them out; a program should treat that as &quot;not on this host&quot;.</p>
+<h2 id="charges">Charges</h2>
+<p>Each <code>submit</code> costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to <code>addr</code> cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See <a href="charges.html">charges</a>; completions are announced by a content-done event, see <a href="events.html">events</a>.</p>
+<h2 id="replay">Replay</h2>
+<p>Record requests are inputs like every completion: what a load delivers and the status of a save are recorded with the run, so a run replays exactly without the records directory. The records themselves are not part of the machine&#39;s state; only the pending requests are.</p>
+<h2 id="where-hosts-keep-them">Where hosts keep them</h2>
+<p>Hosts keep records under <code>&lt;data&gt;/records</code>, where <code>&lt;data&gt;</code> is the <code>--data</code> option of <code>terse run</code> and <code>terse-host</code>, by default <code>$XDG_DATA_HOME/terse</code>, else <code>~/.local/share/terse</code>. Inside, each owner has a directory, <code>program/&lt;feed key hex&gt;/&lt;name hex&gt;/</code> (built-ins have the all-zero key) or <code>image/&lt;image ID hex&gt;/</code>, and each record is a file named by the hex of its name. The <code>terse</code> tool inspects them:</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>terse records list [&lt;owner&gt;] [--data &lt;dir&gt;]</code></td><td>every owner with its count and bytes, or one owner&#39;s records (size, name)</td></tr>
+<tr><td><code>terse records show &lt;owner&gt; &lt;name&gt;</code></td><td>writes the record&#39;s bytes to standard output</td></tr>
+<tr><td><code>terse records delete &lt;owner&gt; &lt;name&gt;</code></td><td>deletes the record</td></tr>
+</tbody></table></div>
+<p>An owner is written <code>builtin:&lt;title&gt;</code>, <code>program:&lt;feed key&gt;:&lt;name&gt;</code> or <code>image:&lt;image id&gt;</code>.</p>
+<h2 id="example-a-high-score">Example: a high score</h2>
+<p>This is how the game Sparks (programs/sparks) keeps its high score in a 4-byte record named <code>high-score</code>. The load is asked for at start and handled when it arrives, so the first frame does not wait; a save is sent at game over and its completion is ignored.</p>
+<pre>#include &quot;terse.h&quot;
+
+static content_req load_req, save_req;
+static uint8_t buf[4], load_handle;
+static uint32_t high;
+
+void start(void)
+{
+    load_handle = record_load(&amp;load_req, &quot;high-score&quot;,
+                              0, 4, buf);
+}
+
+/* For each event in the main loop. */
+void on_event(const terse_event *ev)
+{
+    if (ev-&gt;type != EV_CONTENT_DONE || ev-&gt;a != load_handle)
+        return;
+    load_handle = 0;
+    if (load_req.status == STATUS_DONE
+        &amp;&amp; load_req.length == 4) {
+        uint32_t v = buf[0] | buf[1] &lt;&lt; 8 | buf[2] &lt;&lt; 16
+                   | (uint32_t)buf[3] &lt;&lt; 24;
+        if (v &gt; high) /* a score made meanwhile wins */
+            high = v;
+    }
+}
+
+void game_over(uint32_t score)
+{
+    if (score &lt;= high)
+        return;
+    high = score;
+    for (int i = 0; i &lt; 4; i++)
+        buf[i] = (uint8_t)(high &gt;&gt; (8 * i));
+    record_save(&amp;save_req, &quot;high-score&quot;, buf, 4);
+}</pre>
+<p>The save copies its 4 bytes at submit, so <code>buf</code> may change at once. The first time the game runs there is no record and the load completes with <code>02h</code>; <code>high</code> stays 0. Use separate request blocks for requests that may be pending at the same time, as here: submitting a block again while it is pending makes two requests that both write their results into it.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="content-feeds.html">← Content: feeds, names, search and publishing</a><a rel="next" href="network.html">The network →</a></nav></footer>
+</body>
+</html>

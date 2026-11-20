@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing an article - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="writing-an-article">Writing an article</h1>
+<p>An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Terse: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.</p>
+<h2 id="lines-and-blocks">Lines and blocks</h2>
+<p>Lines end at LF; a CR before the LF is ignored, and a lone CR elsewhere is a blank shown as a space. Blanks are spaces, tabs and CRs, and a line of only blanks is a blank line. A byte order mark at the very start of an article is ignored. The text is a sequence of blocks separated by blank lines. Markers count only at the very start of a line, and a block also ends before a line it cannot hold, which then starts the next block.</p>
+<div class="table"><table>
+<thead><tr><th>Block</th><th>A line that starts with</th></tr></thead>
+<tbody>
+<tr><td>Heading</td><td><code>#</code> and a space</td></tr>
+<tr><td>Subheading</td><td><code>##</code> and a space</td></tr>
+<tr><td>List item</td><td><code>-</code> or <code>*</code> and a space</td></tr>
+<tr><td>Preformatted</td><td>four spaces or a tab</td></tr>
+<tr><td>Fence</td><td>three backquotes</td></tr>
+<tr><td>Table</td><td>a bar, <code>|</code></td></tr>
+<tr><td>Paragraph</td><td>anything else</td></tr>
+</tbody></table></div>
+<h2 id="paragraphs">Paragraphs</h2>
+<pre>    A paragraph&#39;s lines are joined
+    with spaces and wrapped to the
+    reader&#39;s width.</pre>
+<p>A paragraph&#39;s lines are joined with spaces and wrapped to the reader&#39;s width.</p>
+<p>The blanks at the start of each line are dropped. A line that starts no other block continues the paragraph, so a paragraph needs no blank line before a heading, a list or a table that follows it.</p>
+<h2 id="headings">Headings</h2>
+<pre>    # A heading
+    ## A subheading</pre>
+<h1 id="a-heading">A heading</h1>
+<h2 id="a-subheading">A subheading</h2>
+<p>Each is one line; the blanks after the marker are dropped. The sections of this article are subheadings.</p>
+<h2 id="lists">Lists</h2>
+<pre>    - First item.
+    - Second item, whose next line
+    continues it.
+    * A star works as well.</pre>
+<ul>
+<li>First item.</li>
+<li>Second item, whose next line continues it.</li>
+<li>A star works as well.</li>
+</ul>
+<p>Lists have one level. Ordinary lines after an item continue it, joined as in a paragraph.</p>
+<h2 id="preformatted-blocks-and-fences">Preformatted blocks and fences</h2>
+<p>A line indented by four spaces or a tab starts a preformatted block, which holds it and the indented lines after it. They are shown as written, leading blanks included, in a monospaced face, and never wrapped: the reader&#39;s column holds about 64 monospaced characters, and longer lines are cut off.</p>
+<pre>    for (i = 0; i &lt; 10; i++)
+        draw(i);</pre>
+<pre>    for (i = 0; i &lt; 10; i++)
+        draw(i);</pre>
+<p>A blank line ends a preformatted block. A fence keeps blank lines: it opens with a line of three backquotes and ends at a line of three backquotes followed only by blanks. The opening and closing lines are not shown. Text after the opening backquotes (an info string) is ignored, except <code>path</code>, which makes a figure. A fence with no closing line runs to the end of the article.</p>
+<pre>    ```text
+    Shown as written,</pre>
+<pre>    blank line included.
+    ```</pre>
+<pre>Shown as written,
+
+blank line included.</pre>
+<p>To show a fence&#39;s own source, as above, indent it: an indented line of backquotes is preformatted text, not a fence.</p>
+<h2 id="code-spans">Code spans</h2>
+<pre>    Call `wait_frame` once a frame.</pre>
+<p>Call <code>wait_frame</code> once a frame.</p>
+<p>A code span is a backquote, 1 to 200 bytes holding no backquote and no line break, and a backquote (the bytes as written: in a table cell <code>\|</code> counts as two). It counts in paragraphs, list items, headings and table cells, and is shown in a monospaced face without the backquotes. A link inside a code span is not a link. A backquote that starts no code span is ordinary text, as is every backquote in a preformatted block or a fence. There is no other inline markup: <code>*</code> and <code>_</code> are ordinary text.</p>
+<h2 id="links">Links</h2>
+<p>These are links wherever text is shown, also in preformatted blocks, fences and table cells:</p>
+<div class="table"><table>
+<thead><tr><th>Form</th><th>Target</th></tr></thead>
+<tbody>
+<tr><td><code>terse:</code> and 64 hex digits</td><td>An article, by blob ID</td></tr>
+<tr><td><code>terse:feed/</code> and 64 hex digits</td><td>A feed, by key</td></tr>
+<tr><td><code>terse:feed/</code>, the key, <code>@</code> and hints</td><td>A feed, with the relays that hold it</td></tr>
+<tr><td><code>terse:program/</code> key <code>/</code> name</td><td>A program, by publisher and name</td></tr>
+<tr><td><code>[text](target)</code></td><td>Any of these, shown as the text</td></tr>
+</tbody></table></div>
+<p>The hex digits are lowercase. A link must not follow an ASCII letter or digit, and the 64 digits must not be followed by one.</p>
+<p>Give a feed&#39;s address rather than its bare key, so that readers who use other relays find it: after the key, <code>@</code> and one or two relays, <code>host</code> or <code>host:port</code>, separated by a comma (no spaces), as in <code>terse:feed/&lt;key&gt;@relay.example.org</code> or <code>terse:feed/&lt;key&gt;@relay.example:9000,[2001:db8::7]</code>. <code>terse feed address</code> prints yours. The hints are the longest run of letters, digits, <code>.</code>, <code>-</code>, <code>:</code>, <code>,</code> and brackets after the <code>@</code>, less every <code>.</code>, <code>,</code> and <code>:</code> at its end, so a sentence may end right after an address. If that is not one or two valid hints (three hints, a bad port), the link is the key alone and the rest is text; a reader that knows no hints does the same, so the link always leads to the feed.</p>
+<p>Articles do not link to the web. A web address such as https&#58;//example.org is ordinary text, shown as written and not followed, and so is a link with text whose target is not one of the <code>terse:</code> forms: all of [Example](https&#58;//example.org) stays as you see it, brackets and parentheses included. Write a web address as plain text if a reader needs it.</p>
+<p>Written for real, a bare link to an article (the manual&#39;s page on figures), a feed, a feed with a hint, the built-in sketch program, and a link with text to another part of this manual:</p>
+<p><a href="device-page-figures.html" title="Figures on the page">terse:95aa09…e7cf04</a></p>
+<p><code class="addr">terse:feed/0000000000000000000000000000000000000000000000000000000000000000</code></p>
+<p><code class="addr">terse:feed/0000000000000000000000000000000000000000000000000000000000000000@relay.example.org</code>.</p>
+<p><code class="addr">terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch</code></p>
+<p>Read <a href="device-page.html">the page device</a> next.</p>
+<p>The source of the last one is:</p>
+<pre>    Read [the page device](terse:&lt;64 hex digits&gt;) next.</pre>
+<p>The reader shortens a bare <code>terse:</code> link to its first and last six digits. A built-in program has the all-zero key and is named by its image&#39;s title.</p>
+<p>A program&#39;s name is the run of bytes <code>A</code>..<code>Z</code>, <code>a</code>..<code>z</code>, <code>0</code>..<code>9</code>, <code>-</code>, <code>.</code>, <code>_</code>, <code>~</code> and <code>%XX</code> (two hex digits, either case) after the slash, less every final dot (<code>Pad...</code> names <code>Pad</code>). Each <code>%XX</code> stands for byte XX; write every other byte (a space, a non-ASCII letter, a final dot) that way. The decoded name must be a valid display name: 1 to 48 bytes, no control characters, no whitespace first or last. A program named Sketch pad is:</p>
+<pre>    terse:program/&lt;64 hex digits&gt;/Sketch%20pad</pre>
+<p>A link with text is <code>[</code>, the text, <code>]</code>, <code>(</code>, the target, <code>)</code>, all on one line. The text is 1 to 200 bytes as written (<code>\|</code> in a table cell counts as two) holding no <code>[</code>, <code>]</code>, backquote or link; the target is exactly one link, with no blank. Brackets that do not make a whole link with text are ordinary text, and links inside them count as bare links. Where links and code spans would overlap, the one that starts first counts.</p>
+<h2 id="tables">Tables</h2>
+<pre>    | Key | Does | Notes |
+    |---|:--:|--:|
+    | Esc | back | `\|` is a bar |
+    | Tab | next link |
+    | T | publish | a test | extra |</pre>
+<div class="table"><table>
+<thead><tr><th>Key</th><th class="ac">Does</th><th class="ae">Notes</th></tr></thead>
+<tbody>
+<tr><td>Esc</td><td class="ac">back</td><td class="ae"><code>|</code> is a bar</td></tr>
+<tr><td>Tab</td><td class="ac">next link</td><td class="ae"></td></tr>
+<tr><td>T</td><td class="ac">publish</td><td class="ae">a test</td></tr>
+</tbody></table></div>
+<p>A table is consecutive lines that start with <code>|</code>. Each line is a row, cut into cells at every <code>|</code> not preceded by a backslash, after the leading <code>|</code>, the trailing blanks and a trailing unescaped <code>|</code> are dropped; blanks around each cell are dropped. In a cell <code>\|</code> stands for a bar, also in a code span; any other backslash is itself. Each cell is one line of text, in which links and code spans count.</p>
+<p>The first row&#39;s cell count, at most 8, is the number of columns. Later rows lose cells beyond it and get empty cells where they have fewer, as the last two rows above show.</p>
+<p>If the second line holds only <code>|</code>, <code>-</code>, <code>:</code> and blanks and at least one <code>-</code>, it is an alignment row: it is not shown, the first row becomes a header, and its cells align the columns: <code>:--:</code> centres, <code>--:</code> aligns to the end, anything else to the start. Without one, every column is aligned to the start and there is no header. Keep tables narrow (2 to 4 short columns): wide ones are squeezed and their text wrapped.</p>
+<h2 id="figures">Figures</h2>
+<p>A fence whose info string is <code>path</code>, followed by a width and a height in units (each 1 to 4 digits with no sign, from 1 to 1024), is a figure drawn from SVG path data. A column of the recommended width, about 68 characters of body text, is 512 units wide.</p>
+<pre>    ```path 200 60
+    fill #2b3a55 stroke none M0 0 H200 V60 H0 Z
+    fill #98c379 stroke fg 2 M20 50 L60 10 L100 50 Z
+    fill none stroke #e5c07b 3 M120 50 Q150 0 180 50
+    ```</pre>
+<figure><svg viewBox="0 0 200 60" width="200" height="60" style="width:13.333em" role="img" aria-label="Figure, 200 by 60 units"><path d="M0 0 L200 0 L200 60 L0 60 Z" fill="#2b3a55"/><path d="M20 50 L60 10 L100 50 Z" fill="#98c379" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><path d="M120 50 Q150 0 180 50" fill="none" stroke="#e5c07b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></figure>
+<p>The panel, a green triangle with a light outline, and a yellow curve. In brief:</p>
+<ul>
+<li>Commands <code>M L H V C S Q T Z</code>, lowercase relative, numbers as in SVG; the first is <code>M</code> or <code>m</code>; no arcs.</li>
+<li><code>fill &lt;colour&gt;</code> and <code>stroke &lt;colour&gt; [&lt;width&gt;]</code> set how what follows is drawn; at first no fill and stroke <code>fg</code> 1 unit wide. A <code>stroke</code> without a width is 1 unit wide again, whatever came before.</li>
+<li>Colours <code>#rgb</code>, <code>#rrggbb</code>, <code>#rrggbbaa</code>, <code>none</code>, <code>fg</code> (the text colour).</li>
+<li>Coordinates in units from the top left, y down, every point within 2047 either way as written, before rounding to sixteenths: <code>L2047.01 0</code> is out of range.</li>
+<li>A command letter may follow a number directly (<code>L5 5L6 6</code>), but <code>fill</code> and <code>stroke</code> must start the path or follow a blank or comma: <code>L5 5fill #f00</code> is malformed.</li>
+<li>A figure has no text: explain it in the prose or a table after it.</li>
+</ul>
+<p>Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader&#39;s column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in <a href="device-page-figures.html">figures on the page</a>.</p>
+<h2 id="size-and-publishing">Size and publishing</h2>
+<p>Keep articles to a few kilobytes. A host downloads an entry&#39;s article without being asked when it is at most 16,384 bytes (the user may change this limit), so such articles open at once; larger ones are fetched when opened. The reader shows at most 48 KiB of an article (a longer one ends with a note saying how much is shown), and does not open a linked article larger than that.</p>
+<p>Publish a file in your own feed with the command line tool:</p>
+<pre>    terse feed publish hello.txt --title &quot;Hello&quot;</pre>
+<p>It puts the blob, publishes the next entry of your feed and prints <code>seq N blob &lt;id&gt;</code>; <code>--reply-to &lt;blob id&gt;</code> marks a reply. The entry&#39;s title is what timelines show. Like the other feed commands it takes <code>--relay</code>, <code>--store</code> and <code>--config</code>. In the reader, T publishes a test article of its own, not your text; a program that publishes asks the host, which asks you.</p>
+<h2 id="how-the-reader-shows-it">How the reader shows it</h2>
+<p>In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in <a href="device-page.html">the page device</a>.</p>
+<p>Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="using.html">← Using the shell and the reader</a><a rel="next" href="native-reader.html">Writing a reader without the machine →</a></nav></footer>
+</body>
+</html>
