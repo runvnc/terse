@@ -524,6 +524,32 @@ fn the_same_script_gives_the_same_hashes() {
     assert_ne!(a.hashes()[4], format!("4 {}", to_hex(&alone.machine(1).state_hash())));
 }
 
+/// Full text (device 10) is optional for the shell: without it, its own
+/// marks outside basic text are drawn as basic stand-ins (⌂ as ~), so the
+/// bar looks whole on every host (SPEC §terminal.text).
+#[test]
+fn bar_without_full_text() {
+    let bar = |without: bool| {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = common::programs().join("shell/shell.terse");
+        let mut cmd = common::terse_command();
+        cmd.arg("run").arg(&shell).args(["--frames", "10", "--dump"]);
+        if without {
+            cmd.args(["--without", "10"]);
+        }
+        for d in ["store", "config", "data"] {
+            cmd.arg(format!("--{d}")).arg(dir.path().join(d));
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap().lines().next().unwrap().to_string()
+    };
+    assert!(bar(false).starts_with(" \u{2302} "), "{}", bar(false));
+    let basic = bar(true);
+    assert!(basic.starts_with(" ~ "), "{basic}");
+    assert!(basic.chars().all(|c| terse_core::text::is_basic(c as u16)), "{basic}");
+}
+
 /// `terse run --shell --dump` prints what the library run gives.
 #[test]
 fn cli_dump_matches() {

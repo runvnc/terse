@@ -117,8 +117,10 @@ struct CellAtlas {
     next: u32,
 }
 
-/// Slots before the atlas starts over (it needs at most two per cell).
-const ATLAS_SLOTS: u32 = 4096;
+/// Slots before the atlas starts over (it needs at most two per cell, so
+/// it has room for a whole grid of new glyphs several times; the bitmaps
+/// grow only as slots are used).
+pub(super) const ATLAS_SLOTS: u32 = 16384;
 
 impl CellAtlas {
     fn new(cell: (u32, u32)) -> Self {
@@ -377,6 +379,9 @@ impl SoftScreen {
         self.full_text = terminal.full_text();
         if self.atlas.next + 2 * (COLS * ROWS) as u32 > ATLAS_SLOTS {
             self.atlas = CellAtlas::new(self.cell_px);
+            // A slot now means another glyph: a cell whose slot number is
+            // unchanged may still look different, so every cell is redrawn.
+            self.drawn.cells.iter_mut().for_each(|c| c.slot = u32::MAX);
         }
         // SPEC §terminal.cells, §terminal.text: wide characters across two
         // cells, or, without full text, the basic repertoire and the placeholder.

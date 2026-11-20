@@ -178,15 +178,12 @@ fn white_space(c: char) -> bool {
         0x09..=0x0D | 0x20 | 0x85 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000)
 }
 
-/// The characters of the basic text repertoire beyond printable ASCII
-/// (ARTICLE.md 1.1).
-pub const BASIC_EXTRA: [char; 11] =
-    ['\u{d7}', '\u{2013}', '\u{2014}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2026}', '\u{2212}', '\u{fffd}'];
-
-/// Whether a character is in the basic text repertoire, or is one that
-/// ARTICLE.md 1 does not show (control characters) or shows as a blank.
+/// Whether a character is in the basic text repertoire (ARTICLE.md 1.1,
+/// the terminal's basic repertoire too: `terse_core::text::BASIC`), or is
+/// one that ARTICLE.md 1 does not show (control characters) or shows as a
+/// blank.
 pub fn basic_char(c: char) -> bool {
-    (' '..='~').contains(&c) || c.is_control() || BASIC_EXTRA.contains(&c)
+    c.is_control() || u16::try_from(c as u32).is_ok_and(terse_core::text::is_basic)
 }
 
 /// Whether text (an article's bytes, or a title) is in basic text
@@ -1101,10 +1098,40 @@ mod tests {
     fn basic_text_repertoire() {
         assert!(basic_text(b"Plain ASCII, tabs\tand\r\nlines. 3 \xc3\x97 4 \xe2\x88\x92 1 \xe2\x80\x94 \xe2\x80\x9cyes\xe2\x80\x9d\xe2\x80\xa6"));
         assert!(basic_text(b"\xef\xbb\xbfmalformed \xff is U+FFFD"));
-        assert!(!basic_text("caf\u{e9}".as_bytes()));
-        assert!(!basic_text("x\u{a0}y".as_bytes()), "no-break space");
+        assert!(basic_text("caf\u{e9}, x\u{a0}y, \u{2500}\u{2588}".as_bytes()), "Latin-1, box drawing");
         assert!(!basic_text("a\u{feff}b".as_bytes()), "a BOM not at the start is text");
-        assert_eq!((0..=0x10ffffu32).filter_map(char::from_u32).filter(|&c| basic_char(c) && !c.is_control()).count(), 106);
+        assert!(!basic_text("5 \u{20ac}".as_bytes()));
+        assert!(!basic_text("\u{1f600}".as_bytes()));
+    }
+
+    /// The texts of `vectors/basic-text.txt` are in basic text or not as
+    /// it says, and the repertoire (control characters aside) is its ranges.
+    #[test]
+    fn basic_text_vectors() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors/basic-text.txt");
+        let text = std::fs::read_to_string(path).unwrap();
+        let (mut ranges, mut cases, mut hex) = (Vec::new(), 0, None);
+        for line in text.lines() {
+            let mut w = line.split_whitespace();
+            match (w.next(), w.next(), w.next()) {
+                (Some("range"), Some(a), Some(b)) => {
+                    ranges.push(u32::from_str_radix(a, 16).unwrap()..=u32::from_str_radix(b, 16).unwrap())
+                }
+                (Some("hex"), Some(h), None) => hex = Some(h.to_string()),
+                (Some("basic"), Some(yes), None) => {
+                    let h = hex.take().unwrap();
+                    let bytes: Vec<u8> = (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap()).collect();
+                    assert_eq!(basic_text(&bytes), yes == "yes", "{h}");
+                    cases += 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(cases >= 10);
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let listed = ranges.iter().any(|r| r.contains(&(c as u32)));
+            assert_eq!(basic_char(c) && !c.is_control(), listed, "U+{:04X}", c as u32);
+        }
     }
 
     fn d(s: &str) -> String {

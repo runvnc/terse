@@ -592,16 +592,21 @@ asks at start with `terse_has_device(4)` (the `device` call, SPEC §system) whet
 has it. A program meant to run everywhere requires only devices 2 and 3, the
 program profile (SPEC §profiles).
 
-**Text.** Every host's terminal draws the basic repertoire: printable ASCII,
-the Latin-1 Supplement (U+00A0–U+00FF), box drawing and block elements
-(U+2500–U+259F). A program that prints anything else lists device 10, full
+**Text.** Every host's terminal draws the basic repertoire, the same 361
+characters as the basic text of articles (ARTICLE.md 1.1, `vectors/basic-text.txt`):
+printable ASCII, the Latin-1 Supplement (U+00A0–U+00FF), – — ‘ ’ “ ” • … −,
+box drawing and block elements (U+2500–U+259F) and U+FFFD. A program that
+prints anything else lists device 10, full
 text (SPEC §terminal.text): `--optional 10:0` if a placeholder box will do on
 a host without it (`terse_has_full_text()` tells it which it got), `--device
 10:0` if it cannot do without. A machine that does not list it is shown with
 the basic repertoire on every host, the reference host included, so what you
 see is what every host shows. Of the bundled programs the reader requires full
-text (titles and names come in any script); hello, fetch, sparks and the shell
-list it as optional; the rest print only basic text.
+text (titles and names come in any script); hello (other scripts), fetch (the
+message it fetches), sparks and the shell list it as optional; the rest print
+only basic text. Sparks and the shell draw basic stand-ins for their own
+symbols without it (sparks' hearts as `<3`; the shell's ⌂ ‖ ■ ✗ as ~ ║ ▄ ×),
+so they look whole on every host; the shell still shows titles in any script.
 
 `crt0.S` must come first. There is no C library beyond `terse.c` and no
 compiler runtime: avoid 64-bit division and floating point, or bring the routines

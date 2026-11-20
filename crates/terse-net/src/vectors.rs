@@ -1037,6 +1037,49 @@ fn local_session_file() -> String {
 }
 
 // --- Everything ----------------------------------------------------------------
+// --- The basic text repertoire (ARTICLE.md 1.1, SPEC §terminal.text) ---------------
+
+/// Texts in basic text or not: (name, bytes, note).
+fn basic_text_cases() -> Vec<(&'static str, Vec<u8>, &'static str)> {
+    let t = |s: &str| s.as_bytes().to_vec();
+    vec![
+        ("ascii", t("Plain ASCII, tabs\tand\r\nlines."), "tab, CR and LF are handled by ARTICLE.md 1"),
+        ("punctuation", t("3 \u{d7} 4 \u{2212} 1 \u{2014} \u{201c}yes\u{201d}, \u{2018}no\u{2019} \u{2013} \u{2022} \u{2026}"), "the nine marks beyond Latin-1"),
+        ("latin-1", t("caf\u{e9} na\u{ef}ve, 12 \u{b0}C, \u{bd} \u{a3}, \u{bf}s\u{ed}?"), "accented letters and signs"),
+        ("no-break-space", t("x\u{a0}y"), "U+00A0"),
+        ("box-drawing", t("\u{250c}\u{2500}\u{2510} \u{2588}\u{2593}\u{2592}\u{2591} \u{259f}"), "U+2500 to U+259F"),
+        ("malformed", b"malformed \xff is U+FFFD".to_vec(), "shown as U+FFFD, which is basic"),
+        ("bom-at-start", t("\u{feff}text"), "a byte order mark that starts the text is not shown"),
+        ("control", t("a\u{1}b\u{7f}c\u{85}d"), "control characters are not shown"),
+        ("bom-inside", t("a\u{feff}b"), "U+FEFF anywhere else is text, and not basic"),
+        ("euro", t("5 \u{20ac}"), "U+20AC"),
+        ("figure-dash", t("1\u{2012}2"), "U+2012, next to the en dash"),
+        ("black-square", t("\u{25a0}"), "U+25A0, just after block elements"),
+        ("greek", t("\u{3a9}mega"), "another script"),
+        ("cjk", t("\u{4f60}\u{597d}"), "wide characters"),
+        ("emoji", t("\u{1f600}"), "beyond the BMP"),
+    ]
+}
+
+fn basic_text_file() -> String {
+    use terse_core::text::{BASIC, BASIC_COUNT};
+    let mut out = String::from(
+        "# Terse test vectors: the basic text repertoire (ARTICLE.md 1.1), which is\n\
+         # also the terminal's basic repertoire (SPEC.md \u{a7}terminal.text).\n\
+         # Format: vectors/README.\n\n\
+         repertoire basic-text\n",
+    );
+    let _ = writeln!(out, "  count {BASIC_COUNT}");
+    for (lo, hi) in BASIC {
+        let _ = writeln!(out, "  range {lo:04x} {hi:04x}");
+    }
+    for (name, bytes, note) in basic_text_cases() {
+        let basic = if article_parse::basic_text(&bytes) { "yes" } else { "no" };
+        let _ = writeln!(out, "\ntext {name}\n  note {note}\n  hex {}\n  basic {basic}", hex(&bytes));
+    }
+    out
+}
+
 // --- Everything ----------------------------------------------------------------
 
 /// Feed addresses (NETWORK.md 4.9): valid ones and near misses.
@@ -1125,6 +1168,7 @@ pub fn generate() -> Vec<File> {
         File { path: "addresses.txt".into(), bytes: addresses_file().into_bytes() },
         File { path: "relay-session.txt".into(), bytes: session_file().into_bytes() },
         File { path: "local-session.txt".into(), bytes: local_session_file().into_bytes() },
+        File { path: "basic-text.txt".into(), bytes: basic_text_file().into_bytes() },
     ];
     out.extend(article_files());
     out
@@ -1277,6 +1321,18 @@ order must send the `n>` messages, with two allowances: a pushed message
 replay skips pushes; and a refusal's reason (after status 3 in a reply
 `A0h` to `ABh`) is text for people, so only the bytes up to the status
 are compared.
+
+basic-text.txt (ARTICLE.md section 1.1, SPEC.md §terminal.text)
+---------------------------------------------------------------
+The basic text repertoire, which every reader and every Terse
+machine's terminal must be able to show: one record `repertoire
+basic-text` with `count` (the number of characters) and one line
+`range <first> <last>` per run of code points (inclusive, lowercase
+hexadecimal). Then records `text <name>`, each with a `note`, the
+text's bytes (`hex`) and `basic`: `yes` if the text is in basic text
+(every character it shows is in the repertoire; a byte order mark that
+starts it, and control characters, are not shown; malformed UTF-8 is
+shown as U+FFFD), `no` if it needs full text.
 
 articles/ (ARTICLE.md)
 ----------------------

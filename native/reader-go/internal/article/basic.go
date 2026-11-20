@@ -2,22 +2,34 @@ package article
 
 import "unicode/utf8"
 
-// BasicExtra are the characters of the basic text repertoire beyond
-// printable ASCII (ARTICLE.md 1.1).
-var BasicExtra = []rune{
-	'×', '–', '—', '‘', '’', '“', '”',
-	'•', '…', '−', '�',
+// BasicRanges is the basic text repertoire (ARTICLE.md 1.1, the same set
+// as the terminal's basic repertoire, SPEC.md §terminal.text), as
+// inclusive ranges of code points: printable ASCII, the Latin-1
+// Supplement, dashes, quotation marks, bullet, ellipsis, minus sign, box
+// drawing and block elements, and U+FFFD. vectors/basic-text.txt lists
+// the same ranges; a test checks they agree.
+var BasicRanges = [][2]rune{
+	{0x0020, 0x007e},
+	{0x00a0, 0x00ff},
+	{0x2013, 0x2014},
+	{0x2018, 0x2019},
+	{0x201c, 0x201d},
+	{0x2022, 0x2022},
+	{0x2026, 0x2026},
+	{0x2212, 0x2212},
+	{0x2500, 0x259f},
+	{0xfffd, 0xfffd},
 }
 
 // BasicRune reports whether a character is in the basic text repertoire,
 // or is a control character (which ARTICLE.md 1 does not show, or shows
 // as a blank).
 func BasicRune(r rune) bool {
-	if r >= 0x20 && r <= 0x7e || r < 0x20 || r >= 0x7f && r <= 0x9f {
+	if r < 0x20 || r >= 0x7f && r <= 0x9f {
 		return true
 	}
-	for _, x := range BasicExtra {
-		if r == x {
+	for _, x := range BasicRanges {
+		if r >= x[0] && r <= x[1] {
 			return true
 		}
 	}

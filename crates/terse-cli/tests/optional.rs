@@ -63,14 +63,17 @@ fn run(extra: &[&str], dirs: &Dirs) -> String {
 
 /// On the program profile sparks plays exactly as with content: the same
 /// screen after 900 frames of the recorded session as the golden one made
-/// with content (a new data directory: no saved high score either way).
+/// with content (a new data directory: no saved high score either way),
+/// but for the HUD's hearts, "<3" without full text (device 10).
 /// Its hashes, golden in `program-hashes.txt`, are those of the library's
 /// machine with content not granted.
 #[test]
 fn sparks_on_the_program_profile() {
     let dirs = Dirs::new();
     let screen = run(&["--profile", "program", "--frames", "900", "--dump", "--dump-vectors"], &dirs);
-    assert_eq!(screen, std::fs::read_to_string(expected("keys-900.txt")).unwrap());
+    let full = std::fs::read_to_string(expected("keys-900.txt")).unwrap();
+    assert!(full.lines().next().unwrap().contains("LIVES \u{2665} "), "{full}");
+    assert_eq!(screen, full.replace('\u{2665}', "<3"));
     // No content: the run touched no store, config or data directory.
     assert!(!Path::new(&dirs.p("store")).exists() && !Path::new(&dirs.p("data")).exists());
 
@@ -92,7 +95,8 @@ fn sparks_on_the_program_profile() {
 }
 
 /// With and without content, the game is the same frame for frame: the
-/// terminal and the display list match all through the recorded session.
+/// terminal and the display list match all through the recorded session
+/// (both with full text, which changes only the hearts).
 /// (RAM is not: the record requests write their blocks, and the handle of
 /// the load differs.)
 #[test]
@@ -100,7 +104,7 @@ fn the_same_game_without_content() {
     let image = Image::parse(&std::fs::read(sparks()).unwrap()).unwrap();
     let script = Script::parse(&std::fs::read_to_string(keys()).unwrap()).unwrap();
     let mut with = Machine::new(&image);
-    let mut without = Machine::with_grants(&image, Grants(vec![false, false]));
+    let mut without = Machine::with_grants(&image, Grants(vec![false, true]));
     let store = tempfile::tempdir().unwrap();
     let mut node = terse_net::Node::new(terse_net::BlobStore::open(store.path().join("store"), None).unwrap(), None);
     node.set_records(terse_net::Records::in_data_dir(&store.path().join("data")));

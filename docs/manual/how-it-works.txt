@@ -172,8 +172,9 @@ The devices a program host provides (the program profile):
 | 2 | Terminal |
 | 3 | 2D vector display: lines and filled shapes from a display list |
 
-A program host's terminal need draw only 351 characters (ASCII,
-Latin-1, box drawing and blocks); a machine without full text shows
+A program host's terminal need draw only the 361 characters of
+basic text (ASCII, Latin-1, dashes, quotes, `…`, box drawing and
+blocks), as a basic reader does; a machine without full text shows
 every other character as a placeholder box, though it holds the same
 text.
 
