@@ -20,6 +20,8 @@ pub mod glyphs;
 pub mod keymap;
 pub mod page;
 #[cfg(feature = "gpu")]
+mod halo;
+#[cfg(feature = "gpu")]
 mod panels;
 mod phosphor;
 #[cfg(test)]
@@ -87,7 +89,10 @@ const USAGE: &str = "usage:
   the rectangle the panel covers; the GPU renderer always draws them in perspective.
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
-  threads; default one per core).
+  threads; default one per core), --tube xy|p31|amber|vectrex and --vignette: how the phosphor
+  display style (SPEC §vector.phosphor) is drawn: a colour XY monitor with each line in its colour
+  (xy, the default), a green P31 oscilloscope tube, an amber tube or the Vectrex's white tube (the
+  monochrome ones show colours as brightness), and with --vignette a glass darker towards the corners.
   With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
   built-in programs (reader, sparks, fetch, hello, sketch, holo, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
@@ -161,7 +166,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut consent, mut demo) = (None, false);
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let (mut renderer, mut threads, mut bench, mut warmup, mut sweep) = (RendererChoice::Auto, 0usize, false, None, false);
-    let mut bloom = soft::BloomRes::Auto;
+    let mut look = phosphor::Look::default();
     let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
     let mut panels = soft::panel::PanelMode::Perspective;
     let mut it = args.into_iter();
@@ -179,14 +184,11 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 let v = it.next().ok_or(USAGE)?;
                 threads = v.parse().map_err(|_| format!("bad --threads {v}"))?;
             }
-            "--bloom" => {
-                bloom = match it.next().ok_or(USAGE)?.as_str() {
-                    "full" => soft::BloomRes::Full,
-                    "half" => soft::BloomRes::Half,
-                    "auto" => soft::BloomRes::Auto,
-                    v => return Err(format!("bad --bloom {v} (full, half or auto)")),
-                };
+            "--tube" => {
+                let v = it.next().ok_or(USAGE)?;
+                look.preset = phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
             }
+            "--vignette" => look.vignette = true,
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
                 warmup = Some(v.parse::<u64>().map_err(|_| format!("bad --warmup {v}"))?);
@@ -371,7 +373,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, look, eye, parallax, panels };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -387,14 +389,14 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, bloom, eye, parallax, panels };
+            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -402,7 +404,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, bloom, eye, parallax, panels })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, look, eye, parallax, panels })
         }
         _ => Err(USAGE.into()),
     }
@@ -450,8 +452,8 @@ pub struct Looks {
     pub renderer: RendererChoice,
     /// `--threads`: the software renderer's drawing threads (0: one per core).
     pub threads: usize,
-    /// `--bloom`: the software renderer's phosphor bloom resolution.
-    pub bloom: soft::BloomRes,
+    /// `--tube` and `--vignette`: how the phosphor style is drawn.
+    pub look: phosphor::Look,
     /// `--eye`: where the eye is for 3D lists (SPEC §vector3d.space), screen units
     /// from the reference eye; in a window with parallax, where it rests.
     pub eye: display::Eye,
@@ -548,7 +550,6 @@ fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
         }
     }
     let mut display = soft::SoftScreens::new(Box::new(glyphs), looks.threads);
-    display.set_bloom(looks.bloom);
     display.set_panel_mode(looks.panels);
     Ok(Box::new(display))
 }
@@ -604,6 +605,7 @@ fn run_headless(
     // SPEC §page: a screenshot shows the finished page (no scroll animation,
     // figures rasterised at once); a benchmark draws as a window does.
     display.configure(looks.no_trails, looks.force_phosphor, bench);
+    display.set_look(looks.look);
     display.set_eye(looks.eye);
     let viewport = size.unwrap_or(display.grid_size());
     eprintln!("terse-host: renderer {}, {}x{}", display.name(), viewport.0, viewport.1);

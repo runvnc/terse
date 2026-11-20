@@ -51,7 +51,7 @@ fn looks() -> Option<Looks> {
         window: None,
         renderer: RendererChoice::Software,
         threads: 2,
-        bloom: crate::soft::BloomRes::Auto,
+        look: crate::phosphor::Look::default(),
         eye: (0.0, 0.0),
         parallax: false,
         panels: crate::soft::panel::PanelMode::Perspective,

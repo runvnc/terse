@@ -334,8 +334,9 @@ The 3D vector display is seen from an eye that follows the pointer (parallax; se
 Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
 (wgpu) or by the CPU (see [Software renderer](#software-renderer)); `auto`, the
 default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
-`--threads <n>` sets the software renderer's drawing threads (default one per core)
-and `--bloom full|half|auto` the resolution of its phosphor bloom; `--panels flat`
+`--threads <n>` sets the software renderer's drawing threads (default one per core);
+`--tube xy|p31|amber|vectrex` and `--vignette` choose how the phosphor style is drawn
+(see [Phosphor style](#phosphor-style)); `--panels flat`
 makes it draw the shell's panels upright instead of in perspective (`auto`, the
 default, is perspective; the GPU always draws them in perspective).
 `--screenshot <out.png> --frames N [--events <file>] [--size <W>x<H>] [--consent ask|allow|deny] [--demo] [--eye <dx>,<dy>]`
@@ -1180,45 +1181,60 @@ with a dim tail multiplied by persistence / 256 each frame
 machine state (in the state hash, STATE.md 1.7); the afterglow is not, and the
 program cannot see it.
 
-How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`):
-each line and circle adds a bright core 0.6 of the stated width (1.2 times its
-colour) with a tight halo of 0.14 of the core that is gone 1.5 units past the edge,
-and glyphs and the cursor add their light the same way. Light adds up linearly, so
-a line drawn twice is twice the light, and crossings are brighter. The beam dwells
-at a line's end points: a lone end is 1.5 times as bright, and where different lines
-meet (a polygon's corners) they share that, so a corner is also about 1.5 times one
-line (an identical line drawn again counts in full). The afterglow is two
-floating-point textures, a fast component (×0.46 per frame, so about 10% after three
-frames) and a slow tail (× persistence / 256), together fed with 0.2 of the whole beam (0.6 of
-that to the fast component, the rest to the tail) —
-taken as a maximum, not added, so a shape that stays put is never brighter than 1.2
-times its beam, while a line drawn twice leaves a trail twice as bright — and each
-losing a small epsilon per frame so trails really reach black. When a list keeps its
-sequence of opcodes from one frame to the next, the afterglow is also deposited at 3
-to 15 positions interpolated between the old and new coordinates, so a moving shape
-leaves a continuous smear, not separate copies (not for jumps of more than 40 units);
-the live beam is drawn only where the shape is now. All of that light is blurred (a
-Gaussian of 1.4 screen units) and added back at 0.55 as the bloom, the same for text
-and shapes; above one stroke's brightness the blurred light is whitened a little, so
-a doubled line's glow is whiter. The sum goes through a tone curve that is linear up
-to 0.35 and then has a long shoulder towards 1, so repetitions keep getting brighter,
-and only light above 3 (about three times a static stroke) spills into white, so a
-saturated colour turns white only at heavy overdraw. The afterglow advances once per
-machine frame, not per presented frame, so it does not depend on the display's
-refresh rate.
+How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`): the
+aim is a real vector monitor or oscilloscope, a thin, sharp, nearly white-hot line
+on true black with a very faint, very wide glow, not a neon blur. Each line is the
+light of a Gaussian beam spot moved along it at constant speed: a Gaussian across the
+line (σ = 0.5 pixel at the default width, so the core is about 1.2 pixels wide at half
+its peak at any resolution, and grows with wider lines) and the difference of two
+error functions along it, so segments that meet end to end join seamlessly and a lone
+end is a soft round cap. The core's peak is 0.85 (linear, times colour and opacity).
+Every distinct end point gets a dot of extra light where the beam dwells, shared
+between the lines that meet there; a line of length 0 is a dot. Light adds up
+linearly, so a line drawn twice is twice the light, and crossings are brighter.
 
-Measured on a 260-unit line of width 1 unit, in the grid's native size (880 × 660,
-where the core is under a pixel wide) and at twice that: the peak in sRGB, and how
-many pixels across the line are at least 100 and at least 40 (core and bloom):
+Text (the terminal's glyphs and cursor, the page's text and figures) is light on the
+same tube in its own antialiasing and exactly its colours; it gets no narrow glow and
+no motion smear, so it stays as readable as in the clean style.
 
-| Line | native: peak | ≥100 | ≥40 | 2×: peak | ≥100 | ≥40 |
-|---|---|---|---|---|---|---|
-| cyan (0, 180, 255), once | 0, 156, 202 | 4 | 8 | 21, 194, 224 | 6 | 16 |
-| twice | 31, 198, 226 | 6 | 10 | 66, 222, 239 | 12 | 18 |
-| four times | 92, 225, 240 | 8 | 10 | 225, 243, 248 | 14 | 22 |
-| white, once | 202 | 4 | 8 | 224 | 6 | 16 |
-| twice | 226 | 6 | 10 | 239 | 12 | 18 |
-| four times | 240 | 8 | 10 | 248 | 14 | 22 |
+The glow is the faceplate's halation: four Gaussians of 0.4%, 1.2%, 3% and 8% of the
+screen's height, weighted 0.06, 0.08, 0.07 and 0.05, computed on a pyramid of the
+light at a quarter, an eighth, a sixteenth and a thirty-second of the resolution and
+added on top of the untouched core (text feeds it at a quarter of its light). Each is
+faint where it lands, so the gaps inside letters and between close lines stay dark,
+but together they put about a sixth of a line's light more than three pixels away.
+
+The afterglow is two floating-point textures, a fast component (time constant 20 ms
+for the default tube, so about 8% after three frames) and a slow tail (× persistence /
+256 per frame), fed with 0.2 of the beam and text (0.6 of that to the fast component)
+taken as a maximum. What is shown is the brighter of what is lit now and its
+afterglow, so something that stays put shows exactly its own light while a trail
+fades behind a moving one; each component loses a small epsilon per frame so trails
+really reach black. When a list keeps its sequence of opcodes from one frame to the
+next, the afterglow also takes half that deposit at 3 to 15 positions interpolated
+between the old and new coordinates, so a moving shape leaves a continuous smear, not
+separate copies (not for jumps of more than 40 units). The tone curve leaves light
+below 0.8 untouched and rolls the brightest channel off above it, scaling the others
+with it so the hue is kept; light above 2.1 (a line drawn three times, bright
+crossings) first spills into the other channels and turns white-hot. The afterglow
+advances once per machine frame, not per presented frame or by the clock, so it does
+not depend on the display's refresh rate and screenshots are the same on every run.
+
+`--tube` chooses the tube: `xy` (the default, a colour XY monitor: each line in its
+colour), `p31` (a green oscilloscope tube with a very short fast afterglow, 3 ms),
+`amber` (50 ms) or `vectrex` (white, 15 ms); the monochrome tubes show colours as
+brightness. `--vignette` darkens the glass towards the corners (by up to 30%). Both
+renderers draw all of this the same way, within rounding.
+
+Measured by `cargo test -p terse-host soft::look` (both renderers, 1280 × 960 and
+2560 × 1920; a slanted white line of width 1 unit, and grey "8 corners, 12 edges"):
+the core is 1.1 pixels wide at half maximum at both sizes; the frequency at which a
+line's modulation falls to 50% is 0.92 of the clean style's at 1280 × 960 (the clean
+line is 2 pixels wide there, the phosphor core thinner); 16–18% of a line's light lies
+more than 3 pixels from it; a line drawn twice gives 1.5 times the light within
+1.5 pixels of it; the contrast between a letter's strokes and the gaps inside it is
+0.91–0.92 (the earlier, narrow bloom left 0.29–0.45), and the strokes' peak is the
+clean style's within 1/255.
 
 A program can therefore brighten a line by drawing it more than once (SPEC §vector.phosphor);
 Sparks does that with its arena border and craft.
@@ -1453,8 +1469,7 @@ system's `sans-serif`, `serif` and `monospace` families as `fc-match` resolves t
 families or font files given with `--page-sans`, `--page-serif` and `--page-mono`;
 the line height is the face's own (ascent + descent + gap), at least 1.3 × the size.
 `terse-host` prints the faces it uses. In the phosphor style the page's background
-is not drawn and its text is light on the tube, with the same bloom as terminal
-text. Figures are rasterised with [tiny-skia](https://crates.io/crates/tiny-skia)
+is not drawn and its text is light on the tube, drawn as terminal text is. Figures are rasterised with [tiny-skia](https://crates.io/crates/tiny-skia)
 (antialiased, at the window's pixel size) on their own thread, only those within
 half a rectangle height of the view; each gets a texture (at most 4 Mpixels; a
 bigger one is drawn at a lower resolution), and those that leave that band are
@@ -1756,17 +1771,14 @@ consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind th
   overlay over everything. Cells, glyph pixels and screen pixels map through tables
   computed with the shader's formula, so a glyph lands on the pixels it does on the
   GPU.
-- **The phosphor style** follows `phosphor.rs` pass by pass in linear float RGB:
-  glyph light with its halo, the page and shapes as additive beam (core, halo,
-  vertex dwell), the afterglow's two components faded and deposited with `max`
-  (with the smear of moving shapes), the whitened light blurred into the bloom,
-  then spill, tone curve and sRGB. Differences from the GPU: the glyph halo is
-  sampled at whole-pixel offsets, the halo profile comes from a 1,024-step table,
-  sRGB from a 4,096-step table, floats are 32-bit (the GPU's are 16-bit), and from
-  1,200 pixels wide (`--bloom auto`) the bloom is computed at half resolution: the
-  light averaged over 2 × 2 pixels, blurred with half the radius less the spread
-  the averaging and the bilinear upsampling add, sampled back bilinearly (an eighth
-  of the blur's work; `--bloom full` computes it as the GPU does).
+- **The phosphor style** follows `phosphor.rs` and the GPU's passes in linear float
+  RGB: the text's light, the shapes' Gaussian beam with its vertex dwell, the
+  afterglow's two components faded and deposited with `max` (with the smear of
+  moving shapes), the halo's pyramid (the light averaged over 4 × 4 pixels, each
+  level from the one before, the blurs, the sums back up), then tint, spill, tone
+  curve, glass and sRGB. Differences from the GPU are of rounding: the beam's
+  Gaussian and error function come from 4,096-step tables, sRGB from a 4,096-step
+  table, and floats are 32-bit (the GPU's are 16-bit).
 - **Only what changed is drawn.** Each screen keeps an image of its pixels and
   compares what it shows with what it drew: cells whose glyph or colours changed,
   the cursor's old and new cells, the page's rectangle when it scrolled or its
@@ -1790,7 +1802,8 @@ consent prompt and the fault row. It is `crates/terse-host/src/soft/`, behind th
 - **Tests.** `cargo test -p terse-host` checks that a screen drawn bit by bit
   equals one drawn from scratch, that the phosphor afterglow fades to black, the
   shapes' row spans against brute force, butt-ended segments against a whole line,
-  and ten scripted scenes against pictures in
+  the phosphor look's measurements (`soft::look`, by both renderers), and ten
+  scripted scenes against pictures in
   `crates/terse-host/tests/reference/` (400 × 300, made with the DejaVu fonts; at
   most 0.5% of pixels may differ by more than 8/255).
 
@@ -1813,6 +1826,12 @@ native 880 × 660 grid, so at 1320 × 990 it is drawn at 880 × 660 and at
 | holo standing still (A): nothing to draw again | 0.00 / — / 0.22 | — | — |
 | holo, city (55 faces cut out of 160 lines each frame; `--sweep-eye`) | 1.02 / 0.49 / 0.41 | — | — |
 | holo, city, phosphor (`--sweep-eye`) | 16.3 / 3.62 / 1.05 | — | — |
+
+The phosphor rows predate the reworked phosphor look (Gaussian beam, wide halo
+pyramid). Measured again at 1280 × 960 with twelve threads, before → after: sparks
+2.0 → 2.45 ms, holo's wireframes 3.8 → 3.6, rings 4.5 → 4.2, city 4.3 → 3.8, the
+shell with four machines forced to phosphor 4.8 → 4.8; on the GPU sparks 1.12 → 0.88,
+holo 0.98 → 0.92, the shell 3.2 → 3.5.
 
 ## Measurements
 

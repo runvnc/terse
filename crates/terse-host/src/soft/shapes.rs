@@ -3,8 +3,9 @@
 //! outlines and discs by their distance from the pixel's centre, with
 //! round ends and a one-pixel antialiased edge; rectangles and triangles as
 //! plain geometry (pixel centres inside). In the phosphor style a line or
-//! circle gives light instead of coverage: a sharp core, a faint halo and
-//! the vertex dwell (`phosphor.rs`).
+//! circle gives light instead of coverage: the Gaussian beam of
+//! `phosphor::beam_light`, with σ in pixels, and the vertex dwell
+//! (`phosphor.rs`).
 //!
 //! Each shape is visited row by row over only the pixels it can reach (the
 //! row's interval of a capsule, ring or disc), so a long thin line costs
@@ -13,7 +14,7 @@
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use super::base::IRect;
-use crate::phosphor::{CORE, CORE_WIDTH, DWELL, DWELL_MIN_PX, DWELL_SIZE, HALO, HALO_FALLOFF, HALO_REACH};
+use crate::phosphor::{BEAM_REACH, DOT, DWELL, erf, peak, sigma};
 
 /// How sixteenths of a screen unit map to the pixels of a target: pixel
 /// position = origin + sixteenths × scale.
@@ -89,14 +90,13 @@ impl Shape {
 
     /// How far from its centre line (or centre) the shape reaches, in
     /// sixteenths, beyond its own extent: the antialiased edge, or with
-    /// `glow` the phosphor halo.
+    /// `glow` the phosphor beam's Gaussian.
     fn reach(&self, g: &Geom, glow: bool) -> f32 {
         let px = g.px();
         match *self {
             Shape::Line { hw, .. } | Shape::Circle { hw, .. } => {
                 if glow {
-                    let core = hw * CORE_WIDTH;
-                    (core + HALO_REACH).max(core + px)
+                    BEAM_REACH * sigma(2.0 * hw, px) * px
                 } else {
                     hw + px
                 }
@@ -206,7 +206,6 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
     }
     let px = g.px();
     let reach = shape.reach(g, glow);
-    let table = halo_table();
     // Sixteenths of a pixel's centre (by multiplying: no division per
     // pixel), and back.
     let (inv_sx, inv_sy, inv_px) = (1.0 / g.scale.0, 1.0 / g.scale.1, 1.0 / px);
@@ -220,12 +219,11 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
     };
     match *shape {
         Shape::Line { a, b, hw, dwell, fade, butt, .. } => {
-            let core = hw * CORE_WIDTH;
-            let dw = Dwell::new(a, b, dwell, core, px);
+            let beam = glow.then(|| Beam::new(a, b, hw, dwell, fade, px));
             let ba = (b.0 - a.0, b.1 - a.1);
             let len2 = ba.0 * ba.0 + ba.1 * ba.1;
             let inv_len2 = 1.0 / len2.max(1e-6);
-            let (hw_px, core_px) = (hw * inv_px, core * inv_px);
+            let hw_px = hw * inv_px;
             let plain = butt == 0 && fade == (1.0, 1.0);
             // A butt end: a step half a pixel either side of it instead of
             // a round cap (as the GPU's `segment`).
@@ -238,6 +236,13 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                 let pay = yq - a.1;
                 for x in x0..x1 {
                     let q = (qx(x), yq);
+                    if let Some(beam) = &beam {
+                        let v = beam.at(q);
+                        if v > 0.0 {
+                            f(x, y, v);
+                        }
+                        continue;
+                    }
                     // The distance to the segment.
                     let pax = q.0 - a.0;
                     let hr = (pax * ba.0 + pay * ba.1) * inv_len2;
@@ -257,10 +262,7 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                     }
                     let (dx, dy) = (pax - ba.0 * h, pay - ba.1 * h);
                     let d = (dx * dx + dy * dy).sqrt();
-                    let v = match mode {
-                        Mode::Cover => stroke(hw_px, d * inv_px),
-                        Mode::Light => beam_light(core, core_px, d, inv_px, table) * dw.at(q),
-                    } * w;
+                    let v = stroke(hw_px, d * inv_px) * w;
                     if v > 0.0 {
                         f(x, y, v);
                     }
@@ -268,8 +270,9 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
             }
         }
         Shape::Circle { c, r, hw, .. } => {
-            let core = hw * CORE_WIDTH;
-            let (hw_px, core_px) = (hw * inv_px, core * inv_px);
+            let hw_px = hw * inv_px;
+            let inv_s = 1.0 / (sigma(2.0 * hw, px) * px);
+            let top = peak(2.0 * hw);
             let (outer, inner) = (r + reach, r - reach);
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
@@ -290,7 +293,10 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
                         let d = (((q.0 - c.0).powi(2) + (q.1 - c.1).powi(2)).sqrt() - r).abs();
                         let v = match mode {
                             Mode::Cover => stroke(hw_px, d * inv_px),
-                            Mode::Light => beam_light(core, core_px, d, inv_px, table),
+                            Mode::Light => {
+                                let k = d * inv_s;
+                                top * gauss(k * k)
+                            }
                         };
                         if v > 0.0 {
                             f(x, y, v);
@@ -369,75 +375,110 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
     }
 }
 
-/// The halo `edge` sixteenths past the core's edge: exponential, smoothed
-/// to zero over the outer half of its reach.
-fn halo(edge: f32) -> f32 {
-    if edge >= HALO_REACH {
+/// Steps of the tables of `gauss` (over `GAUSS_END`) and `erf_table`
+/// (over ±`ERF_END`): linear between them, within 10⁻⁵ of the functions.
+const STEPS: usize = 4096;
+const GAUSS_END: f32 = 24.0;
+const ERF_END: f32 = 6.0;
+
+struct Tables {
+    gauss: Vec<f32>,
+    erf: Vec<f32>,
+}
+
+fn tables() -> &'static Tables {
+    static TABLES: std::sync::OnceLock<Tables> = std::sync::OnceLock::new();
+    TABLES.get_or_init(|| Tables {
+        gauss: (0..=STEPS + 1).map(|i| (-0.5 * (i as f32 * GAUSS_END / STEPS as f32)).exp()).collect(),
+        erf: (0..=STEPS + 1).map(|i| erf(i as f32 * 2.0 * ERF_END / STEPS as f32 - ERF_END)).collect(),
+    })
+}
+
+/// exp(−s / 2), from the table (0 beyond its end: 6·10⁻⁶).
+#[inline]
+fn gauss(s: f32) -> f32 {
+    let f = s * (STEPS as f32 / GAUSS_END);
+    if f >= STEPS as f32 {
         return 0.0;
     }
-    let t = ((edge - 0.5 * HALO_REACH) / (0.5 * HALO_REACH)).clamp(0.0, 1.0);
-    HALO * (-edge / HALO_FALLOFF).exp() * (1.0 - t * t * (3.0 - 2.0 * t))
-}
-
-/// Steps of the halo's table over its reach.
-const HALO_STEPS: usize = 1024;
-
-/// [`halo`] at `HALO_STEPS` points over its reach (and one past it, 0).
-fn halo_table() -> &'static [f32; HALO_STEPS + 2] {
-    static TABLE: std::sync::OnceLock<[f32; HALO_STEPS + 2]> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| std::array::from_fn(|i| halo(i as f32 * HALO_REACH / HALO_STEPS as f32)))
-}
-
-/// The light (before colour) a stroke with core half width `core`
-/// (`core_px` in pixels) gives a pixel `d` sixteenths from its centre line
-/// (`inv_px` pixels a sixteenth): a sharp core and a faint halo gone
-/// `HALO_REACH` past its edge (from the table, interpolated).
-#[inline]
-fn beam_light(core: f32, core_px: f32, d: f32, inv_px: f32, table: &[f32; HALO_STEPS + 2]) -> f32 {
-    let edge = (d - core).max(0.0);
-    let f = (edge * (HALO_STEPS as f32 / HALO_REACH)).min(HALO_STEPS as f32);
+    let t = tables();
     let i = f as usize;
-    let h = table[i] + (table[i + 1] - table[i]) * (f - i as f32);
-    (CORE * stroke(core_px, d * inv_px)).max(CORE * h)
+    t.gauss[i] + (t.gauss[i + 1] - t.gauss[i]) * (f - i as f32)
 }
 
-/// The vertex dwell of a line: brighter near its ends (`phosphor::DWELL`),
-/// shared between the lines that meet there.
-struct Dwell {
+/// The error function, from the table (±1 beyond it).
+#[inline]
+fn erf_table(x: f32) -> f32 {
+    let f = (x.clamp(-ERF_END, ERF_END) + ERF_END) * (STEPS as f32 / (2.0 * ERF_END));
+    let t = tables();
+    let i = (f as usize).min(STEPS - 1);
+    t.erf[i] + (t.erf[i + 1] - t.erf[i]) * (f - i as f32)
+}
+
+/// `phosphor::beam_light` from the tables.
+#[inline]
+fn light(along: f32, across: f32, len: f32) -> f32 {
+    let g = gauss(across * across);
+    if g == 0.0 {
+        return 0.0;
+    }
+    if len <= 1e-4 {
+        return DOT * g * gauss(along * along);
+    }
+    if along > 5.5 && along < len - 5.5 {
+        return g;
+    }
+    const S: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    g * 0.5 * (erf_table(along * S) - erf_table((along - len) * S))
+}
+
+/// A line's phosphor light (`phosphor::beam_light`): its geometry in units
+/// of the beam's σ, its peak, its depth cue and its vertex dwell.
+struct Beam {
     a: (f32, f32),
     b: (f32, f32),
-    /// Gain at each end (0: none), and 1 / r².
-    k: (f32, f32),
-    inv_r2: f32,
-    /// Beyond this squared distance from an end its spot is negligible.
-    far: f32,
+    dir: (f32, f32),
+    /// Length in σ, and 1 / σ (σ in sixteenths).
+    len: f32,
+    inv_s: f32,
+    peak: f32,
+    fade: (f32, f32),
+    /// The dwell spot's light at each end, relative to the peak (0: none).
+    dwell: (f32, f32),
 }
 
-impl Dwell {
-    fn new(a: (f32, f32), b: (f32, f32), dwell: u32, core: f32, px: f32) -> Self {
-        let r = (DWELL_SIZE * core).max(DWELL_MIN_PX * px);
-        if dwell == 0 {
-            return Dwell { a, b, k: (0.0, 0.0), inv_r2: 0.0, far: 0.0 };
-        }
-        // An end whose count is 0 (a butt end) has none.
-        let k = |n: u32| if n == 0 { 0.0 } else { (1.0 + DWELL) / n as f32 - 1.0 };
+impl Beam {
+    fn new(a: (f32, f32), b: (f32, f32), hw: f32, dwell: u32, fade: (f32, f32), px: f32) -> Self {
+        let s = sigma(2.0 * hw, px) * px;
+        let d = (b.0 - a.0, b.1 - a.1);
+        let len = (d.0 * d.0 + d.1 * d.1).sqrt();
+        let dir = if len > 1e-3 { (d.0 / len, d.1 / len) } else { (1.0, 0.0) };
+        // An end whose count is 0 (a butt end) has none; a dot one at a.
+        let k = |n: u32| if n == 0 { 0.0 } else { DWELL * DOT / n as f32 };
         let k1 = if a != b { k((dwell >> 4) & 15) } else { 0.0 };
-        Dwell { a, b, k: (k(dwell & 15), k1), inv_r2: 1.0 / (r * r), far: 16.0 * r * r }
+        Beam { a, b, dir, len: len / s, inv_s: 1.0 / s, peak: peak(2.0 * hw), fade, dwell: (k(dwell & 15), k1) }
     }
 
     #[inline]
     fn at(&self, q: (f32, f32)) -> f32 {
-        if self.far == 0.0 {
-            return 1.0;
+        let (rx, ry) = ((q.0 - self.a.0) * self.inv_s, (q.1 - self.a.1) * self.inv_s);
+        let along = rx * self.dir.0 + ry * self.dir.1;
+        let across = ry * self.dir.0 - rx * self.dir.1;
+        let mut v = light(along, across, self.len);
+        // The dwell spots, where they are more than 10⁻¹³ of the peak.
+        let r2 = rx * rx + ry * ry;
+        if self.dwell.0 != 0.0 && r2 < 60.0 {
+            v += self.dwell.0 * gauss(r2);
         }
-        let mut w = 1.0;
-        for (p, k) in [(self.a, self.k.0), (self.b, self.k.1)] {
-            let d2 = (q.0 - p.0).powi(2) + (q.1 - p.1).powi(2);
-            if k != 0.0 && d2 < self.far {
-                w += k * (-d2 * self.inv_r2).exp();
+        if self.dwell.1 != 0.0 {
+            let (ex, ey) = ((q.0 - self.b.0) * self.inv_s, (q.1 - self.b.1) * self.inv_s);
+            let e2 = ex * ex + ey * ey;
+            if e2 < 60.0 {
+                v += self.dwell.1 * gauss(e2);
             }
         }
-        w.max(0.0)
+        let h = if self.len > 0.0 { (along / self.len).clamp(0.0, 1.0) } else { 0.0 };
+        v * self.peak * (self.fade.0 + (self.fade.1 - self.fade.0) * h)
     }
 }
 
@@ -472,10 +513,9 @@ mod tests {
                     for x in bounds.x0..bounds.x1 {
                         let q = ((x as f32 + 0.5 - g.origin.0) / g.scale.0, (y as f32 + 0.5 - g.origin.1) / g.scale.1);
                         let d = segment_distance(q, a, b);
-                        let core = hw * CORE_WIDTH;
                         let v = match mode {
                             Mode::Cover => stroke(hw / px, d / px),
-                            Mode::Light => beam_light(core, core / px, d, 1.0 / px, halo_table()) * Dwell::new(a, b, 0x11, core, px).at(q),
+                            Mode::Light => Beam::new(a, b, hw, 0x11, (1.0, 1.0), px).at(q),
                         };
                         if v > 1e-4 {
                             want.push((x, y, v));
@@ -526,15 +566,19 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    /// The tables follow the functions they stand for.
     #[test]
-    fn the_halo_table_follows_the_halo() {
-        let t = halo_table();
-        for i in 0..2000 {
-            let edge = i as f32 * 0.013;
-            let f = (edge * (HALO_STEPS as f32 / HALO_REACH)).min(HALO_STEPS as f32);
-            let k = f as usize;
-            let got = t[k] + (t[k + 1] - t[k]) * (f - k as f32);
-            assert!((got - halo(edge)).abs() < 1e-4, "{edge}");
+    fn the_tables_follow_the_beam() {
+        for i in 0..20000 {
+            let x = i as f32 * 0.0007 - 7.0;
+            assert!((erf_table(x) - erf(x)).abs() < 2e-5, "erf {x}");
+            let s = i as f32 * 0.0013;
+            assert!((gauss(s) - (-0.5 * s).exp()).abs() < 1e-5, "gauss {s}");
+            for len in [0.0, 3.0, 40.0] {
+                let (along, across) = (x * 1.3 + 2.0, x * 0.4);
+                let want = crate::phosphor::beam_light(along, across, len);
+                assert!((light(along, across, len) - want).abs() < 3e-5, "{along} {across} {len}");
+            }
         }
     }
 

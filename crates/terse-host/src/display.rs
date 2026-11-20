@@ -341,6 +341,9 @@ pub trait Display {
     /// reference eye, the same for every machine. Takes effect at the next
     /// `update`.
     fn set_eye(&mut self, eye: Eye);
+    /// How the phosphor style is drawn (`--tube`, `--vignette`): presentation
+    /// only, nothing a program can observe.
+    fn set_look(&mut self, look: crate::phosphor::Look);
     /// The user's presentation options: the phosphor style without its
     /// afterglow, the phosphor presentation whatever the style, and whether
     /// the page's scroll is animated (and its figures rasterised on their

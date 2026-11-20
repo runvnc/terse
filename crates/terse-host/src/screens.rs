@@ -238,6 +238,8 @@ pub struct Screens {
     no_trails: bool,
     force_phosphor: bool,
     animate_page: bool,
+    /// How the phosphor style is drawn (`--tube`, `--vignette`).
+    look: crate::phosphor::Look,
     /// The eye for 3D lists, the same for every machine (SPEC §vector3d.space).
     eye: Eye,
 }
@@ -256,7 +258,20 @@ impl Screens {
             no_trails: false,
             force_phosphor: false,
             animate_page: true,
+            look: crate::phosphor::Look::default(),
             eye: (0.0, 0.0),
+        }
+    }
+
+    pub fn set_look(&mut self, look: crate::phosphor::Look) {
+        self.look = look;
+        self.shell.set_look(look);
+        let surfaced = self.children.values_mut().filter_map(|c| c.surfaced.as_mut()).chain(self.shell_surfaced.as_mut());
+        for s in surfaced {
+            s.renderer.set_look(look);
+        }
+        for c in self.children.values_mut() {
+            c.renderer.set_look(look);
         }
     }
 
@@ -350,7 +365,7 @@ impl Screens {
         // The children's pictures, in the shell's units, to pixels.
         let shell_rect = self.shell.screen_rect(viewport);
         let mut keep = Vec::new();
-        let (no_trails, force, animate) = (self.no_trails, self.force_phosphor, self.animate_page);
+        let (no_trails, force, animate, look) = (self.no_trails, self.force_phosphor, self.animate_page, self.look);
         let shaders = self.shell.shaders().clone();
         let glyphs = |width: u32| self.shell.glyphs_for(width);
         let fresh_renderer = |format, width: u32| {
@@ -358,6 +373,7 @@ impl Screens {
             r.set_no_trails(no_trails);
             r.set_force_phosphor(force);
             r.set_page_animation(animate);
+            r.set_look(look);
             r
         };
         let surface_renderer = |width: u32| fresh_renderer(PANEL_FORMAT, width);
@@ -618,6 +634,10 @@ impl Display for GpuDisplay {
 
     fn set_eye(&mut self, eye: Eye) {
         self.screens.set_eye(eye);
+    }
+
+    fn set_look(&mut self, look: crate::phosphor::Look) {
+        self.screens.set_look(look);
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {
