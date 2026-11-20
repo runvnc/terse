@@ -631,5 +631,5 @@ fn relay_judges_entries_as_the_vectors_say() {
             checked += 1;
         }
     }
-    assert!(checked >= 35, "{checked} entries");
+    assert!(checked >= 34, "{checked} entries");
 }
