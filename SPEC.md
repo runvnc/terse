@@ -198,16 +198,24 @@ by the ROM contents.
 | 5 | 1 | Machine profile: `1` |
 | 6 | 3 | `rom_len`: ROM length in bytes, 1 to 131,072 |
 | 9 | 1 | `ram_pages`: number of 8 KiB RAM pages, 1 to 128 |
-| 10 | 1 | `n_dev`: number of device requirements, 0 to 16 |
+| 10 | 1 | `n_dev`: number of device entries, 0 to 16 |
 | 11 | 5 | Reserved, must be zero |
 | 16 | 16 | Title, UTF-8, padded with `00h` |
-| 32 | 2 × `n_dev` | Device requirements: (device slot, device version) pairs |
+| 32 | 2 × `n_dev` | Device entries: (device slot, version byte) pairs |
 | 32 + 2 × `n_dev` | `rom_len` | ROM contents; byte 0 is at address `0001_0000h` |
 
 - The file length must equal `32 + 2 × n_dev + rom_len` exactly.
 - The **image ID** is the BLAKE3-256 hash of the whole file.
-- A device slot may be listed at most once (slot 1 included); a host
-  refuses an image that lists one twice.
+- A device entry's version byte holds the device version in its low
+  seven bits (0 to 127) and, in its top bit (`80h`), whether the device
+  is **optional**: clear, the image **requires** the device; set, the
+  program can run without it. So `(4, 00h)` requires content version 0,
+  and `(4, 80h)` lists it as optional.
+- A device slot may be listed at most once (slot 1 included), required or
+  optional; a host refuses an image that lists one twice. Devices 1 and 8
+  are never optional: a host refuses an image that lists either with the
+  top bit set (device 1 is always there; device 8 is the shell's,
+  section 12.1, and absent elsewhere whatever the header says).
 - The **title** is the 16 bytes without their trailing `00h` bytes
   (possibly empty). It should be UTF-8, but a host does not check it: it
   shows what it cannot decode as it can (for example as U+FFFD). A
@@ -218,13 +226,23 @@ by the ROM contents.
   does not implement. This holds for an image a shell starts too: the start
   fails (section 12.2, reason 3) and the machine never runs. A device not
   listed in the header behaves as absent.
+- An optional device the host provides in the version listed is
+  **granted** when the machine is reset; one it lacks (or lacks in that
+  version, or a slot that is no device) is not, and the image runs anyway
+  with that device absent, exactly as if it were not listed. A host may
+  also withhold an optional device it has (a user's choice, or a test).
+  Which optional devices were granted is fixed at reset, never changes
+  while the machine runs, and is part of the machine's state (`STATE.md`
+  1.4), of its snapshots and of its recordings, so a replay or another
+  implementation has the same devices. A program learns what it has with
+  `device` (section 4).
 - Device 1 (system) is always present and need not be listed.
 
 | Slot | Device | Version | Status in v0 |
 |---|---|---|---|
-| 1 | System | 0 | specified (sections 4–6); **reading profile** |
-| 2 | Terminal | 0 | specified (section 8); **reading profile** |
-| 3 | 2D vector display | 0 | specified (section 10) |
+| 1 | System | 0 | specified (sections 4–6); **reading** and **program profiles** |
+| 2 | Terminal | 0 | specified (section 8); **reading** and **program profiles** |
+| 3 | 2D vector display | 0 | specified (section 10); **program profile** |
 | 4 | Content | 0 | specified (section 9); **reading profile** |
 | 5 | Messages | — | reserved |
 | 6 | Sound | 0 | specified (section 18) |
@@ -234,14 +252,34 @@ by the ROM contents.
 
 Other slots are free; 0 and 10–255 are not devices in v0.
 
-### 2.1 Machine hosts and the reading profile
+### 2.1 Machine hosts and profiles
 
 A **machine host** implements this document: the machine of section 1,
-device 1 (always present) and whichever other devices it chooses. It
-states which devices (slot and version) it provides and, for the content
-device, which operations it carries out; an image that lists a device the
-host lacks is refused (above), so a program never runs on a host that
-cannot give it the devices its header asks for.
+device 1 (always present) and any set of the other devices it chooses. A
+host needs neither content nor the page to be a machine host. It states
+which devices (slot and version) it provides and, for the content device,
+which operations it carries out; an image that requires a device the host
+lacks is refused (above), so a program never runs on a host that cannot
+give it the devices its header requires, and an optional device the host
+lacks is simply absent.
+
+Two profiles name the sets of devices most hosts will have.
+
+A machine host that runs programs, games and tools but not
+necessarily the reader provides the machine's **program profile**:
+
+- the machine, profile 1 (section 1), and devices 1 System (sections
+  4–6), 2 Terminal (section 8) and 3 2D vector display (section 10),
+  each complete;
+- every other device is optional for it: content, sound, the page, the
+  3D display. A program-profile host refuses an image that requires one
+  of them and runs, with the device absent, an image that lists it as
+  optional.
+
+A program meant to run on every machine host requires only devices 1, 2
+and 3 and lists anything else it can do without as optional (for
+example, content to keep a high score, sound for a game's effects), and
+asks `device` (section 4) at start which of them it has.
 
 A machine host that only wants to run the reader (the built-in feed
 reader, `programs/reader`, or any program written for the same profile)
@@ -262,10 +300,10 @@ provides the machine's **reading profile**:
   from a user or host that refuses;
 - within Page, everything;
 - devices 3, 6, 8 and 9 are optional: a reading-profile host need not
-  provide them, and refuses an image that lists them (the reader lists
-  none of them). Device 8 exists only for the shell of a system
-  (section 12) in any case. Nothing a reader shows depends on sound
-  (device 6, section 18).
+  provide them; it refuses an image that requires one and runs one that
+  lists them as optional without them (the reader lists none of them).
+  Device 8 exists only for the shell of a system (section 12) in any
+  case. Nothing a reader shows depends on sound (device 6, section 18).
 
 Sections 9.5 and 9.6 say, for each optional group of operations, that a
 host may answer it with `05h`. A program meant for the reading profile
@@ -274,7 +312,10 @@ working. The core of Terse (the network and articles, `NETWORK.md` and
 `ARTICLE.md`) does not need a machine at all; the reading profile is
 only for hosts that run the reader as a program. `terse run --profile
 reading` runs one machine with exactly this profile, and
-`programs/conform-reading` is the conformance image for it (section 15).
+`programs/conform-reading` is the conformance image for it (section 15);
+`terse run --profile program` and `programs/conform-program` do the same
+for the program profile. `terse run --without <slot>` withholds an
+optional device on any host.
 
 ---
 
@@ -288,8 +329,9 @@ the result is in `a0`, and a second result in `a1` where listed. A call
 changes no register but `a0` (and `a1` where listed) and no memory but the
 buffers it is said to write. `pc` continues after the `ecall`.
 
-- An unknown call, or a call to a device the image does not list, returns
-  `FFFF_FFFFh` and does nothing else.
+- An unknown call, or a call to a device the machine does not have (one
+  the image does not list, or lists as optional and was not granted,
+  section 2), returns `FFFF_FFFFh` and does nothing else.
 - A **buffer** is a pointer and a length in bytes. A buffer the device
   reads must lie wholly in ROM or wholly in RAM; one it writes must lie
   wholly in RAM. A buffer of length 0 is valid at any address, for every
@@ -326,6 +368,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return | core |
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
+| `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | core |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
 | `201h` | `command` | `a0` = command | 0 | deferred |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
@@ -435,9 +478,15 @@ machine's own and cost 4.
   shell gave none, it runs on its own, or it is the shell) gets 0 and
   nothing is written. The argument never changes and is part of the
   machine's state (`STATE.md` 1.13).
+- **`device`** returns the version of device `a0` if the machine has it:
+  device 1, every device its image requires, and every optional device
+  it was granted (section 2); 8 only for a shell (section 12.1). For any
+  other `a0`, also one above 255, it returns `FFFF_FFFFh`. The answer is
+  fixed at reset, so a program asks once at start and branches on it.
 
 Events, the latched time, the random bytes and controller state are the
-machine's only inputs from this device. A host that records them per frame
+machine's only inputs from this device (which optional devices were
+granted is fixed at reset, part of the state, `STATE.md` 1.4). A host that records them per frame
 (with the content completions of section 9.4) can replay a run exactly:
 the events as the host appended them (page events, section 11.5, and
 feeds updated included; content-done events follow from the completions
@@ -1758,8 +1807,11 @@ starts as its own built-in shell has the identity of a built-in. Section
   snapshot and its identity that of the snapshot, or failed: reason 5 if
   the slot holds no snapshot, one the host cannot read, or one that does
   not fit its image (`STATE.md` 4), reasons 1–3 as for `start` if the
-  image cannot be had or run. The host may take any number of frames. A
-  slot out of range returns 0.
+  image cannot be had or run, reason 3 also if the snapshot's machine was
+  granted an optional device (section 2) this host cannot give it. A
+  machine restored where the host has an optional device the snapshot's
+  machine was not granted runs without it. The host may take any number
+  of frames. A slot out of range returns 0.
 - **`snapshot_info`** writes a 122-byte record of slot `a0`, as the host's
   snapshots are at the start of the frame with the changes the shell's
   own `snapshot_delete` calls made since, to the buffer, which must lie
@@ -2452,11 +2504,14 @@ host (full-budget frames, every cell rewritten, maximum-size display lists at
 the fill cap), for measuring how a host holds its frame rate.
 
 A host that offers only the reading profile (section 2.1) cannot run
-`programs/conform`, which lists devices 3 and 9. `programs/conform-reading`
+`programs/conform`, which requires devices 3 and 9. `programs/conform-reading`
 is built from the same source with the sections for other devices and for
 the optional content operations left out, and has its own input script
 and expected hashes; `terse run --profile reading` runs it (and any image)
-on exactly the reading profile.
+on exactly the reading profile. Likewise `programs/conform-program`, for
+the program profile, requires only devices 2 and 3, leaves out the
+sections of content, the page and the 3D display, and checks `device`;
+`terse run --profile program` runs it on exactly that profile.
 
 ## 16. Provisional values
 
@@ -2587,9 +2642,10 @@ voice's own output moves its phase) and **ring modulation** (one voice's
 output multiplies another's). It is not a mixer and not a full FM
 synthesizer.
 
-Sound is optional (section 2.1): the reading profile does not have it,
-and nothing a reader shows depends on it. A program that wants it lists
-device 6 in its header like any other device.
+Sound is optional (section 2.1): neither profile has it, and nothing a
+reader shows depends on it. A program that needs it requires device 6 in
+its header like any other device; a game whose sound is an extra lists
+it as optional and plays only if `device` (section 4) says it has it.
 
 Every step of the synthesis below is integer arithmetic on the values the
 program set, specified to the bit, so two implementations render the same

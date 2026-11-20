@@ -57,14 +57,21 @@ which never change.
 | 188 | 4 | Fault address (u32, SPEC 1.5), or zero |
 | 192 | 4 | Budget (i32): the budget carried into the next frame; zero or negative (SPEC 1.4) |
 
-### 1.4 RAM (4 + L bytes)
+### 1.4 RAM and grants (4 + L + k bytes)
 
 | Offset | Size | Field |
 |---|---|---|
 | 196 | 4 | L (u32): RAM size in bytes, `ram_pages × 8192` |
 | 200 | L | All of RAM, from address `0010_0000h` |
+| 200 + L | k | The grants: one flag for each device the image lists as optional (SPEC 2), in header order: `01h` granted, `00h` not |
 
-Offsets below are relative to `S = 200 + L`.
+k is the number of optional devices in the image's header, 0 to 16. An
+image with none has no grant bytes, so its state is laid out exactly as
+before optional devices existed. Below, the machine **has** a device if
+its image requires it, or lists it as optional and it was granted; a
+device it does not have is absent, as if the image did not list it.
+
+Offsets below are relative to `S = 200 + L + k`.
 
 ### 1.5 System (37 + 4 × n bytes)
 
@@ -85,7 +92,7 @@ Let `T = S + 37 + 4n`.
 
 | Offset | Size | Field |
 |---|---|---|
-| T | 1 | Present (flag): the image lists device 2. If `00h`, the section ends here. |
+| T | 1 | Present (flag): the machine has device 2. If `00h`, the section ends here. |
 | T + 1 | 9,600 | The grid: cells 0 to 2,399, four bytes each (SPEC 8.1) |
 | T + 9,601 | 1 | Cursor column |
 | T + 9,602 | 1 | Cursor row |
@@ -110,7 +117,7 @@ Let `V` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| V | 1 | Present (flag): the image lists device 3 or device 9. If `00h`, the section ends here. |
+| V | 1 | Present (flag): the machine has device 3 or device 9. If `00h`, the section ends here. |
 | V + 1 | 1 | Style: `00h` clean, `01h` phosphor |
 | V + 2 | 1 | Persistence; 160 after reset |
 | V + 3 | 1 | Fill mode: `00h` fill, `01h` outlines |
@@ -118,7 +125,7 @@ Let `V` be the offset after this section.
 | V + 8 | m | The list (the bytes of the last accepted submit; empty after reset or clear) |
 
 The style and the persistence are also those device 9 sets (SPEC 13.2):
-they are held here once. For an image that lists device 9 and not device
+they are held here once. For a machine that has device 9 and not device
 3 the fill mode is `00h` and m is 0 (nothing can set them).
 
 The afterglow (SPEC 10.6) is presentation and is not included.
@@ -129,7 +136,7 @@ Let `C` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| C | 1 | Present (flag): the image lists device 4. If `00h`, the section ends here. |
+| C | 1 | Present (flag): the machine has device 4. If `00h`, the section ends here. |
 | C + 1 | 8 × 53 | The request with handle 1, then 2, …, 8 |
 
 Each request record is 53 bytes:
@@ -150,7 +157,7 @@ Let `P` be the offset after this section.
 
 | Offset | Size | Field |
 |---|---|---|
-| P | 1 | Present (flag): the image lists device 7. If `00h`, the section ends here. |
+| P | 1 | Present (flag): the machine has device 7. If `00h`, the section ends here. |
 | P + 1 | 2 | Rectangle x (u16), as clamped by `region` (SPEC 11.2) |
 | P + 3 | 2 | Rectangle y (u16) |
 | P + 5 | 2 | Rectangle width (u16) |
@@ -214,7 +221,7 @@ and absent otherwise).
 
 ### 1.11 3D vector display (0 or 4 + m bytes)
 
-This section is there only if the image lists device 9; for any other
+This section is there only if the machine has device 9; for any other
 image it is empty, so the hashes of images without device 9 are as they
 were before device 9 existed.
 
@@ -229,7 +236,7 @@ not included.
 
 ### 1.12 Sound (0 or 2,688 + s bytes)
 
-This section is there only if the image lists device 6 (SPEC 18); for any
+This section is there only if the machine has device 6 (SPEC 18); for any
 other image it is empty, so the hashes of images without device 6 are as
 they were before device 6 existed. `U` is the offset after section 1.11.
 
@@ -289,7 +296,7 @@ the machine was given an argument (by its shell's `argument` before its
 first frame, SPEC 12.2, or by the snapshot it was restored from).
 
 That is the end of the serialization. Its length is
-`45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
+`45 + 128 + 23 + 4 + L + k + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
 83r (machines), 0 or 4 + m (3D vector), 0 or 2,688 + s (sound) and 0
 or 32 (argument).
@@ -297,6 +304,8 @@ or 32 (argument).
 ## 2. What is left out, and why
 
 - **ROM, title and device list**: fixed for the image, covered by the image ID.
+  Which optional devices were granted is not (the host chooses at reset),
+  so the grants are in 1.4.
 - **This frame's random bytes**: an input consumed within the frame (SPEC 4);
   a new set is latched at step 1 of every frame, so nothing of them outlives
   the frame.
@@ -369,13 +378,19 @@ of frame N + 1) or its start failed.
 ## 4. Restoring, and snapshot files
 
 A machine is **restored** from a serialization S and an image whose ID is
-the one in S's header. S is read section by section as section 1 lays it
-out, with the sections the image's device list implies; it is refused
+the one in S's header. The restored machine has the devices S's grants
+(1.4) say, whatever the restoring host could grant otherwise: an
+optional device the host has and S says was not granted stays absent,
+and if S says a device was granted that the host cannot provide, the
+restore fails (SPEC 12.2 `restore`, reason 3) and nothing runs. S is
+read section by section as section 1 lays it out, with the sections the
+image's device list and the grants imply; it is refused
 (SPEC 12.2 `restore`, reason 5) if it is cut short or longer, if its image
 ID is another, if section 1.10 is present (a shell), or if serializing the
 restored machine would not give S again, byte for byte (so every field is
 in range: a flag is `00h` or `01h`, the stopped and fault fields agree, the
-budget is zero or negative, L is the image's RAM size, n ≤ 64, the cursor
+budget is zero or negative, L is the image's RAM size, every grant is `00h`
+or `01h`, n ≤ 64, the cursor
 is on the grid, the incomplete sequence is one, the style, fill mode and
 list lengths are valid, an image without device 3 has fill mode `00h` and
 an empty 2D list, every sound voice's source, wavetable, sample slot,
@@ -409,7 +424,7 @@ A host keeps a snapshot (SPEC 12.7) in a file:
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
 N is below 200 or above 1,423,091 (the longest serialization: 1 MiB of
-RAM, a full queue, every device at its largest and an argument), whose L
+RAM, 16 grants, a full queue, every device at its largest and an argument), whose L
 is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥
 L / 8,192): a writer leaves those bits clear. A file that does not end right after the hash, or
@@ -439,7 +454,8 @@ frame's hash; it refuses a recording of another image.
 | 5 | 32 | The image ID |
 | 37 | 4 | M (u32): the length of the start snapshot; 0 if the run starts from reset |
 | 41 | M | The snapshot file (section 4) the machine is restored from, whose image ID is the one at offset 5 |
-| 41 + M | … | Frame records, one per frame run, in order, to the end of the file |
+| 41 + M | k | The machine's grants (1.4), one flag per optional device the image lists; none for an image without optional devices. With a snapshot they are the snapshot's |
+| 41 + M + k | … | Frame records, one per frame run, in order, to the end of the file |
 
 A frame record:
 
@@ -482,7 +498,9 @@ ignored again on replay. The requests pending in a start snapshot fail in
 the first frame (SPEC 9.2) without a record of it: they follow from the
 snapshot.
 
-Nothing else is an input of a single machine: `open` always returns 0
+A replay makes the machine with the recorded grants (or the snapshot's),
+on a host that can provide them, or refuses. Nothing else is an input of
+a single machine: `open` always returns 0
 (or `FFFF_FFFEh`) for a machine no shell started (SPEC 4), its argument is
 in the snapshot (section 1.13; none from reset), and the page's layout
 reaches it only as events. A recording is read to its end; a file that ends
