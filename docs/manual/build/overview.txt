@@ -3,48 +3,8 @@
 First and foremost, Terse is a way to share information: formatted text,
 with diagrams where they help, without the bloat of web browsers
 (JavaScript, ads, tracking) and without the centralised control of
-websites like Reddit.
+websites like Reddit. Secondly, and completely optionally, it can be
+used to share very lightweight programs, at most 1 MiB of memory each,
+that run on a small isolated virtual machine.
 
-Secondly, and completely optionally, Terse can be used to share very
-lightweight programs, at most 1 MiB of memory each, that run on a small
-isolated virtual machine made for the purpose.
-
-## Sharing information
-
-An article is plain text that reads well as it is, with a few marks for
-headings, lists, tables, preformatted text and links. A diagram is
-written into the article as path data in the style of SVG, so it is
-part of the text and needs no image file. There are no scripts, no
-styles and no embedded programs, and an article cannot link to a web
-page, only to other Terse articles, feeds and programs.
-
-Authors publish articles in feeds. A feed belongs to a key that its
-author holds, not to a website: every entry is signed, so a reader can
-check that it came from the author whoever delivered it. Relays store
-and pass on feeds and articles. Anyone can run a relay, a feed can be
-on several at once, and a reader can follow the same feed through any
-of them, so no single site decides what may be published or read.
-
-A reader for all of this is a small program. It needs the network and
-the article format and nothing else.
-
-## Sharing programs
-
-A Terse program is a small file of machine code for a simple virtual
-computer. The machine is isolated: a program sees only its own memory
-and the few devices its host offers, such as a terminal, a vector
-display and the content store. It gets a fixed amount of work per
-frame, so it cannot slow its host down, and it behaves the same on
-every host.
-
-All of this is optional. A host may leave out the machine altogether,
-or any device it does not want to build, and still be a complete Terse
-reader. Articles never contain programs: they can only link to them.
-
-## Where to go next
-
-- [How Terse works](terse:cc124bef0765dd067daebbf355601435022b2a0adb3fda9d0ea812e377c9e75a): the network, articles, the
-  machine, its devices and the shell, each in a few paragraphs.
-- [Using Terse](terse:853f7eac4a2cb5619e48f97c6102c34d9a72f2a09cabc78d6f2b2bc375cba5b9): the tools, the shell and the reader.
-- [Writing articles](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format, tables and figures.
-- [Writing programs](terse:a9a2a9bc5f05d90fe2d5c0a2d2d064fc2c55142a1a3dfe81251c4e69ef9045b2): building a C program and packing it as an image.
+[Continue to technical details...](terse:7414657941bbd30a48f14004ed7e82f60fb03f571b34e191c70e2e26ca904dd2)

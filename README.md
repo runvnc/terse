@@ -1,6 +1,13 @@
 # Terse
 
-A small virtual computer: a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
+First and foremost, Terse is a way to share information: formatted text,
+with diagrams where they help, without the bloat of web browsers
+(JavaScript, ads, tracking) and without the centralised control of
+websites like Reddit. Secondly, and completely optionally, it can be
+used to share very lightweight programs, at most 1 MiB of memory each,
+that run on a small isolated virtual machine.
+
+That machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
 of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device

@@ -28,9 +28,9 @@
 
 
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 1489, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1451, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |The Terse manual
-   53  15     0   sans12 |terse:58fe6c…56ad7d  ·  not in your timeline  ·  4.5 KiB
+   53  15     0   sans12 |terse:68184c…b8422d  ·  not in your timeline  ·  4.5 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |This manual describes the whole Terse system: the machine, its
   115  19     0   sans15 |devices, the network that carries articles and programs, and the
@@ -38,15 +38,14 @@
   153  19     0   sans15 |can read it in the reader, follow its links with Tab and Enter, and
   172  19     0   sans15 |publish it to a feed. Each article below says what it covers.
   205  22     0   sans17b |Start here
-  237  19    10   sans15 |• [What Terse is]{1}: what Terse is for, in one page: sharing articles
-  256  19    10   sans15 |without the web's bloat or a site in control, and, optionally,
-  275  19    10   sans15 |sharing small programs.
-  298  19    10   sans15 |• [How Terse works]{2}: the overall picture in two pages: the network
-  317  19    10   sans15 |and articles, the machine and its frame budget, the devices,
-  336  19    10   sans15 |determinism and the shell.
-  359  19    10   sans15 |• [Writing a program]{3}: the toolchain, the C library, building,
-  378  19    10   sans15 |running a program headless and in the host, and publishing it in a
-  397  19    10   sans15 |feed.
-  420  19    10   sans15 |• [Using the shell and the reader]{4}: the keys of the shell and the
-  439  19    10   sans15 |reader, layouts, sessions and the consent prompts.
-  462  19    10   sans15 |• [Writing an article]{5}: the article format, every construct shown as
+  237  19    10   sans15 |• [What Terse is]{1}: what Terse is for, in one paragraph.
+  260  19    10   sans15 |• [How Terse works]{2}: the technical details in three pages: sharing
+  279  19    10   sans15 |articles and programs, the network, the machine and its frame
+  298  19    10   sans15 |budget, the devices, determinism and the shell.
+  321  19    10   sans15 |• [Writing a program]{3}: the toolchain, the C library, building,
+  340  19    10   sans15 |running a program headless and in the host, and publishing it in a
+  359  19    10   sans15 |feed.
+  382  19    10   sans15 |• [Using the shell and the reader]{4}: the keys of the shell and the
+  401  19    10   sans15 |reader, layouts, sessions and the consent prompts.
+  424  19    10   sans15 |• [Writing an article]{5}: the article format, every construct shown as
+  443  19    10   sans15 |source and as it is shown.
