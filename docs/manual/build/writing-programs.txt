@@ -107,7 +107,8 @@ int main(void)
 | 2 | Terminal | `2:0` |
 | 3 | 2D vector display | `3:0` |
 | 4 | Content | `4:0` |
-| 5, 6 | Messages, sound | reserved |
+| 5 | Messages | reserved |
+| 6 | Sound | `6:0` |
 | 7 | Page | `7:0` |
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |
@@ -149,7 +150,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 
 ## The state hash
 
-`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:641b20f6a22f0f439da6c411140fe2514067114d929083849946778b5db04a9b).
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:5231c3a0aa19cb6250605d6f65c221eeb22ddd9fb929b215ba06df7252fb113a).
 
 ## Running it in a window
 
@@ -157,11 +158,11 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 cargo run -p terse-host -- prog.terse
 ```
 
-runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:853f7eac4a2cb5619e48f97c6102c34d9a72f2a09cabc78d6f2b2bc375cba5b9) shows the shell, where programs run side by side.
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:1b3a9799b357e73c1ec6060d7c59de46c1856f20d1c4e5bbdd437efed4216c43) shows the shell, where programs run side by side.
 
 ## Costs to keep in mind
 
-An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write` costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:7cde3dbd1b4d9954c057b6f3e5794343b10ac96552aab2620bbcc38cc2f6ffef).
+An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write` costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
 
 ## Publishing it
 
@@ -171,8 +172,8 @@ A program published in your feed has an identity, your feed key and its name, th
 terse feed publish --program prog.terse --name "Tiny tool"
 ```
 
-checks the image and publishes it as a program entry; it prints `seq N program <name> image <id>`. The name defaults to the image's title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest `seq`). Named records belong to the identity, so a new version keeps the old one's records (see [Named records](terse:36eed386f939af1088c12b783a0bd7ed4001548b8ba1982e5367a9bf07a8913a)). `terse key new` creates your feed key if you have none.
+checks the image and publishes it as a program entry; it prints `seq N program <name> image <id>`. The name defaults to the image's title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest `seq`). Named records belong to the identity, so a new version keeps the old one's records (see [Named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32)). `terse key new` creates your feed key if you have none.
 
-Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:f73e27c88fa857f3564239fac179b2cf7fb8684b25f3ac7c7070ab8226b94458) and [The machines device](terse:ce60c12a99868267b77ab4887acbd2768c5da4797d152d07163cae047fb4124e).
+Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7) and [The machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf).
 
-Next: [The machine](terse:0269754b7f5567fee22a7cdd02d4b917110a64a0c5a642d45610454959720808), then the devices, from [The system device](terse:b90f908341dc1bc21cebed98256c6751a21e2ab68a6a3e2dd0c802ba606391e9) and [The terminal](terse:169d0b10057f817f2030a724a7ba6ce8291217a02c9878a46ca18b971bca8134) to [Events](terse:30fb2cb8139131db4570b2d8f23d9a44f97c8996272365f2c27ad0d42a1d0b5a).
+Next: [The machine](terse:6fddfda54458ccb17d5f6a9b189fe3b563804ba8f2934d911f6802296d9be32d), then the devices, from [The system device](terse:54efead3e80d65f5f83c3ddb57477c8d5fca4962638bebdd2ce333acaacb6d5e) and [The terminal](terse:4627bcdef9c7dad04c783c1c88acde0eaba5c22f529ad2c839d1fbb4ab106db8) to [Events](terse:fbad2774fb00d4e03bc2b54669a2ed319c903fd00a7c5f768fd2b9edbe77fd4c).

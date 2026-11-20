@@ -1,0 +1,118 @@
+# The sound device (device 6)
+
+The sound device is a small retro synthesizer in the spirit of the MSX SCC: 16 voices, each playing a 64-sample wavetable, a noise generator or a sample, with an envelope, a volume and a pan, and three cheap extras taken from FM chips. Pairing lets one voice's output move another's phase; feedback lets a voice's output move its own; ring modulation multiplies two voices. Every step is integer arithmetic specified to the bit, so every host renders the same samples, and a snapshot restored in the middle of a note goes on exactly as the machine would have.
+
+## Getting the device
+
+The device is slot 6, version 0: `terse pack ... --device 6:0`. It is optional. The reading profile does not have it, a reading host refuses an image that lists it, and nothing a reader shows depends on it. In an image that does not list it, every call from `600h` to `6FFh` returns `FFFF_FFFFh`. A host with no audio output still has the device: it runs as usual and nothing is heard.
+
+## Output
+
+The device renders 48,000 stereo sample pairs a second, 16 bits each: 800 pairs a frame. It renders a frame's pairs at the end of the frame, from the registers as the frame's calls left them, so what a program sets in a frame is heard from the first pair of that frame. A frame that does not run (a stopped or paused machine) renders nothing. In a shell, the host adds the pairs of every machine that ran and clamps the sum.
+
+## Calls
+
+| `a7` | Call | Arguments | Result |
+|---|---|---|---|
+| `600h` | `submit` | `a0` list address, `a1` length | 0 done, 1 rejected |
+| `601h` | `wave` | `a0` slot, `a1` 64 bytes | 0 |
+| `602h` | `sample` | `a0` slot, `a1` bytes, `a2` length, `a3` loop start | 0 |
+| `603h` | `info` | none | `a0` 16, `a1` capabilities |
+
+- `submit` carries out a command list (below) of 1 to 4,096 bytes in ROM or RAM at once. A length out of range, or a list not wholly in ROM or RAM, is rejected with 1. It costs 2 units a byte, as `write` does.
+- `wave` loads wavetable `a0` (0-31) with 64 signed bytes. A bad slot or buffer gives `FFFF_FFFEh`.
+- `sample` loads sample slot `a0` (0-3) with `a2` signed bytes (0 to 65,536; 0 empties it). A voice playing past the end goes on from byte `a3`; with `a3` at or past the end the sample plays once.
+- `info` gives 16 voices and the capabilities: bit 0, samples. Every version-0 host sets it.
+
+All four are deferred. `wave` and `sample` cost 1 unit per 4 bytes copied. In C: `snd_submit`, `snd_load_wave`, `snd_load_sample`, `snd_info`, and the builder below.
+
+## The command list
+
+The commands set the registers of the current voice, voice 0 at the start of each list. Multi-byte operands are little-endian.
+
+| Op | Command | Operands |
+|---|---|---|
+| `00h` | End | none |
+| `01h` | Voice | v, 0-15: the current voice |
+| `02h` | Wave | w, 0-31: play wavetable w |
+| `03h` | Noise | none: play the noise generator |
+| `04h` | Sample | s, 0-3: play sample slot s |
+| `05h` | Frequency | the phase increment, 4 bytes |
+| `06h` | Volume | 0-255 |
+| `07h` | Pan | left, right: 0-255 each |
+| `08h` | Envelope | attack (2), decay (2), sustain (1), release (2) |
+| `09h` | Key on | none |
+| `0Ah` | Key off | none |
+| `0Bh` | Modulator | m (0-15, or `FFh` none), depth |
+| `0Ch` | Feedback | depth, 0 none |
+| `0Dh` | Ring | q (0-15, or `FFh` none) |
+| `0Eh` | Mix | 1 heard, 0 muted |
+
+The builders, in the same order: `snd_voice`, `snd_wave`, `snd_noise`, `snd_sample`, `snd_frequency`, `snd_volume`, `snd_pan`, `snd_envelope`, `snd_key_on`, `snd_key_off`, `snd_modulator`, `snd_feedback`, `snd_ring`, `snd_mix`, appending to the buffer given to `snd_begin`; `snd_submit_list` submits it.
+
+A list ends at End, at its last byte, at an unknown opcode, at a command whose operands are cut off, or at an operand out of range (a voice above 15, a wavetable above 31, a slot above 3, a mix value above 1). The commands before it have taken effect. `submit` still returns 0: it does not report where a list ended.
+
+## Voices
+
+After reset each voice plays wavetable 0 with increment 0, volume 255, pan 255 and 255, the envelope 0, 0, 255, 0 (a gate), no modulator, feedback or ring, and is heard. Every wavetable is zero and every sample slot empty.
+
+- The **increment** is how far the phase moves each pair. One turn (2^32) is one pass through a wavetable, so a tone of f Hz has round(f x 2^32 / 48,000): 440 Hz is 39,370,534. `SND_HZ(440)` computes it at compile time.
+- For noise the increment sets how often the noise changes: each time the phase carries past 2^32.
+- For a sample it is the playback rate with 16 fraction bits: 65,536 plays one byte a pair. `SND_RATE(r)` gives the increment of a sample recorded at r a second.
+- **Key on** starts the attack, sets the phase to 0 and restarts a sample; the level is kept. **Key off** starts the release.
+
+## The envelope
+
+The level runs from 0 to `FF_FFFFh`; the rates are steps a pair, and 0 means at once. Attack climbs to the top, decay falls to the sustain level (sustain x 65,793), sustain holds it, release falls to 0. The reset envelope is a gate: full from the first pair after a key on, silent from the first after a key off. Attack `FFFFh` takes 256 pairs (5 ms); decay 300 from the top to sustain 128 takes 0.6 s.
+
+## How a pair is made
+
+For each pair the voices are computed in order, 0 to 15. Voice v:
+
+1. steps its envelope;
+2. reads its raw sample r (-128 to 127) from its source;
+3. makes its output o = (r x (level >> 8) x volume) >> 16;
+4. if it has a ring voice q, o becomes (o x q's output) >> 15.
+
+For a wavetable, the index is the top 6 bits of phase + 1,024 x (M + F), where M is the modulator's output times the depth and F is the voice's own previous output times the feedback. Neither changes the phase itself.
+
+A voice reads a lower-numbered voice (modulator or ring) as it is in this pair, and a higher-numbered one, or itself, as it was in the previous pair. So pair a carrier with a lower-numbered modulator to hear it at once.
+
+The pair is the sum over the heard voices of o x left, and of o x right, each shifted right by 10 and clamped to 16 bits. One voice at full volume and pan reaches a quarter of the range, so four can sound at full volume before the sum is clamped.
+
+Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n >> 1) | (((n ^ (n >> 1)) & 1) << 14). A sample reads byte (phase >> 16), loops from the loop start or stops at the end. SPEC.md section 18 gives every formula.
+
+## State
+
+The device's state is every voice's registers (36 bytes each), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display's section, and only for an image that lists device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout's place; `programs/tune/expected-audio.txt` holds the hashes of the demonstration's samples.
+
+## Example
+
+```
+#include "terse.h"
+
+static uint8_t list[64];
+static const int8_t square[64] = { /* 32 x 90, 32 x -90 */ };
+
+int main(void)
+{
+    snd_load_wave(0, square);
+    snd_begin(list, sizeof list);
+    snd_voice(0);
+    snd_wave(0);
+    snd_envelope(0xFFFF, 200, 100, 800);
+    snd_frequency(SND_HZ(440));
+    snd_key_on();
+    snd_submit_list(list);          /* 18 bytes: 4 + 36 units */
+    for (int i = 0; i < 30; i++)
+        terse_wait_frame();
+    snd_begin(list, sizeof list);
+    snd_key_off();                  /* voice 0 again */
+    snd_submit_list(list);
+    for (int i = 0; i < 60; i++)
+        terse_wait_frame();
+    return 0;
+}
+```
+
+`programs/tune` plays a piece through every kind of voice. `terse run programs/tune/tune.terse --audio-out tune.wav` writes it to a file; `terse-host` plays it when built with the `audio` feature. Its charges are in [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).

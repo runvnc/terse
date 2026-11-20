@@ -577,6 +577,11 @@ pub mod property {
     /// user's answer to the question shown (1 allow, 0 refuse), with the
     /// question's number.
     pub const ANSWER: &str = "core.answer";
+    /// Published by the sound driver: the frame counter after the frame
+    /// it rendered last (u32), then that frame's 800 sample pairs (i16,
+    /// left and right interleaved, SPEC 18.7); empty before the first.
+    /// The core reads it after each of the machine's frames.
+    pub const SOUND_FRAME: &str = "sound.frame";
 }
 
 /// The host services of the reference content driver (DEVICES.md 9).

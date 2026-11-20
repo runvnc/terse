@@ -30,7 +30,7 @@ const PAGE: usize = 8192;
 const PAGE_MAP: usize = 16;
 /// The longest serialization: header, CPU, frame loop, 1 MiB of RAM, a
 /// full queue, every device at its largest, and an argument.
-const MAX_STATE: usize = 200 + 1_048_576 + 37 + 4 * 64 + 10_379 + 8 + 16_384 + 425 + 21 + 65_536 + 1 + 4 + 16_384 + 32;
+const MAX_STATE: usize = 200 + 1_048_576 + 37 + 4 * 64 + 10_379 + 8 + 16_384 + 425 + 21 + 65_536 + 1 + 4 + 16_384 + crate::sound::MAX_STATE + 32;
 
 /// Why a snapshot or a serialization could not be restored.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -15,6 +15,7 @@ use crate::page::Page;
 use crate::system::{Event, System};
 use crate::terminal::{CELL_BYTES, CELLS, COLS, ROWS, Terminal};
 use crate::vector::Vector;
+use crate::sound::Sound;
 use crate::vector3::Vector3;
 
 /// The guest's memory as a device sees it during a call or at a frame's
@@ -86,13 +87,20 @@ pub trait Devices {
     fn call(&mut self, slot: u8, function: u8, args: [u32; 6], budget: i64, mem: GuestMem) -> Result<CallOutcome, String>;
     /// Step 3: the frame has ended; `frame` is the counter after it.
     fn end_frame(&mut self, frame: u32, stopped: bool, mem: GuestMem) -> Result<(), String>;
-    /// Slot 2, 3, 4, 7 or 9's section of the state serialization, without
-    /// a present flag (STATE.md 1.6–1.9, 1.11).
+    /// Slot 2, 3, 4, 6, 7 or 9's section of the state serialization,
+    /// without a present flag (STATE.md 1.6–1.9, 1.11, 1.12).
     fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String>;
-    /// Restores slot 2, 3, 4, 7 or 9's section from the start of `bytes`
+    /// Restores slot 2, 3, 4, 6, 7 or 9's section from the start of `bytes`
     /// (the rest of a serialization, STATE.md 4); returns how many bytes
     /// the section has. `ram_len`: the machine's RAM.
     fn restore_state(&mut self, slot: u8, bytes: &[u8], ram_len: usize) -> Result<usize, RestoreError>;
+    /// The samples device 6 rendered at the end of the last frame (SPEC
+    /// 18.7), left and right interleaved, once: `None` if no frame ended
+    /// since the last call. Only asked of a machine whose image lists
+    /// device 6.
+    fn take_audio(&mut self) -> Option<Vec<i16>> {
+        None
+    }
     /// Device 9's list (empty without device 9), which device 8 looks at
     /// (SPEC 12.2 `face`) and which a host needs for the shell's scene and
     /// the pointer over panels (SPEC 12.3, 12.4).
@@ -155,6 +163,7 @@ pub struct InProcess {
     pub(crate) vector3: Option<Vector3>,
     pub(crate) content: Option<Content>,
     pub(crate) page: Option<Page>,
+    pub(crate) sound: Option<Sound>,
     /// The image lists device 3 (not only device 9).
     lists_vector: bool,
 }
@@ -168,6 +177,7 @@ impl InProcess {
             vector3: image.has_device(crate::vector3::SLOT).then(Vector3::default),
             content: image.has_device(4).then(Content::default),
             page: image.has_device(7).then(Page::default),
+            sound: image.has_device(crate::sound::SLOT).then(Sound::default),
         }
     }
 
@@ -193,6 +203,10 @@ impl InProcess {
 
     pub fn page(&self) -> Option<&Page> {
         self.page.as_ref()
+    }
+
+    pub fn sound(&self) -> Option<&Sound> {
+        self.sound.as_ref()
     }
 
     /// Content requests submitted since the last call.
@@ -404,13 +418,61 @@ impl Devices for InProcess {
                     _ => ERR_UNKNOWN,
                 }
             }
+            crate::sound::SLOT => {
+                let s = self.sound.as_mut().unwrap();
+                match n {
+                    // SPEC 18.2: a bad length or a list not wholly in ROM
+                    // or RAM is rejected with 1; the list's bytes cost 2
+                    // each, as `write`'s.
+                    call::SOUND_SUBMIT => match readable(rom, ram, a0, a1 as usize).filter(|_| (1..=crate::sound::MAX_LIST as u32).contains(&a1)) {
+                        Some(list) => {
+                            units += a1 * charge::WRITE_BYTE;
+                            s.submit(list)
+                        }
+                        None => crate::sound::RESULT_REJECTED,
+                    },
+                    call::SOUND_WAVE => match readable(rom, ram, a1, crate::sound::WAVE_LEN).filter(|_| (a0 as usize) < crate::sound::WAVES) {
+                        None => ERR_BUFFER,
+                        Some(bytes) => {
+                            s.load_wave(a0 as usize, bytes);
+                            units += copy_charge(bytes.len());
+                            0
+                        }
+                    },
+                    call::SOUND_SAMPLE => {
+                        let ok = a2 as usize <= crate::sound::MAX_SAMPLE && (a0 as usize) < crate::sound::SAMPLE_SLOTS;
+                        match readable(rom, ram, a1, a2 as usize).filter(|_| ok) {
+                            None => ERR_BUFFER,
+                            Some(bytes) => {
+                                s.load_sample(a0 as usize, bytes, a3);
+                                units += copy_charge(bytes.len());
+                                0
+                            }
+                        }
+                    }
+                    call::SOUND_INFO => {
+                        r1 = Some(crate::sound::CAPS);
+                        crate::sound::VOICES as u32
+                    }
+                    _ => ERR_UNKNOWN,
+                }
+            }
             _ => ERR_UNKNOWN,
         };
         Ok(CallOutcome { a0: r0, a1: r1, charge: units })
     }
 
     fn end_frame(&mut self, _frame: u32, _stopped: bool, _mem: GuestMem) -> Result<(), String> {
+        // SPEC 18.5: the frame's samples, with the registers as the
+        // frame's calls left them.
+        if let Some(s) = &mut self.sound {
+            s.render_frame();
+        }
         Ok(())
+    }
+
+    fn take_audio(&mut self) -> Option<Vec<i16>> {
+        self.sound.as_mut().and_then(|s| s.take_frame().map(<[i16]>::to_vec))
     }
 
     fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String> {
@@ -420,6 +482,7 @@ impl Devices for InProcess {
             4 => self.content.as_ref().ok_or("no content device")?.write_state(out),
             7 => self.page.as_ref().ok_or("no page")?.write_state(out),
             crate::vector3::SLOT => self.vector3.as_ref().ok_or("no 3D vector display")?.write_state(out),
+            crate::sound::SLOT => self.sound.as_ref().ok_or("no sound device")?.write_state(out),
             _ => return Err(format!("no state section for slot {slot}")),
         }
         Ok(())
@@ -444,6 +507,7 @@ impl Devices for InProcess {
             4 => self.content.as_mut().ok_or(bad("content present"))?.restore(&mut r, ram_len)?,
             7 => self.page.as_mut().ok_or(bad("page present"))?.restore(&mut r)?,
             crate::vector3::SLOT => self.vector3.as_mut().ok_or(bad("3D display present"))?.restore(&mut r)?,
+            crate::sound::SLOT => self.sound.as_mut().ok_or(bad("sound present"))?.restore(&mut r)?,
             _ => return Err(bad("no such device")),
         }
         Ok(r.position())

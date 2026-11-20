@@ -269,7 +269,7 @@ fn a_table_document_round_trips() {
 
 /// STATE.md 4: what a reader of a snapshot file refuses besides a
 /// malformed S: N below 200 or above the longest serialization
-/// (1,158,243 bytes), L that is 0, not a multiple of 8,192, above
+/// (1,423,043 bytes), L that is 0, not a multiple of 8,192, above
 /// 1,048,576 or past N, and a page-map bit past the last page. And SPEC
 /// 12.2 `snapshot_info`: the time is the one latched for the machine's
 /// last frame as its state holds it, so a restored machine snapshotted
@@ -289,7 +289,7 @@ fn snapshot_file_fields_and_time() {
     };
     let malformed = |why| Some(RestoreError::Malformed(why));
     assert_eq!(with(90, 199), malformed("state length"));
-    assert_eq!(with(90, 1_158_244), malformed("state length"));
+    assert_eq!(with(90, 1_423_044), malformed("state length"));
     assert_eq!(with(94 + 196, 0), malformed("RAM size"));
     assert_eq!(with(94 + 196, 8193), malformed("RAM size"));
     assert_eq!(with(94 + 196, 129 * 8192), malformed("RAM size"));
@@ -301,8 +301,8 @@ fn snapshot_file_fields_and_time() {
     let back = Snapshot::decode(&file).unwrap().restore(&image).unwrap();
     assert_eq!(Snapshot::of(&back).time, 1_700_000_000);
     assert_eq!(Snapshot::of(&back).info(), s.info());
-    // STATE.md 1.12: the argument is there exactly when 32 bytes remain
-    // after section 1.11; any other remainder is refused.
+    // STATE.md 1.13: the argument is there exactly when 32 bytes remain
+    // after section 1.12; any other remainder is refused.
     let state = m.state();
     for extra in [1, 31, 33, 64] {
         let mut longer = state.clone();

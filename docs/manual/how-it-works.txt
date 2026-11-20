@@ -152,6 +152,7 @@ device the image does not list behaves as absent.
 | 2 | Terminal: 80 × 30 character cells |
 | 3 | 2D vector display: lines and filled shapes from a display list |
 | 4 | Content: blobs, feeds, search, named records |
+| 6 | Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo (optional) |
 | 7 | Page: typeset proportional text and figures |
 | 8 | Machines: starting and placing other machines (the shell only) |
 | 9 | 3D vector display: lines placed in space, seen in perspective |

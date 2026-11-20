@@ -17,6 +17,7 @@ A call's charge is subtracted as the call runs, on top of the `ecall` instructio
 | Any call, also an unknown or failing one: a deferred call, or one of the system device or Machines | 4, provisional | every call |
 | Any answered call, also a failing one | 64, provisional | `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate` |
 | `write`: each byte of the buffer | 2, provisional | the whole buffer (at most 4,096 bytes) is taken whatever the budget; the scrolls and clears it causes cost nothing more |
+| Sound `submit` (`600h`): each byte of the list | 2, provisional | only when accepted (1 to 4,096 bytes) |
 | A clear, scroll up or scroll down by `command` | 150, provisional | commands `01h`, `02h`, `03h` |
 | Bytes copied between memory and a device | 1 per 4 bytes, rounded up, per call; provisional | by the calls of the next table |
 | Content delivered at completion | 1 per 4 bytes: the frame's completions added up, rounded up once; provisional | subtracted from the frame's budget before the CPU runs |
@@ -32,6 +33,8 @@ Bytes counted as copied:
 | `palette_set` | 3 per entry | when the call is valid |
 | vector `submit` (`300h`, `900h`) | the list's length | only when accepted |
 | page `submit` (`700h`) | the document's length | when copied: length in range and buffer valid |
+| sound `wave` (`601h`) | 64 | when the call is valid |
+| sound `sample` (`602h`) | the length | when the call is valid |
 | content `submit` (`400h`) | put or save: `size`; publish: the title; find: the query; set profile or set nickname: the name | only when accepted |
 | `open` (`107h`) | 33, or 34 + n for a program | when the request is read, also if the call returns 0 |
 | system `argument` (`108h`) | 32 | only when written |
@@ -109,6 +112,17 @@ The event queue's 64 and the 256 random bytes a call are provisional.
 | Style, fill mode | 0 or 1 each | |
 | Persistence | 0 to 255, 160 after reset | |
 | Fill cap | 1,228,800 square units of filled shapes a list | provisional |
+
+## Sound (device 6)
+
+| Limit | Value | Note |
+|---|---|---|
+| Command list | 1 to 4,096 bytes, in ROM or RAM | provisional |
+| Output | 48,000 stereo pairs a second, 800 a frame, 16 bits | |
+| Voices | 16 | |
+| Wavetables | 32 of 64 signed bytes | |
+| Sample slots | 4, each 0 to 65,536 signed bytes | provisional |
+| Envelope level | 0 to `FF_FFFFh`; rates 0 to 65,535 a pair | |
 
 ## 3D vector display (device 9)
 

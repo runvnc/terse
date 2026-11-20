@@ -8,6 +8,8 @@
 
 #[cfg(feature = "window")]
 mod app;
+#[cfg(feature = "audio")]
+mod audio;
 pub mod consent;
 pub mod display;
 mod figures;

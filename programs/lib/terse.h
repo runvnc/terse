@@ -38,6 +38,10 @@
 #define CALL_VEC_PERSISTENCE 0x303
 #define CALL_VEC_FILL 0x304
 #define CALL_CONTENT_SUBMIT 0x400
+#define CALL_SND_SUBMIT 0x600
+#define CALL_SND_WAVE 0x601
+#define CALL_SND_SAMPLE 0x602
+#define CALL_SND_INFO 0x603
 #define CALL_PAGE_SUBMIT 0x700
 #define CALL_PAGE_CLEAR 0x701
 #define CALL_PAGE_REGION 0x702
@@ -623,6 +627,89 @@ uint32_t record_delete(content_req *r, const char *name);
 /* The records, from index `first`, as many as fit in `length` bytes: 36
  * bytes each, the name (zero padded to 32) and the size (4), by name. */
 uint32_t record_list(content_req *r, uint32_t first, uint32_t length, void *buf);
+
+/* Device 6, sound (SPEC 18): 16 voices of a wavetable synthesizer,
+ * 48,000 Hz stereo, 800 sample pairs a frame. A program sets the voices
+ * with a command list; the commands take effect from the next samples the
+ * device renders (at the end of the frame). */
+#define SND_VOICES 16
+#define SND_WAVES 32
+#define SND_WAVE_LEN 64
+#define SND_SAMPLE_SLOTS 4
+#define SND_MAX_SAMPLE 65536
+#define SND_MAX_LIST 4096
+#define SND_DONE 0x00
+#define SND_REJECTED 0x01
+#define SND_NONE 0xFF
+#define SND_CAP_SAMPLES 0x01
+
+#define SND_OP_END 0x00
+#define SND_OP_VOICE 0x01
+#define SND_OP_WAVE 0x02
+#define SND_OP_NOISE 0x03
+#define SND_OP_SAMPLE 0x04
+#define SND_OP_FREQUENCY 0x05
+#define SND_OP_VOLUME 0x06
+#define SND_OP_PAN 0x07
+#define SND_OP_ENVELOPE 0x08
+#define SND_OP_KEY_ON 0x09
+#define SND_OP_KEY_OFF 0x0A
+#define SND_OP_MODULATOR 0x0B
+#define SND_OP_FEEDBACK 0x0C
+#define SND_OP_RING 0x0D
+#define SND_OP_MIX 0x0E
+
+/* The phase increment of a wavetable or noise voice for `hz` (SPEC 18.4):
+ * round(hz * 2^32 / 48,000). A constant expression for a constant `hz`
+ * (folded by the compiler: no floating point at run time). */
+#define SND_HZ(hz) ((uint32_t)((double)(hz) * 89478.48533333333 + 0.5))
+/* The increment of a sample voice playing a sample recorded at `rate`
+ * samples per second (16.16 positions a sample). */
+#define SND_RATE(rate) ((uint32_t)((double)(rate) * 65536.0 / 48000.0 + 0.5))
+
+/* Builder, like vec_: appends commands at snd_ptr into a buffer of `cap`
+ * bytes; a command that does not fit sets snd_overflow and is not written,
+ * nor is any later one. */
+extern uint8_t *snd_ptr, *snd_limit;
+extern uint8_t snd_overflow;
+void snd_begin(uint8_t *buf, uint32_t cap);
+#define snd_length(buf) ((uint32_t)(snd_ptr - (uint8_t *)(buf)))
+void snd_voice(uint8_t v);
+void snd_wave(uint8_t slot);
+void snd_noise(void);
+void snd_sample(uint8_t slot);
+void snd_frequency(uint32_t increment);
+void snd_volume(uint8_t volume);
+void snd_pan(uint8_t left, uint8_t right);
+/* Rates are envelope steps a sample (the level runs 0 to 0xFFFFFF); 0 is
+ * at once. Sustain is a level 0-255. */
+void snd_envelope(uint16_t attack, uint16_t decay, uint8_t sustain, uint16_t release);
+void snd_key_on(void);
+void snd_key_off(void);
+/* Voice `m` (or SND_NONE) offsets this voice's wavetable phase by its
+ * output times `depth`. */
+void snd_modulator(uint8_t m, uint8_t depth);
+void snd_feedback(uint8_t depth);
+/* This voice's output is multiplied by voice `q`'s (or SND_NONE). */
+void snd_ring(uint8_t q);
+/* 1: the voice is heard; 0: muted (it may still modulate). */
+void snd_mix(uint8_t on);
+
+/* Carries out `len` bytes of commands at `list` (ROM or RAM, 1 to 4,096
+ * bytes); SND_DONE or SND_REJECTED. Costs 2 units a byte. */
+static inline uint8_t snd_submit(const void *list, uint32_t len) { return terse_call(CALL_SND_SUBMIT, (uint32_t)list, len, 0); }
+#define snd_submit_list(buf) snd_submit((buf), snd_length(buf))
+/* Loads wavetable `slot` (0-31) from 64 signed bytes; 0, or
+ * TERSE_ERR_BUFFER. */
+static inline uint32_t snd_load_wave(uint32_t slot, const int8_t *wave) { return terse_call(CALL_SND_WAVE, slot, (uint32_t)wave, 0); }
+/* Loads sample slot `slot` (0-3) with `len` signed bytes (at most 65,536);
+ * it loops from byte `loop_start`, or plays once if that is `len` or more. */
+static inline uint32_t snd_load_sample(uint32_t slot, const int8_t *data, uint32_t len, uint32_t loop_start)
+{
+    return terse_call4(CALL_SND_SAMPLE, slot, (uint32_t)data, len, loop_start);
+}
+/* The number of voices; *caps gets the capabilities (SND_CAP_SAMPLES). */
+static inline uint32_t snd_info(uint32_t *caps) { return terse_call2(CALL_SND_INFO, 0, 0, caps); }
 
 /* Device 7, page (SPEC 11): typeset text in a rectangle. */
 #define PAGE_DONE 0x00
