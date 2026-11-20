@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The 3D vector display (device 9) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-3d-vector-display-device-9">The 3D vector display (device 9)</h1>
+<p>The 3D vector display draws lines, points and circles placed in a box around the screen, from a display list like the 2D display&#39;s. Faces, which draw nothing, hide what is behind them; Surfaces show parts of the program&#39;s own screen on panels; in the shell&#39;s list, Screens place the screens of the machines it started as panels in the box. The program gives geometry, not a picture: the host projects it onto the screen from an eye it chooses, so it may let the viewer look around the models, and the program cannot observe that choice. As with the 2D display, nothing drawn can be read back.</p>
+<h2 id="getting-the-device">Getting the device</h2>
+<p>The display is slot 9, version 0. An image gets it by listing (9, 0) in its header: <code>terse pack ... --device 9:0</code>. Without it every call from <code>900h</code> to <code>9FFh</code> returns <code>FFFF_FFFFh</code> and does nothing else; so does a number in that range other than the four below.</p>
+<h2 id="space-and-the-eye">Space and the eye</h2>
+<p>Coordinates are signed 16-bit numbers, little-endian, in sixteenths of a screen unit (<code>V3_UNIT</code> is 16). x and y are as on the screen (x right, y down, (0, 0) the top left, 640 by 480 units); z is depth in the same units: 0 is the glass (the plane of the screen), positive is away from the viewer. The axes are right-handed.</p>
+<p>The reference eye is at (320, 240, -960) in screen units. Seen from an eye at (ex, ey, -960), a point (x, y, z) with z &gt; -800 is drawn on the glass at</p>
+<pre>    x&#39; = ex + (x - ex) * 960 / (960 + z)
+    y&#39; = ey + (y - ey) * 960 / (960 + z)</pre>
+<p>So a point on the glass (z = 0) is drawn exactly where the 2D layers would put it, from any eye; a point behind the glass moves with the eye, one in front of it against the eye. For example, from the reference eye the point (480, 240, 960) is drawn at (400, 240). A host may move the eye sideways and up or down by up to 160 units on each axis from the reference eye, at its own discretion (for example following the viewer&#39;s pointer or head); the eye&#39;s distance from the glass, and the glass, stay fixed. The program is not told where the eye is.</p>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>900h</code></td><td><code>submit</code></td><td><code>a0</code> list address, <code>a1</code> length</td><td>0 done, 1 rejected</td></tr>
+<tr><td><code>901h</code></td><td><code>clear</code></td><td>none</td><td>0</td></tr>
+<tr><td><code>902h</code></td><td><code>style</code></td><td><code>a0</code> style</td><td>0 done, 1 rejected</td></tr>
+<tr><td><code>903h</code></td><td><code>persistence</code></td><td><code>a0</code> persistence</td><td>0 done, 1 rejected</td></tr>
+</tbody></table></div>
+<ul>
+<li><code>submit</code> copies <code>a1</code> bytes from <code>a0</code> into the device, replacing the previous list, and returns 0. It is rejected, returning 1 and keeping the previous list, if the length is 0 or more than 16,384 (<code>V3_MAX_LIST</code>) or any part of the range is outside RAM (a list in ROM included).</li>
+<li><code>clear</code> empties the list.</li>
+<li><code>style</code> (0 clean, 1 phosphor) and <code>persistence</code> (0 to 255) set the display style and the afterglow persistence described for the 2D display, returning 1 and changing nothing for a value out of range. They are one setting with device 3&#39;s: whichever device sets them, both displays and the whole screen are shown that way. A machine whose image lists device 9 and not device 3 has the setting too (device 3&#39;s calls stay absent).</li>
+</ul>
+<p>After reset the list is empty, the style is clean and the persistence 160. The list the device holds at the end of a frame is the one the host shows for that frame. Nothing of device 9 is filled, so the 2D display&#39;s fill mode does not apply.</p>
+<h2 id="the-display-list">The display list</h2>
+<p>A list is a sequence of commands, each one opcode byte followed by its operands. A point x, y, z is three signed 16-bit values (6 bytes). Drawing state at the start of a list: colour opaque white (255, 255, 255, 255), width 16, the identity transform, no saved transforms, current point (0, 0, 0).</p>
+<div class="table"><table>
+<thead><tr><th>Op</th><th>Command</th><th>Operands (bytes)</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>00h</code></td><td>End</td><td>none</td><td>Ends the list</td></tr>
+<tr><td><code>01h</code></td><td>Colour</td><td>r, g, b, a (4)</td><td>Sets the colour; a is opacity</td></tr>
+<tr><td><code>02h</code></td><td>Width</td><td>w (2, unsigned)</td><td>Line width in sixteenths</td></tr>
+<tr><td><code>03h</code></td><td>Move</td><td>x, y, z (6)</td><td>Sets the current point</td></tr>
+<tr><td><code>04h</code></td><td>Line</td><td>x, y, z (6)</td><td>Line to the point, the new current point</td></tr>
+<tr><td><code>05h</code></td><td>Point</td><td>none</td><td>A dot at the current point</td></tr>
+<tr><td><code>06h</code></td><td>Circle</td><td>radius (2, unsigned)</td><td>A circle about the current point</td></tr>
+<tr><td><code>07h</code></td><td>Push</td><td>none</td><td>Saves the transform</td></tr>
+<tr><td><code>08h</code></td><td>Pop</td><td>none</td><td>Restores the transform saved last</td></tr>
+<tr><td><code>09h</code></td><td>Translate</td><td>x, y, z (6)</td><td>Moves the transform&#39;s origin</td></tr>
+<tr><td><code>0Ah</code></td><td>Rotate</td><td>axis (1), angle (2)</td><td>Turns the transform about the axis</td></tr>
+<tr><td><code>0Bh</code></td><td>Scale</td><td>s (2, unsigned)</td><td>Scales the transform uniformly (8.8 fixed point); 0 puts every later point at the transform&#39;s origin</td></tr>
+<tr><td><code>0Ch</code></td><td>Face</td><td>n (1), n corners (6 each)</td><td>Hides what is behind it</td></tr>
+<tr><td><code>0Dh</code></td><td>Screen</td><td>handle (1, 1 to 8), width w (2, unsigned)</td><td>Shows machine <code>handle</code>&#39;s screen as a panel</td></tr>
+<tr><td><code>0Eh</code></td><td>Surface</td><td>x, y, width, height, w (2 each)</td><td>Shows that part of this screen as a panel</td></tr>
+</tbody></table></div>
+<p>Details of the operands: the width is the same on the screen at any depth, 0 counts as 1 and more than 255 as 255. The axis is 0 x, 1 y, 2 z; the angle is unsigned, in 1/65,536 of a turn (<code>V3_TURN</code> is 65,536). The scale is 8.8 fixed point: 256 is 1 (<code>V3_SCALE_ONE</code>). A face&#39;s n is 3 or 4, so a Face is 20 or 26 bytes with its opcode. A Screen is 4 bytes, a Surface 11. The C builders are <code>v3_end</code>, <code>v3_colour</code>, <code>v3_width</code>, <code>v3_move</code>, <code>v3_line</code>, <code>v3_point</code>, <code>v3_circle</code>, <code>v3_push</code>, <code>v3_pop</code>, <code>v3_translate</code>, <code>v3_rotate</code>, <code>v3_scale</code>, <code>v3_face3</code>, <code>v3_face4</code>, <code>v3_screen</code> and <code>v3_surface</code>, appending at the buffer given to <code>v3_begin</code>.</p>
+<h2 id="transforms">Transforms</h2>
+<p>A point p given to Move, Line or Face is drawn at M(p), where M is the transform in force, with p and every translation in screen units (sixteenths divided by 16). Translate t, Rotate R and Scale s replace M by M o T(t), M o R and M o S(s): each applies to coordinates given after it, before the transforms given earlier, as in ordinary matrix-stack graphics. So &quot;Translate (100, 0, 0), Rotate z a quarter turn, Move (10, 0, 0)&quot; puts the current point at (100, 10, 0).</p>
+<p>A positive angle about x turns y towards z, about y turns z towards x, and about z turns x towards y (clockwise as seen on the screen):</p>
+<div class="table"><table>
+<thead><tr><th>Axis</th><th>(x, y, z) goes to</th></tr></thead>
+<tbody>
+<tr><td>x</td><td>(x, y cos a - z sin a, y sin a + z cos a)</td></tr>
+<tr><td>y</td><td>(x cos a + z sin a, y, -x sin a + z cos a)</td></tr>
+<tr><td>z</td><td>(x cos a - y sin a, x sin a + y cos a, z)</td></tr>
+</tbody></table></div>
+<p>The current point is kept as Move or Line placed it, with M applied, so a later transform does not move it. A Line after a Push, a Translate and a Pop starts where the Move put it. Circle, Point and the transform commands leave the current point unchanged.</p>
+<p>A circle of radius r (in sixteenths) about the current point c is the closed curve c + L(r cos f, r sin f, 0) / 16, where L is M without its translation: it lies in the plane of M&#39;s x and y axes and is scaled with it. It is drawn as the 64 chords between the points at f = k/64 of a turn, k = 0 to 63, joined without ends of their own. A circle of radius 0 is 64 chords of length 0: it counts 64 segments and draws nothing. To draw a circle about a transform&#39;s origin, Move to (0, 0, 0) first.</p>
+<p>Lines and points use the current width and have round ends (a Point is the dot a line of length 0 draws). They are drawn in list order, each over the earlier ones, blended by opacity. A near line does not cover a far one: only faces hide.</p>
+<p>The stack holds up to 8 transforms. Push saves only the transform, not the colour, the width or the current point.</p>
+<p>The list ends at an End, at the end of the submitted bytes, at an unknown opcode (<code>0Fh</code> and up), at a command whose operands are cut off, at a Rotate whose axis is above 2, at a Face whose n is not 3 or 4, at a Screen whose handle is 0 or above 8, at a Push with 8 transforms saved, or at a Pop with none. Commands before that point are drawn.</p>
+<h2 id="faces">Faces</h2>
+<p>A face is a flat polygon that gives off no light but hides the lines, points and circles behind it. Its corners are transformed as Move&#39;s point is; the current point is not changed. A face of 3 corners is the triangle they make; one of 4 corners is the two triangles of corners 0, 1, 2 and 0, 2, 3 (so it need not be flat or convex). Both sides hide alike. A list without faces draws exactly as it would if faces did not exist.</p>
+<p>Seen from the eye in use, a point of a line, point or circle is hidden if the straight segment from the eye to it passes through one of a face&#39;s triangles and the point lies more than 2 sixteenths (1/8 unit) beyond the triangle&#39;s plane, measured perpendicular to the plane, on the side away from the eye. So a line in a face&#39;s plane, along its edge or ending on it is not hidden by that face, and a solid&#39;s edges given with the same corners as its faces are drawn. A face hides whatever is behind it wherever the face is in the list, before or after it. A triangle with no area, or seen edge on, hides nothing. Faces do not hide one another and draw nothing, so no line is drawn where two faces cross unless the list draws one.</p>
+<p>A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end without vertex dwell; the line&#39;s own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short; the whole line is measured on the glass, from the eye in use, after the cut at the near plane and before clipping to the screen. A point is drawn or hidden whole.</p>
+<h2 id="screens">Screens</h2>
+<p>A Screen is a flat panel w/16 units wide and 3/4 of that high, centred on the transform&#39;s origin in its xy plane. With w in sixteenths and M the transform in force, its corners are</p>
+<pre>    top left      M(-w/32, -3w/128, 0)
+    top right     M( w/32, -3w/128, 0)
+    bottom right  M( w/32,  3w/128, 0)
+    bottom left   M(-w/32,  3w/128, 0)</pre>
+<p>so it is scaled, turned and moved with the transform. With the identity it lies like the glass: its top edge along x, its left edge down along y, its front towards the viewer. It does not change the current point. With a = top right - top left and b = bottom left - top left, the panel is seen from behind from an eye on the side of its plane that a x b points to (or in its plane); otherwise its front is seen.</p>
+<p>A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle&#39;s machine has a picture and the handle&#39;s rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell&#39;s <code>face</code> flies one flat onto the glass, is in <a href="device-machines-screens.html">screens, panels and input</a>.</p>
+<h2 id="clipping-and-caps">Clipping and caps</h2>
+<p>A line is cut where it crosses the plane z = -800: only its part with z &gt; -800 is drawn, and a point at z &lt;= -800 is not drawn. Only a face&#39;s part with z &gt; -800 hides. What is left is projected and clipped to the screen grown by 32 units on every side; the host clips what it draws to the screen.</p>
+<p>The amount one list draws is limited. In list order each command counts:</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>Length (units)</th><th>Segments</th><th>Faces</th></tr></thead>
+<tbody>
+<tr><td>Line</td><td>its counted length (below)</td><td>1</td><td>0</td></tr>
+<tr><td>Point</td><td>0</td><td>1</td><td>0</td></tr>
+<tr><td>Circle</td><td>its 64 chords&#39; lengths</td><td>64</td><td>0</td></tr>
+<tr><td>Face</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td>Screen in effect</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td>Surface in effect</td><td>0</td><td>0</td><td>1</td></tr>
+</tbody></table></div>
+<p>A line&#39;s counted length is its length on the glass, seen from the reference eye, of its part with z &gt; -800 that lies on the screen (0 to 640 by 0 to 480). A command that would take the list&#39;s total length above 65,536, its segments above 16,384, its faces above 256, or its faces times its segments above 131,072 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye. The last cap trades faces against segments:</p>
+<div class="table"><table>
+<thead><tr><th>Faces</th><th>Segments at most</th></tr></thead>
+<tbody>
+<tr><td>0 to 8</td><td>16,384</td></tr>
+<tr><td>16</td><td>8,192</td></tr>
+<tr><td>64</td><td>2,048</td></tr>
+<tr><td>256</td><td>512</td></tr>
+</tbody></table></div>
+<p>After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Only pieces within the 32-unit margin count. Which pieces those are depends on the eye.</p>
+<p>The host evaluates the caps after a floating-point projection, so hosts may differ by rounding when a list comes right up to a cap: one may draw a command fewer than another. That affects only what is drawn, never the machine&#39;s state.</p>
+<h2 id="presentation">Presentation</h2>
+<ul>
+<li>Depth cue: light dims with depth. Each end of a line (after the cut at z = -800) has the factor min(1, 960 / (960 + z)), and along the line on the glass the factor goes linearly from one end&#39;s to the other&#39;s. The opacity is multiplied by it: 0.5 at z = 960, never more than the colour&#39;s own in front of the glass. A point has its own factor, each chord of a circle those of its ends.</li>
+<li>Screens in effect are drawn as panels in the shell&#39;s scene, not in the vector layer: the shell&#39;s lines, points and circles are drawn over the panels, and in the phosphor style how they are lit there is up to the host.</li>
+<li>Surfaces (at most 4 in effect) put the program&#39;s own screen on panels: see <a href="device-vector3-surfaces.html">Surfaces</a>.</li>
+<li>Layers: device 9 is drawn in the vector layer after device 3&#39;s shapes: over the page and the 2D shapes, under the terminal&#39;s characters, so text on the glass labels the models.</li>
+<li>Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display&#39;s lines (core, halo, bloom, afterglow and smear), with the vertex dwell at line ends and points but not where a circle&#39;s chords join or where a face cut a line.</li>
+<li>The trigonometry and the projection are the host&#39;s, and hosts may differ in the last pixel. Smoothing, blending and how the eye moves are up to the host.</li>
+</ul>
+<h2 id="charges-and-state">Charges and state</h2>
+<p>Every call costs 4; an accepted <code>submit</code> also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host&#39;s work. See <a href="charges.html">charges</a>.</p>
+<p>The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell&#39;s device 8 records, and only for what is shown; <code>face</code> reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display&#39;s state section, which is present when the image lists device 3 or device 9.</p>
+<h2 id="example">Example</h2>
+<p>A square that turns about its vertical axis, in front of a circle it partly hides:</p>
+<pre>#include &quot;terse.h&quot;
+
+#define U V3_UNIT
+static uint8_t list[256];
+static const int16_t sq[4][3] = {
+    {-60 * U, -60 * U, 0}, {60 * U, -60 * U, 0},
+    {60 * U, 60 * U, 0}, {-60 * U, 60 * U, 0},
+};
+
+int main(void)
+{
+    for (uint16_t a = 0;; a += 256) {
+        v3_begin(list);
+        v3_push();
+        v3_translate(320 * U, 240 * U, 0);
+        v3_move(0, 0, 200 * U);         /* behind the glass */
+        v3_colour(255, 120, 0, 255);
+        v3_circle(100 * U);
+        v3_rotate(V3_AXIS_Y, a);
+        v3_face4(sq[0], sq[1], sq[2], sq[3]);
+        v3_colour(80, 220, 255, 255);
+        v3_width(24);
+        v3_move(sq[3][0], sq[3][1], sq[3][2]);
+        for (int i = 0; i &lt; 4; i++)
+            v3_line(sq[i][0], sq[i][1], sq[i][2]);
+        v3_pop();
+        v3_end();
+        v3_submit_list(list);           /* VEC_DONE */
+        terse_wait_frame();
+    }
+}</pre>
+<p>The list is 98 bytes, so a submit costs 4 + 25 units. It counts 68 segments and 1 face. The square&#39;s edges share its face&#39;s corners, so they are drawn; the circle is hidden where the square covers it, as the eye in use sees it. Build the image with <code>--device 9:0</code> (and <code>--device 2:0</code> for text).</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-vector.html">← The 2D vector display (device 3)</a><a rel="next" href="device-vector3-surfaces.html">Surfaces: a program&#39;s own screen in its 3D scene →</a></nav></footer>
+</body>
+</html>

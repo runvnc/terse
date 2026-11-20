@@ -25,9 +25,13 @@ publish`.
 
       cargo run -p terse-cli --bin terse -- manual build
       programs/reader/build.sh
+      cargo run -p terse-cli --bin terse -- manual site --out site
 
-  `cargo test -p terse-cli --test manual` checks that the build is up to
-  date, that every link resolves, and that the manual names every call,
+  The last one regenerates `site/`, the manual as a static website
+  (checked in; see "The website" in the top-level README).
+
+  `cargo test -p terse-cli --test manual` checks that the build and
+  `site/` are up to date, that every link resolves, and that the manual names every call,
   event, content operation and status of SPEC.md; `--test reader` that
   the reader holds the current index's ID and shows every article whole.
 - Keep each article under about 14 KB (built, with its links resolved, it

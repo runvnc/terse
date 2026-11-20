@@ -1,0 +1,50 @@
+/* The Terse manual. System fonts, no external resources. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf7; --fg: #1f1f1d; --mute: #6b6a66; --link: #1d5aa6;
+  --rule: #dcdad3; --box: #f1efe9; --head: #e9e6de;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18191b; --fg: #e3e1db; --mute: #9b9993; --link: #8dbbf2;
+    --rule: #3b3c40; --box: #222326; --head: #2b2c30;
+  }
+}
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 1.0625rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+}
+header, main, footer { max-width: 40em; margin: 0 auto; padding: 0 1rem; }
+header nav { display: flex; gap: 1.25em; padding: 1em 0; border-bottom: 1px solid var(--rule); font-size: .9375em; }
+header a { color: var(--mute); text-decoration: none; }
+header a.home { color: var(--fg); font-weight: 600; }
+header a:hover { color: var(--link); }
+main { padding-top: .5em; padding-bottom: 1em; }
+h1, h2 { line-height: 1.25; margin: 1.6em 0 .6em; }
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.2em; }
+article > h1:first-child { margin-top: 1em; }
+p, ul, pre, figure, .table { margin: 0 0 1em; }
+ul { padding-left: 1.4em; }
+li { margin: .25em 0; }
+a { color: var(--link); text-underline-offset: .15em; }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: .875em; }
+code { background: var(--box); padding: .05em .3em; border-radius: 3px; }
+code.addr { overflow-wrap: anywhere; }
+pre { background: var(--box); padding: .75em 1em; border-radius: 4px; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+figure { text-align: center; }
+figure svg { max-width: 100%; height: auto; vertical-align: top; }
+.table { overflow-x: auto; }
+table { border-collapse: collapse; font-size: .9375em; line-height: 1.45; }
+th, td { padding: .35em .75em .35em 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { border-bottom: 2px solid var(--mute); font-weight: 600; }
+th:last-child, td:last-child { padding-right: 0; }
+.ac { text-align: center; }
+.ae { text-align: right; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }
+.toc ul { columns: 2 14em; column-gap: 2em; }
+.toc li { break-inside: avoid; }
+footer .pn { display: flex; justify-content: space-between; gap: 1em; padding: 1em 0 2em; border-top: 1px solid var(--rule); font-size: .9375em; }
+footer a[rel=next] { margin-left: auto; text-align: right; }

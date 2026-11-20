@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Charges and limits - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="charges-and-limits">Charges and limits</h1>
+<p>This page collects in one place what every call costs and every fixed number of the system: the machine, each device, the content device and the network. Each value is explained in the article that owns it; here they are only listed. Values marked provisional are placeholders that may change once weak hosts have been measured (SPEC section 16 lists them all); every other value is fixed for version 0.</p>
+<h2 id="the-budget-in-one-line">The budget, in one line</h2>
+<p>Each frame adds 125,000 units to the budget and the CPU runs while the budget is above zero; an overshoot carries into the next frame, unused budget never does, and <code>wait_frame</code> throws away the rest of the frame.</p>
+<h2 id="charges">Charges</h2>
+<p>A call&#39;s charge is subtracted as the call runs, on top of the <code>ecall</code> instruction itself, and may take the budget below zero.</p>
+<div class="table"><table>
+<thead><tr><th>What</th><th>Charge</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>An instruction fetched from ROM</td><td>1</td><td>as it runs (an <code>ecall</code> too)</td></tr>
+<tr><td>An instruction fetched from RAM</td><td>4, provisional</td><td>as it runs (an <code>ecall</code> too)</td></tr>
+<tr><td>Any call, also an unknown or failing one: a deferred call, or one of the system device or Machines</td><td>4, provisional</td><td>every call</td></tr>
+<tr><td>Any answered call, also a failing one</td><td>64, provisional</td><td><code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, content <code>submit</code>, page <code>locate</code></td></tr>
+<tr><td><code>write</code>: each byte of the buffer</td><td>2, provisional</td><td>the whole buffer (at most 4,096 bytes) is taken whatever the budget; the scrolls and clears it causes cost nothing more</td></tr>
+<tr><td>A clear, scroll up or scroll down by <code>command</code></td><td>150, provisional</td><td>commands <code>01h</code>, <code>02h</code>, <code>03h</code></td></tr>
+<tr><td>Bytes copied between memory and a device</td><td>1 per 4 bytes, rounded up, per call; provisional</td><td>by the calls of the next table</td></tr>
+<tr><td>Content delivered at completion</td><td>1 per 4 bytes: the frame&#39;s completions added up, rounded up once; provisional</td><td>subtracted from the frame&#39;s budget before the CPU runs</td></tr>
+</tbody></table></div>
+<p>Bytes counted as copied:</p>
+<div class="table"><table>
+<thead><tr><th>Call</th><th>Bytes</th><th>When</th></tr></thead>
+<tbody>
+<tr><td><code>next_event</code></td><td>4</td><td>only when an event is written</td></tr>
+<tr><td><code>random</code></td><td>the length</td><td>when the buffer is valid</td></tr>
+<tr><td><code>controller</code></td><td>8</td><td>when the buffer is valid</td></tr>
+<tr><td><code>cells_read</code>, <code>cells_write</code></td><td>4 per cell</td><td>when the call is valid</td></tr>
+<tr><td><code>palette_set</code></td><td>3 per entry</td><td>when the call is valid</td></tr>
+<tr><td>vector <code>submit</code> (<code>300h</code>, <code>900h</code>)</td><td>the list&#39;s length</td><td>only when accepted</td></tr>
+<tr><td>page <code>submit</code> (<code>700h</code>)</td><td>the document&#39;s length</td><td>when copied: length in range and buffer valid</td></tr>
+<tr><td>content <code>submit</code> (<code>400h</code>)</td><td>put or save: <code>size</code>; publish: the title; find: the query; set profile or set nickname: the name</td><td>only when accepted</td></tr>
+<tr><td><code>open</code> (<code>107h</code>)</td><td>33, or 34 + n for a program</td><td>when the request is read, also if the call returns 0</td></tr>
+<tr><td>system <code>argument</code> (<code>108h</code>)</td><td>32</td><td>only when written</td></tr>
+<tr><td><code>start</code></td><td>32</td><td>when the ID is read, also if no handle is free</td></tr>
+<tr><td><code>start_program</code></td><td>33 + n</td><td>when the record is read</td></tr>
+<tr><td><code>info</code></td><td>48</td><td>when written</td></tr>
+<tr><td><code>builtin</code></td><td>32</td><td>when written</td></tr>
+<tr><td><code>identity</code></td><td>81</td><td>when written</td></tr>
+<tr><td><code>request</code></td><td>82</td><td>when written</td></tr>
+<tr><td>machines <code>argument</code> (<code>80Ah</code>)</td><td>32</td><td>when the ID is read, also if it returns 0</td></tr>
+<tr><td><code>snapshot_info</code></td><td>122</td><td>when written</td></tr>
+</tbody></table></div>
+<p>A device call is **deferred** when its result is one the program could work out without the device (a constant, an argument, or a simple function of the arguments) and its charge depends only on its arguments; it is **answered** when its result or charge depends on the device&#39;s state. A host that keeps a device in another process can send deferred calls in batches without waiting for them; an answered call needs a round trip, which the 64 pays for. The calls of the system device and Machines are the machine&#39;s own and cost 4 whatever they return. The call table of the article The machine gives every call&#39;s class.</p>
+<p>Content delivered at completion is what a get, load, find or records-style request (subscriptions, timeline, names, programs, records) writes to its buffer. Nothing else is charged: a rejected submit copies nothing, the fields a completion writes into a request block are free, and laying out the page is free (the host does it outside the frames).</p>
+<p>Two examples. A deferred call that copies nothing costs 5 units from ROM (the <code>ecall</code> and 4), an answered one 65. Writing a whole 80-column row costs 165 with one <code>write</code> of 80 bytes, 85 with one <code>cells_write</code> of 80 cells, against at least 560 for 80 one-byte writes.</p>
+<h2 id="machine-and-image">Machine and image</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>ROM</td><td>1 to 131,072 bytes, at <code>0001_0000h</code></td><td></td></tr>
+<tr><td>RAM</td><td>1 to 128 pages of 8,192 bytes, at <code>0010_0000h</code></td><td>8 KiB to 1 MiB</td></tr>
+<tr><td>Exit code</td><td>0 to 255</td><td></td></tr>
+<tr><td>Image header</td><td>32 bytes, then 2 per device requirement</td><td></td></tr>
+<tr><td>Format version, profile</td><td>0, 1</td><td></td></tr>
+<tr><td><code>rom_len</code> field</td><td>3 bytes, 1 to 131,072</td><td></td></tr>
+<tr><td><code>ram_pages</code> field</td><td>1 to 128</td><td></td></tr>
+<tr><td>Device requirements</td><td>0 to 16, each slot at most once</td><td></td></tr>
+<tr><td>Reserved header bytes</td><td>5, all zero</td><td></td></tr>
+<tr><td>Title</td><td>16 bytes of UTF-8, padded with <code>00h</code>; not checked by hosts</td><td></td></tr>
+<tr><td>Largest image</td><td>131,136 bytes</td><td></td></tr>
+</tbody></table></div>
+<h2 id="frames">Frames</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Budget per frame</td><td>125,000 units</td><td>provisional</td></tr>
+<tr><td>Frame rate</td><td>60 per second, nominal</td><td></td></tr>
+<tr><td>Frame counter</td><td>32 bits, wraps to 0</td><td></td></tr>
+<tr><td><code>terse run</code></td><td>stops after 36,000 frames</td><td>headless runner only</td></tr>
+</tbody></table></div>
+<h2 id="events-controllers-and-random-bytes">Events, controllers and random bytes</h2>
+<p>The event queue&#39;s 64 and the 256 random bytes a call are provisional.</p>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Event queue</td><td>64 events; one that arrives when it is full is dropped</td></tr>
+<tr><td>Pointer position</td><td>x 0 to 639, y 0 to 479; movement at most once a frame</td></tr>
+<tr><td>Wheel</td><td>at most one event a frame, each value -127 to 127</td></tr>
+<tr><td>Feeds updated, page laid out</td><td>at most one of each a frame</td></tr>
+<tr><td>Controllers</td><td>4, numbered 0 to 3; axes -127 to 127</td></tr>
+<tr><td><code>random</code></td><td>at most 256 bytes a call</td></tr>
+<tr><td>Random bytes a frame can take</td><td>at most 463,872</td></tr>
+</tbody></table></div>
+<h2 id="terminal-device-2">Terminal (device 2)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Grid</td><td>80 columns by 30 rows</td></tr>
+<tr><td>Cells</td><td>2,400 of 4 bytes (9,600 bytes)</td></tr>
+<tr><td>Character codes</td><td><code>0000h</code> to <code>FFFFh</code>; <code>FFFFh</code> marks a wide character&#39;s right half</td></tr>
+<tr><td>Palette</td><td>256 entries of red, green, blue</td></tr>
+<tr><td>A cell on the screen</td><td>8 by 16 screen units, on a screen of 640 by 480</td></tr>
+</tbody></table></div>
+<h2 id="s-2d-vector-display-device-3">2D vector display (device 3)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Display list</td><td>1 to 16,384 bytes, in RAM</td><td>provisional</td></tr>
+<tr><td>Coordinates</td><td>signed 16 bits, in sixteenths of a unit; screen 10,240 by 7,680</td><td></td></tr>
+<tr><td>Line width</td><td>1 byte, in sixteenths; 0 counts as 1</td><td></td></tr>
+<tr><td>Style, fill mode</td><td>0 or 1 each</td><td></td></tr>
+<tr><td>Persistence</td><td>0 to 255, 160 after reset</td><td></td></tr>
+<tr><td>Fill cap</td><td>1,228,800 square units of filled shapes a list</td><td>provisional</td></tr>
+</tbody></table></div>
+<h2 id="s-3d-vector-display-device-9">3D vector display (device 9)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Display list</td><td>1 to 16,384 bytes, in RAM</td><td>provisional</td></tr>
+<tr><td>Transform stack</td><td>8</td><td>provisional</td></tr>
+<tr><td>Line width</td><td>1 to 255 sixteenths (0 counts as 1)</td><td>provisional</td></tr>
+<tr><td>Length a list draws</td><td>65,536 screen units</td><td>provisional</td></tr>
+<tr><td>Segments a list draws</td><td>16,384</td><td>provisional</td></tr>
+<tr><td>Faces</td><td>256 a list, each Screen and Surface in effect counting as one</td><td>provisional</td></tr>
+<tr><td>Surfaces in effect</td><td>4 a list, each showing a rectangle of the screen</td><td>provisional</td></tr>
+<tr><td>Faces times segments</td><td>131,072</td><td>provisional</td></tr>
+<tr><td>Pieces drawn after hiding</td><td>16,384, counted within 32 units of the screen</td><td>provisional</td></tr>
+<tr><td>What a face hides</td><td>points more than 2 sixteenths beyond its plane</td><td>provisional</td></tr>
+<tr><td>Shortest cut piece drawn</td><td>1/2 unit</td><td>provisional</td></tr>
+<tr><td>Chords of a circle</td><td>64</td><td>provisional</td></tr>
+<tr><td>Eye distance from the glass</td><td>960 units</td><td>provisional</td></tr>
+<tr><td>Eye movement</td><td>at most 160 units from the reference eye on each axis</td><td>provisional</td></tr>
+<tr><td>Near plane</td><td>z = -800</td><td>provisional</td></tr>
+</tbody></table></div>
+<h2 id="content-device-4">Content (device 4)</h2>
+<p>All but the request block&#39;s 52 bytes are provisional.</p>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Blob</td><td>1 to 1,048,576 bytes</td></tr>
+<tr><td>Request block</td><td>52 bytes, in RAM</td></tr>
+<tr><td>Pending requests</td><td>8 (handles 1 to 8)</td></tr>
+<tr><td><code>length</code> of get, load, records, find</td><td>1 to 16,384</td></tr>
+<tr><td>Publish title</td><td>0 to 120 bytes</td></tr>
+<tr><td>Display name, nickname, find query</td><td>1 to 48 bytes (a nickname may be 0: removes it)</td></tr>
+<tr><td>Find results</td><td>at most 16</td></tr>
+<tr><td>Named records per owner</td><td>256 records, 1,048,576 bytes in all</td></tr>
+<tr><td>One named record</td><td>0 to 65,536 bytes</td></tr>
+<tr><td>Record name</td><td>1 to 32 bytes</td></tr>
+<tr><td>Document format name</td><td>1 to 48 bytes</td></tr>
+</tbody></table></div>
+<h2 id="page-device-7">Page (device 7)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Document</td><td>1 to 65,536 bytes</td><td>provisional</td></tr>
+<tr><td>Text size</td><td>clamped to 6 to 96 units; 14 at the start</td><td>provisional</td></tr>
+<tr><td>Figure</td><td>width and height clamped to 1 to 1,024 units</td><td>provisional</td></tr>
+<tr><td>Paths a figure draws</td><td>256</td><td>provisional</td></tr>
+<tr><td>Figure area</td><td>8 times the figure&#39;s area, at most 1,228,800</td><td>provisional</td></tr>
+<tr><td>Figure path length</td><td>65,536</td><td>provisional</td></tr>
+<tr><td>Anchor ids</td><td>1 to 65,535 (0 is no anchor)</td><td></td></tr>
+<tr><td><code>locate</code></td><td>8 a frame; a host keeps at least the 8 latest waiting</td><td>provisional</td></tr>
+<tr><td>Table columns</td><td>1 to 8</td><td>provisional</td></tr>
+<tr><td>Cells</td><td>1,024 a table, 4,096 a document</td><td>provisional</td></tr>
+<tr><td>Cell padding</td><td>6 units left and right, 3 top and bottom</td><td>provisional</td></tr>
+<tr><td>Narrowest column</td><td>48 units</td><td>provisional</td></tr>
+<tr><td>Rule</td><td>8 units high</td><td></td></tr>
+<tr><td>Reported height or y</td><td>at most <code>FFFFFFh</code></td><td></td></tr>
+</tbody></table></div>
+<h2 id="machines-device-8">Machines (device 8)</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Machine handles</td><td>8 (1 to 8)</td><td>provisional</td></tr>
+<tr><td>Snapshot slots</td><td>16 (0 to 15)</td><td>provisional</td></tr>
+<tr><td>A view&#39;s motion (<code>face</code>, <code>unface</code>)</td><td>0 to 600 frames</td><td>provisional</td></tr>
+<tr><td>A view&#39;s progress</td><td>0 to 4,096 steps</td><td>provisional</td></tr>
+<tr><td>Screens in effect</td><td>the first of each handle, in the shell&#39;s 3D list; each counts as a face</td><td></td></tr>
+<tr><td>Program name</td><td>1 to 48 bytes</td><td>provisional</td></tr>
+<tr><td>Records written</td><td><code>info</code> 48, <code>identity</code> 81, <code>request</code> 82, <code>snapshot_info</code> 122 bytes</td><td></td></tr>
+</tbody></table></div>
+<h2 id="network">Network</h2>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Feed entry</td><td>at most 293 bytes; title 0 to 120 bytes</td></tr>
+<tr><td>Automatic download</td><td>blobs up to 16,384 bytes (the user may change it)</td></tr>
+<tr><td>Program images downloaded</td><td>up to 131,136 bytes</td></tr>
+<tr><td>Prefetch</td><td>the first 8 article links of an article</td></tr>
+<tr><td>Configured relays</td><td>at most 8</td></tr>
+<tr><td>Relays from a feed&#39;s profile</td><td>at most 2 a feed</td></tr>
+<tr><td>Relay connections</td><td>at most 16</td></tr>
+<tr><td>Entries a relay keeps</td><td>at least the 256 newest of a feed, and its latest profile</td></tr>
+<tr><td>Search results</td><td>at most 16</td></tr>
+<tr><td>Profile document</td><td>at most 4,096 bytes; 0 to 4 relay lines</td></tr>
+<tr><td>Reconnecting</td><td>after 1 s, doubling up to 30 s</td></tr>
+<tr><td>Peer get</td><td>not found after 3 s without an answer</td></tr>
+</tbody></table></div>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="events.html">← Events and input</a></nav></footer>
+</body>
+</html>

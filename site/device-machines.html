@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Machines device (device 8) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-machines-device-device-8">The Machines device (device 8)</h1>
+<p>A host can run several machines as one system. One of them, the shell, starts the others, decides where their screens are shown and which of them gets the keyboard, through device 8 (slot 8, version 0). Layout and policy are the shell&#39;s.</p>
+<h2 id="who-has-it">Who has it</h2>
+<p>The shell has device 8 if its image lists (8, 0) (<code>terse pack --device 8:0</code>) and the host starts it as the shell (<code>terse run --shell &lt;image&gt;</code>, <code>terse-host --shell &lt;image&gt;</code>). For every other machine, and an image run alone, every call returns <code>FFFF_FFFFh</code>. At reset no handle is in use, the focus is 0 and there is no view.</p>
+<h2 id="handles-and-states">Handles and states</h2>
+<p>The shell starts machines under handles 1 to 8. Each is a complete, separate machine with its own ROM, RAM, devices, events, content handles, budget, frame counter and 640 x 480 screen; machines share only the host&#39;s store, feeds and identity. A handle is in use from the call that returns it until a <code>stop</code>.</p>
+<div class="table"><table>
+<thead><tr><th>Value</th><th>State</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>none</td><td>not in use</td></tr>
+<tr><td>1</td><td>loading</td><td>the host does not have the image yet</td></tr>
+<tr><td>2</td><td>running</td><td>runs a frame in every system frame</td></tr>
+<tr><td>3</td><td>paused</td><td>runs no frames, receives no input</td></tr>
+<tr><td>4</td><td>exited</td><td>stopped by <code>exit</code></td></tr>
+<tr><td>5</td><td>faulted</td><td>stopped by a fault</td></tr>
+<tr><td>6</td><td>failed</td><td>could not start; <code>info</code> gives the reason</td></tr>
+</tbody></table></div>
+<p>Each handle also has a run flag, a rectangle (x, y, width, height in the shell&#39;s screen units) and possibly an identity. The focus is a handle, or 0 for the shell. The system also has a view of the shell&#39;s 3D scene, set by <code>face</code> (see Screens and the view, below).</p>
+<p>A program&#39;s identity is (publisher&#39;s feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with <code>start_program</code> keeps that identity for life; one started with <code>start</code> has none; a restored one has its snapshot&#39;s. Identity decides whose named records a machine reads (<a href="content-records.html">named records</a>).</p>
+<h2 id="calls">Calls</h2>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>800h</code></td><td><code>start</code></td><td><code>a0</code> = image ID (32, read)</td><td>handle, 0 none free</td></tr>
+<tr><td><code>801h</code></td><td><code>stop</code></td><td><code>a0</code> = handle</td><td>1, 0 not in use</td></tr>
+<tr><td><code>802h</code></td><td><code>place</code></td><td><code>a0</code> handle, <code>a1</code>-<code>a4</code> x y w h</td><td>1, 0 not in use</td></tr>
+<tr><td><code>803h</code></td><td><code>run</code></td><td><code>a0</code> handle, <code>a1</code> 1 run 0 pause</td><td>1, 0 refused</td></tr>
+<tr><td><code>804h</code></td><td><code>focus</code></td><td><code>a0</code> handle or 0</td><td>1, 0 refused</td></tr>
+<tr><td><code>805h</code></td><td><code>info</code></td><td><code>a0</code> handle, <code>a1</code> buffer (48, written)</td><td>1, 0 not 1-8</td></tr>
+<tr><td><code>806h</code></td><td><code>builtin</code></td><td><code>a0</code> index, <code>a1</code> buffer (32, written)</td><td>1, 0 past last</td></tr>
+<tr><td><code>807h</code></td><td><code>start_program</code></td><td><code>a0</code> program record (read)</td><td>handle, 0 none free</td></tr>
+<tr><td><code>808h</code></td><td><code>identity</code></td><td><code>a0</code> handle, <code>a1</code> buffer (81, written)</td><td>1, 0 none</td></tr>
+<tr><td><code>809h</code></td><td><code>request</code></td><td><code>a0</code> handle, <code>a1</code> buffer (82, written)</td><td>1, 0 none waits</td></tr>
+<tr><td><code>80Ah</code></td><td><code>argument</code></td><td><code>a0</code> handle, <code>a1</code> blob ID (32, read)</td><td>1, 0 not loading</td></tr>
+<tr><td><code>80Bh</code></td><td><code>snapshot</code></td><td><code>a0</code> handle, <code>a1</code> slot</td><td>1, 0 refused</td></tr>
+<tr><td><code>80Ch</code></td><td><code>restore</code></td><td><code>a0</code> slot</td><td>handle, 0</td></tr>
+<tr><td><code>80Dh</code></td><td><code>snapshot_info</code></td><td><code>a0</code> slot, <code>a1</code> buffer (122, written)</td><td>1 held, 0</td></tr>
+<tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> slot</td><td>1, 0 out of range</td></tr>
+<tr><td><code>80Fh</code></td><td><code>face</code></td><td><code>a0</code> handle, <code>a1</code> frames, <code>a2</code>-<code>a5</code> x y w h</td><td>1, 0 refused</td></tr>
+<tr><td><code>810h</code></td><td><code>unface</code></td><td><code>a0</code> frames</td><td>1, 0 refused</td></tr>
+</tbody></table></div>
+<p>A read buffer must lie wholly in ROM or wholly in RAM, a written one wholly in RAM, else the call returns <code>FFFF_FFFEh</code> and does nothing else. The reference host checks the buffer before the handle or slot.</p>
+<ul>
+<li><code>start</code>: if every handle is in use, returns 0. Otherwise the lowest free handle becomes loading, with run flag set, rectangle (0, 0, 0, 0) and that image ID. The host looks for the blob in its store, then fetches it as a content get does, and checks it as an image; at the start of a later frame the handle becomes running (paused if the run flag is clear) or failed. Loading may take any number of frames.</li>
+<li><code>start_program</code>: the record is the feed key (32; all zero for a built-in), the name&#39;s length n (1) and the name (n bytes, 1 to 48, a valid display name). A bad record or name returns <code>FFFF_FFFEh</code>. Then as <code>start</code>, with image ID zero and that identity; the host takes the current version it holds of that program (for the zero key, the first built-in whose image title is the name). Failure is reason 1 if it holds no such program or cannot get the image.</li>
+<li><code>identity</code>: writes the feed key (32), the name length (1) and the name padded with <code>00h</code> to 48 bytes. 0, nothing written, for a handle not in use or without identity.</li>
+<li><code>stop</code>: the machine ceases to exist; the handle&#39;s record becomes zero; a focus on it becomes 0. Its pending content requests never complete; its consent prompts are withdrawn.</li>
+<li><code>place</code>: sets the rectangle, clamped as the page&#39;s <code>region</code> is: x at most 640, y at most 480, width at most 640 - x, height at most 480 - y.</li>
+<li><code>run</code>: for loading, running or paused handles and <code>a1</code> 0 or 1. Sets or clears the run flag; running and paused switch at once; loading stays loading.</li>
+<li><code>focus</code>: 0, or a loading, running or paused handle. The machine with the focus also reads the controllers (the shell when it is 0); from the next frame, like the keyboard.</li>
+<li>Calls with a buffer check it first: <code>info</code> of handle 9 into a bad buffer gives <code>FFFF_FFFEh</code>, not 0.</li>
+<li><code>info</code>: writes the record below for any handle 1-8 (zeros if not in use).</li>
+<li><code>builtin</code>: the image ID of built-in program <code>a0</code> (order fixed for the run). Read its title from the image&#39;s first 32 bytes with a content get.</li>
+<li><code>request</code>: if machine <code>a0</code> has an open request waiting that the shell was told of (event <code>0Fh</code>), writes it and returns 1; it no longer waits, so the machine may make another. A <code>stop</code>, or a start that reuses the handle, drops it.</li>
+<li><code>argument</code>: if the handle is loading, the blob ID becomes the machine&#39;s argument (replacing an earlier one), given to it when it becomes running or paused; else 0. For a handle being restored it returns 0 and changes nothing: the snapshot&#39;s argument stays. (The device knows such a handle as loading with image ID zero and no identity; a <code>start</code> of the all-zero ID looks the same.) The buffer is checked first, and the 32 bytes are charged whenever they are read.</li>
+<li><code>snapshot</code>: for a running or paused handle and slot 0-15, the host stores the machine&#39;s snapshot in the slot at the end of this system frame, replacing what was there. The result arrives as event <code>10h</code>: 1 stored, 3 failed (content&#39;s done and failed). A snapshot deleted later in the same frame is stored, then deleted: its event says 1 and the slot is empty.</li>
+<li><code>restore</code>: slot out of range, or no free handle: 0. Otherwise the lowest free handle becomes loading (run flag set, zero rectangle, image ID zero, no identity). Later it becomes running or paused as the machine was when the snapshot was taken, with the snapshot&#39;s image ID and identity, or failed: reason 5 for no, unreadable or unfitting snapshot, 1-3 if its image cannot be had or run.</li>
+<li><code>snapshot_info</code>: the slots as at the start of the frame, with this frame&#39;s deletes. An empty slot writes 122 zero bytes and returns 0; a slot out of range writes nothing.</li>
+<li><code>snapshot_delete</code>: the slot reads as empty at once; the file is removed at the end of the frame, in order with the snapshots asked for.</li>
+<li><code>face</code>: flies the view so that machine <code>a0</code>&#39;s panel comes to lie flat on the glass over <code>a1</code> frames (0-600), then shows the machine flat in the rectangle <code>a2</code>-<code>a5</code> (clamped as <code>place</code> clamps). Refused (0, nothing changes) unless <code>a0</code> is 1-8, its machine has a picture, its own rectangle shows none, the shell&#39;s 3D list as it holds it now has a Screen of <code>a0</code> (decoded only, caps not counted), <code>a1</code> is at most 600 and the rectangle shows a picture. Otherwise the view becomes: that handle, towards the glass, that rectangle, starting at this frame&#39;s counter, lasting <code>a1</code> frames, from the view&#39;s progress now if it already moved <code>a0</code>&#39;s panel, else from 0.</li>
+<li><code>unface</code>: moves the view back to the scene as listed over <code>a0</code> frames (0-600), from its progress now. Refused (0) if <code>a0</code> is above 600 or there is no view.</li>
+</ul>
+<h2 id="records">Records</h2>
+<p>The <code>info</code> record (48 bytes, <code>mach_record</code> in terse.h), as latched at the start of the frame plus the shell&#39;s own calls since:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>State</td></tr>
+<tr><td>1</td><td>1</td><td>Exit code if exited, else 0</td></tr>
+<tr><td>2</td><td>1</td><td>Fault kind if faulted (1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned), else 0</td></tr>
+<tr><td>3</td><td>1</td><td>Failure reason if failed, else 0</td></tr>
+<tr><td>4</td><td>4</td><td>Units used in the machine&#39;s last frame (delivered content included), 0 before its first</td></tr>
+<tr><td>8</td><td>4</td><td>The machine&#39;s frame counter</td></tr>
+<tr><td>12</td><td>4</td><td>Fault <code>pc</code> if faulted, else 0</td></tr>
+<tr><td>16</td><td>32</td><td>Image ID (see below)</td></tr>
+</tbody></table></div>
+<p>The image ID is the one given to <code>start</code>. For <code>start_program</code> and <code>restore</code> it is zero while loading, then the ID of the image the host got, also when that image failed to run or to fit the snapshot.</p>
+<div class="table"><table>
+<thead><tr><th>Reason</th><th>Why the start failed</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>not found (no such blob or program)</td></tr>
+<tr><td>2</td><td>not a valid image</td></tr>
+<tr><td>3</td><td>needs a device (slot, version) the host lacks</td></tr>
+<tr><td>4</td><td>no room for another machine</td></tr>
+<tr><td>5</td><td><code>restore</code>: no snapshot in the slot, unreadable, or does not fit its image</td></tr>
+</tbody></table></div>
+<p>The <code>request</code> record is 82 bytes: the kind (1), then for kind 1 (a blob) the blob ID (32) and zeros, for kind 2 (a program) the 81 bytes <code>identity</code> writes.</p>
+<p>The <code>snapshot_info</code> record (122 bytes, <code>mach_snapshot_record</code>):</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>Present: 1, or 0 for an empty slot</td></tr>
+<tr><td>1</td><td>32</td><td>Image ID</td></tr>
+<tr><td>33</td><td>81</td><td>Identity as <code>identity</code> writes it; zero for none</td></tr>
+<tr><td>114</td><td>4</td><td>The machine&#39;s frame counter when taken</td></tr>
+<tr><td>118</td><td>4</td><td>The Unix time latched for its last frame, as its state holds it (0 if it never ran)</td></tr>
+</tbody></table></div>
+<h2 id="events-for-the-shell">Events for the shell</h2>
+<div class="table"><table>
+<thead><tr><th>Type</th><th>Name</th><th><code>a</code></th><th><code>b</code></th></tr></thead>
+<tbody>
+<tr><td><code>0Ah</code></td><td>Machine changed</td><td>handle</td><td>new state</td></tr>
+<tr><td><code>0Bh</code></td><td>Home</td><td>0</td><td>0</td></tr>
+<tr><td><code>0Ch</code></td><td>Machine pressed</td><td>handle</td><td>buttons</td></tr>
+<tr><td><code>0Fh</code></td><td>Open requested</td><td>handle</td><td>0</td></tr>
+<tr><td><code>10h</code></td><td>Snapshot done</td><td>slot</td><td>1 stored, 3 failed</td></tr>
+</tbody></table></div>
+<p><code>c</code> is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted <code>snapshot</code>, in call order; failed means the machine was stopped in the same frame or the host could not store it. See <a href="events.html">events</a>.</p>
+<h2 id="screens-and-input">Screens and input</h2>
+<p>A machine&#39;s picture is its screen scaled into its rectangle. In the shell&#39;s 3D list a Screen shows a machine as a panel in space instead, and <code>face</code> flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in <a href="device-machines-screens.html">screens, panels and input</a>.</p>
+<h2 id="the-system-frame">The system frame</h2>
+<p>1. Latch. In handle order: loading handles whose image arrived or failed become running, paused or failed (a new machine is reset with its argument, or is the restored one); running handles whose machine stopped become exited or faulted; each change queues machine changed; records take units and frame counters. Then open requested for each open request of the last frame, in handle order, then snapshot done events, all before the frame&#39;s input. 2. Route the input. 3. The shell runs its frame. If the view&#39;s machine is no longer shown as a panel, the view becomes none. 4. Its starts and stops are carried out in call order. A machine started now runs first in the next system frame. 5. Each running machine, in handle order, runs one frame with a full budget and its own carry. So <code>run</code>, <code>stop</code> and <code>place</code> take effect this frame; <code>focus</code> takes effect at the next frame&#39;s routing, for keys, text, the pointer and the controllers alike. 6. Snapshots and deletes, in call order.</p>
+<p>Other machines run no frames. When the shell stops, the system stops.</p>
+<h2 id="snapshots">Snapshots</h2>
+<p>A snapshot is a machine&#39;s state serialization (holding its image ID and argument) plus its identity. A restored machine has the state hash it had when taken and, given the same later inputs, runs as it would have; its frame counter continues.</p>
+<ul>
+<li>Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. <code>terse</code> keeps them in <code>&lt;data&gt;/snapshots</code>. A snapshot may exceed 1 MiB.</li>
+<li>A snapshot restores only its exact image, fetched by ID.</li>
+<li>Named records are not in it.</li>
+<li>Pending content requests fail in the restored machine&#39;s first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.</li>
+<li>The shell itself cannot be snapshotted or restored.</li>
+</ul>
+<h2 id="determinism-and-state">Determinism and state</h2>
+<p>Each machine is deterministic given its own inputs. The shell&#39;s include its device 8 events and what the device reports that the shell did not set (latched records, identities of restored or by-name programs, requests, built-ins, <code>snapshot_info</code>). For a started machine, what <code>open</code> returns is an input. The view is the shell&#39;s own state; the eye the host routes the pointer by is an input. Device 8&#39;s state is part of the shell&#39;s; a started machine&#39;s state holds nothing of the system.</p>
+<h2 id="charges">Charges</h2>
+<p>Each call costs 4 (plus the <code>ecall</code> instruction), and copies cost 1 per 4 bytes, rounded up: <code>start</code> 8 (when the ID is read), <code>start_program</code> (33 + n) / 4 up, <code>info</code> 12, <code>builtin</code> 8, <code>identity</code> 21, <code>request</code> 21, <code>argument</code> 8 (when the ID is read) and <code>snapshot_info</code> 31, each when written. <code>face</code> and <code>unface</code> copy nothing; drawing the scene is the host&#39;s work. See <a href="charges.html">charges</a>.</p>
+<h2 id="example-a-minimal-shell">Example: a minimal shell</h2>
+<pre>#include &quot;terse.h&quot;
+
+static uint8_t id[32], req[82];
+
+int main(void)
+{
+    terse_event ev;
+    uint32_t h = mach_builtin(0, id) ? mach_start(id) : 0;
+    if (h) {
+        mach_place(h, 0, 0, 640, 480);
+        mach_focus(h);
+    }
+    for (;;) {
+        while (terse_event_pop(&amp;ev)) {
+            if (ev.type == EV_MACHINE_PRESSED)
+                mach_focus(ev.a);
+            else if (ev.type == EV_MACHINE_CHANGED
+                     &amp;&amp; ev.b &gt;= MACH_EXITED)
+                mach_stop(ev.a);
+            else if (ev.type == EV_OPEN_REQUESTED
+                     &amp;&amp; mach_request(ev.a, req) &amp;&amp; req[0] == 1
+                     &amp;&amp; (h = mach_start(req + 1)) != 0)
+                mach_place(h, 0, 0, 640, 480);
+        }
+        terse_wait_frame();
+    }
+}</pre>
+<p>It starts the first built-in full screen with the keyboard, stops machines that end and opens requested blobs as new machines.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-page-figures.html">← Figures on the page</a><a rel="next" href="device-machines-screens.html">Screens, panels and input (device 8) →</a></nav></footer>
+</body>
+</html>

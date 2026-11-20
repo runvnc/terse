@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing a reader without the machine - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="writing-a-reader-without-the-machine">Writing a reader without the machine</h1>
+<p>The core of Terse is the network and the article format, not the machine. A reader that implements just those two, natively, in any language and with any text toolkit, is a complete Terse client: it follows feeds, shows their articles and follows their links, side by side with machine hosts on the same relays. This article says what such a reader has to do and where the exact rules are. You need two documents, NETWORK.md and ARTICLE.md; SPEC.md and STATE.md (the machine) are not needed at all.</p>
+<h2 id="what-it-must-do">What it must do</h2>
+<p>The short list is in NETWORK.md section 6:</p>
+<ul>
+<li>keep blobs by their BLAKE3-256 ID and verify every blob it receives;</li>
+<li>talk to at least one relay;</li>
+<li>verify entries and drop invalid ones;</li>
+<li>subscribe to feeds by key or feed address (a key, <code>@</code> and up to two relays that hold the feed: NETWORK.md 4.9) and keep the timeline in arrival order;</li>
+<li>show articles by ARTICLE.md;</li>
+<li>show every feed&#39;s name with its key.</li>
+</ul>
+<p>Everything else is optional: publishing, profiles, nicknames, search, several relays, prefetch.</p>
+<h2 id="blobs-and-the-relay">Blobs and the relay</h2>
+<p>A relay speaks binary WebSocket messages with little-endian integers. A reader needs four of them, and must ignore the replies it does not use:</p>
+<div class="table"><table>
+<thead><tr><th>Message</th><th>Layout</th></tr></thead>
+<tbody>
+<tr><td>Get</td><td><code>01h</code>, <code>req</code> (4), blob ID (32)</td></tr>
+<tr><td>Get reply</td><td><code>81h</code>, <code>req</code>, status (1), the blob if status is 1</td></tr>
+<tr><td>Subscribe</td><td><code>04h</code>, <code>req</code>, feed key (32), <code>after</code> (4)</td></tr>
+<tr><td>Subscribe reply</td><td><code>84h</code>, <code>req</code>, status, <code>highest</code> (4) if status is 1</td></tr>
+<tr><td>Unsubscribe</td><td><code>05h</code>, <code>req</code>, feed key (32)</td></tr>
+<tr><td>Entry (pushed)</td><td><code>90h</code>, the entry</td></tr>
+</tbody></table></div>
+<p><code>req</code> is any number you choose; the reply echoes it, and replies may come in any order. A get reply carries the whole blob: hash it, compare with the ID you asked for, and drop it (as &quot;not found on that relay&quot;) if they differ. Keep what you fetched in a local store, a directory with one file per ID is enough, so that an article opens at once the next time.</p>
+<h2 id="entries-and-the-timeline">Entries and the timeline</h2>
+<p>After a subscribe, the relay sends the feed&#39;s entries with <code>seq</code> above <code>after</code>, oldest first, then each new one as it is published. An entry is at most 293 bytes: the feed key, <code>seq</code>, a time, a kind, the blob&#39;s size and ID, a reply-to ID, a title, and an Ed25519 signature over <code>terse-entry-0</code> and the bytes before it. Verify it strictly and check the rest of the rules of NETWORK.md section 4.2; keep the first valid entry of each feed and <code>seq</code>.</p>
+<p>Your timeline is the article and document entries (kinds 1 and 4) of your subscribed feeds, newest first in the order you first stored them; keep that order across restarts. Subscribe again on each connection with <code>after</code> set to the highest <code>seq</code> you hold, and fetch each blob of at most 16,384 bytes as its entry arrives, so reading never waits.</p>
+<p>Profiles (kind 2) give a feed its display name: the title of the feed&#39;s profile entry with the highest <code>seq</code>. Names are not unique, so always show the key, or its first and last six hex digits, beside a name.</p>
+<h2 id="showing-an-article">Showing an article</h2>
+<p>ARTICLE.md is written as requirements on what the person sees, not as a layout algorithm, so any toolkit that can wrap text, show a monospaced face and draw curves will do. In outline:</p>
+<ul>
+<li>Split the text into blocks: headings, subheadings, list items, preformatted blocks, fences, tables and paragraphs, by the first bytes of each line.</li>
+<li>Join a paragraph&#39;s lines and wrap them to your column; keep preformatted lines and fences as written, unwrapped.</li>
+<li>Find code spans and links on each line, from its start; the one that starts first wins.</li>
+<li>Lay tables out as grids, or show their lines as a paragraph.</li>
+<li>Draw figures from their path strings, or show them as their text. A figure&#39;s units are 512ths of a column of the recommended width (about 68 characters of body text): scale figures by your column&#39;s width over that, down for a narrower column, and up only if you enlarge your text the same way.</li>
+<li>Anything you do not recognise, or that is malformed, is ordinary text.</li>
+</ul>
+<p>Only <code>terse:</code> forms are links: <code>terse:</code> and a blob ID (an article), <code>terse:feed/</code> and a key, maybe with <code>@</code> and the hints of its address (a feed; a malformed hint list leaves the key alone), <code>terse:program/</code>, a key and a name (a program), bare or as the target of <code>[text](target)</code>. Web addresses are ordinary text.</p>
+<h2 id="programs-and-documents">Programs and documents</h2>
+<p>Feeds also carry programs (kind 3) and documents (kind 4) for the machine, and may carry kinds a later revision defines (5 to 254), which are valid entries. A reader without the machine keeps or skips such entries without error and, if it shows them, shows them as something it cannot open. A link may also lead to a blob that is a program image (it starts with <code>TERS</code>) or a document (<code>TDOC</code>): say that you cannot open it rather than showing its bytes. A program link gets the same answer.</p>
+<h2 id="checking-your-reader">Checking your reader</h2>
+<p>Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with <code>terse manual publish</code>, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.</p>
+<p>The details of the network are in <a href="network.html">the network</a>; how the built-in reader lays articles out on the machine is in <a href="device-page.html">the page device</a>, which you do not need to follow.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="writing-articles.html">← Writing an article</a><a rel="next" href="state.html">State, replay and conformance →</a></nav></footer>
+</body>
+</html>

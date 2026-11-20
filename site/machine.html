@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The machine - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="the-machine">The machine</h1>
+<p>This article describes machine profile 1, the only profile so far: the CPU, the memory map, how frames and the budget work, how a machine stops, the image file a program is shipped in, and how programs call devices, with the complete table of calls. Each device&#39;s calls are described in full in that device&#39;s article.</p>
+<p>The machine is the optional third layer of Terse: the network and the article format are the core, and a reader can implement them without it. A machine host that only wants to run the reader may provide the machine&#39;s reading profile: the machine and devices 1, 2, 4 and 7, with every content operation the reader needs (get, subscriptions, timeline, names, identity, subscribe, unsubscribe); it may answer the others with status 05h, and lacks devices 3, 8 and 9, so it refuses an image that lists them. <code>terse run --profile reading</code> runs a machine that way.</p>
+<h2 id="cpu">CPU</h2>
+<p>The CPU executes exactly RV32I with the M (multiply and divide) and C (compressed) extensions, little-endian, in user mode. There is no A, F, D or B extension, no Zicsr or Zifencei, and no privileged architecture: no control and status registers, counters or traps are visible.</p>
+<div class="table"><table>
+<thead><tr><th>Instruction</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td><code>FENCE</code> (funct3 = 0, including <code>FENCE.TSO</code>, <code>PAUSE</code>, hint forms)</td><td>does nothing</td></tr>
+<tr><td>HINT encodings (<code>c.addi x0, 5</code>, <code>slli x0, x0, 3</code>, ...)</td><td>execute as written; writes to <code>x0</code> are discarded</td></tr>
+<tr><td><code>div</code>, <code>divu</code> by zero</td><td>give all ones; no trap</td></tr>
+<tr><td><code>rem</code>, <code>remu</code> by zero</td><td>give the dividend</td></tr>
+<tr><td><code>div</code> of −2³¹ by −1</td><td>gives −2³¹; <code>rem</code> gives 0</td></tr>
+<tr><td>jumps and branches</td><td>targets need only be even; <code>jalr</code> clears bit 0</td></tr>
+<tr><td>loads and stores</td><td>must be aligned to their size (2 or 4), else a misaligned fault</td></tr>
+<tr><td><code>ecall</code></td><td>a device call (see Calls below)</td></tr>
+</tbody></table></div>
+<p>A jump to an address outside ROM and RAM faults when the instruction there is fetched, not at the jump. Everything else faults as an illegal instruction: <code>ebreak</code> and <code>c.ebreak</code> (a breakpoint fault); every reserved or illegal encoding, including the all-zero parcel <code>c.unimp</code>, <code>C.ADDI4SPN</code>, <code>C.ADDI16SP</code> and <code>C.LUI</code> with a zero immediate, <code>C.LWSP</code> and <code>C.JR</code> with register 0, compressed shifts with shamt[5] set, <code>C.SUBW</code>, <code>C.ADDW</code> and the reserved MISC-ALU codes, every compressed floating-point load or store, all 48-bit and longer encodings, CSR instructions, <code>FENCE.I</code>, <code>MRET</code>, <code>WFI</code> and the other privileged encodings.</p>
+<h2 id="memory-map">Memory map</h2>
+<div class="table"><table>
+<thead><tr><th>Address</th><th>Contents</th><th>Access</th></tr></thead>
+<tbody>
+<tr><td><code>0001_0000h</code> to <code>0001_0000h</code> + rom_len − 1</td><td>ROM: the image&#39;s bytes</td><td>read, execute</td></tr>
+<tr><td><code>0010_0000h</code> to <code>0010_0000h</code> + 8,192 × ram_pages − 1</td><td>RAM</td><td>read, write, execute</td></tr>
+<tr><td>everything else</td><td>nothing</td><td>any access faults</td></tr>
+</tbody></table></div>
+<p>So address 0 faults, a store to ROM faults, and so does fetching an instruction any part of which lies outside ROM and RAM (for example a 32-bit instruction whose second half would be past the end of ROM). Code may run from RAM; an instruction fetched from RAM is decoded when it is executed, so code written to RAM takes effect at once, but each such instruction costs 4 units instead of 1.</p>
+<h2 id="reset-state">Reset state</h2>
+<ul>
+<li><code>pc</code> = <code>0001_0000h</code>, the first byte of ROM.</li>
+<li><code>sp</code> (<code>x2</code>) = <code>0010_0000h</code> + 8,192 × ram_pages, the end of RAM. Every other register is zero.</li>
+<li>All RAM is zero, every device is in its reset state, the budget is zero and the frame counter is 0.</li>
+</ul>
+<h2 id="frames-and-the-budget">Frames and the budget</h2>
+<p>Time advances in frames, nominally 60 a second. There are no interrupts. For each frame the host does, in order:</p>
+<div class="table"><table>
+<thead><tr><th>Step</th><th>What happens</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>appends the frame&#39;s input events to the event queue, latches the clock, the random bytes and the controllers, and applies the content completions it has for this frame (their content-done events come after the input events)</td></tr>
+<tr><td>2</td><td>adds 125,000 to the budget, subtracts the charge for the content delivered in step 1, and runs the CPU while the budget is greater than zero</td></tr>
+<tr><td>3</td><td>ends the frame: the frame counter increases by one, and the host presents the terminal, the vector displays and the page as they are now</td></tr>
+</tbody></table></div>
+<div class="table"><table>
+<thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Instruction cost</td><td>1 unit fetched from ROM, 4 fetched from RAM</td></tr>
+<tr><td><code>ecall</code> cost</td><td>1 (or 4 from RAM) plus the call&#39;s charge</td></tr>
+<tr><td>Overrun</td><td>an instruction that starts with a positive budget runs to completion, so the budget can end below zero</td></tr>
+<tr><td>Negative carry</td><td>a negative remainder carries into the next frame; if it exceeds a whole frame&#39;s budget, that frame runs nothing and the rest carries on</td></tr>
+<tr><td>No positive carry</td><td>unused budget never carries forward</td></tr>
+<tr><td>Running out</td><td>the machine pauses and continues with the next instruction in the next frame; the program is not told</td></tr>
+<tr><td><code>wait_frame</code></td><td>the rest of the budget is discarded and the call returns at the start of the next frame, which always runs (content delivered in a frame costs at most 32,768 units)</td></tr>
+<tr><td>Stopping</td><td><code>exit</code> or a fault stops the machine at once; the rest of the budget is dropped, the frame still counts, nothing runs later</td></tr>
+</tbody></table></div>
+<p>A host that falls behind real time lets virtual time lag; it never runs extra frames to catch up. In a system of several machines each machine has its own budget, carry and frame counter.</p>
+<h2 id="stopping-and-faults">Stopping and faults</h2>
+<p>A machine is running, or stopped by an exit or a fault. A fault has no exit code, and a host must show a fault as a fault, with its kind and addresses. The faulting instruction is not executed and not charged, and <code>pc</code> is left pointing at it.</p>
+<div class="table"><table>
+<thead><tr><th>Stopped</th><th>Cause</th><th>Recorded</th></tr></thead>
+<tbody>
+<tr><td>Exit</td><td>the <code>exit</code> call</td><td>the exit code, 0 to 255</td></tr>
+<tr><td>Fault</td><td>one of the kinds below</td><td>the kind, <code>pc</code> and an address</td></tr>
+</tbody></table></div>
+<div class="table"><table>
+<thead><tr><th>Number</th><th>Fault kind</th><th>Cause</th><th>Address recorded</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Illegal instruction</td><td>a reserved, illegal or unsupported encoding; the 16- or 32-bit encoding is recorded too</td><td><code>pc</code></td></tr>
+<tr><td>2</td><td>Breakpoint</td><td><code>ebreak</code>, <code>c.ebreak</code></td><td><code>pc</code></td></tr>
+<tr><td>3</td><td>Fetch</td><td>an instruction, or its second half, is not in ROM or RAM</td><td>the address that could not be fetched</td></tr>
+<tr><td>4</td><td>Load</td><td>a load from outside ROM and RAM</td><td>the load address</td></tr>
+<tr><td>5</td><td>Store</td><td>a store outside RAM (ROM included)</td><td>the store address</td></tr>
+<tr><td>6</td><td>Misaligned</td><td>a load or store not aligned to its size</td><td>the access address</td></tr>
+</tbody></table></div>
+<p>The numbers are those of the state serialization and of the shell&#39;s <code>info</code> record.</p>
+<h2 id="the-image-format">The image format</h2>
+<p>A program is one file (suggested extension <code>.terse</code>): a 32-byte header, the device requirements, then the ROM. All numbers are little-endian.</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>4</td><td>Magic: <code>54h 45h 52h 53h</code> (<code>TERS</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>Format version: 0</td></tr>
+<tr><td>5</td><td>1</td><td>Machine profile: 1</td></tr>
+<tr><td>6</td><td>3</td><td><code>rom_len</code>: 1 to 131,072</td></tr>
+<tr><td>9</td><td>1</td><td><code>ram_pages</code>: 8 KiB pages of RAM, 1 to 128</td></tr>
+<tr><td>10</td><td>1</td><td><code>n_dev</code>: device requirements, 0 to 16</td></tr>
+<tr><td>11</td><td>5</td><td>Reserved, zero</td></tr>
+<tr><td>16</td><td>16</td><td>Title, UTF-8, padded with <code>00h</code></td></tr>
+<tr><td>32</td><td>2 × <code>n_dev</code></td><td>(device slot, device version) pairs</td></tr>
+<tr><td>32 + 2 × <code>n_dev</code></td><td><code>rom_len</code></td><td>ROM; byte 0 is at <code>0001_0000h</code></td></tr>
+</tbody></table></div>
+<ul>
+<li>The file length must be exactly 32 + 2 × <code>n_dev</code> + <code>rom_len</code>.</li>
+<li>The image ID is the BLAKE3-256 hash of the whole file. It names the program everywhere: an image is a blob, and its ID is its blob ID.</li>
+<li>A slot may be listed at most once; a host refuses an image that lists one twice. Device 1 is always present and need not be listed.</li>
+<li>The title is the 16 bytes without their trailing <code>00h</code> bytes. Hosts do not check it (<code>terse pack</code> refuses one that is not UTF-8); a built-in whose title is not a valid display name cannot be started by name, only by its image ID.</li>
+<li>A host refuses an image whose profile or listed device versions it does not implement (also when a shell starts it). A device not listed behaves as absent: its calls return <code>FFFF_FFFFh</code>.</li>
+<li><code>terse pack --rom &lt;bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; --device 2:0 -o &lt;out&gt;</code> builds an image; give <code>--device S:V</code> once per device.</li>
+</ul>
+<div class="table"><table>
+<thead><tr><th>Slot</th><th>Device</th><th>Version</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>System</td><td>0</td><td>specified; reading profile</td></tr>
+<tr><td>2</td><td>Terminal</td><td>0</td><td>specified; reading profile</td></tr>
+<tr><td>3</td><td>2D vector display</td><td>0</td><td>specified</td></tr>
+<tr><td>4</td><td>Content</td><td>0</td><td>specified; reading profile</td></tr>
+<tr><td>5</td><td>Messages</td><td>none</td><td>reserved</td></tr>
+<tr><td>6</td><td>Sound</td><td>none</td><td>reserved</td></tr>
+<tr><td>7</td><td>Page</td><td>0</td><td>specified; reading profile</td></tr>
+<tr><td>8</td><td>Machines</td><td>0</td><td>specified; only the shell of a system has it</td></tr>
+<tr><td>9</td><td>3D vector display</td><td>0</td><td>specified</td></tr>
+</tbody></table></div>
+<p>Slots 0 and 10 to 255 are not devices.</p>
+<h2 id="calls">Calls</h2>
+<p>A program reaches a device with <code>ecall</code>. Register <code>a7</code> holds the call number, (device slot &lt;&lt; 8) | function; arguments are in <code>a0</code> to <code>a5</code>; the result is in <code>a0</code>, and a second result in <code>a1</code> where listed. A call changes no other register and no memory but the buffers it is said to write; <code>pc</code> continues after the <code>ecall</code>.</p>
+<ul>
+<li>An unknown call, or a call to a device the image does not list, returns <code>FFFF_FFFFh</code> (<code>TERSE_ERR_UNKNOWN</code>) and does nothing else.</li>
+<li>A buffer is a pointer and a length. A buffer a device reads must lie wholly in ROM or wholly in RAM; one it writes must lie wholly in RAM. A buffer of length 0 is valid at any address, for every call. Otherwise the call returns <code>FFFF_FFFEh</code> (<code>TERSE_ERR_BUFFER</code>) and does nothing else. This is not a fault.</li>
+<li>Exceptions: a vector display list not wholly in RAM is rejected (result 1, as for a bad length); a content request block not in RAM is rejected with handle 0, and a data range of the block that is not where it must be makes the request invalid (status <code>04h</code>); page <code>submit</code> returns 1 for a bad length before it looks at the buffer.</li>
+<li>A call checks its buffer before its other arguments: a bad buffer gives <code>FFFF_FFFEh</code> whatever they are (page <code>submit</code> aside).</li>
+<li>Buffers need no alignment. Every call is charged, also when it fails: see <a href="charges.html">charges</a>.</li>
+</ul>
+<p>In C, <code>terse.h</code> has a constant for every call (<code>CALL_WAIT_FRAME</code>, ...) and the inline functions <code>terse_call</code>, <code>terse_call4</code>, <code>terse_call5</code> and <code>terse_call2</code> (for two results).</p>
+<h2 id="call-table">Call table</h2>
+<p>Class sets the base charge: 4 for a deferred call (its result and charge follow from its arguments), 64 for an answered one (they depend on the device&#39;s state). System and Machines calls cost 4.</p>
+<p><a href="device-system.html">The system device</a>, slot 1, always present:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>100h</code></td><td><code>wait_frame</code></td><td>none</td><td>the frame counter in the frame it returns in</td></tr>
+<tr><td><code>101h</code></td><td><code>next_event</code></td><td><code>a0</code> = buffer (4 bytes, written)</td><td>1 and the event, or 0 if the queue is empty</td></tr>
+<tr><td><code>102h</code></td><td><code>frame_count</code></td><td>none</td><td>the frame counter</td></tr>
+<tr><td><code>103h</code></td><td><code>unix_time</code></td><td>none</td><td>the Unix time latched at the start of the frame</td></tr>
+<tr><td><code>104h</code></td><td><code>random</code></td><td><code>a0</code> = buffer (written), <code>a1</code> = length, at most 256</td><td>the length</td></tr>
+<tr><td><code>105h</code></td><td><code>controller</code></td><td><code>a0</code> = controller number, <code>a1</code> = buffer (8 bytes, written)</td><td>byte 0 of the state</td></tr>
+<tr><td><code>106h</code></td><td><code>exit</code></td><td><code>a0</code> = exit code (low 8 bits)</td><td>does not return</td></tr>
+<tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td></tr>
+<tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td></tr>
+</tbody></table></div>
+<p><a href="device-terminal.html">The terminal</a>, slot 2:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>200h</code></td><td><code>write</code></td><td><code>a0</code> = buffer (read), <code>a1</code> = length, at most 4,096</td><td>the length</td><td>deferred</td></tr>
+<tr><td><code>201h</code></td><td><code>command</code></td><td><code>a0</code> = command</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>202h</code></td><td><code>set_cursor</code></td><td><code>a0</code> = column, <code>a1</code> = row</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>203h</code></td><td><code>get_cursor</code></td><td>none</td><td><code>a0</code> = column, <code>a1</code> = row</td><td>answered</td></tr>
+<tr><td><code>204h</code></td><td><code>set_colours</code></td><td><code>a0</code> = foreground, <code>a1</code> = background</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>205h</code></td><td><code>get_colours</code></td><td>none</td><td><code>a0</code> = foreground, <code>a1</code> = background</td><td>answered</td></tr>
+<tr><td><code>206h</code></td><td><code>cells_read</code></td><td><code>a0</code> = first cell, <code>a1</code> = buffer (written), <code>a2</code> = count</td><td>the count</td><td>answered</td></tr>
+<tr><td><code>207h</code></td><td><code>cells_write</code></td><td><code>a0</code> = first cell, <code>a1</code> = buffer (read), <code>a2</code> = count</td><td>the count</td><td>deferred</td></tr>
+<tr><td><code>208h</code></td><td><code>palette_set</code></td><td><code>a0</code> = first entry, <code>a1</code> = buffer (read), <code>a2</code> = count</td><td>the count</td><td>deferred</td></tr>
+<tr><td><code>209h</code></td><td><code>size</code></td><td>none</td><td><code>a0</code> = 80 columns, <code>a1</code> = 30 rows</td><td>deferred</td></tr>
+</tbody></table></div>
+<p><a href="device-vector.html">The 2D vector display</a>, slot 3:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>300h</code></td><td><code>submit</code></td><td><code>a0</code> = list address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>301h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>302h</code></td><td><code>style</code></td><td><code>a0</code> = style</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>303h</code></td><td><code>persistence</code></td><td><code>a0</code> = persistence</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>304h</code></td><td><code>fill</code></td><td><code>a0</code> = fill mode</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+</tbody></table></div>
+<p>The content device, slot 4 (see <a href="content-blobs.html">blobs</a>, <a href="content-feeds.html">feeds</a> and <a href="content-records.html">named records</a>):</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>400h</code></td><td><code>submit</code></td><td><code>a0</code> = address of a request block</td><td>a handle 1 to 8, or 0 if rejected</td><td>answered</td></tr>
+</tbody></table></div>
+<p><a href="device-page.html">The page</a>, slot 7:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>700h</code></td><td><code>submit</code></td><td><code>a0</code> = document address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>701h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>702h</code></td><td><code>region</code></td><td><code>a0</code> = x, <code>a1</code> = y, <code>a2</code> = width, <code>a3</code> = height</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>703h</code></td><td><code>scroll</code></td><td><code>a0</code> = y</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>704h</code></td><td><code>background</code></td><td><code>a0</code> = colour</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>705h</code></td><td><code>locate</code></td><td><code>a0</code> = anchor id</td><td>0 done, 1 rejected</td><td>answered</td></tr>
+</tbody></table></div>
+<p><a href="device-machines.html">Machines</a>, slot 8, the shell only:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>800h</code></td><td><code>start</code></td><td><code>a0</code> = image ID address (32 bytes, read)</td><td>a handle 1 to 8, or 0 if none is free</td></tr>
+<tr><td><code>801h</code></td><td><code>stop</code></td><td><code>a0</code> = handle</td><td>1, or 0 if not in use</td></tr>
+<tr><td><code>802h</code></td><td><code>place</code></td><td><code>a0</code> = handle, <code>a1</code> = x, <code>a2</code> = y, <code>a3</code> = width, <code>a4</code> = height</td><td>1, or 0 if not in use</td></tr>
+<tr><td><code>803h</code></td><td><code>run</code></td><td><code>a0</code> = handle, <code>a1</code> = 1 run, 0 pause</td><td>1, or 0 if refused</td></tr>
+<tr><td><code>804h</code></td><td><code>focus</code></td><td><code>a0</code> = handle, or 0</td><td>1, or 0 if refused</td></tr>
+<tr><td><code>805h</code></td><td><code>info</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (48 bytes, written)</td><td>1, or 0 if the handle is not 1 to 8</td></tr>
+<tr><td><code>806h</code></td><td><code>builtin</code></td><td><code>a0</code> = index, <code>a1</code> = buffer (32 bytes, written)</td><td>1, or 0 past the last</td></tr>
+<tr><td><code>807h</code></td><td><code>start_program</code></td><td><code>a0</code> = program record address (read)</td><td>a handle 1 to 8, or 0 if none is free</td></tr>
+<tr><td><code>808h</code></td><td><code>identity</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (81 bytes, written)</td><td>1, or 0 if it has none</td></tr>
+<tr><td><code>809h</code></td><td><code>request</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (82 bytes, written)</td><td>1, or 0 if no request waits</td></tr>
+<tr><td><code>80Ah</code></td><td><code>argument</code></td><td><code>a0</code> = handle, <code>a1</code> = blob ID address (32 bytes, read)</td><td>1, or 0 if not loading</td></tr>
+<tr><td><code>80Bh</code></td><td><code>snapshot</code></td><td><code>a0</code> = handle, <code>a1</code> = slot</td><td>1 accepted, 0 refused</td></tr>
+<tr><td><code>80Ch</code></td><td><code>restore</code></td><td><code>a0</code> = slot</td><td>a handle 1 to 8, or 0 if none is free or the slot is out of range</td></tr>
+<tr><td><code>80Dh</code></td><td><code>snapshot_info</code></td><td><code>a0</code> = slot, <code>a1</code> = buffer (122 bytes, written)</td><td>1 if the slot holds a snapshot, else 0</td></tr>
+<tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> = slot</td><td>1, or 0 if the slot is out of range</td></tr>
+<tr><td><code>80Fh</code></td><td><code>face</code></td><td><code>a0</code> = handle, <code>a1</code> = frames, <code>a2</code> = x, <code>a3</code> = y, <code>a4</code> = width, <code>a5</code> = height</td><td>1, or 0 if refused</td></tr>
+<tr><td><code>810h</code></td><td><code>unface</code></td><td><code>a0</code> = frames</td><td>1, or 0 if refused</td></tr>
+</tbody></table></div>
+<p><a href="device-vector3.html">The 3D vector display</a>, slot 9:</p>
+<div class="table"><table>
+<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
+<tbody>
+<tr><td><code>900h</code></td><td><code>submit</code></td><td><code>a0</code> = list address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>901h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
+<tr><td><code>902h</code></td><td><code>style</code></td><td><code>a0</code> = style</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+<tr><td><code>903h</code></td><td><code>persistence</code></td><td><code>a0</code> = persistence</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
+</tbody></table></div>
+<h2 id="screen-units">Screen units</h2>
+<p>Every device that draws, and the pointer, uses one coordinate system: the screen is 640 units wide and 480 high, (0, 0) at the top left, x to the right and y down. Units are square; the host shows the screen at a 4:3 shape, so a circle is round. A terminal cell is 8 units wide and 16 high: the cell at (column, row) starts at x = column × 8, y = row × 16. The vector displays use sixteenths of a unit for finer positions.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="state.html">← State, replay and conformance</a><a rel="next" href="device-system.html">The system device (device 1) →</a></nav></footer>
+</body>
+</html>

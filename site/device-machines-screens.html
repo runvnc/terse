@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screens, panels and input (device 8) - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="screens-panels-and-input-device-8">Screens, panels and input (device 8)</h1>
+<p>In a system the host draws each machine&#39;s screen where the shell placed it, and routes the input to the machines. This article describes both. The calls that place machines (<code>place</code>, <code>face</code>, <code>unface</code>) are in The Machines device; a panel is a Screen command (<code>0Dh</code>) in the shell&#39;s own 3D list, described in The 3D vector display.</p>
+<h2 id="pictures">Pictures</h2>
+<p>A machine&#39;s picture is its screen scaled uniformly into its rectangle (x, y, w, h) and centred:</p>
+<pre>    if w*480 &lt;= h*640: pw = w, ph = floor(w*480/640)
+    else:              pw = floor(h*640/480), ph = h
+    px = x + floor((w-pw)/2), py = y + floor((h-ph)/2)</pre>
+<p>If pw or ph is 0 nothing is shown. Running, paused, exited and faulted machines have a picture (exited and faulted ones show their last frame); loading and failed ones have none. Example: (0, 20, 640, 460) gives the picture (13, 20, 613, 460).</p>
+<p>A machine is shown flat in the picture of its own rectangle, or, once the view of it (below) has finished moving towards the glass, in the picture of the view&#39;s rectangle. It is shown as a panel where the shell&#39;s 3D list has a Screen of it in effect, unless the view shows it flat. A Screen is in effect only in the shell&#39;s list, only the first one of its handle, and only if that machine has a picture and its own rectangle shows none.</p>
+<h2 id="what-the-host-draws">What the host draws</h2>
+<p>With no Screen in effect, from the bottom: the shell&#39;s screen, then each flat picture in handle order (each a complete screen, with its own layers, style, afterglow and page, covering what is below), then the host&#39;s prompts. With at least one, the shell&#39;s scene, from the bottom:</p>
+<p>1. the shell&#39;s screen without the lines, points and circles of its 3D list; 2. the panels, farthest first by the distance from the eye in use to each panel&#39;s centre (the mean of its corners), the lower handle first where two are as far; each covers what is below; 3. the lines, points and circles of the shell&#39;s 3D list, each panel hiding what is behind it as a face of its four corners does; 4. each flat picture, in handle order; 5. the host&#39;s prompts, naming the image title of the machine that asks.</p>
+<p>A panel shows its machine&#39;s whole screen on its front, in perspective from the eye in use: the point a fraction u along its top edge from its top left corner and v down its left edge shows the point (640u, 480v) of the machine&#39;s screen. Seen from behind it is an opaque plate of a dark colour the host chooses. Panels are cut at the near plane (z = -800) and at the edges of the shell&#39;s screen. A host that cannot draw a picture in perspective may draw each panel&#39;s picture upright instead: scaled uniformly into the bounding rectangle of the panel&#39;s projection (its part in front of the near plane) and centred; the panel still hides what it would hide. (<code>terse-host --panels flat</code> makes its software renderer do this.) The resolution a panel&#39;s picture is drawn at, its filtering and the smoothing of its edges are presentation.</p>
+<h2 id="the-view">The view</h2>
+<p><code>face</code> gives the system a view: a handle, a direction (towards the glass, or back after <code>unface</code>), a rectangle, a start progress, a start frame and a duration. Its progress is a number from 0 (the scene as listed) to 4,096 (the panel flat on the glass). After the shell&#39;s frame with counter f, with start progress p0, start frame s and duration d, it is</p>
+<pre>    k &lt; d:  p0 + (e - p0) * k / d, rounded towards zero
+    k &gt;= d: e        (also for d = 0)</pre>
+<p>for k = f - s (32-bit unsigned), where e is 4,096 towards the glass and 0 back. The view moves while the progress is not e.</p>
+<p>While there is a view whose machine has a Screen in effect, everything in steps 2 and 3 above (panels, lines, points, circles and the faces that hide them) is moved by the view&#39;s transform before it is seen from the eye; the caps are counted on the list as given. Let the view&#39;s panel as listed have the centre c0, the width w0 and the orientation R0 (the rotation whose columns are the unit vectors along its top edge, down its left edge and their cross product), and let the picture of the view&#39;s rectangle be (px, py, pw, ph), with centre c1 = (px + pw/2, py + ph/2, 0). At progress p let t = p/4,096 and e = t²(3 - 2t). Then</p>
+<pre>    c = c0 + (c1 - c0) e
+    w = w0 (pw/w0)^e
+    R = slerp(R0, identity, e), by the shorter arc
+    q goes to c + (w/w0) R R0ᵀ (q - c0)</pre>
+<p>So at progress 0 the scene is as listed, and at 4,096 the view&#39;s panel lies on the glass over the picture, upright, centred on it and as wide. The eye stays where it is, so what is not on the glass still moves with it. When the view has finished moving towards the glass its machine is shown flat, pixel for pixel as <code>place</code> would show it. A host that cannot animate may show every view at its end at once.</p>
+<p>At the end of each of the shell&#39;s frames, if the view&#39;s machine is not in use, has no picture, has a rectangle that shows a picture, or has no Screen in the shell&#39;s list, the view becomes none: the scene is shown as listed at once. The view is part of the shell&#39;s state (18 bytes at the end of the machines section of the state; see State, replay and conformance).</p>
+<h2 id="input">Input</h2>
+<p>Input arrives in the shell&#39;s screen units and is routed before the shell runs, by the focus, the flat pictures and the panels as shown after the shell&#39;s last frame, seen from the eye the host draws from:</p>
+<div class="table"><table>
+<thead><tr><th>Input</th><th>Goes to</th></tr></thead>
+<tbody>
+<tr><td>Key down, key up, text, wheel</td><td>the focused machine if running; the shell if focus is 0; else nobody</td></tr>
+<tr><td>Pointer over a flat picture</td><td>that machine (highest handle on overlap), mapped, if running; else nobody</td></tr>
+<tr><td>Pointer over a panel&#39;s front, no flat picture</td><td>nobody while the view moves; else that machine, mapped, if running; else nobody</td></tr>
+<tr><td>Pointer over nothing else</td><td>the shell, unchanged</td></tr>
+<tr><td>Controllers</td><td>the focused machine (the shell if focus is 0); others read them as not connected</td></tr>
+<tr><td>Content, feeds, page events</td><td>each machine its own</td></tr>
+<tr><td>Any other host input</td><td>the shell, unchanged</td></tr>
+</tbody></table></div>
+<p>The focus that routes a frame&#39;s input, the controllers included, is the one at routing: a home key changes it for the events after it, a <code>focus</code> call from the next frame.</p>
+<p>A position over picture (px, py, pw, ph) maps to</p>
+<pre>    x&#39; = floor((2(x-px)+1) * 640 / (2pw))
+    y&#39; = floor((2(y-py)+1) * 480 / (2ph))</pre>
+<p>The pointer at (x, y) is over a panel if the ray from the eye in use through the point (x + 1/2, y + 1/2, 0) meets the panel in front of the near plane (z &gt; -800), at a fraction u along its top edge and v down its left edge (0 &lt;= u &lt; 1, 0 &lt;= v &lt; 1); of several, the one it meets nearest the eye counts. If that panel is seen from behind, the pointer is over nothing; otherwise it maps to x&#39; = floor(640u), y&#39; = floor(480v). The eye is an input of the shell&#39;s system, as the pointer is.</p>
+<p>A pointer event that sets a button bit clear in the previous pointer event (wherever that went) over a flat picture, or over a panel while the view does not move, also gives the shell a machine pressed event, at the pointer event&#39;s place in the shell&#39;s input, whatever the machine&#39;s state.</p>
+<p>The home key is one input the host reserves (F12 in <code>terse-host</code>, the <code>home</code> script line in <code>terse run</code>). It never reaches a machine as a key; it sets the focus to 0 and queues a home event for the shell. A single machine run alone has no home key. See <a href="events.html">events</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-machines.html">← The Machines device (device 8)</a><a rel="next" href="content-blobs.html">Content: blobs, requests and statuses (device 4) →</a></nav></footer>
+</body>
+</html>

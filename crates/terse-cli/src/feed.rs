@@ -116,7 +116,8 @@ pub fn feed(args: &[String]) -> Result<ExitCode, String> {
 /// `terse relay add|remove|set <url>`, `terse relay list|show`: the
 /// relay list in the config directory's `relays` file (NETWORK 5).
 /// `terse manual build|check [--dir <d>]`: resolves the manual's links and
-/// writes (or checks) `<d>/build`; `terse manual publish`: publishes the
+/// writes (or checks) `<d>/build`; `terse manual site --out <o>` writes
+/// the manual as a static website to `<o>`; `terse manual publish`: publishes the
 /// manual built into terse as article entries of the user's feed, the
 /// articles linked to before those that link to them, so the index last.
 pub fn manual(args: &[String]) -> Result<ExitCode, String> {
@@ -153,6 +154,18 @@ pub fn manual(args: &[String]) -> Result<ExitCode, String> {
             } else {
                 Err(format!("out of date in {}: {} (run `terse manual build`)", out.display(), stale.join(", ")))
             }
+        }
+        "site" => {
+            args.check_known(&["--dir", "--out"])?;
+            if !args.positional.is_empty() {
+                return Err(USAGE.into());
+            }
+            let dir = PathBuf::from(args.get("--dir").unwrap_or("docs/manual"));
+            let out = PathBuf::from(args.require("--out")?);
+            let files = terse_net::manual_site::site_dir(&dir, &out)?;
+            let bytes: usize = files.iter().map(|(_, d)| d.len()).sum();
+            println!("{} files, {bytes} bytes, in {}", files.len(), out.display());
+            Ok(ExitCode::SUCCESS)
         }
         "publish" => {
             known(&args, &[])?;

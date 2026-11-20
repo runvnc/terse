@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State, replay and conformance - the Terse manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="state-replay-and-conformance">State, replay and conformance</h1>
+<p>A Terse machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.</p>
+<h2 id="the-state-serialization">The state serialization</h2>
+<p>The serialization covers everything that can influence later frames or what is shown, and nothing else. It exists only between frames: after a frame ends and before the next begins (a machine just reset counts). Integers are little-endian, <code>u32</code> unsigned, <code>i32</code> two&#39;s complement; a flag is <code>00h</code> or <code>01h</code>. There is no padding. Sections follow in this order.</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>13</td><td>ASCII <code>terse-state-1</code></td></tr>
+<tr><td>13</td><td>32</td><td>Image ID (BLAKE3-256 of the image file)</td></tr>
+<tr><td>45</td><td>4</td><td><code>pc</code> (after a fault, the faulting instruction)</td></tr>
+<tr><td>49</td><td>124</td><td><code>x1</code> to <code>x31</code>, u32 each</td></tr>
+<tr><td>173</td><td>4</td><td>Frame counter (what <code>frame_count</code> returns next frame)</td></tr>
+<tr><td>177</td><td>1</td><td>Stopped: 0 running, 1 exited, 2 faulted</td></tr>
+<tr><td>178</td><td>1</td><td>Exit code, else 0</td></tr>
+<tr><td>179</td><td>1</td><td>Fault kind: 1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned; else 0</td></tr>
+<tr><td>180</td><td>4</td><td>Illegal instruction&#39;s encoding (16-bit in the low half), else 0</td></tr>
+<tr><td>184</td><td>4</td><td>Fault <code>pc</code>, else 0</td></tr>
+<tr><td>188</td><td>4</td><td>Fault address, else 0</td></tr>
+<tr><td>192</td><td>4</td><td>Budget carried into the next frame (i32, zero or negative)</td></tr>
+<tr><td>196</td><td>4</td><td>L: RAM size, <code>ram_pages</code> x 8,192</td></tr>
+<tr><td>200</td><td>L</td><td>All of RAM from <code>0010_0000h</code></td></tr>
+</tbody></table></div>
+<p>The image ID stands for the ROM, the RAM size and the device list, which never change. From here offsets are relative to the start of each section.</p>
+<p>System, 37 + 4n bytes:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>4</td><td>Unix time latched for the frame just run</td></tr>
+<tr><td>4</td><td>1</td><td>n: events queued, 0-64</td></tr>
+<tr><td>5</td><td>4n</td><td>The events from the head: type, a, b, c</td></tr>
+<tr><td>5 + 4n</td><td>32</td><td>Controllers 0-3, 8 bytes each, as <code>controller</code> returned them last frame (zero if not connected)</td></tr>
+</tbody></table></div>
+<p>Terminal (device 2), 1 or 10,379 bytes:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>Present: the image lists device 2 (if 0, the section ends)</td></tr>
+<tr><td>1</td><td>9,600</td><td>Cells 0-2,399, 4 bytes each</td></tr>
+<tr><td>9,601</td><td>6</td><td>Cursor column, row, foreground, background, cursor shown, pending wrap</td></tr>
+<tr><td>9,607</td><td>768</td><td>Palette 0-255: red, green, blue</td></tr>
+<tr><td>10,375</td><td>1</td><td>k: bytes of an incomplete UTF-8 sequence given to <code>write</code>, 0-3</td></tr>
+<tr><td>10,376</td><td>3</td><td>Those bytes, then zeros</td></tr>
+</tbody></table></div>
+<p>Vector display, 1 or 8 + m bytes: present (the image lists device 3 or 9), style (0 clean, 1 phosphor), persistence (160 at reset), fill mode (0 fill, 1 outlines), m (u32, 0-16,384), then the list last accepted. Style and persistence are shared with device 9; an image without device 3 has fill mode 0 and m = 0.</p>
+<p>Content (device 4), 1 or 425 bytes: present, then 8 request records of 53 bytes for handles 1-8:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td><code>op</code> pending (<code>01h</code>-<code>11h</code>), or 0 for a free handle (all zero)</td></tr>
+<tr><td>1</td><td>4</td><td>Address of the request block</td></tr>
+<tr><td>5</td><td>32</td><td><code>id</code> read at submit (a record&#39;s name for save, load, delete; a put&#39;s blob ID)</td></tr>
+<tr><td>37</td><td>4</td><td><code>offset</code> read at submit (publish: the kind; set profile: the listed bit)</td></tr>
+<tr><td>41</td><td>4</td><td><code>length</code> read at submit</td></tr>
+<tr><td>45</td><td>4</td><td><code>addr</code> read at submit</td></tr>
+<tr><td>49</td><td>4</td><td><code>size</code> read at submit (put, save; find: query length)</td></tr>
+</tbody></table></div>
+<p>Fields an op does not read at submit are zero.</p>
+<p>Page (device 7), 1 or 21 + d bytes: present, the rectangle x, y, width, height (u16 each, as clamped), the scroll value (u32, as stored), the background (u32, <code>FF00_0000h</code> at reset), d (u32: document length 1-65,536, or 0 for none) and the document.</p>
+<p>Machines (device 8): absent (0 bytes) if the image does not list device 8. Otherwise a present flag, 1 only for the shell of a system; if it is 0 the section ends. Then focus (1), 8 handle records of 138 bytes, b (1) and b built-in image IDs (32 each), r (1) and r unread open requests (each the handle, then the 82 bytes <code>request</code> writes), in handle order, then the view (18 bytes, all zero for none: handle, direction, the rectangle as four u16, start progress u16, start frame u32, duration u16). Total 1,126 + 32b + 83r.</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Handle record</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>State</td></tr>
+<tr><td>1</td><td>1</td><td>Run flag</td></tr>
+<tr><td>2</td><td>8</td><td>Rectangle x, y, w, h (u16, as clamped)</td></tr>
+<tr><td>10</td><td>47</td><td>Bytes 1-47 of the <code>info</code> record</td></tr>
+<tr><td>57</td><td>81</td><td>Identity given to <code>start_program</code>, or zeros</td></tr>
+</tbody></table></div>
+<p>3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.</p>
+<p>Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the 3D section, none when 0 remain, and refuses any other remainder.</p>
+<p>The sections that may be absent were added so that the hashes of older images did not change. The total is 45 + 128 + 23 + 4 + L + 37 + 4n plus the device sections.</p>
+<h2 id="what-is-left-out">What is left out</h2>
+<ul>
+<li>ROM, title, device list: covered by the image ID.</li>
+<li>This frame&#39;s random bytes: they cannot outlive the frame.</li>
+<li>Copied bytes of requests not yet handed to the host (a put&#39;s data, a save&#39;s data, a title, query or name): only their effect, later inputs, matters; a put is held by its ID.</li>
+<li>Named records, a machine&#39;s identity, consent prompts, whether an open request still waits: host data, seen by the machine only as inputs. A started machine&#39;s identity is in the shell&#39;s handle record.</li>
+<li>Host bookkeeping and presentation: caches, statistics, fonts, pixels, afterglow, the 3D eye, the page&#39;s layout and locate requests. Layout results reach the machine as events, which are in the queue.</li>
+<li>A system&#39;s machines: each has its own state; the shell sees them only through device 8. The shell&#39;s snapshot slots are host data.</li>
+</ul>
+<h2 id="the-hash">The hash</h2>
+<p>The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as 64 lowercase hex digits. Test vectors from the reference implementation, with no input:</p>
+<p><code>programs/hello/hello.terse</code> at reset (serialization 18,811 bytes), after 1 frame and after 30 frames:</p>
+<pre>0ce433a89182bc2f737e02bff89d21d4e8e7c462a40c262cdc8b15240d1321be
+d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe
+066e293e97fd6d5908db87cc110ebc46846d73b310a7047e1f888c7b010e2c83</pre>
+<p>&quot;No input&quot; means no events, Unix time 0, no random bytes (so <code>random</code> gives zeros), controllers disconnected and no completions. That is what <code>terse run</code> supplies, apart from its <code>--events</code> script.</p>
+<ul>
+<li><code>terse run &lt;image&gt; --hash</code> prints the hash after the last frame.</li>
+<li><code>--hash-every N</code> prints <code>&lt;frame counter&gt; &lt;hash&gt;</code> after each frame whose new counter is a multiple of N (after N frames, 2N, ...).</li>
+<li>With <code>--shell</code> these are the shell&#39;s hashes; <code>--hash-all</code> prints, after the last frame, the shell&#39;s hash and then <code>&lt;handle&gt; &lt;hash&gt;</code> for each machine started, <code>-</code> for one that has no machine (loading or failed).</li>
+</ul>
+<h2 id="replay">Replay</h2>
+<p>A machine&#39;s only inputs are, per frame: its events (in order), the latched Unix time, the random bytes, the controller states, the content completions (which handle, in which frame, status, size and bytes) and, for a machine a shell started, what <code>open</code> returns. Supply the same inputs in the same frames and the run repeats exactly, hash for hash. Page layout reaches the machine only as events, so a run replays even where layouts differ. <code>terse run --events &lt;file&gt;</code> replays a scripted input file (one line per event: frame, command, arguments); time stays 0 and there are no random bytes, and content requests complete at the start of the next frame.</p>
+<h2 id="snapshots">Snapshots</h2>
+<p>A snapshot is the serialization plus the program&#39;s identity. A machine is restored from a serialization S and the image whose ID S names: S is read section by section, with the sections the image&#39;s devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image&#39;s RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).</p>
+<p>The restored machine has S&#39;s hash and is between frames; its next frame is numbered by S&#39;s counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, the afterglow is empty. Time and random bytes are what the host supplies from then on.</p>
+<p>The snapshot file:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>4</td><td><code>TSNP</code> (<code>54h 53h 4Eh 50h</code>)</td></tr>
+<tr><td>4</td><td>1</td><td>Version 0</td></tr>
+<tr><td>5</td><td>81</td><td>Identity, as <code>identity</code> writes it; zeros for none</td></tr>
+<tr><td>86</td><td>4</td><td>Unix time latched for the machine&#39;s last frame</td></tr>
+<tr><td>90</td><td>4</td><td>N: length of S</td></tr>
+<tr><td>94</td><td>200</td><td>S bytes 0-199 (up to and including L)</td></tr>
+<tr><td>294</td><td>16</td><td>Page map: bit k (byte k/8, bit k mod 8) set if RAM page k is stored</td></tr>
+<tr><td>310</td><td>8,192p</td><td>The p stored pages, in order; the others are zero</td></tr>
+<tr><td>...</td><td>N - 200 - L</td><td>The rest of S</td></tr>
+<tr><td>...</td><td>32</td><td>The state hash of S</td></tr>
+</tbody></table></div>
+<p>A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,158,243 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.</p>
+<p><code>terse run &lt;image&gt; --save-state &lt;file&gt;</code> writes the file after the last frame; <code>--load-state &lt;file&gt;</code> starts from one instead of reset (the image is the one given, else the one the snapshot names). <code>--frames 0 --hash</code> then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with <a href="device-machines.html">the Machines device</a>.</p>
+<h2 id="the-conformance-image">The conformance image</h2>
+<p><code>programs/conform/conform.terse</code> is a test image for whoever writes a host. It needs devices 2, 3, 4, 7 and 9 and 16 RAM pages, and checks the CPU (every instruction class, M-extension corner cases, compressed forms, code in RAM and self-modifying code), the budget and the charges, events, queue overflow and controllers, every system call, bad and empty buffers, the terminal, the vector display and its fill cap, the content device without a network, and the page. Frames 49-108 are a worst-case stress phase for measuring frame rate.</p>
+<p>Run it headless for 200 frames with an empty store and no subscriptions, and compare with <code>programs/conform/expected-hashes.txt</code> (the hash every 10 frames). Create the two empty directories first:</p>
+<pre>    terse run programs/conform/conform.terse \
+      --events programs/conform/conform.events \
+      --store /tmp/conform/store \
+      --config /tmp/conform/config \
+      --frames 200 --hash-every 10</pre>
+<p>With <code>--dump --dump-vectors</code> instead of <code>--hash-every 10</code> it prints the final screen (compare with <code>expected-screen.txt</code>): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.</p>
+<p>See <a href="machine.html">the machine</a> for frames and the budget, and <a href="charges.html">charges</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="native-reader.html">← Writing a reader without the machine</a><a rel="next" href="machine.html">The machine →</a></nav></footer>
+</body>
+</html>
