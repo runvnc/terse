@@ -1,3 +1,4 @@
 /target
 /.claude/
 .wrangler/
+/native/reader-go/tersereader

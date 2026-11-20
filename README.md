@@ -34,6 +34,11 @@ just the **program profile** (devices 1, 2 and 3), since a program lists the oth
 devices it can do without as optional (SPEC 2). This repository is the first
 prototype of all three layers.
 
+**A second reader.** `native/reader-go/` is such a native reader: a terminal
+program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
+`ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
+its `SPEC-FINDINGS.md` lists where the specifications left it guessing.
+
 Shell commands below are written for fish; they also work in bash and zsh
 unless they set variables (`set X value` in fish is `X=value` in bash).
 
