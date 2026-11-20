@@ -590,14 +590,24 @@ mod tests {
             t.write(text.as_bytes());
             fresh(&t, &v, &pool)
         };
-        // Without full text, 你 (two cells), €€ and two U+FFFD look the same,
-        // and unlike full text's 你; basic characters are drawn as glyphs.
+        // Without full text, 你 (two cells), €€ and ■‖ look the same, and
+        // unlike full text's 你; basic characters are drawn as glyphs.
         let basic_wide = draw(false, "a你é");
         assert_eq!(basic_wide, draw(false, "a€€é"));
-        assert_eq!(basic_wide, draw(false, "a\u{FFFD}\u{FFFD}é"));
+        assert_eq!(basic_wide, draw(false, "a\u{25A0}\u{2016}é"));
         assert_ne!(basic_wide, draw(true, "a你é"));
         assert_eq!(draw(false, "a─é"), draw(true, "a─é"), "box drawing is basic");
         assert_ne!(basic_wide, draw(false, "a  é"), "a placeholder is drawn");
+        // The punctuation shared with articles and U+FFFD are basic: drawn,
+        // not boxed. U+25A0, just past the block elements, is boxed.
+        let placeholder = draw(false, "a€é");
+        for c in ['…', '“', '−', '\u{FFFD}'] {
+            let text = format!("a{c}é");
+            assert_eq!(draw(false, &text), draw(true, &text), "{c} is basic");
+            assert_ne!(draw(false, &text), placeholder, "{c} is drawn");
+        }
+        assert_eq!(draw(false, "a\u{25A0}é"), placeholder, "■ is a placeholder");
+        assert_ne!(draw(true, "a\u{25A0}é"), placeholder);
         // An incremental screen that switches machines redraws.
         let mut s = SoftScreen::new(Box::new(Blocks(8)));
         let (mut a, mut b) = (Terminal::with_full_text(true), Terminal::with_full_text(false));

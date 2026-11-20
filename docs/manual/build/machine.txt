@@ -214,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:2d8a958181a69be54fc086e3fca342ea990fc079e46ad35fb19d36eeec0b0a5a), slot 2:
+[The terminal](terse:357576f27fb4c5c473edff0fdee844e203471e11ca449b56c7a5f571221c7445), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

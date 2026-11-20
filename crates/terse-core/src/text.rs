@@ -9,8 +9,25 @@ use crate::terminal::{COLS, CONTINUATION, ROWS, Terminal};
 pub const FULL_TEXT: u8 = 10;
 
 /// The basic repertoire, as inclusive ranges of code points: printable
-/// ASCII, the printable Latin-1 Supplement, box drawing and block elements.
-pub const BASIC: [(u16, u16); 3] = [(0x0020, 0x007E), (0x00A0, 0x00FF), (0x2500, 0x259F)];
+/// ASCII, the printable Latin-1 Supplement, dashes, quotation marks,
+/// bullet, ellipsis, minus sign, box drawing and block elements, and the
+/// replacement character. It is also the basic text repertoire of
+/// articles (ARTICLE.md 1.1), and `vectors/basic-text.txt` lists it.
+pub const BASIC: [(u16, u16); 10] = [
+    (0x0020, 0x007E),
+    (0x00A0, 0x00FF),
+    (0x2013, 0x2014),
+    (0x2018, 0x2019),
+    (0x201C, 0x201D),
+    (0x2022, 0x2022),
+    (0x2026, 0x2026),
+    (0x2212, 0x2212),
+    (0x2500, 0x259F),
+    (0xFFFD, 0xFFFD),
+];
+
+/// The number of characters in the basic repertoire.
+pub const BASIC_COUNT: u32 = 361;
 
 /// How a cell is drawn for a machine without full text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,12 +124,19 @@ mod tests {
     #[test]
     fn repertoire() {
         let n: u32 = BASIC.iter().map(|&(a, b)| (b - a + 1) as u32).sum();
-        assert_eq!(n, 351);
-        for c in ['A', '~', ' ', 'é', 'ÿ', '·', '─', '┌', '█', '▟'] {
-            assert!(is_basic(c as u16), "{c}");
-            assert!(!crate::wide::is_wide(c as u16), "{c} is narrow");
+        assert_eq!(n, BASIC_COUNT);
+        assert!(BASIC.windows(2).all(|w| w[0].1 + 1 < w[1].0), "sorted, apart");
+        // All narrow (SPEC §terminal.text), so that one fixed-width font
+        // covers them; the state never depends on the repertoire.
+        for &(lo, hi) in &BASIC {
+            for c in lo..=hi {
+                assert!(!crate::wide::is_wide(c), "U+{c:04X} is narrow");
+            }
         }
-        for c in ['…', '€', '♥', 'Ω', '你', '\u{FFFD}', '\u{7F}', '\u{9F}', '\u{25A0}'] {
+        for c in ['A', '~', ' ', 'é', 'ÿ', '·', '×', '–', '—', '‘', '’', '“', '”', '•', '…', '−', '─', '┌', '█', '▟', '\u{FFFD}'] {
+            assert!(is_basic(c as u16), "{c}");
+        }
+        for c in ['€', '♥', 'Ω', '你', '‖', '\u{2012}', '\u{2015}', '\u{2027}', '\u{7F}', '\u{9F}', '\u{25A0}', '\u{FFFC}', '\u{FFFE}'] {
             assert!(!is_basic(c as u16), "{c}");
         }
         assert_eq!(basic('a' as u16), Basic::Char('a'));
@@ -120,6 +144,28 @@ mod tests {
         assert_eq!(basic(0x85), Basic::Blank);
         assert_eq!(basic(0x4F60), Basic::Placeholder);
         assert_eq!(basic(CONTINUATION), Basic::Placeholder);
+    }
+
+    /// The repertoire is exactly the ranges of `vectors/basic-text.txt`,
+    /// the list ARTICLE.md 1.1 and SPEC §terminal.text share.
+    #[test]
+    fn repertoire_is_the_shared_vector() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors/basic-text.txt");
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut ranges = Vec::new();
+        let mut count = None;
+        for line in text.lines() {
+            let mut w = line.split_whitespace();
+            match (w.next(), w.next(), w.next()) {
+                (Some("range"), Some(a), Some(b)) => {
+                    ranges.push((u16::from_str_radix(a, 16).unwrap(), u16::from_str_radix(b, 16).unwrap()))
+                }
+                (Some("count"), Some(n), None) => count = Some(n.parse::<u32>().unwrap()),
+                _ => {}
+            }
+        }
+        assert_eq!(ranges, BASIC);
+        assert_eq!(count, Some(BASIC_COUNT));
     }
 
     /// The same terminal drawn with full text and with basic text: the

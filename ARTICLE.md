@@ -64,21 +64,29 @@ show it as text.
 
 A reader need not be able to show every Unicode character. The **basic
 text repertoire** is the set of characters every reader must be able to
-show:
+show (tab, CR and LF are handled as section 1 says). It is also the set
+every Terse machine's terminal draws (`SPEC.md` §terminal.text lists
+it in the same words), and one fixed-width font covers it. These 361
+characters:
 
-- the printable ASCII characters, U+0020 to U+007E (and tab, CR and LF,
-  handled as section 1 says);
-- these eleven: U+00D7 `×` multiplication sign, U+2013 `–` en dash,
-  U+2014 `—` em dash, U+2018 `‘` and U+2019 `’` single quotation marks,
-  U+201C `“` and U+201D `”` double quotation marks, U+2022 `•` bullet,
-  U+2026 `…` ellipsis, U+2212 `−` minus sign, and U+FFFD `�` the
-  replacement character (which section 1 makes a reader show for
-  malformed text).
+    U+0020-U+007E  printable ASCII                       95
+    U+00A0-U+00FF  Latin-1 Supplement: no-break space,   96
+                   accented letters, £ ° × ÷ and more
+    U+2013-U+2014  – — en dash, em dash                   2
+    U+2018-U+2019  ‘ ’ single quotation marks             2
+    U+201C-U+201D  “ ” double quotation marks             2
+    U+2022         • bullet                               1
+    U+2026         … horizontal ellipsis                  1
+    U+2212         − minus sign                           1
+    U+2500-U+259F  box drawing and block elements       160
+    U+FFFD         � replacement character                1
 
-That is 95 + 11 = 106 characters. An article (or a title, section 9)
-that holds only these, after the rules of section 1 are applied (a
-byte order mark that starts it, control characters that are not
-shown), is in **basic text**; any other article **needs full text**.
+U+FFFD is the character section 1 makes a reader show for malformed
+text. `vectors/basic-text.txt` gives the list as ranges, with texts that
+are and are not in basic text. An article (or a title, section 9) that
+holds only these, after the rules of section 1 are applied (a byte order
+mark that starts it, control characters that are not shown), is in
+**basic text**; any other article **needs full text**.
 
 A **full-text reader** shows every character as its text toolkit can.
 A **basic reader** may show a character outside the repertoire as a

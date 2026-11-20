@@ -249,7 +249,8 @@ static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVI
 static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
 /* Full text (SPEC §terminal.text): device 10, a capability with no calls.
  * Every host draws the basic repertoire in the terminal (ASCII, the
- * Latin-1 Supplement, box drawing and block elements); a machine without
+ * Latin-1 Supplement, dashes, quotation marks, • … −, box drawing and
+ * block elements, U+FFFD: the articles' basic text); a machine without
  * full text shows every other character as a placeholder box (the cells,
  * widths and cursor are the same either way). A program that prints other
  * characters lists device 10: `terse pack --device 10:0` if it cannot do

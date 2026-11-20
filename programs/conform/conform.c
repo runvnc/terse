@@ -847,9 +847,9 @@ static void text_checks(void)
     CH(5, 0, 0x2500);
     CH(6, 0, 0x259F);
     CUR(7, 0);
-    tw("\xE2\x82\xAC\xE2\x80\xA6\xE2\x96\xA0\xC6\x80"); /* € … ■ ƀ: not basic, narrow */
+    tw("\xE2\x82\xAC\xE2\x80\x96\xE2\x96\xA0\xC6\x80"); /* € ‖ ■ ƀ: not basic, narrow */
     CH(7, 0, 0x20AC);
-    CH(8, 0, 0x2026);
+    CH(8, 0, 0x2016);
     CH(9, 0, 0x25A0);
     CH(10, 0, 0x180);
     CUR(11, 0);
