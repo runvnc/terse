@@ -140,7 +140,7 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 
 Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
 
-The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for an image that lists device 9. The style and persistence are held once, in the 2D display's state section, which is present when the image lists device 3 or device 9.
+The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display's state section, which is present when the machine has device 3 or device 9.
 
 ## Example
 

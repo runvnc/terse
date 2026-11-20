@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-system-device-device-1">The system device (device 1)</h1>
-<p>The system device is the machine&#39;s link to time and input: it ends frames, hands out events, reads the clock, random bytes and game controllers, stops the machine, and lets a machine that a shell started ask the shell to open something and read the argument the shell gave it. It is slot 1, version 0. Every machine has it: an image need not list it (listing (1, 0) is allowed too), and it cannot be absent.</p>
+<p>The system device is the machine&#39;s link to time and input: it ends frames, hands out events, reads the clock, random bytes and game controllers, stops the machine, lets a machine that a shell started ask the shell to open something and read the argument the shell gave it, and tells a program which devices it has. It is slot 1, version 0. Every machine has it: an image need not list it (listing (1, 0) is allowed too), and it cannot be absent.</p>
 <h2 id="reset-state">Reset state</h2>
 <div class="table"><table>
 <thead><tr><th>Item</th><th>At reset</th></tr></thead>
@@ -36,8 +36,9 @@
 <tr><td><code>106h</code></td><td><code>exit</code></td><td><code>a0</code> = exit code (low 8 bits)</td><td>does not return</td><td>4</td></tr>
 <tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td><td>4, plus 1 per 4 bytes read</td></tr>
 <tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td><td>4, plus 8 when written</td></tr>
+<tr><td><code>109h</code></td><td><code>device</code></td><td><code>a0</code> = device slot</td><td>the device&#39;s version, or <code>FFFF_FFFFh</code> if the machine does not have it</td><td>4</td></tr>
 </tbody></table></div>
-<p>The charge is in budget units on top of the <code>ecall</code> instruction itself (1 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing. Every buffer a call writes must lie wholly in RAM; one it reads (only <code>open</code>&#39;s) wholly in ROM or wholly in RAM. A bad buffer gives <code>FFFF_FFFEh</code> and nothing else happens. A call number from <code>109h</code> to <code>1FFh</code> is unknown and returns <code>FFFF_FFFFh</code>.</p>
+<p>The charge is in budget units on top of the <code>ecall</code> instruction itself (1 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing. Every buffer a call writes must lie wholly in RAM; one it reads (only <code>open</code>&#39;s) wholly in ROM or wholly in RAM. A bad buffer gives <code>FFFF_FFFEh</code> and nothing else happens. A call number from <code>10Ah</code> to <code>1FFh</code> is unknown and returns <code>FFFF_FFFFh</code>.</p>
 <h2 id="wait-frame">wait_frame</h2>
 <p><code>wait_frame</code> ends the machine&#39;s work for this frame: the rest of the budget is discarded, and the call returns at the start of the next frame with one more than the frame counter at the call. The next frame always runs (the most content a frame can deliver costs 32,768 units), so that is the counter of the frame it returns in. Unused budget never carries over, but a negative one does: the call costs 5 units from ROM, so a <code>wait_frame</code> started with 2 units left leaves a debt of 3 for the next frame.</p>
 <p>In C, <code>terse_wait_frame()</code> makes the call and returns how many frames passed since its previous call (at most 255): 1 normally, more when the work in between ran out of budget and was paused.</p>
@@ -89,6 +90,11 @@ uint32_t open_sparks(void)
 }</pre>
 <h2 id="argument">argument</h2>
 <p><code>argument</code> writes the machine&#39;s argument, the blob ID its shell gave it before its first frame (with the machines device&#39;s <code>argument</code> call), to the 32-byte buffer and returns 1. A machine that has none (the shell gave none, it runs on its own, or it is the shell) gets 0 and nothing is written. The argument never changes during the machine&#39;s life and is part of its state; a machine restored from a snapshot has the argument it had when the snapshot was taken. The built-in shell, for example, starts a document&#39;s program with the document&#39;s blob ID as the argument. In C: <code>terse_argument(id)</code>.</p>
+<h2 id="device-which-devices-a-machine-has">device: which devices a machine has</h2>
+<p>An image lists in its header the devices it uses. Each entry is a slot and a version byte: the device&#39;s version (0 to 127), with the top bit (<code>80h</code>) set if the device is optional. A host refuses an image that requires a device it lacks. An optional device it lacks (or lacks in that version) is simply absent, like a device the image does not list, and the program runs without it. A host may also withhold an optional device it has. Devices 1 and 8 cannot be optional.</p>
+<p><code>device</code> returns the version of device <code>a0</code> if the machine has it: device 1, the devices its image requires, and the optional ones it was granted (device 8 only for a shell). For any other <code>a0</code>, also one above 255, it returns <code>FFFF_FFFFh</code>. Which optional devices a machine has is decided when it is reset and never changes, so a program asks once at start; it is part of the machine&#39;s state, of its snapshots and of its recordings. A snapshot taken with an optional device does not restore on a host that cannot give it that device; one taken without it restores without it, also where the host has it.</p>
+<p>In C, <code>terse_device(slot)</code> makes the call and <code>terse_has_device(slot)</code> says whether the result is a version. <code>terse pack</code> lists a required device with <code>--device S:V</code> and an optional one with <code>--optional S:V</code>.</p>
+<p>Two sets of devices have names. The reading profile, for hosts that run the reader: devices 1, 2, 4 and 7, with the content operations the reader needs (get, subscriptions, timeline, names, identity, subscribe, unsubscribe; the others may be answered with status 05h). The program profile, for hosts that run programs: devices 1, 2 and 3. Everything else is optional for either. A host may provide device 1 and any set of the others; it needs neither content nor the page to run programs. A program meant to run on every host requires only devices 1, 2 and 3 and lists the rest as optional: sparks, for example, keeps its high score with content where the host has it and plays the same game without it. `terse run --profile reading<code> and </code>--profile program` run a machine with exactly these devices, and <code>--without S</code> withholds one more.</p>
 <h2 id="determinism-replay-and-state">Determinism, replay and state</h2>
 <p>Events, the latched Unix time, the random bytes and the controller state are the only inputs from this device. With the content completions (see <a href="content-blobs.html">blobs</a>), they are what a host records per frame to replay a run exactly. For a machine a shell started, whether <code>open</code> passes a request on depends on whether the shell has read the previous one, and is an input like a completion.</p>
 <div class="table"><table>
@@ -99,6 +105,7 @@ uint32_t open_sparks(void)
 <tr><td>the queued events, from the head</td><td></td></tr>
 <tr><td>the eight bytes of each controller as latched</td><td></td></tr>
 <tr><td>the argument, if the machine has one</td><td></td></tr>
+<tr><td>which optional devices were granted</td><td></td></tr>
 </tbody></table></div>
 <h2 id="example">Example</h2>
 <pre>#include &quot;terse.h&quot;

@@ -99,7 +99,7 @@ int main(void)
 
 ## Packing
 
-`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>` writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
+`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>` writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
 
 | Slot | Device | `--device` |
 |---|---|---|
@@ -113,7 +113,21 @@ int main(void)
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |
 
-A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that needs a device version it does not have.
+A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that requires (`--device`) a device version it does not have.
+
+A device the program can do without is listed with `--optional` instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it:
+
+```c
+static int keep_score;
+
+int main(void)
+{
+    keep_score = terse_has_device(4);  /* content: optional */
+    ...
+}
+```
+
+`terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
 ## Running it headless
 

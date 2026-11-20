@@ -160,7 +160,7 @@ The delivery charge is taken from the budget of the frame the completions arrive
 
 ## State
 
-The machine's state (used for the state hash and snapshots) holds, if the image lists device 4, one 53-byte record per handle 1 to 8:
+The machine's state (used for the state hash and snapshots) holds, if the machine has device 4, one 53-byte record per handle 1 to 8:
 
 | Offset | Size | Field |
 |---|---|---|

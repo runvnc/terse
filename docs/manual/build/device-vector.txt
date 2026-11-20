@@ -109,7 +109,7 @@ A rejected submit copies nothing and costs only the 4. Drawing, decoding and the
 
 ## State
 
-The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the image lists device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
+The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
 
 ## Example
 
@@ -138,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:190d28e9cc326cd54c61be74cc7f667e5b6c0112b078e408a68e2ef2d50a1832), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:b8a5c87609b481164badc9f7cb9a7ffa4f0e0ff271918906960065a6d38090bc), shares this display's style and layers.

@@ -2,8 +2,9 @@
 
 The system device is the machine's link to time and input: it ends
 frames, hands out events, reads the clock, random bytes and game
-controllers, stops the machine, and lets a machine that a shell started
-ask the shell to open something and read the argument the shell gave it.
+controllers, stops the machine, lets a machine that a shell started
+ask the shell to open something and read the argument the shell gave it,
+and tells a program which devices it has.
 It is slot 1, version 0. Every machine has it: an image need not list it
 (listing (1, 0) is allowed too), and it cannot be absent.
 
@@ -31,12 +32,13 @@ It is slot 1, version 0. Every machine has it: an image need not list it
 | `106h` | `exit` | `a0` = exit code (low 8 bits) | does not return | 4 |
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | 4, plus 1 per 4 bytes read |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | 4, plus 8 when written |
+| `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | 4 |
 
 The charge is in budget units on top of the `ecall` instruction itself (1
 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing.
 Every buffer a call writes must lie wholly in RAM; one it reads (only
 `open`'s) wholly in ROM or wholly in RAM. A bad buffer gives `FFFF_FFFEh`
-and nothing else happens. A call number from `109h` to `1FFh` is unknown
+and nothing else happens. A call number from `10Ah` to `1FFh` is unknown
 and returns `FFFF_FFFFh`.
 
 ## wait_frame
@@ -174,6 +176,43 @@ when the snapshot was taken. The built-in shell, for example, starts a
 document's program with the document's blob ID as the argument. In C:
 `terse_argument(id)`.
 
+## device: which devices a machine has
+
+An image lists in its header the devices it uses. Each entry is a slot
+and a version byte: the device's version (0 to 127), with the top bit
+(`80h`) set if the device is optional. A host refuses an image that
+requires a device it lacks. An optional device it lacks (or lacks in
+that version) is simply absent, like a device the image does not list,
+and the program runs without it. A host may also withhold an optional
+device it has. Devices 1 and 8 cannot be optional.
+
+`device` returns the version of device `a0` if the machine has it: device
+1, the devices its image requires, and the optional ones it was granted
+(device 8 only for a shell). For any other `a0`, also one above 255, it
+returns `FFFF_FFFFh`. Which optional devices a machine has is decided when
+it is reset and never changes, so a program asks once at start; it is part
+of the machine's state, of its snapshots and of its recordings. A snapshot
+taken with an optional device does not restore on a host that cannot give
+it that device; one taken without it restores without it, also where the
+host has it.
+
+In C, `terse_device(slot)` makes the call and `terse_has_device(slot)`
+says whether the result is a version. `terse pack` lists a required device
+with `--device S:V` and an optional one with `--optional S:V`.
+
+Two sets of devices have names. The reading profile, for hosts that run
+the reader: devices 1, 2, 4 and 7, with the content operations the reader
+needs (get, subscriptions, timeline, names, identity, subscribe,
+unsubscribe; the others may be answered with status 05h). The program
+profile, for hosts that run programs: devices 1, 2 and 3. Everything else
+is optional for either. A host may provide device 1 and any set of the
+others; it needs neither content nor the page to run programs. A program
+meant to run on every host requires only devices 1, 2 and 3 and lists the
+rest as optional: sparks, for example, keeps its high score with content
+where the host has it and plays the same game without it. `terse run
+--profile reading` and `--profile program` run a machine with exactly
+these devices, and `--without S` withholds one more.
+
 ## Determinism, replay and state
 
 Events, the latched Unix time, the random bytes and the controller state
@@ -190,6 +229,7 @@ is an input like a completion.
 | the queued events, from the head | |
 | the eight bytes of each controller as latched | |
 | the argument, if the machine has one | |
+| which optional devices were granted | |
 
 ## Example
 

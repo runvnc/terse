@@ -4,7 +4,7 @@ The sound device is a small retro synthesizer in the spirit of the MSX SCC: 16 v
 
 ## Getting the device
 
-The device is slot 6, version 0: `terse pack ... --device 6:0`. It is optional. The reading profile does not have it, a reading host refuses an image that lists it, and nothing a reader shows depends on it. In an image that does not list it, every call from `600h` to `6FFh` returns `FFFF_FFFFh`. A host with no audio output still has the device: it runs as usual and nothing is heard.
+The device is slot 6, version 0: `terse pack ... --device 6:0`. It is in neither profile: a reading or program host refuses an image that requires it, and nothing a reader shows depends on it. A game whose sound is an extra lists it with `--optional 6:0` and plays only if `terse_has_device(6)`. In a machine that does not have it, every call from `600h` to `6FFh` returns `FFFF_FFFFh`. A host with no audio output still has the device: it runs as usual and nothing is heard.
 
 ## Output
 
@@ -86,7 +86,7 @@ Noise is a 15-bit shift register: +127 or -127 by its low bit, stepped as n = (n
 
 ## State
 
-The device's state is every voice's registers (38 bytes each, its last two outputs among them), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display's section, and only for an image that lists device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout's place; `programs/tune/expected-audio.txt` holds the hashes of the demonstration's samples.
+The device's state is every voice's registers (38 bytes each, its last two outputs among them), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display's section, and only for a machine that has device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout's place; `programs/tune/expected-audio.txt` holds the hashes of the demonstration's samples.
 
 ## Example
 

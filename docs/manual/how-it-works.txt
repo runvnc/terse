@@ -92,7 +92,8 @@ the hash of its bytes. It runs in a machine with at most 1 MiB of RAM and a
 fixed amount of work per frame, and it reaches the outside world only
 through a handful of host devices. The same program, given the same inputs,
 does exactly the same thing on every host. A host that runs only the
-reader needs just the reading profile (devices 1, 2, 4 and 7).
+reader needs just the reading profile (devices 1, 2, 4 and 7); one that
+runs programs needs just the program profile (devices 1, 2 and 3).
 
 The CPU is RV32IMC: the 32-bit RISC-V base integer set with multiply and
 divide and compressed instructions, in user mode only. There are no
@@ -145,11 +146,13 @@ register `a7` is the device slot times 256 plus a function, arguments go in
 `a0` to `a5`, and the result comes back in `a0`.
 
 No host has to build every device, and no program has to use them all.
-A program's image says in its header which devices it needs, each with
-a version. A host that lacks one of them refuses the image before it
-runs, and a device the image does not list behaves as absent. So a
-program that needs only the terminal runs on every host, and a host
-can tell from the header alone what a program will use.
+A program's image lists in its header the devices it uses, each with a
+version, as required or optional. A host that lacks a required device
+refuses the image before it runs. An optional device the host lacks is
+simply absent, as is a device the image does not list, and the program
+asks at start which devices it has. So a game can keep its high score
+or play sound where the host has content or sound, and run without them
+elsewhere.
 
 The devices a reading host provides (the reading profile):
 
@@ -160,14 +163,25 @@ The devices a reading host provides (the reading profile):
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
 
-The extras, each of which a host may leave out:
+The devices a program host provides (the program profile):
 
 | Slot | Device |
 |---|---|
+| 1 | System (always present) |
+| 2 | Terminal |
 | 3 | 2D vector display: lines and filled shapes from a display list |
+
+The other devices, each of which a host may leave out:
+
+| Slot | Device |
+|---|---|
 | 6 | Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo |
 | 8 | Machines: starting and placing other machines (the shell only) |
 | 9 | 3D vector display: lines placed in space, seen in perspective |
+
+A host may provide device 1 and any set of the others; it needs neither
+content nor the page to run programs. A program meant to run everywhere
+requires only devices 1, 2 and 3 and lists the rest as optional.
 
 Devices present and transport; they do not compute for the program, and
 nothing a host draws can be read back. The screen is 640 × 480 units for

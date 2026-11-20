@@ -31,8 +31,9 @@
 <tr><td>192</td><td>4</td><td>Budget carried into the next frame (i32, zero or negative)</td></tr>
 <tr><td>196</td><td>4</td><td>L: RAM size, <code>ram_pages</code> x 8,192</td></tr>
 <tr><td>200</td><td>L</td><td>All of RAM from <code>0010_0000h</code></td></tr>
+<tr><td>200 + L</td><td>k</td><td>Grants: for each device the image lists as optional, in header order, 1 if the machine was granted it, else 0</td></tr>
 </tbody></table></div>
-<p>The image ID stands for the ROM, the RAM size and the device list, which never change. From here offsets are relative to the start of each section.</p>
+<p>The image ID stands for the ROM, the RAM size and the device list, which never change; which optional devices the host granted at reset does not, so the grants follow RAM (k is 0 for an image without optional devices). Below, the machine has a device if its image requires it or it was granted. From here offsets are relative to the start of each section.</p>
 <p>System, 37 + 4n bytes:</p>
 <div class="table"><table>
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
@@ -46,14 +47,14 @@
 <div class="table"><table>
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
 <tbody>
-<tr><td>0</td><td>1</td><td>Present: the image lists device 2 (if 0, the section ends)</td></tr>
+<tr><td>0</td><td>1</td><td>Present: the machine has device 2 (if 0, the section ends)</td></tr>
 <tr><td>1</td><td>9,600</td><td>Cells 0-2,399, 4 bytes each</td></tr>
 <tr><td>9,601</td><td>6</td><td>Cursor column, row, foreground, background, cursor shown, pending wrap</td></tr>
 <tr><td>9,607</td><td>768</td><td>Palette 0-255: red, green, blue</td></tr>
 <tr><td>10,375</td><td>1</td><td>k: bytes of an incomplete UTF-8 sequence given to <code>write</code>, 0-3</td></tr>
 <tr><td>10,376</td><td>3</td><td>Those bytes, then zeros</td></tr>
 </tbody></table></div>
-<p>Vector display, 1 or 8 + m bytes: present (the image lists device 3 or 9), style (0 clean, 1 phosphor), persistence (160 at reset), fill mode (0 fill, 1 outlines), m (u32, 0-16,384), then the list last accepted. Style and persistence are shared with device 9; an image without device 3 has fill mode 0 and m = 0.</p>
+<p>Vector display, 1 or 8 + m bytes: present (the machine has device 3 or 9), style (0 clean, 1 phosphor), persistence (160 at reset), fill mode (0 fill, 1 outlines), m (u32, 0-16,384), then the list last accepted. Style and persistence are shared with device 9; an image without device 3 has fill mode 0 and m = 0.</p>
 <p>Content (device 4), 1 or 425 bytes: present, then 8 request records of 53 bytes for handles 1-8:</p>
 <div class="table"><table>
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
@@ -78,8 +79,8 @@
 <tr><td>10</td><td>47</td><td>Bytes 1-47 of the <code>info</code> record</td></tr>
 <tr><td>57</td><td>81</td><td>Identity given to <code>start_program</code>, or zeros</td></tr>
 </tbody></table></div>
-<p>3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.</p>
-<p>Sound (device 6): absent unless the image lists device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in <a href="device-sound.html">the sound device</a>.</p>
+<p>3D display (device 9): absent unless the machine has device 9; then m (u32, 0-16,384) and the list.</p>
+<p>Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in <a href="device-sound.html">the sound device</a>.</p>
 <p>Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.</p>
 <p>The sections that may be absent were added so that the hashes of older images did not change. The total is 45 + 128 + 23 + 4 + L + 37 + 4n plus the device sections.</p>
 <h2 id="what-is-left-out">What is left out</h2>
@@ -106,7 +107,7 @@ d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe
 <h2 id="replay">Replay</h2>
 <p>A machine&#39;s only inputs are, per frame: its events (in order), the latched Unix time, the random bytes, the controller states, the content completions (which handle, in which frame, status, size and bytes) and, for a machine a shell started, what <code>open</code> returns. Supply the same inputs in the same frames and the run repeats exactly, hash for hash. Page layout reaches the machine only as events, so a run replays even where layouts differ. <code>terse run --events &lt;file&gt;</code> replays a scripted input file (one line per event: frame, command, arguments); time stays 0 and there are no random bytes, and content requests complete at the start of the next frame.</p>
 <h2 id="snapshots">Snapshots</h2>
-<p>A snapshot is the serialization plus the program&#39;s identity. A machine is restored from a serialization S and the image whose ID S names: S is read section by section, with the sections the image&#39;s devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image&#39;s RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).</p>
+<p>A snapshot is the serialization plus the program&#39;s identity. A machine is restored from a serialization S and the image whose ID S names: it has the devices S&#39;s grants say (an optional device the host has and S lacks stays absent; one S has that the host cannot give fails the restore), and S is read section by section, with the sections those devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image&#39;s RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).</p>
 <p>The restored machine has S&#39;s hash and is between frames; its next frame is numbered by S&#39;s counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, the afterglow is empty. Time and random bytes are what the host supplies from then on.</p>
 <p>The snapshot file:</p>
 <div class="table"><table>
@@ -123,10 +124,10 @@ d91a4c7f56a8183d0c0a2a5520e219b1628a3661751460a0eea996fac8761ebe
 <tr><td>...</td><td>N - 200 - L</td><td>The rest of S</td></tr>
 <tr><td>...</td><td>32</td><td>The state hash of S</td></tr>
 </tbody></table></div>
-<p>A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,075 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.</p>
+<p>A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,091 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.</p>
 <p><code>terse run &lt;image&gt; --save-state &lt;file&gt;</code> writes the file after the last frame; <code>--load-state &lt;file&gt;</code> starts from one instead of reset (the image is the one given, else the one the snapshot names). <code>--frames 0 --hash</code> then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with <a href="device-machines.html">the Machines device</a>.</p>
 <h2 id="the-conformance-image">The conformance image</h2>
-<p><code>programs/conform/conform.terse</code> is a test image for whoever writes a host. It needs devices 2, 3, 4, 7 and 9 and 16 RAM pages, and checks the CPU (every instruction class, M-extension corner cases, compressed forms, code in RAM and self-modifying code), the budget and the charges, events, queue overflow and controllers, every system call, bad and empty buffers, the terminal, the vector display and its fill cap, the content device without a network, and the page. Frames 49-108 are a worst-case stress phase for measuring frame rate.</p>
+<p><code>programs/conform-reading</code> and <code>programs/conform-program</code> are the same source built for the reading and the program profile (<code>terse run --profile reading</code> or <code>--profile program</code>), each with its own events and expected files. <code>programs/conform/conform.terse</code> is a test image for whoever writes a host. It needs devices 2, 3, 4, 7 and 9 and 16 RAM pages, and checks the CPU (every instruction class, M-extension corner cases, compressed forms, code in RAM and self-modifying code), the budget and the charges, events, queue overflow and controllers, every system call, bad and empty buffers, the terminal, the vector display and its fill cap, the content device without a network, and the page. Frames 49-108 are a worst-case stress phase for measuring frame rate.</p>
 <p>Run it headless for 200 frames with an empty store and no subscriptions, and compare with <code>programs/conform/expected-hashes.txt</code> (the hash every 10 frames). Create the two empty directories first:</p>
 <pre>    terse run programs/conform/conform.terse \
       --events programs/conform/conform.events \

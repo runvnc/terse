@@ -94,7 +94,7 @@ int main(void)
     }
 }</pre>
 <h2 id="packing">Packing</h2>
-<p><code>terse pack --rom &lt;raw.bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; [--device &lt;slot:version&gt;]... -o &lt;out.terse&gt;</code> writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file&#39;s size and its image ID.</p>
+<p><code>terse pack --rom &lt;raw.bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; [--device &lt;slot:version&gt;]... [--optional &lt;slot:version&gt;]... -o &lt;out.terse&gt;</code> writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file&#39;s size and its image ID.</p>
 <div class="table"><table>
 <thead><tr><th>Slot</th><th>Device</th><th><code>--device</code></th></tr></thead>
 <tbody>
@@ -108,7 +108,16 @@ int main(void)
 <tr><td>8</td><td>Machines</td><td><code>8:0</code>; only the shell of a system gets it</td></tr>
 <tr><td>9</td><td>3D vector display</td><td><code>9:0</code></td></tr>
 </tbody></table></div>
-<p>A device the image does not list is absent: its calls return <code>FFFF_FFFFh</code>. A host refuses an image that needs a device version it does not have.</p>
+<p>A device the image does not list is absent: its calls return <code>FFFF_FFFFh</code>. A host refuses an image that requires (<code>--device</code>) a device version it does not have.</p>
+<p>A device the program can do without is listed with <code>--optional</code> instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it:</p>
+<pre>static int keep_score;
+
+int main(void)
+{
+    keep_score = terse_has_device(4);  /* content: optional */
+    ...
+}</pre>
+<p><code>terse_has_device</code> makes the system device&#39;s <code>device</code> call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (<code>terse run --profile program</code> runs it with exactly those), and lists the rest as optional. <code>terse info</code> shows both lists.</p>
 <h2 id="running-it-headless">Running it headless</h2>
 <pre>terse run prog.terse --frames 30 --dump</pre>
 <p>runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (<code>random</code> gives zeros), and controllers exist only through the script. <code>--dump-vectors</code> and <code>--dump-page</code> add the vector display&#39;s list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, <code>terse run</code> exits with its code; after a fault it prints <code>terse: fault: &lt;kind&gt; at pc &lt;pc&gt;, address &lt;addr&gt;</code> on stderr and ends itself with SIGTERM.</p>
