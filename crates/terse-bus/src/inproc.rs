@@ -81,6 +81,10 @@ impl Devices for InProcessHost {
         Ok(())
     }
 
+    fn take_audio(&mut self) -> Option<Vec<i16>> {
+        self.devices.take_audio()
+    }
+
     fn write_state(&mut self, slot: u8, out: &mut Vec<u8>) -> Result<(), String> {
         self.devices.write_state(slot, out)
     }

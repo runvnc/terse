@@ -1,5 +1,39 @@
 # How Terse works
 
+## Sharing information
+
+An article is plain text that reads well as it is, with a few marks for
+headings, lists, tables, preformatted text and links. A diagram is
+written into the article as path data in the style of SVG, so it is
+part of the text and needs no image file. There are no scripts, no
+styles and no embedded programs, and an article cannot link to a web
+page, only to other Terse articles, feeds and programs.
+
+Authors publish articles in feeds. A feed belongs to a key that its
+author holds, not to a website: every entry is signed, so a reader can
+check that it came from the author whoever delivered it. Relays store
+and pass on feeds and articles. Anyone can run a relay, a feed can be
+on several at once, and a reader can follow the same feed through any
+of them, so no single site decides what may be published or read.
+
+A reader for all of this is a small program. It needs the network and
+the article format and nothing else.
+
+## Sharing programs
+
+A Terse program is a small file of machine code for a simple virtual
+computer. The machine is isolated: a program sees only its own memory
+and the few devices its host offers, such as a terminal, a vector
+display and the content store. It gets a fixed amount of work per
+frame, so it cannot slow its host down, and it behaves the same on
+every host.
+
+All of this is optional. A host may leave out the machine altogether,
+or any device it does not want to build, and still be a complete Terse
+reader. Articles never contain programs: they can only link to them.
+
+## The three layers
+
 Terse has three layers. The network (blobs, relays, feeds, entries,
 profiles, names and search) and the article format are the core: a
 native reader that implements those two, with no virtual machine at all,
@@ -118,6 +152,7 @@ device the image does not list behaves as absent.
 | 2 | Terminal: 80 × 30 character cells |
 | 3 | 2D vector display: lines and filled shapes from a display list |
 | 4 | Content: blobs, feeds, search, named records |
+| 6 | Sound: 16 voices of a wavetable synthesizer, 48,000 Hz stereo (optional) |
 | 7 | Page: typeset proportional text and figures |
 | 8 | Machines: starting and placing other machines (the shell only) |
 | 9 | 3D vector display: lines placed in space, seen in perspective |

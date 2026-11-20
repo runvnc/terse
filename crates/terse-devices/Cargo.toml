@@ -1,6 +1,6 @@
 [package]
 name = "terse-devices"
-description = "Device drivers for the device bus (DEVICES.md): the terminal, vector display, content and page devices as separate programs."
+description = "Device drivers for the device bus (DEVICES.md): the terminal, vector display, content, sound and page devices as separate programs."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -20,6 +20,10 @@ path = "src/bin/page.rs"
 [[bin]]
 name = "terse-dev-content"
 path = "src/bin/content.rs"
+
+[[bin]]
+name = "terse-dev-sound"
+path = "src/bin/sound.rs"
 
 # A terminal that fails on purpose, for the core's tests (DEVICES.md 10).
 [[bin]]

@@ -872,3 +872,89 @@ void doc_table_end(void)
     if (p)
         p[0] = DOC_OP_END_TABLE;
 }
+
+/* Device 6 command-list builder (SPEC 18.3). Its state has a section of
+ * its own: the compiler would otherwise merge it with the vector
+ * builder's globals, and --gc-sections could not drop it from programs
+ * that make no sound (their images would change). */
+#define SND_STATE __attribute__((section(".bss.snd_builder")))
+SND_STATE uint8_t *snd_ptr;
+SND_STATE uint8_t *snd_limit;
+SND_STATE uint8_t snd_overflow;
+
+void snd_begin(uint8_t *buf, uint32_t cap)
+{
+    snd_ptr = buf;
+    snd_limit = buf + cap;
+    snd_overflow = 0;
+}
+
+static uint8_t *snd_room(uint32_t n, uint8_t op)
+{
+    if (snd_overflow || (uint32_t)(snd_limit - snd_ptr) < n) {
+        snd_overflow = 1;
+        return 0;
+    }
+    uint8_t *p = snd_ptr;
+    snd_ptr = p + n;
+    p[0] = op;
+    return p + 1;
+}
+
+static void snd_op0(uint8_t op) { snd_room(1, op); }
+
+static void snd_op1(uint8_t op, uint8_t a)
+{
+    uint8_t *p = snd_room(2, op);
+    if (p)
+        p[0] = a;
+}
+
+static void snd_op2(uint8_t op, uint8_t a, uint8_t b)
+{
+    uint8_t *p = snd_room(3, op);
+    if (p) {
+        p[0] = a;
+        p[1] = b;
+    }
+}
+
+void snd_voice(uint8_t v) { snd_op1(SND_OP_VOICE, v); }
+void snd_wave(uint8_t slot) { snd_op1(SND_OP_WAVE, slot); }
+void snd_noise(void) { snd_op0(SND_OP_NOISE); }
+void snd_sample(uint8_t slot) { snd_op1(SND_OP_SAMPLE, slot); }
+void snd_volume(uint8_t volume) { snd_op1(SND_OP_VOLUME, volume); }
+void snd_pan(uint8_t left, uint8_t right) { snd_op2(SND_OP_PAN, left, right); }
+void snd_key_on(void) { snd_op0(SND_OP_KEY_ON); }
+void snd_key_off(void) { snd_op0(SND_OP_KEY_OFF); }
+void snd_modulator(uint8_t m, uint8_t depth) { snd_op2(SND_OP_MODULATOR, m, depth); }
+void snd_feedback(uint8_t depth) { snd_op1(SND_OP_FEEDBACK, depth); }
+void snd_ring(uint8_t q) { snd_op1(SND_OP_RING, q); }
+void snd_mix(uint8_t on) { snd_op1(SND_OP_MIX, on); }
+
+void snd_frequency(uint32_t increment)
+{
+    uint8_t *p = snd_room(5, SND_OP_FREQUENCY);
+    if (p) {
+        p[0] = increment;
+        p[1] = increment >> 8;
+        p[2] = increment >> 16;
+        p[3] = increment >> 24;
+    }
+}
+
+void snd_envelope(uint16_t attack, uint16_t decay, uint8_t sustain, uint16_t release)
+{
+    uint8_t *p = snd_room(8, SND_OP_ENVELOPE);
+    /* Bytes written one by one, not with put16: another caller of that
+     * static helper would change how the vector builders compile. */
+    if (p) {
+        p[0] = attack;
+        p[1] = attack >> 8;
+        p[2] = decay;
+        p[3] = decay >> 8;
+        p[4] = sustain;
+        p[5] = release;
+        p[6] = release >> 8;
+    }
+}

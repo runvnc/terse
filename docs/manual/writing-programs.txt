@@ -107,7 +107,8 @@ int main(void)
 | 2 | Terminal | `2:0` |
 | 3 | 2D vector display | `3:0` |
 | 4 | Content | `4:0` |
-| 5, 6 | Messages, sound | reserved |
+| 5 | Messages | reserved |
+| 6 | Sound | `6:0` |
 | 7 | Page | `7:0` |
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |

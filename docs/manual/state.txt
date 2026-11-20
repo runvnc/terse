@@ -75,7 +75,9 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the image lists device 9; then m (u32, 0-16,384) and the list.
 
-Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the 3D section, none when 0 remain, and refuses any other remainder.
+Sound (device 6): absent unless the image lists device 6; then the 16 voices of 36 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last output), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,656 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:{device-sound}).
+
+Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 
 The sections that may be absent were added so that the hashes of older images did not change. The total is 45 + 128 + 23 + 4 + L + 37 + 4n plus the device sections.
 
@@ -85,7 +87,7 @@ The sections that may be absent were added so that the hashes of older images di
 - This frame's random bytes: they cannot outlive the frame.
 - Copied bytes of requests not yet handed to the host (a put's data, a save's data, a title, query or name): only their effect, later inputs, matters; a put is held by its ID.
 - Named records, a machine's identity, consent prompts, whether an open request still waits: host data, seen by the machine only as inputs. A started machine's identity is in the shell's handle record.
-- Host bookkeeping and presentation: caches, statistics, fonts, pixels, afterglow, the 3D eye, the page's layout and locate requests. Layout results reach the machine as events, which are in the queue.
+- Host bookkeeping and presentation: caches, statistics, fonts, pixels, afterglow, the 3D eye, the samples the sound device rendered, the page's layout and locate requests. Layout results reach the machine as events, which are in the queue.
 - A system's machines: each has its own state; the shell sees them only through device 8. The shell's snapshot slots are host data.
 
 ## The hash
@@ -131,7 +133,7 @@ The snapshot file:
 | ... | N - 200 - L | The rest of S |
 | ... | 32 | The state hash of S |
 
-A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,158,243 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
+A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,043 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
 `terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:{device-machines}).
 

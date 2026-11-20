@@ -126,8 +126,10 @@ does the following, in order:
 2. Adds 125,000 to the budget, subtracts the charge for content delivered
    in step 1 (section 14), and runs the CPU while the budget is greater
    than zero.
-3. Ends the frame: the frame counter increases by one, and the host presents
-   the terminal, the vector displays and the page as they are at this moment.
+3. Ends the frame: the frame counter increases by one, the sound device
+   renders the frame's samples (section 18.5), and the host presents the
+   terminal, the vector displays and the page as they are at this moment,
+   and plays the samples.
 
 Rules:
 
@@ -225,7 +227,7 @@ by the ROM contents.
 | 3 | 2D vector display | 0 | specified (section 10) |
 | 4 | Content | 0 | specified (section 9); **reading profile** |
 | 5 | Messages | — | reserved |
-| 6 | Sound | — | reserved |
+| 6 | Sound | 0 | specified (section 18) |
 | 7 | Page | 0 | specified (section 11); **reading profile** |
 | 8 | Machines | 0 | specified (section 12); only the shell of a system has it |
 | 9 | 3D vector display | 0 | specified (section 13) |
@@ -259,10 +261,11 @@ provides the machine's **reading profile**:
   rejected with `04h`, a valid one accepted); a program cannot tell that
   from a user or host that refuses;
 - within Page, everything;
-- devices 3, 8 and 9 are optional: a reading-profile host need not
+- devices 3, 6, 8 and 9 are optional: a reading-profile host need not
   provide them, and refuses an image that lists them (the reader lists
   none of them). Device 8 exists only for the shell of a system
-  (section 12) in any case.
+  (section 12) in any case. Nothing a reader shows depends on sound
+  (device 6, section 18).
 
 Sections 9.5 and 9.6 say, for each optional group of operations, that a
 host may answer it with `05h`. A program meant for the reading profile
@@ -293,9 +296,11 @@ buffers it is said to write. `pc` continues after the `ecall`.
   call and for every data range of a content request block (section
   9.1). Otherwise the call returns `FFFF_FFFEh` and does nothing else;
   this is not a fault.
-- Four calls answer a buffer that is not where it must be in their own
+- Five calls answer a buffer that is not where it must be in their own
   way instead: the `submit` of each vector display (sections 10.2, 13.2)
-  rejects a list not wholly in RAM with 1, as it rejects a bad length;
+  rejects a list not wholly in RAM with 1, as it rejects a bad length, and
+  so does the sound device's `submit` a list not wholly in ROM or RAM
+  (section 18.2);
   content `submit` rejects a request block not wholly in RAM with handle
   0 (section 9.2), and a data range in the block that is not where
   section 9.1 requires makes the request invalid (status `04h`); page
@@ -337,6 +342,10 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 | `400h` | `submit` | `a0` = address of a request block | a handle 1–8, or 0 if rejected | answered |
+| `600h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
+| `601h` | `wave` | `a0` = slot, `a1` = buffer (64 bytes, read) | 0 | deferred |
+| `602h` | `sample` | `a0` = slot, `a1` = buffer (read), `a2` = length, `a3` = loop start | 0 | deferred |
+| `603h` | `info` | — | `a0` = 16 voices, `a1` = capabilities | deferred |
 | `700h` | `submit` | `a0` = document address, `a1` = length | 0 done, 1 rejected | deferred |
 | `701h` | `clear` | — | 0 | deferred |
 | `702h` | `region` | `a0` = x, `a1` = y, `a2` = width, `a3` = height | 0 | deferred |
@@ -365,7 +374,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `902h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |
 | `903h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 
-Sections 4 to 13 define each call. The class (section 14) sets a call's
+Sections 4 to 13 and 18 define each call. The class (section 14) sets a call's
 base charge: 4 for a **deferred** call, whose result and charge follow from
 its arguments, 64 for an **answered** one, whose result or charge depends
 on the device's state; the calls of devices 1 and 8 (**core**) are the
@@ -425,7 +434,7 @@ machine's own and cost 4.
   in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
   shell gave none, it runs on its own, or it is the shell) gets 0 and
   nothing is written. The argument never changes and is part of the
-  machine's state (`STATE.md` 1.12).
+  machine's state (`STATE.md` 1.13).
 
 Events, the latched time, the random bytes and controller state are the
 machine's only inputs from this device. A host that records them per frame
@@ -2391,8 +2400,9 @@ the call runs and may take it below zero (section 1.4).
 |---|---|
 | Any call, including one that fails: its base charge | 4 for a deferred call and for every call of devices 1 and 8; 64 for an answered call |
 | `write`: each byte of the buffer | 2 |
+| Sound `submit`: each byte of an accepted list (section 18.2) | 2 |
 | A clear, scroll up or scroll down done by `command` (`01h`–`03h`) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), a page `submit` whose bytes were copied (its length in range and its buffer valid), device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set`, an accepted vector `submit` (device 3 or 9), sound `wave` (64) and `sample` (its length), each when it is carried out, an accepted content put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name), a page `submit` whose bytes were copied (its length in range and its buffer valid), device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0) and `snapshot_info` (122, when written); `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
 | Content delivered at completion: the bytes a get, load, records (subscriptions, timeline, names, programs, records) or find request writes to `addr` | 1 per 4 bytes: the bytes of all the frame's completions added up, then divided by 4 and rounded up once; subtracted from that frame's budget in step 2 of section 1.4 |
 
 Nothing else is charged: a rejected submit or put copies nothing, the
@@ -2408,7 +2418,7 @@ its buffer lies) and its charge depends only on its arguments; it is
 **answered** if its result or its charge depends on the device's state.
 Section 3.2 gives every call's class. The answered calls are the
 terminal's `get_cursor`, `get_colours` and `cells_read`, content `submit`
-and page `locate`; every other call of devices 2, 3, 4, 7 and 9 is
+and page `locate`; every other call of devices 2, 3, 4, 6, 7 and 9 is
 deferred. A host that keeps a device elsewhere (another process, a socket)
 can carry out its deferred calls later, together, without waiting for
 them, while an answered call needs a round trip, which its base charge of
@@ -2459,8 +2469,9 @@ The budget and the charges:
 - the budget, 125,000 units per frame (section 1.4);
 - the cost of an instruction fetched from RAM, 4 (section 1.4);
 - the charges of section 14 (4 per deferred or core call, 64 per answered
-  call, 2 per `write` byte, 1 per 4 bytes copied, 150 per clear or scroll
-  command), and the longest `write`, 4,096 bytes (section 8.2).
+  call, 2 per `write` byte and per sound list byte, 1 per 4 bytes copied,
+  150 per clear or scroll command), and the longest `write`, 4,096 bytes
+  (section 8.2).
 
 What one frame or one list may make a host draw:
 
@@ -2485,7 +2496,9 @@ What one frame or one list may make a host draw:
 The sizes of what a program hands a device:
 
 - display lists of 1 to 16,384 bytes, for both vector displays (sections
-  10.2, 13.2); page documents of 1 to 65,536 bytes (section 11.2);
+  10.2, 13.2); page documents of 1 to 65,536 bytes (section 11.2); sound
+  command lists of 1 to 4,096 bytes and samples of up to 65,536 bytes
+  (section 18.2);
 - 8 locates per frame, and at least the 8 latest waiting kept by a host
   (sections 11.2, 11.5);
 - 256 random bytes per call (section 4);
@@ -2511,7 +2524,9 @@ The sizes that define machine profile 1 (ROM of 128 KiB, RAM of 1 to 128
 pages of 8 KiB, 16 devices in an image, the 640 × 480 screen, the
 terminal's 80 × 30 cells, 4 controllers) and the layouts of records, blocks
 and events are not placeholders: they are the profile and its device
-versions.
+versions. Nor is the sound device's synthesis (section 18: 48,000 Hz, 800
+sample pairs a frame, 16 voices, 32 wavetables of 64 samples, 4 sample
+slots, every formula): it is the device's version 0.
 
 ## 17. Not yet specified
 
@@ -2525,7 +2540,9 @@ versions.
   requests, and publishing replies or kinds of entry other than articles,
   documents and profiles (programs are published by the host, not by
   programs).
-- Devices 5 and 6.
+- Device 5.
+- On the sound device (section 18): a volume per machine in a system,
+  filters, and samples longer than 65,536 bytes or of more than 8 bits.
 - On the 3D display (section 13): filled or shaded faces; the exact
   intersection of faces (a line drawn where two faces cross); more than 4
   Surfaces in a list, Surfaces that show the 3D layer, and curved or
@@ -2546,7 +2563,7 @@ versions.
   request carries one blob ID or program identity, and its machine is not
   told what became of it); arguments other than one blob ID; budgets
   other than one full budget per machine per frame; giving a machine less
-  than the whole screen; sound for several machines, and sound placed
+  than the whole screen; a volume for each machine's sound, and sound placed
   with a panel in the scene; what a host shows for a machine with no
   picture; telling the shell when a view has finished moving.
 - Snapshots (section 12.7): saving them without the shell asking (a host
@@ -2557,3 +2574,234 @@ versions.
   them in step between a user's machines, and sharing a record with
   another program. Starting a version of a program other than the current
   one.
+
+---
+
+## 18. Device 6 — Sound (version 0)
+
+A small retro synthesizer in the spirit of the MSX SCC: 16 voices, each
+playing a 64-sample wavetable, a noise generator or a sample, with an
+envelope, a volume and a pan, and three cheap extras taken from FM chips:
+**pairing** (one voice's output moves another's phase), **feedback** (a
+voice's own output moves its phase) and **ring modulation** (one voice's
+output multiplies another's). It is not a mixer and not a full FM
+synthesizer.
+
+Sound is optional (section 2.1): the reading profile does not have it,
+and nothing a reader shows depends on it. A program that wants it lists
+device 6 in its header like any other device.
+
+Every step of the synthesis below is integer arithmetic on the values the
+program set, specified to the bit, so two implementations render the same
+samples from the same state, and the samples of a run are a function of
+the image and its inputs like everything else (section 18.8).
+
+Arithmetic: values are integers; `×` and `+` are exact (the stated ranges
+show where they fit in 32 bits); `a >> k` is an arithmetic shift, the
+floor of a ÷ 2^k also for a negative a; "mod 2^32" is the low 32 bits, as
+an unsigned number.
+
+### 18.1 Output
+
+The device renders **48,000 sample pairs a second**: stereo, each sample
+a signed 16-bit number. One frame is **800 pairs** (48,000 ÷ 60). The
+device renders a frame's 800 pairs at the end of the frame (section 1.4
+step 3), from its state as the frame's calls left it, so what a program
+sets in frame N is heard from the first pair of frame N's samples; the
+host plays them after the frame. A frame that does not run (a stopped or
+paused machine) renders nothing.
+
+### 18.2 Calls
+
+- **`submit`** carries out the command list (section 18.3) of `a1` bytes
+  at `a0` at once, and returns 0. It is rejected, returning 1 and doing
+  nothing, if the length is 0 or more than 4,096, or if the list does not
+  lie wholly in ROM or wholly in RAM. It costs 2 units per byte of an
+  accepted list, like `write` (section 8.2), whose bound on how far one
+  call can take the budget below zero it shares.
+- **`wave`** copies the 64 bytes at `a1` (in ROM or RAM) into wavetable
+  `a0` (0–31), each a signed sample (−128 to 127), and returns 0. A slot
+  above 31, or a buffer not wholly in ROM or RAM, is a bad buffer
+  (`FFFF_FFFEh`, section 3.1).
+- **`sample`** copies the `a2` bytes at `a1` (0 to 65,536, in ROM or RAM)
+  into sample slot `a0` (0–3), replacing what it held, and returns 0. Each
+  byte is a signed sample. `a3` is the **loop start**: a voice that plays
+  past the last byte goes on from byte `a3`; if `a3` is at least the
+  length, the sample plays once (section 18.6). A length of 0 empties the
+  slot. A slot above 3, a length above 65,536 or a buffer not wholly in
+  ROM or RAM is a bad buffer.
+- **`info`** returns 16 (the voices) in `a0` and the **capabilities** in
+  `a1`: bit 0 set, the device plays samples. In version 0 every host sets
+  bit 0: a host of version 0 must play samples, so that a program's
+  samples are the same on every host (section 18.8). The bit is there for
+  a later version that may leave samples out; a program that wants to run
+  on one checks it before it uses `sample` or the Sample command.
+
+Every call is deferred (section 14). After reset every voice is as
+section 18.4 says, every wavetable is all zero and every sample slot is
+empty (length 0, loop start 0).
+
+### 18.3 Command list
+
+A list is a sequence of commands, each an opcode byte followed by its
+operands; multi-byte operands are little-endian. The commands set the
+registers of the **current voice**, which is voice 0 at the start of each
+list. They take effect at once, in order: the next samples rendered use
+them (section 18.1).
+
+| Opcode | Command | Operands | Effect on the current voice |
+|---|---|---|---|
+| `00h` | End | — | Ends the list |
+| `01h` | Voice | v (1 byte, 0–15) | Makes voice v the current voice |
+| `02h` | Wave | w (1 byte, 0–31) | Source: wavetable w |
+| `03h` | Noise | — | Source: the noise generator |
+| `04h` | Sample | s (1 byte, 0–3) | Source: sample slot s |
+| `05h` | Frequency | increment (4 bytes) | Sets the phase increment (section 18.4) |
+| `06h` | Volume | volume (1 byte) | 0–255 |
+| `07h` | Pan | left, right (1 byte each) | The levels in the left and right outputs, 0–255 each |
+| `08h` | Envelope | attack (2), decay (2), sustain (1), release (2) | Sets the envelope (section 18.5) |
+| `09h` | Key on | — | Stage attack; the phase becomes 0 and Ended is cleared (section 18.6). The level is unchanged |
+| `0Ah` | Key off | — | Stage release, if the stage is attack, decay or sustain |
+| `0Bh` | Modulator | m (1 byte, 0–15 or `FFh`), depth (1 byte) | Pairing: voice m's output moves this voice's phase; `FFh` none |
+| `0Ch` | Feedback | depth (1 byte) | This voice's own output moves its phase; 0 none |
+| `0Dh` | Ring | q (1 byte, 0–15 or `FFh`) | This voice's output is multiplied by voice q's; `FFh` none |
+| `0Eh` | Mix | on (1 byte, 0 or 1) | 1: heard; 0: muted (it is still rendered, so it can modulate or ring another voice) |
+
+- The list ends at an End command, at the end of the submitted bytes, at
+  an unknown opcode, at a command whose operands are cut off by the end of
+  the list, or at a command with an operand out of range (a voice above
+  15, a wavetable above 31, a sample slot above 3, a modulator or ring
+  voice above 15 that is not `FFh`, a mix value above 1). The commands
+  before it have taken effect; the rest are ignored. `submit` still
+  returns 0: like a vector display (section 10.3), the device does not
+  report where a list ended, since that would make `submit` an answered
+  call (section 14).
+- A voice may name itself as its modulator or ring voice; it then reads
+  its own output of the previous pair (section 18.5).
+- Changing a voice's source does not change its phase, its level or its
+  Ended flag.
+
+### 18.4 Voices
+
+Each voice has these registers, with these values after reset:
+
+| Register | Range | After reset |
+|---|---|---|
+| Source | wavetable w, noise, or sample slot s | wavetable 0 |
+| Phase | 32 bits, unsigned | 0 |
+| Increment | 32 bits, unsigned | 0 |
+| Volume | 0–255 | 255 |
+| Pan | left, right: 0–255 each | 255, 255 |
+| Attack, decay, release | 0–65,535 each | 0, 0, 0 |
+| Sustain | 0–255 | 255 |
+| Stage | off, attack, decay, sustain, release | off |
+| Level | 0 to `FF_FFFFh` | 0 |
+| Modulator, depth | voice 0–15 or none; 0–255 | none, 0 |
+| Feedback | 0–255 | 0 |
+| Ring | voice 0–15 or none | none |
+| Mix | 0 or 1 | 1 |
+| Noise register | 15 bits, never 0 | 1 |
+| Ended | flag | clear |
+| Output | the voice's output in the last pair rendered, −32,768 to 32,767 | 0 |
+
+The **increment** is how far the phase moves each sample. For a
+wavetable voice one turn of the phase (2^32) is one pass through the
+table, so a tone of f Hz has the increment round(f × 2^32 ÷ 48,000) (440
+Hz: 39,370,534). For a noise voice it sets how often the noise changes
+(section 18.6). For a sample voice it is the playback rate in samples of
+the sample per output sample, with 16 fraction bits: 65,536 plays the
+sample at 48,000 samples a second, and a sample recorded at r samples a
+second plays at its pitch with round(r × 65,536 ÷ 48,000).
+
+### 18.5 Rendering a pair
+
+For each of the frame's 800 pairs, the device computes each voice's
+output in turn, voice 0 to voice 15, then mixes them. Let **cur(q)** be
+voice q's output in this pair if q is below the voice being computed (it
+was computed already), else voice q's Output register: its output in the
+previous pair. So a voice paired with a higher-numbered modulator (or
+ringed by one) hears it one pair late, and one paired with itself hears
+its own previous output. For voice v, in this order:
+
+1. **Envelope.** With T = sustain × 65,793 (so that 255 gives
+   `FF_FFFFh`):
+   - attack: if attack is 0 or level + attack ≥ `FF_FFFFh`, the level
+     becomes `FF_FFFFh` and the stage decay; else the level increases by
+     attack;
+   - decay: if decay is 0 or level ≤ T + decay, the level becomes T and the
+     stage sustain; else the level decreases by decay;
+   - sustain: the level becomes T;
+   - release: if release is 0 or level ≤ release, the level becomes 0 and
+     the stage off; else the level decreases by release;
+   - off: the level becomes 0.
+
+   So the rates are steps per pair on a 24-bit level, and 0 is at once:
+   the reset envelope (0, 0, 255, 0) is a gate, full from the first pair
+   after a key on and silent from the first pair after a key off.
+2. **Modulation.** M = cur(m) × depth if the voice has a modulator m,
+   else 0; F = Output(v) × feedback, its own previous output. Each is
+   less than 2^23 in size.
+3. **Raw sample** r, −128 to 127, from the source (section 18.6), which
+   also advances the phase.
+4. **Output.** o = (r × (level >> 8) × volume) >> 16, which lies in
+   −32,640 … 32,384. If the voice has a ring voice q, o becomes (o ×
+   cur(q)) >> 15.
+
+Then the pair: L is the sum, over the voices whose mix is 1, of o × left;
+R likewise with right. The pair's left sample is L >> 10 and its right
+sample R >> 10, each clamped to −32,768 … 32,767. (One voice at full
+volume and pan reaches a quarter of the range, so four can sound at full
+volume before the sum is clamped.) Last, every voice's Output register
+becomes its o.
+
+### 18.6 Sources
+
+**Wavetable w.** The index is ((phase + M × 1,024 + F × 1,024) mod 2^32)
+>> 26, a number 0–63, and r is wavetable w's sample at that index. Then
+the phase becomes (phase + increment) mod 2^32. M and F move only the
+index, never the phase: with depth 255 and a modulator at full scale the
+index moves by about two passes through the table.
+
+**Noise.** r is 127 if bit 0 of the noise register is 1, else −127. Then
+the phase becomes (phase + increment) mod 2^32, and if that addition
+carried (the sum was 2^32 or more), the noise register n becomes (n >> 1)
+| (((n XOR (n >> 1)) AND 1) << 14): a 15-bit linear feedback shift
+register of period 32,767. So the noise changes increment × 48,000 ÷ 2^32
+times a second. Modulation and feedback do not apply.
+
+**Sample slot s**, of length len (0–65,536) and loop start ls. The phase
+is a position in the sample with 16 fraction bits. A position p is
+**brought into** the sample: if p < len × 65,536 it stays; else, if ls <
+len, it becomes ls × 65,536 + ((p − ls × 65,536) mod ((len − ls) ×
+65,536)); else the sample has **ended**. Then:
+
+- if the voice's Ended flag is set, r is 0;
+- else the phase is brought into the sample. If the sample has ended, the
+  flag is set, the phase becomes 0 and r is 0. Otherwise r is the
+  sample's byte at (phase >> 16), and the phase becomes phase + increment
+  (computed without a 32-bit limit) brought into the sample; if that has
+  ended, the flag is set and the phase becomes 0.
+
+Key on clears Ended (section 18.3). Modulation and feedback do not apply.
+A slot loaded again while a voice plays it is read as it now is.
+
+### 18.7 Presentation
+
+The 800 pairs of each frame are what the host plays; they are not machine
+state and the program cannot read them. In a system (section 12) each
+machine has its own sound device; the host adds the pairs of every
+machine whose frame ran in a system frame, sample by sample, and clamps
+the sums to −32,768 … 32,767. A host may buffer, delay, resample, drop or
+not play the samples, as long as nothing in the machines changes: a host
+with no audio output has the device all the same (it is present, its
+state advances as above, and nothing is heard), as a headless host has a
+terminal nobody sees. `terse run --audio-out` and `terse-bus --audio-out`
+write the mixed samples to a WAV file instead of playing them.
+
+### 18.8 Determinism
+
+The device's state is every voice's registers, the wavetables and the
+sample slots (`STATE.md` 1.12). It takes no input from the host. The
+samples a frame renders are a function of that state, so they are the
+same on every host and after a restore; a test compares implementations
+by hashing them (`programs/tune/expected-audio.txt`).

@@ -25,8 +25,8 @@ driver provides is refused, SPEC 2).
 
 One driver process serves **every machine** of a run (section 1.2): the
 shell and each machine it starts are **instances**, named in every
-message. So a shell with eight machines and the four reference drivers is
-five processes, not thirty-six.
+message. So a shell with eight machines and the five reference drivers is
+six processes, not forty-five.
 
 Design rules:
 
@@ -313,7 +313,7 @@ goes on. Any calls of the frame still in a batch arrive just before END.
 
 STATE is `40h` alone, for an instance and slot. The reply is `C0h`, 3
 reserved bytes, a length (u32) and the slot's section of the state
-serialization (`STATE.md` 1.6–1.11: the bytes after the present flag). The
+serialization (`STATE.md` 1.6–1.12: the bytes after the present flag). The
 core writes the present flags and puts the sections in `STATE.md`'s order
 (slot 3's section for an image that lists only device 9 too: the style
 lives there, SPEC 13.2). Defined only between frames.
@@ -375,8 +375,8 @@ driver it started: it sends SHUTDOWN, closes the socket, and kills a
 driver that has not exited 2 seconds later.
 
 `terse-bus` starts, by default, `terse-dev-terminal` for slot 2,
-`terse-dev-vector` for slots 3 and 9, `terse-dev-content` for 4 and
-`terse-dev-page` for 7, from its own directory, each only if a machine of
+`terse-dev-vector` for slots 3 and 9, `terse-dev-content` for 4,
+`terse-dev-sound` for 6 and `terse-dev-page` for 7, from its own directory, each only if a machine of
 the run may list one of its slots (for a shell, all of them); `--driver
 <slots>=<command line>` replaces the driver of those slots (`--driver
 2=...`, `--driver 3,9=...`).
@@ -538,7 +538,7 @@ Fields an entry does not use are zero, but argument numbers, which are
 
 A call that fails a check is charged its base charge (4, or 64 for an
 answered call) and does not reach the driver (SPEC 14: nothing is copied).
-This is the whole of SPEC 3.1's rules, including its four exceptions,
+This is the whole of SPEC 3.1's rules, including its five exceptions,
 which are only different results in the table.
 
 ### 5.1 The tables of the reference drivers
@@ -577,6 +577,13 @@ result 1, place result `FFFF_FFFEh`; deferred: 0, 1 per 4 bytes),
 `clear`, `region`, `scroll`, `background` (deferred, 0), `locate`
 (answered).
 
+Sound (slot 6, SPEC 18): `submit` (`a0`, `a1` × 1, 1 … 4,096, read, ROM;
+both failures give 1; deferred: 0, 2 per byte), `wave` (`a1`, fixed 64
+bytes, read, ROM; `a0` ≤ 31; deferred: 0, 1 per 4 bytes), `sample`
+(`a1`, `a2` × 1, 0 … 65,536, read, ROM; `a0` ≤ 3; deferred: 0, 1 per 4
+bytes), `info` (deferred: 16 and, in `a1`, the capabilities 1); failures
+of `wave` and `sample` give `FFFF_FFFEh`.
+
 ## 6. Batching
 
 A deferred call (entry flag bit 1) changes the device's state but returns
@@ -610,7 +617,8 @@ result depends on the device's state cannot be batched: it is answered.
 
 Deferred, so batchable: terminal `write`, `command`, `set_cursor`,
 `set_colours`, `cells_write`, `palette_set`, `size`; every call of the
-vector displays; page `submit`, `clear`, `region`, `scroll`, `background`.
+vector displays; every call of the sound device; page `submit`, `clear`,
+`region`, `scroll`, `background`.
 Answered: terminal `get_cursor`, `get_colours` and `cells_read` (they read
 the device), content `submit` (the handle is the device's), page `locate`
 (it is refused when there is no document or after 8 in a frame: device
@@ -771,9 +779,20 @@ reference drivers and core:
 | `core.status` | core | terminal | the line shown over the bottom row (UTF-8): a fault; empty: none |
 | `content.prompt` | content | core | the consent question waiting: the asking machine (u32), the request's handle (u8), how many wait (u32), what is asked (kind and fields); empty: none |
 | `core.answer` | core | content | the answer: the question's machine (u32) and handle (u8), then 1 allow or 0 refuse |
+| `sound.frame` | sound | core | the frame counter after the frame the driver rendered last (u32), then its 800 sample pairs (i16, left and right interleaved; SPEC 18.7); empty before the first |
 
 `vector3.list` is read in the middle of a frame when device 8's `face`
 needs it: the core sends GET, after the batch, as it would a call.
+
+**Sound.** The sound driver renders a machine's samples at END (SPEC
+18.5: the end of the frame) and plays nothing itself: the core reads
+`sound.frame` after the machine's frame (GET, in front of which the END
+goes on shared memory), mixes the machines that ran in the system frame
+(SPEC 18.7) and plays or writes the result. The frame counter in the value
+tells the core whether the driver rendered since it last asked (a machine
+that did not run renders nothing). So sound, like the picture, is put
+together by the core from what each machine's driver gives, and one
+driver serves every machine.
 
 ## 8. Recording and replay
 

@@ -156,7 +156,7 @@ the device requirements, then the ROM. All numbers are little-endian.
 | 3 | 2D vector display | 0 | specified |
 | 4 | Content | 0 | specified; reading profile |
 | 5 | Messages | none | reserved |
-| 6 | Sound | none | reserved |
+| 6 | Sound | 0 | specified; optional |
 | 7 | Page | 0 | specified; reading profile |
 | 8 | Machines | 0 | specified; only the shell of a system has it |
 | 9 | 3D vector display | 0 | specified |

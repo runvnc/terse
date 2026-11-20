@@ -558,6 +558,7 @@ impl Bus {
             sent: HashMap::new(),
             replay: None,
             records: Vec::new(),
+            audio_frame: None,
         };
         Ok(Machine::with_devices(image, Memory::Backed(Box::new(memory)), devices))
     }
@@ -737,6 +738,8 @@ pub struct BusDevices {
     pub replay: Option<Vec<(u8, Vec<u8>)>>,
     /// The drivers' input records of the last frame (for recording).
     pub records: Vec<(u8, Vec<u8>)>,
+    /// The frame of the sound driver's samples taken last.
+    audio_frame: Option<u32>,
 }
 
 impl BusDevices {
@@ -1065,6 +1068,18 @@ impl Devices for BusDevices {
             Ok(_) => Err(bad("a device refused its section")),
             Err(_) => Err(bad("a device driver failed")),
         }
+    }
+
+    /// The sound driver's `sound.frame` (DEVICES.md 7.2), if it rendered a
+    /// frame since the last call.
+    fn take_audio(&mut self) -> Option<Vec<i16>> {
+        self.slot_proc[terse_core::sound::SLOT as usize]?;
+        let bytes = self.property(property::SOUND_FRAME).ok().flatten()?;
+        let frame = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?);
+        if self.audio_frame.replace(frame) == Some(frame) {
+            return None;
+        }
+        Some(bytes[4..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect())
     }
 
     fn list3(&self) -> Cow<'_, [u8]> {

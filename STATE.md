@@ -227,19 +227,61 @@ were before device 9 existed.
 section 1.7; the eye a host draws from (SPEC 13.1) is presentation and is
 not included.
 
-### 1.12 Argument (0 or 32 bytes)
+### 1.12 Sound (0 or 2,656 + s bytes)
+
+This section is there only if the image lists device 6 (SPEC 18); for any
+other image it is empty, so the hashes of images without device 6 are as
+they were before device 6 existed. `U` is the offset after section 1.11.
+
+| Offset | Size | Field |
+|---|---|---|
+| U | 16 × 36 | Voice 0, then 1, …, 15 |
+| U + 576 | 32 × 64 | Wavetables 0 to 31, 64 signed bytes each |
+| U + 2,624 | … | Sample slots 0 to 3, each: its length len (u32, 0–65,536), its loop start (u32, as given to `sample`), then its len bytes |
+
+s is the sum of the four lengths. Each voice is 36 bytes (SPEC 18.4):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Source: `00h` wavetable, `01h` noise, `02h` sample |
+| 1 | 1 | Wavetable, 0–31 (kept while the source is another) |
+| 2 | 1 | Sample slot, 0–3 (likewise) |
+| 3 | 4 | Phase (u32) |
+| 7 | 4 | Increment (u32) |
+| 11 | 1 | Volume |
+| 12 | 1 | Pan left |
+| 13 | 1 | Pan right |
+| 14 | 2 | Attack (u16) |
+| 16 | 2 | Decay (u16) |
+| 18 | 1 | Sustain |
+| 19 | 2 | Release (u16) |
+| 21 | 1 | Stage: `00h` off, `01h` attack, `02h` decay, `03h` sustain, `04h` release |
+| 22 | 4 | Level (u32), 0 to `FF_FFFFh` |
+| 26 | 1 | Modulator: a voice 0–15, or `FFh` none |
+| 27 | 1 | Depth |
+| 28 | 1 | Feedback |
+| 29 | 1 | Ring: a voice 0–15, or `FFh` none |
+| 30 | 1 | Mix (flag) |
+| 31 | 2 | Noise register (u16), 1 to `7FFFh` |
+| 33 | 1 | Ended (flag) |
+| 34 | 2 | Output (i16): the voice's output in the last pair rendered |
+
+The samples a frame rendered are presentation (SPEC 18.7) and are not
+included; everything they are computed from is.
+
+### 1.13 Argument (0 or 32 bytes)
 
 | Offset | Size | Field |
 |---|---|---|
 | A | 32 | The machine's argument (SPEC 4 `argument`); there only if the shell gave it one |
 
-`A` is the offset after section 1.11. A machine with no argument (every
+`A` is the offset after section 1.12. A machine with no argument (every
 machine run on its own, and every shell) has nothing here, so its hash is
 as it was before arguments existed.
 
 The section has no flag (a flag would change the hash of every machine
 without an argument). Its presence is inferred: a reader that has read
-sections 1.1 to 1.11 finds the argument there exactly when 32 bytes
+sections 1.1 to 1.12 finds the argument there exactly when 32 bytes
 remain, none when 0 remain, and refuses any other remainder. The writer
 is the machine's own serialization: it writes the section exactly when
 the machine was given an argument (by its shell's `argument` before its
@@ -248,7 +290,8 @@ first frame, SPEC 12.2, or by the snapshot it was restored from).
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
-83r (machines), 0 or 4 + m (3D vector) and 0 or 32 (argument).
+83r (machines), 0 or 4 + m (3D vector), 0 or 2,656 + s (sound) and 0
+or 32 (argument).
 
 ## 2. What is left out, and why
 
@@ -276,7 +319,8 @@ That is the end of the serialization. Its length is
   per-frame statistics (units used, events dropped), the decoded form of ROM,
   caches.
 - **Presentation**: fonts, pixels, blending, the afterglow (SPEC 8.6, 10.5,
-  10.6), the eye the 3D display is seen from (SPEC 13.1). The vector list
+  10.6), the eye the 3D display is seen from (SPEC 13.1), the samples the
+  sound device rendered and how a host plays or mixes them (SPEC 18.7). The vector list
   bytes are included; how they are drawn is not.
 - **A system's host bookkeeping** (SPEC 12): which machines exist, their
   images while they load, the order of their frames, what the host shows.
@@ -333,7 +377,9 @@ in range: a flag is `00h` or `01h`, the stopped and fault fields agree, the
 budget is zero or negative, L is the image's RAM size, n ≤ 64, the cursor
 is on the grid, the incomplete sequence is one, the style, fill mode and
 list lengths are valid, an image without device 3 has fill mode `00h` and
-an empty 2D list, the page rectangle is clamped, a document is at most
+an empty 2D list, every sound voice's source, wavetable, sample slot,
+stage, level, modulator, ring and noise register are in range and no
+sample is longer than 65,536 bytes, the page rectangle is clamped, a document is at most
 65,536 bytes, every pending request has a known `op`, its block in RAM and
 its fields as a submit leaves them). The restored machine's state hash is
 S's hash, and it is between frames: its next frame is the one whose number
@@ -361,7 +407,7 @@ A host keeps a snapshot (SPEC 12.7) in a file:
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
-N is below 200 or above 1,158,243 (the longest serialization: 1 MiB of
+N is below 200 or above 1,423,043 (the longest serialization: 1 MiB of
 RAM, a full queue, every device at its largest and an argument), whose L
 is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥
@@ -437,7 +483,7 @@ snapshot.
 
 Nothing else is an input of a single machine: `open` always returns 0
 (or `FFFF_FFFEh`) for a machine no shell started (SPEC 4), its argument is
-in the snapshot (section 1.12; none from reset), and the page's layout
+in the snapshot (section 1.13; none from reset), and the page's layout
 reaches it only as events. A recording is read to its end; a file that ends
 inside a header or record, has a kind or controller bytes out of range, or a
 frame counter other than the machine's, is refused, and a replay stops with

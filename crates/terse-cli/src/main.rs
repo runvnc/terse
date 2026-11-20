@@ -16,8 +16,9 @@ const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
 const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
-            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading]
+            [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading] [--audio-out <file.wav>]
   terse run <image> --replay <file> [--frames N] [--dump ...] [--hash] [--hash-every N] [--bench] [--save-state <file>]
+            [--audio-out <file.wav>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
@@ -109,6 +110,9 @@ prints the shell's screen, then for each machine whose rectangle is not empty a 
 hash, and --hash-all after it `<handle> <hash>` for each machine the shell has after the last
 frame, in handle order (one it stopped is not listed; `-`: no machine, as its image or snapshot is
 still being fetched or its start failed).
+--audio-out writes what the sound device (device 6, SPEC 18) of every machine played, mixed, as a
+WAV file (48,000 Hz, stereo, 16 bits): 800 sample pairs a frame run, silence for a frame in which
+no machine gave any. Nothing is ever played: `run` has no audio output.
 --dump-vectors prints the 2D list (device 3) as shapes and the 3D list (device 9) as commands, then
 `-- 3d: <n> segments, length <l> units --`: what it draws seen from the reference eye (SPEC 13.4).
 --dump-page prints the page (device 7) as the reference layout lays it out: a header line with
@@ -383,6 +387,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--load-state",
         "--record",
         "--profile",
+        "--audio-out",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
@@ -498,9 +503,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
     let mut stopped = None;
     let mut times = Vec::new();
+    let mut audio = AudioOut::new(&args);
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
         let start = std::time::Instant::now();
         headless.frame(&mut system);
+        audio.frame(&mut system);
         stopped = system.stopped();
         if args.has("--bench") {
             times.push(start.elapsed());
@@ -522,6 +529,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     if stopped.is_none() && frames.is_none() {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
+    audio.finish()?;
     finish(&args, &system, stopped, &mut times)
 }
 
@@ -549,8 +557,8 @@ fn print_hash_every(machine: &Machine, every: Option<u32>) {
 /// recording alone (STATE.md 5): no network, store, data directory or
 /// script. Every frame's state hash is checked against the recording.
 fn replay(args: &Args) -> Result<ExitCode, String> {
-    args.check_known(&["--replay", "--frames", "--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-every", "--bench", "--save-state"])
-        .map_err(|e| format!("{e}\n(--replay takes only --frames, --dump, --hash, --hash-every, --bench and --save-state)"))?;
+    args.check_known(&["--replay", "--frames", "--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-every", "--bench", "--save-state", "--audio-out"])
+        .map_err(|e| format!("{e}\n(--replay takes only --frames, --dump, --hash, --hash-every, --bench, --save-state and --audio-out)"))?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
     }
@@ -575,6 +583,7 @@ fn replay(args: &Args) -> Result<ExitCode, String> {
     let mut stopped = None;
     let mut times = Vec::new();
     let mut run = 0;
+    let mut audio = AudioOut::new(args);
     while frames.is_none_or(|n| run < n) {
         let Some(next) = recording.next_frame() else { break };
         let (frame, hash) = next.map_err(|e| format!("{path}: {e}"))?;
@@ -592,12 +601,44 @@ fn replay(args: &Args) -> Result<ExitCode, String> {
         }
         run += 1;
         stopped = machine.stopped();
+        audio.frame(&mut system);
+        let machine = system.shell_mut();
         if machine.state_hash() != hash {
             return Err(format!("{path}: the replay differs from the recording after frame {}", frame.frame));
         }
         print_hash_every(system.shell(), hash_every);
     }
+    audio.finish()?;
     finish(args, &system, stopped, &mut times)
+}
+
+/// `--audio-out`: the system's samples, frame by frame, written as a WAV
+/// file at the end (SPEC 18.7).
+struct AudioOut {
+    path: Option<String>,
+    samples: Vec<i16>,
+}
+
+impl AudioOut {
+    fn new(args: &Args) -> Self {
+        AudioOut { path: args.get("--audio-out").map(str::to_string), samples: Vec::new() }
+    }
+
+    /// The frame just run: every machine's samples mixed, or silence.
+    fn frame(&mut self, system: &mut System) {
+        if self.path.is_some() {
+            let mut frame = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
+            system.take_audio(&mut frame);
+            self.samples.extend_from_slice(&frame);
+        }
+    }
+
+    fn finish(self) -> Result<(), String> {
+        match self.path {
+            Some(path) => write(&path, &terse_core::sound::wav(&self.samples)),
+            None => Ok(()),
+        }
+    }
 }
 
 /// What `run` prints after the last frame, and its exit status.
