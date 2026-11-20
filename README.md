@@ -44,6 +44,14 @@ program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
 `ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
 its `SPEC-FINDINGS.md` lists where the specifications left it guessing.
 
+**A second core.** `native/core-c/` (`tcore`) is the machine's core alone,
+about 1,450 lines of C written from `SPEC.md`, `STATE.md` and `DEVICES.md`:
+the CPU, frames and budget, the System device and the state hash, with every
+other device left to the reference drivers, started as processes on the
+device bus. It gives the expected hashes of `conform-program`, `conform` and
+`conform-reading` frame by frame; its `SPEC-FINDINGS.md` lists where the
+documents left it guessing.
+
 Shell commands below are written for fish; they also work in bash and zsh
 unless they set variables (`set X value` in fish is `X=value` in bash).
 

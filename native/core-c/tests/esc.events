@@ -1,0 +1,4 @@
+# hello: type, Enter, then Esc exits with 0 in frame 5
+3 text hi
+4 press enter
+5 press esc
