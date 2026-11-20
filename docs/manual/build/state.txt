@@ -151,4 +151,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:71642554c8c0e0b6ce114ad7a1ab271dde9f2622b7664073d9404a54c2dd74ea) for frames and the budget, and [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).
+See [the machine](terse:6fddfda54458ccb17d5f6a9b189fe3b563804ba8f2934d911f6802296d9be32d) for frames and the budget, and [charges](terse:e3c9fd96ee747ae433d8170979d89c59848d4e18e9434ccb7612ff3eef50722c).

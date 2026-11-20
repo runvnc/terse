@@ -8,24 +8,24 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:c1735b795bdcbdd7c319bf0c49f837102d557893353114363adad73d560cb54e): what Terse is for, in one
+- [What Terse is](terse:02df92ba7981af856f763b94f3baad873142f7cfe70642f848be3121cf676c3b): what Terse is for, in one
   paragraph.
-- [How Terse works](terse:c04102cbd2ac82455f7cbd34a6b2701340bf5e39c3a7045b01541e04f974bf79): the technical details in
+- [How Terse works](terse:446635cb5b91d46e45703ee7e50527058701e3d317d949e4a1f9fa31b5092c72): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:e3c7731a9a5e347d4c591e91e4e031aa1aa474d0014f379d48b12a872afbf6a3): the toolchain, the C
+- [Writing a program](terse:5da01f5f793084dceb119bad34cb906ac33bf051763b090d2d7b54a931739942): the toolchain, the C
   library, building, running a program headless and in the host, and
   publishing it in a feed.
-- [Using the shell and the reader](terse:69f14aeec1d8050c4e2dbf500a223ea6876532acdf56c5d348f029d5c49f5f2e): the keys of the
+- [Using the shell and the reader](terse:1b3a9799b357e73c1ec6060d7c59de46c1856f20d1c4e5bbdd437efed4216c43): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
 - [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format,
   every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:cc2dbabfe50a9a786282ac1e1c6ed767a650320aeaf72e7cec1f99f45dce0d5e): what a machine's state
+- [State, replay and conformance](terse:5231c3a0aa19cb6250605d6f65c221eeb22ddd9fb929b215ba06df7252fb113a): what a machine's state
   is, its hash, snapshots and the conformance image.
 
 ## The machine
 
-- [The machine](terse:71642554c8c0e0b6ce114ad7a1ab271dde9f2622b7664073d9404a54c2dd74ea): the CPU, the memory map, reset, frames
+- [The machine](terse:6fddfda54458ccb17d5f6a9b189fe3b563804ba8f2934d911f6802296d9be32d): the CPU, the memory map, reset, frames
   and the budget, faults, the image format, the call convention and the
   whole call table.
 - [Events and input](terse:fbad2774fb00d4e03bc2b54669a2ed319c903fd00a7c5f768fd2b9edbe77fd4c): every event, the queue, keys,
