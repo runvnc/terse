@@ -38,9 +38,12 @@ pub fn local_url(port: u16) -> String {
 }
 
 /// Whether `url` is a relay URL this host accepts in its relay list.
+/// It is also the test of NETWORK 4.6 for a profile's `relay` value:
+/// `ws://` or `wss://`, then something that does not start with `/`, and
+/// no control or whitespace character anywhere.
 pub fn valid_url(url: &str) -> bool {
-    url.strip_prefix("ws://").or_else(|| url.strip_prefix("wss://")).is_some_and(|rest| !rest.is_empty())
-        && !url.chars().any(char::is_whitespace)
+    url.strip_prefix("ws://").or_else(|| url.strip_prefix("wss://")).is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>, String> {

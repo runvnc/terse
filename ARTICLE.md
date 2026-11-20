@@ -60,6 +60,50 @@ A blob whose first four bytes are `TERS` (a program image) or `TDOC` (a
 document) is not an article (`NETWORK.md` section 1.1): a reader does not
 show it as text.
 
+### 1.1 The basic text repertoire
+
+A reader need not be able to show every Unicode character. The **basic
+text repertoire** is the set of characters every reader must be able to
+show:
+
+- the printable ASCII characters, U+0020 to U+007E (and tab, CR and LF,
+  handled as section 1 says);
+- these eleven: U+00D7 `×` multiplication sign, U+2013 `–` en dash,
+  U+2014 `—` em dash, U+2018 `‘` and U+2019 `’` single quotation marks,
+  U+201C `“` and U+201D `”` double quotation marks, U+2022 `•` bullet,
+  U+2026 `…` ellipsis, U+2212 `−` minus sign, and U+FFFD `�` the
+  replacement character (which section 1 makes a reader show for
+  malformed text).
+
+That is 95 + 11 = 106 characters. An article (or a title, section 9)
+that holds only these, after the rules of section 1 are applied (a
+byte order mark that starts it, control characters that are not
+shown), is in **basic text**; any other article **needs full text**.
+
+A **full-text reader** shows every character as its text toolkit can.
+A **basic reader** may show a character outside the repertoire as a
+**placeholder**, one per character (code point; a reader may show a
+character and the combining marks after it as one), a mark that cannot
+be taken for text of the article (for example `?` in reverse video, or
+a box). A basic reader:
+
+- never drops a character silently, and never shows it as another
+  character of the repertoire without marking it;
+- should say, for an article that needs full text, that it holds
+  characters it cannot show (for example in a status line);
+- keeps the original characters wherever text leaves the reader: plain
+  text output, copying, and what it gives a screen reader or other
+  assistive tool (which may well be able to speak characters the
+  screen cannot show);
+- may tell, in a timeline or list, which entries need full text: it can
+  do so for an entry's title at once, and for its article once it holds
+  the blob (automatic download, `NETWORK.md` section 4.4, means that is
+  usually before the person opens it). An entry carries no mark of its
+  own for this.
+
+Placeholders change only how a character looks: a placeholder takes
+part in wrapping, tables and links as the character would.
+
 ## 2. Blocks
 
 The text is a sequence of blocks. Blank lines separate them, and a block
@@ -161,7 +205,9 @@ in order (the first at the start). Its lines are its rows.
   within its column, aligned as the column says (start and end are left
   and right in left-to-right text; a reader may take them as left and
   right always), and shows the header, if any, apart from the other rows
-  (for example bold, with a rule under it). Empty cells are empty.
+  (for example bold, with a rule under it; in plain text, such as output
+  for a screen reader, an empty line or a line of `-` after the header
+  row is enough). Empty cells are empty.
 - **Too wide.** A table whose cells' text does not fit the column on one
   line each may have its columns narrowed and the text of its cells
   wrapped within them. A reader that has narrowed the columns as far as
@@ -292,7 +338,8 @@ itself; it may fetch an article link's blob ahead of time (prefetch,
   as text: it says that it cannot open it, or hands it to a program
   that can (on a machine host, the shell, section 11). The title shown
   is that of an entry the reader holds for the blob, if any; else the
-  reader may use the article's first heading, or a short form of the ID.
+  reader may use the article's first block if it is a heading (section
+  9), or a short form of the ID.
   A reader may refuse to open a linked article larger than it shows
   (section 1), saying so.
 - **Feed link.** The reader shows the feed: its name with its key
@@ -366,7 +413,11 @@ The path string is SVG path data with two additions.
   directly after a number or a command letter (`L5 5fill #f00` is
   malformed; `L5 5 fill #f00` is not). A word and its colour are each
   followed by a separator or the end, so a colour is always after a
-  separator too.
+  separator too. A stroke width is a number like any other: it may have
+  a `+` sign, and a command letter may follow it directly
+  (`stroke fg 2M0 0` and `stroke #f00 +3 M0 0` are well formed; so is
+  `stroke fg 2,M0 0`). A number after the width (`stroke fg 2 3`) is a
+  number where none is expected.
 - Every number is rounded to the nearest sixteenth of a unit (halves
   away from zero) before it is used, so relative coordinates add up
   exactly. Every point a command reaches, control points included, lies
@@ -388,7 +439,9 @@ Coordinates are in **units** from the figure's top left corner, x to
 the right and y down. Units are relative to the reading column: a column
 of the **recommended width**, about 68 characters of body text a line
 (what the reference reader shows, and so what authors see), holds 512
-units. The figure is a box W units wide and H high, a block of its own;
+units. For a reader whose body text is monospaced (a terminal, for
+example), the recommended width is 68 character cells: 512 units are 68
+cells. The figure is a box W units wide and H high, a block of its own;
 the reader places it in the column as it likes (the reference reader
 centres it). A unit is the same length across and down, and the same
 for every figure of an article.
@@ -420,7 +473,11 @@ for every figure of an article.
   point. `Z` draws a straight segment back to the subpath's start, closes
   the subpath and makes its start the current point. A `Z` with no
   subpath open (at the start, after another `Z` or after a word) does
-  nothing: it draws nothing and does not move the current point.
+  nothing: it draws nothing and does not move the current point. An `M`
+  with no segment after it before the next `M`, word or the end
+  (`M1 1 M2 2 L3 3`) moves the current point and draws nothing; it is
+  still one of the path's commands (the dump format of
+  `vectors/README` writes it out).
 - A **path** is the subpaths between two words (or the start or end of
   the path string). Each path is drawn with the fill and stroke in force
   when it starts: first filled, with the non-zero winding rule (every
@@ -433,7 +490,7 @@ for every figure of an article.
   draws nothing; a stroke width of 0 draws no outline.
 - `fg` is the colour of the reader's body text, opaque. Every other
   colour is as written: a reader does not change it, whatever its own
-  background. A figure has no background of its own: where nothing is
+  background (but see coarse surfaces, below). A figure has no background of its own: where nothing is
   drawn, the column shows through.
 - Paths are drawn in order, later ones over earlier ones, blended by
   opacity (source over). Drawing is clipped to the figure's box.
@@ -442,6 +499,28 @@ for every figure of an article.
   reader draws its paths in order up to a path it stops at, and none of
   that path or after it (the reference reader has such limits,
   section 11).
+
+**Coarse surfaces.** The rules above assume a surface with at least
+about one dot per unit. A reader that draws on a much coarser one (for
+example a character grid, with braille or block characters giving a few
+dots per cell) or with few colours may:
+
+- draw every stroke and every filled area at least one dot wide, so
+  that nothing drawn disappears;
+- set a dot where a colour covers enough of it (a threshold of its
+  choice) and blend no further;
+- show each cell with as many colours as the surface allows (for
+  example one colour for its dots over one background colour), choosing
+  the nearest it has;
+- in monochrome, leave out a fill that covers most of the figure (a
+  panel behind the drawing), so that what is drawn on it shows.
+
+It must still keep the figure's size and place in the column (section
+6.2, in its own units), the position of everything drawn within the
+box, and the order of paths (later over earlier), and draw nothing
+outside the box. Instead of drawing, any reader may show a figure as
+its text (section 6.5), which always conforms; one that shows text for
+a screen reader or plain output should do so.
 
 ### 6.4 Example
 
@@ -463,7 +542,8 @@ that way.
 ## 7. What a reader must do, in short
 
 - Read the text as UTF-8 (section 1) and split it into blocks
-  (section 2).
+  (section 2); show at least the basic text repertoire, and every other
+  character or a placeholder for it (section 1.1).
 - Show paragraphs, list items, headings, preformatted blocks, fences and
   code spans as sections 2 and 5 say.
 - Show tables as grids (section 2.5), or as paragraphs.
@@ -481,7 +561,8 @@ that way.
   of an article and where a link ends up on the screen differ between
   readers, and nothing in the format depends on them.
 - Shape complex scripts or reorder bidirectional text beyond what its
-  toolkit does.
+  toolkit does, or show characters outside the basic text repertoire
+  (section 1.1) other than as placeholders.
 - Shorten bare links, offer keys to move between links, prefetch linked
   articles, or show the targets of links with text.
 - Use a feed link's hints (it still recognises them as part of the link,
@@ -497,9 +578,16 @@ that way.
 
 An article's title is the title of its entry (`NETWORK.md` section 4.2),
 not part of its text. A reader that shows an article it holds no entry
-for (one reached by a link) may use the article's first line as the
-title if it is a heading, and then need not show that heading again
-(the reference reader does so).
+for (one reached by a link) may use the article's first block as the
+title if it is a heading (`# `, not a subheading), and then need not
+show that heading again (the reference reader does so).
+
+A title, and any name shown with it (a display name or nickname,
+`NETWORK.md` section 4.6), is shown by the rules of section 1 for text:
+malformed UTF-8 (which an entry's title cannot hold) as U+FFFD, tabs
+and lone CRs as spaces, other control characters not shown, and
+characters outside the basic text repertoire as section 1.1 says. A
+title is one line: an LF in it is shown as a space.
 
 ## 10. Not yet specified
 

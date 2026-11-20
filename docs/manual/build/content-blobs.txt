@@ -1,6 +1,6 @@
 # Content: blobs, requests and statuses (device 4)
 
-The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:db4d91204fc22d0cee62e5ff9efab5a3afa2d3cf962d6eed3d23c670f398a80f). The exact rules are in spec/content.md.
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:118f755141d03ebc32d3e63788969d4581a9b6929f09a92ad11081dd4bc85508). The exact rules are in spec/content.md.
 
 An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
 
@@ -61,17 +61,17 @@ Fields an op does not use are ignored.
 |---|---|---|
 | `01h` | Get | below |
 | `02h` | Put | below |
-| `03h` | Subscriptions | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `04h` | Timeline | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `05h` | Subscribe | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `06h` | Unsubscribe | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `07h` | Publish | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `08h` | Identity | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `09h` | Names | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `0Ah` | Find | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `0Bh` | Set profile | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `0Ch` | Set nickname | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
-| `0Dh` | Programs | [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) |
+| `03h` | Subscriptions | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `04h` | Timeline | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `05h` | Subscribe | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `06h` | Unsubscribe | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `07h` | Publish | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `08h` | Identity | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `09h` | Names | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `0Ah` | Find | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `0Bh` | Set profile | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `0Ch` | Set nickname | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
+| `0Dh` | Programs | [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) |
 | `0Eh` | Save | [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121) |
 | `0Fh` | Load | [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121) |
 | `10h` | Delete | [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121) |

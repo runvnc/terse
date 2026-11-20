@@ -233,12 +233,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:480fc5884171c1f1d5310905765a18b4d79bcfc63dc9d2fa8268ec2e3376aca4): building a C program and packing it as an image.
-- [Using Terse](terse:42a808c07533cc620db3f85d08f7a86346940ef05370bd15e1487c186488b285): the tools, the shell and the reader.
-- [Writing articles](terse:c25759cedb1872135adff023db1eef5b08f26d131277cd6948da1de3d5385787): the article format, tables and figures.
-- [The machine](terse:7e0a58c1c0f017209b1a67f812b28956d11ea9ce247484c4d5cd9d20144c6ed3): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:685d33355dab5162ac045bf83d8dc3a78c4d5fced38f7e03acb2fce2cfb33218), [the terminal](terse:2d8a958181a69be54fc086e3fca342ea990fc079e46ad35fb19d36eeec0b0a5a), [the 2D vector display](terse:94a70a146c03632e7b355c88af61144b8b7a7f418f02b691adb6e99f654c81c6), [the 3D vector display](terse:2fb193248c09d094e6bac8b8313011ec675af721e13e841ab77e54866213372e), [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) and [machines](terse:1a699ef2f4a468fd6d66f6c086bf2995fd5e9c1eef17102b2aa43420c07d5930).
-- [Blobs](terse:e009e110363f9261adb4a57399b7aea9d4e47e1dd267840a07d4fcb2d8840e42), [feeds](terse:d56bef7229de3d02867d7f9c311471bf6aafb228fcd7f76e45f4bb5d17a6c542) and [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121) on the content device.
-- [The network](terse:db4d91204fc22d0cee62e5ff9efab5a3afa2d3cf962d6eed3d23c670f398a80f): relays and feeds as the host sees them.
-- [Machine state](terse:f429928a0cf48eb5879c984a86688b808435629603651466f202db3da8b05ae1): the state serialization and the state hash.
+- [Writing programs](terse:7cf77c383b3e17cff2ff45dec1e65f1005962272956ee6d2780558af283d8936): building a C program and packing it as an image.
+- [Using Terse](terse:9bde5fdd81bdf977bf5e4630f0d39868e7a6cbdf76d3e2be0db6ea446eb0e378): the tools, the shell and the reader.
+- [Writing articles](terse:47bd766c9350c98d9c4e47dbec0ef64ad3e7a1ce9b048070aeb7dfe6406b7d8a): the article format, tables and figures.
+- [The machine](terse:42cf8e5bd485e11d04aa9b0e641df60d9edc6c40484f3b65782e45fbd9735bd7): the CPU, memory, frames, image format and the full call table.
+- [The system device](terse:2ee02ed0c0e9b1457282a5766b4ed941b98b70f9cecfdf4b3b23b0849f98298a), [the terminal](terse:2d8a958181a69be54fc086e3fca342ea990fc079e46ad35fb19d36eeec0b0a5a), [the 2D vector display](terse:94a70a146c03632e7b355c88af61144b8b7a7f418f02b691adb6e99f654c81c6), [the 3D vector display](terse:2fb193248c09d094e6bac8b8313011ec675af721e13e841ab77e54866213372e), [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) and [machines](terse:1a699ef2f4a468fd6d66f6c086bf2995fd5e9c1eef17102b2aa43420c07d5930).
+- [Blobs](terse:254bc5cea2bed72326d852dbf7bc378513377f2a52238c9f7019e8648cf64d86), [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) and [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121) on the content device.
+- [The network](terse:118f755141d03ebc32d3e63788969d4581a9b6929f09a92ad11081dd4bc85508): relays and feeds as the host sees them.
+- [Machine state](terse:5fd861c27b0d400dbfdf31f91e0ce401d753ba601a50ed7b9e0dc9c531717f7f): the state serialization and the state hash.
 - [Events and input](terse:2ff1d91c14260d1a4c8cb78cf69b0cc177e3b69c3a4c7b60dd4362909c06a8ad) and [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).

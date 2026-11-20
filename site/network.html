@@ -49,7 +49,7 @@
 <p>A find the relay carries out is answered with status 1 and its results, none if nothing matches.</p>
 <p>The relay computes a put&#39;s ID itself. It must refuse blobs over 1,048,576 bytes and may limit its store. It closes the connection on a text message or an unparsable message of a known type, and ignores unknown types and replies or pushed entries from a non-peer.</p>
 <h2 id="feeds">Feeds</h2>
-<p>A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is a curve point that is not of small order. Only the author&#39;s client holds the secret key.</p>
+<p>A feed is a numbered series of small signed entries from one author, each pointing to a blob. A feed is identified by an Ed25519 public key (32 bytes, 64 lowercase hex digits); a valid key is the canonical encoding of a curve point that is not of small order. Only the author&#39;s client holds the secret key.</p>
 <h2 id="the-entry">The entry</h2>
 <div class="table"><table>
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
@@ -66,7 +66,7 @@
 <tr><td>109 + <code>n</code></td><td>64</td><td>signature</td></tr>
 </tbody></table></div>
 <p>The signature is Ed25519 over the 13 ASCII bytes <code>terse-entry-0</code> followed by bytes 0 to 108 + <code>n</code> of the entry. An entry is at most 293 bytes.</p>
-<p>An entry is valid if: <code>n</code> is at most 120 and the entry&#39;s length matches it; the signature verifies under the feed key with strict verification (small-order keys and non-canonical signatures are rejected); <code>seq</code> is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and <code>seq</code>, the one received first is kept. <code>seq</code> values need not be consecutive, and the time is not checked.</p>
+<p>An entry is valid if: <code>n</code> is at most 120 and the entry&#39;s length matches it; the signature verifies under the feed key with strict verification (NETWORK.md section 4.2 lists its checks: a canonical key and S below the group order, no small-order key or R, and the cofactorless equation compared byte for byte; an ordinary library verify is not enough); <code>seq</code> is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and <code>seq</code>, the one received first is kept. <code>seq</code> values need not be consecutive, and the time is not checked.</p>
 <div class="table"><table>
 <thead><tr><th>Kind</th><th>Entry</th><th>Title</th><th>Blob</th></tr></thead>
 <tbody>

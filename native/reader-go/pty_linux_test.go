@@ -70,7 +70,7 @@ func TestInteractive(t *testing.T) {
 	ws := struct{ Row, Col, X, Y uint16 }{24, 80, 0, 0}
 	ioctl(int(slave.Fd()), syscall.TIOCSWINSZ, unsafe.Pointer(&ws))
 	cmd := exec.Command(bin, "--dir", store)
-	cmd.Env = []string{"HOME=" + tmp, "TERM=xterm"}
+	cmd.Env = []string{"HOME=" + tmp, "TERM=xterm", "TERSE_NODE_SOCKET=" + filepath.Join(tmp, "no-node", "node.sock")}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {

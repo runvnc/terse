@@ -1,0 +1,10 @@
+figure 50 50
+  path fill none stroke fg 16
+    M 16 16
+    M 32 32
+    L 48 48
+  path fill #000000ff stroke fg 16
+    M 96 96
+    L 112 112
+    M 128 128
+    M 144 144

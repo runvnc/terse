@@ -2955,8 +2955,10 @@ name = "terse-net"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.4.3",
+ "sha2",
  "tempfile",
  "terse-core",
  "tungstenite",

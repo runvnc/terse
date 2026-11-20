@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 
 use crate::blob::{parse_hex, to_hex};
 
@@ -82,9 +82,15 @@ impl Identity {
     }
 }
 
-/// Whether `key` is a usable Ed25519 public key (a valid curve point).
+/// Whether `key` is a valid feed key (NETWORK 4.1): the canonical encoding
+/// of a curve point (RFC 8032 decoding: y below p, no sign bit on x = 0;
+/// equivalently, the decoded point encodes back to the same bytes) that is
+/// not of small order. A key with a small-order component but of large
+/// order itself is valid.
 pub fn valid_feed_key(key: &FeedKey) -> bool {
-    VerifyingKey::from_bytes(key).is_ok_and(|k| !k.is_weak())
+    curve25519_dalek::edwards::CompressedEdwardsY(*key)
+        .decompress()
+        .is_some_and(|p| p.compress().to_bytes() == *key && !p.is_small_order())
 }
 
 #[cfg(unix)]

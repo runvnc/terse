@@ -34,6 +34,24 @@ type Entry struct {
 	Blob  string // blob ID, 64 hex digits
 	Title string
 	Held  bool // the blob is held and its length is Size
+
+	Arrival  uint32 // its place in arrival order, from 1 (NETWORK.md 4.4)
+	Name     string // the feed's nickname or display name, or ""
+	FullText bool   // the title, or the held article, needs full text (ARTICLE.md 1.1)
+	Raw      []byte // the complete signed entry (NETWORK.md 4.2)
+}
+
+// LabelOf names a feed for people: its name, if any, always with the
+// short form of its key beside it (NETWORK.md 4.6).
+func LabelOf(name, key string) string {
+	short := key
+	if len(key) >= 12 {
+		short = key[:6] + "…" + key[len(key)-6:]
+	}
+	if name != "" {
+		return name + " (" + short + ")"
+	}
+	return short
 }
 
 // Feed describes a feed and what the node holds of it.
@@ -41,6 +59,8 @@ type Feed struct {
 	Key           string
 	Address       string // the key and the hints it was subscribed with
 	Label         string // name and short key (NETWORK.md 4.6)
+	Name          string // nickname or display name, or ""
+	Nickname      bool   // Name is the user's nickname
 	Subscribed    bool
 	Hints         []string // relay URLs of the address's hints
 	HintRelays    []string // hinted relays the feed is followed on now

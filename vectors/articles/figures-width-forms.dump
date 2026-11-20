@@ -1,0 +1,16 @@
+figure 100 100
+  path fill none stroke fg 32
+    M 0 0
+    L 160 160
+  path fill none stroke #ff0000ff 48
+    M 320 320
+    L 480 480
+  path fill none stroke fg 32
+    M 640 640
+    L 800 800
+pre
+  line
+    text "stroke fg 2 3 M0 0 L1 1"
+pre
+  line
+    text "stroke fg2 M0 0 L1 1"

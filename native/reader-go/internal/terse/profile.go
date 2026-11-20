@@ -75,8 +75,13 @@ func ParseProfile(b []byte) (p Profile, ok bool) {
 	return p, true
 }
 
-// isRelayURL is our reading of "a ws:// or wss:// URL": the scheme, then
-// a non-empty host with no blanks or control characters.
+// IsRelayURL is the test of NETWORK.md 4.6 for a relay URL (see isRelayURL).
+func IsRelayURL(v string) bool { return isRelayURL(v) }
+
+// isRelayURL reports whether a relay line's value counts as a relay URL
+// (NETWORK.md 4.6): it starts with `ws://` or `wss://` (lowercase), what
+// follows is not empty and does not start with `/`, and it holds no
+// control character and no whitespace character.
 func isRelayURL(v string) bool {
 	var rest string
 	switch {
@@ -87,12 +92,11 @@ func isRelayURL(v string) bool {
 	default:
 		return false
 	}
-	host, _, _ := strings.Cut(rest, "/")
-	if host == "" {
+	if rest == "" || rest[0] == '/' {
 		return false
 	}
 	for _, r := range v {
-		if r <= ' ' || r == 0x7f {
+		if isControl(r) || isWhiteSpace(r) {
 			return false
 		}
 	}

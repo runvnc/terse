@@ -59,7 +59,8 @@ func freePort(t *testing.T) int {
 // isolated is an environment with every XDG directory in the test's temp dir.
 func (e *env) isolated(extra ...string) []string {
 	base := []string{"HOME=" + e.tmp, "XDG_CONFIG_HOME=" + e.tmp + "/xdg-config",
-		"XDG_CACHE_HOME=" + e.tmp + "/xdg-cache", "XDG_DATA_HOME=" + e.tmp + "/xdg-data", "PATH=" + os.Getenv("PATH")}
+		"XDG_CACHE_HOME=" + e.tmp + "/xdg-cache", "XDG_DATA_HOME=" + e.tmp + "/xdg-data", "PATH=" + os.Getenv("PATH"),
+		"XDG_RUNTIME_DIR=" + e.tmp + "/xdg-run"}
 	return append(base, extra...)
 }
 

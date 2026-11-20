@@ -1439,7 +1439,18 @@ impl Node {
                 self.events.push(FeedEvent::Subscribed(feed));
                 self.program_downloads(&feed);
             }
-            (Waiting::Subscribe(feed, _), RelayReply::Refused) => self.events.push(FeedEvent::SubscribeRefused(feed)),
+            (Waiting::Subscribe(feed, _), RelayReply::Refused) => {
+                // NETWORK 4.9: an own relay that refuses the feed holds none
+                // of it for this client.
+                if self.subscriptions.contains(&feed)
+                    && self.links.get(&lid).is_some_and(|l| l.feeds.is_none())
+                    && !self.held_on_own.contains(&feed)
+                {
+                    self.empty_on_own.entry(feed).or_default().insert(lid);
+                    self.check_hints(&feed);
+                }
+                self.events.push(FeedEvent::SubscribeRefused(feed));
+            }
             // No answer: subscribe again on the next poll.
             (Waiting::Subscribe(..), _) => {
                 if let Some(link) = self.links.get_mut(&lid) {
