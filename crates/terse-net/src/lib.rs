@@ -34,6 +34,8 @@ pub mod identity;
 pub mod local;
 pub mod manual;
 pub mod manual_site;
+pub mod feed_site;
+pub mod site_render;
 pub mod node;
 pub mod profile;
 pub mod protocol;

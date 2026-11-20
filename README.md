@@ -229,7 +229,8 @@ images were built with clang and LLD 23.1.4.
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`).
 - `key new|show`, `feed …`, `profile …` and `find`: feeds, names and search, see
-  [Feeds](#feeds).
+  [Feeds](#feeds); `feed site` writes a feed as a static website, see
+  [Any feed as a website](#any-feed-as-a-website).
 - `manual build|check [--dir <docs/manual>]`, `manual site --out <dir>` and `manual
   publish`: the manual, see [Manual](#manual) and [The website](#the-website).
 - `vectors [--dir <dir>]` writes the core's test vectors (default `vectors/`):
@@ -694,6 +695,42 @@ deterministic, and it is checked in):
 `cargo test -p terse-cli --test manual` checks that `site/` is up to date, that
 every link resolves to a page of it, and that no page holds a script or a web
 address.
+
+#### Any feed as a website
+
+The same renderer makes a website of any feed, so that an author's readers need
+install nothing:
+
+    terse feed site [<address>] --out <dir> [--title <t>] [--base-url https://...] [--force]
+
+(default: your own feed; with the usual `--relay`, `--store`, `--config`). It first
+fetches the feed's entries from the relays (and the address's hints), then writes:
+a page per article entry (`<first 16 hex digits of the blob ID>.html`, the whole
+ID if that name is taken), dated by the entry's time; `index.html` with the newest
+20 and links to `page-1.html`, `page-2.html`, ... (20 articles each, numbered
+from the oldest, shown newest first); `programs.html` listing the feed's programs
+by `terse:program/` address (they do not run on the web); the manual's
+`style.css` with a few rules more; and with `--base-url` (the site's own address)
+`feed.xml`, an Atom feed of the newest 20 articles with their whole HTML, figures
+inline. The profile gives the title (unless `--title`) and the description. Every
+page ends with the feed's address, `terse:feed/<key>[@hints]`, for following it
+in a Terse reader. No scripts, nothing loaded from elsewhere, and no web address
+except the site's own (and the Atom namespace name) in `feed.xml`.
+
+It is incremental: `.terse-site`, a state file in the output directory, records
+each article's entry, page, the articles its links lead to and the hash of the
+inputs of its page, and each other file's hash. A run writes only the files whose
+inputs changed and reads only the blobs of the pages it writes: one new article
+writes its page, the last index page, `index.html` and `feed.xml`, and reads one
+blob. No page lists other articles or links to its neighbours. A link to another
+article of the feed leads to its page if the site has it (whenever it was
+published), else it is shown as its address; an old article that links to one
+published later is written again once, when that one arrives. Another `--title`,
+`--base-url` or feed address, or a new generator version, rewrites every file (it
+says so), as does `--force`. Nothing is ever removed: the network has no way to
+withdraw an entry, and an article relays no longer keep stays on the site. The
+output depends only on its inputs (no run times). `cargo test -p terse-cli --test
+feed_site` checks all this.
 
 ## Named records
 

@@ -36,6 +36,7 @@ const USAGE: &str = "usage:
   terse feed list [<key>]
   terse feed read <key> <seq>
   terse feed nickname <key> [<name>]
+  terse feed site [<address>] --out <dir> [--title <t>] [--base-url <https://...>] [--force]
   terse profile set --name <n> [--listed|--unlisted] [--description <file>]
   terse profile show [<key>]
   terse find [--entries|--programs] <text>
@@ -76,6 +77,11 @@ find it (default: as in your current profile, else unlisted), the description fr
 --no-prefetch: do not also fetch the terse: links of those articles (NETWORK 4.4).
 --no-program-download: do not fetch the current version of each program of the subscribed feeds
 (NETWORK 4.4; by default they are fetched whatever their size, up to the largest image).
+feed site writes a feed (default: your own) as a static website to --out: a page per article,
+an index newest first, the stylesheet, a page of the feed's programs, and with --base-url (the
+site's address) an Atom feed, feed.xml. It fetches the feed's entries first, and on later runs
+writes only what changed (a state file, .terse-site, remembers what was written; --force rewrites
+everything).
 feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
 image's title); feed programs lists the current version of each program held (of one feed, or of
 all the feeds held), find --programs searches programs by name.

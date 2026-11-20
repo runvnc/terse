@@ -114,7 +114,7 @@ Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and wheth
 
 ## Reading an article
 
-The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160) describes. The status row shows how far you have scrolled, from 0% to 100%.
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:7a1608758c30131d63598142f26d342b98cbf1c3046b68e7b0be9d8cc93c5f55) describes. The status row shows how far you have scrolled, from 0% to 100%.
 
 | Key | In an article |
 |---|---|
@@ -132,4 +132,4 @@ The reader also gets the first 8 article links of an article as you open it, so 
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160). How the shell's devices work: [The machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf). Feeds and consent from a program's side: [Feeds](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7).
+How articles are written: [Writing an article](terse:7a1608758c30131d63598142f26d342b98cbf1c3046b68e7b0be9d8cc93c5f55). How the shell's devices work: [The machines device](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf). Feeds and consent from a program's side: [Feeds](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7).

@@ -206,9 +206,9 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:4db0ec8a32d39e1a0ec493a7f0e552bf52931b6b9b76427a919013e5c5fe73c3): building a C program and packing it as an image.
-- [Using Terse](terse:371d372162411679ce0bec03bfafd12ab1ad0518473e355e3f2cabccf7b983ae): the tools, the shell and the reader.
-- [Writing articles](terse:8f5005fdf581daed1e9991b5d8714ecab7b52391b4b4c0f52544237afa4e3160): the article format, tables and figures.
+- [Writing programs](terse:7204704df8189ca354246c3cf1a891c6b7c2741c04dcd33f074b7134b5ec79b8): building a C program and packing it as an image.
+- [Using Terse](terse:8530f43137ac19bafc67db7fba1e7ea7ad37358e75c4466535962b0ebd081cdf): the tools, the shell and the reader.
+- [Writing articles](terse:7a1608758c30131d63598142f26d342b98cbf1c3046b68e7b0be9d8cc93c5f55): the article format, tables and figures.
 - [The machine](terse:6fddfda54458ccb17d5f6a9b189fe3b563804ba8f2934d911f6802296d9be32d): the CPU, memory, frames, image format and the full call table.
 - [The system device](terse:54efead3e80d65f5f83c3ddb57477c8d5fca4962638bebdd2ce333acaacb6d5e), [the terminal](terse:4627bcdef9c7dad04c783c1c88acde0eaba5c22f529ad2c839d1fbb4ab106db8), [the 2D vector display](terse:4bdeaa36d854ee892aefd80985ef003de279bda756eebcfb2ec9b275676c15dc), [the 3D vector display](terse:190d28e9cc326cd54c61be74cc7f667e5b6c0112b078e408a68e2ef2d50a1832), [the page](terse:40a1f848429c158dabb28eb8d87a409d9a0550ea9c01106ec8947c380e00deb0) and [machines](terse:5b35b78b9b17a4771ab875126c191344c2017885680d1ab19add12292e0430bf).
 - [Blobs](terse:bdc35f9b05aeb4a35ef3bbffb3ad1c70427695c3aa5aeb7810e1056c84eb0062), [feeds](terse:df18f119281f3bfd0d46efc0c724c76532e103d06ae528343bc8f9fffda297f7) and [named records](terse:3e7372405ccc6cb30e53b6b16064124cbfe42fedc7d51a22ae3310da8bbf1b32) on the content device.
