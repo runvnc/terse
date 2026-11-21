@@ -1,0 +1,26 @@
+[package]
+name = "terse-mame-crt"
+description = "MAME's BGFX vector CRT pipeline (BSD-3-Clause, translated to WGSL) as a Tersenet device driver for the vector displays and the terminal, with a Hershey stroke font."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+# The translated MAME files are BSD-3-Clause (their headers kept); the rest
+# is the workspace's Apache-2.0. See NOTICE and third_party/mame-vector-crt.
+license = "Apache-2.0 AND BSD-3-Clause"
+
+[[bin]]
+name = "terse-dev-mame"
+path = "src/bin/terse-dev-mame.rs"
+
+[dependencies]
+terse-core.workspace = true
+terse-bus.workspace = true
+terse-host.workspace = true
+terse-devices = { path = "../terse-devices" }
+wgpu = "30"
+pollster = "0.4"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }
+tempfile = "3"
+png = "0.18"

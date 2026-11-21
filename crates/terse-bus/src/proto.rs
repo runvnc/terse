@@ -569,6 +569,11 @@ pub mod property {
     /// light (DEVICES.md 7.1: no backgrounds, straight colour, the vector
     /// displays' layers left empty), else 0 or empty.
     pub const LIGHT: &str = "core.light";
+    /// Published by a vector driver that draws the phosphor style itself
+    /// (DEVICES.md 7.2): 1 when it does. In the phosphor style its layers
+    /// are then light like the text's, and the core adds the light of
+    /// every light layer as it is instead of drawing its own tube.
+    pub const TUBE: &str = "vector.tube";
     /// Published by the core for the vector driver: the ink caps the
     /// machine's lists are drawn within, its share of the system ink (SPEC
     /// §machines.ink): the 2D cap (u64) and the 3D cap (f64); empty: the

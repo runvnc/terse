@@ -2929,6 +2929,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "terse-mame-crt"
+version = "0.1.0"
+dependencies = [
+ "naga",
+ "png",
+ "pollster",
+ "tempfile",
+ "terse-bus",
+ "terse-core",
+ "terse-devices",
+ "terse-host",
+ "wgpu",
+]
+
+[[package]]
 name = "terse-net"
 version = "0.1.0"
 dependencies = [
