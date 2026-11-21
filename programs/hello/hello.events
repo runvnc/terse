@@ -1,0 +1,10 @@
+# The typed input of expected-30-frames.txt (STATE.md 6.2):
+#   terse run hello.terse --events hello.events --frames 30 --dump
+# A text line's text starts after one space, so frame 6's starts
+# with a space.
+5 text Hi wörld
+6 text  你好
+7 press enter
+8 text 😀x
+9 down backspace
+10 text ok
