@@ -1342,11 +1342,13 @@ state the file's first comment describes, in the format of
 relay-session.txt: `c>` from the reader, `n>` from the node. Each line
 is one message without its 4-byte length (LOCAL.md 2 frames every
 message with one). A node that answers the reader's messages in this
-order must send the `n>` messages, with two allowances: a pushed message
-(`C0h`, `C1h`) may come between any two replies or not at all, so a
-replay skips pushes; and a refusal's reason (after status 3 in a reply
+order must send the `n>` messages, with three allowances: a pushed
+message (`C0h`, `C1h`) may come between any two replies or not at all,
+so a replay skips pushes; a refusal's reason (after status 3 in a reply
 `A0h` to `ABh`) is text for people, so only the bytes up to the status
-are compared.
+are compared; and the Hello reply's last byte, `flags`, says whether
+the node answers Find and Lookup (the session uses neither), so it is
+not compared.
 
 basic-text.txt (ARTICLE.md section 1.1, SPEC.md §terminal.text)
 ---------------------------------------------------------------

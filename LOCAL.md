@@ -16,6 +16,17 @@ A program that does both in one process, as before, is still a
 conforming client; nothing here is required of it. The test vectors are
 in `vectors/local-session.txt` (described in `vectors/README`).
 
+**Implementations.** Two nodes speak this protocol: the reference's
+`terse node` (`crates/terse-cli/src/node.rs`; it uses the store,
+subscriptions, nicknames and relay list of `terse` and `terse-host`, and
+answers Find and Lookup) and the independent Go reader's `tersereader
+node` (`native/reader-go`, its own store; no Find or Lookup). The Go
+reader is also a client, and its thin build (`-tags thin`) is a
+reader-only program. `crates/terse-cli/tests/node.rs` runs a client
+written from this document against both nodes, and the thin reader
+against `terse node`. Both serve Unix domain sockets only; the loopback
+TCP transport below is specified but not implemented yet.
+
 ## 1. Why not the relay protocol itself
 
 A node is close to "a relay on your own machine that you trust", and the
@@ -85,12 +96,14 @@ several readers may use one node at once.
 - A reader must still parse what it receives defensively (lengths, UTF-8,
   `ARTICLE.md` section 1 for text it shows): a bug in a node must not
   become a crash or a terminal escape in a reader.
-- A node refuses (closes the connection on) a first message that is not
-  Hello, a message of a known type it cannot parse, and a message longer
-  than the limit; it ignores a message whose type it does not know. It
-  refuses requests that would break `NETWORK.md`: subscribing to an
-  invalid key or a malformed address, more than eight relays or a relay
-  that is not a relay URL, a nickname that is not a display name.
+- A node closes the connection on a first message that is not Hello, a
+  second Hello, a message of a known type it cannot parse (too short, or
+  with bytes after its last field), and a message longer than the limit;
+  it ignores a message whose type it does not know. It answers with
+  status 3 (refused) requests that would break `NETWORK.md`: subscribing
+  to an invalid key or a malformed address, more than eight relays or a
+  relay that is not a relay URL, a nickname that is not a display name
+  or for an invalid key.
 - Secret keys never cross the socket (a node that publishes keeps its
   identity, section 6).
 
@@ -109,9 +122,10 @@ tests do not compare it) and nothing else.
 | reader → node | Hello | `20h`, `req` (4), `version` (1) = 0, `n` (1), token (`n` bytes; none on a Unix socket) |
 | node → reader | Hello reply | `A0h`, `req` (4), `status` (1), then if 1: `version` (1) = 0, `flags` (1) |
 
-Hello is the first message on a connection. `flags` bit 0: the node
-answers Find and Lookup (section 4.2); other bits are 0. A node answers
-a version it does not speak with status 3.
+Hello is the first message on a connection, and the only Hello. `flags`
+bit 0: the node answers Find and Lookup (section 4.2); other bits are 0.
+A node answers a version it does not speak with status 3 and waits for
+another Hello.
 
 ### 4.2 Reused from the relay protocol
 
@@ -128,7 +142,9 @@ Get answers from the store, else asks the relays (`NETWORK.md` section
 5.1) and stores the blob; status 2 when no relay has it (at once when the
 node has no relay). Find and Lookup, if the node offers them (Hello
 flags), are the client's merged answers of `NETWORK.md` 4.7 and 4.8:
-every entry in them is verified. The relay protocol's other requests
+every entry in them is verified. A Find that no relay answered (or
+that the node had no relay to ask) is refused: status 3, `count` 0; a
+Lookup that no relay answered has status 2. The relay protocol's other requests
 (Put, Publish, Subscribe, Unsubscribe, Peer) are not local messages: a
 node ignores them like any unknown type.
 
@@ -173,6 +189,10 @@ node ignores them like any unknown type.
   is the user's nickname for the feed, else the display name of its
   profile in force, else empty; a reader shows it with the short key
   (`NETWORK.md` 4.6), which it takes from the entry.
+- **A reply's size**: a Subscriptions or Feed reply that would be longer
+  than the limit of section 2 carries as many records as fit (`count`
+  says how many): Subscriptions the first, Feed the latest (the
+  highest `seq`, still in increasing order).
 - **Timeline**: the records of the timeline (`NETWORK.md` 4.4: article
   and document entries of subscribed feeds), newest first, those with
   `arrival` below `before` (`before` 0: from the newest), at most `max`
@@ -196,17 +216,21 @@ node ignores them like any unknown type.
   `NETWORK.md` 4.6), or removes it when `n` is 0.
 - **Relays** lists the node's relay connections: `flags` bit 0
   configured (one of the user's own relays), bit 1 a hinted relay, bit 2
-  connected; the configured ones first, in their order. **Set relays**
-  replaces the configured list (at most eight relay URLs, `NETWORK.md`
-  4.6's test; status 3 otherwise).
+  connected; the configured ones first, in their order. A relay that a
+  feed's profile names (`NETWORK.md` section 5) has neither bit 0 nor
+  bit 1. **Set relays** replaces the configured list (at most eight relay
+  URLs, `NETWORK.md` 4.6's test; status 3 otherwise). The node keeps the
+  list as the user's relay list and uses it from then on: it disconnects
+  from relays no longer listed and connects to the new ones.
 - **Sync** connects (if the node is not connected), waits until every
   subscribed feed has caught up on its relays (`NETWORK.md` 4.3) and
   the automatic downloads it caused are done, or the timeout: status 1
   if everything arrived, 2 if not, 3 (with a reason) if it cannot try,
   for example because it has no relay.
 - **Title** is the title of an article entry the node holds for that
-  blob ID and size (status 2 if none): what a reader shows for an
-  article reached by a link (`ARTICLE.md` 4.4).
+  blob ID and size (status 2 if none; of several, the one the node
+  stored first; an empty title is status 1 with `n` 0): what a reader
+  shows for an article reached by a link (`ARTICLE.md` 4.4).
 
 ### 4.4 Pushed by the node
 
