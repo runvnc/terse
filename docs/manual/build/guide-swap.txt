@@ -1,0 +1,52 @@
+# Swap in your own part
+
+Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference's. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after `cargo build --release`, with `target/release` on your PATH; `tersereader` is built in `native/reader-go` as its README says.
+
+## Your reader, the reference network
+
+Run a relay, `terse-relay --store try-relay`, and point your reader at `ws://127.0.0.1:7878`. Publish to it with `terse feed publish` (step 3 of the reader guide). Or let the reference node do the network and talk to it over its socket:
+
+```
+tersereader node
+```
+
+## Your core, the reference devices
+
+A core that speaks the device bus (DEVICES.md section 12 lists what it must do) starts the reference drivers, `terse-dev-terminal`, `terse-dev-vector` and the others, from one folder. `tcore` is such a core; it takes the folder with `--drivers`:
+
+```
+native/core-c/tcore programs/hello/hello.terse \
+    --frames 30 --hash --drivers target/release
+terse run programs/hello/hello.terse --frames 30 --hash
+```
+
+Both print the same hash. Do the same with your core.
+
+## Your device, the reference core
+
+```
+terse-bus programs/hello/hello.terse --frames 30 --hash \
+    --driver 2=$PWD/terminal
+```
+
+as on the previous page. `--driver` takes any slot of a device of the specification: `3,9=` for the vector displays, `4=` for content, `6=` sound, `7=` the page.
+
+## Your device under your core
+
+`tcore` takes `--driver` too, so the example driver runs under a core that is not the reference's either:
+
+```
+native/core-c/tcore programs/hello/hello.terse --frames 30 \
+    --hash --drivers target/release --driver 2=$PWD/terminal
+```
+
+## What does not work yet
+
+- The device bus needs Unix sockets and Linux's futexes: `terse-bus` and the drivers run on Linux only, and are not in the downloads.
+- `terse-host`, the windowed host of the downloads, has its devices built in and does not load drivers. To see a driver's machine in a window, use `terse-bus --window`.
+- A core finds drivers only in its own folder or through `--driver`. A folder of drivers per user, so that you could install a driver by copying it there, is a proposal in DEVICES.md section 14; nothing of it is built.
+- The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host's content device does not use it yet.
+
+## What you have now
+
+The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:25f600a5015cce82e523cc46642522a3e07c89f41c713084899e26224b91528d).

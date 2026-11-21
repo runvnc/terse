@@ -1,0 +1,51 @@
+# Make a reader, step 3: links and feeds
+
+Your reader can show an article and fetch one by its ID. Two things make it a real reader: following links, and following feeds, so that new articles come to you.
+
+## Follow a link
+
+A link to an article is `terse:` and the article's ID. When the person follows one, fetch that ID exactly as in step 2, then show the article. Keep a list of where they came from, so that a key takes them back.
+
+Two other kinds of link exist: `terse:feed/` and a feed's key (below), and `terse:program/` for a program, which a reader without the virtual machine shows as something it cannot open.
+
+## Publish a feed
+
+A feed is one author's numbered series of entries. Each entry is small, at most 293 bytes, and signed with the author's key: it says "number 1 of my feed is this blob, this size, with this title". Make a feed of your own to test with, with the relay from step 2 running:
+
+```
+terse key new
+terse feed publish hello.txt --title "Hello"
+```
+
+The first command makes your key, once, and prints it (`terse key show` prints it again); it is the feed's name. The second puts the article on the relay and publishes entry 1 of your feed.
+
+## Subscribe
+
+Send the relay a Subscribe: the byte `04h`, a request number (4 bytes), the feed's key (32 bytes) and the highest entry number you already hold (4 bytes, 0 the first time). The relay replies (`84h`), then sends every entry numbered above that, oldest first, each in a message that starts with `90h`, and then each new one as it is published, for as long as you stay connected.
+
+An entry holds, in order: the feed key (32 bytes), its number (4), a time (4), a kind (1: 1 for an article), the blob's size (3) and ID (32), a reply-to ID (32), the title's length (1) and the title, then a 64-byte signature.
+
+## Check the signature
+
+Verify each entry's Ed25519 signature before you keep it, and drop the entries that fail. Use a library, but note that an ordinary Ed25519 verify is not quite enough: Tersenet adds a few strict checks, listed in NETWORK.md section 4.2, and `vectors/entries.txt` holds a forged entry for each, which your reader must refuse.
+
+Then fetch the article each entry names (step 2) and list the titles, newest first: that is your timeline. Show each feed's key, or its first and last six hexadecimal digits, beside anything you show for it, since names are not unique.
+
+With a node (step 2), all of this is two messages: Subscribe (`25h`, with the feed's key as text) and Timeline (`22h`), whose entries the node has already checked.
+
+## Compare with the reference
+
+`tersereader` does the same, so you can check your timeline against it:
+
+```
+tersereader relay add ws://127.0.0.1:7878
+tersereader subscribe <your feed key>
+tersereader sync
+tersereader list
+```
+
+## What you have now
+
+A Tersenet reader: it follows feeds, checks what it receives, keeps it, and shows articles with their links. NETWORK.md section 6 lists what a complete reader must do; most of it is above. The rest, such as display names, feed addresses with relay hints and the speed requirements, is in [Writing a reader without the machine](terse:{native-reader}).
+
+Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. [Write a program](terse:{guide-program}).

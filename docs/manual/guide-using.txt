@@ -1,0 +1,56 @@
+# Using Tersenet
+
+This page is for reading and writing on Tersenet, no programming needed.
+
+## Install and start
+
+Download the archive of a Tersenet release for your system (Windows, macOS or Linux), unpack it, and start `terse-host` (on Windows, `terse-host.exe`). On Windows and macOS, the `README.txt` inside says what to do when the system warns about a program from the internet. A window opens on the launcher, a list of programs: Up and Down choose, Enter starts one.
+
+Choose "reader" and press Enter. That is where you read. F12 always brings you back to the launcher.
+
+## Read
+
+The reader opens on your timeline: the newest articles of the feeds you follow. Up and Down choose one, Enter opens it, Esc goes back. In an article, Tab moves to the next link and Enter follows it. M opens this manual, and ? shows every key.
+
+## Follow a feed
+
+A feed is one person's series of articles, named by a key: 64 hexadecimal digits, sometimes followed by `@` and a relay. To follow one, press F in the reader, then S, type or paste the address (Ctrl+V pastes), press Enter, and answer Y when the host asks. Their articles appear in your timeline, and new ones arrive by themselves.
+
+To give someone your own address, press ? in the reader: it is shown there.
+
+## Write and publish
+
+An article is a plain text file. Write it in any text editor: lines starting with `# ` are headings, `- ` list items, blank lines separate paragraphs. [Writing an article](terse:{writing-articles}) shows everything else.
+
+Publishing uses the `terse` command, which came in the same archive. In a terminal, with `terse-host` running:
+
+```
+terse key new
+terse feed publish my-article.txt --title "My first article"
+```
+
+The first command makes your key, once. The second publishes the article in your feed. To see your own articles in your timeline, follow your own feed: in the reader, T publishes a short test article and follows your feed for you.
+
+## Share with someone
+
+Two people need a relay they can both reach. One of you starts one that listens on the network, before starting `terse-host`:
+
+```
+terse-relay --listen 0.0.0.0:7878 --store terse-relay-store
+```
+
+The other adds it once, with the first one's computer name or address:
+
+```
+terse relay add ws://their-host:7878
+```
+
+Then exchange addresses and follow each other. Relays have no accounts or encryption: anyone who can reach one can read what is on it, but nobody can publish in your name.
+
+## Open a program
+
+The launcher also lists small programs: the built-in ones, and those published by feeds you follow. Enter starts one in a tile of its own. An article may link to a program; following such a link to a program that is not built in asks you first. A program cannot read your files, and the host asks you before one publishes anything in your name.
+
+## What you have now
+
+A reader, a feed of your own, and the people you follow. The keys of every view, layouts and sessions are in [Using the shell and the reader](terse:{using}); fonts for other scripts in [Fonts](terse:{fonts}).
