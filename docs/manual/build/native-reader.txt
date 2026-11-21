@@ -38,6 +38,10 @@ Your timeline is the article and document entries (kinds 1 and 4) of your subscr
 
 Profiles (kind 2) give a feed its display name: the title of the feed's profile entry with the highest `seq`. Names are not unique, so always show the key, or its first and last six hex digits, beside a name.
 
+## Never wait for what you hold
+
+NETWORK.md section 6.1 makes speed a requirement, counted in round trips rather than milliseconds: an article you hold opens from your store without asking any relay or waiting for one to connect; one you do not hold costs one Get; your timeline shows what you hold at once; catching a feed up is one Subscribe. Test your reader against a relay that counts what it receives and an address that never answers; PERFORMANCE.md says how, and `terse perf` does it for the two reference clients.
+
 ## Showing an article
 
 ARTICLE.md is written as requirements on what the person sees, not as a layout algorithm, so any toolkit that can wrap text, show a monospaced face and draw curves will do. In outline:

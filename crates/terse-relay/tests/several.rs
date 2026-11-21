@@ -12,16 +12,37 @@ use terse_net::relay::{DEFAULT_TIMEOUT, RelayClient};
 use terse_net::{BlobStore, Done, Draft, Entry, Identity, Node, Subscriptions, blob_id};
 use terse_relay::Relay;
 
+/// A `terse-relay` process, killed when dropped: also when an assertion
+/// fails, so that no relay outlives the test (a leftover one keeps the
+/// ports and every file descriptor it inherited, a build lock included).
+struct RelayProcess(Child);
+
+impl RelayProcess {
+    fn stop(mut self) {
+        self.0.kill().unwrap();
+        self.0.wait().unwrap();
+    }
+}
+
+impl Drop for RelayProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// `terse-relay` as a process on `listen` (port 0: any); returns it and its URL.
-fn spawn_relay(store: &std::path::Path, listen: &str) -> (Child, String) {
+fn spawn_relay(store: &std::path::Path, listen: &str) -> (RelayProcess, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_terse-relay"))
         .args(["--listen", listen, "--store", store.to_str().unwrap()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let child = RelayProcess(child);
     let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    BufReader::new(stdout).read_line(&mut line).unwrap();
     let url = line.trim().strip_prefix("listening on ").unwrap().to_string();
     (child, url)
 }
@@ -47,7 +68,7 @@ fn poll_until(node: &mut Node, what: &str, mut ok: impl FnMut(&Node) -> bool) {
 #[test]
 fn two_relays_one_stopped_and_restarted() {
     let (da, db, dn) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let (mut child, url_a) = spawn_relay(da.path(), "127.0.0.1:0");
+    let (child, url_a) = spawn_relay(da.path(), "127.0.0.1:0");
     let (url_b, b) = in_process(db.path());
     let mut node = Node::open(Some(dn.path().to_path_buf()), &[url_a.clone(), url_b.clone()], DEFAULT_TIMEOUT).unwrap();
     node.set_identity(Identity::from_seed([50; 32]));
@@ -63,8 +84,7 @@ fn two_relays_one_stopped_and_restarted() {
     assert!(b.blobs().read(&blob_id(b"to both")).unwrap().is_some());
 
     // A stops: publishing and getting still work, through B.
-    child.kill().unwrap();
-    child.wait().unwrap();
+    child.stop();
     let draft = Draft { data: b"only B now".to_vec(), title: "B".into(), reply_to: None, time: 2 };
     assert!(matches!(node.publish_article(&draft), Done::Published { seq: 2, .. }));
     assert_eq!(b.feeds().seqs(&Identity::from_seed([50; 32]).feed_key()).unwrap(), [1, 2]);
@@ -74,13 +94,12 @@ fn two_relays_one_stopped_and_restarted() {
 
     // A starts again on the same port: the node reconnects.
     let listen = url_a.strip_prefix("ws://").unwrap();
-    let (mut child, again) = spawn_relay(da.path(), listen);
+    let (child, again) = spawn_relay(da.path(), listen);
     assert_eq!(again, url_a);
     poll_until(&mut node, "A to be reconnected", |n| n.connected_relays().len() == 2);
     assert_eq!(node.publish(b"after restart"), Done::Put(blob_id(b"after restart")));
     assert!(std::fs::metadata(da.path().join(terse_net::to_hex(&blob_id(b"after restart")))).is_ok());
-    child.kill().unwrap();
-    child.wait().unwrap();
+    child.stop();
 }
 
 #[test]

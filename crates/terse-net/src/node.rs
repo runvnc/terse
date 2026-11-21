@@ -1656,6 +1656,12 @@ impl Node {
         std::mem::take(&mut self.ready)
     }
 
+    /// The operations that finished without the network (from the store)
+    /// since the last call or [`Self::poll`], without polling the relays.
+    pub fn take_ready(&mut self) -> Vec<(Token, Done)> {
+        std::mem::take(&mut self.ready)
+    }
+
     fn wait_for(&mut self, token: Token) -> Done {
         loop {
             if let Some((_, done)) = self.poll().into_iter().find(|(t, _)| *t == token) {
@@ -1978,6 +1984,39 @@ mod tests {
     fn node_with_fake(dir: &std::path::Path) -> (Node, Arc<Mutex<Script>>) {
         let (relay, script) = fake_relay();
         (Node::new(BlobStore::open(dir, None).unwrap(), Some(relay)), script)
+    }
+
+    /// NETWORK 2, spec/content.md §content.submit: a get for a blob the node
+    /// holds is answered from the store at once, whatever the relays do. A
+    /// connected relay is not asked (no Get is sent), and a relay that is
+    /// still connecting, one that accepts the TCP connection and never
+    /// answers the WebSocket handshake, does not hold it up: the first poll
+    /// after the get has the blob. (A get for a blob not held does wait
+    /// for that relay, NETWORK 5.1.)
+    #[test]
+    fn a_held_blob_never_waits_on_the_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, script) = node_with_fake(dir.path());
+        let id = node.store().put(b"held").unwrap();
+        node.poll();
+        assert!(node.connected());
+        node.start_get(1, id);
+        assert_eq!(node.poll(), [(1, Done::Got(b"held".to_vec()))]);
+        assert_eq!(script.lock().unwrap().gets, 0, "a held blob is not asked of the relay");
+
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}", silent.local_addr().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        node.add_relay(&url, RelayClient::websocket(&url, DEFAULT_TIMEOUT));
+        let id = node.store().put(b"held").unwrap();
+        node.poll();
+        assert!(node.connecting(), "the handshake is never answered");
+        node.start_get(2, id);
+        assert_eq!(node.poll(), [(2, Done::Got(b"held".to_vec()))]);
+        node.start_get(3, blob_id(b"not held"));
+        assert_eq!(node.poll(), [], "a blob not held waits for the relay being connected");
+        assert!(node.connecting());
     }
 
     /// Polls until `Settled` and returns the events.

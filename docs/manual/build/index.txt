@@ -71,6 +71,6 @@ Each article below says what it covers.
 - [The network](terse:118f755141d03ebc32d3e63788969d4581a9b6929f09a92ad11081dd4bc85508): blobs and relays, feeds and entries,
   profiles, names and search, programs, and relays that mirror each
   other.
-- [Writing a reader without the machine](terse:7f382c64d113ab25e075380b17932b990f1d6b37b1e2ffef71dfb570c139c735): what
+- [Writing a reader without the machine](terse:22d5f2f659e2d1caaecc044513bedd1582afc66cabf6c7c0795ba3fd1f9305c5): what
   a native reader must do to be a complete Terse client, with only the
   network and the article format.

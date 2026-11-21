@@ -74,6 +74,11 @@ just the **program profile** (devices 1, 2 and 3), since a program lists the oth
 devices it can do without as optional (SPEC §image). This repository is the first
 prototype of all three layers.
 
+Each specification also says how quick an implementation must be, in units any
+implementation can be tested against (round trips, frames, "never waits for a
+relay"): `PERFORMANCE.md` collects those requirements, says how to test them and
+gives the reference's times; see [Performance](#performance).
+
 **A second reader.** `native/reader-go/` is such a native reader: a terminal
 program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
 `ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
@@ -542,7 +547,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay, with peers and
                          search (a library too: `terse-host` runs one in-process when it
                          finds none)
-    crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
+    crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds, perf.rs
+                         (`terse perf`, the scenarios of PERFORMANCE.md); the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
                          sketch.rs, holo.rs, shell.rs, conform.rs)
     crates/terse-host/   `terse-host`: winit window, drawn by the GPU or the CPU behind
@@ -578,6 +584,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     programs/conform-reading/, programs/conform-program/
                          the same source built for the reading and the program
                          profile, each with its build.sh, events and expected files
+    programs/conform-perf/
+                         the machine host's responsiveness checks (PERFORMANCE.md):
+                         conform-perf.c, build.sh and its expected files
 
 ## Writing programs
 
@@ -1783,7 +1792,7 @@ Measured on the development machine (Linux, i7-10750H, RTX 2060, Vulkan, 60 Hz),
 release build: emulation of a full-budget stress frame about 0.57 ms (headless
 over 200 frames: p99 0.52 ms, max 0.86 ms, 94 times real time); render-submit
 about 7 ms in the stress frames (almost all of it rasterising some 600 new CJK
-glyphs a frame), 0.6–1.1 s once when the CJK fallback fonts are first loaded; GPU
+glyphs a frame), 0.6–1.1 s once when the CJK fallback fonts were first loaded (before they were drawn a glyph at a time: PERFORMANCE.md 3); GPU
 render about 1.3 ms (max 3 ms) even in the worst-legal-fill frames, which present
 at 60 Hz. With the page device added (and its two sections after the stress
 phase), 200 frames in the window: emulation p50 0.13 ms, p99 0.88 ms; render-submit
@@ -1870,6 +1879,43 @@ pyramid). Measured again at 1280 × 960 with twelve threads, before → after: s
 2.0 → 2.45 ms, holo's wireframes 3.8 → 3.6, rings 4.5 → 4.2, city 4.3 → 3.8, the
 shell with four machines forced to phosphor 4.8 → 4.8; on the GPU sparks 1.12 → 0.88,
 holo 0.98 → 0.92, the shell 3.2 → 3.5.
+
+## Performance
+
+Terse is meant to be quick: what you hold opens without the network, and what
+you do not hold costs one round trip. Each specification says so in units any
+implementation can be tested against (NETWORK.md 6.1 for readers, LOCAL.md 4.5
+for a node, SPEC §responsiveness and spec/content.md §content.submit for machine
+hosts); `PERFORMANCE.md` collects the requirements, says how to test another
+implementation, and gives the reference's numbers.
+
+    cargo build --release -p terse-cli -p terse-host
+    (cd native/reader-go && go build -o tersereader .)    # optional: its rows
+    target/release/terse perf
+
+`terse perf` runs every scenario headless, in temporary directories, with relays
+it starts on ephemeral loopback ports (never 7878, never your own config, cache or
+data). Each line is a scenario, its measurement, and a requirement (`R1`–`R9`, in
+frames, round trips or "never waits for a relay": PASS or FAIL) or a target (`T`,
+milliseconds on the reference machine: `info`). It exits with 1 if a requirement
+failed; `--only machine|client|host` and `--runs n` narrow it. The machine scenarios
+run as the window does (a frame every 16.7 ms, each given only what finished before
+it began), not as `terse run` does. `programs/conform-perf` checks the same
+requirements from inside a program, in any host's own frame loop. The deterministic
+parts (relay message counts, held content not waiting for a relay that never
+answers, conform-perf's headless screen and hashes) are in `cargo test`; the timed
+ones are only in `terse perf`.
+
+On the reference machine (i7-10750H, 12 threads, 15 GB, RTX 2060; load average
+12): a held blob reaches a program in 1 frame, with or without relays, including one
+that never answers; a blob on a local relay in 1 Get (6 ms); a program the shell
+starts runs in the next frame; the reader opens a held article 1 frame after Enter;
+`terse get` of a held article takes 7 ms as a whole process and `tersereader
+--dump` 12 ms; syncing 50 entries takes 59 ms (`terse`) and 303 ms (`tersereader`),
+with one Subscribe; `terse-host` draws its first frame 170 ms after it starts.
+Fetch's first frame of CJK text used to take about a second (PERFORMANCE.md 3): it
+now takes 90 ms even when fetch starts 50 ms after the host, most of it waiting for
+the font map the host builds as it starts.
 
 ## Measurements
 

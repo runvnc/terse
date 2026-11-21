@@ -91,6 +91,20 @@ request:
   event (§events). If the event queue is full the event is dropped; the
   block is still updated.
 
+**Without waiting on the network.** A get for a blob the host holds
+completes from its store; the network is consulted only for a blob that
+is not held (`NETWORK.md` section 2). Likewise subscriptions, timeline,
+names, identity, programs and the named-record operations are answered
+from the host's own state, and a get of a blob not held when the host
+has no relay connected or connecting completes as not found. None of
+these waits for a relay to connect or to answer, or for any other
+request: each completes at the start of the first or the second frame
+after the frame of its submit. (The frame is still an input to the
+machine, §content.determinism; a headless host that completes every
+request in the next frame meets this.) `programs/conform-perf` checks a
+host's own frame loop against it, and `PERFORMANCE.md` says how the
+reference is tested.
+
 The device writes to the block at the address given at submit, whatever the
 program has since done with that memory. Completions in one frame are
 applied in increasing handle order. A get whose `offset` is at or beyond the

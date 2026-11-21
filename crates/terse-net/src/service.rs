@@ -447,11 +447,23 @@ pub struct Headless {
     /// The page's events (SPEC §page.events), from the reference layout unless the
     /// host gives its own layouter.
     page: PageInput,
+    /// Completions as a windowed host gives them ([`Self::realtime`]).
+    realtime: bool,
 }
 
 impl Headless {
     pub fn new(content: Option<ContentService>, script: Script) -> Self {
-        Headless { content, script, completions: Vec::new(), feeds_updated: false, page: PageInput::default() }
+        Headless { content, script, completions: Vec::new(), feeds_updated: false, page: PageInput::default(), realtime: false }
+    }
+
+    /// Completes requests as a windowed host does (`terse-host`'s frame
+    /// loop): each frame gets the completions that finished before it
+    /// began, without waiting for the others, so how many frames a request
+    /// takes depends on how long the host takes to carry it out (`terse
+    /// perf`). The caller paces the frames.
+    pub fn realtime(mut self) -> Self {
+        self.realtime = true;
+        self
     }
 
     /// Lays the page out with `layouter` instead of the reference layout.
@@ -465,6 +477,11 @@ impl Headless {
         self.content.as_ref()
     }
 
+    /// The content service, to go on with another script.
+    pub fn into_content(self) -> Option<ContentService> {
+        self.content
+    }
+
     /// The layouter, holding the latest layout of the page.
     pub fn page_layouter(&self) -> &dyn Layouter {
         self.page.layouter()
@@ -476,15 +493,24 @@ impl Headless {
         if std::mem::take(&mut self.feeds_updated) {
             events.push(Event::feeds_updated());
         }
+        if self.realtime
+            && let Some(content) = &mut self.content
+        {
+            self.completions.extend(content.take_finished());
+        }
         let completions = std::mem::take(&mut self.completions);
         let controllers = self.script.controllers(machine.frame());
-        let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
+        // In real time the clock is the real one (programs/conform-perf counts frames against it).
+        let unix_time = if self.realtime { now() } else { 0 };
+        let input = FrameInput { events: &events, completions: &completions, controllers, unix_time, ..Default::default() };
         let result = machine.run_frame(&input);
         // The height of a changed page is reported at the next frame.
         self.page.after_frame(machine.page());
         if let Some(content) = &mut self.content {
             content.submit_machine(0, machine);
-            self.completions = content.wait_finished();
+            if !self.realtime {
+                self.completions = content.wait_finished();
+            }
             self.feeds_updated = content.feeds_updated();
         }
         result
@@ -528,6 +554,10 @@ pub struct HeadlessSystem {
     /// The inputs of the frames run since the last `take_recorded`, if
     /// recording (`terse run --record`, STATE.md 5).
     recorded: Option<Vec<(Who, terse_core::record::Frame)>>,
+    /// Completions and images as a windowed host gives them
+    /// ([`Self::realtime`]), and the machines whose image is being fetched.
+    realtime: bool,
+    fetching: Vec<u32>,
 }
 
 impl HeadlessSystem {
@@ -541,7 +571,17 @@ impl HeadlessSystem {
             restores: Vec::new(),
             layouter: Box::new(|_| Box::new(terse_core::page::ReferenceLayouter::default())),
             recorded: None,
+            realtime: false,
+            fetching: Vec::new(),
         }
+    }
+
+    /// Finishes requests and image fetches as a windowed host does
+    /// (`terse-host`'s frame loop, [`Headless::realtime`]): each frame gets
+    /// what finished before it began, and nothing waits.
+    pub fn realtime(mut self) -> Self {
+        self.realtime = true;
+        self
     }
 
     /// Keeps every input each machine's frame is given, for
@@ -576,6 +616,23 @@ impl HeadlessSystem {
     /// Runs the system's next frame with the script's input for it, then
     /// finishes every request and image fetch it made.
     pub fn frame(&mut self, system: &mut System) -> SystemFrame {
+        if self.realtime
+            && let Some(content) = &mut self.content
+        {
+            for (tag, c) in content.take_finished_tagged() {
+                if c.handle == 0 && self.fetching.contains(&tag) {
+                    self.fetching.retain(|&s| s != tag);
+                    self.images.push((tag, image_from(c.outcome)));
+                } else if let Some(m) = self.machines.get_mut(&tag) {
+                    m.completions.push(c);
+                }
+            }
+            let (saved, restored) = content.take_snapshot_results();
+            for (slot, stored) in saved {
+                system.snapshot_done(slot, stored);
+            }
+            self.restores.extend(restored);
+        }
         for (serial, image) in self.images.drain(..) {
             system.deliver_image(serial, image);
         }
@@ -597,6 +654,17 @@ impl HeadlessSystem {
                         Wanted::Image(id) => content.fetch(*serial, *id),
                         Wanted::Program(program, builtins) => content.fetch_program(*serial, program, builtins),
                     }
+                }
+                if self.realtime {
+                    self.fetching.extend(wanted.iter().map(|w| w.0));
+                    if content.feeds_updated() {
+                        for (&serial, m) in self.machines.iter_mut() {
+                            if system.machine_by_serial(serial).is_some_and(|(_, m)| m.content().is_some()) {
+                                m.feeds_updated = true;
+                            }
+                        }
+                    }
+                    return result;
                 }
                 for (tag, c) in content.wait_finished_tagged() {
                     if c.handle == 0 && wanted.iter().any(|w| w.0 == tag) {
@@ -648,7 +716,8 @@ impl Driver for HeadlessSystem {
             events.push(Event::feeds_updated());
         }
         let completions = std::mem::take(&mut m.completions);
-        let input = FrameInput { events: &events, completions: &completions, controllers, ..Default::default() };
+        let unix_time = if self.realtime { now() } else { 0 };
+        let input = FrameInput { events: &events, completions: &completions, controllers, unix_time, ..Default::default() };
         let frame = machine.frame();
         let result = machine.run_frame(&input);
         if let Some(recorded) = &mut self.recorded {
@@ -671,6 +740,7 @@ impl Driver for HeadlessSystem {
 
     fn removed(&mut self, serial: u32) {
         self.machines.remove(&serial);
+        self.fetching.retain(|&s| s != serial);
         self.images.retain(|i| i.0 != serial);
         self.restores.retain(|i| i.0 != serial);
         if let Some(content) = &mut self.content {
@@ -1076,7 +1146,12 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
             Some(Work::Feed(FeedCommand::Unsubscribe(feed))) => drop(node.unsubscribe(&feed)),
             None => {}
         }
-        for (token, done) in node.poll() {
+        // What finished at once (a held blob, from the store) goes back
+        // before the relays are polled: polling them waits for each
+        // connection's socket a few milliseconds.
+        let ready = node.take_ready();
+        let finished_now = if ready.is_empty() { node.poll() } else { ready };
+        for (token, done) in finished_now {
             let sent = match pending.remove(&token) {
                 Some((_, Job::FeedPublish)) => events
                     .send(match done {

@@ -117,6 +117,9 @@ pub struct Relay {
     arrivals: Mutex<Arrivals>,
     /// Messages written to peer connections, by type.
     peer_messages: [AtomicUsize; 256],
+    /// Messages received on every connection, by type (for counting round
+    /// trips: `terse perf`).
+    received: [AtomicUsize; 256],
 }
 
 /// One connection's share of the relay.
@@ -169,6 +172,7 @@ impl Relay {
             state: Mutex::default(),
             profiles: Mutex::new(profiles),
             peer_messages: std::array::from_fn(|_| AtomicUsize::new(0)),
+            received: std::array::from_fn(|_| AtomicUsize::new(0)),
         }
     }
 
@@ -183,6 +187,12 @@ impl Relay {
     /// How many messages of type `kind` this relay has written to peers.
     pub fn peer_messages(&self, kind: u8) -> usize {
         self.peer_messages[kind as usize].load(Ordering::Relaxed)
+    }
+
+    /// How many messages of type `kind` this relay has received, from
+    /// clients and peers.
+    pub fn received(&self, kind: u8) -> usize {
+        self.received[kind as usize].load(Ordering::Relaxed)
     }
 
     /// The number of connections marked as peers.
@@ -231,6 +241,9 @@ impl Relay {
     /// The answer to one binary message. Entries for subscriptions and
     /// replies to gets asked of peers are queued on `conn`.
     pub fn respond(&self, conn: &Connection, message: &[u8]) -> Answer {
+        if let Some(&kind) = message.first() {
+            self.received[kind as usize].fetch_add(1, Ordering::Relaxed);
+        }
         let peer = conn.peer.load(Ordering::Relaxed);
         if message.first().is_some_and(|&k| k >= 0x80) {
             if peer {

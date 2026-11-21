@@ -50,7 +50,9 @@ that it cannot open the first two kinds (section 6).
 ## 2. Client behaviour
 
 - A client keeps a local blob store (a cache). It answers a want for a
-  blob, or a part of one, from the store when possible.
+  blob, or a part of one, from the store when possible, without asking
+  any relay and without waiting for one to connect or answer (section
+  6.1).
 - Otherwise it asks its relays (section 5). In v0 it fetches the whole
   blob, checks that its BLAKE3-256 hash equals the requested ID, stores
   it, and only then uses it (or the part wanted). A blob that fails the
@@ -665,6 +667,30 @@ blob is not downloaded automatically. A link to a program or to a blob
 that turns out to be an image or a document (section 1.1, `ARTICLE.md`
 section 4.4) is handled the same way: the client says that it cannot
 open it.
+
+### 6.1 Responsiveness
+
+Reading should never wait on the network for what the client already
+holds. A reading client **must**:
+
+- show an article it holds (opened from the timeline, by following a
+  link to it, or by its ID) from its store: it sends no request to any
+  relay for it and does not wait for a relay to connect or to answer;
+- get a blob it does not hold as section 5.1 says, so that when the
+  first connected relay asked holds it, the client has it after one
+  round trip (one Get and its reply) with no other request before it;
+- show its timeline and subscription list from what it holds, at once,
+  never after waiting for a relay to connect or for feeds to catch up;
+  entries that arrive later are added as they come;
+- catch a feed up on a relay with one Subscribe (section 4.3), the
+  entries pushed after it, not asked for one by one.
+
+These are stated in round trips and in what may wait on what, so that
+any client can be tested against them on any network (a relay that
+counts the messages it receives, and one that accepts connections and
+never answers). Times in milliseconds depend on the machine and the
+network; `PERFORMANCE.md` gives the reference implementation's on a
+named machine, as information, and how to run the same tests.
 
 ## 7. For machine hosts
 
