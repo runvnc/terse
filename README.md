@@ -2055,7 +2055,7 @@ with `--strict`): a held blob reaches a program in 1 frame, with or without rela
 including one that never answers; a blob on a local relay in 1 Get (6 ms); a program
 the shell starts runs in the next frame; the reader opens a held article 1 frame after
 Enter; `terse get` of a held article takes 7 ms as a whole process and `tersereader
---dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 304 ms (`tersereader`),
+--dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 25 ms (`tersereader`),
 with one Subscribe; `terse-host` draws its first frame 19 ms after it starts (63 ms
 cold, on a first run with the program not in the page cache; 293 ms on the GPU
 renderer, which starts the graphics driver); every device's worst legal frame takes
