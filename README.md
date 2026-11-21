@@ -1568,9 +1568,9 @@ the monospace one must be monospaced (every printable ASCII character as wide as
 given, and `terse-host` again at start, where a missing or unsuitable file is
 reported on stderr and the built-in font used instead.
 
-Each file is memory-mapped once, at start: a 19 MB CJK collection costs about a
-millisecond to list and nothing more until one of its glyphs is drawn, and no file
-is opened for text after start (SPEC §responsiveness item 5, PERFORMANCE.md R11).
+Each file is memory-mapped and checked once, at start: listing a 19 MB CJK
+collection adds nothing measurable to start-up and nothing to the memory until one
+of its glyphs is drawn, and no file is opened for text after start (SPEC §responsiveness item 5, PERFORMANCE.md R11).
 The terminal's cell is the monospace font's advance; the first monospace font is
 parsed whole by fontdue (small), the others a glyph at a time with swash, and every
 glyph is rasterised once, the first time it is shown. The device-bus drivers
@@ -1935,9 +1935,10 @@ starts runs in the next frame; the reader opens a held article 1 frame after Ent
 `terse get` of a held article takes 7 ms as a whole process and `tersereader
 --dump` 12 ms; syncing 50 entries takes 59 ms (`terse`) and 303 ms (`tersereader`),
 with one Subscribe; `terse-host` draws its first frame 170 ms after it starts.
-Fetch's first frame of CJK text used to take about a second (PERFORMANCE.md 3): it
-now takes 90 ms even when fetch starts 50 ms after the host, most of it waiting for
-the font map the host builds as it starts.
+Fetch's first frame of CJK text used to take about a second, then 90 ms with a font
+map built as the host started (PERFORMANCE.md 3); the host now draws only with the
+fonts it loads at start and never looks for one, and fetch's text keeps to the full
+repertoire of its built-in fonts.
 
 ## Measurements
 
@@ -1971,8 +1972,8 @@ The frames over 16.7 ms are the ones in which a machine first appears (a rendere
 of its own, its glyphs: 15–19 ms), in which a new machine makes the others' tiles
 change size (glyphs and textures for the new size: 13–15 ms), and the first frame
 showing hello's CJK and Greek text (600–640 ms looking through the system's fonts for
-the characters the monospace font lacks; `terse-host hello.terse` alone pays the
-same at its first frame).
+the characters the monospace font lacks; `terse-host hello.terse` alone paid the
+same at its first frame; measured before the host stopped looking for fonts).
 
 Host cost per budget unit, for a frame spent entirely in one kind of call
 (`cargo test --release -p terse-core --test charges -- --ignored --nocapture

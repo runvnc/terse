@@ -667,6 +667,11 @@ fn terminal_scenarios() -> Vec<Scenario> {
             Call::new(0x200, [t, text.len() as u32, 0, 0]),
         ]);
     }
+    out.push(Scenario {
+        id: "term-cjk",
+        what: "terminal, full text: 1,200 CJK characters each frame (placeholders without a CJK font)",
+        image: b.build("w-cjk", &[d(2), d(10)]),
+    });
     // The whole full repertoire (SPEC §terminal.text), every glyph new: the
     // first frame shows 2,400 of its characters, the next the rest.
     let full: Vec<char> = crate::text::FULL
@@ -676,14 +681,19 @@ fn terminal_scenarios() -> Vec<Scenario> {
         .filter(|&c| c != ' ' && c != '\u{A0}')
         .collect();
     let mut b = Builder::new();
+    // Two screens' worth, shown in turn: the second frame brings the rest.
+    // Each is two writes: a write takes at most 4,096 bytes.
+    let screens: Vec<Vec<(u32, u32)>> = (0..2usize)
+        .map(|k| {
+            let chars: String = (0..2400).map(|i| full[(k * 2400 + i) % full.len()]).collect();
+            let half = chars.char_indices().nth(1200).unwrap().0;
+            [&chars[..half], &chars[half..]].iter().map(|part| (b.blob(part.as_bytes()), part.len() as u32)).collect()
+        })
+        .collect();
     for f in 0..30usize {
         let mut calls = vec![Call::new(0x202, [0, 0, 0, 0]), Call::new(0x204, [9 + f as u32 % 7, 232 + f as u32 % 24, 0, 0])];
-        let chars: String = (0..2400).map(|i| full[(f * 2400 + i) % full.len()]).collect();
-        // Two writes: a write takes at most 4,096 bytes.
-        let half = chars.char_indices().nth(1200).unwrap().0;
-        for part in [&chars[..half], &chars[half..]] {
-            let t = b.blob(part.as_bytes());
-            calls.push(Call::new(0x200, [t, part.len() as u32, 0, 0]));
+        for &(t, n) in &screens[f % 2] {
+            calls.push(Call::new(0x200, [t, n, 0, 0]));
         }
         b.frame(calls);
     }
@@ -691,11 +701,6 @@ fn terminal_scenarios() -> Vec<Scenario> {
         id: "term-full",
         what: "terminal, full text: the full repertoire, 2,400 characters not shown before in the first frame",
         image: b.build("w-full", &[d(2), d(10)]),
-    });
-    out.push(Scenario {
-        id: "term-cjk",
-        what: "terminal, full text: 1,200 CJK characters each frame (placeholders without a CJK font)",
-        image: b.build("w-cjk", &[d(2), d(10)]),
     });
     out
 }

@@ -185,7 +185,9 @@ pub fn describe(t: &TerminalFonts, p: &PageFonts) -> String {
     for f in &t.extras {
         out.push_str(&format!("extra    {}\n", f.label));
     }
-    for n in t.notes.iter().chain(&p.notes) {
+    let mut notes: Vec<&String> = t.notes.iter().chain(&p.notes).collect();
+    notes.dedup();
+    for n in notes {
         out.push_str(&format!("note     {n}\n"));
     }
     out

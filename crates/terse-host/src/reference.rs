@@ -1,16 +1,14 @@
 //! The software renderer against reference pictures (`tests/reference/`):
 //! scripted scenes run headless and drawn by the software renderer at
 //! 400 × 300, as `--screenshot --renderer software` does, each compared
-//! with its checked-in picture. They need no GPU and no network, so they
-//! run on any machine with the DejaVu fonts (the grid in DejaVu Sans Mono,
-//! the page in DejaVu Sans, Serif and Sans Mono); without them the tests
-//! say so and pass. `UPDATE_REFERENCE=1` rewrites the pictures.
+//! with its checked-in picture. They need no GPU, no network and no
+//! installed fonts: text is drawn with the host's built-in fonts, so every
+//! machine draws the same glyphs. `UPDATE_REFERENCE=1` rewrites the
+//! pictures.
 //!
-//! The tolerance allows for other fallback fonts (the hello screen's two
-//! CJK characters and the like come from whatever the system has) and for
-//! float rounding on other CPUs: at most `MAX_OFF` of the pixels may
-//! differ by more than 8/255 in a channel, and the mean difference must
-//! stay under `MAX_MEAN` (per channel, 0–255).
+//! The tolerance allows for float rounding on other CPUs: at most
+//! `MAX_OFF` of the pixels may differ by more than 8/255 in a channel, and
+//! the mean difference must stay under `MAX_MEAN` (per channel, 0–255).
 
 use std::path::PathBuf;
 

@@ -112,7 +112,8 @@ perf`: on a busy machine they would fail for the wrong reason.
 ## 3. Targets on the reference machine
 
 Measured with `terse perf --runs 5` on the machine above, release build,
-2026-11-21, load average 12 (another build was running): the median,
+2026-11-21, load average 12 (another build was running; rows H1, H2 and H4 to H6
+measured again after the fonts were built in, with --runs 3, load average 3 to 4): the median,
 with the lowest and highest run where there were several. Every
 requirement passed.
 
@@ -133,8 +134,11 @@ requirement passed.
 | G2, G3 | `tersereader --dump` of a held article; relay connected / never answering | 12.2 ms (11.9–18.1) / 12.6 ms | ≤ 50 ms |
 | G4 | `tersereader list`, relay never answering | 12.3 ms | ≤ 50 ms |
 | G5 | the same through the Go node on the local socket: `--dump`, `list` | 1.9 ms (1.8–2.3), 2.6 ms | ≤ 50 ms |
-| H1 | `terse-host` start to hello's first frame drawn (software, offscreen) | 173 ms (168–1,556: the slow run read the fonts from disk) | ≤ 500 ms |
-| H2 | fetch's slowest frame (its CJK and Hangul line, 50 ms after start) | 93 ms (91–104) | ≤ 150 ms |
+| H1 | `terse-host` start to hello's first frame drawn (software, offscreen) | 22 ms (20–28; before the built-in fonts: 202 ms, 150–513) | ≤ 500 ms |
+| H2 | fetch's slowest frame (its first Greek, Cyrillic and symbols, 50 ms after start) | 1.0 ms (before, its CJK and Hangul line: 102 ms) | ≤ 50 ms |
+| H4 | the first frame showing 2,400 glyphs of the full repertoire never drawn before, 1 thread (`term-full`) | 9.2 ms (the first frame of basic text, 90 glyphs: 4.4 ms) | ≤ 16.7 ms |
+| H5 | H1 with a 19 MB CJK collection listed as an extra font | 19 ms (19–21) | as H1 |
+| H6 | 1,200 CJK glyphs never drawn before, each frame, from that font, 1 thread (`term-cjk`) | p50 22 ms, max 26 ms | ≤ 16.7 ms |
 | H3 | programs/conform's stress frames 49–108 on the software renderer, 1 / 12 threads | p50 6.4 / 1.6 ms, max 8.7 / 2.3 ms (before the ink caps: p99 1,678 / 361 ms) | ≤ 16.7 ms |
 | W | each device's worst legal frame, and all of them at once (§4) | every cap held (PASS); 1 thread at most 6.5 ms a device, 15.8 ms all at once | ≤ 16.7 ms |
 
@@ -142,17 +146,27 @@ The machine rows' milliseconds are those of the content service; the
 frames are what a program sees. Drawing times of the renderers for the
 usual scenes are in README "Software renderer".
 
-**First text in another script.** A frame that first shows characters
-the monospace font lacks (fetch's Japanese, Chinese and Korean line)
-took 0.95 to 1.7 s on this machine, and the host grew from 35 MB to
-360 MB: in that frame the host looked for a font with each such
-character by reading the font files one by one (about 0.1 s), then had
-fontdue parse the font it found, a 19 MB CJK collection, whole (0.7 s
-and 300 MB). Now every font's character map is read once, on a thread
-of its own as the host starts (about 0.1 s for 1,000 faces), and a
-fallback font's glyphs are drawn one at a time with swash as they are
-needed: that frame takes 90 ms when fetch runs 50 ms after start (most
-of it waiting for the map), and fetch uses 71 MB.
+**Fonts (R11).** A frame that first showed characters the monospace
+font lacked (fetch's Japanese, Chinese and Korean line) once took 0.95
+to 1.7 s, the host looking through the system's fonts one file at a
+time and parsing the one it found whole; later 90 ms, waiting for a map
+of every installed font's characters built as the host started. The
+host now draws only with fonts it loads at start (`SPEC.md`
+§terminal.text: three built in, and those the user lists) and never
+looks for another: start-up fell from 202 ms to 22 ms (no scan of a
+thousand font files), and a glyph costs only its rasterising, once.
+The worst frame of the full repertoire, 2,400 glyphs none drawn before
+(H4), takes 9.2 ms on one thread, within a frame; it can happen once
+per screen size, since there are only 2,461 of them. A font the user
+adds is memory-mapped and checked, not read: listing a 19 MB CJK
+collection adds nothing measurable to start-up (H5 against H1) and
+nothing to the memory until its glyphs are drawn. Those glyphs cost
+what they did before (H6: 1,200 new CJK glyphs a frame, 22 ms, about
+18 µs a glyph), which misses a frame by 5 to 9 ms in that worst case; a
+real page of CJK text uses far fewer new characters a frame. Memory
+(peak, 30 frames): hello 21 MB, fetch 22 MB (71 MB before, with the
+font map), the CJK frames 28 MB as placeholders and 43 MB from the
+listed font.
 
 **Requests with a relay connected.** The content service polls each
 connected relay's socket with a 5 ms read timeout, so a request that
@@ -189,7 +203,7 @@ legal frames found, drawing time per frame:
 | 3D | 4 Surfaces of the whole screen | 20.6 ms | 3.9 ms | 1.2 ms | 4 Surfaces |
 | 3D | hidden lines: 256 faces × 512 segments; 8 × 16,384 | 2.1; 5.0 ms | 1.4; 2.0 ms | 1.0; 0.5 ms | faces × segments, 131,072 |
 | Terminal | every cell rewritten each frame, basic text | 2.7 ms | 0.7 ms | 0.4 ms | 2,400 cells |
-| Terminal | full text: 1,200 CJK characters never shown before, each frame | 23 ms | 21 ms | 31 ms | 2,400 cells (not the font work) |
+| Terminal | full text: 1,200 CJK characters never shown before, each frame (from an extra font, since the built-in fonts) | 23 ms | 21 ms | 31 ms | 2,400 cells (not the font work) |
 | Page | 65,536 bytes of size-6 text, scrolled every frame | 3.6 ms | 1.8 ms | 1.8 ms | lines in view; layout outside the frames |
 
 Sound needs no row: its mixing is the machine's own, inside the frame's
@@ -248,11 +262,12 @@ counted, below); reader, fetch, hello and tune draw no vector list.
   (`phosphor::SMEAR_INK_MAX`, above holo's 51,000). A host must draw only
   plain lines in the phosphor style, which cost what the clean style
   does.
-- *Text in another script.* The terminal's 2,400 cells are bounded, but
-  a frame of 1,200 CJK characters the host has not drawn before costs it
-  23 ms (fonts found, glyphs rasterised) on any renderer. The work
-  depends on the host's fonts; a rule that lets a host show a new glyph
-  a few frames late, as the page may show a figure late, would bound it.
+- *Text in another script.* The terminal's 2,400 cells are bounded, and
+  the full repertoire's worst frame fits (9.2 ms, §3). With a CJK font
+  the user added, a frame of 1,200 CJK characters the host has not drawn
+  before costs it 23 ms (glyphs rasterised; nothing is looked for) on
+  any renderer. A rule that lets a host show a new glyph a few frames
+  late, as the page may show a figure late, would bound it.
 - *A system of machines.* The caps are per machine: a shell and 8
   machines whose pictures each cover the screen can ask 9 times one
   machine's worst. A machine's picture costs in proportion to its area,

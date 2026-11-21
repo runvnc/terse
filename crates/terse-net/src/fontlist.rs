@@ -144,8 +144,6 @@ pub struct FontInfo {
     /// The family name of its first face.
     pub family: String,
     pub faces: u32,
-    /// Characters its first face maps to glyphs.
-    pub chars: u32,
 }
 
 /// Checks font file bytes for `role`: they must be a font this host reads
@@ -162,19 +160,16 @@ pub fn check(role: Role, bytes: &[u8]) -> Result<FontInfo, String> {
         .filter(|n| n.name_id == ttf_parser::name_id::FAMILY && n.is_unicode())
         .find_map(|n| n.to_string())
         .unwrap_or_else(|| "(no name)".into());
-    let mut chars = 0u32;
-    if let Some(cmap) = face.tables().cmap {
-        let mut seen = std::collections::HashSet::new();
-        for sub in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
-            sub.codepoints(|c| {
-                if sub.glyph_index(c).is_some_and(|g| g.0 != 0) {
-                    seen.insert(c);
-                }
-            });
-        }
-        chars = seen.len() as u32;
-    }
-    if chars == 0 {
+    // A Unicode character map with at least one glyph in it (counting them
+    // all is `count_chars`, for the user: too slow for every start).
+    let maps = face.tables().cmap.is_some_and(|cmap| {
+        cmap.subtables.into_iter().filter(|s| s.is_unicode()).any(|sub| {
+            let mut any = false;
+            sub.codepoints(|c| any |= !any && sub.glyph_index(c).is_some_and(|g| g.0 != 0));
+            any
+        })
+    });
+    if !maps {
         return Err("the font maps no characters".into());
     }
     if role != Role::Extra {
@@ -192,7 +187,23 @@ pub fn check(role: Role, bytes: &[u8]) -> Result<FontInfo, String> {
             return Err(format!("not monospaced: {c:?} is not as wide as '0', so it cannot fill the terminal's cells"));
         }
     }
-    Ok(FontInfo { family, faces, chars })
+    Ok(FontInfo { family, faces })
+}
+
+/// The characters the first face of a font maps to glyphs.
+pub fn count_chars(bytes: &[u8]) -> u32 {
+    let Ok(face) = ttf_parser::Face::parse(bytes, 0) else { return 0 };
+    let mut seen = std::collections::HashSet::new();
+    if let Some(cmap) = face.tables().cmap {
+        for sub in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
+            sub.codepoints(|c| {
+                if sub.glyph_index(c).is_some_and(|g| g.0 != 0) {
+                    seen.insert(c);
+                }
+            });
+        }
+    }
+    seen.len() as u32
 }
 
 #[cfg(test)]

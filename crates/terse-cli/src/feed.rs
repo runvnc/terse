@@ -258,7 +258,7 @@ pub fn fonts(args: &[String]) -> Result<ExitCode, String> {
         let path = std::fs::canonicalize(file).map_err(|e| format!("{file}: {e}"))?;
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let info = fontlist::check(role, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        eprintln!("terse: {}: {}, {} characters", path.display(), info.family, info.chars);
+        eprintln!("terse: {}: {}, {} characters", path.display(), info.family, fontlist::count_chars(&bytes));
         Ok(path)
     };
     match (command.as_str(), args.positional.as_slice()) {
