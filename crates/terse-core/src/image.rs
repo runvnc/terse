@@ -99,7 +99,7 @@ impl fmt::Display for ImageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooShort { len } => write!(f, "file is {len} bytes, shorter than the 32-byte header"),
-            Self::BadMagic => write!(f, "not a Terse image (bad magic)"),
+            Self::BadMagic => write!(f, "not a Terse32 image (bad magic)"),
             Self::UnsupportedFormatVersion(v) => write!(f, "unsupported format version {v}"),
             Self::UnsupportedProfile(p) => write!(f, "unsupported machine profile {p}"),
             Self::RomLength(n) => write!(f, "ROM length {n} outside 1..={ROM_MAX}"),

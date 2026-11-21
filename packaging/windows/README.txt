@@ -1,12 +1,12 @@
-Terse @VERSION@ for Windows (64-bit, Windows 10 or newer)
-=======================================================
+Tersenet @VERSION@ for Windows (64-bit, Windows 10 or newer)
+============================================================
 
-Terse is a way to share formatted text, with diagrams where they help,
+Tersenet is a way to share formatted text, with diagrams where they help,
 without web browsers, ads or tracking. https://github.com/runvnc/terse
 
 In this folder
 --------------
-  terse-host.exe    the Terse window: the reader, the manual, the built-in programs
+  terse-host.exe    the Terse32 window: the reader, the manual, the built-in programs
   terse.exe         the command-line tool (publish articles, manage feeds and relays)
   terse-relay.exe   a relay, to share with other people (see the manual)
   LICENSE.txt       Apache License 2.0
@@ -20,7 +20,7 @@ This download is not signed, so Windows SmartScreen may say "Windows
 protected your PC". Click "More info", then "Run anyway". It asks only once.
 
 The window opens on the launcher. Up and Down choose a program, Enter
-starts it. Choose "reader" and press M: that is the Terse manual. F12
+starts it. Choose "reader" and press M: that is the Tersenet manual. F12
 always brings you back to the launcher. In the reader, ? shows the keys.
 
 From a terminal (PowerShell or Command Prompt) in this folder:
@@ -29,13 +29,13 @@ From a terminal (PowerShell or Command Prompt) in this folder:
   .\terse.exe                 lists the commands
 terse-host prints what it is doing to the terminal it was started from.
 
-Where Terse keeps things
-------------------------
+Where Tersenet keeps things
+---------------------------
   %APPDATA%\terse         your feed key (identity.key) and subscriptions
   %LOCALAPPDATA%\terse    programs' records, downloaded articles and
                           programs (blobs), and the store of the relay
                           terse-host starts when it finds none
-Keep identity.key safe: it is your feed. To remove Terse, delete this
+Keep identity.key safe: it is your feed. To remove Tersenet, delete this
 folder and the two above.
 
 Without a relay of its own, terse-host starts one on 127.0.0.1:7878 (this

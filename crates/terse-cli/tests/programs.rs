@@ -85,7 +85,7 @@ fn publish_follow_list_and_find_programs() {
     assert_eq!(out, format!("seq 2 program sparks image {}\n", to_hex(&blob_id(SPARKS))));
     let out = author.ok(&["feed", "publish", "--program", hello.to_str().unwrap(), "--name", "Hello, world", "--relay", &url]);
     assert!(out.starts_with("seq 3 program Hello, world image "), "{out}");
-    assert!(author.fails(&["feed", "publish", "--program", junk.to_str().unwrap(), "--relay", &url]).contains("not a Terse image"));
+    assert!(author.fails(&["feed", "publish", "--program", junk.to_str().unwrap(), "--relay", &url]).contains("not a Terse32 image"));
     assert!(author.fails(&["feed", "publish", "--program", hello.to_str().unwrap(), "--name", " x", "--relay", &url]).contains("not a valid name"));
     // A new version of sparks (another image under the same name).
     let v2 = Image::build("sparks", 1, &[terse_core::DeviceReq::new(2, 0)], &[0x6F, 0, 0, 0]);

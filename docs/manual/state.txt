@@ -1,6 +1,6 @@
 # State, replay and conformance
 
-A Terse machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.
+A Terse32 machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.
 
 ## The state serialization
 

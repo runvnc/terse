@@ -184,7 +184,7 @@ pub enum RecordError {
 impl fmt::Display for RecordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RecordError::NotARecording => write!(f, "not a Terse recording"),
+            RecordError::NotARecording => write!(f, "not a Terse32 recording"),
             RecordError::Version(v) => write!(f, "recording version {v} (this host reads version {VERSION})"),
             RecordError::Malformed(at) => write!(f, "malformed recording at byte {at}"),
         }

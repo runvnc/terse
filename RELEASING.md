@@ -31,7 +31,7 @@ from source. `tersereader` has no Windows build: its terminal code is Unix-only.
        git push origin v0.1.0
 
 3. Wait for the workflow (Actions tab, "release"; about 20 to 30 minutes). It
-   ends by making a **draft** release named "Terse 0.1.0" with every file
+   ends by making a **draft** release named "Tersenet 0.1.0" with every file
    attached and the notes from `packaging/release-notes.md`.
 4. Check the draft: download the file for your system, run it, open the
    manual. Edit the notes if you like (say what changed).

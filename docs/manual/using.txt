@@ -1,6 +1,6 @@
 # Using the shell and the reader
 
-`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user's side: the keys, the screens, and the prompts the host shows.
+`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user's side: the keys, the screens, and the prompts the host shows.
 
 ## Starting
 

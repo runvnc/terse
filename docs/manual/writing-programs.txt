@@ -1,6 +1,6 @@
 # Writing a program
 
-A Terse program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.
+A Terse32 program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.
 
 ## Tools
 

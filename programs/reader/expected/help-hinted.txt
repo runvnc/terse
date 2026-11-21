@@ -46,5 +46,5 @@
   353  18    12   sans14b |F   feeds
   375  18    12   sans14b |? or F1   this help
   397  18    12   sans14b |T   publish a test article
-  419  18    12   sans14b |M   the Terse manual
+  419  18    12   sans14b |M   the Tersenet manual
   441  18    12   sans14b |Esc   quit
