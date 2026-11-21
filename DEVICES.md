@@ -481,7 +481,9 @@ and page drivers the `--config` it gives the content driver. Every Rust driver a
 drivers in the repository take no options:
 `crates/terse-devices/c/terminal.c` (slots 2 and 10; the socket unless
 `TERSE_C_SHM=1`), `crates/terse-devices/python/vector.py` (slots 3 and 9,
-socket only), `native/driver-example/terminal.c` (slots 2 and 10, socket
+socket only), `terse-dev-mame` (`crates/terse-mame-crt`: slots 3 and 9,
+or slot 2, whichever group it is asked for; section 7.1),
+`native/driver-example/terminal.c` (slots 2 and 10, socket
 only, section 13) and `terse-dev-crash`, a terminal that fails on purpose
 for tests (`TERSE_CRASH`, `TERSE_CRASH_AT`, `TERSE_CRASH_THEN`).
 
@@ -1067,6 +1069,26 @@ machines as tiles and as panels, `crates/terse-devices/tests/pictures.rs`);
 only a page whose glyphs overlap can differ, by the rounding of their
 added light to 8 bits.
 
+**A vector driver that draws its own tube.** The look of the phosphor
+style is the host's (SPEC §vector.phosphor), and a driver may carry
+another one: a vector driver that publishes **`vector.tube`** = 1 draws
+the beam, its glow and its afterglow itself. For a machine in the
+phosphor style it then draws its layers as light, as the terminal and
+the page do (straight colour and coverage), from its own lists, and the
+core, instead of the last two items above, adds the light of every light
+layer, the vector driver's among them, linear, over black, as it is: no
+beam, halo, afterglow or tone curve of its own. A light layer that holds
+full coverage (alpha 255) where no other holds light is shown with its
+colour exactly, so such a driver's picture passes through unchanged.
+The driver keeps its own afterglow from the frames it is told of (END),
+not from PRESENT, which may come more or less often; a terminal driver
+that wants its text drawn by the same beam draws its light layer the
+same way. With 0 or no value the core draws the tube as above. A scene
+with Screens or Surfaces is still drawn with the core's tube (its 3D
+lines over the panels are the core's). `crates/terse-mame-crt`
+(`terse-dev-mame`) is such a driver, for both groups: MAME's vector CRT
+renderer, and the terminal's text as strokes.
+
 **The system ink** (SPEC §machines.ink) is the core's: it counts what it
 shows with terse-core's count, the pictures' areas, then the machines'
 2D lists (device 3's state from `vector.list`) and 3D lists
@@ -1106,6 +1128,7 @@ reference drivers and core:
 | `vector3.list` | vector display | core | device 9's list (SPEC §vector3d), which device 8 (`face`), the shell's scene and the pointer over panels (SPEC §machines.calls, §machines.screens and §machines.input) look at |
 | `vector.list` | vector display | core | device 3's state as `STATE.md` 1.7's section: style (u8), persistence (u8), fill mode (u8: 1 outlines), the list's length (u32) and the list; the core counts the system ink from it and draws the phosphor style's beam (section 7.1) |
 | `core.light` | core | terminal, page, vector display | 1: the machine is shown in the phosphor style and its layers are light (section 7.1); 0 or empty: the clean style |
+| `vector.tube` | a vector display that draws its own tube (not the reference's) | core | 1: in the phosphor style its layers are light and the core adds the layers' light as it is, without its own tube (section 7.1); 0 or empty: the core draws the tube |
 | `core.caps` | core | vector display | the ink caps the machine's lists are drawn within, its share of the system ink (SPEC §machines.ink): the 2D cap (u64) and the 3D cap (f64), each at most the device's own; empty: the devices' own |
 | `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |
 | `core.view` | core | vector display | the shell's scene: which Screens are in effect (u8) and the view (12 f64: the linear part by rows, then the translation); empty: none |
