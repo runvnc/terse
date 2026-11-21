@@ -22,18 +22,28 @@ pub const USAGE: &str = "usage:
   terse perf report --check <file>
   terse perf aggregate [--follow <keys file>] <report file or dir>...";
 
+/// A timed measurement of a `terse perf` row: its median, judged against
+/// its ceiling and its target.
+pub struct PerfMeasure {
+    pub name: String,
+    pub value: f64,
+    pub unit: String,
+    pub ceiling_ok: bool,
+    pub target_ok: bool,
+}
+
 /// A row of a `terse perf` run, as `perf.rs` has it.
 pub struct PerfRow {
     pub id: String,
     pub what: String,
     pub measured: String,
-    pub rule: String,
     /// The requirement's outcome, if the row has one.
     pub requirement: Option<bool>,
+    pub measures: Vec<PerfMeasure>,
 }
 
 /// The first number in a text and the unit after it (`frame` as
-/// `frames`, a relay message as `trips`).
+/// `frames`, a relay message as `trips`; "1 thread" is not a measure).
 fn first_number(s: &str) -> Option<(f64, String)> {
     let words: Vec<&str> = s.split(|c: char| c.is_whitespace() || matches!(c, ';' | ',' | '(' | ')')).filter(|w| !w.is_empty()).collect();
     for (i, w) in words.iter().enumerate() {
@@ -43,7 +53,7 @@ fn first_number(s: &str) -> Option<(f64, String)> {
         {
             let unit = words.get(i + 1).copied().unwrap_or("");
             if unit == "thread" || unit == "threads" {
-                continue; // "1 thread p50 6.5 ms": the threads are not the measure
+                continue;
             }
             let unit = match unit {
                 "frame" => "frames",
@@ -57,48 +67,67 @@ fn first_number(s: &str) -> Option<(f64, String)> {
     None
 }
 
-/// A `terse perf` run's rows as `bench` lines: the id (a `W` row's with
-/// its scenario; made unique), the first number measured and its unit,
-/// the requirement, and whether a target `T: ≤ <n> <unit>` was met.
-/// (Ceilings are not yet separate rows of `terse perf`: `-`.)
+/// A `terse perf` run's rows as `bench` lines. A row with timed
+/// measurements gives one line for each (its id, with the measurement's
+/// name if the row has several), the median, the ceiling and the target
+/// judged; the requirement on the row's first line. A row without gives
+/// one line: its first number and unit, and the requirement. Ids are
+/// made unique (a `W` row's carries its scenario).
 pub fn bench_of(rows: &[PerfRow]) -> Vec<Bench> {
     let mut out: Vec<Bench> = Vec::new();
-    for r in rows {
-        let mut id = if r.id == "W" { format!("W.{}", r.what.split(':').next().unwrap_or("").trim()) } else { r.id.clone() };
+    let clean = |mut id: String| {
         id.retain(|c| c.is_ascii_graphic() && c != '%');
         id.truncate(MAX_BENCH_ID - 3);
+        id
+    };
+    let push = |out: &mut Vec<Bench>, id: String, b: Bench| {
         if id.is_empty() {
-            continue;
+            return;
         }
-        let base = id.clone();
+        let mut unique = id.clone();
         let mut n = 2;
-        while out.iter().any(|b| b.id == id) {
-            id = format!("{base}.{n}");
+        while out.iter().any(|b| b.id == unique) {
+            unique = format!("{id}.{n}");
             n += 1;
         }
-        let measured = first_number(&r.measured).map(|(v, u)| ((v * 1000.0).round() / 1000.0, u)).filter(|(v, _)| *v < 1e7);
-        let target = match (r.rule.split_once("T: ≤ ").and_then(|(_, t)| first_number(t)), &measured) {
-            (Some((limit, unit)), Some((v, u))) if unit == *u => {
-                if *v <= limit {
-                    Tier::Pass
-                } else {
-                    Tier::Fail
-                }
+        out.push(Bench { id: unique, ..b });
+    };
+    let tier = |ok: Option<bool>| match ok {
+        Some(true) => Tier::Pass,
+        Some(false) => Tier::Fail,
+        None => Tier::None,
+    };
+    for r in rows {
+        let base = if r.id == "W" { format!("W.{}", r.what.split(':').next().unwrap_or("").trim()) } else { r.id.clone() };
+        if r.measures.is_empty() {
+            let measured = first_number(&r.measured).map(|(v, u)| ((v * 1000.0).round() / 1000.0, u)).filter(|(v, _)| *v < 1e7);
+            let b = Bench {
+                id: String::new(),
+                value: measured.as_ref().map(|m| m.0),
+                unit: measured.map(|m| m.1).unwrap_or_default(),
+                requirement: tier(r.requirement),
+                ceiling: Tier::None,
+                target: Tier::None,
+            };
+            push(&mut out, clean(base), b);
+            continue;
+        }
+        for (i, m) in r.measures.iter().enumerate() {
+            let mut id = base.clone();
+            if r.measures.len() > 1 && !m.name.is_empty() {
+                id = format!("{id}.{}", m.name.split_whitespace().last().unwrap_or(""));
             }
-            _ => Tier::None,
-        };
-        out.push(Bench {
-            id,
-            value: measured.as_ref().map(|m| m.0),
-            unit: measured.map(|m| m.1).unwrap_or_default(),
-            requirement: match r.requirement {
-                Some(true) => Tier::Pass,
-                Some(false) => Tier::Fail,
-                None => Tier::None,
-            },
-            ceiling: Tier::None,
-            target,
-        });
+            let value = (m.value.is_finite() && m.value >= 0.0 && m.value < 1e7).then(|| (m.value * 1000.0).round() / 1000.0);
+            let b = Bench {
+                id: String::new(),
+                value,
+                unit: m.unit.clone(),
+                requirement: if i == 0 { tier(r.requirement) } else { Tier::None },
+                ceiling: tier(Some(m.ceiling_ok)),
+                target: tier(Some(m.target_ok)),
+            };
+            push(&mut out, clean(id), b);
+        }
     }
     out
 }
@@ -361,33 +390,38 @@ pub fn aggregate(args: &[String]) -> Result<ExitCode, String> {
 mod tests {
     use super::*;
 
-    fn row(id: &str, what: &str, measured: &str, rule: &str, requirement: Option<bool>) -> PerfRow {
-        PerfRow { id: id.into(), what: what.into(), measured: measured.into(), rule: rule.into(), requirement }
+    fn row(id: &str, what: &str, measured: &str, requirement: Option<bool>, measures: Vec<PerfMeasure>) -> PerfRow {
+        PerfRow { id: id.into(), what: what.into(), measured: measured.into(), requirement, measures }
+    }
+
+    fn m(name: &str, value: f64, ceiling_ok: bool, target_ok: bool) -> PerfMeasure {
+        PerfMeasure { name: name.into(), value, unit: "ms".into(), ceiling_ok, target_ok }
     }
 
     #[test]
     fn perf_rows_as_bench_lines() {
         let b = bench_of(&[
-            row("M1a", "held get", "1 frame; service 0.1 ms; relay asked 0 times", "R6: ≤ 2 frames; R1: no relay asked", Some(true)),
-            row("M2", "get", "1 Get; service 6.2 ms", "R2: 1 round trip", Some(false)),
-            row("H1", "start", "22 ms (20–28)", "T: ≤ 500 ms", None),
-            row("H6", "cjk", "p50 22 ms, max 26 ms", "T: ≤ 16.7 ms", None),
-            row("W", "vector: worst", "1 thread p50 6.5 ms, max 7.0 ms; caps", "R10: within the caps; T: ≤ 16.7 ms", Some(true)),
-            row("W", "vector: worst again", "never", "T: ≤ 16.7 ms", None),
+            row("M1a", "held get", "1 frame; service 0.1 ms; relay asked 0 times", Some(true), vec![]),
+            row("M2", "get", "1 Get; service 6.2 ms", Some(false), vec![]),
+            row("H1", "start", "22 ms (20–28)", None, vec![m("", 22.0, true, true)]),
+            row("G5", "node", "", None, vec![m("--dump", 1.9, true, true), m("list", 300.0, false, false)]),
+            row("W", "vector: worst", "1 thread p50 6.5 ms", Some(true), vec![m("1 thread p50", 6.5, true, true)]),
+            row("W", "vector: worst again", "never", None, vec![]),
         ]);
         let lines: Vec<String> = b
             .iter()
-            .map(|b| format!("{} {:?} {} {:?} {:?}", b.id, b.value, b.unit, b.requirement, b.target))
+            .map(|b| format!("{} {:?} {} {:?} {:?} {:?}", b.id, b.value, b.unit, b.requirement, b.ceiling, b.target))
             .collect();
         assert_eq!(
             lines,
             [
-                "M1a Some(1.0) frames Pass None",
-                "M2 Some(1.0) trips Fail None",
-                "H1 Some(22.0) ms None Pass",
-                "H6 Some(22.0) ms None Fail",
-                "W.vector Some(6.5) ms Pass Pass",
-                "W.vector.2 None  None None",
+                "M1a Some(1.0) frames Pass None None",
+                "M2 Some(1.0) trips Fail None None",
+                "H1 Some(22.0) ms None Pass Pass",
+                "G5.--dump Some(1.9) ms None Pass Pass",
+                "G5.list Some(300.0) ms None Fail Fail",
+                "W.vector Some(6.5) ms Pass Pass Pass",
+                "W.vector.2 None  None None None",
             ]
         );
     }

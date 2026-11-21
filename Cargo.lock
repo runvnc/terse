@@ -2867,6 +2867,7 @@ dependencies = [
 name = "terse-cli"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tempfile",
  "terse-bus",
  "terse-core",

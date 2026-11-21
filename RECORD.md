@@ -394,8 +394,6 @@ publishes them in a followed feed for the program.
   report documents and list it in the launcher; it moves the launcher's
   entries after the built-ins, which the shell's scripted tests and
   reference pictures navigate by.
-- **Ceilings.** `terse perf` does not yet give ceilings as outcomes of
-  their own; `--run` writes `-` for them.
 - **Search.** At most 16 results a search, listed feeds only, no profile
   lookup by key: an aggregate of strangers is a small, self-selected
   sample.

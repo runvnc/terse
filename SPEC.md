@@ -1301,6 +1301,16 @@ tested (at 60 frames a second a frame is 16.7 ms):
    file is opened, nor any directory of fonts read, for text after that.
    A glyph is rasterised when it is first shown, which is bounded per
    glyph (`PERFORMANCE.md` R11).
+6. **Starting.** Before its first frame a host reads only the image it
+   runs (for a shell, the images it is given as built-ins), its
+   settings, the fonts they list and its own store and data directories
+   (where it puts the built-in programs and the manual,
+   §machines.calls) and the result of its hardware check (`PERFORMANCE.md`
+   R16, which on its first start on a computer draws the worst legal
+   frames once); besides those it opens only its window and graphics
+   device. It waits on no relay (relays are connected beside the frame
+   loop), reads no directory of fonts and asks the user nothing, so its
+   first frame depends on those files alone (`PERFORMANCE.md` R17).
 
 **What a host does about its own components.** With programs bounded,
 what can still make a frame late is the host's own: a device driver, a
@@ -1313,8 +1323,10 @@ rule and its numbers.
 
 How a host presents a frame (drawing, the phosphor style) is not machine
 state and has no requirement here; `PERFORMANCE.md` gives the reference
-host's drawing times on a named machine as targets, with how to measure
-them (`terse perf`, `terse-host --bench-render`).
+host's drawing and start-up times on a named machine as targets, and
+ceilings far above them that a host on any reasonable computer must stay
+under, with how to measure them (`terse perf`, `terse-host
+--bench-render`).
 
 ## §provisional Provisional values
 

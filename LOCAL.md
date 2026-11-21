@@ -235,7 +235,9 @@ hold their replies behind a request that waits on the network (a Get of
 a blob not held, Find, Lookup, Sync; replies may come in any order,
 section 2). So a reader on a node sees what is held in one round trip on
 the local socket, whatever the network is doing. `PERFORMANCE.md` says
-how this is tested and gives the reference's times as information.
+how this is tested and gives the reference's times as targets
+(information), with ceilings that a node on any reasonable computer must
+stay under.
 
 ## 5. Builds
 

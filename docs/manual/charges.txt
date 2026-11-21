@@ -57,6 +57,8 @@ Two examples. A deferred call that copies nothing costs 5 units from ROM (the `e
 
 The budget bounds the program's own work. Drawing, hiding lines and laying out text are the host's, and are bounded by the limits below instead: the terminal's 2,400 cells, the two vector displays' ink caps (a list over its cap is cut where it passes it, the rest not drawn), the 3D display's other caps, and the page's layout outside the frames. They are set so that every device at its cap at once costs the reference host no more than one frame's time on one thread; no legal program can make a frame slow.
 
+In a system the machines the shell shows also share one budget, the system ink: 691,200 square units of the shell's screen, what one machine shown over the whole screen may count. The pictures count their areas first, then each machine's lists their ink times the picture's scale; a picture that does not fit is a plain plate, a list is cut where the ink runs out. The shell's own screen is not counted. So a whole system asks of the host about what two machines can (Screens, panels and input gives the rules).
+
 ## Machine and image
 
 | Limit | Value | Note |
@@ -197,6 +199,7 @@ All but the request block's 52 bytes are provisional.
 | Screens in effect | the first of each handle, in the shell's 3D list; each counts as a face | |
 | Program name | 1 to 48 bytes | provisional |
 | Records written | `info` 48, `identity` 81, `request` 82, `snapshot_info` 122 bytes | |
+| System ink | 691,200 square units: pictures' areas, then lists' ink times their scale | |
 
 ## Network
 
@@ -214,3 +217,13 @@ All but the request block's 52 bytes are provisional.
 | Profile document | at most 4,096 bytes; 0 to 4 relay lines |
 | Reconnecting | after 1 s, doubling up to 30 s |
 | Peer get | not found after 3 s without an answer |
+
+## Performance
+
+Tersenet's speed is specified in three tiers, collected in PERFORMANCE.md and checked by `terse perf`:
+
+- **Requirements**, in units any implementation can be tested against on any machine: frames, round trips, and what may not wait on what. A held article is shown with no request to any relay; a blob not held costs one round trip; a content request that needs no network completes within 2 frames; a program the shell starts runs within 2 frames; a host's first frame waits on nothing but the image, its settings and the fonts they list. They pass or fail.
+- **Ceilings**, in milliseconds or frames, far above what a correct implementation takes on any reasonable computer (a 2-core 2 GHz machine of the last ten years): a host's first frame within 1.5 s, a held article shown by a whole process within 250 ms, a worst legal frame drawn on one thread within 4 frames. They fail on any machine: going over one means something is wrong, not that the computer is slow.
+- **Targets**, the reference implementation's times on a named machine: a first frame within 50 ms, a held article within 25 ms, a worst legal frame within one frame. They are information, and fail only with `terse perf --strict`.
+
+Ceilings and targets judge the median of several runs, so one slow run on a busy machine fails nothing. An implementation is expected to run `terse perf` (another host or reader plugs in with `--host` or `--reader`) and pass every requirement and ceiling.

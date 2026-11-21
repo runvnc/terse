@@ -16,6 +16,10 @@ terse-perflog.workspace = true
 terse-net.workspace = true
 terse-relay.workspace = true
 
+# `terse perf`'s cold start: dropping one file's pages from the page cache.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 terse-net.workspace = true
 terse-relay.workspace = true
