@@ -1,7 +1,7 @@
 //! `vectors/perf-reports.txt` (from `example-reports.txt`): the valid
 //! reports parse (and write back as they were), the malformed ones are
 //! rejected for the reason given; a report made from the example record;
-//! the aggregation rule (REPORT.md section 5).
+//! the aggregation rule (RECORD.md 5.5).
 
 use terse_perflog::aggregate::{Aggregate, Class, Kind, Submission, tally};
 use terse_perflog::record;

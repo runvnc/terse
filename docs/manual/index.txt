@@ -24,6 +24,9 @@ Each article below says what it covers.
   every construct shown as source and as it is shown.
 - [State, replay and conformance](terse:{state}): what a machine's state
   is, its hash, snapshots and the conformance image.
+- [Performance reports](terse:{performance-reports}): what a report
+  of your host's record holds, publishing one, and reading many with the
+  reports program.
 
 ## The machine
 

@@ -1949,6 +1949,29 @@ map built as the host started (PERFORMANCE.md 3); the host now draws only with t
 fonts it loads at start and never looks for one, and fetch's text keeps to the full
 repertoire of its built-in fonts.
 
+### Reports
+
+A host's record of late frames (RECORD.md) stays on your computer. If you choose,
+you can publish a summary of it, so that hosts and devices that are slow on many
+computers come to light:
+
+    target/release/terse perf report              # prints the report: nothing is sent
+    target/release/terse perf report --run        # with a terse perf run's results
+    target/release/terse perf report --publish    # shows it, warns, asks; only "yes" publishes
+
+A report is a document of the `reports` format in your feed: which host and device
+builds you ran, their late frames by cause, R15 warnings and stops, start-up times,
+memory, and the computer coarsely (OS, cores, RAM in GiB, renderer, CPU model); no
+names, paths, addresses or (unless you add `--programs n`) program IDs. It is public,
+signed with your feed key, and cannot be deleted once a relay has it.
+`programs/reports` (`terse-host programs/reports/reports.terse`) gathers the reports of
+the feeds you follow and, with F, a sample found by search, and shows each host's,
+device's and terse perf build's verdict in both: `CONFORMANT IN SAMPLE (12
+reporters)`, `NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)` or `TOO FEW REPORTS
+(2)`. Only the first sample is people you chose: anyone can make feed keys. P
+publishes the aggregate as an article. `terse perf aggregate <files...>` computes the
+same from report files. The format and the rule are RECORD.md section 5.
+
 ## Measurements
 
 Release build on the development machine (i7-10750H). Budget 125,000 units per

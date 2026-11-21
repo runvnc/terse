@@ -1,7 +1,7 @@
-# Terse test vectors: performance reports (REPORT.md). Format: vectors/README.
+# Terse test vectors: performance reports (RECORD.md 5). Format: vectors/README.
 
 report full
-  note "every type of line; the example of REPORT.md"
+  note "every type of line; the example of RECORD.md 5"
   valid yes
   text "terse-report 1\nperiod 2026-11-01 2026-11-21\nhost terse-bus 0.1.0 b3:5faccb21bc9113fb\nenv Linux 7.3.1-1-cachyos x86_64 12 15 drivers Intel(R)%20Core(TM)%20i7-10750H%20CPU%20@%202.60GHz\ndevice dev2 2,10 terse-dev-terminal%20(Rust) 0.1.0 b3:3c1f0a9e77d2b410\ndevice dev3 3,9 terse-dev-vector%20(Rust) 0.1.0 b3:9a0b44c1e5f60d27\ndevice dev4 4 terse-dev-content%20(Rust) 0.1.0 b3:97f8a7cc7bf5e08c\ndevice dev7 7 terse-dev-page%20(Rust) 0.1.0 b3:f8f5a88bb33ad6eb\nruns 14 12 2592000 61\nstart 14 131.4 412.0 2 412.0\nlate outside 0 0 0 1\nlate core 0 0 1 0\nlate dev7 41 12 0 0\nwarn dev7 2\nhalt dev7 1\nshed 1 0\nmem core 50.2 0.13\nmem dev7 80.0 6.00\ncheck dev3 6.5 ok\nperf terse 0.1.0 b3:0f1e2d3c4b5a6978 2026-11-21\nbench M1a 1 frames pass - -\nbench M2 1 trips pass - -\nbench H1 22 ms - - met\nbench H6 22.4 ms - - missed\nbench W - - pass - -\nprogram abababababababab 3\nend 26\n"
 

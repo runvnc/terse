@@ -1037,7 +1037,7 @@ fn load() -> String {
     std::fs::read_to_string("/proc/loadavg").map_or("unknown".into(), |s| s.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
 }
 
-// --- For a performance report (REPORT.md) --------------------------------
+// --- For a performance report (RECORD.md 5) --------------------------------
 
 /// The rows of a `terse perf` run (every layer, `runs` runs each) as a
 /// report's `bench` lines (`crate::report::bench_of`).

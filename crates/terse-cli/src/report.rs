@@ -1,4 +1,4 @@
-//! `terse perf report` and `terse perf aggregate` (REPORT.md): a
+//! `terse perf report` and `terse perf aggregate` (RECORD.md 5): a
 //! performance report made from this computer's record, printed in full,
 //! published only when the user says so; and the verdicts of many
 //! reports, the reference for programs/reports.

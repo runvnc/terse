@@ -1468,11 +1468,11 @@ these conventions). Its source is crates/terse-perflog/example-record.txt;
 `cargo test -p terse-perflog` parses it, writes every line back byte for
 byte and summarises it as `terse perf log` does.
 
-perf-reports.txt (REPORT.md)
+perf-reports.txt (RECORD.md 5)
 ----------------------------
-Not a core vector: performance reports (REPORT.md section 2), valid and
+Not a core vector: performance reports (RECORD.md 5.2), valid and
 malformed. Records `report <name>` with a `note`, `valid` (`yes` or `no`),
-for a malformed one the `reason` (the code REPORT.md section 2 gives for
+for a malformed one the `reason` (the code RECORD.md 5.2 gives for
 the first rule it breaks), and the report's `text` (quoted). The document
 is the header of the `reports` format (`TDOC`, 00h, 32 zero bytes, 07h,
 `reports`) and then the text, unless `format <name>` names another format

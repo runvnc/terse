@@ -1,4 +1,4 @@
-//! Aggregating published performance reports (`REPORT.md` section 5): one
+//! Aggregating published performance reports (`RECORD.md` 5.5): one
 //! report per feed key and identity, grouped by host, device and `terse
 //! perf` identity, a verdict per group in a stated sample. The reference
 //! for `programs/reports`, whose screens the tests compare with it.
@@ -230,7 +230,7 @@ pub fn tally<'a>(facts: impl Iterator<Item = &'a Fact>) -> Tally {
 }
 
 impl Tally {
-    /// The verdict, in the words of `REPORT.md` section 5.
+    /// The verdict, in the words of `RECORD.md` 5.5.
     pub fn verdict(&self) -> String {
         if self.judged < MIN_REPORTERS {
             return format!("TOO FEW REPORTS ({})", self.judged);

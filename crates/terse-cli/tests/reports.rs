@@ -1,4 +1,4 @@
-//! programs/reports/reports.terse: gathering performance reports (REPORT.md)
+//! programs/reports/reports.terse: gathering performance reports (RECORD.md 5)
 //! from the followed feeds and, on F, from a local relay's search; one
 //! report per key (a faker's 50 count once; an older report is replaced
 //! by a newer); malformed reports counted, other documents ignored; the

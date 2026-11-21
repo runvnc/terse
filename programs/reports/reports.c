@@ -1,4 +1,4 @@
-/* reports: gathers the performance reports (REPORT.md) published by the
+/* reports: gathers the performance reports (RECORD.md 5) published by the
  * feeds the user follows and, when asked, a sample found on the relays,
  * and shows a verdict for each host, device and terse perf identity in
  * both samples; built with clang (see build.sh).
@@ -10,7 +10,7 @@
  * bytes that it has not taken before (by feed key and seq) is fetched
  * (at most 4 gets at once) and, if it is a document of the `reports`
  * format (owner key zero, name "reports"), parsed by every rule of
- * REPORT.md section 2: a report that breaks one is counted as malformed
+ * RECORD.md 5.2: a report that breaks one is counted as malformed
  * and otherwise ignored; a document of another format is ignored. F asks
  * the relays (find, op 0Ah, scope 2: article and document titles) for
  * "performance report", then for "performance report: <host name>" for
@@ -19,7 +19,7 @@
  * results); what they find is taken like the timeline's entries. A feed
  * is "followed" if the host is subscribed to it.
  *
- * Counting (REPORT.md section 5). A report speaks about its host, each
+ * Counting (RECORD.md 5.5). A report speaks about its host, each
  * device identity (not the host's own) and, if it has a perf line, the
  * terse perf that ran. For each (reporter key, identity) only the fact of
  * the entry with the highest seq is kept: whether R15 halted it, whether
@@ -28,7 +28,7 @@
  * start-up, a device's blamed frames per 10,000, a perf run's targets
  * missed). Nothing else of a report is kept, and no count in a report is
  * trusted beyond its own reporter. The verdicts are computed from the
- * facts, at most two groups a frame, in the words of REPORT.md section 5.
+ * facts, at most two groups a frame, in the words of RECORD.md 5.5.
  *
  * Budget: a frame parses at most PARSE_BYTES of reports (line by line;
  * a quarter of that in a frame that may draw the screen),
@@ -206,7 +206,7 @@ static uint32_t muldiv(uint32_t a, uint32_t b, uint32_t c)
     return (uint32_t)q;
 }
 
-/* --- Parsing a report (REPORT.md section 2) ------------------------------- */
+/* --- Parsing a report (RECORD.md 5.2) ------------------------------- */
 
 /* The known line types, in their order. */
 static const char *const types[] = { "terse-report", "period", "host", "env", "device", "runs", "start", "late", "warn",
@@ -1271,7 +1271,7 @@ static void build_article(void)
     as("# ");
     atb();
     tn = 0;
-    as("\n\nMade with the reports program from the performance reports (REPORT.md) it found: ");
+    as("\n\nMade with the reports program from the performance reports (RECORD.md 5) it found: ");
     tu(reports_in);
     ts(" reports, ");
     tu(followed);

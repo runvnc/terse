@@ -1,4 +1,4 @@
-//! The performance report (`REPORT.md`): a small, public summary of one
+//! The performance report (`RECORD.md` section 5): a small, public summary of one
 //! host identity's record over a period, plus the results of a `terse
 //! perf` run if one was made, that a user may choose to publish as a
 //! document of the `reports` format. Text, one record per line, in the
@@ -404,7 +404,7 @@ fn fields_of(t: &str) -> usize {
     }
 }
 
-/// Parses a report's text: every rule of `REPORT.md` section 2.
+/// Parses a report's text: every rule of `RECORD.md` 5.2.
 pub fn parse_text(text: &[u8]) -> Result<Report, Reject> {
     if text.is_empty() {
         return Err(reject("first-line", 1));

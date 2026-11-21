@@ -8,9 +8,9 @@ Each article below says what it covers.
 
 ## Start here
 
-- [What Tersenet is](terse:24428c03f919990ee8848a6ed6575bdbd6d531f414497c7cf651c1719359a597): what Tersenet is for, in one
+- [What Tersenet is](terse:da2bbe8823b3f60b0c68658adfc9ed85081b28b2f5f9809de45e8ca5037defc9): what Tersenet is for, in one
   paragraph.
-- [How Tersenet works](terse:d3ba4638479c87cc5a7db5791b1cb5fbb66a35ed37dc001a43610f9313e36ab0): the technical details in
+- [How Tersenet works](terse:3ab70f687adf0156290ba6f0a7e37301a219439fad4cde9e51d770ee2e8df9f8): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
 - [Writing a program](terse:8e0765276b3721b137e635517dc5dd08fc34da695e8b96f7229e37bb963ffb80): the toolchain, the C
@@ -24,6 +24,9 @@ Each article below says what it covers.
   every construct shown as source and as it is shown.
 - [State, replay and conformance](terse:3eb0dfdf22c94e083f5d1cc5468a17aa865e2d95991204e26356f32654f6e144): what a machine's state
   is, its hash, snapshots and the conformance image.
+- [Performance reports](terse:dc10f4777968b3efc1be2edf6ae84e5f678c753b6c12e36411ed448517566ad7): what a report
+  of your host's record holds, publishing one, and reading many with the
+  reports program.
 
 ## The machine
 

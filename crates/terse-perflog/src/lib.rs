@@ -12,7 +12,7 @@
 //! - [`record`]: the record file's format, its writer (off the frame
 //!   loop, bounded) and its parser;
 //! - [`summary`]: `terse perf log`;
-//! - [`report`]: the performance report a user may publish (`REPORT.md`);
+//! - [`report`]: the performance report a user may publish (`RECORD.md` section 5);
 //! - [`aggregate`]: the verdicts of many published reports.
 //!
 //! Nothing here is machine state, and no machine can read any of it.

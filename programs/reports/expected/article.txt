@@ -1,6 +1,6 @@
 # Performance reports: an aggregate, 1970-01-01
 
-Made with the reports program from the performance reports (REPORT.md) it found: 81 reports, 11 reporters from the feeds I follow and 16 others found on the relays. Anyone can make feed keys, so only the first column is a sample of people I chose; neither is a global ruling.
+Made with the reports program from the performance reports (RECORD.md 5) it found: 81 reports, 11 reporters from the feeds I follow and 16 others found on the relays. Anyone can make feed keys, so only the first column is a sample of people I chose; neither is a global ruling.
 
 The rule: one report per feed key and identity (the newest); computers with fewer than 4 cores or 4 GiB are listed but not judged; a verdict needs 5 judged reporters; NON-CONFORMANT IN SAMPLE when at least 1 in 3 fail (halted by R15, or a terse perf requirement or ceiling failed); starved and memory verdicts never count.
 
