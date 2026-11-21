@@ -298,6 +298,22 @@ pub struct Node {
     hints_wanted: BTreeSet<FeedKey>,
     /// Feeds followed through a hint relay now.
     hinted: BTreeSet<FeedKey>,
+    /// The hint relays in use, with the feeds followed on each because of
+    /// a hint.
+    hint_relays: BTreeMap<String, BTreeSet<FeedKey>>,
+    /// The timeout of the own relays' connections ([`Node::set_relays`]).
+    relay_timeout: Duration,
+}
+
+/// One relay connection, for [`Node::relay_links`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelayLink {
+    pub url: String,
+    /// One of the host's own relays (not a feed relay).
+    pub own: bool,
+    /// A feed relay used because of a hint (NETWORK 4.9).
+    pub hint: bool,
+    pub connected: bool,
 }
 
 impl Node {
@@ -342,6 +358,8 @@ impl Node {
             empty_on_own: HashMap::new(),
             hints_wanted: BTreeSet::new(),
             hinted: BTreeSet::new(),
+            hint_relays: BTreeMap::new(),
+            relay_timeout: DEFAULT_TIMEOUT,
         };
         if let Some(client) = relay {
             node.add_relay("relay", client);
@@ -359,6 +377,7 @@ impl Node {
             node.add_relay(url, RelayClient::websocket(url, timeout));
         }
         node.connect_feed_relay = Box::new(move |url| RelayClient::websocket_checked(url, timeout, true));
+        node.relay_timeout = timeout;
         Ok(node)
     }
 
@@ -371,6 +390,71 @@ impl Node {
         self.next_link += 1;
         self.links.insert(self.next_link, link);
         self.next_link
+    }
+
+    /// Replaces the host's own relays with `urls` (`ws://` relays, at most
+    /// [`crate::local::MAX_RELAYS`]): connections to relays still listed
+    /// are kept, the others are closed (their requests fail), and the new
+    /// ones are connected on the next poll.
+    pub fn set_relays(&mut self, urls: &[String]) {
+        let urls: Vec<&String> = urls.iter().take(crate::local::MAX_RELAYS).collect();
+        let drop: Vec<u64> =
+            self.links.iter().filter(|(_, l)| l.feeds.is_none() && !urls.contains(&&l.url)).map(|(&id, _)| id).collect();
+        for lid in drop {
+            self.remove_link(lid);
+            for set in self.empty_on_own.values_mut() {
+                set.remove(&lid);
+            }
+        }
+        let have = self.relay_urls();
+        for url in urls.into_iter().filter(|u| !have.contains(u)) {
+            // A feed relay at the same URL becomes an own relay.
+            let feed_link: Vec<u64> = self.links.iter().filter(|(_, l)| &l.url == url).map(|(&id, _)| id).collect();
+            for lid in feed_link {
+                self.remove_link(lid);
+            }
+            self.add_relay(url, RelayClient::websocket(url, self.relay_timeout));
+        }
+        self.feed_relays_dirty = true;
+    }
+
+    /// Every relay connection: the own relays first, in the order they
+    /// were added, then the feed relays.
+    pub fn relay_links(&self) -> Vec<RelayLink> {
+        let link = |l: &Link| RelayLink {
+            url: l.url.clone(),
+            own: l.feeds.is_none(),
+            hint: l.feeds.is_some() && self.hint_relays.contains_key(&l.url),
+            connected: l.client.connected(),
+        };
+        let own = self.links.values().filter(|l| l.feeds.is_none()).map(link);
+        own.chain(self.links.values().filter(|l| l.feeds.is_some()).map(link)).collect()
+    }
+
+    /// The hint relays `feed` is followed on now (NETWORK 4.9).
+    pub fn hint_relays(&self, feed: &FeedKey) -> Vec<String> {
+        self.hint_relays.iter().filter(|(_, f)| f.contains(feed)).map(|(u, _)| u.clone()).collect()
+    }
+
+    /// Whether every subscribed feed is caught up (NETWORK 4.3) on every
+    /// connected relay and no automatic download is running, with at least
+    /// one relay connected: the state [`FeedEvent::Settled`] reports, but
+    /// also true with no subscriptions.
+    pub fn caught_up(&self) -> bool {
+        !self.settle_pending() && self.connections_current()
+    }
+
+    fn settle_pending(&self) -> bool {
+        self.links.values().any(|l| !l.catching_up.is_empty())
+            || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
+            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch | GetFor::Program(_), .. }))
+    }
+
+    /// Some relay is connected, and every connected one has had the
+    /// subscriptions sent on its current connection.
+    fn connections_current(&self) -> bool {
+        let mut connected = self.links.values().filter(|l| l.client.connected()).peekable();
+        connected.peek().is_some() && connected.all(|l| l.ready())
     }
 
     /// Whether to use feed relays (NETWORK 5); on by default.
@@ -1234,6 +1318,7 @@ impl Node {
         let room = MAX_LINKS.saturating_sub(own.len());
         let wanted: BTreeMap<String, BTreeSet<FeedKey>> = wanted.into_iter().take(room).collect();
         self.hinted = by_hint.iter().filter(|(u, _)| wanted.contains_key(*u)).flat_map(|(_, f)| f.iter().copied()).collect();
+        self.hint_relays = by_hint.into_iter().filter(|(u, _)| wanted.contains_key(u)).collect();
         // Remove or update the feed relays there are.
         let current: Vec<(u64, String)> =
             self.links.iter().filter(|(_, l)| l.feeds.is_some()).map(|(&id, l)| (id, l.url.clone())).collect();
@@ -1613,11 +1698,8 @@ impl Node {
 
     /// Reports `Settled` when nothing is outstanding for the feeds.
     fn check_settled(&mut self) {
-        let pending = self.links.values().any(|l| !l.catching_up.is_empty())
-            || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
-            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch | GetFor::Program(_), .. }));
-        let connected: Vec<&Link> = self.links.values().filter(|l| l.client.connected()).collect();
-        let current = !connected.is_empty() && connected.iter().all(|l| l.ready());
+        let pending = self.settle_pending();
+        let current = self.connections_current();
         if pending {
             if std::mem::take(&mut self.settled) {
                 self.events.push(FeedEvent::Busy);
