@@ -206,7 +206,8 @@ Then:
     cargo run -p terse-host -- programs/hello/hello.terse --screenshot hello.png --frames 30
 
 Building the programs needs clang with the riscv32 target, ld.lld and
-llvm-objcopy (see [Writing programs](#writing-programs)); the tests that need
+llvm-objcopy (see [Writing programs](#writing-programs)), and the Rust example
+rustc with the riscv32imc-unknown-none-elf target; the tests that need
 them are skipped, with a message, when they are missing. The checked-in
 images were built with clang and LLD 23.1.4.
 
@@ -301,6 +302,15 @@ images were built with clang and LLD 23.1.4.
   `get <id> [-o <file>]` fetches one; `hash <file>` prints a file's blob ID.
   `info`, `put` and `get` take `--relay ws://...|none`, `--store` and `--config`, and
   find a relay as [Getting started](#getting-started) says when `--relay` is not given.
+- `build <source>... [-o <out.terse>] [--title <t>] [--ram-pages <n>] [--device <slot:version>]... [--optional <slot:version>]... [--cflag <flag>]... [--clang <path>] [--lld <path>] [--rustc <path>] [--show] [--run [the options of run]...]`
+  builds an image from C (`.c`), assembly (`.S`, `.s`) or Rust (one `.rs`, the
+  crate root) with the user's clang and ld.lld or rustc; programs/lib and its Rust
+  runtime are built into `terse`. Defaults: `<stem>.terse`, the stem as title, the
+  program profile's devices (2:0 and 3:0; `--device` replaces them, `--optional`
+  adds), RAM for `.data` and `.bss` plus 8 KiB of stack. `--show` prints the
+  commands, `--run` runs the image after. `build --write-lib <dir>` writes the
+  built-in files; `new <file.c|file.rs|file.S>` writes a starter program. See
+  [Writing programs](#writing-programs) and `docs/toolchain.md`.
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`): `--device`
   lists a device the program requires, `--optional` one it can run without (SPEC §image:
@@ -566,9 +576,11 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
                          it; consent.rs the consent prompt; setup.rs the relay choice and
                          --demo, whose articles are in demo/
     programs/lib/        what a program needs: crt0.S, terse.ld (the memory map), terse.h
-                         and terse.c (the calls, display-list builders, content requests)
+                         and terse.c (the calls, display-list builders, content requests);
+                         rust/terse.rs, the Rust runtime (all built into `terse build`)
     programs/hello/      demo program in assembly: hello.S, build.sh, the built hello.terse
-                         and the golden screen used by the tests
+                         and the golden screen used by the tests; hello.c, the same in C
+    programs/hello-rs/   the same program in Rust: hello.rs (`terse build hello.rs`)
     programs/fetch/      content device demo in C: gets message.txt by its ID and prints it;
                          build.sh writes message_id.h, then fetch.terse
     programs/reader/     the feed reader, in C: reader.c, build.sh, the built reader.terse
@@ -602,8 +614,24 @@ in `a7`, arguments in `a0`–`a5`, result in `a0` (and `a1`). There are no
 interrupts: a program does a frame's work and calls `wait_frame`; if it runs out
 of budget it is simply paused until the next frame.
 
-Programs are built with clang's riscv32 target, ld.lld and llvm-objcopy, then
-packed with `terse pack`. For C, `programs/lib` provides:
+The short way is `terse build`, with clang and ld.lld installed (or rustc and
+its riscv32imc-unknown-none-elf target, for Rust):
+
+    terse new game.c                 a starter program (or game.rs, game.S)
+    terse build game.c               -> game.terse
+    terse run game.terse --frames 60 --dump
+    terse build a.c b.c -o game.terse --title "My game" --optional 10:0
+
+It compiles with the flags below, links with programs/lib (built into `terse`),
+takes the ROM out of the ELF file and packs it; `--show` prints each command.
+`docs/toolchain.md` is the reference: every flag and why, building by hand, the
+Rust runtime (`programs/lib/rust/terse.rs`, the program profile's calls as safe
+functions), cargo for larger Rust programs, and what another language's
+compiler must do. Given the header options of its build.sh, `terse build`
+makes each program here that uses programs/lib byte for byte as its build.sh.
+
+By hand, programs are built with clang's riscv32 target, ld.lld and
+llvm-objcopy, then packed with `terse pack`. For C, `programs/lib` provides:
 
 - `crt0.S`: the entry point; copies `.data` from ROM to RAM (`.bss` is already
   zero), calls `main`, and exits with its return value.
