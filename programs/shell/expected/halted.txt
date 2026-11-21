@@ -1,0 +1,85 @@
+ ⌂   Tersenet stopped hello: device 7 was too slow (state saved)           00:00
+
+
+
+
+
+
+
+
+                          1 hello
+                          halted: stopped by Tersenet
+                          the page
+                          kept making frames late
+                          its state was saved
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 1 halted 203 23 0 0 hello --
+ Tersenet · hello
+
+  héllo, wörld — привет, мир
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 00000021
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- launcher --
+PROGRAMS
+Manual
+reader
+sparks
+fetch
+hello
+sketch
+holo
+reports
+SAVED BY TERSENET
+hello
+saved at 00:00 UTC, frame 34
+MACHINES
+1  hello  halted
+Tersenet stopped it: the
+page (device 7) kept making
+frames late. Its state was
+saved: Enter restores it.
+Enter start or focus · Esc back ·
+Tab next machine · X stop · P
+pause · Z zoom · L layout · 1-8
+select · S save session · D
+deletes a saved state

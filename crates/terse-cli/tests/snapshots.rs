@@ -650,3 +650,93 @@ fn cli_save_and_load_state() {
     let out = common::terse_command().args(["run", "--shell", "--load-state", &p("s.snap")]).output().unwrap();
     assert!(!out.status.success(), "not for a shell");
 }
+
+// --- Halted machines and the automatic snapshots (PERFORMANCE.md R15) -----
+
+/// What the host does at a warning and at a stop (terse-bus's rule,
+/// PERFORMANCE.md R15), done by hand: machine `h`'s snapshot into its
+/// automatic slot (15 + h), on disk and in the shell's table.
+fn auto_save(s: &mut Sys, data: &Path, h: u8) -> Snapshot {
+    let snapshot = Snapshot::of(s.machine(h));
+    let slot = terse_core::snapshot::auto_slot(h);
+    Snapshots::in_data_dir(data).save(&s.owner(), slot, &snapshot.encode()).unwrap();
+    s.system.set_snapshot_info(slot, Some(snapshot.info()));
+    snapshot
+}
+
+/// A machine the host saves at a warning (its launcher line says so),
+/// then saves again and halts (state 7, device 7): the shell shows it as
+/// halted in words in its bar segment, its tile and the launcher, and says
+/// once in the bar why; the automatic snapshot is listed under "SAVED BY
+/// TERSENET"; Enter on the halted machine restores it in its place, where
+/// it goes on from the snapshot; D on the saved state deletes it.
+#[test]
+fn a_halted_machine_and_its_automatic_snapshot() {
+    let (store, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // Hello (handle 1); later the home key, Enter on its line (restore);
+    // the home key, Up to the saved state, D.
+    let script = "2 press down\n3 press down\n4 press down\n5 press enter\n35 home\n230 press enter\n250 home\n251 press up\n252 press d\n";
+    let mut s = Sys::new(store.path(), data.path(), script);
+    // The halt is made by hand in this system only, not in a bus twin.
+    s.twin = None;
+    s.run_until(20);
+    assert_eq!((s.system.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "hello"));
+    assert!(!s.launcher().contains("SAVED BY TERSENET"));
+
+    // The warning: the host saves the machine; the shell notices it when
+    // it next reads the slots (frame 30) and says so on the machine's line.
+    auto_save(&mut s, data.path(), 1);
+    s.run_until(36);
+    // (The launcher's lines as laid out; wrapped lines joined with spaces.)
+    let launcher = s.launcher().replace('\n', " ");
+    assert!(launcher.contains("SAVED BY TERSENET hello saved at 00:00 UTC, frame "), "{launcher}");
+    assert!(launcher.contains("A device it uses was slow; Tersenet saved its state."), "{launcher}");
+    assert_eq!(s.system.state(1), state::RUNNING);
+
+    // The stop: saved again, then halted for device 7.
+    s.run_until(40);
+    let saved = auto_save(&mut s, data.path(), 1);
+    s.system.child_mut(1).unwrap().machine.as_mut().unwrap().halt(7);
+    s.run_until(42);
+    let dev = s.system.shell().machines().unwrap();
+    assert_eq!((dev.slot(1).state, dev.slot(1).exit_code), (state::HALTED, 7));
+    assert_eq!(s.system.focus(), 0);
+    assert!(s.bar().contains("Tersenet stopped hello: device 7 was too slow (state saved)"), "{}", s.bar());
+    assert_eq!((s.rects()[0].2, s.rects()[0].3), (0, 0), "words in its tile instead of its last picture");
+    let dump = s.dump();
+    for words in ["1 hello", "halted: stopped by Tersenet", "the page", "kept making frames late", "its state was saved"] {
+        assert!(dump.contains(words), "{words}: {dump}");
+    }
+    let lines = s.launcher();
+    let launcher = lines.replace('\n', " ");
+    assert!(lines.contains("1  hello  halted\n"), "{launcher}");
+    assert!(
+        launcher.contains("Tersenet stopped it: the page (device 7) kept making frames late. Its state was saved: Enter restores it."),
+        "{launcher}"
+    );
+    assert!(!launcher.contains("A device it uses was slow"), "a halted machine is not warned about");
+    golden("halted", &format!("{dump}-- launcher --\n{lines}"));
+    // Once the message has gone (three seconds), the bar segment says it.
+    s.run_until(229);
+    assert!(s.bar().contains("1⊘hello") && s.bar().contains("halted"), "{}", s.bar());
+
+    // Enter on its line: restored from slot 16 in its place, and focused.
+    s.run_until(232);
+    assert_eq!(s.system.state(1), state::RUNNING);
+    assert_eq!(s.system.child(1).unwrap().title, "hello");
+    assert_eq!(s.machine(1).image_id(), &saved.info().image);
+    assert_eq!(s.machine(1).frame(), saved.info().frames + 1, "it goes on from the snapshot");
+    assert_eq!(s.system.focus(), 1);
+    assert_eq!(s.system.children().count(), 1, "in place of the halted machine");
+    s.run_until(251);
+    let launcher = s.launcher();
+    assert!(launcher.contains("1  hello  running"), "{launcher}");
+    assert!(!launcher.contains("A device it uses was slow"), "the restored machine was not warned about: {launcher}");
+
+    // D on the saved state: slot 16 is emptied.
+    s.run_until(254);
+    assert!(s.bar().contains("Saved state deleted"), "{}", s.bar());
+    assert!(!s.launcher().contains("SAVED BY TERSENET"), "{}", s.launcher());
+    assert!(Snapshots::in_data_dir(data.path()).table(&s.owner())[16].is_none());
+    assert_eq!(s.system.state(1), state::RUNNING);
+}

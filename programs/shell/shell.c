@@ -957,11 +957,11 @@ static void build_launcher(void)
             doc_size(15);
             line(autos() + i, 400 + i);
             doc_text(snapshot_title(r), title_len(snapshot_title(r)));
-            /* When: the time of day it was taken (UTC) and its frame. */
+            /* When: the time of day it was taken (UTC) and its frame counter. */
             doc_paragraph(DOC_START, 18, 0, DOC_NOWRAP | DOC_ELLIPSIS);
             doc_size(11);
             doc_colour(130, 138, 155);
-            doc_str("saved when a device was slow, ");
+            doc_str("saved at ");
             doc_clock(r->time);
             doc_str(" UTC, frame ");
             doc_num(r->frames, 0);
