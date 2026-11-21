@@ -1,55 +1,69 @@
-# Make a host
+# Make a host, step 1: run a program to its end
 
-A host is the program that runs Terse32 machines: it reads a program file, runs its instructions, and gives it its devices. `terse-host` is one; you can write another, in any language, and check it against this one exactly. This page builds the smallest useful host, one that runs programs on the text grid, in four small steps, checked along the way with programs from the Tersenet sources.
+A host runs Terse32 programs: it reads a program file, runs its instructions and gives the program its devices. You can write one in any language and check it against the reference exactly. The specifications cover every device; a host starts much smaller. This guide builds one in four tested steps: run a program until it stops (this page), keep time, show `hello` through the reference terminal, prove the host exact. Each says how much code it took in `tcore`, a core written in C from the specifications alone (`native/core-c`).
 
-## Step 1: load and run
+## The program file
 
-A program file starts with a 32-byte header: `TERS`, two bytes that are 0 and 1, the program's length (3 bytes, least significant first), its memory in 8 KiB pages (1 byte), the number of devices (1 byte), 5 zero bytes and a 16-byte title. Two bytes per device follow, then the program's bytes.
+A program file (`.terse`) starts with a 32-byte header:
 
-Put the program at address `0001_0000h` (that is its read-only memory) and zeroed RAM of the size asked at `0010_0000h`. Start at the program's first byte, with the stack pointer at the end of RAM and every other register 0.
+- bytes 0 to 3: `TERS`; byte 4: 0, the format; byte 5: 1, the machine profile;
+- bytes 6 to 8: the ROM's length, 1 to 131,072, least significant byte first;
+- byte 9: RAM in pages of 8 KiB, 1 to 128; byte 10: the number of device entries, 0 to 16;
+- bytes 11 to 15: zero; bytes 16 to 31: the title, padded with zero bytes.
 
-The processor is 32-bit RISC-V with the multiply and compressed instruction extensions (RV32IMC), in user mode only: no interrupts, no special registers. A misaligned load or store, an access outside both memories, or an instruction the machine does not have (`ebreak` and the CSR instructions among them) stops it with a fault.
+Two bytes per device entry follow, then the ROM. Refuse a file whose length is not exactly 32 + 2 × entries + the ROM's length. Until step 3, run only programs that list no devices.
 
-## Step 2: frames and calls
+## Memory and reset
 
-Time comes in frames, 60 a second. Each frame, add 125,000 to the machine's budget and run instructions while it is above zero: each instruction costs 1 (or 4, when it runs from RAM). What is left over below zero is carried into the next frame; what is left above zero is dropped.
+The ROM, the program's bytes, is at `0001_0000h`, to read and execute. The RAM, all zero, is at `0010_0000h`, to read, write and execute. Nothing else is there. Start at the first byte of ROM, with `sp` (`x2`) at the end of RAM, `0010_0000h` + 8,192 × pages, and every other register 0.
 
-A program talks to its devices with the `ecall` instruction: register `a7` holds the call's number, `a0` to `a5` its arguments, and the result goes back in `a0`. Three calls get the first program running:
+## The processor
 
-- `100h`, `wait_frame`: the program is done for this frame; continue it in the next.
-- `106h`, `exit`: the program has finished.
-- `200h`, the terminal's `write`: put the text at `a0`, `a1` bytes of it, on the 80 by 30 grid.
+RV32IMC: RISC-V's 32-bit integer instructions with multiply and divide (M) and the 16-bit compressed forms (C), in user mode: no floating point, atomics, control registers or interrupts. `fence` does nothing; division by zero gives RISC-V's answers, not a trap.
 
-Return `FFFF_FFFFh` for every call you do not have yet. With these, `programs/hello/hello.terse` prints its text. Compare with what the reference shows:
+A fault stops the machine: an instruction it does not have (`ebreak`, the CSR instructions and every reserved encoding among them), a fetch or load outside ROM and RAM, a store outside RAM, or a load or store at an address that is not a multiple of its size. The faulting instruction is not carried out and `pc` stays on it. Show the user the fault, never an exit code.
 
-```
-terse run programs/hello/hello.terse --frames 30 --dump
-```
+## Calls
 
-Each call also costs budget. The exact charges matter for matching the reference to the last unit, not for getting this far: they are in [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+`ecall` calls a device: `a7` holds the device's slot × 256 + the function, `a0` to `a5` the arguments, and the result goes in `a0`. Two cases are enough now:
 
-## Step 3: the rest of the program profile
+- `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it then writes its result, 0, to `a0`, and `pc` moves past the `ecall`.
+- A call you do not have: put `FFFF_FFFFh` in `a0` and go on.
 
-Add the rest of the terminal (cursor, colours, cells), then the system calls and events (keys, text, the pointer), then the 2D vector display. That is 25 calls in all, the whole program profile: SPEC.md section "What a minimal host implements" lists them, and every program built with `terse build` runs on it. `hello` now echoes what you type.
+## Check yourself
 
-## Step 4: the conformance program
-
-`programs/conform-program` tests a host from the inside: run it for 200 frames with its scripted input, `conform-program.events`, and it prints one PASS or FAIL line per part of the machine. Your text grid should match the first 30 lines of `expected-screen.txt`, every line PASS (the rest of that file is what it draws on the vector display). The reference's screen:
+STATE.md gives a 42-byte program that exits with code 7: `c.li a0, 7`, `addi a7, x0, 106h`, `ecall`. Make the file:
 
 ```
-terse run programs/conform-program/conform-program.terse \
-    --events programs/conform-program/conform-program.events \
-    --frames 200 --dump
+xxd -r -p > exit.terse <<EOF
+5445525300010a000001000000000000657869740000
+000000000000000000001d459308601073000000
+EOF
 ```
 
-To prove your host exact, compute the machine's state hash (STATE.md) and compare it with `expected-hashes.txt`, frame by frame.
+Your host should stop with exit code 7, `pc` = `0001_000Ah`, `a0` = 0 and `a7` = `106h`. The reference's exit status is the program's exit code, 7:
 
-## Proof it is small
+```
+terse run exit.terse --frames 1
+echo $?
+```
 
-`native/core-c` holds `tcore`, a second Terse32 core written in C from the specifications alone. Its core proper (processor, memory, system device and the BLAKE3 hash) is about 530 lines; it leaves the terminal and the other devices to separate programs, as the next page explains, and with the code that talks to them it is about 1,600 lines. It gives every expected hash of `conform-program`. Its README gives an order to write a core in and the traps on the way.
+This one adds 100 + 99 + ... + 1 and exits with the sum's low byte, 186:
+
+```
+xxd -r -p > sum.terse <<EOF
+544552530001160000010000000000007375
+6d0000000000000000000000000001459302
+40061695fd12e39e02fe9308601073000000
+EOF
+```
+
+## How much code
+
+In `tcore` the processor is 262 lines of C (`cpu.c`); the file and the memory map about 50 more.
 
 ## What you have now
 
-A host that runs every program written for the program profile, and a way to prove it exact. Next, write one of its devices as a separate program: [Make a device](terse:17b6b735853a168197ccc3b2a43ffb85031188094b0bfe43547f5483096106a4).
+A Terse32 processor that runs a program to its end. Next, make it keep time: [Make a host, step 2: frames and the budget](terse:801f3e50f9629aadb3294013cba7e285bfe79fe9df205bac4499c8288d6660d5).
 
-The machine in full is in [The machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), with [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc) and [The terminal](terse:109353cb353476bc6b7de663f9c9afc097275cb86f02ce936ef74ed620996f0b); the state hash in [State, replay and conformance](terse:3d301b04ac7d3a4327891586c316a6df1655298c8ae08f57722440f8c32e85a1).
+The detail is in [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls" (SPEC §cpu, §memory, §reset, §stopping, §image, §calls.convention), and `exit` in [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc).

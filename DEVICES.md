@@ -1301,7 +1301,7 @@ the same machines as headless (the same state hashes).
 
 What a core must do to run one machine headless with drivers, check it
 against the expected hashes, and nothing more (`native/core-c`'s `tcore`
-does exactly this, in about 600 lines of C for the bus). The order is
+does exactly this, in about 640 lines of C for the bus). The order is
 the order of a run:
 
 1. **Start each driver** it needs (section 2): listen on a fresh socket,

@@ -13,6 +13,9 @@ guide-reader-feeds
 guide-program
 guide-drawing
 guide-host
+guide-host-frames
+guide-host-driver
+guide-host-state
 guide-device
 guide-swap
 guide-shell

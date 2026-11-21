@@ -1,0 +1,81 @@
+# Make a host, step 4: prove it exact
+
+Your host shows what the reference shows. This step proves that it agrees to the last bit, with a yes-or-no test: the state hash.
+
+## The state hash
+
+Between frames, a machine's whole state is one string of bytes, the state serialization; the state hash is its BLAKE3-256 hash. Two hosts given the same program and input agree exactly when their hashes do after every frame. The string holds, in order:
+
+- `terse-state-1` and the image ID;
+- `pc` and the registers `x1` to `x31`;
+- the frame counter, how the machine stopped, and the budget carried over;
+- all of RAM, then one byte per optional device: 1 if granted;
+- the System device: the Unix time, the event queue, the controllers;
+- each device's section, in a fixed order, from its driver's STATE; a device the machine lacks is `00h` or nothing (DEVICES.md section 1.7 has the table).
+
+## Check yourself
+
+STATE.md gives the hashes of step 1's `exit.terse`, at reset and after its frame:
+
+```
+9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a
+3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b
+```
+
+and of `hello` after 30 frames, as the reference prints it:
+
+```
+terse run programs/hello/hello.terse --frames 30 --hash
+819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
+```
+
+`--frames 0` gives the hash at reset, `--hash-every 1` one per frame: the first that differs shows where your host goes wrong. `--save-state <file>` writes a snapshot file whose bytes 94 to 293 are the string's first 200 (header, registers, frame loop).
+
+## Save and restore
+
+The same string is a snapshot: a machine restored from it goes on as if it had never stopped. Read it back section by section; send each device's section to its driver with RESTORE, which replies how many bytes it took; refuse a string that does not serialize back to itself. Save after 10 frames, restore, run 20 more, and the hash is that of 30 frames:
+
+```
+terse run programs/hello/hello.terse --frames 10 \
+    --save-state hello.snap
+terse run programs/hello/hello.terse --load-state hello.snap \
+    --frames 20 --hash
+```
+
+prints `8194...` again. A host that runs one program may leave restoring out, as `tcore` does.
+
+## Input, and the rest of the System device
+
+The conformance program needs all of the System device: the event queue (keys, text, pointer, wheel), controllers, and the other calls (`unix_time`, `random`, `controller`, `open`, `argument`, `device`). For tests, read input from an events file (STATE.md section 6.2). `programs/hello/hello.events` types into `hello`; the screen must then be `expected-30-frames.txt`:
+
+```
+terse run programs/hello/hello.terse --frames 30 --dump \
+    --events programs/hello/hello.events
+```
+
+## The conformance program
+
+`programs/conform-program` checks a host from the inside. It needs the 2D vector display too: start `terse-dev-vector`, asking it for slots 3 and 9 together (DEVICES.md section 1.1). Run it for 200 frames with its input:
+
+```
+terse run programs/conform-program/conform-program.terse \
+    --events programs/conform-program/conform-program.events \
+    --frames 200 --dump
+```
+
+Your screen should be the first 30 lines of `expected-screen.txt`: 22 PASS lines, no FAIL. With `--hash-every 10` instead of `--dump`, your hashes must be the 20 of `expected-hashes.txt`. Then your host is exact.
+
+## How much code
+
+In `tcore` the serialization is 46 lines of C, the events file about 160, and the whole core about 1,580.
+
+## Where to go next
+
+- More devices cost nothing: content, sound, the page and the 3D display are reference drivers too (DEVICES.md section 2.1).
+- Or build the devices in, as `terse run` and `terse-host` do, with no bus: write the terminal and the 2D vector display yourself. SPEC.md's "What a minimal host implements" (§minimal) lists the 25 calls and the tables they need; the same tests apply.
+
+## What you have now
+
+A host that runs Terse32 programs exactly as the reference does, and proves it. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
+
+The detail is in [State, replay and conformance](terse:{state}), sections "The state serialization", "The hash", "Snapshots" and "The conformance image" (STATE.md sections 1, 3, 4 and 6; SPEC §conformance), with the input in [Events and input](terse:{events}) and the calls in [The system device](terse:{device-system}).

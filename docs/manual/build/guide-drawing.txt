@@ -70,6 +70,6 @@ It prints the text grid (empty here), then the display list as the host draws it
 
 ## What you have now
 
-A program that draws and reacts to keys: the shape of most games and tools. This is where the guide's part on programs ends. Next, a bigger step: [Make a host](terse:23e63dea3ac00c7c8ef4dbf3948407b490d43172e91144d50a3e6deac8393d10), your own Terse32 machine that runs these programs.
+A program that draws and reacts to keys: the shape of most games and tools. This is where the guide's part on programs ends. Next, a bigger step: [Make a host](terse:60a2c14c286ee609e987d6e3c210ea1c34693403e421b11fe644e2af119b44c2), your own Terse32 machine that runs these programs.
 
 Every drawing command is in [The 2D vector display](terse:c4e777067a9407d4559e27121169f80eac2db852099b0e04888626ce169e62d4), and every event and key in [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).

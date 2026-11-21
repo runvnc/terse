@@ -114,11 +114,16 @@ it set or every unit of budget, which the hashes cover.
 
 **An order to build it in.**
 
-1. The image, the CPU, memory, the frame loop and `wait_frame`, `exit`
-   and the Terminal's `write`: `programs/hello` runs and prints its
-   text.
+1. The image, the CPU, memory, the frame loop, `wait_frame`, `exit`,
+   `next_event` (answering 0, no event, is enough for now: `hello` asks
+   every frame and never ends its frame if the call is unknown) and the
+   Terminal's `write`: `programs/hello` runs and prints its text. A
+   core on the device bus also needs BLAKE3 here, since it names the
+   image by its ID when it opens a driver (`DEVICES.md` 1.2).
 2. The rest of the Terminal (§terminal), then events and the other
-   System calls: `hello` echoes what is typed.
+   System calls: `hello` echoes what is typed (with the input of
+   `programs/hello/hello.events` it shows
+   `programs/hello/expected-30-frames.txt`).
 3. The 2D vector display (§vector).
 4. `programs/conform-program` with its scripted input: every line PASS.
 5. For conformance, the state serialization of `STATE.md`: the hashes of

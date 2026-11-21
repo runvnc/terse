@@ -10,7 +10,7 @@ state hash. Every other device stays in the **reference drivers**
 over the device bus's socket transport (`DEVICES.md`). It is headless: no
 window, no sound.
 
-About 1,570 lines of C11, five files, nothing but libc and POSIX:
+About 1,580 lines of C11, five files, nothing but libc and POSIX:
 
 | File | Lines | What |
 |---|---|---|

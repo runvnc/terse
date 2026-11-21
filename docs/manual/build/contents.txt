@@ -4,12 +4,15 @@ The manual has two parts. The guide is a series of short steps, each one you can
 
 ## Guide
 
-- [Make a reader, step 1: show an article](terse:7c96a2721c4cb994b64220aef717c1850416913969d03343efb90cba97ef81f1): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:162f7a13787827c8fe1d18f812acf397ed8d1ab6cfdc93d7cb53db02cc9479eb): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:a1f02799a62fca743ac924c5790d289b09597772cee5d26c207e47a583bd60cc): follow links, subscribe to a feed, check its signatures.
-- [Write a program](terse:7bd74c9b99f6f32b4c17190188f6c72ea1377ace3ceb6c6ec62966f374329aa4): a first Terse32 program, built and run in three commands.
-- [Draw a line and read a key](terse:0b9084d263158f8e46a425e6298278d9fa11b0060c22361fcc5aea61323ac5ba): the 2D vector display and keyboard events.
-- [Make a host](terse:23e63dea3ac00c7c8ef4dbf3948407b490d43172e91144d50a3e6deac8393d10): your own Terse32 machine, step by step, checked against the reference.
+- [Make a reader, step 1: show an article](terse:20b5c7921769c51315e84a6ca97713453dc1c68c9150771af1b97602ce9549c8): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:c62da5b66106aa8192f04da3edf6f77bd39d0e60344171507ce4421245b211f4): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:cee365aa9c303c38c42c15b68c19642704a8d810c4d9d09de6651c556d25bb0e): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:a5c2e4ae233a2c949f51b3bc7424c9b047acca63007916974bb5a0980bce8cda): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:0a5aac1ef84ecfd17c448c969aafc0a8cfb1d72c1a283688a4130dfe4509e28e): the 2D vector display and keyboard events.
+- [Make a host, step 1: run a program to its end](terse:60a2c14c286ee609e987d6e3c210ea1c34693403e421b11fe644e2af119b44c2): the program file, memory and the processor, until `exit`.
+- [Make a host, step 2: frames and the budget](terse:801f3e50f9629aadb3294013cba7e285bfe79fe9df205bac4499c8288d6660d5): 125,000 units a frame, `wait_frame` and the carry rule.
+- [Make a host, step 3: a driver shows hello](terse:12c9d045bf9dc89a759fb5f02e11c733ce26a571aefd9baddabb7cd91f4f800d): the reference terminal over the device bus.
+- [Make a host, step 4: prove it exact](terse:9bed2004e3690b1b58e31abd2db0d6b8a60a8b5f8d37877b30a92e4baeecd0f4): the state hash, snapshots and the conformance program.
 - [Make a device](terse:17b6b735853a168197ccc3b2a43ffb85031188094b0bfe43547f5483096106a4): a device as a separate program on the device bus.
 - [Swap in your own part](terse:9d4f30312697aa40c2109315479eca239615ef8a70a07fe3fb245430ed5067c3): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:6f152dd0396239eaa6e7629626791d00b9579ab35e10cae6cec0de9d2accbf5e): the program that starts other machines and lays out their screens.

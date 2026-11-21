@@ -9,7 +9,10 @@ The manual has two parts. The guide is a series of short steps, each one you can
 - [Make a reader, step 3: links and feeds](terse:{guide-reader-feeds}): follow links, subscribe to a feed, check its signatures.
 - [Write a program](terse:{guide-program}): a first Terse32 program, built and run in three commands.
 - [Draw a line and read a key](terse:{guide-drawing}): the 2D vector display and keyboard events.
-- [Make a host](terse:{guide-host}): your own Terse32 machine, step by step, checked against the reference.
+- [Make a host, step 1: run a program to its end](terse:{guide-host}): the program file, memory and the processor, until `exit`.
+- [Make a host, step 2: frames and the budget](terse:{guide-host-frames}): 125,000 units a frame, `wait_frame` and the carry rule.
+- [Make a host, step 3: a driver shows hello](terse:{guide-host-driver}): the reference terminal over the device bus.
+- [Make a host, step 4: prove it exact](terse:{guide-host-state}): the state hash, snapshots and the conformance program.
 - [Make a device](terse:{guide-device}): a device as a separate program on the device bus.
 - [Swap in your own part](terse:{guide-swap}): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:{guide-shell}): the program that starts other machines and lays out their screens.
