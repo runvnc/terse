@@ -1,6 +1,6 @@
-# tcore: a second, tiny Terse core in C
+# tcore: a second, tiny Terse32 core in C
 
-`tcore` is an independent implementation of the Terse machine's **core**:
+`tcore` is an independent implementation of the Terse32 machine's **core**:
 the RV32IMC CPU, ROM and RAM, frames and the 125,000-unit budget with its
 exact charges, faults and exit, the System device (device 1) with its
 event queue and controllers, optional-device grants and `device`, and the

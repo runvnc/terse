@@ -3,23 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How Terse works - the Terse manual</title>
+<title>How Tersenet works - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
-<h1 id="how-terse-works">How Terse works</h1>
+<h1 id="how-tersenet-works">How Tersenet works</h1>
 <h2 id="sharing-information">Sharing information</h2>
-<p>An article is plain text that reads well as it is, with a few marks for headings, lists, tables, preformatted text and links. A diagram is written into the article as path data in the style of SVG, so it is part of the text and needs no image file. There are no scripts, no styles and no embedded programs, and an article cannot link to a web page, only to other Terse articles, feeds and programs.</p>
+<p>An article is plain text that reads well as it is, with a few marks for headings, lists, tables, preformatted text and links. A diagram is written into the article as path data in the style of SVG, so it is part of the text and needs no image file. There are no scripts, no styles and no embedded programs, and an article cannot link to a web page, only to other Tersenet articles, feeds and programs.</p>
 <p>Authors publish articles in feeds. A feed belongs to a key that its author holds, not to a website: every entry is signed, so a reader can check that it came from the author whoever delivered it. Relays store and pass on feeds and articles. Anyone can run a relay, a feed can be on several at once, and a reader can follow the same feed through any of them, so no single site decides what may be published or read.</p>
 <p>A reader for all of this is a small program. It needs the network and the article format and nothing else.</p>
 <h2 id="sharing-programs">Sharing programs</h2>
-<p>A Terse program is a small file of machine code for a simple virtual computer. The machine is isolated: a program sees only its own memory and the few devices its host offers, such as a terminal, a vector display and the content store. It gets a fixed amount of work per frame, so it cannot slow its host down, and it behaves the same on every host.</p>
-<p>All of this is optional. A host may leave out the machine altogether, or any device it does not want to build, and still be a complete Terse reader. Articles never contain programs: they can only link to them.</p>
+<p>A Terse32 program is a small file of machine code for a simple virtual computer. The machine is isolated: a program sees only its own memory and the few devices its host offers, such as a terminal, a vector display and the content store. It gets a fixed amount of work per frame, so it cannot slow its host down, and it behaves the same on every host.</p>
+<p>All of this is optional. A host may leave out the machine altogether, or any device it does not want to build, and still be a complete Tersenet reader. Articles never contain programs: they can only link to them.</p>
 <h2 id="the-three-layers">The three layers</h2>
-<p>Terse has three layers. The network (blobs, relays, feeds, entries, profiles, names and search) and the article format are the core: a native reader that implements those two, with no virtual machine at all, is a complete Terse client. The machine is an optional third layer that reuses them: a small virtual computer whose programs are shared the same way articles are. This article goes through the network and articles first, then the machine and what surrounds it.</p>
+<p>Tersenet has three layers. The network (blobs, relays, feeds, entries, profiles, names and search) and the article format are the core: a native reader that implements those two, with no virtual machine at all, is a complete Tersenet client. The machine is an optional third layer that reuses them: a small virtual computer whose programs are shared the same way articles are. This article goes through the network and articles first, then the machine and what surrounds it.</p>
 <h2 id="the-network">The network</h2>
 <p>Everything that travels is a blob: 1 to 1,048,576 bytes, named by the BLAKE3-256 hash of its bytes, so a host checks every blob it receives against its name and needs to trust no one to deliver it. Program images are blobs too, so a program&#39;s image ID is a blob ID. Relays are blob stores reached over WebSocket. Authors have feeds: numbered series of small entries signed with an Ed25519 key, each pointing at a blob and giving its size and title. An entry is an article, a profile (a display name and a short description), a program or a document. Hosts subscribe to feeds and fetch small articles ahead of time, so reading never waits on the network.</p>
 <figure><svg viewBox="0 0 512 80" width="512" height="80" style="width:34.133em" role="img" aria-label="Figure, 512 by 80 units"><path d="M8 16 L128 16 L128 64 L8 64 Z" fill="#3070e0" fill-opacity="0.251" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><path d="M196 16 L316 16 L316 64 L196 64 Z" fill="#e09020" fill-opacity="0.251" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><path d="M384 16 L504 16 L504 64 L384 64 Z" fill="#30a050" fill-opacity="0.251" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><path d="M136 40 L186 40 M176 32 L188 40 L176 48 M324 40 L374 40 M364 32 L376 40 L364 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg></figure>
@@ -86,7 +86,7 @@
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
 <li><a href="writing-programs.html">Writing programs</a>: building a C program and packing it as an image.</li>
-<li><a href="using.html">Using Terse</a>: the tools, the shell and the reader.</li>
+<li><a href="using.html">Using Tersenet</a>: the tools, the shell and the reader.</li>
 <li><a href="writing-articles.html">Writing articles</a>: the article format, tables and figures.</li>
 <li><a href="machine.html">The machine</a>: the CPU, memory, frames, image format and the full call table.</li>
 <li><a href="device-system.html">The system device</a>, <a href="device-terminal.html">the terminal</a>, <a href="device-vector.html">the 2D vector display</a>, <a href="device-vector3.html">the 3D vector display</a>, <a href="device-page.html">the page</a> and <a href="device-machines.html">machines</a>.</li>
@@ -97,6 +97,6 @@
 </ul>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="index.html">← What Terse is</a><a rel="next" href="writing-programs.html">Writing a program →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="index.html">← What Tersenet is</a><a rel="next" href="writing-programs.html">Writing a program →</a></nav></footer>
 </body>
 </html>

@@ -1,7 +1,7 @@
-# tersereader: a native Terse reader in Go
+# tersereader: a native Tersenet reader in Go
 
-`tersereader` is a second, independent implementation of the Terse core: a
-terminal reader that speaks the Terse network (`NETWORK.md`) and shows Terse
+`tersereader` is a second, independent implementation of the Tersenet core: a
+terminal reader that speaks the Tersenet protocol (`NETWORK.md`) and shows Tersenet
 articles (`ARTICLE.md`) with **no virtual machine**. It is a single static
 binary with no third-party dependencies.
 

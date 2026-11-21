@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Writing an article - the Terse manual</title>
+<title>Writing an article - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
 <h1 id="writing-an-article">Writing an article</h1>
-<p>An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Terse: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.</p>
+<p>An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Tersenet: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.</p>
 <p>Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, <code>×</code>, <code>°</code>), dashes, curly quotes, <code>−</code>, <code>•</code>, <code>…</code> and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. Plain ASCII reads everywhere.</p>
 <h2 id="lines-and-blocks">Lines and blocks</h2>
 <p>Lines end at LF; a CR before the LF is ignored, and a lone CR elsewhere is a blank shown as a space. Blanks are spaces, tabs and CRs, and a line of only blanks is a blank line. A byte order mark at the very start of an article is ignored. The text is a sequence of blocks separated by blank lines. Markers count only at the very start of a line, and a block also ends before a line it cannot hold, which then starts the next block.</p>
@@ -134,9 +134,9 @@ blank line included.</pre>
 <pre>    terse feed publish hello.txt --title &quot;Hello&quot;</pre>
 <p>It puts the blob, publishes the next entry of your feed and prints <code>seq N blob &lt;id&gt;</code>; <code>--reply-to &lt;blob id&gt;</code> marks a reply. The entry&#39;s title is what timelines show. Like the other feed commands it takes <code>--relay</code>, <code>--store</code> and <code>--config</code>. In the reader, T publishes a test article of its own, not your text; a program that publishes asks the host, which asks you.</p>
 <h2 id="your-feed-as-a-website">Your feed as a website</h2>
-<p>Readers without Terse can read your feed on the web. This writes it as a static website, plain HTML with no scripts:</p>
+<p>Readers without Tersenet can read your feed on the web. This writes it as a static website, plain HTML with no scripts:</p>
 <pre>    terse feed site --out site --base-url https&#58;//example.org/</pre>
-<p>Each article gets a page, drawn like this manual&#39;s web pages; an index lists them newest first; <code>feed.xml</code> is an Atom feed for RSS readers (only with <code>--base-url</code>, the site&#39;s own address). Every page names your feed&#39;s address, for readers who want to follow it in Terse. Run it again after publishing: it writes only the new article&#39;s page and the index, and reads no other article. Give a feed address to make the site of another feed.</p>
+<p>Each article gets a page, drawn like this manual&#39;s web pages; an index lists them newest first; <code>feed.xml</code> is an Atom feed for RSS readers (only with <code>--base-url</code>, the site&#39;s own address). Every page names your feed&#39;s address, for readers who want to follow it in a Tersenet reader. Run it again after publishing: it writes only the new article&#39;s page and the index, and reads no other article. Give a feed address to make the site of another feed.</p>
 <h2 id="how-the-reader-shows-it">How the reader shows it</h2>
 <p>In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in <a href="device-page.html">the page device</a>.</p>
 <p>Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.</p>

@@ -79,14 +79,14 @@ fn page(built: &[Built], pages: &HashMap<BlobId, usize>, i: usize) -> String {
     };
     let mut ids = HashSet::new();
     let landing = b.name == "overview";
-    let title = if landing { format!("Terse: {}", b.title) } else { format!("{} - the Terse manual", b.title) };
+    let title = if landing { format!("Tersenet: {}", b.title) } else { format!("{} - the Tersenet manual", b.title) };
     let mut out = String::new();
     let _ = write!(
         out,
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>{}</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n\
-         <header><nav><a href=\"index.html\" class=\"home\">Terse</a> <a href=\"contents.html\">Manual</a></nav></header>\n\
+         <header><nav><a href=\"index.html\" class=\"home\">Tersenet</a> <a href=\"contents.html\">Manual</a></nav></header>\n\
          <main>\n<article>\n",
         esc(&title)
     );
@@ -133,7 +133,7 @@ mod tests {
         let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["style.css", "contents.html", "index.html", "b.html"]);
         let index = &files[2].1;
-        assert!(index.contains("<title>Terse: What &lt;it&gt; is</title>"), "{index}");
+        assert!(index.contains("<title>Tersenet: What &lt;it&gt; is</title>"), "{index}");
         assert!(index.contains("<a href=\"b.html\" title=\"B\">terse:"), "{index}");
         assert!(index.contains("&amp; https&#58;//x.org."), "{index}");
         assert!(index.contains("<li><a href=\"contents.html\">Contents</a></li>"), "{index}");

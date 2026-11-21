@@ -1,4 +1,4 @@
-# How Terse works
+# How Tersenet works
 
 ## Sharing information
 
@@ -7,7 +7,7 @@ headings, lists, tables, preformatted text and links. A diagram is
 written into the article as path data in the style of SVG, so it is
 part of the text and needs no image file. There are no scripts, no
 styles and no embedded programs, and an article cannot link to a web
-page, only to other Terse articles, feeds and programs.
+page, only to other Tersenet articles, feeds and programs.
 
 Authors publish articles in feeds. A feed belongs to a key that its
 author holds, not to a website: every entry is signed, so a reader can
@@ -21,7 +21,7 @@ the article format and nothing else.
 
 ## Sharing programs
 
-A Terse program is a small file of machine code for a simple virtual
+A Terse32 program is a small file of machine code for a simple virtual
 computer. The machine is isolated: a program sees only its own memory
 and the few devices its host offers, such as a terminal, a vector
 display and the content store. It gets a fixed amount of work per
@@ -29,15 +29,15 @@ frame, so it cannot slow its host down, and it behaves the same on
 every host.
 
 All of this is optional. A host may leave out the machine altogether,
-or any device it does not want to build, and still be a complete Terse
+or any device it does not want to build, and still be a complete Tersenet
 reader. Articles never contain programs: they can only link to them.
 
 ## The three layers
 
-Terse has three layers. The network (blobs, relays, feeds, entries,
+Tersenet has three layers. The network (blobs, relays, feeds, entries,
 profiles, names and search) and the article format are the core: a
 native reader that implements those two, with no virtual machine at all,
-is a complete Terse client. The machine is an optional third layer that
+is a complete Tersenet client. The machine is an optional third layer that
 reuses them: a small virtual computer whose programs are shared the same
 way articles are. This article goes through the network and articles
 first, then the machine and what surrounds it.
@@ -237,12 +237,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:9ec8965c860f52b483f67276d0c2b625697dc490798198dca0557effd022a805): building a C program and packing it as an image.
-- [Using Terse](terse:3ff2b234e44ab16a84c1029c3f95cb14e0624e6d0fd45cc84520104df38aa075): the tools, the shell and the reader.
-- [Writing articles](terse:1ca89e53cccc8d069b801cc9820656fe8d9b219a369e2ab0b6338b9d2c0a1c45): the article format, tables and figures.
-- [The machine](terse:23d95b734681da3ab2949d587214cf9ff989e1804eac2c617bb05bdc2f6a7a4d): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:19c18c81512acbb16a3d199631359874142e34711e130eebd73b6f2a7594f44d), [the terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), [the 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
-- [Blobs](terse:a76400c3aecc763086c94ecfb06332f5f533aabba0b71186721e626cd6a7a1eb), [feeds](terse:1bd2a6ccf94697b751f63f50a9e8fee3fbaea79b42df4c0d34ed0633644e342b) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81) on the content device.
-- [The network](terse:8b870f1e201fe885c27b8dde6bf339a3504090be618b23d2a0951ba6d19edf3f): relays and feeds as the host sees them.
-- [Machine state](terse:a9206288508d3124356306d80802c8a5a803e6d73e1210f2679127470fce2bb9): the state serialization and the state hash.
+- [Writing programs](terse:29f5941c2bfd3a01899311b83da2203e396bc8113134e55bfab44a6038d7e640): building a C program and packing it as an image.
+- [Using Tersenet](terse:3d5c94b9b5836d6e905b41aa30d124b39b870705cac817f89ba22f347eea2dd4): the tools, the shell and the reader.
+- [Writing articles](terse:c148cde4359bb7215a75e9ad23c2f69fedccd1a1012c488f564da1307d44c999): the article format, tables and figures.
+- [The machine](terse:65226db98065ba9d4c9374ea40e4b0ee7b974b2348867a980b0f20714297e7d1): the CPU, memory, frames, image format and the full call table.
+- [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), [the terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), [the 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
+- [Blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46), [feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81) on the content device.
+- [The network](terse:f5ddaf54feef02f988f85a90effdcfce5faf1222c6d2783e6b30f1f17fd68ef4): relays and feeds as the host sees them.
+- [Machine state](terse:ae4dcfe08bc2bad1beab7d01e712478e6bdcc90224e22ac49fcc8c38ca762e4c): the state serialization and the state hash.
 - [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462) and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

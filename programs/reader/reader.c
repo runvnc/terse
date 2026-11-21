@@ -3212,7 +3212,7 @@ static void empty_doc(void)
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press T to publish a test article of your own; it shows up here.");
     doc_paragraph(DOC_START, 0, 10, 0);
-    doc_s("Press M to read the Terse manual.");
+    doc_s("Press M to read the Tersenet manual.");
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press ? for help, Esc to quit.");
     column_submit();
@@ -4302,7 +4302,7 @@ static const char *const help_keys[] = {
     "F", "feeds",
     "? or F1", "this help",
     "T", "publish a test article",
-    "M", "the Terse manual",
+    "M", "the Tersenet manual",
     "Esc", "quit",
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
@@ -5159,7 +5159,7 @@ static void test_publish(void)
     test_title[tb_n] = 0;
     test_tlen = tb_n;
     tb_n = 0;
-    tb_s("This is a test article, published from the Terse reader to check that publishing works. "
+    tb_s("This is a test article, published from the Tersenet reader to check that publishing works. "
          "It was written in frame ");
     tb_u(frame);
     if (now) {

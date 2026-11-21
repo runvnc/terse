@@ -1,18 +1,23 @@
-# Terse
+# Tersenet
 
-First and foremost, Terse is a way to share information: formatted text,
+First and foremost, Tersenet is a way to share information: formatted text,
 with diagrams where they help, without the bloat of web browsers
 (JavaScript, ads, tracking) and without the centralised control of
 websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
-that run on tiny isolated virtual machines.
+that run on tiny isolated virtual machines. That machine is called Terse32.
+
+Tersenet names the whole system and its reading side (the network, articles,
+feeds, relays and readers); Terse32 names the machine and its programs. The
+commands (`terse`, `terse-host`, `terse-relay`), file names and `terse:` links
+keep the short name.
 
 ## Install
 
 Download the file for your system from the
 [latest release](https://github.com/runvnc/terse/releases/latest), unpack it
 and run `terse-host`: the window opens on the launcher. Choose **reader**,
-press **Enter**, then **M**: that is the Terse manual. Nothing else needs to be
+press **Enter**, then **M**: that is the Tersenet manual. Nothing else needs to be
 installed. Each download also has `terse` (the command-line tool),
 `terse-relay` (for sharing) and a `README.txt`.
 
@@ -42,7 +47,7 @@ To build from source instead, see [Getting started](#getting-started) and
 [Build, run, test](#build-run-test). `RELEASING.md` says how the downloads are
 made.
 
-The Terse machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
+The Terse32 machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
 of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device
@@ -50,13 +55,13 @@ that fetches and publishes blobs and reads feeds. Several machines can run
 side by side as one system: a shell program starts them and lays their screens
 out as tiles.
 
-Terse has three layers, each with its own specification:
+Tersenet has three layers, each with its own specification:
 
-- **(a) The Terse network**, `NETWORK.md`: blobs named by their hash, relays,
+- **(a) The network**, `NETWORK.md`: blobs named by their hash, relays,
   signed feeds and their entries, profiles and names, search.
-- **(b) Terse articles**, `ARTICLE.md`: the article format and what a reader
+- **(b) Tersenet articles**, `ARTICLE.md`: the article format and what a reader
   must do with it.
-- **(c) The Terse machine**: `SPEC.md`, the core machine (the CPU, the
+- **(c) The Terse32 machine**: `SPEC.md`, the core machine (the CPU, the
   System, Terminal and 2D vector devices: everything a host that only runs
   programs needs, with a one-page summary of it at the top); one document per
   further device in `spec/` (content, page, machines, 3D vector display,
@@ -65,7 +70,7 @@ Terse has three layers, each with its own specification:
   (`spec/RENUMBERING.md` maps the old section numbers).
 
 (a) and (b) are **the core**: a native reader with no virtual machine that
-implements them is a complete, conforming Terse client. The machine is optional
+implements them is a complete, conforming Tersenet client. The machine is optional
 and reuses the core: programs are blobs published in feeds, and the reader that
 comes with this repository is a machine program that shows articles on the page
 device. A machine host that only runs that reader needs just the machine's
@@ -127,7 +132,7 @@ turn it, Enter flies the front one onto the screen, F12 sends it back.
 See [The shell](#the-shell).
 
 In the reader: Up and Down choose an article, Enter opens it, Esc goes back
-(and quits from the timeline); M opens the Terse manual; F manages the feeds you follow; ? (or F1)
+(and quits from the timeline); M opens the Tersenet manual; F manages the feeds you follow; ? (or F1)
 shows help and your own feed key; T (on the timeline, the feeds view or the help
 page) publishes a test article. See [The reader](#the-reader).
 
@@ -754,7 +759,7 @@ so an article still reads as plain text.
 
 ## Manual
 
-`docs/manual` is the Terse manual: the articles listed in `docs/manual/manifest`, written in the article format,
+`docs/manual` is the Tersenet manual: the articles listed in `docs/manual/manifest`, written in the article format,
 that describe the whole system (the machine, every device call, event, record and
 limit, the network, the tools, the shell and the reader). Every host carries it:
 `terse-host` and `terse run` put its articles into the store at start (for an image with the content device, or a shell), and M on
@@ -782,7 +787,7 @@ content operation and status of the machine specification (SPEC.md and spec/), a
 ### The website
 
 `site/` is the manual as a static website, so that it can be read before
-installing Terse: one HTML page per article (the overview, "What Terse is", is
+installing Tersenet: one HTML page per article (the overview, "What Tersenet is", is
 `index.html`; the manual's index is `contents.html`), made from the same sources by
 the reference article parser, with figures as inline SVG. It is plain static files:
 no JavaScript, nothing loaded from anywhere else (no fonts, no images, no
@@ -817,7 +822,7 @@ by `terse:program/` address (they do not run on the web); the manual's
 `feed.xml`, an Atom feed of the newest 20 articles with their whole HTML, figures
 inline. The profile gives the title (unless `--title`) and the description. Every
 page ends with the feed's address, `terse:feed/<key>[@hints]`, for following it
-in a Terse reader. No scripts, nothing loaded from elsewhere, and no web address
+in a Tersenet reader. No scripts, nothing loaded from elsewhere, and no web address
 except the site's own (and the Atom namespace name) in `feed.xml`.
 
 It is incremental: `.terse-site`, a state file in the output directory, records
@@ -1885,7 +1890,7 @@ holo 0.98 → 0.92, the shell 3.2 → 3.5.
 
 ## Performance
 
-Terse is meant to be quick: what you hold opens without the network, and what
+Tersenet is meant to be quick: what you hold opens without the network, and what
 you do not hold costs one round trip. Each specification says so in units any
 implementation can be tested against (NETWORK.md 6.1 for readers, LOCAL.md 4.5
 for a node, SPEC §responsiveness and spec/content.md §content.submit for machine
