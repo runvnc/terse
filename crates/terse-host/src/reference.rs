@@ -189,9 +189,9 @@ fn holo_cockpit() {
 /// scaled into its picture with glyphs for its size.
 #[test]
 fn shell_four_machines() {
-    let events = "5 press enter\n30 press down\n32 press down\n34 press down\n36 press enter\n45 home\n46 press up\n46 press up\n47 press up\n\
-                  48 press up\n49 press up\n50 press enter\n75 press p\n77 press enter\n85 home\n86 press up\n86 press up\n87 press up\n88 press up\n89 press enter\n\
-                  110 home\n111 press up\n111 press up\n112 press up\n113 press up\n114 press up\n115 press up\n116 press up\n117 press enter\n\
+    let events = "5 press enter\n30 press down\n32 press down\n34 press down\n36 press enter\n45 home\n46 press up\n46 press up\n46 press up\n47 press up\n\
+                  48 press up\n49 press up\n50 press enter\n75 press p\n77 press enter\n85 home\n86 press up\n86 press up\n86 press up\n87 press up\n88 press up\n89 press enter\n\
+                  110 home\n111 press up\n111 press up\n111 press up\n112 press up\n113 press up\n114 press up\n115 press up\n116 press up\n117 press enter\n\
                   140 press enter\n150 home\n151 press 1\n152 press esc\n160 press pagedown\n";
     check("shell-four", None, events, 200, Consent::Deny);
 }
@@ -205,11 +205,11 @@ fn consent_prompt() {
 /// The gallery's script: the shell in its gallery layout (L twice), the
 /// reader on an article, sparks in the phosphor style, sketch with a
 /// drawing, holo; then the ring turned back to the reader.
-const GALLERY: &str = "2 press l\n3 press l\n5 press enter\n40 press enter\n60 home\n61 press up\n62 press up\n63 press up\n64 press up\n\
-                       65 press up\n66 press enter\n80 press p\n90 home\n91 press up\n92 press up\n93 press up\n94 press enter\n\
+const GALLERY: &str = "2 press l\n3 press l\n5 press enter\n40 press enter\n60 home\n61 press up\n61 press up\n62 press up\n63 press up\n64 press up\n\
+                       65 press up\n66 press enter\n80 press p\n90 home\n91 press up\n91 press up\n92 press up\n93 press up\n94 press enter\n\
                        120 pointer 200 150 1\n121 pointer 260 120 1\n122 pointer 320 150 1\n123 pointer 380 120 1\n124 pointer 440 150 1\n\
                        125 pointer 440 260 1\n126 pointer 320 360 1\n127 pointer 200 260 1\n128 pointer 200 150 1\n129 pointer 200 150 0\n\
-                       140 home\n141 press up\n142 press up\n143 press up\n144 press enter\n175 home\n176 press 1\n";
+                       140 home\n141 press up\n141 press up\n142 press up\n143 press up\n144 press enter\n175 home\n176 press 1\n";
 
 /// The shell's gallery (SPEC §machines.screens): four machines' screens as panels on a
 /// ring, in perspective, the front one on the glass; the ring's lines and
@@ -423,7 +423,7 @@ fn surfaces_of_a_machine(displays: &mut [Box<dyn crate::display::Display>]) {
 /// Surfaces included; a Surface showing its whole screen on its glass is
 /// the tile without it, and its sources are off its glass.
 fn surfaces_in_a_tile(displays: &mut [Box<dyn crate::display::Display>]) {
-    let mut system = system_after("2 press enter\n30 home\n31 press up\n32 press enter\n60 press 6\n", 90);
+    let mut system = system_after("2 press enter\n30 home\n31 press up\n31 press up\n32 press enter\n60 press 6\n", 90);
     let (h, holo) = system.children().find(|(_, c)| c.title == "holo").map(|(h, c)| (h, c.serial)).expect("holo started");
     let picture = system.pictures().into_iter().find(|p| p.0 == h).expect("holo in a tile").1;
     let list = |s: &terse_core::System| s.machine_by_serial(holo).unwrap().1.vector3().unwrap().list().to_vec();

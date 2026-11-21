@@ -209,10 +209,11 @@ fn golden(name: &str, got: &str) {
 
 /// From the launcher at start: reader (handle 1), then sparks, fetch and
 /// hello, each started from the launcher after the home key (the cursor is
-/// then on the focused machine's line, below the six programs).
+/// then on the focused machine's line, below the seven programs).
 const FOUR: &str = "\
 2 press enter
 10 home
+11 press up
 11 press up
 11 press up
 12 press up
@@ -222,11 +223,13 @@ const FOUR: &str = "\
 20 home
 21 press up
 21 press up
+21 press up
 22 press up
 23 press up
 24 press up
 25 press enter
 30 home
+31 press up
 31 press up
 31 press up
 32 press up
@@ -243,13 +246,32 @@ fn launcher_at_start() {
     assert_eq!(s.system.children().count(), 0);
     let launcher = s.launcher();
     assert!(
-        launcher.starts_with("PROGRAMS\n[Manual]{301}\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n"),
+        launcher.starts_with("PROGRAMS\n[Manual]{301}\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n[reports]{106}\n"),
         "{launcher}"
     );
     let page = s.system.shell().page().unwrap().region();
     assert_eq!((page.x, page.y, page.w), (160, 80, 320), "centred while there are no machines");
     assert!(page.h < 340, "as high as the launcher's text: {}", page.h);
     golden("launcher", &format!("{}-- launcher --\n{launcher}", s.dump()));
+}
+
+/// The reports aggregator (programs/reports, RECORD.md 5.4) is a built-in:
+/// the last in the launcher, started by its identity (the zero key and
+/// its title) like the others, and it runs.
+#[test]
+fn reports_is_a_built_in() {
+    let reports = Image::parse(builtin::PROGRAMS[6]).unwrap();
+    assert_eq!(reports.title, b"reports");
+    let script: String = (2..8).map(|f| format!("{f} press down\n")).collect::<String>() + "8 press enter\n";
+    let mut s = Sys::new(&script, Setup::default());
+    s.run(40);
+    assert_eq!((s.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "reports"));
+    let child = s.system.child(1).unwrap();
+    assert_eq!(child.identity, Some(ProgramId { publisher: [0; 32], name: b"reports".to_vec() }));
+    assert_eq!(s.machine(1).image_id(), &terse_net::blob_id(builtin::PROGRAMS[6]));
+    assert_eq!(s.system.focus(), 1);
+    assert!(s.bar().contains("1 reports"), "{}", s.bar());
+    assert!(s.machine(1).stopped().is_none());
 }
 
 /// The launcher's Manual entry (above the programs; the cursor starts on
@@ -307,7 +329,7 @@ fn one_machine_fills_the_area() {
 
 #[test]
 fn two_machines_master_and_stack() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n12 press up\n13 press enter\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n", Setup::default());
     s.run(40);
     assert_eq!((s.state(1), s.state(2)), (state::RUNNING, state::RUNNING));
     assert_eq!(s.system.child(2).unwrap().title, "hello");
@@ -372,6 +394,7 @@ fn typed_text_reaches_only_the_focused_machine() {
 20 home
 21 press up
 21 press up
+21 press up
 22 press up
 23 press enter
 30 text two
@@ -429,7 +452,7 @@ fn a_click_in_a_tile_reaches_the_reader_mapped() {
 fn a_click_focuses_a_tile_and_the_bar() {
     // Two machines (reader, hello: hello focused); a click in the
     // reader's tile focuses it; one on hello's bar segment focuses hello.
-    let script = "2 press enter\n10 home\n11 press up\n11 press up\n12 press up\n13 press enter\n30 click 100 100\n40 click 330 8\n";
+    let script = "2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n30 click 100 100\n40 click 330 8\n";
     let mut s = Sys::new(script, Setup::default());
     s.run(31);
     assert_eq!(s.system.focus(), 1);
@@ -455,7 +478,7 @@ fn pause_and_resume() {
 
 #[test]
 fn stop() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press x\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press x\n", Setup::default());
     s.run(25);
     assert_eq!(s.state(2), state::NONE);
     assert!(s.system.child(2).is_none());
@@ -496,10 +519,10 @@ fn exit_and_fault_are_reported() {
 fn a_start_that_fails() {
     // An extra program's ID is in no store: its title is unknown, and
     // starting it fails.
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n7 press enter\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n";
     let mut s = Sys::new(script, Setup { unknown: true, ..Setup::default() });
     s.run(5);
-    assert!(s.launcher().contains("[?]{106}"), "{}", s.launcher());
+    assert!(s.launcher().contains("[?]{107}"), "{}", s.launcher());
     s.run(10);
     assert_eq!(s.state(1), state::FAILED);
     assert!(s.system.child(1).unwrap().machine.is_none());
@@ -589,7 +612,8 @@ fn budget() {
 fn image_is_up_to_date() {
     common::check_up_to_date(SHELL, &["shell/shell.c"], true, "shell", 3, &[(2, 0), (3, 0), (4, 0), (7, 0), (8, 0), (9, 0), (10, 0x80)]);
     assert_eq!(SHELL, builtin::SHELL, "the shell built into the hosts");
-    assert!(Image::parse(SHELL).unwrap().rom.len() < 20 * 1024);
+    // Small (raised from 20 KiB for halted machines and the automatic snapshots).
+    assert!(Image::parse(SHELL).unwrap().rom.len() < 24 * 1024);
 }
 
 
@@ -622,6 +646,7 @@ fn programs_from_feeds() {
 4 press down
 5 press down
 6 press down
+7 press down
 7 press down
 7 press down
 8 press enter
@@ -914,9 +939,9 @@ fn gallery_click_on_a_side_panel() {
 #[test]
 fn gallery_start_a_program() {
     let (script, at) = gallery_script(2);
-    // The cursor is on machine 2's line (7): up 4 is hello.
+    // The cursor is on machine 2's line (9): up 5 is hello.
     let st = at + 5;
-    let mut s = Sys::new(&format!("{script}{}{st} press enter\n", format!("{} press up\n", st - 1).repeat(4)), Setup::default());
+    let mut s = Sys::new(&format!("{script}{}{st} press enter\n", format!("{} press up\n", st - 1).repeat(5)), Setup::default());
     s.run_until(st + 1);
     assert_eq!(s.state(3), state::LOADING);
     assert_eq!(s.system.focus(), 3);

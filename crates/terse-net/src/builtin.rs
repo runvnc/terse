@@ -9,13 +9,14 @@ use crate::BlobId;
 pub const SHELL: &[u8] = include_bytes!("../../../programs/shell/shell.terse");
 
 /// The built-in programs, in the order `builtin` lists them.
-pub const PROGRAMS: [&[u8]; 6] = [
+pub const PROGRAMS: [&[u8]; 7] = [
     include_bytes!("../../../programs/reader/reader.terse"),
     include_bytes!("../../../programs/sparks/sparks.terse"),
     include_bytes!("../../../programs/fetch/fetch.terse"),
     include_bytes!("../../../programs/hello/hello.terse"),
     include_bytes!("../../../programs/sketch/sketch.terse"),
     include_bytes!("../../../programs/holo/holo.terse"),
+    include_bytes!("../../../programs/reports/reports.terse"),
 ];
 
 /// Other blobs a built-in program needs: the message `fetch` shows.

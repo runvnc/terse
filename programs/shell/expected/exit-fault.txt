@@ -99,7 +99,8 @@ PROGRAMS
 [hello]{103}
 [sketch]{104}
 [holo]{105}
-[crash]{106}
+[reports]{106}
+[crash]{107}
 MACHINES
 [1  hello]{1}[  exited 0]{1}
 [2  crash]{2}[  faulted]{2}
