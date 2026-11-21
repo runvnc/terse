@@ -4,22 +4,22 @@ The manual has two parts. The guide is a series of short steps, each one you can
 
 ## Guide
 
-- [Make a reader, step 1: show an article](terse:04bd1174bd060e2c1302634641d47410caa3d0f2127fb95f3e7dbac84d0a5c7b): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:e1b26896ce7584ef547a5db7058fb6eb772e2fb6f77e28265de8aa889701223a): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:c279d60da90d3e068ac5bba50d2a59f1d8226e644a6b102fbf3aaeb3a56b7ae8): follow links, subscribe to a feed, check its signatures.
-- [Write a program](terse:b754b6fa1ae68e778c75a39c20e99fa502e4e6809b7f013abb365ca769d4f711): a first Terse32 program, built and run in three commands.
-- [Draw a line and read a key](terse:141694e61c58ec50ab7aff1f97c848e49436fea5d0ea283be159c2bd6591c6c5): the 2D vector display and keyboard events.
-- [Make a host](terse:205d2b8eae4d912fd60e2a38f5c9f2309cdef927e3136417cfee52b01c454625): your own Terse32 machine, step by step, checked against the reference.
-- [Make a device](terse:b53df4c96c2af6726aa5a45e85427570e694241ef359e2331a84fa9d9a62f641): a device as a separate program on the device bus.
-- [Swap in your own part](terse:fc1fe33e19ba7cee5bd02d7ee99f23265e8d5d67458fe08adf22f21199d6d1a8): your reader, core or device with the reference for everything else.
-- [Make a shell](terse:4339965c02802c9edb591e01fb4e73aa72a6b5ba03292a8eabbdade42b9b5ad3): the program that starts other machines and lays out their screens.
+- [Make a reader, step 1: show an article](terse:c363852bfd42594b87be8da2b43d23992413291fc8c356e7cbf0a4cb27ca39fa): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:84b9ca56b13a4749b96ccad88a565881973976648b8c5f95a7454fb7b5aa03e1): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:bc912a4c1145e5846532f3ec47d1ab5cce7390da50351e2c44fa0236fbc45c47): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:cb15a734bd22fa96fb5489c6ea3ee488a7628d8ec826a39df21665f3469ffd58): the 2D vector display and keyboard events.
+- [Make a host](terse:25d55da82fb9ddd1d6eefc62c26815c447efd9791f58dd36e08b74dedc8bab08): your own Terse32 machine, step by step, checked against the reference.
+- [Make a device](terse:e22547a461d2716b35626580d18dc9ceb10d377a42115d7c701e9b39ea6b64bf): a device as a separate program on the device bus.
+- [Swap in your own part](terse:a569551baa714144459f7d6a0d37ebd756384611229c0a273d201dbe85bd3a5b): your reader, core or device with the reference for everything else.
+- [Make a shell](terse:6f152dd0396239eaa6e7629626791d00b9579ab35e10cae6cec0de9d2accbf5e): the program that starts other machines and lays out their screens.
 - [Using Tersenet](terse:376297817e054c6e8cc8bcb45cea3b4d51219e5b909a1ff65d90352a2eb30982): install, read, follow, write and publish; no programming needed.
 
 ## Reference
 
 Tersenet as a whole:
 
-- [How Tersenet works](terse:caa05e7048fc3076368fad7d2dac6bd7ea630acf6740327fdff0c4c26d438842): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
+- [How Tersenet works](terse:ed72152e9718da5cc9a82ee76afe51cf157af15789da1197e2583d59501b8cf8): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
 - [Using the shell](terse:4819c3b1b0580facd005843e4b9fab8ae47d56db9d41e241bbeef75ce0181512): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
 - [Using the reader](terse:a26c9a330b01f98347566242b5b208ff0b2655cc7667473fc1f391209f330777): the timeline, feeds, search and reading an article, with every key.
 - [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df): the fonts the host draws with, which characters they show, and adding one.
@@ -33,8 +33,11 @@ Articles and the network:
 
 Programs:
 
-- [The toolchain and the C library](terse:8cc8dd3a472976fac785bc10509691710b2b918782c417033b4cd313b0dd9e6a): the compiler and its flags, the library, the hello program, packing an image.
-- [Running and publishing a program](terse:9b596b1db9c600928078a1ff436b0f833481f4e1fd83851bc4cf8a0b7fa92aaf): headless runs, scripted input, the state hash, the window, costs, publishing.
+- [Building a program](terse:4f0b9607dc01ecc7723605b9bb83f4271f20058b1d94bc10d2f54949022096d2): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
+- [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec): the start code, the linker script, terse.h, and the hello program in assembly and C.
+- [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700): the Rust runtime, what things cost, a larger program with cargo.
+- [Building by hand, and other languages](terse:748be8ce8017566cf74c5c89f73d1b85abb5f051ef3c8ceacbfeadf0cd400d92): the build without `terse build`, and what any compiler must do.
+- [Running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69): headless runs, scripted input, the state hash, the window, costs, publishing.
 
 The Terse32 machine:
 

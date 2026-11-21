@@ -243,7 +243,7 @@ in a tile of its own.
 
 ## Where to go next
 
-- [The toolchain and the C library](terse:{toolchain}): building a C program and packing it as an image; [running and publishing a program](terse:{running-programs}).
+- [Building a program](terse:{toolchain}): `terse build`, in C, assembly or Rust; [running and publishing a program](terse:{running-programs}).
 - [Using Tersenet](terse:{using}): the tools, the shell and the reader.
 - [Writing articles](terse:{writing-articles}): the article format, tables and figures.
 - [The machine](terse:{machine}): the CPU, memory, frames, image format and the full call table.

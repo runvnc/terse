@@ -1,0 +1,60 @@
+# Building by hand, and other languages
+
+`terse build` is a convenience: an image can be built with the compilers alone and `terse pack`. This article gives those commands, then what any other compiler or language runtime must do to make a Terse32 program.
+
+## By hand
+
+`terse build --show` prints the commands it runs; `terse build --write-lib lib` writes the files they use. With those, in fish:
+
+```
+terse build --write-lib lib
+set CFLAGS --target=riscv32-unknown-elf -march=rv32imc \
+    -mabi=ilp32 -Os -ffreestanding -nostdlib -fno-builtin \
+    -ffunction-sections -fdata-sections
+clang $CFLAGS -I lib -c lib/crt0.S -o 0.o
+clang $CFLAGS -I lib -c hello.c -o 1.o
+clang $CFLAGS -I lib -c lib/terse.c -o 2.o
+ld.lld -T lib/terse.ld --gc-sections 0.o 1.o 2.o \
+    -o hello.elf
+llvm-objcopy -O binary hello.elf hello.bin
+terse pack --rom hello.bin --title hello --ram-pages 2 \
+    --device 2:0 --device 3:0 -o hello.terse
+```
+
+(In sh, `CFLAGS="..."`.) The `build.sh` of each program in `programs/` is such a script. For Rust:
+
+```
+terse build --write-lib lib
+rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+    -C opt-level=s -Cpanic=abort --crate-type rlib \
+    --crate-name terse -o libterse.rlib lib/terse.rs
+rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+    -C opt-level=s -Cpanic=abort -C lto --crate-type bin \
+    -C link-arg=-Tlib/terse.ld --extern terse=libterse.rlib \
+    -o hello.elf hello.rs
+llvm-objcopy -O binary hello.elf hello.bin
+terse pack --rom hello.bin --title hello --ram-pages 1 \
+    --device 2:0 --device 3:0 -o hello.terse
+```
+
+`rust-objcopy`, which rustup's `llvm-tools` component installs, does what `llvm-objcopy` does.
+
+## Other languages
+
+Anything that can produce RV32IMC machine code for a bare machine can make a Terse32 program. What its compiler and runtime must do:
+
+- **Start.** Execution begins at the first byte of ROM, `0001_0000h`, with `sp` at the end of RAM (`0010_0000h` + 8,192 × RAM pages) and every other register zero (SPEC §reset). Nothing else is set up.
+- **Data.** The machine knows nothing of `.data` or `.bss`: RAM is all zero at reset, and the start code must copy initialised data from ROM to RAM itself (zero-initialised data needs nothing).
+- **The stack.** Nothing guards it: it grows down from the end of RAM, and a stack that reaches `.bss` overwrites it without a fault. Only the RAM size in the image's header leaves room for it.
+- **No `gp`.** Nothing sets `gp`: it is zero at reset like every other register but `sp`. A linker that relaxes addresses to `gp`-relative needs the start code to load `__global_pointer$` into `gp` first (GNU ld relaxes by default; ld.lld does not).
+- **CPU.** RV32I with M and C only (SPEC §cpu): no atomics, no floating-point instructions (soft float, `ilp32`), no CSRs, so no `rdcycle` or `rdtime`; `fence` does nothing. Loads and stores must be aligned to their size, or the machine faults: a compiler must not assume misaligned access is allowed (clang and rustc do not for this target).
+- **Memory.** ROM is read and execute only, 1 to 128 KiB; a store to it faults. RAM is 1 to 128 pages of 8 KiB, the count fixed in the image's header. Address 0 and everything outside ROM and RAM fault, so a null pointer dereference faults.
+- **Buffers in RAM.** A buffer a device reads may be in ROM or RAM, but a display list must be in RAM: the vector displays' `submit` refuses a list not wholly in RAM with the result 1, as it refuses a bad length (SPEC §vector.calls). So a constant list placed in ROM is never drawn.
+- **Calls.** Devices are reached with `ecall`: `a7` = slot × 256 + function, arguments in `a0` to `a5`, the result in `a0` (and `a1`); other registers are kept (SPEC §calls).
+- **Frames.** There are no interrupts or threads. A program works, then calls `wait_frame` (`a7` = `100h`); each frame has a budget of 125,000 units, and a program that uses it up is paused until the next frame (SPEC §frames). A garbage collector or any long computation must fit in this or be split across frames.
+- **Exit.** `exit` (`a7` = `106h`) with the code in `a0`.
+- **Image.** The image is the 32-byte header (SPEC §image) and the ROM; `terse pack` writes it from the raw ROM.
+
+Other compilers with a 32-bit RISC-V bare-metal target (Zig, for one) should fit these rules with their own start code and the linker script of "Building a program"; none has been tried.
+
+Next: [Running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69).

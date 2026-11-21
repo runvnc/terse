@@ -19,6 +19,9 @@ guide-shell
 guide-using
 how-it-works
 toolchain
+toolchain-c
+toolchain-rust
+toolchain-other
 running-programs
 using
 using-reader

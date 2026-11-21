@@ -50,6 +50,6 @@ To prove your host exact, compute the machine's state hash (STATE.md) and compar
 
 ## What you have now
 
-A host that runs every program written for the program profile, and a way to prove it exact. Next, write one of its devices as a separate program: [Make a device](terse:b53df4c96c2af6726aa5a45e85427570e694241ef359e2331a84fa9d9a62f641).
+A host that runs every program written for the program profile, and a way to prove it exact. Next, write one of its devices as a separate program: [Make a device](terse:e22547a461d2716b35626580d18dc9ceb10d377a42115d7c701e9b39ea6b64bf).
 
 The machine in full is in [The machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), with [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc) and [The terminal](terse:109353cb353476bc6b7de663f9c9afc097275cb86f02ce936ef74ed620996f0b); the state hash in [State, replay and conformance](terse:3d301b04ac7d3a4327891586c316a6df1655298c8ae08f57722440f8c32e85a1).

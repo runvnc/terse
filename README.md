@@ -319,7 +319,8 @@ images were built with clang and LLD 23.1.4.
   adds), RAM for `.data` and `.bss` plus 8 KiB of stack. `--show` prints the
   commands, `--run` runs the image after. `build --write-lib <dir>` writes the
   built-in files; `new <file.c|file.rs|file.S>` writes a starter program. See
-  [Writing programs](#writing-programs) and `docs/toolchain.md`.
+  [Writing programs](#writing-programs) and the manual's "Building a program"
+  (`docs/manual/toolchain.txt`).
 - `pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>`
   builds an image from a raw ROM (the bytes loaded at `0001_0000h`): `--device`
   lists a device the program requires, `--optional` one it can run without (SPEC §image:
@@ -633,7 +634,8 @@ its riscv32imc-unknown-none-elf target, for Rust):
 
 It compiles with the flags below, links with programs/lib (built into `terse`),
 takes the ROM out of the ELF file and packs it; `--show` prints each command.
-`docs/toolchain.md` is the reference: every flag and why, building by hand, the
+The manual's four toolchain articles (`docs/manual/toolchain*.txt`;
+`docs/toolchain.md` lists them) are the reference: every flag and why, building by hand, the
 Rust runtime (`programs/lib/rust/terse.rs`, the program profile's calls as safe
 functions), cargo for larger Rust programs, and what another language's
 compiler must do. Given the header options of its build.sh, `terse build`

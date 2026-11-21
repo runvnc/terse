@@ -29,7 +29,13 @@ Each machine is a whole separate Terse32 machine, with its own memory, devices a
 
 ## Build and run it
 
-Save it as `myshell.c` and build it with `terse build`, listing device 8 besides the usual ones (the toolchain reference says how). Then:
+Save it as `myshell.c` and build it, listing device 8 besides the usual terminal (2) and line display (3):
+
+```
+terse build myshell.c --device 2:0 --device 3:0 --device 8:0
+```
+
+Then:
 
 ```
 terse run --shell myshell.terse --frames 30 --dump

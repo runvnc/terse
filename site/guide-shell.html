@@ -33,7 +33,9 @@ int main(void)
 </ul>
 <p>Each machine is a whole separate Terse32 machine, with its own memory, devices and budget. The shell only decides what runs and where it is seen.</p>
 <h2 id="build-and-run-it">Build and run it</h2>
-<p>Save it as <code>myshell.c</code> and build it with <code>terse build</code>, listing device 8 besides the usual ones (the toolchain reference says how). Then:</p>
+<p>Save it as <code>myshell.c</code> and build it, listing device 8 besides the usual terminal (2) and line display (3):</p>
+<pre>terse build myshell.c --device 2:0 --device 3:0 --device 8:0</pre>
+<p>Then:</p>
 <pre>terse run --shell myshell.terse --frames 30 --dump</pre>
 <p>runs it headless and prints the shell&#39;s screen, then each machine&#39;s: a line <code>-- machine 1 running 0 0 640 480 hello --</code> and hello&#39;s text. In a window:</p>
 <pre>terse-host --shell myshell.terse</pre>

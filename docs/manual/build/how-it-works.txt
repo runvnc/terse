@@ -243,7 +243,7 @@ in a tile of its own.
 
 ## Where to go next
 
-- [The toolchain and the C library](terse:8cc8dd3a472976fac785bc10509691710b2b918782c417033b4cd313b0dd9e6a): building a C program and packing it as an image; [running and publishing a program](terse:9b596b1db9c600928078a1ff436b0f833481f4e1fd83851bc4cf8a0b7fa92aaf).
+- [Building a program](terse:4f0b9607dc01ecc7723605b9bb83f4271f20058b1d94bc10d2f54949022096d2): `terse build`, in C, assembly or Rust; [running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69).
 - [Using Tersenet](terse:4819c3b1b0580facd005843e4b9fab8ae47d56db9d41e241bbeef75ce0181512): the tools, the shell and the reader.
 - [Writing articles](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format, tables and figures.
 - [The machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b): the CPU, memory, frames, image format and the full call table.

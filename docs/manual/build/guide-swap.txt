@@ -49,4 +49,4 @@ native/core-c/tcore programs/hello/hello.terse --frames 30 \
 
 ## What you have now
 
-The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:4339965c02802c9edb591e01fb4e73aa72a6b5ba03292a8eabbdade42b9b5ad3).
+The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:6f152dd0396239eaa6e7629626791d00b9579ab35e10cae6cec0de9d2accbf5e).

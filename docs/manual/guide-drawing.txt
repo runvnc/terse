@@ -4,7 +4,7 @@ This page adds the two things most programs need: drawing, and input. The progra
 
 ## The program
 
-Make it with `terse new line.c`, replace the file's text with this, and build it with `terse build line.c`:
+Save it as `line.c` (or start from `terse new line.c` and replace its text) and build it with `terse build line.c`:
 
 ```
 #include "terse.h"
@@ -46,7 +46,7 @@ Returning from `main` ends the program.
 
 ## Drawing
 
-The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with `vec_submit_list`. The display keeps showing that list, every frame, until the program submits another one.
+The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with `vec_submit_list`. The display keeps showing that list, every frame, until the program submits another one. The list must be in RAM, which is why it is a variable: a list in the program's read-only memory (a `const` array, say) is refused.
 
 The screen is 640 by 480 units, (0, 0) at the top left. The list's coordinates are in sixteenths of a unit, hence the `* 16`. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
 

@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="running-and-publishing-a-program">Running and publishing a program</h1>
-<p>This article is the reference for what comes after building a program (see the toolchain article): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, <code>terse</code> stands for the <code>terse</code> command of this repository (<code>cargo run -p terse-cli --bin terse --</code>, or <code>target/debug/terse</code> after <code>cargo build --workspace</code>).</p>
+<p>This article is the reference for what comes after building a program (see &quot;Building a program&quot;): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, <code>terse</code> stands for the <code>terse</code> command of this repository (<code>cargo run -p terse-cli --bin terse --</code>, or <code>target/debug/terse</code> after <code>cargo build --workspace</code>).</p>
 <h2 id="running-it-headless">Running it headless</h2>
 <pre>terse run prog.terse --frames 30 --dump</pre>
 <p>runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (<code>random</code> gives zeros), and controllers exist only through the script. <code>--dump-vectors</code> and <code>--dump-page</code> add the vector display&#39;s list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, <code>terse run</code> exits with its code; after a fault it prints <code>terse: fault: &lt;kind&gt; at pc &lt;pc&gt;, address &lt;addr&gt;</code> on stderr and ends itself with SIGTERM.</p>
@@ -51,6 +51,6 @@
 <p>Next: <a href="machine.html">The machine</a>, then the devices, from <a href="device-system.html">The system device</a> and <a href="device-terminal.html">The terminal</a> to <a href="events.html">Events</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="toolchain.html">← The toolchain and the C library</a><a rel="next" href="using.html">Using the shell →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="toolchain-other.html">← Building by hand, and other languages</a><a rel="next" href="using.html">Using the shell →</a></nav></footer>
 </body>
 </html>

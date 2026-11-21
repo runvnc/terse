@@ -10,34 +10,48 @@ terse build hello.c
 terse-host hello.terse
 ```
 
-`terse new` writes a small C program to start from. `terse build` compiles it into `hello.terse`, the program file, with the text grid and the line display as its devices. `terse-host` runs it in a window; closing the window ends it.
+`terse new` writes a small C program to start from: it prints a line and ends when you press Esc. `terse build` compiles it into `hello.terse`, the program file, with the text grid and the line display as its devices. `terse-host` runs it in a window.
 
-The same works in Rust: `terse new hello.rs`, then `terse build hello.rs`.
+`terse build` needs clang and its linker lld; if one is missing, it says in one sentence what to install. Nothing else is needed: the C library comes inside `terse`.
+
+The same works in Rust, `terse new hello.rs` and then `terse build hello.rs`, with rustc and its target for this machine, which `terse build` also names if it is missing.
 
 ## What a program looks like
 
-A whole program can be this short:
+Open `hello.c`. Without its comments it is short:
 
 ```
 #include "terse.h"
 
 int main(void)
 {
-    term_puts("Hello, Tersenet!");
-    for (;;)
+    term_color(15, 4); /* white on blue */
+    term_puts(" Hello from hello! ");
+    term_color(7, 0);
+    term_puts("\n\nPress Esc to exit.\n");
+
+    for (;;) {
+        terse_event e;
         terse_wait_frame();
+        while (terse_event_pop(&e)) {
+            if (e.type == EV_KEY_DOWN && e.a == KEY_ESCAPE)
+                return 0;
+        }
+    }
 }
 ```
 
-`term_puts` writes text on the grid. `terse_wait_frame` says "done for this frame": the program sleeps until the next one. There are no threads and no interrupts; a program does a frame's work, then waits. If it does too much, the machine simply pauses it and carries on in the next frame.
+`term_puts` writes text on the grid. `terse_wait_frame` says "done for this frame": the program sleeps until the next one. There are no threads and no interrupts; a program does a frame's work, then waits. If it does too much, the machine simply pauses it and carries on in the next frame. Keys arrive as events, and returning from `main` ends the program.
+
+Change the text, build again, run again: that is the whole loop.
 
 ## Run it without a window
 
 ```
-terse run hello.terse --frames 30 --dump
+terse run hello.terse --frames 60 --dump
 ```
 
-runs it for 30 frames with no window and prints the text grid. That is how programs are tested: the machine is deterministic, so the same program with the same input gives the same result on every computer.
+runs it for 60 frames with no window and prints the text grid. That is how programs are tested: the machine is deterministic, so the same program with the same input gives the same result on every computer. `terse build hello.c --run --frames 60 --dump` builds and runs in one go.
 
 ## Share it
 
@@ -49,6 +63,6 @@ publishes it in your feed, under its name (make your key first with `terse key n
 
 ## What you have now
 
-A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:141694e61c58ec50ab7aff1f97c848e49436fea5d0ea283be159c2bd6591c6c5).
+A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:cb15a734bd22fa96fb5489c6ea3ee488a7628d8ec826a39df21665f3469ffd58).
 
-How a program is built, the C library and every option are in [The toolchain and the C library](terse:8cc8dd3a472976fac785bc10509691710b2b918782c417033b4cd313b0dd9e6a); running, testing and publishing in more detail in [Running and publishing a program](terse:9b596b1db9c600928078a1ff436b0f833481f4e1fd83851bc4cf8a0b7fa92aaf).
+Every option of `terse build`, the C library and the Rust runtime are in [Building a program](terse:4f0b9607dc01ecc7723605b9bb83f4271f20058b1d94bc10d2f54949022096d2); running, testing and publishing in more detail in [Running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69).

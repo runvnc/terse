@@ -1,105 +1,106 @@
-# The toolchain and the C library
+# Building a program
 
-A Terse32 program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article is the reference for building one: the tools, the compiler flags, the C library, the hello program in assembly and in C, and packing the image. Running, testing and publishing a program are in [Running and publishing a program](terse:9b596b1db9c600928078a1ff436b0f833481f4e1fd83851bc4cf8a0b7fa92aaf); the machine and each device have articles of their own.
+A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec) describes the library and the hello program, [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700) the Rust runtime, and [Building by hand, and other languages](terse:748be8ce8017566cf74c5c89f73d1b85abb5f051ef3c8ceacbfeadf0cd400d92) the same build without `terse build` and what any other compiler must do.
 
-## Tools
+## What you need
 
-You need clang with the riscv32 target, ld.lld and llvm-objcopy, and the `terse` command of this repository (`cargo run -p terse-cli --bin terse --`, or `target/debug/terse` after `cargo build --workspace`). Below, `terse` stands for either.
+- C and assembly: `clang` with the RISC-V target and `ld.lld` (LLVM's C compiler and linker; most systems' packages include the RISC-V target).
+- Rust: `rustc` from rustup with the target `riscv32imc-unknown-none-elf` (`rustup target add riscv32imc-unknown-none-elf`). rustc links with its own `rust-lld`, so neither clang nor lld is needed.
 
-The compiler flags, the same in every `programs/*/build.sh`:
+Nothing else. The C library, the start-up code, the linker script and the Rust runtime are built into `terse`, and `terse build` takes the ROM out of the linked ELF file itself, so `llvm-objcopy` is not needed. When a tool is missing, `terse build` says in one sentence what to install. The compiler's own errors and warnings are shown as it prints them.
+
+## The commands
+
+```
+terse new <file.c|file.rs|file.S>
+terse build <source>... [-o <out.terse>] [--title <t>]
+    [--ram-pages <n>] [--device <slot:version>]...
+    [--optional <slot:version>]... [--cflag <flag>]...
+    [--clang <path>] [--lld <path>] [--rustc <path>]
+    [--show] [--run [the options of terse run]...]
+terse build --write-lib <dir>
+```
+
+- `terse new` writes a small commented program that prints a line on the terminal, waits for each frame and exits on Esc, in C, Rust or assembly by the extension. It never overwrites a file.
+- Sources: the extension chooses the language. `.c` is C; `.S` and `.s` are assembly (`.S` goes through the C preprocessor, `.s` does not); `.rs` is Rust. Several C and assembly files may be given and are linked together in the order given. A Rust program is one `.rs` file, the crate root; its modules (`mod x;`) are found from it as rustc finds them.
+- `-o`: the image. Default: the first source's stem with `.terse`, in the current directory (`terse build src/game.c` writes `game.terse`).
+- `--title`: the image's title, at most 16 bytes of UTF-8. Default: the first source's stem, cut to 16 bytes.
+- `--device`, `--optional`: the devices the header lists (below). Without `--device` the image requires the program profile: `2:0`, the terminal, and `3:0`, the 2D vector display (device 1, System, is always there and is not listed). Giving `--device` replaces that list; `--optional` adds to it, and `--optional 3:0` makes the vector display optional instead of required.
+- `--ram-pages`: RAM in 8 KiB pages, 1 to 128. Default: the program's `.data` and `.bss` plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for `.data` and `.bss` alone is refused. The stack grows down from the end of RAM towards `.bss` and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.
+- `--cflag`: one more flag for clang, for example `--cflag -DDEBUG`; repeat it for several.
+- `--clang`, `--lld`, `--rustc`: the tools to run. Default: the variables `CLANG`, `LLD` and `RUSTC` if set (the `build.sh` scripts of `programs/` read the same names), else `clang`, `ld.lld` and `rustc` from `PATH`.
+- `--show`: print each command as it is run, then the `terse pack` command that gives the same image. The files built into `terse` are written to a temporary directory for the build, named in the first line.
+- `--run`: after building, run the image; everything after `--run` goes to `terse run` (`terse build hello.c --run --frames 60 --dump`).
+- `--write-lib <dir>`: write the files built into `terse` to a directory: `terse.h`, `terse.c`, `crt0.S` and `terse.ld` (programs/lib) and `terse.rs` (programs/lib/rust), to read them or to build by hand.
+
+`terse build` prints the image's size, its RAM and its ID on standard error:
+
+```
+hello.terse: 386 bytes (ROM 350), RAM 2 pages
+    (4 bytes of data, the rest stack), id 54c6bd79...
+```
+
+(one line). The same sources and the same compiler give the same image, byte for byte.
+
+## What it runs for C and assembly
+
+```
+clang $CFLAGS -I <lib> -c <lib>/crt0.S -o 0.o
+clang $CFLAGS -I <lib> -c hello.c -o 1.o
+clang $CFLAGS -I <lib> -c <lib>/terse.c -o 2.o
+ld.lld -T <lib>/terse.ld --gc-sections 0.o 1.o 2.o \
+    -o out.elf
+terse pack --rom rom.bin --title hello --ram-pages 2 \
+    --device 2:0 --device 3:0 -o hello.terse
+```
+
+`crt0.S` is compiled only when there is C, and each source in its turn as `1.o`; `rom.bin` is the ELF file's loaded bytes (below). `$CFLAGS` is
+
+```
+--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
+-Os -ffreestanding -nostdlib -fno-builtin
+-ffunction-sections -fdata-sections
+```
+
+the flags of every `programs/*/build.sh`: built with its build.sh's header options, each program of `programs/` that uses programs/lib comes out byte for byte as its checked-in image (crates/terse-cli/tests/build.rs checks it).
 
 | Flag | Why |
 |---|---|
-| `--target=riscv32-unknown-elf` | 32-bit RISC-V, no operating system |
-| `-march=rv32imc -mabi=ilp32` | exactly the machine's instruction set; no floating-point registers |
+| `--target=riscv32-unknown-elf` | 32-bit RISC-V, no operating system: no system headers or libraries |
+| `-march=rv32imc` | exactly the CPU (SPEC §cpu): integers, multiply and divide, compressed instructions; no atomics, no floating-point registers |
+| `-mabi=ilp32` | the calling convention without floating-point registers |
 | `-Os` | small code: ROM is at most 128 KiB and every instruction costs budget |
-| `-ffreestanding -nostdlib -fno-builtin` | no C library and no start files |
-| `-ffunction-sections -fdata-sections` | with `--gc-sections` at link time, unused functions are dropped |
+| `-ffreestanding` | no hosted C library: only freestanding headers such as `stdint.h` |
+| `-nostdlib` | link no C library or start files |
+| `-fno-builtin` | `memcpy` and the like are not known functions; terse.c provides `memcpy`, `memmove`, `memset` and `memcmp` |
+| `-ffunction-sections -fdata-sections` | each function and variable in its own section, so `--gc-sections` drops what a program does not use |
+| `-I <lib>` | finds `terse.h` |
+| `-T terse.ld` | the memory map (below) |
+| `--gc-sections` | drop every section nothing refers to |
 
-A C program's build, in fish as the README writes it (the `build.sh` scripts do the same in sh, and take `CLANG`, `LLD`, `OBJCOPY`, `TERSE` and `CARGO` from the environment):
+crt0.S comes first and terse.c last. `crt0.S` holds `_start`, in the section `.text.start`, which the linker script puts at the first byte of ROM, where the machine starts (SPEC §reset). It copies `.data` from ROM to RAM, calls `main` and exits with its return value; RAM is zero at reset, so `.bss` needs nothing. A program only in assembly starts itself: it defines `_start` in `.text.start` (see `programs/hello/hello.S` or `terse new x.S`). terse.c is always linked; `--gc-sections` drops it from a program that calls nothing in it. There is no C library beyond terse.c and no compiler runtime: avoid 64-bit division and floating point in C, or bring the routines.
 
-```
-set L programs/lib
-set F --target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
-set -a F -Os -ffreestanding -nostdlib -fno-builtin
-set -a F -ffunction-sections -fdata-sections
-clang $F -I $L -c $L/crt0.S -o 0.o
-clang $F -I $L -c prog.c -o 1.o
-clang $F -I $L -c $L/terse.c -o 2.o
-ld.lld -T $L/terse.ld --gc-sections 0.o 1.o 2.o -o prog.elf
-llvm-objcopy -O binary prog.elf prog.bin
-terse pack --rom prog.bin --title prog --ram-pages 4 \
-    --device 2:0 -o prog.terse
-```
-
-`crt0.S` must be linked first. The build is reproducible: the same sources and the same clang give the same image, and each program's test fails if its checked-in `.terse` is not what its sources build to.
-
-## The library
-
-- `crt0.S` is the entry point, `_start`, in the section `.text.start`, which the linker script puts at the first byte of ROM. It copies `.data` from its load address in ROM to RAM (`.bss` needs no clearing, since RAM is zero at reset), calls `main`, and calls `exit` with `main`'s return value.
-- `terse.ld` places code and constants in ROM from `0001_0000h` and `.data`, `.bss` and the stack in RAM from `0010_0000h`. The stack grows down from the end of RAM, whose size is set only by `terse pack --ram-pages`: nothing checks at link time that it leaves room above `.bss`. A stack that grows into `.bss` corrupts it silently.
-- `terse.h` and `terse.c` give every call as a C function or macro, with the call numbers (`CALL_WAIT_FRAME` ... `CALL_V3_PERSISTENCE`), event types (`EV_KEY_DOWN` ...), key codes (`KEY_ENTER` ...), and `TERSE_ERR_UNKNOWN` and `TERSE_ERR_BUFFER`. Generic calls: `terse_call` (three arguments), `terse_call4`, `terse_call5` and `terse_call2` (two results). Calls without a wrapper of their own, such as `palette_set` and `get_cursor`, go through these.
-
-What `terse.h` provides, by area:
-
-- System: `terse_event_pop`, `terse_wait_frame`, `terse_frame`, `terse_time`, `terse_random` (repeats the call 256 bytes at a time), `terse_random_byte`, `terse_exit`, `terse_open`, `terse_argument`, `terse_pad_read`. Note that `terse_wait_frame` returns how many frames passed since its last call (at most 255), not the frame counter that `wait_frame` returns.
-- Terminal: `term_write` (splits a text into writes of at most 4,096 bytes, the most one `write` takes), `term_puts`, `term_putc`, `term_put_ascii`, `term_put_cp` (one code point up to `FFFFh` as UTF-8), `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_fill`, `term_cells_write`, `term_cells_read`, `term_is_wide`.
-- 2D vector display: a list builder (`vec_begin`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`, `vec_end`, `vec_length`), `vec_submit`, `vec_submit_list`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`. The builder does not check the buffer's size.
-- 3D vector display: the same with `v3_` names.
-- Content: the 52-byte `content_req` block, `content_submit`, a `content_` function for each operation (`content_get`, `content_put`, `content_find` ...), and named records: `record_save`, `record_load`, `record_delete`, `record_list`.
-- Page: `page_submit`, `page_submit_doc`, `page_clear`, `page_region`, `page_scroll`, `page_background`, `page_locate`, `page_place_event`, and a document builder (`doc_begin`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`, `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_figure`, `doc_end`) that never writes past its capacity and sets `doc_overflow` when full, and a path builder for figures (`path_begin`, `path_move`, `path_line` and so on).
-- Machines (the shell only): a `mach_` function for each call, such as `mach_start_program` and `mach_place`.
-- `memcpy`, `memset`, `memmove`, `memcmp`, which the compiler may call on its own.
-
-There is no other C library and no compiler runtime. Avoid floating point and 64-bit division, which need runtime routines that are not there (the link fails), or bring the routines yourself: `crates/terse-core/tests/softfloat/softfloat.c` is a tested IEEE double add, subtract, multiply and divide in integer C.
-
-## The hello program
-
-`programs/hello` is written in assembly, `hello.S`, without the library: it shows how bare the machine is. Its `build.sh` assembles it with the same flags, links it alone with `terse.ld`, and packs it with one RAM page and the terminal (`--device 2:0`). It does this:
-
-- Names the calls it uses with `.equ` (`WAIT_FRAME` = `100h`, `TERM_WRITE` = `200h`, `CELLS_WRITE` = `207h` and so on). Each call is `li a7, number`, arguments in `a0`-`a2`, `ecall`, result in `a0`.
-- At `_start` (in `.text.start`, so at `0001_0000h`) it sets the colours to 15 on 4, writes the title with `write` and sends command `04h` (clear to end of row), which paints row 0 blue.
-- Walks a table in `.rodata` of row, column, foreground, background and a zero-terminated UTF-8 string, ended by `FFh`: `set_cursor`, `set_colours`, then `write` for each. Its helper `print` calls `write` once, which is enough for short strings at the start of a frame; `term_write` in C repeats the call.
-- Builds 48 cells in `.bss` (4 bytes each: character, foreground, background) showing palette entries 0 to 15, and copies them to the grid with one `cells_write`.
-- Then loops: `wait_frame`, write the frame counter as eight hex digits with `cells_write`, and take events with `next_event` until it returns 0. A text event (`03h`) is encoded as UTF-8 and written; a key down (`01h`) of Enter writes a line break and a prompt, Backspace writes `08h`, space, `08h`, and Escape calls `exit` with 0.
-
-A test compares its screen after 30 frames with `expected-30-frames.txt`.
-
-## The same in C
+## The linker script, terse.ld
 
 ```
-#include "terse.h"
-
-int main(void)
-{
-    terse_event e;
-    term_color(15, 4);
-    term_puts(" hello");
-    term_cmd(TERM_CLEAR_EOL);
-    term_color(7, 0);
-    term_goto(0, 2);
-    term_puts("> ");
-    for (;;) {
-        terse_wait_frame();
-        while (terse_event_pop(&e)) {
-            if (e.type == EV_TEXT) {
-                uint32_t cp = e.a | e.b << 8
-                    | (uint32_t)(e.c & 0x1F) << 16;
-                term_put_cp(cp > 0xFFFF ? 0xFFFD : cp);
-            } else if (e.type == EV_KEY_DOWN) {
-                if (e.a == KEY_ENTER)
-                    term_puts("\n> ");
-                else if (e.a == KEY_ESCAPE)
-                    return 0;
-            }
-        }
-    }
-}
+ROM (rx) : ORIGIN = 0x00010000, LENGTH = 128K
+RAM (rw) : ORIGIN = 0x00100000, LENGTH = 1M
+.text   : KEEP(*(.text.start)), then *(.text .text.*)  > ROM
+.rodata : constants                                     > ROM
+.data   : __data_start .. __data_end  > RAM, at __data_load
+.bss    : (NOLOAD) up to __bss_end                      > RAM
+/DISCARD/ : .comment, .note*, .riscv.attributes, .eh_frame*
 ```
 
-## Packing
+`.data` is loaded in ROM at `__data_load`, after `.rodata`, and copied to RAM by the start code. The image's RAM is set by its header, not by the script (which allows the largest, 1 MiB); `terse build` reads where `.bss` ends from the ELF file to choose the default RAM and to refuse a count too small.
 
-`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>` writes the image header before the raw ROM and checks the result as a host would. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
+## The ROM from the ELF file
+
+The ROM is the bytes of each loadable segment (program header `PT_LOAD` with a file size) placed at its load address (`p_paddr`) from `0001_0000h`, with the gaps between segments zero: what `llvm-objcopy -O binary` writes for these files. `terse build` refuses an ELF file whose entry point is not `0001_0000h` (no `_start` in `.text.start`) or which loads anything outside the 128 KiB of ROM.
+
+## The devices an image lists
+
+`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>` writes the header before a raw ROM and checks the result as a host would; `terse build` takes the same `--device` and `--optional`. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
 
 | Slot | Device | `--device` |
 |---|---|---|
@@ -112,21 +113,10 @@ int main(void)
 | 7 | Page | `7:0` |
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |
+| 10 | Full text | `10:0` |
 
-A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that requires (`--device`) a device version it does not have.
+A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that requires (`--device`) a device version it does not have. A device the program can do without is listed with `--optional` instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it, with `terse_has_device(slot)` in C, the system device's `device` call; the answer never changes while the machine runs.
 
-A device the program can do without is listed with `--optional` instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it:
+A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
-```c
-static int keep_score;
-
-int main(void)
-{
-    keep_score = terse_has_device(4);  /* content: optional */
-    ...
-}
-```
-
-A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. `terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
-
-Next: [Running and publishing a program](terse:9b596b1db9c600928078a1ff436b0f833481f4e1fd83851bc4cf8a0b7fa92aaf).
+Next: [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec).

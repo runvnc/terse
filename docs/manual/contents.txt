@@ -33,7 +33,10 @@ Articles and the network:
 
 Programs:
 
-- [The toolchain and the C library](terse:{toolchain}): the compiler and its flags, the library, the hello program, packing an image.
+- [Building a program](terse:{toolchain}): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
+- [The C library](terse:{toolchain-c}): the start code, the linker script, terse.h, and the hello program in assembly and C.
+- [Rust programs](terse:{toolchain-rust}): the Rust runtime, what things cost, a larger program with cargo.
+- [Building by hand, and other languages](terse:{toolchain-other}): the build without `terse build`, and what any compiler must do.
 - [Running and publishing a program](terse:{running-programs}): headless runs, scripted input, the state hash, the window, costs, publishing.
 
 The Terse32 machine:

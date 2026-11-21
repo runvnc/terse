@@ -1,6 +1,6 @@
 # Running and publishing a program
 
-This article is the reference for what comes after building a program (see the toolchain article): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, `terse` stands for the `terse` command of this repository (`cargo run -p terse-cli --bin terse --`, or `target/debug/terse` after `cargo build --workspace`).
+This article is the reference for what comes after building a program (see "Building a program"): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, `terse` stands for the `terse` command of this repository (`cargo run -p terse-cli --bin terse --`, or `target/debug/terse` after `cargo build --workspace`).
 
 ## Running it headless
 
