@@ -322,14 +322,14 @@ shell's launcher.
   entries a search (newest first): "all found" is a sample, not a census.
   The host offers no lookup of a profile by key, so a reporter found this
   way shows only a short key.
-- **Budget.** A frame parses at most 2,048 bytes of reports, line by line
+- **Budget.** A frame parses at most 1,536 bytes of reports, line by line
   (a quarter of that in a frame that may draw), scans at most 64
-  timeline records and computes at most two identities' numbers; the
-  screen is drawn at most every 6 frames while reports arrive. It keeps a
-  small fact per reporter and identity, never the reports (at most 256
-  reporters, 48 identities, 1,024 facts, 1,536 entries taken). Tested:
-  about 75 reports a second from followed feeds, the busiest frame under
-  75 % of the budget.
+  timeline records and, only in a frame that parsed little, computes one
+  identity's numbers; the screen is drawn at most every 6 frames while
+  reports arrive. It keeps a small fact per reporter and identity, never
+  the reports (at most 256 reporters, 48 identities, 1,024 facts, 1,536
+  entries taken). Tested: about 70 reports a second from followed feeds;
+  the busiest frame under 70 % of the budget, also with 250 reporters.
 
 The list gives each identity three rows: its kind and identity, then the
 verdict among the feeds the user follows and among all found, under one

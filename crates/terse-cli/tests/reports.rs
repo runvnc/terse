@@ -429,6 +429,30 @@ fn no_relay() {
     assert!(run.row(2).starts_with("Followed: 11 reporters."), "{}", run.row(2));
 }
 
+/// The most reporters the program keeps, all followed, each with one
+/// report: every frame ends within the budget, also the one that lists
+/// them all (Enter on the host).
+#[test]
+fn many_reporters_stay_within_the_budget() {
+    let store = tempfile::tempdir().unwrap();
+    let author = Node::new(BlobStore::open(store.path(), None).unwrap(), None);
+    let followed: Vec<Identity> = (0..250u32).map(|i| Identity::from_seed([(i % 250) as u8, (i / 250) as u8 + 1, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 9])).collect();
+    let mut w = World { store, author, time: 1_794_938_400, followed: followed.clone(), published: Vec::new(), malformed_reports: 0 };
+    for (i, f) in followed.iter().enumerate() {
+        let mut s = spec(4 + (i as u32 % 3) * 4, 8 << (i % 3));
+        s.page_halted = i % 4 == 0;
+        s.perf = Some(i % 7 == 0);
+        w.report(f, &make(&s));
+    }
+    // Enter on the first group (the host) once all are in, then scroll.
+    let mut run = Run::new(&w, None, "400 press enter\n410 press down\n411 press down\n420 press escape\n");
+    run.frames(430);
+    assert!(run.row(2).starts_with("Followed: 250 reporters."), "{}", run.row(2));
+    let busiest = run.used.iter().copied().max().unwrap();
+    eprintln!("reports: 250 reporters, busiest frame {busiest} units ({:.1}%)", common::pct(busiest));
+    assert!(busiest < BUDGET_PER_FRAME as u64 * 9 / 10, "{busiest}");
+}
+
 #[test]
 fn image_is_up_to_date() {
     common::check_up_to_date(IMAGE, &["reports/reports.c"], true, "reports", RAM_PAGES, &[(2, 0), (4, 0), (10, 0x80)]);

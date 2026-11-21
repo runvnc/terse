@@ -28,12 +28,12 @@
  * start-up, a device's blamed frames per 10,000, a perf run's targets
  * missed). Nothing else of a report is kept, and no count in a report is
  * trusted beyond its own reporter. The verdicts are computed from the
- * facts, at most two groups a frame, in the words of RECORD.md 5.5.
+ * facts, at most one group a frame, in the words of RECORD.md 5.5.
  *
  * Budget: a frame parses at most PARSE_BYTES of reports (line by line;
  * a quarter of that in a frame that may draw the screen),
- * scans at most SCAN_RECORDS timeline records and computes at most two
- * groups' tallies; the screen is drawn at most every 6 frames while
+ * scans at most SCAN_RECORDS timeline records and computes at most one
+ * group's tallies, only in a frame that parsed little; the screen is drawn at most every 6 frames while
  * reports arrive. Everything is static RAM.
  *
  * Screens. The list: three rows a group (its kind and identity, then the
@@ -53,7 +53,7 @@
 
 #define DOC_MAX 8192
 #define HEAD 45 /* TDOC, 0, 32 zero bytes, 7, "reports" */
-#define PARSE_BYTES 2048
+#define PARSE_BYTES 1536
 #define SCAN_RECORDS 64
 #define MAX_GROUPS 48
 #define MAX_REPORTERS 256
@@ -1113,23 +1113,29 @@ static void stat_row(uint8_t r, const char *what, uint32_t a, uint32_t b)
 static uint16_t rep_list[MAX_REPORTERS];
 static uint32_t rep_n;
 
-/* The group's reporters, followed first, then by key. */
+/* The group's reporters, followed first, then by the first 31 bits of
+ * their key (a shell sort on one word each: a few hundred reporters cost
+ * well under a frame). */
+static uint32_t rep_key[MAX_REPORTERS];
+
 static void list_reporters(uint32_t g)
 {
     rep_n = 0;
-    for (int32_t i = groups[g].head; i >= 0; i = facts[i].next) {
-        uint16_t x = i;
-        uint32_t j = rep_n++;
-        const reporter *a = &reps[facts[x].rep];
-        while (j) {
-            const reporter *b = &reps[facts[rep_list[j - 1]].rep];
-            if (b->followed > a->followed || (b->followed == a->followed && memcmp(b->key, a->key, 32) < 0))
-                break;
-            rep_list[j] = rep_list[j - 1];
-            j--;
-        }
-        rep_list[j] = x;
+    for (int32_t i = groups[g].head; i >= 0 && rep_n < MAX_REPORTERS; i = facts[i].next) {
+        const reporter *r = &reps[facts[i].rep];
+        rep_key[rep_n] = (uint32_t)!r->followed << 31 | (r->key[0] << 23 | r->key[1] << 15 | r->key[2] << 7 | r->key[3] >> 1);
+        rep_list[rep_n++] = i;
     }
+    for (uint32_t gap = rep_n / 2; gap; gap /= 2)
+        for (uint32_t i = gap; i < rep_n; i++)
+            for (uint32_t j = i; j >= gap && rep_key[j - gap] > rep_key[j]; j -= gap) {
+                uint32_t k = rep_key[j];
+                uint16_t x = rep_list[j];
+                rep_key[j] = rep_key[j - gap];
+                rep_list[j] = rep_list[j - gap];
+                rep_key[j - gap] = k;
+                rep_list[j - gap] = x;
+            }
 }
 
 static void draw_detail(void)
@@ -1521,7 +1527,8 @@ static void gets_step(void)
 /* The report being parsed: which get buffer, or -1. */
 static int8_t parsing = -1;
 
-static void parse_step(uint32_t budget)
+/* Parses up to `budget` bytes; returns the bytes left. */
+static uint32_t parse_step(uint32_t budget)
 {
     while (budget) {
         if (parsing < 0) {
@@ -1549,7 +1556,7 @@ static void parse_step(uint32_t budget)
                     break;
                 }
             if (parsing < 0)
-                return;
+                return budget;
         }
         /* One line. */
         const uint8_t *s = P.p, *e = s;
@@ -1575,6 +1582,7 @@ static void parse_step(uint32_t budget)
             dirty = 1;
         }
     }
+    return 0;
 }
 
 /* --- Main ------------------------------------------------------------------- */
@@ -1681,10 +1689,11 @@ int main(void)
         find_step();
         gets_step();
         /* A frame that may draw the screen parses less. */
-        parse_step(frame_n - drawn_at >= 6 ? PARSE_BYTES / 4 : PARSE_BYTES);
-        /* At most two groups' tallies a frame. */
+        uint32_t budget = frame_n - drawn_at >= 6 ? PARSE_BYTES / 4 : PARSE_BYTES;
+        uint32_t left = parse_step(budget);
+        /* One group's tallies a frame, in a frame that parsed little. */
         uint32_t done = 0;
-        for (uint32_t g = 0; g < ngroups && done < 2; g++)
+        for (uint32_t g = 0; g < ngroups && done < 1 && budget - left < PARSE_BYTES / 4; g++)
             if (tally_dirty[g]) {
                 tally_dirty[g] = 0;
                 compute(g, 0);
