@@ -4,9 +4,13 @@
 //! Every scenario runs headless, in temporary directories, with relays
 //! started here on ephemeral loopback ports: nothing reads or writes the
 //! user's config, cache or data directories, and nothing uses port 7878.
-//! Requirements are in frames, round trips or "no network access", and
-//! print PASS or FAIL; targets are in milliseconds on a named machine and
-//! print as information. A run exits with 1 if any requirement failed.
+//!
+//! Three tiers (PERFORMANCE.md §1): requirements are in frames, round
+//! trips or "no network access", and pass or fail; ceilings are wall-clock
+//! limits far above any correct implementation on any reasonable computer,
+//! and fail on any machine; targets are the reference machine's numbers,
+//! information unless `--strict`. Ceilings and targets judge the median of
+//! the runs. A run exits with 1 if anything failed.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -35,7 +39,94 @@ const GIVE_UP: u32 = 600;
 /// Entries published for the sync scenarios.
 const SYNC_ENTRIES: u32 = 50;
 
-pub const USAGE: &str = "terse perf [--only <text>] [--runs <n>] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]\n       terse perf --write-worst <dir>   (the W rows' images, PERFORMANCE.md R10)";
+pub const USAGE: &str = "terse perf [--only <text>] [--runs <n>] [--strict] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]\n       terse perf --write-worst <dir>   (the W rows' images, PERFORMANCE.md R10)";
+
+/// A frame's time in milliseconds.
+const FRAME_MS: f64 = 1000.0 / 60.0;
+
+/// What a measurement counts, and how its limits are shown.
+#[derive(Clone, Copy, PartialEq)]
+enum Unit {
+    /// Milliseconds.
+    Ms,
+    /// Milliseconds of the host's drawing, the limits shown in frame times.
+    FrameTimes,
+    /// The machine's frames, in the real-time loop.
+    Frames,
+}
+
+/// A timed measurement's target and ceiling (PERFORMANCE.md §1): the
+/// target is the reference machine's, information unless `--strict`; the
+/// ceiling fails on any machine. Both judge the median of the runs.
+#[derive(Clone, Copy, PartialEq)]
+struct Limit {
+    target: f64,
+    ceiling: f64,
+    unit: Unit,
+}
+
+/// A held article or the timeline shown by a whole process (`terse get`,
+/// `terse feed list`, the Go reader): C2–C5, G2–G5.
+const HELD_PROCESS: Limit = Limit { target: 25.0, ceiling: 250.0, unit: Unit::Ms };
+/// A feed of 50 entries and their articles synced from a local relay: C1, G1.
+const SYNC: Limit = Limit { target: 400.0, ceiling: 2000.0, unit: Unit::Ms };
+/// A key to what it shows, everything held, in the real-time loop: M7–M9.
+const SHOWN: Limit = Limit { target: 3.0, ceiling: 15.0, unit: Unit::Frames };
+/// The host's start to its first frame drawn, software renderer: H1, H5.
+const START: Limit = Limit { target: 50.0, ceiling: 1500.0, unit: Unit::Ms };
+/// The same, cold: the first run on this machine as a new user has it (H7).
+const COLD_START: Limit = Limit { target: 100.0, ceiling: 1500.0, unit: Unit::Ms };
+/// The same on the GPU renderer, which starts the graphics driver (H8).
+const GPU_START: Limit = Limit { target: 500.0, ceiling: 1500.0, unit: Unit::Ms };
+/// A frame of the host's worst legal drawing on one thread (H2–H4, W rows,
+/// the phosphor look shed): within a frame on the reference, 4 anywhere.
+const WORST_FRAME: Limit = Limit { target: FRAME_MS, ceiling: 4.0 * FRAME_MS, unit: Unit::FrameTimes };
+/// 1,200 CJK glyphs never drawn before, each frame, from a listed font (H6).
+const NEW_GLYPHS: Limit = Limit { target: 2.0 * FRAME_MS, ceiling: 6.0 * FRAME_MS, unit: Unit::FrameTimes };
+/// A shell and 8 machines, every device at its worst, one thread (W sys-*).
+const SYSTEM: Limit = Limit { target: 4.0 * FRAME_MS, ceiling: 12.0 * FRAME_MS, unit: Unit::FrameTimes };
+
+impl Limit {
+    fn show(&self, v: f64) -> String {
+        match self.unit {
+            Unit::Ms => format!("{v:.0} ms"),
+            Unit::Frames => format!("{v:.0} frames"),
+            Unit::FrameTimes => {
+                let n = (v / FRAME_MS).round();
+                format!("{n:.0} frame{} ({v:.1} ms)", if n == 1.0 { "" } else { "s" })
+            }
+        }
+    }
+
+    /// "C ≤ 250 ms, T ≤ 25 ms".
+    fn rule(&self) -> String {
+        format!("C ≤ {}, T ≤ {}", self.show(self.ceiling), self.show(self.target))
+    }
+}
+
+/// Several runs of one measurement, judged by their median.
+struct Measure {
+    /// What it is, if the row has several ("" if not).
+    name: String,
+    samples: Vec<f64>,
+    limit: Limit,
+}
+
+impl Measure {
+    fn new(name: &str, samples: Vec<f64>, limit: Limit) -> Self {
+        Measure { name: name.to_string(), samples, limit }
+    }
+
+    fn median(&self) -> f64 {
+        median(self.samples.clone())
+    }
+
+    fn show(&self) -> String {
+        let unit = if self.limit.unit == Unit::Frames { "frames" } else { "ms" };
+        let s = spread(self.samples.clone(), unit);
+        if self.name.is_empty() { s } else { format!("{} {s}", self.name) }
+    }
+}
 
 enum Verdict {
     Pass,
@@ -50,6 +141,25 @@ struct Row {
     measured: String,
     rule: String,
     verdict: Verdict,
+    /// Timed measurements with a ceiling and a target.
+    measures: Vec<Measure>,
+}
+
+/// A row with no timed measurement.
+fn row(id: &'static str, what: impl Into<String>, measured: impl Into<String>, rule: impl Into<String>, verdict: Verdict) -> Row {
+    Row { id, what: what.into(), measured: measured.into(), rule: rule.into(), verdict, measures: Vec::new() }
+}
+
+impl Row {
+    fn with(mut self, m: Measure) -> Self {
+        self.measures.push(m);
+        self
+    }
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v[v.len() / 2]
 }
 
 /// A directory removed when dropped.
@@ -247,13 +357,13 @@ fn machine_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
         if asked > 0 || !status.contains("done") {
             verdict = Verdict::Fail;
         }
-        rows.push(Row {
+        rows.push(row(
             id,
-            what: format!("{label}: submit to content-done (fetch)"),
-            measured: format!("{measured}; service {}; relay asked {asked} times; {status}", ms(latency)),
-            rule: format!("R6: ≤ {HELD_FRAMES} frames; R1: no relay asked"),
+            format!("{label}: submit to content-done (fetch)"),
+            format!("{measured}; service {}; relay asked {asked} times; {status}", ms(latency)),
+            format!("R6: ≤ {HELD_FRAMES} frames; R1: no relay asked"),
             verdict,
-        });
+        ));
     }
 
     // M2: not held, on a connected relay: one round trip.
@@ -282,13 +392,13 @@ fn machine_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
         let (at, _) = fetch_frames(service(&store, &Net::Connected(&relay), None)?)?;
         frames.push(at.unwrap_or(GIVE_UP) as f64);
     }
-    rows.push(Row {
-        id: "M2",
-        what: "get not held, on a connected local relay".into(),
-        measured: format!("{trips} Get; service {}; fetch {}", spread(lat, "ms"), spread(frames, "frames")),
-        rule: "R2: 1 round trip".into(),
-        verdict: if trips == 1 { Verdict::Pass } else { Verdict::Fail },
-    });
+    rows.push(row(
+        "M2",
+        "get not held, on a connected local relay",
+        format!("{trips} Get; service {}; fetch {}", spread(lat, "ms"), spread(frames, "frames")),
+        "R2: 1 round trip",
+        if trips == 1 { Verdict::Pass } else { Verdict::Fail },
+    ));
 
     // M3: not held and no relay: not found at once.
     let tmp = Tmp::new("m3")?;
@@ -296,13 +406,7 @@ fn machine_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
     BlobStore::open(&store, None).map_err(|e| e.to_string())?;
     let (at, status) = fetch_frames(service(&store, &Net::None, None)?)?;
     let (measured, verdict) = frames_rule(at, HELD_FRAMES);
-    rows.push(Row {
-        id: "M3",
-        what: "get not held, no relay: not found".into(),
-        measured: format!("{measured}; {status}"),
-        rule: format!("R6: ≤ {HELD_FRAMES} frames"),
-        verdict,
-    });
+    rows.push(row("M3", "get not held, no relay: not found", format!("{measured}; {status}"), format!("R6: ≤ {HELD_FRAMES} frames"), verdict));
 
     // M4: the timeline from the store while the only relay never answers.
     let tmp = Tmp::new("m4")?;
@@ -311,13 +415,13 @@ fn machine_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
     let mut svc = service(&store, &Net::Silent(&silent), Some(Subscriptions::in_memory([key])))?;
     let (latency, outcome) = service_latency(&mut svc, RequestKind::Timeline { offset: 0, length: 4096 });
     let ok = matches!(outcome, Some(Outcome::Records { .. })) && latency < FRAME * HELD_FRAMES;
-    rows.push(Row {
-        id: "M4",
-        what: "timeline request, subscribed, relay never answers".into(),
-        measured: ms(latency),
-        rule: format!("R3, R6: ≤ {HELD_FRAMES} frames"),
-        verdict: if ok { Verdict::Pass } else { Verdict::Fail },
-    });
+    rows.push(row(
+        "M4",
+        "timeline request, subscribed, relay never answers",
+        ms(latency),
+        format!("R3, R6: ≤ {HELD_FRAMES} frames"),
+        if ok { Verdict::Pass } else { Verdict::Fail },
+    ));
 
     // M10: programs/conform-perf in the real-time loop: its own PASS
     // lines, and the frame rate against the clock (about 6 s). (No relay:
@@ -335,16 +439,16 @@ fn machine_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
     let text = machine.terminal().map(|t| t.text()).unwrap_or_default();
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("PASS") || l.contains("FAIL") || l.contains("not checked")).collect();
     let short = |l: &str| l.split("  ").next().unwrap_or(l).trim().to_string();
-    rows.push(Row {
-        id: "M10",
-        what: "programs/conform-perf in the real-time loop".into(),
-        measured: lines.iter().map(|l| short(l)).collect::<Vec<_>>().join("; "),
-        rule: "R6, R8: every line PASS".into(),
-        verdict: if !lines.is_empty() && lines.iter().all(|l| l.contains("PASS")) { Verdict::Pass } else { Verdict::Fail },
-    });
+    rows.push(row(
+        "M10",
+        "programs/conform-perf in the real-time loop",
+        lines.iter().map(|l| short(l)).collect::<Vec<_>>().join("; "),
+        "R6, R8: every line PASS",
+        if !lines.is_empty() && lines.iter().all(|l| l.contains("PASS")) { Verdict::Pass } else { Verdict::Fail },
+    ));
 
     shell_rows(rows, runs)?;
-    reader_rows(rows)?;
+    reader_rows(rows, runs)?;
     Ok(())
 }
 
@@ -391,28 +495,19 @@ fn shell_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
         start.push(first.map_or(GIVE_UP as f64, |f| f as f64 - 4.0));
         text.push(done.map_or(GIVE_UP as f64, |f| f as f64 - 4.0));
     }
-    rows.push(Row {
-        id: "M5",
-        what: "shell start to the launcher on screen".into(),
-        measured: spread(launcher, "frames"),
-        rule: "the shell's own frames".into(),
-        verdict: Verdict::Info,
-    });
+    rows.push(row("M5", "shell start to the launcher on screen", spread(launcher, "frames"), "the shell's own frames", Verdict::Info));
     let worst = start.iter().copied().fold(0.0, f64::max);
-    rows.push(Row {
-        id: "M6",
-        what: "program start (held image): Enter on fetch to fetch's first frame".into(),
-        measured: spread(start, "frames"),
-        rule: format!("R9: ≤ {HELD_FRAMES} frames"),
-        verdict: if worst <= HELD_FRAMES as f64 { Verdict::Pass } else { Verdict::Fail },
-    });
-    rows.push(Row {
-        id: "M7",
-        what: "Enter on fetch to its message on screen (emulation only)".into(),
-        measured: format!("{}; {}", spread(text, "frames"), spread(wall, "ms")),
-        rule: "T: ≤ 6 frames".into(),
-        verdict: Verdict::Info,
-    });
+    rows.push(row(
+        "M6",
+        "program start (held image): Enter on fetch to fetch's first frame",
+        spread(start, "frames"),
+        format!("R9: ≤ {HELD_FRAMES} frames"),
+        if worst <= HELD_FRAMES as f64 { Verdict::Pass } else { Verdict::Fail },
+    ));
+    rows.push(
+        row("M7", "Enter on fetch to its message on screen (emulation only)", spread(wall, "ms"), "", Verdict::Info)
+            .with(Measure::new("", text, SHOWN)),
+    );
     Ok(())
 }
 
@@ -425,7 +520,27 @@ fn page_text(m: &Machine) -> String {
 
 /// The reader (programs/reader) in a real-time loop: M opens the manual's
 /// index; Tab and Enter follow its first link. Both articles are held.
-fn reader_rows(rows: &mut Vec<Row>) -> Result<(), String> {
+fn reader_rows(rows: &mut Vec<Row>, runs: usize) -> Result<(), String> {
+    let (mut opened, mut followed) = (Vec::new(), Vec::new());
+    for _ in 0..runs {
+        let (o, f) = reader_run()?;
+        opened.push(o.map_or(GIVE_UP as f64, |f| f.saturating_sub(10) as f64));
+        followed.push(f.map_or(GIVE_UP as f64, |f| f.saturating_sub(6) as f64));
+    }
+    rows.push(
+        row("M8", "reader: M to the manual's index on the page (held)", "", "", Verdict::Info)
+            .with(Measure::new("", opened, SHOWN)),
+    );
+    rows.push(
+        row("M9", "reader: Enter on a link to the article on the page (held)", "", "", Verdict::Info)
+            .with(Measure::new("", followed, SHOWN)),
+    );
+    Ok(())
+}
+
+/// One run of [`reader_rows`]: the frames in which the index and the
+/// article were on the page.
+fn reader_run() -> Result<(Option<u32>, Option<u32>), String> {
     let tmp = Tmp::new("reader")?;
     let store = held_store(&tmp)?;
     let content = service(&store, &Net::None, None)?;
@@ -456,21 +571,7 @@ fn reader_rows(rows: &mut Vec<Row>) -> Result<(), String> {
         let now = page_text(&machine);
         machine.frame() > base + 6 && !now.is_empty() && now != index
     });
-    rows.push(Row {
-        id: "M8",
-        what: "reader: M to the manual's index on the page (held)".into(),
-        measured: opened.map_or("never".into(), |f| format!("{} frames", f - 10)),
-        rule: "T: ≤ 6 frames".into(),
-        verdict: Verdict::Info,
-    });
-    rows.push(Row {
-        id: "M9",
-        what: "reader: Enter on a link to the article on the page (held)".into(),
-        measured: followed.map_or("never".into(), |f| format!("{} frames", f.saturating_sub(6))),
-        rule: "T: ≤ 6 frames".into(),
-        verdict: Verdict::Info,
-    });
-    Ok(())
+    Ok((opened, followed))
 }
 
 fn headless_content(h: terse_net::service::Headless) -> Option<ContentService> {
@@ -525,150 +626,184 @@ fn publish_feed(relay: &LocalRelay) -> Result<([u8; 32], [u8; 32]), String> {
     Ok((author.feed_key(), first.unwrap()))
 }
 
+/// `terse` with `home`'s store and config and `url` as its only relay.
+fn cli(terse: &Path, home: &Tmp, url: &str, args: &[&str]) -> Command {
+    let mut c = isolated(terse, home);
+    c.args(args).args(["--relay", url, "--store"]).arg(home.path("store")).arg("--config").arg(home.path("cfg")).arg("--no-feed-relays");
+    c
+}
+
+/// `tersereader` with its directory in `home` and `url` as its only relay.
+fn go(reader: &Path, home: &Tmp, url: &str, args: &[&str]) -> Command {
+    let mut c = isolated(reader, home);
+    c.arg("--dir").arg(home.path("reader")).args(["--node", "in-process", "--relay", url, "--no-feed-relays"]).args(args);
+    c
+}
+
+/// Runs `cmd` `runs` times; the times in milliseconds and the last output.
+fn repeat(runs: usize, mut cmd: impl FnMut() -> Command) -> Result<(Vec<f64>, String), String> {
+    let mut v = Vec::new();
+    let mut out = String::new();
+    for _ in 0..runs {
+        let (took, o) = timed(&mut cmd())?;
+        v.push(took.as_secs_f64() * 1000.0);
+        out = o;
+    }
+    Ok((v, out))
+}
+
+/// The worst of several runs is under a second: "no wait" for a relay that
+/// never answers (it would time out after 10 s).
+fn no_wait(v: &[f64]) -> Verdict {
+    if v.iter().all(|&t| t < 1000.0) { Verdict::Pass } else { Verdict::Fail }
+}
+
 fn client_rows(rows: &mut Vec<Row>, runs: usize, reader: Option<PathBuf>) -> Result<(), String> {
     let terse = std::env::current_exe().map_err(|e| e.to_string())?;
     let relay = LocalRelay::start()?;
     let silent = SilentRelay::start()?;
     let (key, article) = publish_feed(&relay)?;
-    let key = to_hex(&key);
+    let (key, article) = (to_hex(&key), to_hex(&article));
 
-    // The reference command line as a reading client.
-    let home = Tmp::new("cli")?;
-    let (store, config) = (home.path("store"), home.path("cfg"));
-    let net = |c: &mut Command, url: &str| {
-        c.args(["--relay", url, "--store"]).arg(&store).arg("--config").arg(&config).arg("--no-feed-relays");
-    };
-    let mut c = isolated(&terse, &home);
-    c.args(["feed", "subscribe", &key]);
-    net(&mut c, &relay.url);
-    timed(&mut c)?;
-    let (subs, gets) = (relay.relay.received(SUBSCRIBE), relay.gets());
-    let mut c = isolated(&terse, &home);
-    c.args(["feed", "sync"]);
-    net(&mut c, &relay.url);
-    let (took, _) = timed(&mut c)?;
-    rows.push(Row {
-        id: "C1",
-        what: format!("terse feed sync: {SYNC_ENTRIES} new entries and articles from a local relay"),
-        measured: format!("{}; {} Subscribe, {} Get", ms(took), relay.relay.received(SUBSCRIBE) - subs, relay.gets() - gets),
-        rule: "R4: 1 Subscribe per feed; T: ≤ 500 ms".into(),
-        verdict: if relay.relay.received(SUBSCRIBE) - subs == 1 { Verdict::Pass } else { Verdict::Fail },
-    });
-    let mut held = Vec::new();
-    let gets = relay.gets();
+    // The reference command line as a reading client. Each sync starts
+    // from an empty store; the last one's is used for the rest.
+    let (mut sync, mut subscribes, mut gets) = (Vec::new(), Vec::new(), 0);
+    let mut home = None;
     for _ in 0..runs {
-        let mut c = isolated(&terse, &home);
-        c.args(["get", &to_hex(&article), "-o"]).arg(home.path("out"));
-        net(&mut c, &relay.url);
-        held.push(timed(&mut c)?.0.as_secs_f64() * 1000.0);
+        let h = Tmp::new("cli")?;
+        timed(&mut cli(&terse, &h, &relay.url, &["feed", "subscribe", &key]))?;
+        let (subs, before) = (relay.relay.received(SUBSCRIBE), relay.gets());
+        let (took, _) = timed(&mut cli(&terse, &h, &relay.url, &["feed", "sync"]))?;
+        sync.push(took.as_secs_f64() * 1000.0);
+        subscribes.push(relay.relay.received(SUBSCRIBE) - subs);
+        gets = relay.gets() - before;
+        home = Some(h);
     }
-    let asked = relay.gets() - gets;
-    rows.push(Row {
-        id: "C2",
-        what: "terse get of a held article (process start to exit), relay connected".into(),
-        measured: format!("{}; relay asked {asked} times", spread(held, "ms")),
-        rule: "R1: no relay asked; T: ≤ 50 ms".into(),
-        verdict: if asked == 0 { Verdict::Pass } else { Verdict::Fail },
-    });
-    let mut c = isolated(&terse, &home);
-    c.args(["get", &to_hex(&article), "-o"]).arg(home.path("out"));
-    net(&mut c, &silent.url);
-    let (took, _) = timed(&mut c)?;
-    rows.push(Row {
-        id: "C3",
-        what: "terse get of a held article, relay never answers".into(),
-        measured: ms(took),
-        rule: "R1: no wait for the relay (< 1 s; it times out at 10 s)".into(),
-        verdict: if took < Duration::from_secs(1) { Verdict::Pass } else { Verdict::Fail },
-    });
-    let mut c = isolated(&terse, &home);
-    c.args(["feed", "list"]);
-    net(&mut c, &silent.url);
-    let (took, out) = timed(&mut c)?;
-    rows.push(Row {
-        id: "C4",
-        what: "terse feed list (the timeline from the store), relay never answers".into(),
-        measured: format!("{}; {} entries", ms(took), out.lines().filter(|l| l.contains("Article")).count()),
-        rule: "R3: no wait for the relay (< 1 s)".into(),
-        verdict: if took < Duration::from_secs(1) { Verdict::Pass } else { Verdict::Fail },
-    });
+    let home = home.ok_or("no runs")?;
+    let out = home.path("out");
+    let out = out.to_str().ok_or("a temporary path that is not UTF-8")?;
+    rows.push(
+        row(
+            "C1",
+            format!("terse feed sync: {SYNC_ENTRIES} new entries and articles from a local relay"),
+            format!("{} Subscribe, {gets} Get", subscribes.iter().max().unwrap_or(&0)),
+            "R4: 1 Subscribe per feed",
+            if subscribes.iter().all(|&n| n == 1) { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("", sync, SYNC)),
+    );
+    let before = relay.gets();
+    let (held, _) = repeat(runs, || cli(&terse, &home, &relay.url, &["get", &article, "-o", out]))?;
+    let asked = relay.gets() - before;
+    rows.push(
+        row(
+            "C2",
+            "terse get of a held article (process start to exit), relay connected",
+            format!("relay asked {asked} times"),
+            "R1: no relay asked",
+            if asked == 0 { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("", held, HELD_PROCESS)),
+    );
+    let (v, _) = repeat(runs, || cli(&terse, &home, &silent.url, &["get", &article, "-o", out]))?;
+    rows.push(
+        row("C3", "terse get of a held article, relay never answers", "", "R1: no wait for the relay (< 1 s; it times out at 10 s)", no_wait(&v))
+            .with(Measure::new("", v, HELD_PROCESS)),
+    );
+    let (v, list) = repeat(runs, || cli(&terse, &home, &silent.url, &["feed", "list"]))?;
+    rows.push(
+        row(
+            "C4",
+            "terse feed list (the timeline from the store), relay never answers",
+            format!("{} entries", list.lines().filter(|l| l.contains("Article")).count()),
+            "R3: no wait for the relay (< 1 s)",
+            no_wait(&v),
+        )
+        .with(Measure::new("", v, HELD_PROCESS)),
+    );
     let mut not_held = Vec::new();
-    let mut trips = 0;
+    let mut trips = Vec::new();
     for run in 0..runs {
         let blob = format!("C5 {run} {}", std::process::id()).into_bytes();
         relay.relay.blobs().put(&blob).map_err(|e| e.to_string())?;
         let before = relay.gets();
-        let mut c = isolated(&terse, &home);
-        c.args(["get", &to_hex(&blob_id(&blob)), "-o"]).arg(home.path("out"));
-        net(&mut c, &relay.url);
-        not_held.push(timed(&mut c)?.0.as_secs_f64() * 1000.0);
-        trips = relay.gets() - before;
+        not_held.push(timed(&mut cli(&terse, &home, &relay.url, &["get", &to_hex(&blob_id(&blob)), "-o", out]))?.0.as_secs_f64() * 1000.0);
+        trips.push(relay.gets() - before);
     }
-    rows.push(Row {
-        id: "C5",
-        what: "terse get of an article not held, from a local relay".into(),
-        measured: format!("{}; {trips} Get", spread(not_held, "ms")),
-        rule: "R2: 1 round trip".into(),
-        verdict: if trips == 1 { Verdict::Pass } else { Verdict::Fail },
-    });
+    rows.push(
+        row(
+            "C5",
+            "terse get of an article not held, from a local relay",
+            format!("{} Get", trips.iter().max().unwrap_or(&0)),
+            "R2: 1 round trip",
+            if trips.iter().all(|&n| n == 1) { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("", not_held, HELD_PROCESS)),
+    );
 
     // The Go reader, an independent implementation, if it is built.
     let Some(reader) = reader else {
-        rows.push(Row {
-            id: "G",
-            what: "Go reader (native/reader-go/tersereader)".into(),
-            measured: String::new(),
-            rule: String::new(),
-            verdict: Verdict::Skipped("not built (cd native/reader-go && go build -o tersereader .)".into()),
-        });
+        rows.push(row(
+            "G",
+            "Go reader (native/reader-go/tersereader)",
+            "",
+            "",
+            Verdict::Skipped("not built (cd native/reader-go && go build -o tersereader .)".into()),
+        ));
         return Ok(());
     };
-    let home = Tmp::new("go")?;
-    let dir = home.path("reader");
-    let go = |args: &[&str], url: &str| {
-        let mut c = isolated(&reader, &home);
-        c.arg("--dir").arg(&dir).args(["--node", "in-process", "--relay", url, "--no-feed-relays"]).args(args);
-        c
-    };
-    timed(&mut go(&["subscribe", &key], &relay.url))?;
-    let (subs, gets) = (relay.relay.received(SUBSCRIBE), relay.gets());
-    let (took, _) = timed(&mut go(&["sync", "--timeout", "20s"], &relay.url))?;
-    rows.push(Row {
-        id: "G1",
-        what: format!("tersereader sync: {SYNC_ENTRIES} new entries and articles from a local relay"),
-        measured: format!("{}; {} Subscribe, {} Get", ms(took), relay.relay.received(SUBSCRIBE) - subs, relay.gets() - gets),
-        rule: "R4: 1 Subscribe per feed; T: ≤ 500 ms".into(),
-        verdict: if relay.relay.received(SUBSCRIBE) - subs == 1 { Verdict::Pass } else { Verdict::Fail },
-    });
-    let mut dump = Vec::new();
-    let gets = relay.gets();
+    let (mut sync, mut subscribes, mut gets) = (Vec::new(), Vec::new(), 0);
+    let mut home = None;
     for _ in 0..runs {
-        dump.push(timed(&mut go(&["--dump", &to_hex(&article), "--plain", "--width", "80"], &relay.url))?.0.as_secs_f64() * 1000.0);
+        let h = Tmp::new("go")?;
+        timed(&mut go(&reader, &h, &relay.url, &["subscribe", &key]))?;
+        let (subs, before) = (relay.relay.received(SUBSCRIBE), relay.gets());
+        let (took, _) = timed(&mut go(&reader, &h, &relay.url, &["sync", "--timeout", "20s"]))?;
+        sync.push(took.as_secs_f64() * 1000.0);
+        subscribes.push(relay.relay.received(SUBSCRIBE) - subs);
+        gets = relay.gets() - before;
+        home = Some(h);
     }
-    let asked = relay.gets() - gets;
-    rows.push(Row {
-        id: "G2",
-        what: "tersereader --dump of a held article, relay connected".into(),
-        measured: format!("{}; relay asked {asked} times", spread(dump, "ms")),
-        rule: "R1: no relay asked; T: ≤ 50 ms".into(),
-        verdict: if asked == 0 { Verdict::Pass } else { Verdict::Fail },
-    });
-    let (took, _) = timed(&mut go(&["--dump", &to_hex(&article), "--plain"], &silent.url))?;
-    rows.push(Row {
-        id: "G3",
-        what: "tersereader --dump of a held article, relay never answers".into(),
-        measured: ms(took),
-        rule: "R1: no wait for the relay (< 1 s)".into(),
-        verdict: if took < Duration::from_secs(1) { Verdict::Pass } else { Verdict::Fail },
-    });
-    let (took, out) = timed(&mut go(&["list"], &silent.url))?;
-    rows.push(Row {
-        id: "G4",
-        what: "tersereader list (the timeline from the store), relay never answers".into(),
-        measured: format!("{}; {} entries", ms(took), out.lines().filter(|l| l.contains("Article")).count()),
-        rule: "R3: no wait for the relay (< 1 s)".into(),
-        verdict: if took < Duration::from_secs(1) { Verdict::Pass } else { Verdict::Fail },
-    });
+    let home = home.ok_or("no runs")?;
+    rows.push(
+        row(
+            "G1",
+            format!("tersereader sync: {SYNC_ENTRIES} new entries and articles from a local relay"),
+            format!("{} Subscribe, {gets} Get", subscribes.iter().max().unwrap_or(&0)),
+            "R4: 1 Subscribe per feed",
+            if subscribes.iter().all(|&n| n == 1) { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("", sync, SYNC)),
+    );
+    let before = relay.gets();
+    let (dump, _) = repeat(runs, || go(&reader, &home, &relay.url, &["--dump", &article, "--plain", "--width", "80"]))?;
+    let asked = relay.gets() - before;
+    rows.push(
+        row(
+            "G2",
+            "tersereader --dump of a held article, relay connected",
+            format!("relay asked {asked} times"),
+            "R1: no relay asked",
+            if asked == 0 { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("", dump, HELD_PROCESS)),
+    );
+    let (v, _) = repeat(runs, || go(&reader, &home, &silent.url, &["--dump", &article, "--plain"]))?;
+    rows.push(
+        row("G3", "tersereader --dump of a held article, relay never answers", "", "R1: no wait for the relay (< 1 s)", no_wait(&v))
+            .with(Measure::new("", v, HELD_PROCESS)),
+    );
+    let (v, list) = repeat(runs, || go(&reader, &home, &silent.url, &["list"]))?;
+    rows.push(
+        row(
+            "G4",
+            "tersereader list (the timeline from the store), relay never answers",
+            format!("{} entries", list.lines().filter(|l| l.contains("Article")).count()),
+            "R3: no wait for the relay (< 1 s)",
+            no_wait(&v),
+        )
+        .with(Measure::new("", v, HELD_PROCESS)),
+    );
 
     // The same through the local node protocol (LOCAL.md): the Go node on
     // a socket of its own, a reader process asking it.
@@ -682,8 +817,9 @@ fn client_rows(rows: &mut Vec<Row>, runs: usize, reader: Option<PathBuf>) -> Res
     }
     let socket = sockets.join("node.sock");
     let mut node = isolated(&reader, &home);
-    node.arg("--dir").arg(&dir).args(["--relay", &silent.url, "--no-feed-relays", "--socket"]).arg(&socket).arg("node");
-    let mut child = node.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    node.arg("--dir").arg(home.path("reader")).args(["--relay", &silent.url, "--no-feed-relays", "--socket"]).arg(&socket).arg("node");
+    let child = node.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    let _child = Killed(child);
     let deadline = Instant::now() + Duration::from_secs(5);
     while !socket.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -691,28 +827,36 @@ fn client_rows(rows: &mut Vec<Row>, runs: usize, reader: Option<PathBuf>) -> Res
     let via_node = |args: &[&str]| {
         let mut c = isolated(&reader, &home);
         c.args(["--node", "socket", "--socket"]).arg(&socket).args(args);
-        timed(&mut c)
+        c
     };
-    let result = (|| {
-        let mut dump = Vec::new();
-        for _ in 0..runs {
-            dump.push(via_node(&["--dump", &to_hex(&article), "--plain", "--width", "80"])?.0.as_secs_f64() * 1000.0);
-        }
-        let (list, out) = via_node(&["list"])?;
-        Ok::<_, String>((dump, list, out))
-    })();
-    let _ = child.kill();
-    let _ = child.wait();
-    let (dump, list, out) = result?;
-    let worst = dump.iter().copied().fold(list.as_secs_f64() * 1000.0, f64::max);
-    rows.push(Row {
-        id: "G5",
-        what: "tersereader via its node on the local socket: --dump held, list; relay never answers".into(),
-        measured: format!("--dump {}; list {} ({} entries)", spread(dump, "ms"), ms(list), out.lines().filter(|l| l.contains("Article")).count()),
-        rule: "R5: no wait for the relay (< 1 s)".into(),
-        verdict: if worst < 1000.0 { Verdict::Pass } else { Verdict::Fail },
-    });
+    let (dump, _) = repeat(runs, || via_node(&["--dump", &article, "--plain", "--width", "80"]))?;
+    let (list, out) = repeat(runs, || via_node(&["list"]))?;
+    let verdict = match (no_wait(&dump), no_wait(&list)) {
+        (Verdict::Pass, Verdict::Pass) => Verdict::Pass,
+        _ => Verdict::Fail,
+    };
+    rows.push(
+        row(
+            "G5",
+            "tersereader via its node on the local socket: --dump held, list; relay never answers",
+            format!("{} entries", out.lines().filter(|l| l.contains("Article")).count()),
+            "R5: no wait for the relay (< 1 s)",
+            verdict,
+        )
+        .with(Measure::new("--dump", dump, HELD_PROCESS))
+        .with(Measure::new("list", list, HELD_PROCESS)),
+    );
     Ok(())
+}
+
+/// A child process killed and reaped when dropped.
+struct Killed(std::process::Child);
+
+impl Drop for Killed {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// `--bench-render`'s line: "... p50 X ms, p99 Y ms, max Z ms, ...".
@@ -724,13 +868,7 @@ fn bench_numbers(out: &str) -> Option<(f64, f64, f64)> {
 
 fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: Option<PathBuf>) -> Result<(), String> {
     let Some(host) = host else {
-        rows.push(Row {
-            id: "H",
-            what: "terse-host (rendering)".into(),
-            measured: String::new(),
-            rule: String::new(),
-            verdict: Verdict::Skipped("terse-host not found beside terse (--host)".into()),
-        });
+        rows.push(row("H", "terse-host (rendering)", "", "", Verdict::Skipped("terse-host not found beside terse (--host)".into())));
         return Ok(());
     };
     let home = Tmp::new("host")?;
@@ -749,34 +887,50 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
         c.arg("--config").arg(home.path("cfg")).arg("--data").arg(home.path("dat")).args(extra);
         c
     };
+    // One frame drawn, then the host exits: the whole process is timed.
+    const FIRST: [&str; 4] = ["--warmup", "0", "--frames", "1"];
     let mut start = Vec::new();
     let mut first_cjk = Vec::new();
     for _ in 0..runs {
-        let (took, _) = timed(&mut bench(&hello, &["--warmup", "0", "--frames", "1"]))?;
+        let (took, _) = timed(&mut bench(&hello, &FIRST))?;
         start.push(took.as_secs_f64() * 1000.0);
         let (_, out) = timed(&mut bench(&fetch, &["--warmup", "0", "--frames", "8"]))?;
         first_cjk.push(bench_numbers(&out).ok_or("no --bench-render line")?.2);
     }
-    rows.push(Row {
-        id: "H1",
-        what: "terse-host start to hello's first frame drawn (software, offscreen)".into(),
-        measured: spread(start, "ms"),
-        rule: "T: ≤ 500 ms".into(),
-        verdict: Verdict::Info,
-    });
-    rows.push(Row {
-        id: "H2",
-        what: "fetch: slowest frame drawn (its first Greek, Cyrillic and symbols, 50 ms after start)".into(),
-        measured: spread(first_cjk, "ms"),
-        rule: "T: ≤ 50 ms".into(),
-        verdict: Verdict::Info,
+    rows.push(
+        row("H1", "terse-host start to hello's first frame drawn (software, offscreen)", "", "R13", Verdict::Info)
+            .with(Measure::new("", start, START)),
+    );
+    rows.push(
+        row("H2", "fetch: slowest frame drawn (its first Greek, Cyrillic and symbols, 50 ms after start)", "", "R11", Verdict::Info)
+            .with(Measure::new("", first_cjk, WORST_FRAME)),
+    );
+    cold_start(rows, runs, &host)?;
+    // The GPU renderer: its start includes the graphics driver's.
+    let mut gpu = Vec::new();
+    let mut failed = None;
+    for _ in 0..runs {
+        let mut args = FIRST.to_vec();
+        args.extend(["--renderer", "gpu"]);
+        match timed(&mut bench(&hello, &args)) {
+            Ok((took, _)) => gpu.push(took.as_secs_f64() * 1000.0),
+            Err(e) => {
+                failed = Some(e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("failed").trim().to_string());
+                break;
+            }
+        }
+    }
+    let what = "terse-host start to hello's first frame drawn, GPU renderer (offscreen)";
+    rows.push(match failed {
+        Some(e) => row("H8", what, "", "", Verdict::Skipped(format!("no GPU renderer here: {e}"))),
+        None => row("H8", what, "", "R13", Verdict::Info).with(Measure::new("", gpu, GPU_START)),
     });
     // R11: the frame that first shows 2,400 of the full repertoire's glyphs
     // (term-full's first frame), against term-basic's first frame (90 ASCII
     // glyphs), both on one thread; and start-up and the CJK frames with a
     // 19 MB CJK collection listed as an extra font, if this system has one.
     let worst = terse_core::worst::scenarios();
-    let first_frame = |id: &str, extra: &[&str]| -> Result<String, String> {
+    let first_frame = |id: &str, extra: &[&str]| -> Result<Vec<f64>, String> {
         let s = worst.iter().find(|s| s.id == id).ok_or("no scenario")?;
         let img = image(&format!("{id}.terse"), &s.image)?;
         let mut firsts = Vec::new();
@@ -786,27 +940,30 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             let (_, out) = timed(&mut bench(&img, &args))?;
             firsts.push(bench_numbers(&out).ok_or("no --bench-render line")?.2);
         }
-        Ok(spread(firsts, "ms"))
+        Ok(firsts)
     };
-    rows.push(Row {
-        id: "H4",
-        what: "first frame showing 2,400 new glyphs of the full repertoire, 1 thread (term-full)".into(),
-        measured: format!("{}; 90 ASCII glyphs (term-basic): {}", first_frame("term-full", &[])?, first_frame("term-basic", &[])?),
-        rule: "R11 (no font found or opened); T: ≤ 16.7 ms".into(),
-        verdict: Verdict::Info,
-    });
+    rows.push(
+        row(
+            "H4",
+            "first frame showing 2,400 new glyphs of the full repertoire, 1 thread (term-full)",
+            format!("90 ASCII glyphs (term-basic): {}", spread(first_frame("term-basic", &[])?, "ms")),
+            "R11 (no font found or opened)",
+            Verdict::Info,
+        )
+        .with(Measure::new("", first_frame("term-full", &[])?, WORST_FRAME)),
+    );
     let cjk = ["/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]
         .into_iter()
         .map(PathBuf::from)
         .find(|p| p.is_file());
     match cjk {
-        None => rows.push(Row {
-            id: "H5",
-            what: "start-up and CJK with a CJK font listed".into(),
-            measured: String::new(),
-            rule: String::new(),
-            verdict: Verdict::Skipped("no NotoSansCJK-Regular.ttc on this system".into()),
-        }),
+        None => rows.push(row(
+            "H5",
+            "start-up and CJK with a CJK font listed",
+            "",
+            "",
+            Verdict::Skipped("no NotoSansCJK-Regular.ttc on this system".into()),
+        )),
         Some(cjk) => {
             let cfg = home.path("cfg-cjk");
             std::fs::create_dir_all(&cfg).map_err(|e| e.to_string())?;
@@ -817,53 +974,72 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                 let (took, _) = timed(&mut bench(&hello, &["--warmup", "0", "--frames", "1", "--config", &cfg]))?;
                 start.push(took.as_secs_f64() * 1000.0);
             }
-            rows.push(Row {
-                id: "H5",
-                what: format!("terse-host start to hello's first frame, {} listed as an extra font", cjk.display()),
-                measured: spread(start, "ms"),
-                rule: "R11; T: as H1".into(),
-                verdict: Verdict::Info,
-            });
+            rows.push(
+                row(
+                    "H5",
+                    format!("terse-host start to hello's first frame, {} listed as an extra font", cjk.display()),
+                    "",
+                    "R11, R13",
+                    Verdict::Info,
+                )
+                .with(Measure::new("", start, START)),
+            );
             let s = worst.iter().find(|s| s.id == "term-cjk").ok_or("no scenario")?;
             let img = image("term-cjk-font.terse", &s.image)?;
-            let (_, out) = timed(&mut bench(&img, &["--warmup", "0", "--frames", "30", "--threads", "1", "--config", &cfg]))?;
-            let (p50, _, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
-            rows.push(Row {
-                id: "H6",
-                what: "term-cjk with that font listed: 1,200 new CJK glyphs a frame, 1 thread".into(),
-                measured: format!("p50 {p50:.1} ms, max {max:.1} ms"),
-                rule: "T: ≤ 16.7 ms".into(),
-                verdict: Verdict::Info,
-            });
+            let (mut p50s, mut maxes) = (Vec::new(), Vec::new());
+            for _ in 0..runs {
+                let (_, out) = timed(&mut bench(&img, &["--warmup", "0", "--frames", "30", "--threads", "1", "--config", &cfg]))?;
+                let (p50, _, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
+                p50s.push(p50);
+                maxes.push(max);
+            }
+            rows.push(
+                row(
+                    "H6",
+                    "term-cjk with that font listed: 1,200 new CJK glyphs a frame, 1 thread, p50",
+                    format!("max {}", spread(maxes, "ms")),
+                    "",
+                    Verdict::Info,
+                )
+                .with(Measure::new("p50", p50s, NEW_GLYPHS)),
+            );
         }
     }
     let conform = programs.as_ref().map(|p| p.join("conform/conform.terse")).filter(|p| p.exists());
     match conform {
-        None => rows.push(Row {
-            id: "H3",
-            what: "programs/conform's stress scenes".into(),
-            measured: String::new(),
-            rule: String::new(),
-            verdict: Verdict::Skipped("programs/conform not found (--programs)".into()),
-        }),
+        None => rows.push(row(
+            "H3",
+            "programs/conform's stress scenes",
+            "",
+            "",
+            Verdict::Skipped("programs/conform not found (--programs)".into()),
+        )),
         Some(conform) => {
             let events = conform.with_extension("events");
             for threads in ["1", "0"] {
                 // The stress phase: frames 49-108 (programs/conform/conform.c).
-                let (_, out) = timed(
-                    bench(&conform, &["--warmup", "48", "--frames", "61", "--threads", threads, "--events"]).arg(&events),
-                )?;
-                let (p50, p99, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
-                rows.push(Row {
-                    id: "H3",
-                    what: format!(
-                        "programs/conform's stress frames 49–108, software, {}",
-                        if threads == "1" { "1 thread" } else { "all threads" }
-                    ),
-                    measured: format!("p50 {p50:.2} ms, p99 {p99:.2} ms, max {max:.2} ms"),
-                    rule: "T: ≤ 16.7 ms (a worst legal case)".into(),
-                    verdict: Verdict::Info,
-                });
+                let (mut p50s, mut maxes) = (Vec::new(), Vec::new());
+                for _ in 0..runs {
+                    let (_, out) = timed(
+                        bench(&conform, &["--warmup", "48", "--frames", "61", "--threads", threads, "--events"]).arg(&events),
+                    )?;
+                    let (p50, _, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
+                    p50s.push(p50);
+                    maxes.push(max);
+                }
+                rows.push(
+                    row(
+                        "H3",
+                        format!(
+                            "programs/conform's stress frames 49–108, software, {}: slowest frame",
+                            if threads == "1" { "1 thread" } else { "all threads" }
+                        ),
+                        format!("p50 {}", spread(p50s, "ms")),
+                        "",
+                        Verdict::Info,
+                    )
+                    .with(Measure::new("max", maxes, WORST_FRAME)),
+                );
             }
         }
     }
@@ -880,23 +1056,21 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             p50s.push(p50);
             maxes.push(max);
         }
-        let median = |mut v: Vec<f64>| {
-            v.sort_by(f64::total_cmp);
-            v[v.len() / 2]
-        };
-        let (p50, max) = (median(p50s), median(maxes));
         let capped = enforced.ink2.is_some() || enforced.ink3.is_some();
-        rows.push(Row {
-            id: "W",
-            what: format!("{}: {}", s.id, s.what),
-            measured: format!("1 thread p50 {p50:.1} ms, max {max:.1} ms; {enforced}"),
-            rule: if capped { "R10: within the caps; T: ≤ 16.7 ms".into() } else { "T: ≤ 16.7 ms".into() },
-            verdict: match (capped, enforced.within()) {
-                (false, _) => Verdict::Info,
-                (true, true) => Verdict::Pass,
-                (true, false) => Verdict::Fail,
-            },
-        });
+        rows.push(
+            row(
+                "W",
+                format!("{}: {}", s.id, s.what),
+                format!("max {:.1} ms; {enforced}", median(maxes)),
+                if capped { "R10: within the caps" } else { "" },
+                match (capped, enforced.within()) {
+                    (false, _) => Verdict::Info,
+                    (true, true) => Verdict::Pass,
+                    (true, false) => Verdict::Fail,
+                },
+            )
+            .with(Measure::new("1 thread p50", p50s, WORST_FRAME)),
+        );
     }
     // R12: a shell and 8 machines, each at its worst, tiled, overlapping
     // and as panels, with the system ink (SPEC §machines.ink) and without.
@@ -904,7 +1078,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     let all = all.to_string_lossy().into_owned();
     for s in terse_core::worst::system_scenarios(builtin::PROGRAMS.len() as u32) {
         let img = image(&format!("{}.terse", s.id), &s.shell)?;
-        let p50 = |off: bool| -> Result<f64, String> {
+        let p50s = |off: bool| -> Result<Vec<f64>, String> {
             let mut v = Vec::new();
             for _ in 0..runs {
                 let mut c = bench(&img, &["--shell", "--builtin", &all, "--warmup", "12", "--frames", "30", "--threads", "1"]);
@@ -914,24 +1088,27 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                 let (_, out) = timed(&mut c)?;
                 v.push(bench_numbers(&out).ok_or("no --bench-render line")?.0);
             }
-            v.sort_by(f64::total_cmp);
-            Ok(v[v.len() / 2])
+            Ok(v)
         };
-        let (on, off) = (p50(false)?, p50(true)?);
-        rows.push(Row {
-            id: "W",
-            what: format!("{}: {}", s.id, s.what),
-            measured: format!("1 thread p50 {on:.1} ms (without the system ink {off:.1} ms)"),
-            rule: "R12: within the system ink by construction; T: ≤ 2 × the single machine's".into(),
-            verdict: Verdict::Info,
-        });
+        let (on, off) = (p50s(false)?, p50s(true)?);
+        rows.push(
+            row(
+                "W",
+                format!("{}: {}", s.id, s.what),
+                format!("without the system ink {:.1} ms", median(off)),
+                "R12: within the system ink by construction",
+                Verdict::Info,
+            )
+            .with(Measure::new("1 thread p50", on, SYSTEM)),
+        );
     }
     // The phosphor look at the caps: shed by ink (terse-host's default)
     // and in full (--no-shed); presentation, the host's choice.
-    let mut parts = Vec::new();
+    let mut full = Vec::new();
+    let mut shed = Vec::new();
     for s in terse_core::worst::scenarios().into_iter().filter(|s| s.id.ends_with("-phosphor")) {
         let img = image(&format!("{}.terse", s.id), &s.image)?;
-        let one = |extra: &[&str]| -> Result<f64, String> {
+        let one = |extra: &[&str]| -> Result<Vec<f64>, String> {
             let mut v = Vec::new();
             for _ in 0..runs {
                 let mut args = vec!["--warmup", "3", "--frames", "30", "--threads", "1"];
@@ -939,19 +1116,124 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                 let (_, out) = timed(&mut bench(&img, &args))?;
                 v.push(bench_numbers(&out).ok_or("no --bench-render line")?.0);
             }
-            v.sort_by(f64::total_cmp);
-            Ok(v[v.len() / 2])
+            Ok(v)
         };
-        parts.push(format!("{} {:.1} ({:.1})", s.id.trim_end_matches("-phosphor"), one(&[])?, one(&["--no-shed"])?));
+        let name = s.id.trim_end_matches("-phosphor");
+        full.push(format!("{name} {:.1}", median(one(&["--no-shed"])?)));
+        shed.push(Measure::new(name, one(&[])?, WORST_FRAME));
     }
-    rows.push(Row {
-        id: "W",
-        what: "phosphor look at the caps, shed by ink (in full, --no-shed), 1 thread p50 ms".into(),
-        measured: parts.join(", "),
-        rule: "T: ≤ 16.7 ms shed".into(),
-        verdict: Verdict::Info,
-    });
+    let mut r = row(
+        "W",
+        "phosphor look at the caps, shed by ink, 1 thread p50",
+        format!("in full (--no-shed, presentation: no limit): {} ms", full.join(", ")),
+        "",
+        Verdict::Info,
+    );
+    r.measures = shed;
+    rows.push(r);
     Ok(())
+}
+
+/// H7: the built-in shell's first frame as a new user's first start has it.
+/// Each run is a first run: empty store, config and data directories and a
+/// new HOME (so the host installs the built-in programs and the manual), and
+/// terse-host's own pages dropped from the page cache just before it is
+/// started, checked to be gone. The shared libraries it links (libc and the
+/// like) are left: every desktop's processes keep them resident. Then the
+/// same start again, warm, for comparison.
+fn cold_start(rows: &mut Vec<Row>, runs: usize, host: &Path) -> Result<(), String> {
+    let (mut cold, mut warm, mut resident) = (Vec::new(), Vec::new(), (0, 0));
+    let mut dropped = true;
+    for _ in 0..runs {
+        let home = Tmp::new("cold")?;
+        let start = || {
+            let mut c = isolated(host, &home);
+            c.args(["--bench-render", "--renderer", "software", "--warmup", "0", "--frames", "1", "--store"]).arg(home.path("store"));
+            c.arg("--config").arg(home.path("cfg")).arg("--data").arg(home.path("dat"));
+            c
+        };
+        // Pages of a process that has just exited can stay mapped for a
+        // moment (they cannot be dropped then): try again for up to 2 s.
+        let mut tries = 0;
+        let dropping = loop {
+            let r = page_cache::drop_pages(host);
+            tries += 1;
+            match r {
+                Ok((left, _)) if left > 0 && tries < 40 => std::thread::sleep(Duration::from_millis(50)),
+                r => break r,
+            }
+        };
+        match dropping {
+            Ok((left, pages)) => {
+                resident = (resident.0.max(left), pages);
+                // A file system that keeps them (tmpfs) gives no cold start.
+                dropped &= left * 10 <= pages;
+            }
+            Err(_) => dropped = false,
+        }
+        cold.push(timed(&mut start())?.0.as_secs_f64() * 1000.0);
+        warm.push(timed(&mut start())?.0.as_secs_f64() * 1000.0);
+    }
+    let (what, measured) = if dropped {
+        (
+            "cold start: the built-in shell's first frame on a first run (empty store, config, data, HOME; terse-host not in the page cache)",
+            format!("at most {} of terse-host's {} pages resident at start; warm, the same: {}", resident.0, resident.1, spread(warm, "ms")),
+        )
+    } else {
+        (
+            "first run: the built-in shell's first frame (empty store, config, data, HOME); terse-host could not be dropped from the page cache here",
+            format!("(not cold: {} of {} pages stayed resident); warm, the same: {}", resident.0, resident.1, spread(warm, "ms")),
+        )
+    };
+    rows.push(row("H7", what, measured, "R13", Verdict::Info).with(Measure::new("", cold, COLD_START)));
+    Ok(())
+}
+
+/// Dropping one file's pages from the page cache, without root and
+/// without touching any other file's.
+mod page_cache {
+    use std::path::Path;
+
+    /// Drops `path`'s cached pages (`posix_fadvise(POSIX_FADV_DONTNEED)`:
+    /// clean pages not mapped by a process, as an executable's are when it
+    /// is not running) and counts those still resident (`mincore`): the
+    /// number left and the file's pages.
+    #[cfg(target_os = "linux")]
+    pub fn drop_pages(path: &Path) -> Result<(usize, usize), String> {
+        use std::os::fd::AsRawFd;
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let len = file.metadata().map_err(|e| e.to_string())?.len() as usize;
+        let fd = file.as_raw_fd();
+        // SAFETY: plain system calls on a file this function holds open; the
+        // map is read only, never dereferenced, and unmapped before return.
+        unsafe {
+            let e = libc::posix_fadvise(fd, 0, 0, libc::POSIX_FADV_DONTNEED);
+            if e != 0 {
+                return Err(format!("posix_fadvise: error {e}"));
+            }
+            let page = libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize;
+            let pages = len.div_ceil(page);
+            if pages == 0 {
+                return Ok((0, 0));
+            }
+            let map = libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, 0);
+            if map == libc::MAP_FAILED {
+                return Err("mmap failed".into());
+            }
+            let mut v = vec![0u8; pages];
+            let r = libc::mincore(map, len, v.as_mut_ptr());
+            libc::munmap(map, len);
+            if r != 0 {
+                return Err("mincore failed".into());
+            }
+            Ok((v.iter().filter(|&&b| b & 1 != 0).count(), pages))
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn drop_pages(_: &Path) -> Result<(usize, usize), String> {
+        Err("no way to drop one file's pages on this system".into())
+    }
 }
 
 /// A sibling of this executable (`target/release/terse-host` beside
@@ -963,10 +1245,12 @@ fn sibling(name: &str) -> Option<PathBuf> {
 
 pub fn perf(args: &[String]) -> Result<ExitCode, String> {
     let (mut only, mut runs, mut programs, mut host, mut reader) = (None, 5usize, None, sibling("terse-host"), None);
+    let mut strict = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().cloned().ok_or(format!("{a} needs a value\nusage: {USAGE}"));
         match a.as_str() {
+            "--strict" => strict = true,
             "--only" => only = Some(value()?),
             "--runs" => runs = value()?.parse().ok().filter(|&n| n > 0).ok_or("bad --runs")?,
             "--programs" => programs = Some(PathBuf::from(value()?)),
@@ -1004,7 +1288,12 @@ pub fn perf(args: &[String]) -> Result<ExitCode, String> {
     let want = |layer: &str| only.as_deref().is_none_or(|o| layer.contains(o));
 
     let mut rows = Vec::new();
-    println!("terse perf: {} cores; load average {}", std::thread::available_parallelism().map_or(0, |n| n.get()), load());
+    println!(
+        "terse perf: {} cores; load average {}; {runs} runs of each timed scenario, ceilings (C) and targets (T) judged by the median{}",
+        std::thread::available_parallelism().map_or(0, |n| n.get()),
+        load(),
+        if strict { "; --strict: a missed target fails" } else { "" }
+    );
     if want("machine") {
         machine_rows(&mut rows, runs)?;
     }
@@ -1012,25 +1301,133 @@ pub fn perf(args: &[String]) -> Result<ExitCode, String> {
         client_rows(&mut rows, runs, reader)?;
     }
     if want("host") {
-        host_rows(&mut rows, runs.min(3), host, programs)?;
+        host_rows(&mut rows, runs, host, programs)?;
     }
-    let mut failed = 0;
+    let mut tally = Tally::default();
     let width = rows.iter().map(|r| r.what.chars().count()).max().unwrap_or(0).min(72);
-    println!("{:<4} {:<width$}  {:<44}  {:<38}  result", "id", "scenario", "measured", "requirement (R) or target (T)");
+    println!("{:<4} {:<width$}  {:<44}  {:<38}  result", "id", "scenario", "measured: median (range)", "requirement (R), ceiling (C), target (T)");
     for r in &rows {
-        let verdict = match &r.verdict {
-            Verdict::Pass => "PASS".to_string(),
-            Verdict::Fail => {
-                failed += 1;
-                "FAIL".to_string()
-            }
-            Verdict::Info => "info".to_string(),
-            Verdict::Skipped(why) => format!("skipped: {why}"),
-        };
-        println!("{:<4} {:<width$}  {:<44}  {:<38}  {verdict}", r.id, r.what, r.measured, r.rule);
+        let result = tally.judge(r, strict);
+        let measured =
+            r.measures.iter().map(Measure::show).chain((!r.measured.is_empty()).then(|| r.measured.clone())).collect::<Vec<_>>().join("; ");
+        let mut limits: Vec<Limit> = r.measures.iter().map(|m| m.limit).collect();
+        limits.dedup();
+        let rule = (!r.rule.is_empty()).then(|| r.rule.clone()).into_iter().chain(limits.iter().map(Limit::rule)).collect::<Vec<_>>().join("; ");
+        println!("{:<4} {:<width$}  {:<44}  {:<38}  {result}", r.id, r.what, measured, rule);
     }
-    println!("{} requirements, {failed} failed. Targets (T) are for the reference machine of PERFORMANCE.md.", rows.iter().filter(|r| matches!(r.verdict, Verdict::Pass | Verdict::Fail)).count());
-    Ok(if failed == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) })
+    println!("{}", tally.summary(strict));
+    Ok(if tally.failures() == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) })
+}
+
+/// What was judged, and what failed.
+#[derive(Default)]
+struct Tally {
+    requirements: usize,
+    requirements_failed: usize,
+    ceilings: usize,
+    ceilings_failed: usize,
+    targets: usize,
+    targets_missed: usize,
+    /// Whether a missed target counts as a failure (`--strict`).
+    strict: bool,
+}
+
+impl Tally {
+    /// Counts `r`'s requirement, ceilings and targets; its result column.
+    fn judge(&mut self, r: &Row, strict: bool) -> String {
+        self.strict = strict;
+        let mut failed = Vec::new();
+        match &r.verdict {
+            Verdict::Pass => self.requirements += 1,
+            Verdict::Fail => {
+                self.requirements += 1;
+                self.requirements_failed += 1;
+                failed.push("requirement");
+            }
+            Verdict::Skipped(why) => return format!("skipped: {why}"),
+            Verdict::Info => {}
+        }
+        let (mut over, mut missed) = (false, false);
+        for m in &r.measures {
+            let v = m.median();
+            self.ceilings += 1;
+            self.targets += 1;
+            if v > m.limit.ceiling {
+                self.ceilings_failed += 1;
+                over = true;
+            }
+            if v > m.limit.target {
+                self.targets_missed += 1;
+                missed = true;
+            }
+        }
+        if over {
+            failed.push("ceiling");
+        }
+        if missed && strict {
+            failed.push("target");
+        }
+        if !failed.is_empty() {
+            format!("FAIL ({})", failed.join(", "))
+        } else if matches!(r.verdict, Verdict::Pass) || !r.measures.is_empty() {
+            if missed { "PASS; target missed".into() } else { "PASS".into() }
+        } else {
+            "info".into()
+        }
+    }
+
+    fn failures(&self) -> usize {
+        self.requirements_failed + self.ceilings_failed + if self.strict { self.targets_missed } else { 0 }
+    }
+
+    fn summary(&self, strict: bool) -> String {
+        format!(
+            "{} requirements, {} ceilings, {} targets: {} failures ({} requirements, {} ceilings{}); {} targets missed{}. Targets (T) are the reference machine's, PERFORMANCE.md.",
+            self.requirements,
+            self.ceilings,
+            self.targets,
+            self.failures(),
+            self.requirements_failed,
+            self.ceilings_failed,
+            if strict { format!(", {} targets", self.targets_missed) } else { String::new() },
+            self.targets_missed,
+            if strict { "" } else { " (information; --strict makes them failures)" },
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The median is judged, not the worst run: one slow run on a busy
+    /// machine does not fail a ceiling, a slow majority does.
+    #[test]
+    fn ceilings_judge_the_median() {
+        let judge = |samples: &[f64], strict: bool| {
+            let mut t = Tally::default();
+            let r = row("H1", "", "", "", Verdict::Info).with(Measure::new("", samples.to_vec(), START));
+            (t.judge(&r, strict), t.failures())
+        };
+        assert_eq!(judge(&[20.0, 21.0, 19.0, 22.0, 2000.0], false), ("PASS".into(), 0));
+        assert_eq!(judge(&[2000.0, 1600.0, 1700.0, 20.0, 20.0], false), ("FAIL (ceiling)".into(), 1));
+        assert_eq!(judge(&[60.0, 70.0, 80.0], false), ("PASS; target missed".into(), 0));
+        assert_eq!(judge(&[60.0, 70.0, 80.0], true), ("FAIL (target)".into(), 1));
+        let mut t = Tally::default();
+        assert_eq!(t.judge(&row("R", "", "", "", Verdict::Fail).with(Measure::new("", vec![1.0], START)), true), "FAIL (requirement)");
+        assert_eq!(t.failures(), 1);
+    }
+
+    /// Every ceiling is a generous multiple of its target: at least 3 times
+    /// (PERFORMANCE.md §1, the hardware floor).
+    #[test]
+    fn ceilings_are_far_above_targets() {
+        for l in [HELD_PROCESS, SYNC, SHOWN, START, COLD_START, GPU_START, WORST_FRAME, NEW_GLYPHS, SYSTEM] {
+            assert!(l.ceiling >= 3.0 * l.target, "{}", l.rule());
+        }
+        assert_eq!(START.ceiling, 1500.0, "the owner's start-up ceiling");
+        assert_eq!(WORST_FRAME.rule(), "C ≤ 4 frames (66.7 ms), T ≤ 1 frame (16.7 ms)");
+    }
 }
 
 fn load() -> String {
