@@ -13,8 +13,8 @@ The serialization covers everything that can influence later frames or what is s
 | 45 | 4 | `pc` (after a fault, the faulting instruction) |
 | 49 | 124 | `x1` to `x31`, u32 each |
 | 173 | 4 | Frame counter (what `frame_count` returns next frame) |
-| 177 | 1 | Stopped: 0 running, 1 exited, 2 faulted |
-| 178 | 1 | Exit code, else 0 |
+| 177 | 1 | Stopped: 0 running, 1 exited, 2 faulted, 3 halted by the host |
+| 178 | 1 | Exit code; if halted, the slow device's slot; else 0 |
 | 179 | 1 | Fault kind: 1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned; else 0 |
 | 180 | 4 | Illegal instruction's encoding (16-bit in the low half), else 0 |
 | 184 | 4 | Fault `pc`, else 0 |
@@ -136,7 +136,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,423,091 (the longest serialization), and L that is 0, not a multiple of 8,192, above 1,048,576 or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:99e9a01d2ccd5a4288b0f876c24394fb245f5164aab413504d3cbb7a8047d897).
 
 ## The conformance image
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+See [the machine](terse:e77aa2d4e5fc5c4c34fda20fdf16f1ec962ec7fee8bc9ceb9e46feed46d0686a) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

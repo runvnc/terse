@@ -194,7 +194,7 @@ These go only to the shell of a system, the machine with device 8:
 
 | Type | Name | Meaning |
 |---|---|---|
-| `0Ah` | Machine changed | machine `a` is now in state `b` (1 loading, 2 running, 3 paused, 4 exited, 5 faulted, 6 failed), a change the shell did not make with a call |
+| `0Ah` | Machine changed | machine `a` is now in state `b` (1 loading, 2 running, 3 paused, 4 exited, 5 faulted, 6 failed, 7 halted), a change the shell did not make with a call |
 | `0Bh` | Home | the user pressed the host's home key; the focus is now the shell |
 | `0Ch` | Machine pressed | a pointer button was pressed over machine `a`'s picture; `b` is the buttons |
 | `0Fh` | Open requested | machine `a` made an open request the shell can read with `request` |
