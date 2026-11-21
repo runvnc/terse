@@ -619,11 +619,6 @@ impl Compositor {
         self.refresh = true;
     }
 
-    /// Whether any machine was shown in the phosphor style in the last draw.
-    pub fn any_phosphor(&self) -> bool {
-        self.shell.phosphor() || self.children.values().any(|c| c.screen.phosphor())
-    }
-
     /// The frame drawn last.
     pub fn frame(&self) -> &Pixels {
         &self.frame
