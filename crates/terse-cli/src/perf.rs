@@ -69,7 +69,7 @@ struct Limit {
 /// `terse feed list`, the Go reader): C2–C5, G2–G5.
 const HELD_PROCESS: Limit = Limit { target: 25.0, ceiling: 250.0, unit: Unit::Ms };
 /// A feed of 50 entries and their articles synced from a local relay: C1, G1.
-const SYNC: Limit = Limit { target: 400.0, ceiling: 2000.0, unit: Unit::Ms };
+const SYNC: Limit = Limit { target: 200.0, ceiling: 2000.0, unit: Unit::Ms };
 /// A key to what it shows, everything held, in the real-time loop: M7–M9.
 const SHOWN: Limit = Limit { target: 3.0, ceiling: 15.0, unit: Unit::Frames };
 /// The host's start to its first frame drawn, software renderer: H1, H5.
