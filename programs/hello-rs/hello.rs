@@ -3,8 +3,13 @@
 //!
 //! Shows a title bar, some UTF-8 text, palette entries 0-15 written straight
 //! into cell memory, and a frame counter; echoes typed text; Esc exits.
-//! Build it with:  terse build hello.rs --optional 10:0 --ram-pages 1
-//! (build.sh does exactly that; the image is checked in as hello-rs.terse).
+//! The same screen as hello.S (programs/hello/expected-30-frames.txt; the
+//! test crates/terse-cli/tests/build.rs checks it). Build and run it with
+//!     terse build hello.rs --optional 10:0
+//!     terse run hello.terse --frames 30 --dump
+//! (--optional 10:0: it shows Greek and Cyrillic, beyond the basic text
+//! repertoire, SPEC §terminal.text). No image is checked in: what rustc
+//! makes depends on its version.
 #![no_std]
 #![no_main]
 

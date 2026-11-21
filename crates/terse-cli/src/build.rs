@@ -376,8 +376,11 @@ fn build_rust(args: &Args, source: &str, name: &str, lib: &Path, tmp: &Path, elf
     let rustc = Tool::new(args, "--rustc", "RUSTC", "rustc", RUSTC_MISSING);
     check_rust_target(&rustc)?;
     let rlib = tmp.join("libterse.rlib");
+    // The runtime's panics name it as terse.rs, not by the temporary
+    // directory, so a build gives the same image every time.
+    let remap = format!("--remap-path-prefix={}/=", lib.display());
     let mut cmd = rustc.command();
-    cmd.args(RUSTFLAGS).args(["--crate-type", "rlib", "--crate-name", "terse", "-o"]).arg(&rlib).arg(lib.join("terse.rs"));
+    cmd.args(RUSTFLAGS).arg(&remap).args(["--crate-type", "rlib", "--crate-name", "terse", "-o"]).arg(&rlib).arg(lib.join("terse.rs"));
     exec(&rustc, &mut cmd, show)?;
     // A crate name is an identifier: the file's stem with anything else as _.
     let mut crate_name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
@@ -386,6 +389,7 @@ fn build_rust(args: &Args, source: &str, name: &str, lib: &Path, tmp: &Path, elf
     }
     let mut cmd = rustc.command();
     cmd.args(RUSTFLAGS)
+        .arg(&remap)
         .args(["-C", "lto", "-C", "strip=debuginfo", "--crate-type", "bin", "--crate-name", &crate_name])
         .arg("-C")
         .arg(format!("link-arg=-T{}", lib.join("terse.ld").display()))
