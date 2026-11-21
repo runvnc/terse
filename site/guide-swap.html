@@ -14,7 +14,8 @@
 <p>Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference&#39;s. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after <code>cargo build --release</code>, with <code>target/release</code> on your PATH; <code>tersereader</code> is built in <code>native/reader-go</code> as its README says.</p>
 <h2 id="your-reader-the-reference-network">Your reader, the reference network</h2>
 <p>Run a relay, <code>terse-relay --store try-relay</code>, and point your reader at <code>ws&#58;//127.0.0.1:7878</code>. Publish to it with <code>terse feed publish</code> (step 3 of the reader guide). Or let the reference node do the network and talk to it over its socket:</p>
-<pre>tersereader node</pre>
+<pre>terse node</pre>
+<p><code>tersereader node</code> answers the same messages, so you can try your reader on both.</p>
 <h2 id="your-core-the-reference-devices">Your core, the reference devices</h2>
 <p>A core that speaks the device bus (DEVICES.md section 12 lists what it must do) starts the reference drivers, <code>terse-dev-terminal</code>, <code>terse-dev-vector</code> and the others, from one folder. <code>tcore</code> is such a core; it takes the folder with <code>--drivers</code>:</p>
 <pre>native/core-c/tcore programs/hello/hello.terse \
@@ -34,7 +35,7 @@ terse run programs/hello/hello.terse --frames 30 --hash</pre>
 <li>The device bus needs Unix sockets and Linux&#39;s futexes: <code>terse-bus</code> and the drivers run on Linux only, and are not in the downloads.</li>
 <li><code>terse-host</code>, the windowed host of the downloads, has its devices built in and does not load drivers. To see a driver&#39;s machine in a window, use <code>terse-bus --window</code>.</li>
 <li>A core finds drivers only in its own folder or through <code>--driver</code>. A folder of drivers per user, so that you could install a driver by copying it there, is a proposal in DEVICES.md section 14; nothing of it is built.</li>
-<li>The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host&#39;s content device does not use it yet.</li>
+<li>The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host&#39;s content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.</li>
 </ul>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: <a href="guide-shell.html">Make a shell</a>.</p>

@@ -2,6 +2,7 @@
 
 mod build;
 mod feed;
+mod node;
 mod perf;
 mod perflog;
 mod report;
@@ -65,6 +66,10 @@ const USAGE: &str = "usage:
              after you confirm: it is public, signed with your feed key, and cannot be deleted)
   terse perf report --check <file>   (whether a file is a valid report)
   terse perf aggregate [--follow <keys file>] <report file or dir>...   (verdicts per host and device, RECORD.md 5.5)
+  terse node [--socket <path>] [--relay ws://...|none]... [--store <dir>] [--config <dir>] [--no-feed-relays]
+             [--auto-download <bytes>] [--no-prefetch] [--no-program-download]
+             (a node for readers on a local socket, LOCAL.md: it follows your subscriptions on your relays
+             and serves them until stopped; Unix only)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
@@ -72,7 +77,12 @@ const USAGE: &str = "usage:
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
   [--config <dir>] [--no-feed-relays])
 
-Relays: info, put, get, feed publish, feed sync, feed read, profile set and find use the
+node listens on --socket, else $TERSE_NODE_SOCKET, else $XDG_RUNTIME_DIR/terse/node.sock (or
+/tmp/terse-<uid>/node.sock); it refuses to start if a node already answers there, and removes the
+socket when it stops (Ctrl-C, SIGTERM). Readers' changes (subscriptions, nicknames, relays) are saved
+in --config as the other commands save them.
+
+Relays: info, put, get, feed publish, feed sync, feed read, profile set, find and node use the
 --relay options if given (several may be; `none`: no network), else the relays listed in
 <config>/relays (`terse relay add` and `set` write it; an older <config>/relay file is read
 if there is no list), else a relay running on this machine (ws://127.0.0.1:7878), else none
@@ -207,6 +217,7 @@ fn main() -> ExitCode {
         Some("find") => feed::find(&args[1..]),
         Some("records") => records(&args[1..]),
         Some("manual") => feed::manual(&args[1..]),
+        Some("node") => node::node(&args[1..]),
         Some("vectors") => vectors(&args[1..]),
         Some("perf") if args.get(1).is_some_and(|a| a == "log") => perflog::log(&args[2..]),
         Some("perf") if args.get(1).is_some_and(|a| a == "report") => report::report(&args[2..]),

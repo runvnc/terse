@@ -16,8 +16,9 @@ terse-perflog.workspace = true
 terse-net.workspace = true
 terse-relay.workspace = true
 
-# `terse perf`'s cold start: dropping one file's pages from the page cache.
-[target.'cfg(target_os = "linux")'.dependencies]
+# `terse perf`'s cold start: dropping one file's pages from the page cache;
+# `terse node`: signals, the socket's owner and the peer's user ID.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
