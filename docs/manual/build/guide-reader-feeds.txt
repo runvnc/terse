@@ -48,4 +48,4 @@ tersereader list
 
 A Tersenet reader: it follows feeds, checks what it receives, keeps it, and shows articles with their links. NETWORK.md section 6 lists what a complete reader must do; most of it is above. The rest, such as display names, feed addresses with relay hints and the speed requirements, is in [Writing a reader without the machine](terse:74123e20f1739d0921abc649e0c394339b7ddd66d68b584ad60f1a09b721678d).
 
-Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. [Write a program](terse:d8b9fad36672f448f55406476b8299ced3086381ddaeb5ed56a7dc1649eae6bc).
+Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. [Write a program](terse:c152ef5cf6b4b252a96fb300073bec76d1474ce6fbcea5ebea49617c9f5b803f).
