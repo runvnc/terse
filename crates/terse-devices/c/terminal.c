@@ -17,7 +17,9 @@
  * transport (DEVICES.md 4) when the core offers it; otherwise the socket.
  * On shared memory it spins adaptively (DEVICES.md 4.2) up to
  * TERSE_BUS_SPIN_US (2,000) before it sleeps; TERSE_BUS_SPIN=fixed spins
- * that long every time.
+ * that long every time. It sleeps on the futex on Linux (on the socket
+ * with TERSE_BUS_WAKE=socket), on the socket elsewhere (DEVICES.md 4.3).
+ * POSIX C: it builds on Linux and macOS, not Windows.
  */
 #define _GNU_SOURCE
 #include <errno.h>

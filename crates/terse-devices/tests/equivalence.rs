@@ -149,6 +149,10 @@ fn c_terminal(dir: &Path) -> Option<String> {
 }
 
 fn python_vector() -> Option<Vec<String>> {
+    if cfg!(windows) {
+        eprintln!("skipped: the Python vector driver needs socket.AF_UNIX, which Python does not offer on Windows");
+        return None;
+    }
     if !Command::new("python3").arg("--version").output().is_ok_and(|o| o.status.success()) {
         eprintln!("skipped: the Python vector driver needs python3");
         return None;

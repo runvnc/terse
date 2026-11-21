@@ -10,6 +10,10 @@ In this folder
   terse-host    the same program, for starting from Terminal with options
   terse         the command-line tool (publish articles, manage feeds and relays)
   terse-relay   a relay, to share with other people (see the manual)
+  bus/          for developers: terse-bus, the host that runs each device as
+                a program of its own, and the device programs it starts
+                (terse-dev-*), to build or swap a device (DEVICES.md in the
+                source). Not yet tried on macOS: please report what happens
   LICENSE       Apache License 2.0
   FONTS-LICENSE.txt  the licence of the DejaVu fonts built into terse-host
 

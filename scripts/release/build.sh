@@ -46,6 +46,12 @@ stage() { # <name>: a fresh directory named for the download
     printf '%s\n' "$dir"
 }
 
+# The driver-based host and its drivers (DEVICES.md), for people who build
+# or swap devices: terse-bus finds the drivers in its own directory, so they
+# go together into bus/ (terse-dev-crash, a test driver, stays out).
+bus_programs=(terse-bus terse-dev-terminal terse-dev-vector terse-dev-content terse-dev-sound terse-dev-page)
+bus_packages=(-p terse-bus -p terse-devices)
+
 case "$platform" in
 linux-x86_64 | linux-aarch64)
     arch=${platform#linux-}
@@ -53,7 +59,7 @@ linux-x86_64 | linux-aarch64)
     musl="$arch-unknown-linux-musl"
     # The host links the system's graphics, sound and input libraries:
     # glibc, on the oldest runner image the workflow can use.
-    build "$gnu" -p terse-host "${host_features[@]}"
+    build "$gnu" -p terse-host "${host_features[@]}" "${bus_packages[@]}"
     # The command-line tools need nothing from the system: static (musl),
     # so they run on any Linux, servers included.
     musl_cc="CC_${musl//-/_}"
@@ -62,6 +68,8 @@ linux-x86_64 | linux-aarch64)
     name="terse-$VERSION-$platform"
     dir=$(stage "$name")
     cp "target/$gnu/release/terse-host" "target/$musl/release/terse" "target/$musl/release/terse-relay" "$dir/"
+    mkdir "$dir/bus"
+    for bin in "${bus_programs[@]}"; do cp "target/$gnu/release/$bin" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE"
     cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/linux/README.txt >"$dir/README.txt"
@@ -71,12 +79,17 @@ macos)
     # Both Apple silicon and Intel, joined into universal binaries.
     export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-11.0}
     for t in aarch64-apple-darwin x86_64-apple-darwin; do
-        build "$t" -p terse-host -p terse-cli -p terse-relay "${host_features[@]}"
+        build "$t" -p terse-host -p terse-cli -p terse-relay "${host_features[@]}" "${bus_packages[@]}"
     done
     name="terse-$VERSION-macos"
     dir=$(stage "$name")
     for bin in terse-host terse terse-relay; do
         lipo -create -output "$dir/$bin" "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
+    done
+    mkdir "$dir/bus"
+    for bin in "${bus_programs[@]}"; do
+        lipo -create -output "$dir/bus/$bin" "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
+        codesign --force --sign - "$dir/bus/$bin"
     done
     # A minimal app bundle, so the host opens with a double click.
     app="$dir/Terse.app"
@@ -102,12 +115,14 @@ macos)
 windows-x86_64)
     t=x86_64-pc-windows-msvc
     # The C runtime linked in, so no Visual C++ redistributable is needed.
-    RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static" build "$t" -p terse-host -p terse-cli -p terse-relay "${host_features[@]}"
+    RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static" build "$t" -p terse-host -p terse-cli -p terse-relay "${host_features[@]}" "${bus_packages[@]}"
     name="terse-$VERSION-windows-x86_64"
     dir=$(stage "$name")
-    # SIGNING: with a code-signing certificate, sign the three .exe files
-    # here (signtool sign /fd SHA256 /tr <timestamp URL> /td SHA256 …).
+    # SIGNING: with a code-signing certificate, sign the .exe files here
+    # (signtool sign /fd SHA256 /tr <timestamp URL> /td SHA256 …), bus\ too.
     cp "target/$t/release/terse-host.exe" "target/$t/release/terse.exe" "target/$t/release/terse-relay.exe" "$dir/"
+    mkdir "$dir/bus"
+    for bin in "${bus_programs[@]}"; do cp "target/$t/release/$bin.exe" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE.txt"
     sed 's/$/\r/' crates/terse-host/fonts/LICENSE >"$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/windows/README.txt | sed 's/$/\r/' >"$dir/README.txt"

@@ -1,0 +1,97 @@
+# Runs the workspace's tests on Linux, macOS and Windows, by hand only
+# (Actions, "test", "Run workflow"; or gh workflow run test.yml --ref <branch>).
+# The bus tests (crates/terse-devices, crates/terse-bus) run three times on
+# Linux and macOS: as they are, with every end sleeping on the socket and no
+# process timing (TERSE_BUS_WAKE=socket TERSE_PERF_PROBE=none: what Windows
+# always does, DEVICES.md 4.3), and with the drivers on the socket transport
+# only. Tests that need a GPU, a window, fonts or a tool the runner lacks skip
+# themselves as they do anywhere. Then the C core and example driver (POSIX:
+# Linux and macOS) and the Go reader's tests.
+name: test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # udev (game controllers) and ALSA for the host's window and sound.
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+
+      - name: Build
+        run: cargo build --locked --workspace --all-targets
+
+      - name: Test the workspace
+        run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
+
+      - name: Bus tests, every end sleeping on the socket, no process timing
+        if: runner.os != 'Windows'
+        env:
+          TERSE_BUS_WAKE: socket
+          TERSE_PERF_PROBE: none
+        run: cargo test --locked -p terse-bus -p terse-devices -p terse-perflog --no-fail-fast -- --test-threads 4
+
+      - name: Bus tests, the socket transport only
+        env:
+          TERSE_BUS_TRANSPORT: socket
+        run: cargo test --locked -p terse-devices --no-fail-fast -- --test-threads 4
+
+      - name: Release programs for the native tests
+        if: runner.os != 'Windows'
+        run: cargo build --locked --release -p terse-bus -p terse-devices -p terse-cli -p terse-relay --bins
+
+      - name: C core (native/core-c)
+        if: runner.os != 'Windows'
+        run: |
+          cd native/core-c
+          make
+          ./test.sh
+
+      - name: Example driver (native/driver-example)
+        if: runner.os != 'Windows'
+        run: native/driver-example/test.sh
+
+      - uses: actions/setup-go@v5
+        if: runner.os != 'Windows'
+        with:
+          go-version-file: native/reader-go/go.mod
+          cache: false
+
+      - name: Go reader (native/reader-go)
+        if: runner.os != 'Windows'
+        env:
+          TERSE_BIN_DIR: ${{ github.workspace }}/target/release
+        run: |
+          cd native/reader-go
+          go test ./...
