@@ -31,7 +31,7 @@ Verify each entry's Ed25519 signature before you keep it, and drop the entries t
 
 Then fetch the article each entry names (step 2) and list the titles, newest first: that is your timeline. Show each feed's key, or its first and last six hexadecimal digits, beside anything you show for it, since names are not unique.
 
-With a node (step 2), all of this is two messages: Subscribe (`25h`, with the feed's key as text) and Timeline (`22h`), whose entries the node has already checked.
+With a node (step 2), all of this is two messages: Subscribe (`25h`, with the feed's key as text) and Timeline (`22h`), whose entries the node has already checked. `terse node` keeps what you subscribe to with your other settings, so `terse feed subscriptions` lists it too.
 
 ## Compare with the reference
 
