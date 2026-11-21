@@ -205,8 +205,7 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
         None => (all, None),
     };
     let args = Args::parse(ours, &["--show"])?;
-    if args.options.iter().any(|(n, _)| !BUILD_OPTIONS.contains(&n.as_str())) {
-        let (n, _) = args.options.iter().find(|(n, _)| !BUILD_OPTIONS.contains(&n.as_str())).unwrap();
+    if let Some((n, _)) = args.options.iter().find(|(n, _)| !BUILD_OPTIONS.contains(&n.as_str())) {
         return Err(format!("unknown option {n}\n{BUILD_USAGE}"));
     }
     if let Some(dir) = args.get("--write-lib") {
@@ -262,14 +261,13 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
     }
     let elf_bytes = std::fs::read(&elf).map_err(|e| format!("{}: {e}", elf.display()))?;
     let (rom, ram_used) = rom_from_elf(&elf_bytes)?;
-    let page = PAGE;
     let ram_pages = match ram_pages {
-        Some(n) if (n as u32) * page < ram_used => {
-            return Err(format!("the program's data and .bss take {ram_used} bytes, more than {n} RAM pages ({} bytes)", n as u32 * page));
+        Some(n) if (n as u32) * PAGE < ram_used => {
+            return Err(format!("the program's data and .bss take {ram_used} bytes, more than {n} RAM pages ({} bytes)", n as u32 * PAGE));
         }
         Some(n) => n,
         None => {
-            let n = (ram_used + STACK).div_ceil(page);
+            let n = (ram_used + STACK).div_ceil(PAGE);
             u8::try_from(n).ok().filter(|&n| n <= RAM_PAGES_MAX).ok_or(format!(
                 "the program's data and .bss take {ram_used} bytes: with 8 KiB of stack that is more than 128 RAM pages (1 MiB)"
             ))?
@@ -311,7 +309,8 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
     }
 }
 
-const BUILD_OPTIONS: [&str; 12] = [
+/// The options before --run (everything after it is terse run's).
+const BUILD_OPTIONS: [&str; 11] = [
     "-o",
     "--title",
     "--ram-pages",
@@ -323,7 +322,6 @@ const BUILD_OPTIONS: [&str; 12] = [
     "--rustc",
     "--show",
     "--write-lib",
-    "--run",
 ];
 
 /// The header's devices: --device as given, else the program profile's;
