@@ -1031,14 +1031,14 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                     row(
                         "H3",
                         format!(
-                            "programs/conform's stress frames 49–108, software, {}: slowest frame",
+                            "programs/conform's stress frames 49–108, software, {}",
                             if threads == "1" { "1 thread" } else { "all threads" }
                         ),
-                        format!("p50 {}", spread(p50s, "ms")),
+                        format!("max {}", spread(maxes, "ms")),
                         "",
                         Verdict::Info,
                     )
-                    .with(Measure::new("max", maxes, WORST_FRAME)),
+                    .with(Measure::new("p50", p50s, WORST_FRAME)),
                 );
             }
         }

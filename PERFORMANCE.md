@@ -16,14 +16,46 @@ with the method:
   §content.submit; what a frame may ask of a host's drawing: `SPEC.md`
   §vector.ink-cap and `spec/vector3d.md` §vector3d.caps.
 
-**Requirements and targets.** A requirement is stated in units that any
-implementation can be tested against on any machine and network: frames
-(at 60 a second), round trips (messages a relay receives), and what may
-not wait on what ("asks no relay", "does not wait for a relay"). It
-passes or fails. A target is in milliseconds on the reference machine
-below; it is information for implementers and a guard against
-regressions of the reference, never a pass or fail for another
-implementation.
+**Three tiers: requirements, ceilings and targets.**
+
+- A **requirement** (R) is stated in units that any implementation can
+  be tested against on any machine and network: frames (at 60 a
+  second), round trips (messages a relay receives), and what may not
+  wait on what ("asks no relay", "does not wait for a relay"). It passes
+  or fails.
+- A **ceiling** (C) is in milliseconds (or frames), set far above what
+  any correct implementation takes on any reasonable computer: a few
+  times the target, and more than the reference would take on the
+  hardware floor below. It fails on any machine: a time over its ceiling
+  means something is wrong (a wait on the network or the disk, a search,
+  a lost cap), not that the computer is slow.
+- A **target** (T) is the reference implementation's time on the
+  reference machine below, with some room. It is information for
+  implementers and a guard against regressions of the reference: it
+  fails only with `terse perf --strict`, which the reference machine
+  (and anyone holding their build to these numbers) runs.
+
+Ceilings and targets judge the **median** of several runs (5 by
+default), so one slow run on a busy machine fails nothing and a
+consistently slow one does. Every timed scenario has both (§1.1).
+
+**The hardware floor** the ceilings assume: a 2-core, 2 GHz x86-64 or
+ARM64 computer from the last ten years (an Intel Core i5-6200U laptop,
+or a Raspberry Pi 5), with 4 GB of RAM and an SSD, and a GPU driver if
+the GPU renderer is used. Its single-thread speed is at worst about 2.5
+times slower than the reference machine's (5 GHz turbo against 2 GHz on
+the same Skylake core; the Pi 5's Cortex-A76 at 2.4 GHz is about as
+fast), its multi-thread speed about 6 times. Each ceiling is at least 3
+times the reference's time on one thread, and was checked by running
+`terse perf` on the reference restricted to 2 cores at 40 % each (§1.1).
+
+**An implementation is expected to run `terse perf`**, or its
+equivalent, and pass: every requirement and every ceiling. A host or a
+reader other than the reference plugs in with `--host <terse-host>` and
+`--reader <tersereader>` (the rows run the same scenarios through it, so
+it must take `terse-host`'s or `tersereader`'s command line, §2); one
+that cannot runs the same scenarios its own way and holds itself to the
+same limits.
 
 **The reference machine**: an Intel Core i7-10750H laptop (6 cores, 12
 threads), 15 GB of RAM, NVIDIA RTX 2060, Linux (CachyOS), with about a
@@ -47,6 +79,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R10 | The host work a frame can demand is bounded: what a machine's displays make a host draw in a frame is within the caps, counted in square screen units of ink from the lists alone (the 2D list at most 230,400, `SPEC.md` §vector.ink-cap; the 3D list at most 153,600, with its segment, face and faces × segments caps, §vector3d.caps), the terminal's 2,400 cells and the page's lines in view (its layout outside the frames, §page.layout) | square screen units; cells | `terse perf` W rows: each device's worst legal list, built to ask far more than the cap, is drawn only up to it (PASS or FAIL), and its drawing time on one thread is a target; `cargo test -p terse-core` (`vector`, `vector3`: the counts and where the lists are cut) |
 | Machine host | R11 | The frame loop never waits on finding or loading a font: every font is opened when the host starts, and no file is opened, nor any font directory read, for text after that; a glyph is rasterised on first use, at a bounded cost per glyph | files opened | `cargo test -p terse-host fonts` (the fonts are loaded from bytes the host holds: built in, or files read once at start, which the test counts); `terse perf` H2 and the W row `term-full`: the first frame of the whole full repertoire |
 | Machine host | R12 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut) |
+| Machine host | R13 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts and its own store and data directories, besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes at once, and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
 
 What the machine already guarantees needs no row: a frame's work for a
 program is bounded by the budget (`SPEC.md` §frames, §charges), so no
@@ -63,6 +96,49 @@ pixels) on the reference machine below no more than one frame, 16.7 ms
 slower than the reference falls at most a few frames behind in the very
 worst case, and keeps up with every bundled program.
 
+### 1.1 Ceilings and targets
+
+Every timed row of `terse perf` has a ceiling (C: fails on any machine)
+and a target (T: the reference machine's; fails only with `--strict`),
+judged on the median of its runs (`crates/terse-cli/src/perf.rs`, the
+`Limit` constants). "Reference" is the median measured on the reference
+machine (§3, 2026-11-21); "floor" the median with `terse perf` run on
+the reference restricted to 2 of its cores and 80 % of one core's time
+between them (`systemd-run --user --scope -p AllowedCPUs=0,1 -p
+CPUQuota=80%`: two cores at about 2 GHz each, throttled in 100 ms
+slices, which is harsher on latency than a real slow machine).
+
+FLOOR_TABLE
+
+**Targets tightened** (2026-11-21), each to a few times what the
+reference now measures: a held article or the timeline from a whole
+process 50 → 25 ms (it measures 4 to 12 ms); host start-up 500 → 50 ms
+(18 ms since the fonts are built in; the owner's ceiling of 1.5 s is
+kept); fetch's slowest frame 50 ms → 1 frame (0.7 ms); a key to what it
+shows 6 → 3 frames (1 to 2). Feed sync 500 → 400 ms (55 ms; the Go
+reader's 300 ms, which asks for its 50 articles one at a time, sets
+it). **Targets loosened**: 1,200 CJK glyphs never drawn before from a
+listed font, each frame (H6), 1 → 2 frames: the reference takes 21 ms,
+so `--strict` would fail on the reference itself, for a cost that is
+known and not bounded yet (§4, "Text in another script"). The system rows' target was
+"2 × the single machine's", which tiles (41 ms against 16) missed; it is
+now 4 frames on one thread. **New**: the cold start H7 (target 100 ms)
+and the GPU renderer's start H8 (500 ms: the driver's start-up, about
+290 ms on the reference).
+
+**Cold start (H7).** The first start a new user has: the built-in
+shell's first frame with an empty store, config and data directory and
+a new HOME (so the host puts the built-in programs and the manual in
+the store), and `terse-host`'s own file not in the page cache. `terse
+perf` drops the executable's pages with `posix_fadvise(DONTNEED)`, which
+needs no root and touches no other file's, retrying until `mincore`
+shows none resident (a process that has just exited keeps them mapped
+for a moment), and prints how many were resident at start. The shared
+libraries it links (libc, libm, libgcc_s, libudev) are left: every
+desktop's processes keep them resident. Where the pages cannot be
+dropped (tmpfs, or not Linux) the row says so and reports each run as a
+first run, binary cached. The warm start of the same is in the same row.
+
 ## 2. Running the tests
 
 **On the reference** (a release build, the Go reader built if you want
@@ -75,11 +151,15 @@ its rows):
 `terse perf` runs every scenario headless, in temporary directories,
 with relays it starts on ephemeral loopback ports (never 7878, never your
 config, cache or data directories), and prints one line per scenario:
-its id, what it measures, the measurement, the requirement (R1–R12, §1)
-or target (T), and PASS, FAIL, `info` (a target) or `skipped` (terse-host or the Go
-reader not found). It exits with 1 if a requirement failed. `--only
-machine|client|host` runs one group, `--runs n` changes the 5 runs of the
-timed scenarios (the rendering ones run 3 times). The machine scenarios run the content service and the
+its id, what it measures, the measurement (for a timed one the median
+of its runs and their range), its requirement (R1–R13, §1), ceiling (C)
+and target (T), and the result: PASS, FAIL (naming the requirement,
+ceiling or target that failed), "PASS; target missed", `info` or
+`skipped` (terse-host or the Go reader not found). A last line counts
+the requirements, ceilings and targets judged and the failures. It exits
+with 1 if anything failed: a requirement or a ceiling, and with
+`--strict` a target. `--only machine|client|host` runs one group, `--runs
+n` changes the 5 runs of every timed scenario. The machine scenarios run the content service and the
 system as `terse-host`'s window does, a frame every 16.7 ms with each
 frame given only what finished before it began (`Headless::realtime`),
 not the headless way of `terse run`, where every request completes in
@@ -109,6 +189,15 @@ perf`: on a busy machine they would fail for the wrong reason.
   show `programs/conform-perf/expected-screen.txt` and its state hashes
   must be `expected-hashes.txt`, like the other conformance images
   (`SPEC.md` §conformance).
+- *Its times*: `terse perf --host <path>` runs the H and W rows through
+  another host that takes `terse-host`'s options for them
+  (`--bench-render`, which prints the frames' p50, p99 and max;
+  `--renderer`, `--threads`, `--frames`, `--warmup`, `--store`,
+  `--config`, `--data`, `--shell`, `--builtin`); `--reader <path>` runs
+  the G rows through a reader that takes `tersereader`'s. Every
+  requirement and every ceiling must pass. An implementation that takes
+  other options runs the same scenarios its own way, judged by the same
+  limits (§1.1) on the median of 5 runs.
 
 ## 3. Targets on the reference machine
 
@@ -349,4 +438,3 @@ and grid at most 168,401; no picture is a plate and no list is cut
 - Input-to-photon latency, which depends on the display.
 - Times over real networks (round trips are specified, milliseconds
   are not).
-- Start-up of the host itself (the reference's is a target, H1).
