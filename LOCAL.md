@@ -144,9 +144,9 @@ node has no relay). Find and Lookup, if the node offers them (Hello
 flags), are the client's merged answers of `NETWORK.md` 4.7 and 4.8:
 every entry in them is verified. A Find that no relay answered (or
 that the node had no relay to ask) is refused: status 3, `count` 0; a
-Lookup that no relay answered has status 2. The relay protocol's other requests
-(Put, Publish, Subscribe, Unsubscribe, Peer) are not local messages: a
-node ignores them like any unknown type.
+Lookup that no relay answered has status 2. The relay protocol's other
+requests (Put, Publish, Subscribe, Unsubscribe, Peer) are not local
+messages: a node ignores them like any unknown type.
 
 ### 4.3 The user's state
 

@@ -671,7 +671,7 @@ mod imp {
             self.refresh();
             Some(match r {
                 Request::Get { req, id } => {
-                    let held = self.held(&id).is_some();
+                    let held = self.node.store().path(&id).exists();
                     let token = self.token(conn, req, Pending::Get { held });
                     self.node.start_get(token, id);
                     return None;
