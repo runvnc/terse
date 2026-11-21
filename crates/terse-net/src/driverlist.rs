@@ -150,7 +150,7 @@ pub struct Installed {
 impl Installed {
     /// The program to start, if its manifest is good and the file is there.
     pub fn program(&self) -> Result<PathBuf, String> {
-        let m = self.manifest.as_ref().map_err(|e| format!("its manifest: {e}"))?;
+        let m = self.manifest.as_ref().map_err(|e| if e == "not installed" { e.clone() } else { format!("its manifest: {e}") })?;
         let p = self.dir.join(&m.program);
         if p.is_file() { Ok(p) } else { Err(format!("its program {} is missing", p.display())) }
     }
