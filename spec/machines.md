@@ -267,7 +267,7 @@ bottom:
 1. the shell's screen, over the whole of the host's screen as a single
    machine's would be, combined as §vector.layers says;
 2. each flat picture, in increasing handle order, each a complete
-   screen (its own layers, style, afterglow and page, §vector.layers, §vector.phosphor,
+   screen (its own layers, style, any afterglow and page, §vector.layers, §vector.phosphor,
    §page) scaled into its picture and covering what is below it; outside the
    picture, the rest of the rectangle shows what is below;
 3. the host's own prompts (§content.feeds), over everything; a consent prompt
@@ -487,8 +487,8 @@ the restore.
   (§content.submit). An open request that waited for the shell (§system
   `open`) is dropped. Locates the machine made in its last frame before
   the snapshot (§page.calls) are not answered. A host lays the page out
-  and reports its height (§page.events) as for a new document, and draws
-  the vector display without afterglow (§vector.phosphor).
+  and reports its height (§page.events) as for a new document, and starts
+  any afterglow it draws empty (§vector.phosphor).
 - The shell itself is never snapshotted: a state with its `STATE.md` section 1.10
   present cannot be restored.
 

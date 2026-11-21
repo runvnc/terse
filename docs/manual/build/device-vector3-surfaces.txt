@@ -31,7 +31,7 @@ A program whose list has no Surface in effect is drawn exactly as without them. 
 2. its Surfaces, from the farthest to the nearest (by the distance from the eye to their centres; the earlier in the list first where two are as far), each covering what is below it;
 3. its 3D lines, points and circles, each Surface hiding what is behind it exactly as a Face of its four corners does. Lines in front of a Surface are drawn over it.
 
-So text outside the sources stays on the glass as a heads-up line, and the instrument panels move onto their consoles. In the phosphor style the 2D layers on a Surface glow as they would on the glass, their afterglow included; the afterglow belongs to the screen, so it moves with the panel, and a moving Surface leaves no trail. How the 3D lines are lit over the Surfaces is up to the host.
+So text outside the sources stays on the glass as a heads-up line, and the instrument panels move onto their consoles. In the phosphor style the 2D layers on a Surface look as they would on the glass; any afterglow a host draws belongs to the screen, so it moves with the panel, and a moving Surface leaves no trail. How the 3D lines are lit over the Surfaces is up to the host.
 
 Wherever the program's screen is shown it is this complete picture: on its own, in a tile of the shell, or as a panel in the shell's gallery. The shell's own Surfaces, when its scene has panels, are drawn among them, far to near.
 
