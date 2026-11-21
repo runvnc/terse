@@ -318,6 +318,10 @@ impl Bus {
         let config = &self.config;
         let name = format!("driver{i}");
         let sock = config.session.join(format!("{name}.sock"));
+        // A driver that failed in its place (an installed one, DEVICES.md
+        // 2.2) may have left its socket and bus file.
+        let _ = std::fs::remove_file(&sock);
+        let _ = std::fs::remove_file(config.session.join(format!("{name}.bus")));
         let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
         let (program, args) = want.command.split_first().ok_or(format!("slots {:?}: an empty command", want.slots))?;
         let what = format!("slots {:?} ({program})", want.slots);

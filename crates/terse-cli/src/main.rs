@@ -1,6 +1,7 @@
 //! `terse`: headless runner, image tools and feeds.
 
 mod build;
+mod drivers;
 mod feed;
 mod perf;
 mod perflog;
@@ -68,6 +69,7 @@ const USAGE: &str = "usage:
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
+  terse drivers list | add <file> [--slot <n>] [--name <name>] | remove <name> | use <slot> <name>|default
   terse --version
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
   [--config <dir>] [--no-feed-relays])
@@ -92,7 +94,13 @@ entries are kept in <store>/feeds.
 fonts: the fonts terse-host draws with, besides its built-in ones (<config>/fonts, read when it
 starts; README, Fonts): add lists an extra font for characters the built-in fonts lack, set
 replaces one of them (mono must be monospaced). Each file is checked as it is given.
---config holds the identity, subscriptions, nicknames, relay list and fonts; it defaults to
+drivers: device drivers terse-bus uses instead of the ones shipped with it (<config>/drivers, read
+when it starts; DEVICES.md 2.2). add runs the driver's handshake once (with terse-bus, next to
+terse), shows its name, version, build and slots, copies it into the folder and uses it for its
+slots; use chooses an installed driver, or default for the shipped one; list shows which driver
+each slot gets and why. A driver is a native program with your full rights: add only ones you
+trust. Nothing installs a driver but this command.
+--config holds the identity, subscriptions, nicknames, relay list, fonts and drivers; it defaults to
 $XDG_CONFIG_HOME/terse (or ~/.config/terse).
 profile set publishes your profile: the display name (1-48 bytes), --listed to let search
 find it (default: as in your current profile, else unlisted), the description from a file
@@ -203,6 +211,7 @@ fn main() -> ExitCode {
         Some("feed") => feed::feed(&args[1..]),
         Some("relay") => feed::relay(&args[1..]),
         Some("fonts") => feed::fonts(&args[1..]),
+        Some("drivers") => drivers::drivers(&args[1..]),
         Some("profile") => feed::profile(&args[1..]),
         Some("find") => feed::find(&args[1..]),
         Some("records") => records(&args[1..]),
