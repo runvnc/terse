@@ -98,12 +98,39 @@ pub struct Show {
     pub advance: Option<bool>,
     /// The slots whose layers are light in the phosphor style.
     pub light_slots: Vec<u8>,
+    /// In the phosphor style, the vector driver draws the tube itself
+    /// (`vector.tube`, DEVICES.md 7.2): its layers are light too, and the
+    /// core adds the layers' light as it is, without a tube of its own.
+    pub own_tube: bool,
 }
 
 impl Default for Show {
     fn default() -> Self {
-        Show { plate: false, phosphor: false, vector: None, list3: None, caps: Caps::FULL, excluded: Vec::new(), advance: None, light_slots: Vec::new() }
+        Show {
+            plate: false,
+            phosphor: false,
+            vector: None,
+            list3: None,
+            caps: Caps::FULL,
+            excluded: Vec::new(),
+            advance: None,
+            light_slots: Vec::new(),
+            own_tube: false,
+        }
     }
+}
+
+/// Linear light of each 8-bit sRGB value.
+fn linear_table() -> &'static [f32; 256] {
+    static T: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+    T.get_or_init(|| std::array::from_fn(|i| terse_host::soft::phosphor::to_linear(i as f32 / 255.0)))
+}
+
+/// The 8-bit sRGB value of linear light (clipped to 0–1).
+fn srgb8(c: f32) -> u32 {
+    let c = c.clamp(0.0, 1.0);
+    let s = if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+    (s * 255.0 + 0.5) as u32
 }
 
 /// How the phosphor style is drawn (`--tube`, `--vignette`, `--no-trails`,
@@ -283,6 +310,51 @@ impl Screen {
         };
         let updates = devices.present(picture, local, self.cell)?;
         let damage = self.take_updates(&updates, picture)?;
+        if light && self.show.own_tube && !self.scene {
+            // DEVICES.md 7.1 with `vector.tube`: the drivers' light, the vector
+            // driver's beam among it, added (linear) over black.
+            self.tube = None;
+            self.extents.clear();
+            let mut slots = self.show.light_slots.clone();
+            slots.extend([3, terse_core::vector3::SLOT]);
+            let mut dirty: Vec<IRect> = if all { vec![IRect::of_size(picture)] } else { damage.into_iter().filter(|(k, _)| slots.contains(&k.0)).map(|(_, r)| r).collect() };
+            dirty.retain(|r| !r.is_empty());
+            let stack: Vec<&[u32]> = self.order.iter().filter(|k| slots.contains(&k.0)).filter_map(|k| self.layers.get(k)).map(|l| l.pixels()).collect();
+            let lin = linear_table();
+            let w = picture.0 as usize;
+            for r in &dirty {
+                for y in r.y0..r.y1 {
+                    let row = y as usize * w;
+                    let out = &mut self.image.data[row..row + w];
+                    for x in r.x0 as usize..r.x1 as usize {
+                        let mut sum = [0.0f32; 3];
+                        let mut n = 0;
+                        let mut only = 0;
+                        for l in &stack {
+                            let p = l[row + x];
+                            let a = p >> 24;
+                            if a == 0 {
+                                continue;
+                            }
+                            n += 1;
+                            only = p;
+                            let k = a as f32 / 255.0;
+                            sum[0] += lin[(p >> 16 & 255) as usize] * k;
+                            sum[1] += lin[(p >> 8 & 255) as usize] * k;
+                            sum[2] += lin[(p & 255) as usize] * k;
+                        }
+                        out[x] = match n {
+                            0 => 0,
+                            // One layer's full light: its colour as it is.
+                            1 if only >> 24 == 255 => only & 0xFF_FFFF,
+                            _ => srgb8(sum[0]) << 16 | srgb8(sum[1]) << 8 | srgb8(sum[2]),
+                        };
+                    }
+                }
+                self.damage.add(IRect::new(r.x0 + area.x0, r.y0 + area.y0, r.x1 + area.x0, r.y1 + area.y0));
+            }
+            return Ok(());
+        }
         if light {
             let slots = &self.show.light_slots;
             self.extents.retain(|k, _| slots.contains(&k.0));
@@ -656,7 +728,8 @@ impl Compositor {
         }
         let light_slots = if phosphor { d.light_slots() } else { Vec::new() };
         let list3 = (phosphor && lines).then(|| d.list3().into_owned());
-        Ok(Show { plate, phosphor, vector, list3, caps, excluded, advance, light_slots })
+        let own_tube = phosphor && d.property(property::TUBE)?.is_some_and(|v| v.first() == Some(&1));
+        Ok(Show { plate, phosphor, vector, list3, caps, excluded, advance, light_slots, own_tube })
     }
 
     /// Draws the picture of `system` for `viewport` after a frame, with the

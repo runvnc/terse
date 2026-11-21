@@ -9,5 +9,7 @@
 //! The driver is `src/bin/terse-dev-mame.rs`; see the crate's README.
 
 pub mod beams;
+pub mod layers;
 pub mod pipeline;
 pub mod stroke;
+pub mod text;
