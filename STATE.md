@@ -55,8 +55,8 @@ which never change.
 | Offset | Size | Field |
 |---|---|---|
 | 173 | 4 | Frame counter (u32): the value `frame_count` returns in the next frame |
-| 177 | 1 | Stopped: `00h` running, `01h` exited, `02h` faulted (SPEC §stopping) |
-| 178 | 1 | Exit code, or `00h` if not exited |
+| 177 | 1 | Stopped: `00h` running, `01h` exited, `02h` faulted, `03h` halted: stopped by the host because a device did not keep up (SPEC §stopping, `PERFORMANCE.md` R15) |
+| 178 | 1 | Exit code if exited; the device's slot if halted; else `00h` |
 | 179 | 1 | Fault kind, or `00h` if not faulted: `01h` illegal instruction, `02h` breakpoint, `03h` fetch, `04h` load, `05h` store, `06h` misaligned |
 | 180 | 4 | Illegal instruction: its encoding (u32; a 16-bit encoding in the low half). Otherwise zero. |
 | 184 | 4 | Fault `pc` (u32), or zero |
@@ -526,6 +526,10 @@ ignored again on replay. The requests pending in a start snapshot fail in
 the first frame (SPEC §content.submit) without a record of it: they follow from the
 snapshot.
 
+A single machine's run in a host that records it never halts it in
+`terse run` (its headless frames are not timed); the bus's recordings
+(`DEVICES.md` 8) carry a stop when the host made one.
+
 A replay makes the machine with the recorded grants (or the snapshot's),
 on a host that can provide them, or refuses. Nothing else is an input of
 a single machine: `open` always returns 0
@@ -630,3 +634,4 @@ withheld, SPEC §image). They end with:
 | ended by signal `SIGTERM` (a shell shows 143) | the machine faulted (SPEC §stopping: a fault is never shown as an exit code); the fault is printed on standard error |
 | 2 | the run did not start: a bad command line or events file, an image refused (SPEC §image: malformed, or a required device or version not provided), a driver that could not be started or whose handshake failed (`DEVICES.md` 1.1, 2) |
 | 3 | a driver failed while the machine ran (`DEVICES.md` 10) |
+| 4 | the host stopped the machine: a device did not keep up (SPEC §stopping, halted; `PERFORMANCE.md` R15); the message names the device and where the machine's snapshot from just before went |

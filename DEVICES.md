@@ -143,6 +143,8 @@ The driver answers HELLO (`81h`):
 | … | 1 + … | Properties it publishes: a count (u8), then names (section 7.2) |
 | … | 1 + … | Properties it subscribes to: a count, then names |
 | … | 1 + … | Host services it gives: a count, then names (section 9) |
+| … | 2 + … | Optional: the driver's version (printable ASCII without spaces, at most 32 bytes) |
+| … | 2 + … | Optional, with the version: its build identifier (the same characters): a tag naming a hash, a colon and the first 8 bytes of that hash of the driver's program file in hex (`b3:` BLAKE3, `fnv:` FNV-1a 64, `b2:` BLAKE2b, `s2:` SHA-256), or `unknown` |
 
 - **Which slots the core asks for.** The slots of the driver (section 2)
   that a machine of the run may have: for a single machine, those its
@@ -181,6 +183,15 @@ The driver answers HELLO (`81h`):
   granted, and an image that requires it is refused. `terse-dev-terminal`
   answers for it; so does the C terminal driver, which draws nothing and
   so lacks no character.
+- **The driver's identity** (`PERFORMANCE.md` R13) is the name with the
+  version and the build identifier. A reply may end after the services
+  (an older driver: version and build empty), and a core ignores anything
+  after the build (room for later fields), so neither end needs a new
+  protocol version. It is self-reported, for accountability among honest
+  drivers (the record, `RECORD.md`, names the driver that made a frame
+  late), not a security measure; a core never passes it to a machine.
+  Every driver prints the same three words with `--version`, without
+  connecting.
 - After the reply, every message travels on the chosen transport. A driver
   that chose shared memory keeps the socket open and sends nothing on it:
   it is how each end learns that the other has gone.
@@ -962,13 +973,16 @@ feeds-updated flag; the page driver's is the events it reported. A driver
 with no inputs gives none.
 
 The bus recording file is the core's own (`terse-bus --record`, a single
-machine): `TBRC`, version 0, the image ID, the machine's grants (one byte,
+machine): `TBRC`, version 1, the image ID, the machine's grants (one byte,
 `00h` or `01h`, per optional device the image lists, as `STATE.md` 5;
 none for most images), then per frame: the frame
 counter, the Unix time, the 32 controller bytes, the host's events (count
 and events), the random bytes taken (count and bytes), the drivers' records
-(count; then the driver's lowest slot, length, bytes for each) and the
-state hash. It is not the format of `STATE.md` 5, whose completions are a
+(count; then the driver's lowest slot, length, bytes for each), a byte:
+0, or the slot of the device for which the host stopped the machine after
+this frame (`PERFORMANCE.md` R15; the frame is then the last), and the
+state hash (after that stop). A replay stops the machine where the
+recording says. Version 0 had no stop byte; a core still reads it. It is not the format of `STATE.md` 5, whose completions are a
 content device's: a core that knows nothing of content cannot write that
 one.
 
@@ -1030,6 +1044,18 @@ defines; a driver's failure is the host's. So:
 A SPEC change would be needed for anything finer: a stop reason "the host
 lost a device" (neither exit nor fault) that a shell could show for a
 machine whose own driver failed, if drivers were ever per machine.
+
+**A driver that answers, but too slowly**, has not failed: it is timed.
+The core waits for each reply, so the time it waited for each driver in a
+frame is the driver's, and the operating system says how much of it the
+driver spent waiting for a CPU (`PERFORMANCE.md` R14). One that makes
+frames late is warned about, then the machines that use it are saved and
+stopped, halted with the device's slot (`SPEC.md` §stopping; `PERFORMANCE.md`
+R15), and the record says so (`RECORD.md`). `terse-bus` does this in a
+window and with `--realtime` (`--perf-rule on|off` to choose), and writes
+the record there to the data directory's `perf/` (`--perf-log <dir>|off`).
+`native/driver-example` has a deliberately slow mode for testing it
+(`TERSE_EXAMPLE_SLOW`, its README).
 
 `terse-bus` also ends cleanly on SIGINT, SIGTERM and SIGHUP and when its
 window is closed: it finishes the frame, sends SHUTDOWN to every driver,
