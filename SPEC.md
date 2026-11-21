@@ -1116,8 +1116,10 @@ quickly at first, then with a dim tail multiplied by persistence ÷ 256
 each frame, down to black (with persistence 0, no tail). Something that
 stays put grows no brighter than about its own light, and a shape that
 keeps its structure and only moves leaves a continuous smear rather than
-separate copies. A program may be written with this look in mind, but its
-picture should not depend on it: on another host it may be plain lines.
+separate copies. A frame whose light passes a quarter of a screen of ink
+sheds the look step by step, down to plain lines (`PERFORMANCE.md` §4).
+A program may be written with this look in mind, but its picture should
+not depend on it: on another host it may be plain lines.
 
 ### §vector.determinism Determinism
 

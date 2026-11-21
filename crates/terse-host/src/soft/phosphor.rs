@@ -170,6 +170,9 @@ pub struct Light<'a> {
     /// Rectangles (x0, y0, x1, y1 pixels of the tube) that give no light:
     /// the sources of the machine's Surfaces (SPEC §vector3d.presentation).
     pub excluded: &'a [(usize, usize, usize, usize)],
+    /// How much of the look is shed (`phosphor::shed_level`): from
+    /// `SHED_HALO` no halo, at `SHED_PLAIN` the lines drawn plain.
+    pub shed: u8,
 }
 
 /// One level of the halo's pyramid: the light averaged down to it, a
@@ -336,11 +339,14 @@ impl Tube {
                     b.beam_m[j] = 0;
                 }
                 // The shapes' beam.
+                // Plain lines: each a flat stroke of its width at the
+                // core's brightness, as the clean style covers it.
+                let (mode, gain) = if l.shed >= crate::phosphor::SHED_PLAIN { (Mode::Cover, crate::phosphor::CORE) } else { (Mode::Light, 1.0) };
                 for s in l.shapes {
                     let [r, g, bl, a] = s.rgba();
-                    let k = a as f32 / 255.0;
+                    let k = a as f32 / 255.0 * gain;
                     let c = [l.lin[r as usize] * k, l.lin[g as usize] * k, l.lin[bl as usize] * k];
-                    visit(s, &geom, Mode::Light, run, |x, y, v| {
+                    visit(s, &geom, mode, run, |x, y, v| {
                         let j = (y - b.y0 as i32) as usize;
                         let p = &mut b.beam[j * stride + x as usize * 3..][..3];
                         p[0] += c[0] * v;
@@ -482,15 +488,15 @@ impl Tube {
                 }
             });
         }
-        self.halo(changed.into_inner(), pool);
+        self.halo(changed.into_inner(), l.shed < crate::phosphor::SHED_HALO, pool);
     }
 
     /// The halo's pyramid from its first level (`frame`): the levels
     /// below, the blurs, the sums up from the smallest level, and where the
     /// halo shows; nothing if the first level is as it was (`changed`
     /// false).
-    fn halo(&mut self, changed: bool, pool: &Pool) {
-        let lit = self.beam_m.iter().chain(&self.text_m).chain(&self.glow_m).any(|&m| m != 0);
+    fn halo(&mut self, changed: bool, shown: bool, pool: &Pool) {
+        let lit = shown && self.beam_m.iter().chain(&self.text_m).chain(&self.glow_m).any(|&m| m != 0);
         if (!lit && !self.halo_lit) || (!changed && lit == self.halo_lit) {
             return;
         }

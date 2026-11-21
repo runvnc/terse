@@ -552,7 +552,7 @@ mod tests {
     /// Brings `s` up to date and draws it; returns the damage.
     fn show(s: &mut SoftScreen, t: &Terminal, v: &Vector, pool: &Pool) -> Damage {
         s.update(t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(v), vector3: None, eye: (0.0, 0.0), caps: crate::display::Caps::FULL });
         s.update_page(None, None);
         s.render(VIEWPORT, pool);
         let mut d = Damage::new(VIEWPORT);
@@ -707,7 +707,7 @@ mod tests {
         let mut v3 = Vector3::default();
         let show3 = |s: &mut SoftScreen, v3: &Vector3, eye: (f32, f32)| {
             s.update(&t);
-            s.update_vectors(&VectorScene { vector: Some(&v), vector3: Some(v3), eye, caps: Caps::FULL });
+            s.update_vectors(&VectorScene { vector: Some(&v), vector3: Some(v3), eye, caps: crate::display::Caps::FULL });
             s.update_page(None, None);
             s.render(VIEWPORT, &pool);
             let mut d = Damage::new(VIEWPORT);
@@ -758,7 +758,7 @@ mod tests {
         v.set_persistence(200);
         let mut s = SoftScreen::new(Box::new(Blocks(8)));
         s.update(&t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: crate::display::Caps::FULL });
         s.update_page(None, None);
         s.accumulate(VIEWPORT, true, &pool);
         let lit = |s: &SoftScreen| s.image.data.iter().filter(|&&p| p != 0).count();
@@ -768,7 +768,7 @@ mod tests {
         t.command(0x01);
         t.command(0x06);
         s.update(&t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: crate::display::Caps::FULL });
         s.accumulate(VIEWPORT, true, &pool);
         let fading = lit(&s);
         assert!(fading > 0, "an afterglow");

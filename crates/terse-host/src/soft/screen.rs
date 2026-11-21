@@ -540,12 +540,13 @@ impl SoftScreen {
         let persistence = if self.no_trails { 0 } else { self.style.1 };
         let clear = self.phosphor_stale;
         let v = &self.vectors;
+        let shed = crate::phosphor::shed_level(&self.look, &v.shapes);
         let mut smears = Vec::new();
         if advance && persistence > 0 {
             let smear = !clear && v.opcodes == v.prev_opcodes;
             let mut deposits = Vec::new();
             let (fast, slow) = (self.look.preset.fast_decay(), crate::phosphor::slow_decay(persistence));
-            crate::phosphor::deposits(&v.prev_shapes, &v.shapes, smear, fast, slow, &mut deposits);
+            crate::phosphor::deposits(&v.prev_shapes, &v.shapes, smear, shed, fast, slow, &mut deposits);
             smears = deposits.iter().map(|d| Smear { shape: Shape::new(&d.shape, v.dwell[d.index]), fast: d.fast, slow: d.slow }).collect();
         }
         let mut tube = self.tube.take().expect("made above");
@@ -570,6 +571,7 @@ impl SoftScreen {
             look: self.look,
             clear,
             advance,
+            shed,
         };
         tube.frame(&light, pool);
         if advance {

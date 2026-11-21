@@ -240,14 +240,29 @@ counted, below); reader, fetch, hello and tune draw no vector list.
 **Not bounded yet, by design or for a decision:**
 
 - *The look.* The phosphor style's glow, afterglow and smear are the
-  host's choice (`SPEC.md` §vector.phosphor) and are not counted: at the
-  caps the reference draws them in 20 to 30 ms (2D) and up to 81 ms (3D
-  points, each a glowing disc 80 pixels wide) on one thread, 5 to 22 ms
-  on 12. It already sheds the smear (3 to 15 more copies of each moving
-  shape) when a frame's lines pass a quarter of a screen of ink
-  (`phosphor::SMEAR_INK_MAX`, above holo's 51,000). A host must draw only
-  plain lines in the phosphor style, which cost what the clean style
-  does.
+  host's choice (`SPEC.md` §vector.phosphor) and are not counted; a host
+  must draw only plain lines, which cost what the clean style does. The
+  reference sheds the look by the ink a frame's light draws (as the caps
+  count it, so the same picture on every run): above a quarter of a
+  screen no smear (3 to 15 more copies of each moving shape), above a
+  third no halo, above two fifths plain lines, flat strokes of their
+  width (`phosphor::shed_level`); the bundled programs draw at most about
+  33,000 (holo) and keep the whole look. In a window it also sheds one
+  level more after 3 frames in a row that took longer than a frame to
+  draw, and one less after 120 that took under half a frame
+  (`phosphor::Governor`; never for `--screenshot` or `--bench-render`).
+  `--no-shed` keeps the whole look. At the caps, p50 shed (in full):
+
+  | Worst list, phosphor style | 1 thread | 12 threads | GPU |
+  |---|---|---|---|
+  | 2D lines 16 units wide | 3.7 (103.8) ms | 2.1 (55.1) ms | 0.6 (1.7) ms |
+  | 2D circles | 3.7 (93.0) ms | 1.0 (16.9) ms | 0.5 (1.6) ms |
+  | 3D lines | 6.4 (85.7) ms | 1.7 (16.1) ms | 0.6 (1.7) ms |
+  | 3D points 16 units wide | 11.1 (70.8) ms | 3.3 (14.3) ms | 1.0 (2.7) ms |
+
+  Before, with only the smear shed: 24.7, 19.7, 28.8 and 75.6 ms on one
+  thread. The GPU sheds the smear and the halo; its beam costs it
+  little, so it draws the plain level as the halo one.
 - *Text in another script.* The terminal's 2,400 cells are bounded, but
   a frame of 1,200 CJK characters the host has not drawn before costs it
   23 ms (fonts found, glyphs rasterised) on any renderer. The work

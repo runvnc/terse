@@ -62,6 +62,7 @@ pub fn run(
         fetching: Vec::new(),
         page_thread: None,
         looks,
+        governor: Default::default(),
         title,
         shell_title: program.image.title_lossy(),
         paste: VecDeque::new(),
@@ -530,6 +531,8 @@ struct App {
     fetching: Vec<u32>,
     page_thread: Option<PageThread>,
     looks: Looks,
+    /// Sheds the phosphor look when frames run long (`phosphor::Governor`).
+    governor: crate::phosphor::Governor,
     title: String,
     /// The shell's (or the single machine's) image title.
     shell_title: String,
@@ -906,6 +909,15 @@ impl ApplicationHandler for App {
                     }
                     if let Some(t) = &mut self.selftest {
                         t.presented(acquire, render, Instant::now());
+                    }
+                    // A frame that took longer than a frame to draw sheds
+                    // more of the look (presentation only).
+                    if !self.looks.look.no_shed
+                        && let Some(floor) = self.governor.presented(render)
+                    {
+                        self.looks.look.floor = floor;
+                        gfx.display_mut().set_look(self.looks.look);
+                        eprintln!("terse-host: frames ran long or caught up: the phosphor look sheds from level {floor}");
                     }
                 }
             }

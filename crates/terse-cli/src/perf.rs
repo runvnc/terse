@@ -838,7 +838,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     let all = all.to_string_lossy().into_owned();
     for s in terse_core::worst::system_scenarios(builtin::PROGRAMS.len() as u32) {
         let img = image(&format!("{}.terse", s.id), &s.shell)?;
-        let mut p50 = |off: bool| -> Result<f64, String> {
+        let p50 = |off: bool| -> Result<f64, String> {
             let mut v = Vec::new();
             for _ in 0..runs {
                 let mut c = bench(&img, &["--shell", "--builtin", &all, "--warmup", "12", "--frames", "30", "--threads", "1"]);
@@ -860,6 +860,31 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             verdict: Verdict::Info,
         });
     }
+    // The phosphor look at the caps: shed by ink (terse-host's default)
+    // and in full (--no-shed); presentation, the host's choice.
+    let mut parts = Vec::new();
+    for s in terse_core::worst::scenarios().into_iter().filter(|s| s.id.ends_with("-phosphor")) {
+        let img = image(&format!("{}.terse", s.id), &s.image)?;
+        let one = |extra: &[&str]| -> Result<f64, String> {
+            let mut v = Vec::new();
+            for _ in 0..runs {
+                let mut args = vec!["--warmup", "3", "--frames", "30", "--threads", "1"];
+                args.extend_from_slice(extra);
+                let (_, out) = timed(&mut bench(&img, &args))?;
+                v.push(bench_numbers(&out).ok_or("no --bench-render line")?.0);
+            }
+            v.sort_by(f64::total_cmp);
+            Ok(v[v.len() / 2])
+        };
+        parts.push(format!("{} {:.1} ({:.1})", s.id.trim_end_matches("-phosphor"), one(&[])?, one(&["--no-shed"])?));
+    }
+    rows.push(Row {
+        id: "W",
+        what: "phosphor look at the caps, shed by ink (in full, --no-shed), 1 thread p50 ms".into(),
+        measured: parts.join(", "),
+        rule: "T: ≤ 16.7 ms shed".into(),
+        verdict: Verdict::Info,
+    });
     Ok(())
 }
 
