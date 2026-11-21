@@ -1,0 +1,30 @@
+ Performance reports
+Trust "feeds you follow": anyone can make keys, so "all found" may hold fakes.
+Followed: 11 reporters.  All found: 11 reporters, 65 reports, 21 malformed.
+
+> host terse-bus 0.1.0 b3:5faccb21bc9113fb
+    you follow   TOO FEW REPORTS (1)
+    all found    TOO FEW REPORTS (1)
+  host terse-bus 0.1.0 b3:b2b2b2b2b2b2b2b2
+    you follow   TOO FEW REPORTS (2)
+    all found    TOO FEW REPORTS (2)
+  host terse-host 0.1.0 -
+    you follow   TOO FEW REPORTS (1)
+    all found    TOO FEW REPORTS (1)
+  host terse-host 0.1.0 b3:1111111111111111
+    you follow   TOO FEW REPORTS (1)
+    all found    TOO FEW REPORTS (1)
+  host terse-host 0.1.0 b3:a1a1a1a1a1a1a1a1
+    you follow   CONFORMANT IN SAMPLE (9 reporters)
+    all found    CONFORMANT IN SAMPLE (9 reporters)
+  device terse-dev-content (Rust) 0.1.0 b3:97f8a7cc7bf5e08c
+    you follow   TOO FEW REPORTS (1)
+    all found    TOO FEW REPORTS (1)
+  device terse-dev-page (Rust) 0.1.0 b3:f8f5a88bb33ad6eb
+    you follow   TOO FEW REPORTS (1)
+    all found    TOO FEW REPORTS (1)
+  device terse-dev-page 0.1.0 b3:d4d4d4d4d4d4d4d4
+    you follow   NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)
+    all found    NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)
+
+ Up Down choose  Enter details  F find on relays  P publish the aggregate

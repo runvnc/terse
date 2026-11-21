@@ -346,13 +346,13 @@ fn int4(s: &str) -> Option<u32> {
 }
 
 /// A string field: printable ASCII, `%` only as `%` and two uppercase hex
-/// digits; its unescaped length at most `max` bytes.
+/// digits; at most `max` bytes once unescaped.
 fn string(s: &str, max: usize) -> Option<String> {
     let b = s.as_bytes();
-    let mut i = 0;
+    let hex = |c: u8| c.is_ascii_digit() || (b'A'..=b'F').contains(&c);
+    let (mut i, mut len) = (0, 0);
     while i < b.len() {
         if b[i] == b'%' {
-            let hex = |c: u8| c.is_ascii_digit() || (b'A'..=b'F').contains(&c);
             if i + 2 >= b.len() || !hex(b[i + 1]) || !hex(b[i + 2]) {
                 return None;
             }
@@ -360,9 +360,17 @@ fn string(s: &str, max: usize) -> Option<String> {
         } else {
             i += 1;
         }
+        len += 1;
     }
-    let u = unescape(s);
-    (u.len() <= max).then_some(u)
+    if s == "-" {
+        len = 0;
+    }
+    (len <= max).then(|| unescape(s))
+}
+
+/// A component as the record writes it, exactly (`dev7`, not `dev07`).
+fn component(s: &str) -> Option<Component> {
+    Component::parse(s).filter(|c| c.name() == s)
 }
 
 /// A version or build field: 1 to 32 printable bytes without `%`, or `-`.
@@ -470,7 +478,7 @@ pub fn parse_text(text: &[u8]) -> Result<Report, Reject> {
         }
         let bad = || reject("bad-field", n);
         let comp = |s: &str, r: &Report| -> Result<Component, Reject> {
-            let c = Component::parse(s).ok_or(reject("bad-field", n))?;
+            let c = component(s).ok_or(reject("bad-field", n))?;
             if host_component(c) || r.devices.iter().any(|d| d.0 == c) {
                 Ok(c)
             } else {
@@ -510,7 +518,7 @@ pub fn parse_text(text: &[u8]) -> Result<Report, Reject> {
             }
             "device" => {
                 cap(r.devices.len(), MAX_DEVICES)?;
-                let c = Component::parse(f[0]).filter(|c| c.is_device() || *c == Component::Core).ok_or_else(bad)?;
+                let c = component(f[0]).filter(|c| c.is_device() || *c == Component::Core).ok_or_else(bad)?;
                 dup(r.devices.iter().map(|d| d.0).collect(), c)?;
                 let slots: Vec<u8> = if f[1] == "-" {
                     Vec::new()
