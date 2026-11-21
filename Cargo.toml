@@ -9,6 +9,7 @@ members = [
     "crates/terse-bus",
     "crates/terse-devices",
     "crates/terse-perflog",
+    "crates/terse-mame-crt",
 ]
 
 [workspace.package]
