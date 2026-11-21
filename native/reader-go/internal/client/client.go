@@ -39,6 +39,7 @@ func DefaultOptions() Options {
 
 const (
 	maxConns     = 16
+	downloaders  = 8 // blobs fetched at once (requests are pipelined, NETWORK.md 3)
 	maxOwn       = 8
 	prefetchMax  = 8
 	getTimeout   = 10 * time.Second       // a relay that has not answered a get by then has failed
@@ -46,6 +47,8 @@ const (
 	dialTimeout  = 10 * time.Second
 	firstBackoff = time.Second
 	maxBackoff   = 30 * time.Second
+	idlePoll     = 2 * time.Millisecond  // how often WaitIdle looks
+	idleSettle   = 10 * time.Millisecond // how long Idle must hold for WaitIdle
 )
 
 // ErrNotFound is returned by Get when no relay has the blob.
@@ -77,13 +80,13 @@ type conn struct {
 	connected  bool
 	connecting bool // a connection attempt is under way
 	tried      bool // a connection attempt has finished, one way or the other
-	refused   bool // its host is refused (NETWORK.md 5.1): never connected
-	nextReq   uint32
-	pending   map[uint32]chan *terse.Reply
-	subReq    map[uint32][32]byte
-	subs      map[[32]byte]*subState
-	stop      chan struct{}
-	stopped   bool
+	refused    bool // its host is refused (NETWORK.md 5.1): never connected
+	nextReq    uint32
+	pending    map[uint32]chan *terse.Reply
+	subReq     map[uint32][32]byte
+	subs       map[[32]byte]*subState
+	stop       chan struct{}
+	stopped    bool
 }
 
 // Client is a reading client's network side.
@@ -109,6 +112,8 @@ type Client struct {
 	// the feed is unsubscribed.
 	hintsOn   map[[32]byte]bool
 	heldOnOwn map[[32]byte]bool
+
+	own []string // the user's relays now (guarded by mu); SetOwnRelays replaces them
 }
 
 type job struct {
@@ -125,8 +130,8 @@ func New(st *store.Store, opt Options) *Client {
 	}
 	return &Client{
 		st: st, opt: opt, ctx: ctx, cancel: cancel,
-		fetching: map[[32]byte]bool{},
-		jobs:     make(chan job, 4096),
+		fetching:  map[[32]byte]bool{},
+		jobs:      make(chan job, 4096),
 		changed:   make(chan struct{}, 1),
 		wake:      make(chan struct{}),
 		hintsOn:   map[[32]byte]bool{},
@@ -144,25 +149,29 @@ func (c *Client) signal() {
 	}
 }
 
-// Start connects to the configured relays and starts the downloaders.
+// ownRelays is the user's relay list in use.
 func (c *Client) ownRelays() []string {
-	if c.opt.Relays != nil {
-		return c.opt.Relays
-	}
-	return c.st.Relays()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.own...)
 }
 
+// Start connects to the configured relays and starts the downloaders.
 func (c *Client) Start() {
-	relays := c.ownRelays()
+	relays := c.opt.Relays
+	if relays == nil {
+		relays = c.st.Relays()
+	}
 	if len(relays) > maxOwn {
 		relays = relays[:maxOwn]
 	}
 	c.mu.Lock()
+	c.own = append([]string(nil), relays...)
 	for _, u := range relays {
 		c.addConnLocked(u, true)
 	}
 	c.mu.Unlock()
-	for i := 0; i < 3; i++ {
+	for i := 0; i < downloaders; i++ {
 		c.wg.Add(1)
 		go c.downloader()
 	}
@@ -172,6 +181,37 @@ func (c *Client) Start() {
 		c.updateFeedRelays(sb.Addr.Key)
 		c.evaluateHints(sb.Addr.Key)
 	}
+}
+
+// SetOwnRelays makes urls the user's relays from now on (LOCAL.md 4.3,
+// Set relays): connections to own relays no longer listed are closed, new
+// ones are connected (a feed relay now listed is connected again as an own
+// relay), and the feeds' profile relays and hints are worked out again
+// against the new list.
+func (c *Client) SetOwnRelays(urls []string) {
+	if len(urls) > maxOwn {
+		urls = urls[:maxOwn]
+	}
+	listed := map[string]bool{}
+	for _, u := range urls {
+		listed[u] = true
+	}
+	c.mu.Lock()
+	c.own = append([]string(nil), urls...)
+	for _, cn := range append([]*conn(nil), c.conns...) {
+		if cn.own != listed[cn.url] {
+			c.removeConnLocked(cn)
+		}
+	}
+	for _, u := range urls {
+		c.addConnLocked(u, true)
+	}
+	c.mu.Unlock()
+	for _, sb := range c.st.Subscriptions() {
+		c.updateFeedRelays(sb.Addr.Key)
+		c.evaluateHints(sb.Addr.Key)
+	}
+	c.signal()
 }
 
 // Stop closes every connection and waits for the client's goroutines.
@@ -283,13 +323,20 @@ func (cn *conn) run() {
 		cl.mu.Unlock()
 		w, err := cn.dial()
 		if err != nil {
+			select {
+			case <-cn.stop: // dropped while connecting (removeConnLocked)
+				return
+			default:
+			}
 			cl.mu.Lock()
 			cn.tried = true
 			cn.connecting = false
+			cl.work++ // until the hints are worked out again (Idle)
 			cl.connStateLocked()
 			cl.mu.Unlock()
 			cl.opt.Logf("%s: %v", cn.url, err)
 			cl.afterConnChange()
+			cl.doneWork()
 			if cn.refusedNow() {
 				return
 			}
@@ -345,7 +392,7 @@ func (cn *conn) refusedNow() bool {
 // or link-local, and the connection goes to an address that was checked.
 func (cn *conn) dial() (*ws.Conn, error) {
 	if cn.own {
-		return ws.Dial(cn.url, "", dialTimeout)
+		return ws.DialStop(cn.url, "", dialTimeout, cn.stop)
 	}
 	u, err := url.Parse(cn.url)
 	if err != nil {
@@ -384,7 +431,7 @@ func (cn *conn) dial() (*ws.Conn, error) {
 		}
 	}
 	addr := ips[0].Unmap().String()
-	return ws.Dial(cn.url, net.JoinHostPort(addr, port), dialTimeout)
+	return ws.DialStop(cn.url, net.JoinHostPort(addr, port), dialTimeout, cn.stop)
 }
 
 func (cn *conn) send(m []byte) error {
@@ -466,6 +513,7 @@ func (cn *conn) readLoop(w *ws.Conn) {
 			delete(cn.subReq, r.Req)
 			s := cn.subs[key]
 			held := false
+			cn.cl.work++ // until the hints are worked out again (Idle)
 			if ok && s != nil {
 				s.replied = true
 				if r.Status != terse.StatusDone {
@@ -484,9 +532,7 @@ func (cn *conn) readLoop(w *ws.Conn) {
 			} else if ok {
 				cn.cl.evaluateHints(key)
 			}
-			if ok {
-				cn.cl.signal()
-			}
+			cn.cl.doneWork()
 		case terse.MsgGetReply:
 			cn.cl.mu.Lock()
 			ch := cn.pending[r.Req]
@@ -576,9 +622,8 @@ func (c *Client) downloader() {
 			c.runJob(j)
 			c.mu.Lock()
 			delete(c.fetching, j.id)
-			c.work--
 			c.mu.Unlock()
-			c.signal()
+			c.doneWork()
 		}
 	}
 }
@@ -1173,6 +1218,14 @@ func (c *Client) HintRelays(key [32]byte) []string {
 	return out
 }
 
+// doneWork ends a unit of work counted in c.work and wakes WaitIdle.
+func (c *Client) doneWork() {
+	c.mu.Lock()
+	c.work--
+	c.mu.Unlock()
+	c.signal()
+}
+
 // Idle reports whether every relay has been tried, every subscription on
 // a connected relay has caught up (or was refused), and no download is
 // queued or running.
@@ -1205,20 +1258,29 @@ func (c *Client) Idle() bool {
 	return true
 }
 
-// WaitIdle waits until Idle or the timeout; it reports whether it was idle.
+// WaitIdle waits until Idle or the timeout; it reports whether it was
+// idle. Every step that can start more work (an entry stored, a
+// subscribe reply, a failed connection, a download) counts in c.work
+// until it has started it, so Idle is not true in between; it must still
+// hold for idleSettle, as a margin.
 func (c *Client) WaitIdle(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	stable := 0
-	for time.Now().Before(deadline) {
+	var since time.Time
+	for {
+		now := time.Now()
 		if c.Idle() {
-			stable++
-			if stable >= 3 {
+			if since.IsZero() {
+				since = now
+			}
+			if now.Sub(since) >= idleSettle {
 				return true
 			}
 		} else {
-			stable = 0
+			since = time.Time{}
 		}
-		time.Sleep(100 * time.Millisecond)
+		if !now.Before(deadline) {
+			return false
+		}
+		time.Sleep(idlePoll)
 	}
-	return false
 }
