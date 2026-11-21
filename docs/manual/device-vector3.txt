@@ -28,7 +28,7 @@ So a point on the glass (z = 0) is drawn exactly where the 2D layers would put i
 
 - `submit` copies `a1` bytes from `a0` into the device, replacing the previous list, and returns 0. It is rejected, returning 1 and keeping the previous list, if the length is 0 or more than 16,384 (`V3_MAX_LIST`) or any part of the range is outside RAM (a list in ROM included).
 - `clear` empties the list.
-- `style` (0 clean, 1 phosphor) and `persistence` (0 to 255) set the display style and the afterglow persistence described for the 2D display, returning 1 and changing nothing for a value out of range. They are one setting with device 3's: whichever device sets them, both displays and the whole screen are shown that way. A machine whose image lists device 9 and not device 3 has the setting too (device 3's calls stay absent).
+- `style` (0 clean, 1 phosphor) and `persistence` (0 to 255) set the display style and persistence described for the 2D display, returning 1 and changing nothing for a value out of range. They are one setting with device 3's: whichever device sets them, both displays and the whole screen are shown that way. A machine whose image lists device 9 and not device 3 has the setting too (device 3's calls stay absent).
 
 After reset the list is empty, the style is clean and the persistence 160. The list the device holds at the end of a frame is the one the host shows for that frame. Nothing of device 9 is filled, so the 2D display's fill mode does not apply.
 
@@ -84,7 +84,7 @@ A face is a flat polygon that gives off no light but hides the lines, points and
 
 Seen from the eye in use, a point of a line, point or circle is hidden if the straight segment from the eye to it passes through one of a face's triangles and the point lies more than 2 sixteenths (1/8 unit) beyond the triangle's plane, measured perpendicular to the plane, on the side away from the eye. So a line in a face's plane, along its edge or ending on it is not hidden by that face, and a solid's edges given with the same corners as its faces are drawn. A face hides whatever is behind it wherever the face is in the list, before or after it. A triangle with no area, or seen edge on, hides nothing. Faces do not hide one another and draw nothing, so no line is drawn where two faces cross unless the list draws one.
 
-A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end without vertex dwell; the line's own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short; the whole line is measured on the glass, from the eye in use, after the cut at the near plane and before clipping to the screen. A point is drawn or hidden whole.
+A line, and each chord of a circle, is drawn as its pieces that are not hidden. Each piece keeps the depth cue that part of the whole line has. An end where a piece was cut is a butt end; the line's own ends keep their own. A piece with a cut end that is shorter than 1/2 unit on the glass is not drawn, unless the whole line is that short; the whole line is measured on the glass, from the eye in use, after the cut at the near plane and before clipping to the screen. A point is drawn or hidden whole.
 
 ## Screens
 
@@ -133,14 +133,14 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 - Screens in effect are drawn as panels in the shell's scene, not in the vector layer: the shell's lines, points and circles are drawn over the panels, and in the phosphor style how they are lit there is up to the host.
 - Surfaces (at most 4 in effect) put the program's own screen on panels: see [Surfaces](terse:{device-vector3-surfaces}).
 - Layers: device 9 is drawn in the vector layer after device 3's shapes: over the page and the 2D shapes, under the terminal's characters, so text on the glass labels the models.
-- Phosphor: in the phosphor style lines, points and circles are beam light like the 2D display's lines (sharp core, wide glow, afterglow and smear), with the vertex dwell at line ends and points but not where a circle's chords join or where a face cut a line.
-- The trigonometry and the projection are the host's, and hosts may differ in the last pixel. Smoothing, blending and how the eye moves are up to the host.
+- A host must draw the lines, points and circles where the list and the eye put them, in their colours with the depth cue, within the caps and without what faces hide (hiding is part of the picture), on black in the phosphor style. The rest of the look (glow, afterglow, dwell) is the host's.
+- Hosts may differ in the last pixel of the projection; smoothing, blending and how the eye moves are theirs.
 
 ## Charges and state
 
 Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:{charges}).
 
-The device sends no events and takes no input from the host: the eye is presentation, and so is what faces hide from it. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display's state section, which is present when the machine has device 3 or device 9.
+The device sends no events and takes no input from the host: the eye is the host's, so what faces hide from it is not state. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display's state section, which is present when the machine has device 3 or device 9.
 
 ## Example
 

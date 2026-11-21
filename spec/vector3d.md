@@ -151,8 +151,8 @@ saved transforms, current point (0, 0, 0).
 - **What is drawn of a hidden line.** A line, and each chord of a circle,
   is drawn as its pieces that are not hidden. Each piece has, along it,
   the depth cue that part of the whole line has (§vector3d.presentation). An end
-  where a piece was cut is a butt end without vertex dwell, as where a
-  circle's chords join; the line's own ends keep their own. A piece with a
+  where a piece was cut is a butt end, as where a circle's chords join
+  (and has no dwell where a host draws one, §vector3d.presentation); the line's own ends keep their own. A piece with a
   cut end that is shorter than 1/2 screen unit on the glass is not drawn,
   unless the whole line is that short. The whole line's length is that of
   its part in front of the near plane, on the glass, seen from the eye in
@@ -264,6 +264,35 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
 
 ## §vector3d.presentation Presentation
 
+**What a host must draw**, from the eye it uses (§vector3d.space):
+
+- the lines, points and circles that §vector3d.list draws, placed by the
+  transform and projected as §vector3d.space says, with the width in
+  effect (the same on the screen at any depth) and round ends, cut,
+  clipped and capped as §vector3d.caps says;
+- each in the colour in effect at its command, its opacity multiplied by
+  the depth cue (below);
+- without what faces, and Screens and Surfaces in effect, hide
+  (§vector3d.list). Hiding is part of the picture, not of its look: a
+  program draws a solid as its edges and faces and relies on the edges
+  behind it not showing. What is hidden depends on the eye, which is the
+  host's, so it is not machine state (§vector3d.determinism);
+- in the clean style, in list order, each over the earlier ones, in the
+  vector layer (below); Screens and Surfaces in effect as below;
+- in the phosphor style, what §vector.phosphor requires: nothing of
+  device 9 is filled, so for it that is light in its colours on the black
+  screen.
+
+**The host's choice**: where the eye is, within §vector3d.space's range;
+the trigonometry and the projection, in which hosts may differ in the last
+pixel; smoothing and the exact colour of blended pixels; and in the
+phosphor style all of the look that §vector.phosphor leaves to the host
+(glow, afterglow and smear, the beam's profile, dwell). *Note, not a
+requirement:* `terse-host` draws the 3D lines, points and circles in the
+phosphor style as it draws the 2D display's lines, with extra light (dwell)
+at line ends and points but not where a circle's chords join or where a
+face cut a line.
+
 - **Depth cue.** Light dims with depth. Each end of a line (after the cut
   at z = −800) has the factor min(1, 960 / (960 + z)); along the line on
   the glass the factor goes linearly from one end's to the other's, which
@@ -274,14 +303,9 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
 - **Layers.** Device 9 is drawn in the vector layer of §vector.layers, after
   device 3's shapes: over the page and the 2D shapes, under the terminal's
   characters, so text on the glass labels the models.
-- **Phosphor.** In the phosphor style (§vector.phosphor) lines, points and
-  circles are beam light like the 2D display's lines: a sharp core, its
-  share of the wide glow, afterglow and smear, with the vertex dwell at
-  line ends and points but not where a circle's chords join or where a
-  face cut a line.
 - **Screens** in effect are drawn as panels, in the shell's scene (§machines.screens), not in the vector layer: the shell's lines, points and circles
   are then drawn over the panels, and in the phosphor style how they are
-  lit there (beam, afterglow) is up to the host.
+  lit there is up to the host.
 - **Surfaces.** A machine whose list has no Surface in effect is drawn
   exactly as without this rule (§vector.layers). One that has Surfaces in
   effect is drawn, from the bottom:
@@ -301,9 +325,9 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
   So the program's text on the glass outside the sources stays where it
   is, as a heads-up line, and its 3D lines are drawn over it. The 2D
   layers a Surface shows are those of the same frame, in the machine's
-  style; in the phosphor style the afterglow is that of the 2D layers on
-  the screen, so it moves with the panel (a moving Surface leaves no
-  trail), and how the 3D lines are lit over the Surfaces is up to the host,
+  style; in the phosphor style any afterglow a host draws is that of the
+  2D layers on the screen, so it moves with the panel (a moving Surface
+  leaves no trail), and how the 3D lines are lit over the Surfaces is up to the host,
   as over a shell's panels. Surfaces are cut at the near plane and at the
   edges of the screen as panels are. A host that cannot draw a picture in
   perspective may draw each Surface's source flat instead, scaled
@@ -319,9 +343,6 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
   machine's screen is shown (on its own, as a flat picture or as a panel)
   it is its complete picture, its Surfaces included; a Surface shows only
   2D layers, so no picture shows itself.
-- The trigonometry and the projection are the host's, and hosts may differ
-  in the last pixel. Smoothing, the exact colour of blended pixels and how
-  the eye moves are up to the host.
 
 ## §vector3d.determinism Determinism
 

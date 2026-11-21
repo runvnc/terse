@@ -118,7 +118,7 @@ The `snapshot_info` record (122 bytes, `mach_snapshot_record`):
 
 ## Screens and input
 
-A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:2ced23874196488c6c3681f2ee684d6ac4923a81fff4d60deaec8c6dd9e24fff).
+A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:c5fc180d17f2cbb9c3271bc22fba65213fd9a75bc4238fee4850a4366e9084c3).
 
 ## The system frame
 

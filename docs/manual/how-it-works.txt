@@ -199,7 +199,10 @@ compares two hosts.
 
 Devices present and transport; they do not compute for the program, and
 nothing a host draws can be read back. The screen is 640 × 480 units for
-every device that draws.
+every device that draws. Each device says what a host must
+draw; the rest of the look (fonts, smoothing, the phosphor style's
+glow and afterglow) is the host's, so a plain host and an elaborate
+one show the same picture.
 
 ## Determinism and replay
 

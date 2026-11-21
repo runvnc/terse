@@ -16,7 +16,7 @@ A machine is shown flat in the picture of its own rectangle, or, once the view o
 
 ## What the host draws
 
-With no Screen in effect, from the bottom: the shell's screen, then each flat picture in handle order (each a complete screen, with its own layers, style, afterglow and page, covering what is below), then the host's prompts. With at least one, the shell's scene, from the bottom:
+With no Screen in effect, from the bottom: the shell's screen, then each flat picture in handle order (each a complete screen, with its own layers, style, any afterglow and page, covering what is below), then the host's prompts. With at least one, the shell's scene, from the bottom:
 
 1. the shell's screen without the lines, points and circles of its 3D list;
 2. the panels, farthest first by the distance from the eye in use to each panel's centre (the mean of its corners), the lower handle first where two are as far; each covers what is below;
