@@ -13,7 +13,8 @@
 //! - with Go (skipped, saying so, when `go` is absent):
 //!   `go_thin_reader_through_terse_node` (the Go reader's thin build as
 //!   the client) and `terse_node_and_go_node_answer_alike` (this client
-//!   against `terse node` and `tersereader node`).
+//!   against `terse node` and `tersereader node`, LOCAL.md's rules
+//!   included: Hello, refusals, hints, titles, Set relays at once).
 #![cfg(unix)]
 
 mod common;
@@ -921,44 +922,149 @@ fn go_thin_reader_through_terse_node() {
     drop(node);
 }
 
-/// The same questions to two nodes holding the same feed; the replies,
-/// for comparing (refusals to their status).
-fn script(socket: &Path, key: &FeedKey) -> Vec<(String, Vec<u8>)> {
+/// An article with an empty title (LOCAL.md 4.3, Title).
+const UNTITLED: &str = "No title on this one.\n";
+
+/// Alice publishes, after [`publish`], [`ARTICLE`] again under another
+/// title (a Title of several entries is the first stored) and
+/// [`UNTITLED`] with an empty title.
+fn publish_more(dir: &Path, relay: &str) {
+    let mut node = Node::new(BlobStore::open(dir, None).unwrap(), Some(RelayClient::websocket(relay, TIMEOUT)));
+    node.set_identity(alice());
+    for (data, title, time) in [(ARTICLE, "Stored second", 1_700_000_300), (UNTITLED, "", 1_700_000_400)] {
+        let draft = Draft { data: data.as_bytes().to_vec(), title: title.into(), reply_to: None, time };
+        assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { .. }));
+    }
+}
+
+/// A reply reduced for comparing: a refusal to its status, a Hello reply
+/// without its flags (whether the node answers Find and Lookup).
+fn reduced(r: Vec<u8>) -> Vec<u8> {
+    if (0xa0..=0xab).contains(&r[0]) && r[5] == 3 {
+        r[..6].to_vec()
+    } else if r[0] == 0xa0 && r.len() == 8 {
+        r[..7].to_vec()
+    } else {
+        r
+    }
+}
+
+/// Asks Relays until `done` holds for the list (at most `TIMEOUT`), and
+/// returns that reply.
+fn relays_until(c: &mut Client, req: u32, done: impl Fn(&[(u8, String)]) -> bool) -> Vec<u8> {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let r = c.call(&msg(0x28, req, &[]));
+        let mut f = R(&r[6..]);
+        let list: Vec<(u8, String)> = (0..f.u8()).map(|_| (f.u8(), f.text())).collect();
+        if done(&list) {
+            return r;
+        }
+        assert!(Instant::now() < deadline, "relays: {list:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The same questions to two nodes holding the same feed, with `relays`
+/// the node's relay and another; the replies, for comparing ([`reduced`]).
+/// A connection the node closes is recorded as the reply "closed".
+///
+/// Not compared, because the Go node does not offer them (Hello flags):
+/// Find and Lookup. Not here, because they need thousands of entries:
+/// replies over 2 MiB (each node's own tests).
+fn script(socket: &Path, key: &FeedKey, relays: [&str; 2]) -> Vec<(String, Vec<u8>)> {
     let (mut c, _) = Client::hello(socket);
     let key_hex = to_hex(key);
     let id = blob_id(ARTICLE.as_bytes());
     let bob = Identity::from_seed([22; 32]).feed_key();
+    let invalid = [0xffu8; 32]; // not a point's encoding (y >= p)
     let mut out = Vec::new();
-    let mut ask = |c: &mut Client, what: &str, m: Vec<u8>| {
-        let r = c.call(&m);
-        let r = if (0xa0..=0xab).contains(&r[0]) && r[5] == 3 { r[..6].to_vec() } else { r };
+    fn ask(out: &mut Vec<(String, Vec<u8>)>, c: &mut Client, what: &str, m: Vec<u8>) {
+        let r = reduced(c.call(&m));
         out.push((what.to_string(), r));
-    };
+    }
     assert_eq!(c.ask(&msg(0x2a, 2, &[&20_000u32.to_le_bytes()])).0, 1, "sync");
-    ask(&mut c, "subscriptions", msg(0x23, 3, &[]));
-    ask(&mut c, "timeline", msg(0x22, 4, &[&0u32.to_le_bytes(), &10u16.to_le_bytes()]));
-    ask(&mut c, "timeline before 2", msg(0x22, 5, &[&2u32.to_le_bytes(), &10u16.to_le_bytes()]));
-    ask(&mut c, "feed with entries", msg(0x24, 6, &[&[1], &short(key_hex.as_bytes())]));
-    ask(&mut c, "feed not subscribed", msg(0x24, 7, &[&[1], &short(to_hex(&bob).as_bytes())]));
-    ask(&mut c, "feed malformed", msg(0x24, 8, &[&[1], &short(b"nonsense")]));
-    ask(&mut c, "held", msg(0x21, 9, &[&id]));
-    ask(&mut c, "held missing", msg(0x21, 10, &[&blob_id(b"missing")]));
-    ask(&mut c, "get", msg(0x01, 11, &[&id]));
-    ask(&mut c, "get missing", msg(0x01, 12, &[&blob_id(b"missing")]));
-    ask(&mut c, "title", msg(0x2b, 13, &[&id, &(ARTICLE.len() as u32).to_le_bytes()]));
-    ask(&mut c, "title wrong size", msg(0x2b, 14, &[&id, &1u32.to_le_bytes()]));
-    ask(&mut c, "relays", msg(0x28, 15, &[]));
-    ask(&mut c, "set relays not a URL", msg(0x29, 16, &[&[1], &short(b"http://relay.example")]));
-    ask(&mut c, "nickname", msg(0x27, 17, &[key, &short(b"Al")]));
-    ask(&mut c, "nickname not a name", msg(0x27, 18, &[key, &short(b" Al")]));
-    ask(&mut c, "subscriptions with a nickname", msg(0x23, 19, &[]));
-    ask(&mut c, "nickname removed", msg(0x27, 20, &[key, &short(b"")]));
-    ask(&mut c, "subscribe again", msg(0x25, 21, &[&short(key_hex.as_bytes())]));
-    ask(&mut c, "subscribe malformed", msg(0x25, 22, &[&short(b"not an address")]));
-    ask(&mut c, "subscribe bob", msg(0x25, 23, &[&short(to_hex(&bob).as_bytes())]));
-    ask(&mut c, "unsubscribe bob", msg(0x26, 24, &[&bob]));
-    ask(&mut c, "unsubscribe bob again", msg(0x26, 25, &[&bob]));
-    ask(&mut c, "subscriptions at the end", msg(0x23, 26, &[]));
+    ask(&mut out, &mut c, "subscriptions", msg(0x23, 3, &[]));
+    ask(&mut out, &mut c, "timeline", msg(0x22, 4, &[&0u32.to_le_bytes(), &10u16.to_le_bytes()]));
+    ask(&mut out, &mut c, "timeline before 2", msg(0x22, 5, &[&2u32.to_le_bytes(), &10u16.to_le_bytes()]));
+    ask(&mut out, &mut c, "feed with entries", msg(0x24, 6, &[&[1], &short(key_hex.as_bytes())]));
+    ask(&mut out, &mut c, "feed not subscribed", msg(0x24, 7, &[&[1], &short(to_hex(&bob).as_bytes())]));
+    ask(&mut out, &mut c, "feed malformed", msg(0x24, 8, &[&[1], &short(b"nonsense")]));
+    ask(&mut out, &mut c, "held", msg(0x21, 9, &[&id]));
+    ask(&mut out, &mut c, "held missing", msg(0x21, 10, &[&blob_id(b"missing")]));
+    ask(&mut out, &mut c, "get", msg(0x01, 11, &[&id]));
+    ask(&mut out, &mut c, "get missing", msg(0x01, 12, &[&blob_id(b"missing")]));
+    ask(&mut out, &mut c, "title", msg(0x2b, 13, &[&id, &(ARTICLE.len() as u32).to_le_bytes()]));
+    ask(&mut out, &mut c, "title wrong size", msg(0x2b, 14, &[&id, &1u32.to_le_bytes()]));
+    ask(&mut out, &mut c, "relays", msg(0x28, 15, &[]));
+    ask(&mut out, &mut c, "set relays not a URL", msg(0x29, 16, &[&[1], &short(b"http://relay.example")]));
+    ask(&mut out, &mut c, "nickname", msg(0x27, 17, &[key, &short(b"Al")]));
+    ask(&mut out, &mut c, "nickname not a name", msg(0x27, 18, &[key, &short(b" Al")]));
+    ask(&mut out, &mut c, "subscriptions with a nickname", msg(0x23, 19, &[]));
+    ask(&mut out, &mut c, "nickname removed", msg(0x27, 20, &[key, &short(b"")]));
+    ask(&mut out, &mut c, "subscribe again", msg(0x25, 21, &[&short(key_hex.as_bytes())]));
+    ask(&mut out, &mut c, "subscribe malformed", msg(0x25, 22, &[&short(b"not an address")]));
+    ask(&mut out, &mut c, "subscribe bob", msg(0x25, 23, &[&short(to_hex(&bob).as_bytes())]));
+    ask(&mut out, &mut c, "unsubscribe bob", msg(0x26, 24, &[&bob]));
+    ask(&mut out, &mut c, "unsubscribe bob again", msg(0x26, 25, &[&bob]));
+    ask(&mut out, &mut c, "subscriptions after bob", msg(0x23, 26, &[]));
+
+    // LOCAL.md 3: a nickname for an invalid key is refused; unsubscribing
+    // from one succeeds (it is not subscribed).
+    ask(&mut out, &mut c, "nickname for an invalid key", msg(0x27, 27, &[&invalid, &short(b"Al")]));
+    ask(&mut out, &mut c, "unsubscribe an invalid key", msg(0x26, 28, &[&invalid]));
+    // Feed: the hints the feed was subscribed with, not the address's.
+    ask(&mut out, &mut c, "feed with other hints", msg(0x24, 29, &[&[0], &short(format!("{key_hex}@relay.example:1").as_bytes())]));
+    ask(&mut out, &mut c, "feed not subscribed, with hints", msg(0x24, 30, &[&[0], &short(format!("{}@relay.example:1", to_hex(&bob)).as_bytes())]));
+    // (A loopback hint, which a node never follows: NETWORK.md 5.1.)
+    ask(&mut out, &mut c, "subscribe bob with a hint", msg(0x25, 50, &[&short(format!("{}@127.0.0.1:1", to_hex(&bob)).as_bytes())]));
+    ask(&mut out, &mut c, "feed subscribed with a hint, asked with another", msg(0x24, 51, &[&[0], &short(format!("{}@relay.example:1", to_hex(&bob)).as_bytes())]));
+    ask(&mut out, &mut c, "unsubscribe bob with a hint", msg(0x26, 52, &[&bob]));
+    // Title: an empty one is status 1 with n 0 (of several, "title" above
+    // is the first stored).
+    ask(&mut out, &mut c, "title empty", msg(0x2b, 31, &[&blob_id(UNTITLED.as_bytes()), &(UNTITLED.len() as u32).to_le_bytes()]));
+
+    // Set relays, at once: a URL twice counts once; the new relay is
+    // connected; one dropped goes; with none, Sync is refused and a Get not
+    // held is not found.
+    let [relay, other] = relays;
+    let urls = |list: &[&str]| -> Vec<u8> {
+        let mut m = vec![list.len() as u8];
+        for u in list {
+            m.extend(short(u.as_bytes()));
+        }
+        m
+    };
+    ask(&mut out, &mut c, "set relays, one twice", msg(0x29, 32, &[&urls(&[relay, other, relay])]));
+    let r = relays_until(&mut c, 33, |l| l.len() == 2 && l.iter().all(|(f, _)| *f == 5));
+    out.push(("relays, both connected".into(), r));
+    ask(&mut out, &mut c, "set relays, the first dropped", msg(0x29, 34, &[&urls(&[other])]));
+    let r = relays_until(&mut c, 35, |l| l == [(5, other.to_string())]);
+    out.push(("relays, the first gone".into(), r));
+    ask(&mut out, &mut c, "set no relays", msg(0x29, 36, &[&urls(&[])]));
+    let r = relays_until(&mut c, 37, |l| l.is_empty());
+    out.push(("relays, none".into(), r));
+    ask(&mut out, &mut c, "sync with no relay", msg(0x2a, 38, &[&1000u32.to_le_bytes()]));
+    ask(&mut out, &mut c, "get not held, no relay", msg(0x01, 39, &[&blob_id(b"missing")]));
+    ask(&mut out, &mut c, "set relays back", msg(0x29, 40, &[&urls(&[relay])]));
+    let r = relays_until(&mut c, 41, |l| l == [(5, relay.to_string())]);
+    out.push(("relays, back".into(), r));
+    ask(&mut out, &mut c, "subscriptions at the end", msg(0x23, 42, &[]));
+
+    // LOCAL.md 3 and 4.1, each on a connection of its own: a first message
+    // that is not Hello, and a second Hello, close it; a version the node
+    // does not speak is refused and Hello is awaited again.
+    let closed = |c: &mut Client| if c.closed() { b"closed".to_vec() } else { b"open".to_vec() };
+    let mut d = Client::connect(socket);
+    d.send(&msg(0x28, 1, &[]));
+    out.push(("not Hello first".into(), closed(&mut d)));
+    let (mut d, _) = Client::hello(socket);
+    d.send(&msg(0x20, 2, &[&[0], &short(b"")]));
+    out.push(("a second Hello".into(), closed(&mut d)));
+    let mut d = Client::connect(socket);
+    out.push(("Hello, version 1".into(), reduced(d.call(&msg(0x20, 1, &[&[1], &short(b"")])))));
+    out.push(("then Hello, version 0".into(), reduced(d.call(&msg(0x20, 2, &[&[0], &short(b"")])))));
+    out.push(("and a request".into(), reduced(d.call(&msg(0x23, 3, &[])))));
     out
 }
 
@@ -967,7 +1073,9 @@ fn terse_node_and_go_node_answer_alike() {
     let tmp = tempfile::tempdir().unwrap();
     let Some(go) = build_go_reader(tmp.path(), false) else { return };
     let relay = start_relay(&tmp.path().join("relay"));
+    let other = start_relay(&tmp.path().join("other"));
     let key = publish(&tmp.path().join("alice"), &relay, false);
+    publish_more(&tmp.path().join("alice"), &relay);
 
     // The reference node, subscribed through its configuration.
     let ours = tmp.path().join("ours");
@@ -992,8 +1100,9 @@ fn terse_node_and_go_node_answer_alike() {
         .unwrap();
     let _go = NodeProc { child, socket: go_socket.clone(), log }.wait_ready();
 
-    let a = script(&socket, &key);
-    let b = script(&go_socket, &key);
+    let a = script(&socket, &key, [&relay, &other]);
+    let b = script(&go_socket, &key, [&relay, &other]);
+    assert_eq!(a.len(), b.len());
     let mut differ = Vec::new();
     for ((what, x), (_, y)) in a.iter().zip(&b) {
         if x != y {
@@ -1001,5 +1110,27 @@ fn terse_node_and_go_node_answer_alike() {
         }
     }
     assert!(differ.is_empty(), "the nodes answer differently:\n{}", differ.join("\n"));
+    // And what LOCAL.md says they answer.
+    let reply = |what: &str| a.iter().find(|(w, _)| w == what).unwrap().1.clone();
+    let st = |what: &str| reply(what)[5];
+    assert_eq!(R(&reply("title")[6..]).text(), "Through the node", "of several, the first stored");
+    assert_eq!(&reply("title empty")[5..], &[1, 0]);
+    assert_eq!(feed_record(&mut R(&reply("feed with other hints")[6..])).hints, "");
+    assert_eq!(feed_record(&mut R(&reply("feed subscribed with a hint, asked with another")[6..])).hints, "127.0.0.1:1");
+    assert_eq!(feed_record(&mut R(&reply("feed not subscribed, with hints")[6..])).hints, "");
+    for (what, want) in [
+        ("nickname for an invalid key", 3),
+        ("unsubscribe an invalid key", 1),
+        ("set relays, one twice", 1),
+        ("sync with no relay", 3),
+        ("get not held, no relay", 2),
+        ("Hello, version 1", 3),
+        ("then Hello, version 0", 1),
+    ] {
+        assert_eq!(st(what), want, "{what}");
+    }
+    for what in ["not Hello first", "a second Hello"] {
+        assert_eq!(reply(what), b"closed", "{what}");
+    }
     eprintln!("terse node and tersereader node gave the same {} replies", a.len());
 }
