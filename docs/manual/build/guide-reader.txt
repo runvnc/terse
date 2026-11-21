@@ -1,0 +1,72 @@
+# Make a reader, step 1: show an article
+
+A Tersenet article is plain UTF-8 text that already reads well as it is. A reader's job is to show it a little better: headings larger, paragraphs wrapped to the window, links you can follow. You can write one in any language, with any way of putting text on a screen, and you do not need the Terse32 virtual machine at all: articles and the network are the whole of Tersenet's reading side.
+
+This first step needs no network either. You will show an article that is already a file on your computer.
+
+## An article to start with
+
+Save this as `hello.txt`:
+
+```
+# Hello
+
+My first article.
+Two lines, one paragraph.
+
+## A short list
+
+- one item
+- another, with `code` in it
+```
+
+## The rules you need first
+
+An article is a series of blocks. Blank lines separate them, and each block is known by how its first line starts:
+
+- `# ` starts a heading, and `## ` a subheading: one line each.
+- `- ` or `* ` starts a list item.
+- Four spaces or a tab start a preformatted line, shown as written in a monospaced face.
+- Three backquotes start a fence, which runs to the next line of three backquotes and is shown as written, like preformatted lines.
+- `|` starts a table row.
+- Any other line starts a paragraph. Its lines are joined with spaces, then wrapped to your width.
+
+Inside a line, text between two backquotes is a code span, and a link is a `terse:` address, bare or written as `[text](address)`. An article's address is `terse:` and 64 hexadecimal digits. Only `terse:` addresses are links: a web address is ordinary text.
+
+That is enough for a first version. Anything that matches no rule is ordinary text, shown as written. A reader that does not lay tables out yet may show a table's lines as a paragraph, and one that does not draw figures may show a figure as its text: the format allows both, so leave them for later.
+
+## Check yourself
+
+The Tersenet sources come with a test for exactly this. The folder `vectors/articles` holds 58 small articles, each `.txt` beside a `.dump` file that lists what a reader must find in it, one block or piece per line. For `hello.txt` it is:
+
+```
+heading
+  text "Hello"
+paragraph
+  text "My first article. Two lines, one paragraph."
+subheading
+  text "A short list"
+item
+  text "one item"
+item
+  text "another, with "
+  code "code"
+  text " in it"
+```
+
+Make your program print the same, and compare. The reader `tersereader` (in the sources as `native/reader-go`) prints it for any file:
+
+```
+tersereader --dump hello.txt --tokens
+tersereader --dump hello.txt
+```
+
+The second command shows the article laid out as text, with its links numbered: a good picture of what yours should do.
+
+`tersereader` is itself a reader written from the specifications alone. With the network left to a separate program, as step 2 shows, it is about 5,300 lines of Go. A reader is a project you can finish.
+
+## What you have now
+
+A program that shows Tersenet articles from files. Next, get them from the network: [Make a reader, step 2: fetch an article](terse:84b9ca56b13a4749b96ccad88a565881973976648b8c5f95a7454fb7b5aa03e1).
+
+The complete rules, with every edge case, are in ARTICLE.md; [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8) shows each construct as source and as shown.

@@ -1,0 +1,63 @@
+# Contents
+
+The manual has two parts. The guide is a series of short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
+
+## Guide
+
+- [Make a reader, step 1: show an article](terse:{guide-reader}): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:{guide-reader-fetch}): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:{guide-reader-feeds}): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:{guide-program}): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:{guide-drawing}): the 2D vector display and keyboard events.
+- [Make a host](terse:{guide-host}): your own Terse32 machine, step by step, checked against the reference.
+- [Make a device](terse:{guide-device}): a device as a separate program on the device bus.
+- [Swap in your own part](terse:{guide-swap}): your reader, core or device with the reference for everything else.
+- [Make a shell](terse:{guide-shell}): the program that starts other machines and lays out their screens.
+- [Using Tersenet](terse:{guide-using}): install, read, follow, write and publish; no programming needed.
+
+## Reference
+
+Tersenet as a whole:
+
+- [How Tersenet works](terse:{how-it-works}): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
+- [Using the shell](terse:{using}): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
+- [Using the reader](terse:{using-reader}): the timeline, feeds, search and reading an article, with every key.
+- [Fonts](terse:{fonts}): the fonts the host draws with, which characters they show, and adding one.
+- [Performance reports](terse:{performance-reports}): what a report of your host's record holds, publishing one, and reading many.
+
+Articles and the network:
+
+- [Writing an article](terse:{writing-articles}): the article format, every construct shown as source and as shown.
+- [Writing a reader without the machine](terse:{native-reader}): what a native reader must do to be a complete Tersenet client.
+- [The network](terse:{network}): blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.
+
+Programs:
+
+- [Building a program](terse:{toolchain}): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
+- [The C library](terse:{toolchain-c}): the start code, the linker script, terse.h, and the hello program in assembly and C.
+- [Rust programs](terse:{toolchain-rust}): the Rust runtime, what things cost, a larger program with cargo.
+- [Building by hand, and other languages](terse:{toolchain-other}): the build without `terse build`, and what any compiler must do.
+- [Running and publishing a program](terse:{running-programs}): headless runs, scripted input, the state hash, the window, costs, publishing.
+
+The Terse32 machine:
+
+- [The Terse32 machine](terse:{machine}): the CPU, the memory map, frames and the budget, faults, the image format, the call table.
+- [Events and input](terse:{events}): every event, the queue, keys, text, the pointer, the wheel and controllers.
+- [Charges and limits](terse:{charges}): every charge and every numeric limit on one page.
+- [State, replay and conformance](terse:{state}): the machine's state, its hash, snapshots and the conformance image.
+
+The devices:
+
+- [The system device (device 1)](terse:{device-system}): frames, events, time, random bytes, controllers, exit, opening things.
+- [The terminal (device 2)](terse:{device-terminal}): an 80 by 30 grid of character cells.
+- [The 2D vector display (device 3)](terse:{device-vector}): lines and filled shapes from a display list, clean or phosphor.
+- [Content: blobs, requests and statuses (device 4)](terse:{content-blobs}): fetching and publishing blobs by hash.
+- [Content: feeds, names, search and publishing](terse:{content-feeds}): the feeds the host follows, names and search.
+- [Content: named records](terse:{content-records}): small named records a program keeps on the host.
+- [The sound device (device 6)](terse:{device-sound}): a 16-voice wavetable synthesizer, optional and bit-exact.
+- [The page (device 7)](terse:{device-page}): typeset proportional text and tables in a rectangle of the screen.
+- [Figures on the page](terse:{device-page-figures}): drawings within the page's text.
+- [The Machines device (device 8)](terse:{device-machines}): the shell's device, which starts other machines.
+- [Screens, panels and input (device 8)](terse:{device-machines-screens}): where machines' screens go, flat or as panels in 3D.
+- [The 3D vector display (device 9)](terse:{device-vector3}): lines, points and circles in a box, seen from the host's eye.
+- [Surfaces](terse:{device-vector3-surfaces}): a program's own screen placed in its 3D scene.

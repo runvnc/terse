@@ -1,0 +1,58 @@
+# Make a reader, step 2: fetch an article
+
+Articles travel between computers through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob's name is its hash, so you can always check that you got what you asked for. In this step your reader asks a relay for one article and checks it.
+
+## Start a relay and put an article on it
+
+You need the `terse` and `terse-relay` programs, which come with every Tersenet download. In one terminal, start a relay of your own on your computer:
+
+```
+terse-relay --store try-relay
+```
+
+It listens on `ws://127.0.0.1:7878`, and the `terse` commands find it there. (If `terse-host` is running, it already runs one there: skip this.) In another terminal, put your article on it:
+
+```
+terse put hello.txt
+```
+
+It prints the article's ID, 64 hexadecimal digits: the BLAKE3-256 hash of the file. `terse hash hello.txt` prints the same without a relay.
+
+## Ask for it
+
+A relay is a WebSocket server: use any WebSocket library, open `ws://127.0.0.1:7878`, and send binary messages. To fetch a blob, send a Get:
+
+- the byte `01h`;
+- a request number you choose, 4 bytes, least significant first;
+- the blob's ID, 32 bytes.
+
+The reply starts with `81h`, your request number and a status byte: 1 found, followed by the blob's bytes; 2 not found; 3 refused.
+
+## Check it
+
+Hash the bytes with BLAKE3-256 (libraries exist for most languages) and compare with the ID you asked for. If they differ, throw the bytes away and treat the blob as not found: relays are not trusted, the hash is. Then show the article as in step 1.
+
+Keep what you fetched, a file per ID in a folder is enough, so that the article opens at once next time, with no network at all. Tersenet asks that of every reader: what you hold opens without waiting for a relay.
+
+To see what your reader should get:
+
+```
+tersereader --relay ws://127.0.0.1:7878 show <id>
+```
+
+## Or let a node do the network
+
+If you would rather not write the WebSocket and hashing parts now, there is a shortcut. A node is a separate program that talks to relays, checks everything and keeps the store; your reader asks it over a local socket and trusts its answers. `tersereader node` is one:
+
+```
+tersereader relay add ws://127.0.0.1:7878
+tersereader node
+```
+
+The first command, needed once, tells it which relay to use. It listens on the Unix socket `$XDG_RUNTIME_DIR/terse/node.sock`. Each message there is its length (4 bytes, least significant first) and then its bytes. Send a Hello first (`20h`, a request number, a version byte 0 and a length byte 0), then the same Get as above. The node fetches from its relays, checks the blob and stores it; you only show it. A reader made this way needs no cryptography, no hash and no store; tersereader's own "thin" build is one. LOCAL.md has every message.
+
+## What you have now
+
+A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d).
+
+The relay's messages are in NETWORK.md section 3 and [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862).

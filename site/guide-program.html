@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a program - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="write-a-program">Write a program</h1>
+<p>Besides articles, Tersenet can carry small programs. Each runs on its own Terse32 machine, a tiny virtual computer: at most 1 MiB of memory, a fixed amount of work per frame at 60 frames a second, and a few devices to talk to, such as an 80 by 30 grid of text and a display for lines and shapes. A program cannot see your files, and before one publishes anything in your name or changes the feeds you follow, the host asks you. Programs are optional: nothing in the reader depends on them.</p>
+<h2 id="three-commands">Three commands</h2>
+<pre>terse new hello.c
+terse build hello.c
+terse-host hello.terse</pre>
+<p><code>terse new</code> writes a small C program to start from: it prints a line and ends when you press Esc. <code>terse build</code> compiles it into <code>hello.terse</code>, the program file, with the text grid and the line display as its devices. <code>terse-host</code> runs it in a window.</p>
+<p><code>terse build</code> needs clang and its linker lld; if one is missing, it says in one sentence what to install. Nothing else is needed: the C library comes inside <code>terse</code>.</p>
+<p>The same works in Rust, <code>terse new hello.rs</code> and then <code>terse build hello.rs</code>, with rustc and its target for this machine, which <code>terse build</code> also names if it is missing.</p>
+<h2 id="what-a-program-looks-like">What a program looks like</h2>
+<p>Open <code>hello.c</code>. Without its comments it is short:</p>
+<pre>#include &quot;terse.h&quot;
+
+int main(void)
+{
+    term_color(15, 4); /* white on blue */
+    term_puts(&quot; Hello from hello! &quot;);
+    term_color(7, 0);
+    term_puts(&quot;\n\nPress Esc to exit.\n&quot;);
+
+    for (;;) {
+        terse_event e;
+        terse_wait_frame();
+        while (terse_event_pop(&amp;e)) {
+            if (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
+                return 0;
+        }
+    }
+}</pre>
+<p><code>term_puts</code> writes text on the grid. <code>terse_wait_frame</code> says &quot;done for this frame&quot;: the program sleeps until the next one. There are no threads and no interrupts; a program does a frame&#39;s work, then waits. If it does too much, the machine simply pauses it and carries on in the next frame. Keys arrive as events, and returning from <code>main</code> ends the program.</p>
+<p>Change the text, build again, run again: that is the whole loop.</p>
+<h2 id="run-it-without-a-window">Run it without a window</h2>
+<pre>terse run hello.terse --frames 60 --dump</pre>
+<p>runs it for 60 frames with no window and prints the text grid. That is how programs are tested: the machine is deterministic, so the same program with the same input gives the same result on every computer. <code>terse build hello.c --run --frames 60 --dump</code> builds and runs in one go.</p>
+<h2 id="share-it">Share it</h2>
+<pre>terse feed publish --program hello.terse</pre>
+<p>publishes it in your feed, under its name (make your key first with <code>terse key new</code>, once). People who follow your feed see it in the launcher of <code>terse-host</code> and can start it with Enter.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: <a href="guide-drawing.html">Draw a line and read a key</a>.</p>
+<p>Every option of <code>terse build</code>, the C library and the Rust runtime are in <a href="toolchain.html">Building a program</a>; running, testing and publishing in more detail in <a href="running-programs.html">Running and publishing a program</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-feeds.html">← Make a reader, step 3: links and feeds</a><a rel="next" href="guide-drawing.html">Draw a line and read a key →</a></nav></footer>
+</body>
+</html>

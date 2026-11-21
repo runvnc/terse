@@ -3,66 +3,76 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Tersenet manual - the Tersenet manual</title>
+<title>Contents - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
 <main>
 <article>
-<h1 id="the-tersenet-manual">The Tersenet manual</h1>
-<p>This manual describes the whole Tersenet system: the Terse32 machine, its devices, the network that carries articles and programs, and the programs that come with it. It is written as Tersenet articles, so you can read it in the reader, follow its links with Tab and Enter, and publish it to a feed. Each article below says what it covers.</p>
-<h2 id="start-here">Start here</h2>
+<h1 id="contents">Contents</h1>
+<p>The manual has two parts. The guide is a series of short steps, each one you can finish in a sitting. The reference is everything, complete and exact.</p>
+<h2 id="guide">Guide</h2>
 <ul>
-<li><a href="index.html">What Tersenet is</a>: what Tersenet is for, in one paragraph.</li>
-<li><a href="how-it-works.html">How Tersenet works</a>: the technical details in three pages: sharing articles and programs, the network, the machine and its frame budget, the devices, determinism and the shell.</li>
-<li><a href="writing-programs.html">Writing a program</a>: the toolchain, the C library, building, running a program headless and in the host, and publishing it in a feed.</li>
-<li><a href="using.html">Using the shell and the reader</a>: the keys of the shell and the reader, layouts, sessions and the consent prompts.</li>
-<li><a href="fonts.html">Fonts</a>: the fonts the host draws with, which characters they show, and adding a font for other scripts.</li>
-<li><a href="writing-articles.html">Writing an article</a>: the article format, every construct shown as source and as it is shown.</li>
-<li><a href="state.html">State, replay and conformance</a>: what a machine&#39;s state is, its hash, snapshots and the conformance image.</li>
-<li><a href="performance-reports.html">Performance reports</a>: what a report of your host&#39;s record holds, publishing one, and reading many with the reports program.</li>
+<li><a href="guide-reader.html">Make a reader, step 1: show an article</a>: the article format&#39;s first rules, and a test to check yourself.</li>
+<li><a href="guide-reader-fetch.html">Make a reader, step 2: fetch an article</a>: get an article from a relay and check that it is genuine.</li>
+<li><a href="guide-reader-feeds.html">Make a reader, step 3: links and feeds</a>: follow links, subscribe to a feed, check its signatures.</li>
+<li><a href="guide-program.html">Write a program</a>: a first Terse32 program, built and run in three commands.</li>
+<li><a href="guide-drawing.html">Draw a line and read a key</a>: the 2D vector display and keyboard events.</li>
+<li><a href="guide-host.html">Make a host</a>: your own Terse32 machine, step by step, checked against the reference.</li>
+<li><a href="guide-device.html">Make a device</a>: a device as a separate program on the device bus.</li>
+<li><a href="guide-swap.html">Swap in your own part</a>: your reader, core or device with the reference for everything else.</li>
+<li><a href="guide-shell.html">Make a shell</a>: the program that starts other machines and lays out their screens.</li>
+<li><a href="guide-using.html">Using Tersenet</a>: install, read, follow, write and publish; no programming needed.</li>
 </ul>
-<h2 id="the-machine">The machine</h2>
+<h2 id="reference">Reference</h2>
+<p>Tersenet as a whole:</p>
 <ul>
-<li><a href="machine.html">The machine</a>: the CPU, the memory map, reset, frames and the budget, faults, the image format, the call convention and the whole call table.</li>
+<li><a href="how-it-works.html">How Tersenet works</a>: sharing articles and programs, the network, the machine, the devices, determinism and the shell.</li>
+<li><a href="using.html">Using the shell</a>: the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.</li>
+<li><a href="using-reader.html">Using the reader</a>: the timeline, feeds, search and reading an article, with every key.</li>
+<li><a href="fonts.html">Fonts</a>: the fonts the host draws with, which characters they show, and adding one.</li>
+<li><a href="performance-reports.html">Performance reports</a>: what a report of your host&#39;s record holds, publishing one, and reading many.</li>
+</ul>
+<p>Articles and the network:</p>
+<ul>
+<li><a href="writing-articles.html">Writing an article</a>: the article format, every construct shown as source and as shown.</li>
+<li><a href="native-reader.html">Writing a reader without the machine</a>: what a native reader must do to be a complete Tersenet client.</li>
+<li><a href="network.html">The network</a>: blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.</li>
+</ul>
+<p>Programs:</p>
+<ul>
+<li><a href="toolchain.html">Building a program</a>: <code>terse build</code> and <code>terse new</code>, every option, what they run and why, the devices an image lists.</li>
+<li><a href="toolchain-c.html">The C library</a>: the start code, the linker script, terse.h, and the hello program in assembly and C.</li>
+<li><a href="toolchain-rust.html">Rust programs</a>: the Rust runtime, what things cost, a larger program with cargo.</li>
+<li><a href="toolchain-other.html">Building by hand, and other languages</a>: the build without <code>terse build</code>, and what any compiler must do.</li>
+<li><a href="running-programs.html">Running and publishing a program</a>: headless runs, scripted input, the state hash, the window, costs, publishing.</li>
+</ul>
+<p>The Terse32 machine:</p>
+<ul>
+<li><a href="machine.html">The Terse32 machine</a>: the CPU, the memory map, frames and the budget, faults, the image format, the call table.</li>
 <li><a href="events.html">Events and input</a>: every event, the queue, keys, text, the pointer, the wheel and controllers.</li>
 <li><a href="charges.html">Charges and limits</a>: every charge and every numeric limit on one page.</li>
+<li><a href="state.html">State, replay and conformance</a>: the machine&#39;s state, its hash, snapshots and the conformance image.</li>
 </ul>
-<h2 id="the-devices">The devices</h2>
-<div class="table"><table>
-<thead><tr><th>Slot</th><th>Device</th><th>Article</th></tr></thead>
-<tbody>
-<tr><td>1</td><td>System</td><td><a href="device-system.html">The system device</a></td></tr>
-<tr><td>2</td><td>Terminal</td><td><a href="device-terminal.html">The terminal</a></td></tr>
-<tr><td>3</td><td>2D vector display</td><td><a href="device-vector.html">The 2D vector display</a></td></tr>
-<tr><td>4</td><td>Content</td><td><a href="content-blobs.html">Blobs, requests and statuses</a></td></tr>
-<tr><td>4</td><td>Content</td><td><a href="content-feeds.html">Feeds, names, search and publishing</a></td></tr>
-<tr><td>4</td><td>Content</td><td><a href="content-records.html">Named records</a></td></tr>
-<tr><td>6</td><td>Sound</td><td><a href="device-sound.html">The sound device</a></td></tr>
-<tr><td>7</td><td>Page</td><td><a href="device-page.html">The page</a></td></tr>
-<tr><td>7</td><td>Page</td><td><a href="device-page-figures.html">Figures on the page</a></td></tr>
-<tr><td>8</td><td>Machines</td><td><a href="device-machines.html">The Machines device</a></td></tr>
-<tr><td>8</td><td>Machines</td><td><a href="device-machines-screens.html">Screens, panels and input</a></td></tr>
-<tr><td>9</td><td>3D vector display</td><td><a href="device-vector3.html">The 3D vector display</a></td></tr>
-</tbody></table></div>
+<p>The devices:</p>
 <ul>
-<li>The system device: frames, events, time, random bytes, controllers, exit, and asking the shell to open something.</li>
-<li>The terminal: an 80 by 30 grid of character cells.</li>
-<li>The 2D vector display: lines and filled shapes from a display list, in a clean or a phosphor style.</li>
-<li>Content: blobs fetched and published by hash, the feeds the host follows, search, and named records kept on the host.</li>
-<li>Sound: a 16-voice wavetable synthesizer, with pairing, feedback, ring modulation, noise and samples; optional, and bit-exact.</li>
-<li>The page: typeset proportional text, figures and tables in a rectangle of the screen.</li>
-<li>Machines: the shell&#39;s device, which starts other machines and lays out their screens, flat or as panels in its 3D scene.</li>
-<li>The 3D vector display: lines, points and circles in a box behind and in front of the screen, seen from an eye the host chooses.</li>
-</ul>
-<h2 id="the-network">The network</h2>
-<ul>
-<li><a href="network.html">The network</a>: blobs and relays, feeds and entries, profiles, names and search, programs, and relays that mirror each other.</li>
-<li><a href="native-reader.html">Writing a reader without the machine</a>: what a native reader must do to be a complete Tersenet client, with only the network and the article format.</li>
+<li><a href="device-system.html">The system device (device 1)</a>: frames, events, time, random bytes, controllers, exit, opening things.</li>
+<li><a href="device-terminal.html">The terminal (device 2)</a>: an 80 by 30 grid of character cells.</li>
+<li><a href="device-vector.html">The 2D vector display (device 3)</a>: lines and filled shapes from a display list, clean or phosphor.</li>
+<li><a href="content-blobs.html">Content: blobs, requests and statuses (device 4)</a>: fetching and publishing blobs by hash.</li>
+<li><a href="content-feeds.html">Content: feeds, names, search and publishing</a>: the feeds the host follows, names and search.</li>
+<li><a href="content-records.html">Content: named records</a>: small named records a program keeps on the host.</li>
+<li><a href="device-sound.html">The sound device (device 6)</a>: a 16-voice wavetable synthesizer, optional and bit-exact.</li>
+<li><a href="device-page.html">The page (device 7)</a>: typeset proportional text and tables in a rectangle of the screen.</li>
+<li><a href="device-page-figures.html">Figures on the page</a>: drawings within the page&#39;s text.</li>
+<li><a href="device-machines.html">The Machines device (device 8)</a>: the shell&#39;s device, which starts other machines.</li>
+<li><a href="device-machines-screens.html">Screens, panels and input (device 8)</a>: where machines&#39; screens go, flat or as panels in 3D.</li>
+<li><a href="device-vector3.html">The 3D vector display (device 9)</a>: lines, points and circles in a box, seen from the host&#39;s eye.</li>
+<li><a href="device-vector3-surfaces.html">Surfaces</a>: a program&#39;s own screen placed in its 3D scene.</li>
 </ul>
 </article>
 </main>
-<footer><nav class="pn"><a rel="next" href="index.html">What Tersenet is →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="index.html">← Tersenet</a><a rel="next" href="guide-reader.html">Make a reader, step 1: show an article →</a></nav></footer>
 </body>
 </html>

@@ -2259,7 +2259,7 @@ fn reading_profile() {
     run.press("esc");
     run.press("m");
     run.frames(6);
-    assert!(run.view().contains("sans26b |The Tersenet manual\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |Tersenet\n"), "{}", run.view());
     let (worst, waited) = run.busiest();
     assert!(waited, "every frame ended in wait_frame ({worst} units)");
 }
@@ -2867,17 +2867,18 @@ fn manual_key_opens_the_index() {
     run.frames(20);
     let view = run.view();
     golden("manual-index", &view);
-    assert!(view.contains("sans26b |The Tersenet manual\n"), "{view}");
-    assert!(!view.contains("sans21b |The Tersenet manual"), "the heading is the title: {view}");
-    assert!(view.contains("[What Tersenet is]{1}"), "{view}");
-    // Following the first link opens the overview; Esc comes back.
+    assert!(view.contains("sans26b |Tersenet\n"), "{view}");
+    assert!(!view.contains("sans21b |Tersenet\n"), "the heading is the title: {view}");
+    assert!(view.contains("[Write your own Tersenet reader"), "{view}");
+    assert!(view.contains("[Contents: a step-by-step guide"), "{view}");
+    // Following the first link opens the guide's first page; Esc comes back.
     run.press("tab");
     run.press("enter");
     run.frames(6);
-    assert!(run.view().contains("sans26b |What Tersenet is\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |Make a reader, step 1: show an article\n"), "{}", run.view());
     run.press("esc");
     run.frames(4);
-    assert!(run.view().contains("sans26b |The Tersenet manual\n"));
+    assert!(run.view().contains("sans26b |Tersenet\n"));
 }
 
 /// The reader holds the ID of the manual's current index: a change of the

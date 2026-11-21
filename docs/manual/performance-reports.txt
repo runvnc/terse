@@ -32,7 +32,7 @@ Only typing `yes` publishes. To stop, publish no more. Programs cannot make repo
 
 ## Reading many: the reports program
 
-The reports program gathers the reports in the feeds you follow, and with F a sample found by searching the relays. Run it with `terse-host programs/reports/reports.terse`, or publish it to your feed with `terse feed publish --program` to start it from the shell's launcher. For every host, device and terse perf build it shows a verdict twice: among the feeds you follow, and among all found.
+The reports program gathers the reports in the feeds you follow, and with F a sample found by searching the relays. It is built in: choose reports in the shell's launcher. For every host, device and terse perf build it shows a verdict twice: among the feeds you follow, and among all found.
 
 | Verdict | When |
 |---|---|

@@ -1,0 +1,63 @@
+# Contents
+
+The manual has two parts. The guide is a series of short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
+
+## Guide
+
+- [Make a reader, step 1: show an article](terse:c363852bfd42594b87be8da2b43d23992413291fc8c356e7cbf0a4cb27ca39fa): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:84b9ca56b13a4749b96ccad88a565881973976648b8c5f95a7454fb7b5aa03e1): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:bc912a4c1145e5846532f3ec47d1ab5cce7390da50351e2c44fa0236fbc45c47): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:cb15a734bd22fa96fb5489c6ea3ee488a7628d8ec826a39df21665f3469ffd58): the 2D vector display and keyboard events.
+- [Make a host](terse:25d55da82fb9ddd1d6eefc62c26815c447efd9791f58dd36e08b74dedc8bab08): your own Terse32 machine, step by step, checked against the reference.
+- [Make a device](terse:e22547a461d2716b35626580d18dc9ceb10d377a42115d7c701e9b39ea6b64bf): a device as a separate program on the device bus.
+- [Swap in your own part](terse:a569551baa714144459f7d6a0d37ebd756384611229c0a273d201dbe85bd3a5b): your reader, core or device with the reference for everything else.
+- [Make a shell](terse:6f152dd0396239eaa6e7629626791d00b9579ab35e10cae6cec0de9d2accbf5e): the program that starts other machines and lays out their screens.
+- [Using Tersenet](terse:376297817e054c6e8cc8bcb45cea3b4d51219e5b909a1ff65d90352a2eb30982): install, read, follow, write and publish; no programming needed.
+
+## Reference
+
+Tersenet as a whole:
+
+- [How Tersenet works](terse:ed72152e9718da5cc9a82ee76afe51cf157af15789da1197e2583d59501b8cf8): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
+- [Using the shell](terse:4819c3b1b0580facd005843e4b9fab8ae47d56db9d41e241bbeef75ce0181512): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
+- [Using the reader](terse:a26c9a330b01f98347566242b5b208ff0b2655cc7667473fc1f391209f330777): the timeline, feeds, search and reading an article, with every key.
+- [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df): the fonts the host draws with, which characters they show, and adding one.
+- [Performance reports](terse:f6d99c3dd5e4499ba3116ca1e0ee0525d067191baeeb072e6d6c49cece782a1a): what a report of your host's record holds, publishing one, and reading many.
+
+Articles and the network:
+
+- [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format, every construct shown as source and as shown.
+- [Writing a reader without the machine](terse:74123e20f1739d0921abc649e0c394339b7ddd66d68b584ad60f1a09b721678d): what a native reader must do to be a complete Tersenet client.
+- [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862): blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.
+
+Programs:
+
+- [Building a program](terse:4f0b9607dc01ecc7723605b9bb83f4271f20058b1d94bc10d2f54949022096d2): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
+- [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec): the start code, the linker script, terse.h, and the hello program in assembly and C.
+- [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700): the Rust runtime, what things cost, a larger program with cargo.
+- [Building by hand, and other languages](terse:748be8ce8017566cf74c5c89f73d1b85abb5f051ef3c8ceacbfeadf0cd400d92): the build without `terse build`, and what any compiler must do.
+- [Running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69): headless runs, scripted input, the state hash, the window, costs, publishing.
+
+The Terse32 machine:
+
+- [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b): the CPU, the memory map, frames and the budget, faults, the image format, the call table.
+- [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62): every event, the queue, keys, text, the pointer, the wheel and controllers.
+- [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620): every charge and every numeric limit on one page.
+- [State, replay and conformance](terse:3d301b04ac7d3a4327891586c316a6df1655298c8ae08f57722440f8c32e85a1): the machine's state, its hash, snapshots and the conformance image.
+
+The devices:
+
+- [The system device (device 1)](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc): frames, events, time, random bytes, controllers, exit, opening things.
+- [The terminal (device 2)](terse:109353cb353476bc6b7de663f9c9afc097275cb86f02ce936ef74ed620996f0b): an 80 by 30 grid of character cells.
+- [The 2D vector display (device 3)](terse:c4e777067a9407d4559e27121169f80eac2db852099b0e04888626ce169e62d4): lines and filled shapes from a display list, clean or phosphor.
+- [Content: blobs, requests and statuses (device 4)](terse:bc4077f56c58ab74d245ddb40108c97f5088ae5f2b83cba8c1b15bbff5592124): fetching and publishing blobs by hash.
+- [Content: feeds, names, search and publishing](terse:9cbb89a2324c05a5455b16e9afa48479958926b3cce38aaa6e76d9799e97d886): the feeds the host follows, names and search.
+- [Content: named records](terse:2075d95732936a1e72971864904c935d47f93ff95f855b5068424799137ed1bf): small named records a program keeps on the host.
+- [The sound device (device 6)](terse:698ca31c5cf788d3306e5047c2e4d771bbac3f3399c5d75a1d5bc7c069e35c00): a 16-voice wavetable synthesizer, optional and bit-exact.
+- [The page (device 7)](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5): typeset proportional text and tables in a rectangle of the screen.
+- [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04): drawings within the page's text.
+- [The Machines device (device 8)](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063): the shell's device, which starts other machines.
+- [Screens, panels and input (device 8)](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f): where machines' screens go, flat or as panels in 3D.
+- [The 3D vector display (device 9)](terse:d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e): lines, points and circles in a box, seen from the host's eye.
+- [Surfaces](terse:3977dab63bc65a337e55f00eba3e3dee536c624ea3e9388ab1cc835a618d2d44): a program's own screen placed in its 3D scene.

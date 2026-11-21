@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building a program - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="building-a-program">Building a program</h1>
+<p>A Terse32 program is one image file, <code>.terse</code>: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at <code>0001_0000h</code>. RAM starts at <code>0010_0000h</code>; devices are reached with <code>ecall</code>. <code>terse build</code> makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. <a href="toolchain-c.html">The C library</a> describes the library and the hello program, <a href="toolchain-rust.html">Rust programs</a> the Rust runtime, and <a href="toolchain-other.html">Building by hand, and other languages</a> the same build without <code>terse build</code> and what any other compiler must do.</p>
+<h2 id="what-you-need">What you need</h2>
+<ul>
+<li>C and assembly: <code>clang</code> with the RISC-V target and <code>ld.lld</code> (LLVM&#39;s C compiler and linker; most systems&#39; packages include the RISC-V target).</li>
+<li>Rust: <code>rustc</code> from rustup with the target <code>riscv32imc-unknown-none-elf</code> (<code>rustup target add riscv32imc-unknown-none-elf</code>). rustc links with its own <code>rust-lld</code>, so neither clang nor lld is needed.</li>
+</ul>
+<p>Nothing else. The C library, the start-up code, the linker script and the Rust runtime are built into <code>terse</code>, and <code>terse build</code> takes the ROM out of the linked ELF file itself, so <code>llvm-objcopy</code> is not needed. When a tool is missing, <code>terse build</code> says in one sentence what to install. The compiler&#39;s own errors and warnings are shown as it prints them.</p>
+<h2 id="the-commands">The commands</h2>
+<pre>terse new &lt;file.c|file.rs|file.S&gt;
+terse build &lt;source&gt;... [-o &lt;out.terse&gt;] [--title &lt;t&gt;]
+    [--ram-pages &lt;n&gt;] [--device &lt;slot:version&gt;]...
+    [--optional &lt;slot:version&gt;]... [--cflag &lt;flag&gt;]...
+    [--clang &lt;path&gt;] [--lld &lt;path&gt;] [--rustc &lt;path&gt;]
+    [--show] [--run [the options of terse run]...]
+terse build --write-lib &lt;dir&gt;</pre>
+<ul>
+<li><code>terse new</code> writes a small commented program that prints a line on the terminal, waits for each frame and exits on Esc, in C, Rust or assembly by the extension. It never overwrites a file.</li>
+<li>Sources: the extension chooses the language. <code>.c</code> is C; <code>.S</code> and <code>.s</code> are assembly (<code>.S</code> goes through the C preprocessor, <code>.s</code> does not); <code>.rs</code> is Rust. Several C and assembly files may be given and are linked together in the order given. A Rust program is one <code>.rs</code> file, the crate root; its modules (<code>mod x;</code>) are found from it as rustc finds them.</li>
+<li><code>-o</code>: the image. Default: the first source&#39;s stem with <code>.terse</code>, in the current directory (<code>terse build src/game.c</code> writes <code>game.terse</code>).</li>
+<li><code>--title</code>: the image&#39;s title, at most 16 bytes of UTF-8. Default: the first source&#39;s stem, cut to 16 bytes.</li>
+<li><code>--device</code>, <code>--optional</code>: the devices the header lists (below). Without <code>--device</code> the image requires the program profile: <code>2:0</code>, the terminal, and <code>3:0</code>, the 2D vector display (device 1, System, is always there and is not listed). Giving <code>--device</code> replaces that list; <code>--optional</code> adds to it, and <code>--optional 3:0</code> makes the vector display optional instead of required.</li>
+<li><code>--ram-pages</code>: RAM in 8 KiB pages, 1 to 128. Default: the program&#39;s <code>.data</code> and <code>.bss</code> plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for <code>.data</code> and <code>.bss</code> alone is refused. The stack grows down from the end of RAM towards <code>.bss</code> and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.</li>
+<li><code>--cflag</code>: one more flag for clang, for example <code>--cflag -DDEBUG</code>; repeat it for several.</li>
+<li><code>--clang</code>, <code>--lld</code>, <code>--rustc</code>: the tools to run. Default: the variables <code>CLANG</code>, <code>LLD</code> and <code>RUSTC</code> if set (the <code>build.sh</code> scripts of <code>programs/</code> read the same names), else <code>clang</code>, <code>ld.lld</code> and <code>rustc</code> from <code>PATH</code>.</li>
+<li><code>--show</code>: print each command as it is run, then the <code>terse pack</code> command that gives the same image. The files built into <code>terse</code> are written to a temporary directory for the build, named in the first line.</li>
+<li><code>--run</code>: after building, run the image; everything after <code>--run</code> goes to <code>terse run</code> (<code>terse build hello.c --run --frames 60 --dump</code>).</li>
+<li><code>--write-lib &lt;dir&gt;</code>: write the files built into <code>terse</code> to a directory: <code>terse.h</code>, <code>terse.c</code>, <code>crt0.S</code> and <code>terse.ld</code> (programs/lib) and <code>terse.rs</code> (programs/lib/rust), to read them or to build by hand.</li>
+</ul>
+<p><code>terse build</code> prints the image&#39;s size, its RAM and its ID on standard error:</p>
+<pre>hello.terse: 386 bytes (ROM 350), RAM 2 pages
+    (4 bytes of data, the rest stack), id 54c6bd79...</pre>
+<p>(one line). The same sources and the same compiler give the same image, byte for byte.</p>
+<h2 id="what-it-runs-for-c-and-assembly">What it runs for C and assembly</h2>
+<pre>clang $CFLAGS -I &lt;lib&gt; -c &lt;lib&gt;/crt0.S -o 0.o
+clang $CFLAGS -I &lt;lib&gt; -c hello.c -o 1.o
+clang $CFLAGS -I &lt;lib&gt; -c &lt;lib&gt;/terse.c -o 2.o
+ld.lld -T &lt;lib&gt;/terse.ld --gc-sections 0.o 1.o 2.o \
+    -o out.elf
+terse pack --rom rom.bin --title hello --ram-pages 2 \
+    --device 2:0 --device 3:0 -o hello.terse</pre>
+<p><code>crt0.S</code> is compiled only when there is C, and each source in its turn as <code>1.o</code>; <code>rom.bin</code> is the ELF file&#39;s loaded bytes (below). <code>$CFLAGS</code> is</p>
+<pre>--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
+-Os -ffreestanding -nostdlib -fno-builtin
+-ffunction-sections -fdata-sections</pre>
+<p>the flags of every <code>programs/*/build.sh</code>: built with its build.sh&#39;s header options, each program of <code>programs/</code> that uses programs/lib comes out byte for byte as its checked-in image (crates/terse-cli/tests/build.rs checks it).</p>
+<div class="table"><table>
+<thead><tr><th>Flag</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>--target=riscv32-unknown-elf</code></td><td>32-bit RISC-V, no operating system: no system headers or libraries</td></tr>
+<tr><td><code>-march=rv32imc</code></td><td>exactly the CPU (SPEC §cpu): integers, multiply and divide, compressed instructions; no atomics, no floating-point registers</td></tr>
+<tr><td><code>-mabi=ilp32</code></td><td>the calling convention without floating-point registers</td></tr>
+<tr><td><code>-Os</code></td><td>small code: ROM is at most 128 KiB and every instruction costs budget</td></tr>
+<tr><td><code>-ffreestanding</code></td><td>no hosted C library: only freestanding headers such as <code>stdint.h</code></td></tr>
+<tr><td><code>-nostdlib</code></td><td>link no C library or start files</td></tr>
+<tr><td><code>-fno-builtin</code></td><td><code>memcpy</code> and the like are not known functions; terse.c provides <code>memcpy</code>, <code>memmove</code>, <code>memset</code> and <code>memcmp</code></td></tr>
+<tr><td><code>-ffunction-sections -fdata-sections</code></td><td>each function and variable in its own section, so <code>--gc-sections</code> drops what a program does not use</td></tr>
+<tr><td><code>-I &lt;lib&gt;</code></td><td>finds <code>terse.h</code></td></tr>
+<tr><td><code>-T terse.ld</code></td><td>the memory map (below)</td></tr>
+<tr><td><code>--gc-sections</code></td><td>drop every section nothing refers to</td></tr>
+</tbody></table></div>
+<p>crt0.S comes first and terse.c last. <code>crt0.S</code> holds <code>_start</code>, in the section <code>.text.start</code>, which the linker script puts at the first byte of ROM, where the machine starts (SPEC §reset). It copies <code>.data</code> from ROM to RAM, calls <code>main</code> and exits with its return value; RAM is zero at reset, so <code>.bss</code> needs nothing. A program only in assembly starts itself: it defines <code>_start</code> in <code>.text.start</code> (see <code>programs/hello/hello.S</code> or <code>terse new x.S</code>). terse.c is always linked; <code>--gc-sections</code> drops it from a program that calls nothing in it. There is no C library beyond terse.c and no compiler runtime: avoid 64-bit division and floating point in C, or bring the routines.</p>
+<h2 id="the-linker-script-terse-ld">The linker script, terse.ld</h2>
+<pre>ROM (rx) : ORIGIN = 0x00010000, LENGTH = 128K
+RAM (rw) : ORIGIN = 0x00100000, LENGTH = 1M
+.text   : KEEP(*(.text.start)), then *(.text .text.*)  &gt; ROM
+.rodata : constants                                     &gt; ROM
+.data   : __data_start .. __data_end  &gt; RAM, at __data_load
+.bss    : (NOLOAD) up to __bss_end                      &gt; RAM
+/DISCARD/ : .comment, .note*, .riscv.attributes, .eh_frame*</pre>
+<p><code>.data</code> is loaded in ROM at <code>__data_load</code>, after <code>.rodata</code>, and copied to RAM by the start code. The image&#39;s RAM is set by its header, not by the script (which allows the largest, 1 MiB); <code>terse build</code> reads where <code>.bss</code> ends from the ELF file to choose the default RAM and to refuse a count too small.</p>
+<h2 id="the-rom-from-the-elf-file">The ROM from the ELF file</h2>
+<p>The ROM is the bytes of each loadable segment (program header <code>PT_LOAD</code> with a file size) placed at its load address (<code>p_paddr</code>) from <code>0001_0000h</code>, with the gaps between segments zero: what <code>llvm-objcopy -O binary</code> writes for these files. <code>terse build</code> refuses an ELF file whose entry point is not <code>0001_0000h</code> (no <code>_start</code> in <code>.text.start</code>) or which loads anything outside the 128 KiB of ROM.</p>
+<h2 id="the-devices-an-image-lists">The devices an image lists</h2>
+<p><code>terse pack --rom &lt;raw.bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; [--device &lt;slot:version&gt;]... [--optional &lt;slot:version&gt;]... -o &lt;out.terse&gt;</code> writes the header before a raw ROM and checks the result as a host would; <code>terse build</code> takes the same <code>--device</code> and <code>--optional</code>. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file&#39;s size and its image ID.</p>
+<div class="table"><table>
+<thead><tr><th>Slot</th><th>Device</th><th><code>--device</code></th></tr></thead>
+<tbody>
+<tr><td>1</td><td>System</td><td>always present, need not be listed</td></tr>
+<tr><td>2</td><td>Terminal</td><td><code>2:0</code></td></tr>
+<tr><td>3</td><td>2D vector display</td><td><code>3:0</code></td></tr>
+<tr><td>4</td><td>Content</td><td><code>4:0</code></td></tr>
+<tr><td>5</td><td>Messages</td><td>reserved</td></tr>
+<tr><td>6</td><td>Sound</td><td><code>6:0</code></td></tr>
+<tr><td>7</td><td>Page</td><td><code>7:0</code></td></tr>
+<tr><td>8</td><td>Machines</td><td><code>8:0</code>; only the shell of a system gets it</td></tr>
+<tr><td>9</td><td>3D vector display</td><td><code>9:0</code></td></tr>
+<tr><td>10</td><td>Full text</td><td><code>10:0</code></td></tr>
+</tbody></table></div>
+<p>A device the image does not list is absent: its calls return <code>FFFF_FFFFh</code>. A host refuses an image that requires (<code>--device</code>) a device version it does not have. A device the program can do without is listed with <code>--optional</code> instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it, with <code>terse_has_device(slot)</code> in C, the system device&#39;s <code>device</code> call; the answer never changes while the machine runs.</p>
+<p>A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, <code>•</code>, <code>…</code>, <code>−</code>, box drawing and blocks) lists device 10, full text: <code>--optional 10:0</code> if a placeholder box will do on a host without it, <code>--device 10:0</code> if not (see the terminal&#39;s article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (<code>terse run --profile program</code> runs it with exactly those), and lists the rest as optional. <code>terse info</code> shows both lists.</p>
+<p>Next: <a href="toolchain-c.html">The C library</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="how-it-works.html">← How Tersenet works</a><a rel="next" href="toolchain-c.html">The C library →</a></nav></footer>
+</body>
+</html>

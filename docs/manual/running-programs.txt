@@ -1,0 +1,66 @@
+# Running and publishing a program
+
+This article is the reference for what comes after building a program (see "Building a program"): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, `terse` stands for the `terse` command of this repository (`cargo run -p terse-cli --bin terse --`, or `target/debug/terse` after `cargo build --workspace`).
+
+## Running it headless
+
+```
+terse run prog.terse --frames 30 --dump
+```
+
+runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (`random` gives zeros), and controllers exist only through the script. `--dump-vectors` and `--dump-page` add the vector display's list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, `terse run` exits with its code; after a fault it prints `terse: fault: <kind> at pc <pc>, address <addr>` on stderr and ends itself with SIGTERM.
+
+`--events <file>` gives it input: one event per line, a frame number, a command and its arguments; blank lines and text after `#` are ignored (except in `text`). The events of a frame are delivered in the order written.
+
+| Command | Arguments | Gives |
+|---|---|---|
+| `down` | key, then any of `shift` `ctrl` `alt` `meta` | key down |
+| `up` | key, modifiers | key up |
+| `press` | key, modifiers | key down and key up in that frame |
+| `text` | the rest of the line | one text event per character |
+| `pointer` | x, y, buttons 0 to 7 (optional) | a pointer event, in screen units |
+| `click` | x, y | a press of the primary button there, then its release |
+| `wheel` | vertical, horizontal (optional) | wheel steps; positive is down and right |
+| `feeds-updated` | none | a feeds-updated event |
+| `home` | none | the home key (with `--shell` only) |
+| `pad` | n, buttons, lx, ly, rx, ry (rx, ry optional) | controller n's whole state from this frame on |
+| `pad` | n, `off` | controller n disconnected |
+
+A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`. Pad buttons are hexadecimal, the first button byte in bits 0-7 and the second in bits 8-15 (`1` up, `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start); sticks are -127 to 127. A cell (column, row) starts at screen unit (column times 8, row times 16).
+
+```
+# type, press Enter, then quit
+10 text hi
+12 press enter
+20 press esc
+```
+
+## The state hash
+
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:{state}).
+
+## Running it in a window
+
+```
+cargo run -p terse-host -- prog.terse
+```
+
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell](terse:{using}) shows the shell, where programs run side by side.
+
+## Costs to keep in mind
+
+An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall` and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: `get_cursor`, `get_colours`, `cells_read`, content `submit`, page `locate`); `write` costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one `write` or `term_cells_write` is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in [Charges and limits](terse:{charges}).
+
+## Publishing it
+
+A program published in your feed has an identity, your feed key and its name, that stays the same from version to version:
+
+```
+terse feed publish --program prog.terse --name "Tiny tool"
+```
+
+checks the image and publishes it as a program entry; it prints `seq N program <name> image <id>`. The name defaults to the image's title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest `seq`). Named records belong to the identity, so a new version keeps the old one's records (see [Named records](terse:{content-records})). `terse key new` creates your feed key if you have none.
+
+Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:{content-feeds}) and [The machines device](terse:{device-machines}).
+
+Next: [The machine](terse:{machine}), then the devices, from [The system device](terse:{device-system}) and [The terminal](terse:{device-terminal}) to [Events](terse:{events}).

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The C library - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="the-c-library">The C library</h1>
+<p>The C library is four files of programs/lib, built into <code>terse</code> (<code>terse build --write-lib &lt;dir&gt;</code> writes them out): the start code, the linker script, and <code>terse.h</code> with <code>terse.c</code>, which give every call of the machine as a C function. This article describes them, then the hello program in assembly, without the library, and in C. How they are compiled and linked is in &quot;Building a program&quot;, the article before this one.</p>
+<h2 id="the-library">The library</h2>
+<ul>
+<li><code>crt0.S</code> is the entry point, <code>_start</code>, in the section <code>.text.start</code>, which the linker script puts at the first byte of ROM. It copies <code>.data</code> from its load address in ROM to RAM (<code>.bss</code> needs no clearing, since RAM is zero at reset), calls <code>main</code>, and calls <code>exit</code> with <code>main</code>&#39;s return value.</li>
+<li><code>terse.ld</code> places code and constants in ROM from <code>0001_0000h</code> and <code>.data</code>, <code>.bss</code> and the stack in RAM from <code>0010_0000h</code>. The stack grows down from the end of RAM, whose size is set only by the image&#39;s header (<code>--ram-pages</code>): nothing checks that it leaves room above <code>.bss</code>, at link time or when the program runs. A stack that grows into <code>.bss</code> corrupts it silently.</li>
+<li><code>terse.h</code> and <code>terse.c</code> give every call as a C function or macro, with the call numbers (<code>CALL_WAIT_FRAME</code> ... <code>CALL_V3_PERSISTENCE</code>), event types (<code>EV_KEY_DOWN</code> ...), key codes (<code>KEY_ENTER</code> ...), and <code>TERSE_ERR_UNKNOWN</code> and <code>TERSE_ERR_BUFFER</code>. Generic calls: <code>terse_call</code> (three arguments), <code>terse_call4</code>, <code>terse_call5</code> and <code>terse_call2</code> (two results). Calls without a wrapper of their own, such as <code>palette_set</code> and <code>get_cursor</code>, go through these.</li>
+</ul>
+<p>What <code>terse.h</code> provides, by area:</p>
+<ul>
+<li>System: <code>terse_event_pop</code>, <code>terse_wait_frame</code>, <code>terse_frame</code>, <code>terse_time</code>, <code>terse_random</code> (repeats the call 256 bytes at a time), <code>terse_random_byte</code>, <code>terse_exit</code>, <code>terse_open</code>, <code>terse_argument</code>, <code>terse_pad_read</code>. Note that <code>terse_wait_frame</code> returns how many frames passed since its last call (at most 255), not the frame counter that <code>wait_frame</code> returns.</li>
+<li>Terminal: <code>term_write</code> (splits a text into writes of at most 4,096 bytes, the most one <code>write</code> takes), <code>term_puts</code>, <code>term_putc</code>, <code>term_put_ascii</code>, <code>term_put_cp</code> (one code point up to <code>FFFFh</code> as UTF-8), <code>term_goto</code>, <code>term_color</code>, <code>term_fg</code>, <code>term_cmd</code>, <code>term_fill</code>, <code>term_cells_write</code>, <code>term_cells_read</code>, <code>term_is_wide</code>.</li>
+<li>2D vector display: a list builder (<code>vec_begin</code>, <code>vec_colour</code>, <code>vec_width</code>, <code>vec_origin</code>, <code>vec_move</code>, <code>vec_line</code>, <code>vec_circle</code>, <code>vec_disc</code>, <code>vec_rect</code>, <code>vec_tri</code>, <code>vec_end</code>, <code>vec_length</code>), <code>vec_submit</code>, <code>vec_submit_list</code>, <code>vec_clear</code>, <code>vec_style</code>, <code>vec_persistence</code>, <code>vec_fill</code>. The builder does not check the buffer&#39;s size.</li>
+<li>3D vector display: the same with <code>v3_</code> names.</li>
+<li>Content: the 52-byte <code>content_req</code> block, <code>content_submit</code>, a <code>content_</code> function for each operation (<code>content_get</code>, <code>content_put</code>, <code>content_find</code> ...), and named records: <code>record_save</code>, <code>record_load</code>, <code>record_delete</code>, <code>record_list</code>.</li>
+<li>Page: <code>page_submit</code>, <code>page_submit_doc</code>, <code>page_clear</code>, <code>page_region</code>, <code>page_scroll</code>, <code>page_background</code>, <code>page_locate</code>, <code>page_place_event</code>, and a document builder (<code>doc_begin</code>, <code>doc_text</code>, <code>doc_font</code>, <code>doc_size</code>, <code>doc_colour</code>, <code>doc_paragraph</code>, <code>doc_rule</code>, <code>doc_anchor</code>, <code>doc_figure</code>, <code>doc_end</code>) that never writes past its capacity and sets <code>doc_overflow</code> when full, and a path builder for figures (<code>path_begin</code>, <code>path_move</code>, <code>path_line</code> and so on).</li>
+<li>Machines (the shell only): a <code>mach_</code> function for each call, such as <code>mach_start_program</code> and <code>mach_place</code>.</li>
+<li><code>memcpy</code>, <code>memset</code>, <code>memmove</code>, <code>memcmp</code>, which the compiler may call on its own.</li>
+</ul>
+<p>There is no other C library and no compiler runtime. Avoid floating point and 64-bit division, which need runtime routines that are not there (the link fails), or bring the routines yourself: <code>crates/terse-core/tests/softfloat/softfloat.c</code> is a tested IEEE double add, subtract, multiply and divide in integer C.</p>
+<h2 id="the-hello-program">The hello program</h2>
+<p><code>programs/hello</code> is written in assembly, <code>hello.S</code>, without the library: it shows how bare the machine is. Its <code>build.sh</code> assembles it with the same flags, links it alone with <code>terse.ld</code>, and packs it with one RAM page and the terminal (<code>--device 2:0</code>). It does this:</p>
+<ul>
+<li>Names the calls it uses with <code>.equ</code> (<code>WAIT_FRAME</code> = <code>100h</code>, <code>TERM_WRITE</code> = <code>200h</code>, <code>CELLS_WRITE</code> = <code>207h</code> and so on). Each call is <code>li a7, number</code>, arguments in <code>a0</code>-<code>a2</code>, <code>ecall</code>, result in <code>a0</code>.</li>
+<li>At <code>_start</code> (in <code>.text.start</code>, so at <code>0001_0000h</code>) it sets the colours to 15 on 4, writes the title with <code>write</code> and sends command <code>04h</code> (clear to end of row), which paints row 0 blue.</li>
+<li>Walks a table in <code>.rodata</code> of row, column, foreground, background and a zero-terminated UTF-8 string, ended by <code>FFh</code>: <code>set_cursor</code>, <code>set_colours</code>, then <code>write</code> for each. Its helper <code>print</code> calls <code>write</code> once, which is enough for short strings at the start of a frame; <code>term_write</code> in C repeats the call.</li>
+<li>Builds 48 cells in <code>.bss</code> (4 bytes each: character, foreground, background) showing palette entries 0 to 15, and copies them to the grid with one <code>cells_write</code>.</li>
+<li>Then loops: <code>wait_frame</code>, write the frame counter as eight hex digits with <code>cells_write</code>, and take events with <code>next_event</code> until it returns 0. A text event (<code>03h</code>) is encoded as UTF-8 and written; a key down (<code>01h</code>) of Enter writes a line break and a prompt, Backspace writes <code>08h</code>, space, <code>08h</code>, and Escape calls <code>exit</code> with 0.</li>
+</ul>
+<p>A test compares its screen after 30 frames with <code>expected-30-frames.txt</code>.</p>
+<h2 id="the-same-in-c">The same in C</h2>
+<p><code>programs/hello/hello.c</code> is the whole hello program in C. Its core, typing and Esc, is this:</p>
+<pre>#include &quot;terse.h&quot;
+
+int main(void)
+{
+    terse_event e;
+    term_color(15, 4);
+    term_puts(&quot; hello&quot;);
+    term_cmd(TERM_CLEAR_EOL);
+    term_color(7, 0);
+    term_goto(0, 2);
+    term_puts(&quot;&gt; &quot;);
+    for (;;) {
+        terse_wait_frame();
+        while (terse_event_pop(&amp;e)) {
+            if (e.type == EV_TEXT) {
+                uint32_t cp = e.a | e.b &lt;&lt; 8
+                    | (uint32_t)(e.c &amp; 0x1F) &lt;&lt; 16;
+                term_put_cp(cp &gt; 0xFFFF ? 0xFFFD : cp);
+            } else if (e.type == EV_KEY_DOWN) {
+                if (e.a == KEY_ENTER)
+                    term_puts(&quot;\n&gt; &quot;);
+                else if (e.a == KEY_ESCAPE)
+                    return 0;
+            }
+        }
+    }
+}</pre>
+<p>Next: <a href="toolchain-rust.html">Rust programs</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="toolchain.html">← Building a program</a><a rel="next" href="toolchain-rust.html">Rust programs →</a></nav></footer>
+</body>
+</html>

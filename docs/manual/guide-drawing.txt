@@ -1,0 +1,75 @@
+# Draw a line and read a key
+
+This page adds the two things most programs need: drawing, and input. The program below draws one line, and the Left and Right arrow keys swing its top end; Esc quits.
+
+## The program
+
+Save it as `line.c` (or start from `terse new line.c` and replace its text) and build it with `terse build line.c`:
+
+```
+#include "terse.h"
+
+static uint8_t list[64];
+
+int main(void)
+{
+    int x = 320;
+    terse_event e;
+    for (;;) {
+        while (terse_event_pop(&e)) {
+            if (e.type != EV_KEY_DOWN)
+                continue;
+            if (e.a == KEY_LEFT)
+                x -= 10;
+            if (e.a == KEY_RIGHT)
+                x += 10;
+            if (e.a == KEY_ESCAPE)
+                return 0;
+        }
+        vec_begin(list, sizeof list);
+        vec_move(320 * 16, 400 * 16);
+        vec_line(x * 16, 80 * 16);
+        vec_end();
+        vec_submit_list(list);
+        terse_wait_frame();
+    }
+}
+```
+
+Run it with `terse-host line.terse`.
+
+## Reading keys
+
+Input arrives as events, queued for the program between frames. `terse_event_pop` takes the next one and returns 0 when there are none left. A key down event carries the key's code in `e.a`; `terse.h` names the common ones (`KEY_LEFT`, `KEY_ENTER`, `KEY_ESCAPE` and so on). Typed text comes as separate text events, one per character, so a program that wants words reads those instead.
+
+Returning from `main` ends the program.
+
+## Drawing
+
+The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with `vec_submit_list`. The display keeps showing that list, every frame, until the program submits another one. The list must be in RAM, which is why it is a variable: a list in the program's read-only memory (a `const` array, say) is refused.
+
+The screen is 640 by 480 units, (0, 0) at the top left. The list's coordinates are in sixteenths of a unit, hence the `* 16`. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
+
+## Test it without a window
+
+The machine takes scripted input, a line per event: a frame number, then what happens. Save this as `keys.txt`:
+
+```
+5 press left
+6 press left
+```
+
+then run:
+
+```
+terse run line.terse --frames 10 --events keys.txt \
+    --dump --dump-vectors
+```
+
+It prints the text grid (empty here), then the display list as the host draws it, one shape per line. After two presses of Left it is `line 5120 6400 4800 1280 w 16 c ffffffff`: a line from (320, 400) to (300, 80) in screen units, written in sixteenths, one unit wide (16), in white. Its top end has moved 20 units left of the middle.
+
+## What you have now
+
+A program that draws and reacts to keys: the shape of most games and tools. This is where the guide's part on programs ends. Next, a bigger step: [Make a host](terse:{guide-host}), your own Terse32 machine that runs these programs.
+
+Every drawing command is in [The 2D vector display](terse:{device-vector}), and every event and key in [Events and input](terse:{events}).

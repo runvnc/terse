@@ -1,0 +1,41 @@
+# Make a device
+
+A host does not have to build its devices in. On the device bus, each device is a separate program, a driver, that talks to the core (the part that runs the processor) over a local socket. A driver is written once, in any language, and works with any core that speaks the bus: the reference one, `tcore`, or yours. This page walks through one.
+
+## The example
+
+`native/driver-example/terminal.c` is a complete Terse32 terminal as a driver: one file of C, 570 lines, about 160 of them the device and 290 the bus, with every step marked `STEP 1` to `STEP 10`. It draws nothing: it keeps the grid and answers the program's calls, which is everything the machine's state depends on. Build it and run a program with it, from the top folder of the Tersenet sources:
+
+```
+cc -std=c11 -O2 -o terminal \
+    native/driver-example/terminal.c
+terse-bus programs/hello/hello.terse --frames 30 --hash \
+    --driver 2=$PWD/terminal
+```
+
+`terse-bus` is the reference core on the bus (it is not in the downloads: build it from the sources with `cargo build --release -p terse-bus -p terse-devices`, which also builds the reference drivers, all in `target/release`); `--driver 2=...` makes your program the driver of device 2, the terminal. It prints the machine's state hash after 30 frames. Run the same without `--driver` (the reference terminal) and the two hashes are equal: your driver behaves exactly like the reference.
+
+## What a driver does
+
+The core starts the driver with the socket's path in the environment variable `TERSE_BUS_SOCKET`. Every message is a length, an address (which machine, which device) and a body whose first byte is its type. In outline:
+
+- HELLO: say which device you serve, its version, and a call table: for each call, where its buffer is and what it costs, so the core can check calls before it sends them.
+- OPEN and CLOSE: a machine starts or stops. One driver serves every machine of a run, each with its own state.
+- CALL: carry out a program's call and reply with the result.
+- BEGIN and END: a frame starts and ends. A device with input to give the program (the content device's network replies, for example) delivers it at BEGIN.
+- STATE: reply with your device's part of the machine's state, byte for byte, which is how hashes stay equal.
+- SHUTDOWN: exit.
+
+## What makes a device
+
+A driver serves a whole device of the specification: every call, exactly. There is no partial device, and a made-up device on an unused slot is not asked for: a new device is a change to the specification. So the way in is to write your own driver for an existing device. The terminal is the example; `crates/terse-devices/python/vector.py` serves the 2D and 3D vector displays in about 330 lines of Python.
+
+## Check yourself
+
+Run a program with `--hash-every 1` under `terse-bus`, once with the reference driver and once with yours, and compare. The first frame whose hash differs is where to look. `test.sh`, beside the example, does this for several programs and under both cores.
+
+## What you have now
+
+A device of your own, running under the reference core and giving its hashes. Next, mix your parts with the reference ones: [Swap in your own part](terse:a569551baa714144459f7d6a0d37ebd756384611229c0a273d201dbe85bd3a5b).
+
+The bus in full is DEVICES.md; section 13 is the list of what a minimal driver must do, and the example's README says it with the reasons.

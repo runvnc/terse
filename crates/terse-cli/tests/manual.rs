@@ -356,14 +356,24 @@ fn site_is_self_contained() {
         builtin::MANUAL.iter().map(|(_, _, t)| std::str::from_utf8(t).unwrap().matches("\n```path ").count()).sum();
     assert!(sources >= 4);
     assert_eq!(figures, sources, "every figure is drawn");
-    // The landing page shows the overview and lists every article.
+    // The landing page is the index article alone: its heading, the
+    // paragraph and two links (the guide's first page, then the contents);
+    // no navigation and no list of articles.
     let index = page("index.html").unwrap();
-    assert!(index.contains(&format!(">{}</h1>", builtin::MANUAL[1].2.split(|&b| b == b'\n').next().map(|l| std::str::from_utf8(&l[2..]).unwrap()).unwrap())));
-    for (name, title, _) in builtin::MANUAL {
-        let title = title.replace('&', "&amp;").replace('\'', "&#39;").replace('<', "&lt;");
-        assert!(
-            index.contains(&format!("<li><a href=\"{}\">{}</a></li>", terse_net::manual_site::page_of(name), title)),
-            "{name} is listed on index.html"
-        );
+    let (name, title, _) = builtin::MANUAL[0];
+    assert_eq!(name, "index");
+    assert!(index.contains(&format!(">{title}</h1>")), "{index}");
+    let links: Vec<&str> = attrs(index, "href").into_iter().filter(|h| h.ends_with(".html")).collect();
+    assert_eq!(links, ["guide-reader.html", "contents.html"], "index.html links to the guide and the contents only");
+    assert!(!index.contains("<header>") && !index.contains("<footer>") && !index.contains("<li>"), "{index}");
+    // The contents page lists every other article, the guide first.
+    let contents = page("contents.html").unwrap();
+    let listed: Vec<&str> = attrs(contents, "href").into_iter().filter(|h| h.ends_with(".html")).collect();
+    for (name, _, _) in &builtin::MANUAL[1..] {
+        if *name != "contents" {
+            assert!(listed.contains(&terse_net::manual_site::page_of(name).as_str()), "{name} is listed on contents.html");
+        }
     }
+    let at = |h: &str| contents.find(&format!("href=\"{h}\">")).unwrap();
+    assert!(at("guide-reader.html") < at("how-it-works.html"), "the guide comes before the reference");
 }

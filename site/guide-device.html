@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a device - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-device">Make a device</h1>
+<p>A host does not have to build its devices in. On the device bus, each device is a separate program, a driver, that talks to the core (the part that runs the processor) over a local socket. A driver is written once, in any language, and works with any core that speaks the bus: the reference one, <code>tcore</code>, or yours. This page walks through one.</p>
+<h2 id="the-example">The example</h2>
+<p><code>native/driver-example/terminal.c</code> is a complete Terse32 terminal as a driver: one file of C, 570 lines, about 160 of them the device and 290 the bus, with every step marked <code>STEP 1</code> to <code>STEP 10</code>. It draws nothing: it keeps the grid and answers the program&#39;s calls, which is everything the machine&#39;s state depends on. Build it and run a program with it, from the top folder of the Tersenet sources:</p>
+<pre>cc -std=c11 -O2 -o terminal \
+    native/driver-example/terminal.c
+terse-bus programs/hello/hello.terse --frames 30 --hash \
+    --driver 2=$PWD/terminal</pre>
+<p><code>terse-bus</code> is the reference core on the bus (it is not in the downloads: build it from the sources with <code>cargo build --release -p terse-bus -p terse-devices</code>, which also builds the reference drivers, all in <code>target/release</code>); <code>--driver 2=...</code> makes your program the driver of device 2, the terminal. It prints the machine&#39;s state hash after 30 frames. Run the same without <code>--driver</code> (the reference terminal) and the two hashes are equal: your driver behaves exactly like the reference.</p>
+<h2 id="what-a-driver-does">What a driver does</h2>
+<p>The core starts the driver with the socket&#39;s path in the environment variable <code>TERSE_BUS_SOCKET</code>. Every message is a length, an address (which machine, which device) and a body whose first byte is its type. In outline:</p>
+<ul>
+<li>HELLO: say which device you serve, its version, and a call table: for each call, where its buffer is and what it costs, so the core can check calls before it sends them.</li>
+<li>OPEN and CLOSE: a machine starts or stops. One driver serves every machine of a run, each with its own state.</li>
+<li>CALL: carry out a program&#39;s call and reply with the result.</li>
+<li>BEGIN and END: a frame starts and ends. A device with input to give the program (the content device&#39;s network replies, for example) delivers it at BEGIN.</li>
+<li>STATE: reply with your device&#39;s part of the machine&#39;s state, byte for byte, which is how hashes stay equal.</li>
+<li>SHUTDOWN: exit.</li>
+</ul>
+<h2 id="what-makes-a-device">What makes a device</h2>
+<p>A driver serves a whole device of the specification: every call, exactly. There is no partial device, and a made-up device on an unused slot is not asked for: a new device is a change to the specification. So the way in is to write your own driver for an existing device. The terminal is the example; <code>crates/terse-devices/python/vector.py</code> serves the 2D and 3D vector displays in about 330 lines of Python.</p>
+<h2 id="check-yourself">Check yourself</h2>
+<p>Run a program with <code>--hash-every 1</code> under <code>terse-bus</code>, once with the reference driver and once with yours, and compare. The first frame whose hash differs is where to look. <code>test.sh</code>, beside the example, does this for several programs and under both cores.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A device of your own, running under the reference core and giving its hashes. Next, mix your parts with the reference ones: <a href="guide-swap.html">Swap in your own part</a>.</p>
+<p>The bus in full is DEVICES.md; section 13 is the list of what a minimal driver must do, and the example&#39;s README says it with the reasons.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-host.html">← Make a host</a><a rel="next" href="guide-swap.html">Swap in your own part →</a></nav></footer>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rust programs - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="rust-programs">Rust programs</h1>
+<p><code>terse build hello.rs</code> builds a Rust program with rustc and the runtime <code>terse.rs</code> (programs/lib/rust), built into <code>terse</code>. This article says what it runs, what the runtime gives, what things cost, and how to build a larger program with cargo. <code>programs/hello-rs/hello.rs</code> is the hello program in Rust.</p>
+<h2 id="a-program">A program</h2>
+<p>A Rust program is a <code>#![no_std]</code>, <code>#![no_main]</code> crate root that names its main function with <code>terse::entry!</code>:</p>
+<pre>#![no_std]
+#![no_main]
+use terse::*;
+entry!(main);
+
+fn main() {
+    term_puts(&quot;Hello from Rust\n&quot;);
+    loop {
+        wait_frame();
+    }
+}</pre>
+<h2 id="what-it-runs">What it runs</h2>
+<pre>rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+    -C opt-level=s -Cpanic=abort --remap-path-prefix=&lt;lib&gt;/= \
+    --crate-type rlib --crate-name terse \
+    -o &lt;tmp&gt;/libterse.rlib &lt;lib&gt;/terse.rs
+rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+    -C opt-level=s -Cpanic=abort --remap-path-prefix=&lt;lib&gt;/= \
+    -C lto -C strip=debuginfo --crate-type bin \
+    --crate-name hello -C link-arg=-T&lt;lib&gt;/terse.ld \
+    --extern terse=&lt;tmp&gt;/libterse.rlib -o out.elf hello.rs</pre>
+<p>then the ROM and <code>terse pack</code> as for C (see &quot;Building a program&quot;).</p>
+<div class="table"><table>
+<thead><tr><th>Flag</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>--edition 2024</code></td><td>rustc&#39;s own default is the 2015 edition</td></tr>
+<tr><td><code>--target riscv32imc-unknown-none-elf</code></td><td>Rust&#39;s target for exactly RV32IMC with no operating system (<code>core</code> and <code>alloc</code>, no <code>std</code>)</td></tr>
+<tr><td><code>-C opt-level=s</code></td><td>small code, as <code>-Os</code> for C</td></tr>
+<tr><td><code>-Cpanic=abort</code></td><td>no unwinding: a panic goes straight to the runtime&#39;s panic handler</td></tr>
+<tr><td><code>--remap-path-prefix=&lt;lib&gt;/=</code></td><td>panic messages name <code>terse.rs</code>, not the temporary directory, so the same source gives the same image</td></tr>
+<tr><td><code>--crate-type rlib --crate-name terse</code></td><td>the runtime is an ordinary library crate, used as <code>terse</code></td></tr>
+<tr><td><code>-C lto</code></td><td>link-time optimisation across the program, the runtime and <code>core</code>: about 12% smaller for hello</td></tr>
+<tr><td><code>-C strip=debuginfo</code></td><td><code>core</code> comes with debug information; it never reaches the ROM, but it makes the ELF file large</td></tr>
+<tr><td><code>-C link-arg=-T&lt;lib&gt;/terse.ld</code></td><td>the same memory map as C; rustc links with <code>rust-lld</code> and passes <code>--gc-sections</code> itself</td></tr>
+<tr><td><code>--extern terse=...</code></td><td>the runtime, so the program can say <code>use terse::*;</code></td></tr>
+</tbody></table></div>
+<h2 id="the-runtime-terse-rs">The runtime, terse.rs</h2>
+<p>One file, about 590 lines, the counterpart of crt0.S, terse.h and terse.c for the program profile:</p>
+<ul>
+<li><code>_start</code> (in <code>global_asm!</code>, in <code>.text.start</code>): copies <code>.data</code>, calls the function <code>entry!</code> names, and exits with code 0 if it returns.</li>
+<li>The panic handler writes <code>panic at &lt;file&gt;:&lt;line&gt;</code> on the terminal and stops the machine with <code>ebreak</code>, a breakpoint fault, which the host shows as a fault. It does not format the panic&#39;s message (that would pull <code>core::fmt</code> into every program).</li>
+<li><code>call</code>, <code>call2</code>, <code>call6</code>: the raw <code>ecall</code>, <code>unsafe</code>; and safe functions named as in terse.h without its <code>terse_</code> prefix. System: <code>wait_frame</code>, <code>frame</code>, <code>time</code>, <code>exit</code>, <code>random</code>, <code>random_byte</code>, <code>device</code>, <code>has_full_text</code>. Events: <code>next_event</code> gives an <code>Event</code> with <code>kind</code>, <code>key()</code>, <code>modifiers()</code>, <code>char()</code>, <code>pointer()</code>, <code>buttons()</code>, <code>wheel()</code>; constants <code>EV_*</code>, <code>KEY_*</code>, <code>MOD_*</code>, <code>BUTTON_*</code>. Controllers: <code>pad_read</code> gives a <code>Pad</code>; <code>PAD_*</code>. The terminal: <code>term_write</code>, <code>term_puts</code>, <code>term_putc</code>, <code>term_put_char</code>, <code>term_put_dec</code>, <code>term_goto</code>, <code>term_color</code>, <code>term_fg</code>, <code>term_cmd</code>, <code>term_get_cursor</code>, <code>term_get_colours</code>, <code>cell</code>, <code>term_cells_write</code>, <code>term_cells_read</code>, <code>term_palette_set</code>, <code>term_fill</code>; <code>TERM_*</code>. The 2D vector display: <code>VecList</code>, a list builder over a buffer you own (<code>colour</code>, <code>width</code>, <code>origin</code>, <code>move_to</code>, <code>line_to</code>, <code>rect</code>, <code>circle</code>, <code>disc</code>, <code>tri</code>, <code>submit</code>); <code>vec_submit</code>, <code>vec_clear</code>, <code>vec_style</code>, <code>vec_persistence</code>, <code>vec_fill</code>; <code>VEC_*</code>. Functions that take buffers take slices, so they are safe: a device never touches memory it was not handed.</li>
+<li><code>Term</code>, which implements <code>core::fmt::Write</code>: <code>write!(Term, &quot;{} points&quot;, n)</code>.</li>
+</ul>
+<p>The devices outside the program profile (content, the page, sound, the 3D display, machines) are not in the runtime; reach their calls with <code>call</code> and the numbers of the call table (<a href="machine.html">The Terse32 machine</a>; terse.h has them all).</p>
+<h2 id="what-things-cost">What things cost</h2>
+<p>Measured with rustc 1.100 and clang 23:</p>
+<div class="table"><table>
+<thead><tr><th>Program</th><th>ROM</th></tr></thead>
+<tbody>
+<tr><td>hello in assembly, <code>hello.S</code></td><td>898 bytes</td></tr>
+<tr><td>hello in C, <code>hello.c</code></td><td>1,288 bytes</td></tr>
+<tr><td>hello in Rust, <code>hello.rs</code></td><td>1,716 bytes</td></tr>
+<tr><td><code>terse new</code> starter: C, Rust, assembly</td><td>347, 229, 123 bytes</td></tr>
+<tr><td>Rust, one <code>write!</code> of two integers</td><td>about 1.9 KiB in all</td></tr>
+<tr><td>Rust, one <code>f32</code> formatted with <code>{:.3}</code></td><td>about 23 KiB in all</td></tr>
+</tbody></table></div>
+<ul>
+<li>Integer formatting with <code>write!</code> is cheap; floating-point formatting is not. <code>term_put_dec</code> writes a number without <code>core::fmt</code>.</li>
+<li>Rust&#39;s <code>compiler_builtins</code> comes with <code>core</code>, so 64-bit division and software floating point work in Rust (unlike C here), at their cost in ROM and budget.</li>
+<li><code>alloc</code> (<code>Vec</code>, <code>String</code>, <code>Box</code>) works if the program brings a global allocator (<code>#[global_allocator]</code>); the runtime has none. A bump allocator over a <code>static mut</code> array is about 20 lines.</li>
+<li><code>static mut</code> and <code>&amp;raw mut</code> work as usual: there is one thread and no interrupts. There is no <code>std</code>: no files, threads, time or printing except through the devices.</li>
+</ul>
+<h2 id="a-larger-program-with-cargo">A larger program with cargo</h2>
+<p>For several crates, or crates from crates.io that support <code>no_std</code>, use cargo with the runtime as a path dependency. The files, with <code>terse.rs</code> and <code>terse.ld</code> from <code>terse build --write-lib</code>:</p>
+<pre>game/Cargo.toml
+game/.cargo/config.toml
+game/terse-rt/Cargo.toml   package &quot;terse&quot;, lib path terse.rs
+game/terse-rt/terse.rs
+game/terse.ld
+game/src/main.rs           #![no_std] #![no_main] ...</pre>
+<p><code>Cargo.toml</code>:</p>
+<pre>[package]
+name = &quot;game&quot;
+version = &quot;0.1.0&quot;
+edition = &quot;2024&quot;
+
+[dependencies]
+terse = { path = &quot;terse-rt&quot; }
+
+[profile.release]
+opt-level = &quot;s&quot;
+lto = true
+panic = &quot;abort&quot;
+debug = false
+
+[profile.dev]
+panic = &quot;abort&quot;</pre>
+<p><code>.cargo/config.toml</code>:</p>
+<pre>[build]
+target = &quot;riscv32imc-unknown-none-elf&quot;
+
+[target.riscv32imc-unknown-none-elf]
+rustflags = [&quot;-C&quot;, &quot;link-arg=-Tterse.ld&quot;]</pre>
+<p>Then:</p>
+<pre>cargo build --release
+llvm-objcopy -O binary \
+    target/riscv32imc-unknown-none-elf/release/game game.bin
+terse pack --rom game.bin --title game --ram-pages 4 \
+    --device 2:0 --device 3:0 -o game.terse</pre>
+<p>The linker script&#39;s path is relative to the package&#39;s root, where cargo runs the linker. This gives the same ROM as <code>terse build</code> for the same source (checked with hello.rs). A debug build (<code>opt-level = 0</code>) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 128 KiB of ROM or in a frame&#39;s budget.</p>
+<p>Next: <a href="toolchain-other.html">Building by hand, and other languages</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="toolchain-c.html">← The C library</a><a rel="next" href="toolchain-other.html">Building by hand, and other languages →</a></nav></footer>
+</body>
+</html>

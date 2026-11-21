@@ -1,0 +1,70 @@
+# The C library
+
+The C library is four files of programs/lib, built into `terse` (`terse build --write-lib <dir>` writes them out): the start code, the linker script, and `terse.h` with `terse.c`, which give every call of the machine as a C function. This article describes them, then the hello program in assembly, without the library, and in C. How they are compiled and linked is in "Building a program", the article before this one.
+
+## The library
+
+- `crt0.S` is the entry point, `_start`, in the section `.text.start`, which the linker script puts at the first byte of ROM. It copies `.data` from its load address in ROM to RAM (`.bss` needs no clearing, since RAM is zero at reset), calls `main`, and calls `exit` with `main`'s return value.
+- `terse.ld` places code and constants in ROM from `0001_0000h` and `.data`, `.bss` and the stack in RAM from `0010_0000h`. The stack grows down from the end of RAM, whose size is set only by the image's header (`--ram-pages`): nothing checks that it leaves room above `.bss`, at link time or when the program runs. A stack that grows into `.bss` corrupts it silently.
+- `terse.h` and `terse.c` give every call as a C function or macro, with the call numbers (`CALL_WAIT_FRAME` ... `CALL_V3_PERSISTENCE`), event types (`EV_KEY_DOWN` ...), key codes (`KEY_ENTER` ...), and `TERSE_ERR_UNKNOWN` and `TERSE_ERR_BUFFER`. Generic calls: `terse_call` (three arguments), `terse_call4`, `terse_call5` and `terse_call2` (two results). Calls without a wrapper of their own, such as `palette_set` and `get_cursor`, go through these.
+
+What `terse.h` provides, by area:
+
+- System: `terse_event_pop`, `terse_wait_frame`, `terse_frame`, `terse_time`, `terse_random` (repeats the call 256 bytes at a time), `terse_random_byte`, `terse_exit`, `terse_open`, `terse_argument`, `terse_pad_read`. Note that `terse_wait_frame` returns how many frames passed since its last call (at most 255), not the frame counter that `wait_frame` returns.
+- Terminal: `term_write` (splits a text into writes of at most 4,096 bytes, the most one `write` takes), `term_puts`, `term_putc`, `term_put_ascii`, `term_put_cp` (one code point up to `FFFFh` as UTF-8), `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_fill`, `term_cells_write`, `term_cells_read`, `term_is_wide`.
+- 2D vector display: a list builder (`vec_begin`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`, `vec_end`, `vec_length`), `vec_submit`, `vec_submit_list`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`. The builder does not check the buffer's size.
+- 3D vector display: the same with `v3_` names.
+- Content: the 52-byte `content_req` block, `content_submit`, a `content_` function for each operation (`content_get`, `content_put`, `content_find` ...), and named records: `record_save`, `record_load`, `record_delete`, `record_list`.
+- Page: `page_submit`, `page_submit_doc`, `page_clear`, `page_region`, `page_scroll`, `page_background`, `page_locate`, `page_place_event`, and a document builder (`doc_begin`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`, `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_figure`, `doc_end`) that never writes past its capacity and sets `doc_overflow` when full, and a path builder for figures (`path_begin`, `path_move`, `path_line` and so on).
+- Machines (the shell only): a `mach_` function for each call, such as `mach_start_program` and `mach_place`.
+- `memcpy`, `memset`, `memmove`, `memcmp`, which the compiler may call on its own.
+
+There is no other C library and no compiler runtime. Avoid floating point and 64-bit division, which need runtime routines that are not there (the link fails), or bring the routines yourself: `crates/terse-core/tests/softfloat/softfloat.c` is a tested IEEE double add, subtract, multiply and divide in integer C.
+
+## The hello program
+
+`programs/hello` is written in assembly, `hello.S`, without the library: it shows how bare the machine is. Its `build.sh` assembles it with the same flags, links it alone with `terse.ld`, and packs it with one RAM page and the terminal (`--device 2:0`). It does this:
+
+- Names the calls it uses with `.equ` (`WAIT_FRAME` = `100h`, `TERM_WRITE` = `200h`, `CELLS_WRITE` = `207h` and so on). Each call is `li a7, number`, arguments in `a0`-`a2`, `ecall`, result in `a0`.
+- At `_start` (in `.text.start`, so at `0001_0000h`) it sets the colours to 15 on 4, writes the title with `write` and sends command `04h` (clear to end of row), which paints row 0 blue.
+- Walks a table in `.rodata` of row, column, foreground, background and a zero-terminated UTF-8 string, ended by `FFh`: `set_cursor`, `set_colours`, then `write` for each. Its helper `print` calls `write` once, which is enough for short strings at the start of a frame; `term_write` in C repeats the call.
+- Builds 48 cells in `.bss` (4 bytes each: character, foreground, background) showing palette entries 0 to 15, and copies them to the grid with one `cells_write`.
+- Then loops: `wait_frame`, write the frame counter as eight hex digits with `cells_write`, and take events with `next_event` until it returns 0. A text event (`03h`) is encoded as UTF-8 and written; a key down (`01h`) of Enter writes a line break and a prompt, Backspace writes `08h`, space, `08h`, and Escape calls `exit` with 0.
+
+A test compares its screen after 30 frames with `expected-30-frames.txt`.
+
+## The same in C
+
+`programs/hello/hello.c` is the whole hello program in C. Its core, typing and Esc, is this:
+
+```
+#include "terse.h"
+
+int main(void)
+{
+    terse_event e;
+    term_color(15, 4);
+    term_puts(" hello");
+    term_cmd(TERM_CLEAR_EOL);
+    term_color(7, 0);
+    term_goto(0, 2);
+    term_puts("> ");
+    for (;;) {
+        terse_wait_frame();
+        while (terse_event_pop(&e)) {
+            if (e.type == EV_TEXT) {
+                uint32_t cp = e.a | e.b << 8
+                    | (uint32_t)(e.c & 0x1F) << 16;
+                term_put_cp(cp > 0xFFFF ? 0xFFFD : cp);
+            } else if (e.type == EV_KEY_DOWN) {
+                if (e.a == KEY_ENTER)
+                    term_puts("\n> ");
+                else if (e.a == KEY_ESCAPE)
+                    return 0;
+            }
+        }
+    }
+}
+```
+
+Next: [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700).

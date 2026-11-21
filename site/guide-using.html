@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using Tersenet - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="using-tersenet">Using Tersenet</h1>
+<p>This page is for reading and writing on Tersenet, no programming needed.</p>
+<h2 id="install-and-start">Install and start</h2>
+<p>Download the archive of a Tersenet release for your system (Windows, macOS or Linux), unpack it, and start <code>terse-host</code> (on Windows, <code>terse-host.exe</code>). On Windows and macOS, the <code>README.txt</code> inside says what to do when the system warns about a program from the internet. A window opens on the launcher, a list of programs: Up and Down choose, Enter starts one.</p>
+<p>Choose &quot;reader&quot; and press Enter. That is where you read. F12 always brings you back to the launcher.</p>
+<h2 id="read">Read</h2>
+<p>The reader opens on your timeline: the newest articles of the feeds you follow. Up and Down choose one, Enter opens it, Esc goes back. In an article, Tab moves to the next link and Enter follows it. M opens this manual, and ? shows every key.</p>
+<h2 id="follow-a-feed">Follow a feed</h2>
+<p>A feed is one person&#39;s series of articles, named by a key: 64 hexadecimal digits, sometimes followed by <code>@</code> and a relay. To follow one, press F in the reader, then S, type or paste the address (Ctrl+V pastes), press Enter, and answer Y when the host asks. Their articles appear in your timeline, and new ones arrive by themselves.</p>
+<p>To give someone your own address, press ? in the reader: it is shown there.</p>
+<h2 id="write-and-publish">Write and publish</h2>
+<p>An article is a plain text file. Write it in any text editor: lines starting with <code># </code> are headings, <code>- </code> list items, blank lines separate paragraphs. <a href="writing-articles.html">Writing an article</a> shows everything else.</p>
+<p>Publishing uses the <code>terse</code> command, which came in the same archive. In a terminal, with <code>terse-host</code> running:</p>
+<pre>terse key new
+terse feed publish my-article.txt --title &quot;My first article&quot;</pre>
+<p>The first command makes your key, once. The second publishes the article in your feed. To see your own articles in your timeline, follow your own feed: in the reader, T publishes a short test article and follows your feed for you.</p>
+<h2 id="share-with-someone">Share with someone</h2>
+<p>Two people need a relay they can both reach. One of you starts one that listens on the network, before starting <code>terse-host</code>:</p>
+<pre>terse-relay --listen 0.0.0.0:7878 --store terse-relay-store</pre>
+<p>The other adds it once, with the first one&#39;s computer name or address:</p>
+<pre>terse relay add ws&#58;//their-host:7878</pre>
+<p>Then exchange addresses and follow each other. Relays have no accounts or encryption: anyone who can reach one can read what is on it, but nobody can publish in your name.</p>
+<h2 id="open-a-program">Open a program</h2>
+<p>The launcher also lists small programs: the built-in ones, and those published by feeds you follow. Enter starts one in a tile of its own. An article may link to a program; following such a link to a program that is not built in asks you first. A program cannot read your files, and the host asks you before one publishes anything in your name. On a slow computer, Tersenet may stop a program whose device keeps making frames late; it saves its state first, and Enter on it in the launcher brings it back.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A reader, a feed of your own, and the people you follow. The keys of every view, layouts and sessions are in <a href="using.html">Using the shell</a> and <a href="using-reader.html">Using the reader</a>; fonts for other scripts in <a href="fonts.html">Fonts</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-shell.html">← Make a shell</a><a rel="next" href="how-it-works.html">How Tersenet works →</a></nav></footer>
+</body>
+</html>

@@ -1,81 +1,12 @@
-# The Tersenet manual
+# Tersenet
 
-This manual describes the whole Tersenet system: the Terse32 machine, its devices,
-the network that carries articles and programs, and the programs that
-come with it. It is written as Tersenet articles, so you can read it in the
-reader, follow its links with Tab and Enter, and publish it to a feed.
-Each article below says what it covers.
+First and foremost, Tersenet is a way to share information: formatted text,
+with diagrams where they help, without the bloat of web browsers
+(JavaScript, ads, tracking) and without the centralised control of
+websites like Reddit. Secondly, and completely optionally, it can be
+used to share very lightweight programs, at most 1 MiB of memory each,
+that run on tiny isolated virtual machines.
 
-## Start here
+[Write your own Tersenet reader: it starts with a text file and a few rules](terse:c363852bfd42594b87be8da2b43d23992413291fc8c356e7cbf0a4cb27ca39fa)
 
-- [What Tersenet is](terse:490113f602392c0869490b238b56d023535e5e35446d5d3f327ced39f9f15dd1): what Tersenet is for, in one
-  paragraph.
-- [How Tersenet works](terse:e6ce50ae3ede3668cea36fde918bc37e5e97a3dff8746879f90b91144aea0a43): the technical details in
-  three pages: sharing articles and programs, the network, the machine
-  and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:98bf68a923131315a172962eb7ec19fb5f54d3754170ea8d8dbb0315074dcb61): the toolchain, the C
-  library, building, running a program headless and in the host, and
-  publishing it in a feed.
-- [Using the shell and the reader](terse:e209761d451dcd6d791a2ec0033e2c6f6387fabdc4cf1a1d1965722a8866f767): the keys of the
-  shell and the reader, layouts, sessions and the consent prompts.
-- [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df): the fonts the host draws with, which
-  characters they show, and adding a font for other scripts.
-- [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format,
-  every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:3d301b04ac7d3a4327891586c316a6df1655298c8ae08f57722440f8c32e85a1): what a machine's state
-  is, its hash, snapshots and the conformance image.
-- [Performance reports](terse:dc10f4777968b3efc1be2edf6ae84e5f678c753b6c12e36411ed448517566ad7): what a report
-  of your host's record holds, publishing one, and reading many with the
-  reports program.
-
-## The machine
-
-- [The machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b): the CPU, the memory map, reset, frames
-  and the budget, faults, the image format, the call convention and the
-  whole call table.
-- [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62): every event, the queue, keys,
-  text, the pointer, the wheel and controllers.
-- [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620): every charge and every numeric
-  limit on one page.
-
-## The devices
-
-| Slot | Device | Article |
-|---|---|---|
-| 1 | System | [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc) |
-| 2 | Terminal | [The terminal](terse:109353cb353476bc6b7de663f9c9afc097275cb86f02ce936ef74ed620996f0b) |
-| 3 | 2D vector display | [The 2D vector display](terse:c4e777067a9407d4559e27121169f80eac2db852099b0e04888626ce169e62d4) |
-| 4 | Content | [Blobs, requests and statuses](terse:bc4077f56c58ab74d245ddb40108c97f5088ae5f2b83cba8c1b15bbff5592124) |
-| 4 | Content | [Feeds, names, search and publishing](terse:9cbb89a2324c05a5455b16e9afa48479958926b3cce38aaa6e76d9799e97d886) |
-| 4 | Content | [Named records](terse:2075d95732936a1e72971864904c935d47f93ff95f855b5068424799137ed1bf) |
-| 6 | Sound | [The sound device](terse:698ca31c5cf788d3306e5047c2e4d771bbac3f3399c5d75a1d5bc7c069e35c00) |
-| 7 | Page | [The page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) |
-| 7 | Page | [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04) |
-| 8 | Machines | [The Machines device](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063) |
-| 8 | Machines | [Screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f) |
-| 9 | 3D vector display | [The 3D vector display](terse:d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e) |
-
-- The system device: frames, events, time, random bytes, controllers,
-  exit, and asking the shell to open something.
-- The terminal: an 80 by 30 grid of character cells.
-- The 2D vector display: lines and filled shapes from a display list,
-  in a clean or a phosphor style.
-- Content: blobs fetched and published by hash, the feeds the host
-  follows, search, and named records kept on the host.
-- Sound: a 16-voice wavetable synthesizer, with pairing, feedback,
-  ring modulation, noise and samples; optional, and bit-exact.
-- The page: typeset proportional text, figures and tables in a
-  rectangle of the screen.
-- Machines: the shell's device, which starts other machines and lays
-  out their screens, flat or as panels in its 3D scene.
-- The 3D vector display: lines, points and circles in a box behind and
-  in front of the screen, seen from an eye the host chooses.
-
-## The network
-
-- [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862): blobs and relays, feeds and entries,
-  profiles, names and search, programs, and relays that mirror each
-  other.
-- [Writing a reader without the machine](terse:74123e20f1739d0921abc649e0c394339b7ddd66d68b584ad60f1a09b721678d): what
-  a native reader must do to be a complete Tersenet client, with only the
-  network and the article format.
+[Contents: a step-by-step guide, and the complete reference](terse:ebb561501edc17a761e98d05416eef2c29eb3df8eaab8ad9fd231affb861a361)

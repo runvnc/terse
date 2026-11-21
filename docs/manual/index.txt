@@ -1,81 +1,12 @@
-# The Tersenet manual
+# Tersenet
 
-This manual describes the whole Tersenet system: the Terse32 machine, its devices,
-the network that carries articles and programs, and the programs that
-come with it. It is written as Tersenet articles, so you can read it in the
-reader, follow its links with Tab and Enter, and publish it to a feed.
-Each article below says what it covers.
+First and foremost, Tersenet is a way to share information: formatted text,
+with diagrams where they help, without the bloat of web browsers
+(JavaScript, ads, tracking) and without the centralised control of
+websites like Reddit. Secondly, and completely optionally, it can be
+used to share very lightweight programs, at most 1 MiB of memory each,
+that run on tiny isolated virtual machines.
 
-## Start here
+[Write your own Tersenet reader: it starts with a text file and a few rules](terse:{guide-reader})
 
-- [What Tersenet is](terse:{overview}): what Tersenet is for, in one
-  paragraph.
-- [How Tersenet works](terse:{how-it-works}): the technical details in
-  three pages: sharing articles and programs, the network, the machine
-  and its frame budget, the devices, determinism and the shell.
-- [Writing a program](terse:{writing-programs}): the toolchain, the C
-  library, building, running a program headless and in the host, and
-  publishing it in a feed.
-- [Using the shell and the reader](terse:{using}): the keys of the
-  shell and the reader, layouts, sessions and the consent prompts.
-- [Fonts](terse:{fonts}): the fonts the host draws with, which
-  characters they show, and adding a font for other scripts.
-- [Writing an article](terse:{writing-articles}): the article format,
-  every construct shown as source and as it is shown.
-- [State, replay and conformance](terse:{state}): what a machine's state
-  is, its hash, snapshots and the conformance image.
-- [Performance reports](terse:{performance-reports}): what a report
-  of your host's record holds, publishing one, and reading many with the
-  reports program.
-
-## The machine
-
-- [The machine](terse:{machine}): the CPU, the memory map, reset, frames
-  and the budget, faults, the image format, the call convention and the
-  whole call table.
-- [Events and input](terse:{events}): every event, the queue, keys,
-  text, the pointer, the wheel and controllers.
-- [Charges and limits](terse:{charges}): every charge and every numeric
-  limit on one page.
-
-## The devices
-
-| Slot | Device | Article |
-|---|---|---|
-| 1 | System | [The system device](terse:{device-system}) |
-| 2 | Terminal | [The terminal](terse:{device-terminal}) |
-| 3 | 2D vector display | [The 2D vector display](terse:{device-vector}) |
-| 4 | Content | [Blobs, requests and statuses](terse:{content-blobs}) |
-| 4 | Content | [Feeds, names, search and publishing](terse:{content-feeds}) |
-| 4 | Content | [Named records](terse:{content-records}) |
-| 6 | Sound | [The sound device](terse:{device-sound}) |
-| 7 | Page | [The page](terse:{device-page}) |
-| 7 | Page | [Figures on the page](terse:{device-page-figures}) |
-| 8 | Machines | [The Machines device](terse:{device-machines}) |
-| 8 | Machines | [Screens, panels and input](terse:{device-machines-screens}) |
-| 9 | 3D vector display | [The 3D vector display](terse:{device-vector3}) |
-
-- The system device: frames, events, time, random bytes, controllers,
-  exit, and asking the shell to open something.
-- The terminal: an 80 by 30 grid of character cells.
-- The 2D vector display: lines and filled shapes from a display list,
-  in a clean or a phosphor style.
-- Content: blobs fetched and published by hash, the feeds the host
-  follows, search, and named records kept on the host.
-- Sound: a 16-voice wavetable synthesizer, with pairing, feedback,
-  ring modulation, noise and samples; optional, and bit-exact.
-- The page: typeset proportional text, figures and tables in a
-  rectangle of the screen.
-- Machines: the shell's device, which starts other machines and lays
-  out their screens, flat or as panels in its 3D scene.
-- The 3D vector display: lines, points and circles in a box behind and
-  in front of the screen, seen from an eye the host chooses.
-
-## The network
-
-- [The network](terse:{network}): blobs and relays, feeds and entries,
-  profiles, names and search, programs, and relays that mirror each
-  other.
-- [Writing a reader without the machine](terse:{native-reader}): what
-  a native reader must do to be a complete Tersenet client, with only the
-  network and the article format.
+[Contents: a step-by-step guide, and the complete reference](terse:{contents})
