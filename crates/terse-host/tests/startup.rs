@@ -1,4 +1,4 @@
-//! PERFORMANCE.md R13, SPEC §responsiveness item 6: before its first frame
+//! PERFORMANCE.md R17, SPEC §responsiveness item 6: before its first frame
 //! a host reads only the image it runs, its settings, the fonts they list
 //! and its own store and data directories. It waits on no relay and looks
 //! in no directory of fonts, so the first frame depends on those files

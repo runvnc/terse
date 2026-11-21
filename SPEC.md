@@ -1298,7 +1298,7 @@ tested (at 60 frames a second a frame is 16.7 ms):
    §machines.calls); besides those it opens only its window and graphics
    device. It waits on no relay (relays are connected beside the frame
    loop), reads no directory of fonts and asks the user nothing, so its
-   first frame depends on those files alone (`PERFORMANCE.md` R13).
+   first frame depends on those files alone (`PERFORMANCE.md` R17).
 
 How a host presents a frame (drawing, the phosphor style) is not machine
 state and has no requirement here; `PERFORMANCE.md` gives the reference

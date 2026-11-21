@@ -898,7 +898,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
         first_cjk.push(bench_numbers(&out).ok_or("no --bench-render line")?.2);
     }
     rows.push(
-        row("H1", "terse-host start to hello's first frame drawn (software, offscreen)", "", "R13", Verdict::Info)
+        row("H1", "terse-host start to hello's first frame drawn (software, offscreen)", "", "R17", Verdict::Info)
             .with(Measure::new("", start, START)),
     );
     rows.push(
@@ -923,7 +923,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     let what = "terse-host start to hello's first frame drawn, GPU renderer (offscreen)";
     rows.push(match failed {
         Some(e) => row("H8", what, "", "", Verdict::Skipped(format!("no GPU renderer here: {e}"))),
-        None => row("H8", what, "", "R13", Verdict::Info).with(Measure::new("", gpu, GPU_START)),
+        None => row("H8", what, "", "R17", Verdict::Info).with(Measure::new("", gpu, GPU_START)),
     });
     // R11: the frame that first shows 2,400 of the full repertoire's glyphs
     // (term-full's first frame), against term-basic's first frame (90 ASCII
@@ -979,7 +979,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                     "H5",
                     format!("terse-host start to hello's first frame, {} listed as an extra font", cjk.display()),
                     "",
-                    "R11, R13",
+                    "R11, R17",
                     Verdict::Info,
                 )
                 .with(Measure::new("", start, START)),
@@ -1185,7 +1185,7 @@ fn cold_start(rows: &mut Vec<Row>, runs: usize, host: &Path) -> Result<(), Strin
             format!("(not cold: {} of {} pages stayed resident); warm, the same: {}", resident.0, resident.1, spread(warm, "ms")),
         )
     };
-    rows.push(row("H7", what, measured, "R13", Verdict::Info).with(Measure::new("", cold, COLD_START)));
+    rows.push(row("H7", what, measured, "R17", Verdict::Info).with(Measure::new("", cold, COLD_START)));
     Ok(())
 }
 
