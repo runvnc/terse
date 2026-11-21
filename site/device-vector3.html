@@ -97,15 +97,7 @@
 <tr><td>Screen in effect</td><td>0</td><td>0</td><td>1</td></tr>
 <tr><td>Surface in effect</td><td>0</td><td>0</td><td>1</td></tr>
 </tbody></table></div>
-<p>A line&#39;s counted length is its length on the glass, seen from the reference eye, of its part with z &gt; -800 that lies on the screen (0 to 640 by 0 to 480). A command that would take the list&#39;s total length above 65,536, its segments above 16,384, its faces above 256, or its faces times its segments above 131,072 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye. The last cap trades faces against segments:</p>
-<div class="table"><table>
-<thead><tr><th>Faces</th><th>Segments at most</th></tr></thead>
-<tbody>
-<tr><td>0 to 8</td><td>16,384</td></tr>
-<tr><td>16</td><td>8,192</td></tr>
-<tr><td>64</td><td>2,048</td></tr>
-<tr><td>256</td><td>512</td></tr>
-</tbody></table></div>
+<p>A line&#39;s counted length is its length on the glass, seen from the reference eye, of its part with z &gt; -800 that lies on the screen (0 to 640 by 0 to 480). Each line, point and chord also counts its ink as a 2D line does: on the glass, in units, (|dx| + |dy| + w) x (w + 3) with w its width, or its box grown by (w + 3) / 2 and clipped to the screen if smaller; a Surface in effect counts its box on the glass. A command that would take the list&#39;s total length above 65,536, its segments above 16,384, its faces above 256, its faces times its segments above 131,072 (256 faces leave 512 segments), or its ink above 153,600 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye.</p>
 <p>After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Only pieces within the 32-unit margin count. Which pieces those are depends on the eye.</p>
 <p>The host evaluates the caps after a floating-point projection, so hosts may differ by rounding when a list comes right up to a cap: one may draw a command fewer than another. That affects only what is drawn, never the machine&#39;s state.</p>
 <h2 id="presentation">Presentation</h2>

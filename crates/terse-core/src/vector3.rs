@@ -579,6 +579,46 @@ pub fn counted_length(a: [f64; 3], b: [f64; 3]) -> f64 {
     }
 }
 
+/// The ink of the segment a–b drawn `width` sixteenths wide (SPEC
+/// §vector3d.caps), in square screen units: its part in front of the near
+/// plane seen on the glass from the reference eye, counted as a 2D line
+/// is (SPEC §vector.ink-cap): (|dx| + |dy| + w) × (w + 3) with w the
+/// width in screen units, or the box it can reach on the screen if that
+/// is smaller. A point is a segment of length 0.
+pub fn segment_ink(a: [f64; 3], b: [f64; 3], width: u16) -> f64 {
+    let Some((a, b)) = near_clip(a, b) else { return 0.0 };
+    let reference = (EYE_X, EYE_Y);
+    let (p, q) = (to_glass(a, reference), to_glass(b, reference));
+    let w = width.clamp(1, MAX_WIDTH) as f64 / 16.0;
+    let stroke = ((q.0 - p.0).abs() + (q.1 - p.1).abs() + w) * (w + 3.0);
+    let g = (w + 3.0) / 2.0;
+    let bw = (p.0.max(q.0) + g).min(SCREEN.2) - (p.0.min(q.0) - g).max(SCREEN.0);
+    let bh = (p.1.max(q.1) + g).min(SCREEN.3) - (p.1.min(q.1) - g).max(SCREEN.1);
+    stroke.min(bw.max(0.0) * bh.max(0.0))
+}
+
+/// The ink of a panel (a Screen or Surface in effect) with these corners
+/// (SPEC §vector3d.caps): the area of the box its corners make on the
+/// glass, seen from the reference eye, clipped to the screen; the whole
+/// screen if a corner is not in front of the near plane.
+pub fn panel_ink(corners: &[[f64; 3]; 4]) -> f64 {
+    if corners.iter().any(|c| c[2] <= NEAR_Z) {
+        return SCREEN.2 * SCREEN.3;
+    }
+    let glass = corners.map(|c| to_glass(c, (EYE_X, EYE_Y)));
+    let (x0, x1) = glass.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p.0), b.max(p.0)));
+    let (y0, y1) = glass.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p.1), b.max(p.1)));
+    let w = (x1.min(SCREEN.2) - x0.max(SCREEN.0)).max(0.0);
+    let h = (y1.min(SCREEN.3) - y0.max(SCREEN.1)).max(0.0);
+    w * h
+}
+
+/// Most ink one 3D list may draw (SPEC §vector3d.caps), in square screen
+/// units.
+pub const INK_CAP: f64 = INK_CAP_SCREENS * 640.0 * 480.0;
+/// [`INK_CAP`] in screens.
+pub const INK_CAP_SCREENS: f64 = 0.5;
+
 /// Faces one list may give (SPEC §vector3d.caps).
 pub const FACE_CAP: usize = 256;
 /// The most faces × segments one list may give (SPEC §vector3d.caps): it bounds the
@@ -601,6 +641,11 @@ pub struct Projection {
     /// Their counted length (SPEC §vector3d.caps), in screen units, as if there were
     /// no faces.
     pub length: f64,
+    /// Their ink (SPEC §vector3d.caps), in square screen units, as if there
+    /// were no faces.
+    pub ink: f64,
+    /// Segments as the caps count them (a circle 64), before cutting.
+    pub counted: usize,
     /// Faces in effect.
     pub faces: usize,
     /// A command was stopped by a cap (or a segment by the cap on what is
@@ -701,9 +746,22 @@ struct Walk {
 /// what the caps let through, and the panels into `panels` (cleared), far
 /// to near.
 fn walk(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>) -> Walk {
+    walk_capped(list, eye, scene, panels, INK_CAP)
+}
+
+/// What a list's caps count (SPEC §vector3d.caps) with the ink cap left
+/// out (the other caps applied as usual): what the list asks of a host.
+/// `screens` are the handles whose Screens are in effect (as in
+/// [`SceneView`]).
+pub fn counts(list: &[u8], screens: u8) -> Projection {
+    let scene = SceneView { screens, view: Transform::IDENTITY };
+    walk_capped(list, eye_at((0.0, 0.0)), &scene, &mut Vec::new(), f64::INFINITY).projection
+}
+
+fn walk_capped(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>, ink_cap: f64) -> Walk {
     panels.clear();
     let mut state = State::default();
-    let (mut length, mut count) = (0.0f64, 0usize);
+    let (mut length, mut count, mut ink) = (0.0f64, 0usize, 0.0f64);
     let mut projection = Projection::default();
     let mut drawn = Vec::new();
     let mut faces = Vec::new();
@@ -725,19 +783,31 @@ fn walk(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>
             Figure::Surface(src, w, _) if src[2] == 0 || src[3] == 0 || w == 0 || projection.surfaces == MAX_SURFACES => continue,
             _ => {}
         }
-        let (n, len, f) = match &figure {
-            Figure::Line(a, b) => (1, counted_length(*a, *b), 0),
-            Figure::Point(_) => (1, 0.0, 0),
-            Figure::Circle(ring) => (CIRCLE_CHORDS, (0..ring.len()).map(|k| counted_length(ring[k], ring[(k + 1) % ring.len()])).sum(), 0),
-            Figure::Face(_) | Figure::Screen(..) | Figure::Surface(..) => (0, 0.0, 1),
+        let w = state.width;
+        let (n, len, f, k) = match &figure {
+            Figure::Line(a, b) => (1, counted_length(*a, *b), 0, segment_ink(*a, *b, w)),
+            Figure::Point(p) => (1, 0.0, 0, segment_ink(*p, *p, w)),
+            Figure::Circle(ring) => {
+                let chord = |k: usize| (ring[k], ring[(k + 1) % ring.len()]);
+                let len = (0..ring.len()).map(|k| counted_length(chord(k).0, chord(k).1)).sum();
+                (CIRCLE_CHORDS, len, 0, (0..ring.len()).map(|k| segment_ink(chord(k).0, chord(k).1, w)).sum())
+            }
+            Figure::Face(_) | Figure::Screen(..) => (0, 0.0, 1, 0.0),
+            Figure::Surface(_, _, corners) => (0, 0.0, 1, panel_ink(corners)),
         };
         let nf = faces.len() + f;
-        if length + len > LENGTH_CAP || count + n > SEGMENT_CAP || nf > FACE_CAP || nf * (count + n) > FACE_WORK_CAP {
+        if length + len > LENGTH_CAP
+            || count + n > SEGMENT_CAP
+            || nf > FACE_CAP
+            || nf * (count + n) > FACE_WORK_CAP
+            || ink + k > ink_cap
+        {
             projection.capped = true;
             break;
         }
         length += len;
         count += n;
+        ink += k;
         let figure = if moved { figure.moved(v) } else { figure };
         match figure {
             Figure::Face(corners) => faces.push(corners),
@@ -762,6 +832,8 @@ fn walk(list: &[u8], eye: (f64, f64), scene: &SceneView, panels: &mut Vec<Panel>
     // Surface, handle 0, before a Screen), then in list order.
     panels.sort_by(|a, b| b.distance.total_cmp(&a.distance).then(a.handle.cmp(&b.handle)));
     projection.length = length;
+    projection.ink = ink;
+    projection.counted = count;
     projection.faces = faces.len();
     Walk { drawn, faces, projection }
 }
@@ -1451,18 +1523,26 @@ mod tests {
 
     #[test]
     fn the_caps() {
-        // A horizontal line across the screen counts 640 units, whatever
-        // part of it lies outside; 102 fit in 65,536, the 103rd does not,
+        // A horizontal line across the screen, 1 unit wide, counts 640
+        // units of length and 640 × 4 of ink (its box on the screen, 4
+        // units high, is less than its stroke), whatever part of it lies
+        // outside; 60 fit in the ink cap of 153,600, the 61st does not,
         // and nothing after it is drawn.
         let across = [cmd(op::MOVE, &xyz(-16000, 1600, 0)), cmd(op::LINE, &xyz(26000, 1600, 0))].concat();
-        let mut list: Vec<u8> = std::iter::repeat_n(across.clone(), 103).flatten().collect();
+        let mut list: Vec<u8> = std::iter::repeat_n(across.clone(), 61).flatten().collect();
         list.extend(cmd(op::POINT, &[]));
         let mut out = Vec::new();
         let p = project(&list, (0.0, 0.0), &mut out);
-        assert_eq!((p.segments, p.length, p.capped), (102, 102.0 * 640.0, true));
+        assert_eq!((p.segments, p.length, p.ink, p.capped), (60, 60.0 * 640.0, INK_CAP, true));
         // Counted with the reference eye: the same when the eye moves.
         let p = project(&list, (160.0, 0.0), &mut Vec::new());
-        assert_eq!((p.segments, p.capped), (102, true));
+        assert_eq!((p.segments, p.capped), (60, true));
+        // A hair line (1/16 unit) counts its box, 640 × (1/16 + 3): more
+        // ink than length, so for any width the ink cap comes before the
+        // length cap.
+        let hair = [cmd(op::WIDTH, &[1, 0]), across.clone()].concat();
+        let list = hair;
+        assert!((project(&list, (0.0, 0.0), &mut Vec::new()).ink - 640.0 * (1.0 / 16.0 + 3.0)).abs() < 1e-6);
         // Off the screen, and behind the near plane, counts nothing.
         let off = [cmd(op::MOVE, &xyz(-1600, -1600, 0)), cmd(op::LINE, &xyz(-1600, 9000, 0))].concat();
         let list: Vec<u8> = std::iter::repeat_n(off, 1000).flatten().collect();
@@ -1476,11 +1556,14 @@ mod tests {
         assert!((p.length - 64.0 * chord).abs() < 1e-6, "{}", p.length);
         assert_eq!(p.segments, 64);
         assert!(out.iter().all(|b| matches!(b, Primitive::Beam { butt: 3, .. })));
-        // 104 such circles fit by length (65,302), the 105th does not.
-        let many: Vec<u8> = std::iter::repeat_n(circle.clone(), 106).flatten().collect();
-        assert_eq!(project(&many, (0.0, 0.0), &mut Vec::new()).segments, 104 * 64);
-        // By count: 256 circles of radius 0 are 16,384 segments; a point more is not drawn.
-        let dot = [cmd(op::MOVE, &xyz(5120, 3840, 0)), cmd(op::CIRCLE, &[0, 0])].concat();
+        // As many such circles fit as their ink allows.
+        let n = (INK_CAP / p.ink) as usize;
+        let many: Vec<u8> = std::iter::repeat_n(circle.clone(), n + 2).flatten().collect();
+        assert_eq!(project(&many, (0.0, 0.0), &mut Vec::new()).segments, n * 64);
+        // By count: 256 circles of radius 0 are 16,384 segments; a point
+        // more is not drawn. (Thin, and behind the screen, so that their
+        // ink stays under its cap.)
+        let dot = [cmd(op::WIDTH, &[1, 0]), cmd(op::MOVE, &xyz(5120, 3840, 0)), cmd(op::CIRCLE, &[0, 0])].concat();
         let mut list: Vec<u8> = std::iter::repeat_n(dot, 256).flatten().collect();
         list.extend(cmd(op::POINT, &[]));
         let p = project(&list, (0.0, 0.0), &mut Vec::new());

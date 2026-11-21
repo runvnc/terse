@@ -318,7 +318,9 @@ fn fills_the_data() {
     let mut script = String::from("2 pointer 0 0 1\n");
     for i in 0..2100u32 {
         let f = 3 + i / 50;
-        let (x, y) = (i % 2 * 600 + 10, (i * 7) % 470);
+        // Short steps, as a hand draws: 2,047 lines of 10 to 14 units stay
+        // within the ink cap (SPEC §vector.ink-cap), so all are drawn.
+        let (x, y) = (i % 2 * 10 + 10, 10 + (i * 7) % 5 + i / 300 * 20);
         script += &format!("{f} pointer {x} {y} 1\n");
     }
     script += "50 pointer 0 0 0\n52 press s\n";

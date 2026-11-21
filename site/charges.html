@@ -57,6 +57,8 @@
 <p>A device call is **deferred** when its result is one the program could work out without the device (a constant, an argument, or a simple function of the arguments) and its charge depends only on its arguments; it is **answered** when its result or charge depends on the device&#39;s state. A host that keeps a device in another process can send deferred calls in batches without waiting for them; an answered call needs a round trip, which the 64 pays for. The calls of the system device and Machines are the machine&#39;s own and cost 4 whatever they return. The call table of the article The machine gives every call&#39;s class.</p>
 <p>Content delivered at completion is what a get, load, find or records-style request (subscriptions, timeline, names, programs, records) writes to its buffer. Nothing else is charged: a rejected submit copies nothing, the fields a completion writes into a request block are free, and laying out the page is free (the host does it outside the frames).</p>
 <p>Two examples. A deferred call that copies nothing costs 5 units from ROM (the <code>ecall</code> and 4), an answered one 65. Writing a whole 80-column row costs 165 with one <code>write</code> of 80 bytes, 85 with one <code>cells_write</code> of 80 cells, against at least 560 for 80 one-byte writes.</p>
+<h2 id="what-a-frame-asks-of-the-host">What a frame asks of the host</h2>
+<p>The budget bounds the program&#39;s own work. Drawing, hiding lines and laying out text are the host&#39;s, and are bounded by the limits below instead: the terminal&#39;s 2,400 cells, the two vector displays&#39; ink caps (a list over its cap is cut where it passes it, the rest not drawn), the 3D display&#39;s other caps, and the page&#39;s layout outside the frames. They are set so that every device at its cap at once costs the reference host no more than one frame&#39;s time on one thread; no legal program can make a frame slow.</p>
 <h2 id="machine-and-image">Machine and image</h2>
 <div class="table"><table>
 <thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
@@ -114,7 +116,7 @@
 <tr><td>Line width</td><td>1 byte, in sixteenths; 0 counts as 1</td><td></td></tr>
 <tr><td>Style, fill mode</td><td>0 or 1 each</td><td></td></tr>
 <tr><td>Persistence</td><td>0 to 255, 160 after reset</td><td></td></tr>
-<tr><td>Fill cap</td><td>1,228,800 square units of filled shapes a list</td><td>provisional</td></tr>
+<tr><td>2D ink cap</td><td>230,400 square units of ink a list</td><td>provisional</td></tr>
 </tbody></table></div>
 <h2 id="sound-device-6">Sound (device 6)</h2>
 <div class="table"><table>
@@ -139,6 +141,7 @@
 <tr><td>Faces</td><td>256 a list, each Screen and Surface in effect counting as one</td><td>provisional</td></tr>
 <tr><td>Surfaces in effect</td><td>4 a list, each showing a rectangle of the screen</td><td>provisional</td></tr>
 <tr><td>Faces times segments</td><td>131,072</td><td>provisional</td></tr>
+<tr><td>3D ink cap</td><td>153,600 square units of ink a list</td><td>provisional</td></tr>
 <tr><td>Pieces drawn after hiding</td><td>16,384, counted within 32 units of the screen</td><td>provisional</td></tr>
 <tr><td>What a face hides</td><td>points more than 2 sixteenths beyond its plane</td><td>provisional</td></tr>
 <tr><td>Shortest cut piece drawn</td><td>1/2 unit</td><td>provisional</td></tr>

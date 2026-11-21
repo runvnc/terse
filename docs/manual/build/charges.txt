@@ -53,6 +53,10 @@ Content delivered at completion is what a get, load, find or records-style reque
 
 Two examples. A deferred call that copies nothing costs 5 units from ROM (the `ecall` and 4), an answered one 65. Writing a whole 80-column row costs 165 with one `write` of 80 bytes, 85 with one `cells_write` of 80 cells, against at least 560 for 80 one-byte writes.
 
+## What a frame asks of the host
+
+The budget bounds the program's own work. Drawing, hiding lines and laying out text are the host's, and are bounded by the limits below instead: the terminal's 2,400 cells, the two vector displays' ink caps (a list over its cap is cut where it passes it, the rest not drawn), the 3D display's other caps, and the page's layout outside the frames. They are set so that every device at its cap at once costs the reference host no more than one frame's time on one thread; no legal program can make a frame slow.
+
 ## Machine and image
 
 | Limit | Value | Note |
@@ -111,7 +115,7 @@ The event queue's 64 and the 256 random bytes a call are provisional.
 | Line width | 1 byte, in sixteenths; 0 counts as 1 | |
 | Style, fill mode | 0 or 1 each | |
 | Persistence | 0 to 255, 160 after reset | |
-| Fill cap | 1,228,800 square units of filled shapes a list | provisional |
+| 2D ink cap | 230,400 square units of ink a list | provisional |
 
 ## Sound (device 6)
 
@@ -136,6 +140,7 @@ The event queue's 64 and the 256 random bytes a call are provisional.
 | Faces | 256 a list, each Screen and Surface in effect counting as one | provisional |
 | Surfaces in effect | 4 a list, each showing a rectangle of the screen | provisional |
 | Faces times segments | 131,072 | provisional |
+| 3D ink cap | 153,600 square units of ink a list | provisional |
 | Pieces drawn after hiding | 16,384, counted within 32 units of the screen | provisional |
 | What a face hides | points more than 2 sixteenths beyond its plane | provisional |
 | Shortest cut piece drawn | 1/2 unit | provisional |

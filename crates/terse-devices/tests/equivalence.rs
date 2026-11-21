@@ -598,10 +598,15 @@ fn signals_end_a_run_cleanly() {
         // A copy of the terminal driver, to find its process.
         let exe = tmp.path().join(format!("terse-dev-terminal-{name}"));
         std::fs::copy(env!("CARGO_BIN_EXE_terse-dev-terminal"), &exe).unwrap();
-        let mut child = Command::new(terse_bus())
-            .args([&sparks, "--realtime", "--frames", "100000", "--driver", &format!("2={}", exe.display())])
-            .spawn()
-            .unwrap();
+        // Killed when dropped, so that a failing assertion leaves no run
+        // of 100,000 frames behind.
+        let mut child = KillOnDrop(
+            Command::new(terse_bus())
+                .args([&sparks, "--realtime", "--frames", "100000", "--driver", &format!("2={}", exe.display())])
+                .spawn()
+                .unwrap(),
+        );
+        let child = &mut child.0;
         let deadline = Instant::now() + Duration::from_secs(20);
         while processes_with(&exe.display().to_string()).is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
@@ -622,6 +627,18 @@ fn signals_end_a_run_cleanly() {
 
 unsafe extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
+}
+
+/// A child process killed (and reaped) when dropped, unless it has ended.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 }
 
 fn libc_sigterm() -> i32 {

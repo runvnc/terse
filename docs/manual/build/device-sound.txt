@@ -117,4 +117,4 @@ int main(void)
 }
 ```
 
-`programs/tune` plays a piece through every kind of voice. `terse run programs/tune/tune.terse --audio-out tune.wav` writes it to a file; `terse-host` plays it when built with the `audio` feature. Its charges are in [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).
+`programs/tune` plays a piece through every kind of voice. `terse run programs/tune/tune.terse --audio-out tune.wav` writes it to a file; `terse-host` plays it when built with the `audio` feature. Its charges are in [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

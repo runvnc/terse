@@ -2,7 +2,7 @@
 //!
 //! The device only validates and copies the display list. [`decode`] turns a
 //! stored list into resolved primitives (origin applied, drawing state
-//! tracked, SPEC §vector.list termination rules, the fill cap of SPEC §vector.fill-cap); hosts
+//! tracked, SPEC §vector.list termination rules, the ink cap of SPEC §vector.ink-cap); hosts
 //! and tests draw from it rather than parsing the list themselves.
 
 use std::fmt;
@@ -18,9 +18,9 @@ pub const STYLE_CLEAN: u8 = 0x00;
 pub const STYLE_PHOSPHOR: u8 = 0x01;
 /// Persistence after reset (SPEC §vector.calls).
 pub const DEFAULT_PERSISTENCE: u8 = 160;
-/// Total area, in square screen units, that the filled shapes of one list
-/// may cover (SPEC §vector.fill-cap). Provisional.
-pub const FILL_CAP: u64 = 4 * 640 * 480;
+/// Most ink, in square screen units, that one list may draw (SPEC
+/// §vector.ink-cap): three quarters of the screen. Provisional.
+pub const INK_CAP: u64 = 3 * 640 * 480 / 4;
 /// The screen in sixteenths of a screen unit (SPEC §vector.coordinates).
 const SCREEN_W16: i32 = 640 * 16;
 const SCREEN_H16: i32 = 480 * 16;
@@ -197,7 +197,7 @@ impl Vector {
     }
 
     /// What the host draws: the outlines of the list when [`Vector::outlined`],
-    /// else its primitives with the fill cap applied.
+    /// else its primitives, each within the ink cap.
     pub fn shapes(&self) -> Box<dyn Iterator<Item = Primitive> + '_> {
         if self.outlined() { Box::new(decode_outlines(&self.list)) } else { Box::new(decode(&self.list)) }
     }
@@ -256,22 +256,57 @@ impl fmt::Display for Primitive {
     }
 }
 
-/// Decodes a display list (SPEC §vector.list), leaving out the filled shapes that
-/// the fill cap (SPEC §vector.fill-cap) stops.
+/// Decodes a display list (SPEC §vector.list) as the clean style with fill
+/// mode 0 draws it: up to the shape that the ink cap (SPEC §vector.ink-cap)
+/// stops.
 pub fn decode(list: &[u8]) -> Decoder<'_> {
-    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), cap: true, filled: 0, capped: false }
+    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), ink: Ink::default() }
 }
 
-/// Decodes a display list without the fill cap (for outlines, where
-/// nothing is filled).
+/// Decodes a display list without the ink cap (for outlines, where
+/// [`Outlines`] applies it to the outlines it gives).
 fn decode_uncapped(list: &[u8]) -> Decoder<'_> {
-    Decoder { cap: false, ..decode(list) }
+    Decoder { ink: Ink::OFF, ..decode(list) }
 }
 
-/// The area a filled shape counts against the fill cap (SPEC §vector.fill-cap): its
-/// bounding box (a disc's bounding square) clipped to the screen, in
-/// sixteenths squared, divided by 256 and rounded up.
-pub fn fill_area(p: &Primitive) -> u64 {
+/// The ink cap's running count (SPEC §vector.ink-cap).
+#[derive(Clone, Copy, Debug, Default)]
+struct Ink {
+    /// The cap does not apply (it is applied elsewhere).
+    off: bool,
+    /// Ink of the shapes drawn so far.
+    total: u64,
+}
+
+impl Ink {
+    const OFF: Ink = Ink { off: true, total: 0 };
+
+    /// Whether `p` is drawn, counting it if so.
+    fn admit(&mut self, p: &Primitive) -> bool {
+        if self.off {
+            return true;
+        }
+        let ink = ink(p);
+        if self.total + ink > INK_CAP {
+            return false;
+        }
+        self.total += ink;
+        true
+    }
+}
+
+/// The ink a shape counts against the ink cap (SPEC §vector.ink-cap), in
+/// square screen units: [`fill_ink`] for a filled shape, [`stroke_ink`]
+/// for a line or circle outline.
+pub fn ink(p: &Primitive) -> u64 {
+    fill_ink(p) + stroke_ink(p)
+}
+
+/// The ink of a filled shape (SPEC §vector.ink-cap): half its bounding box
+/// (a disc's bounding square) clipped to the screen, in sixteenths
+/// squared, divided by 512 and rounded up. Lines and circle outlines count
+/// 0 here.
+pub fn fill_ink(p: &Primitive) -> u64 {
     let (x0, y0, x1, y1) = match *p {
         Primitive::Disc { x, y, radius, .. } => {
             let (x, y, r) = (x as i32, y as i32, radius as i32);
@@ -290,7 +325,40 @@ pub fn fill_area(p: &Primitive) -> u64 {
     };
     let w = (x1.min(SCREEN_W16) - x0.max(0)).max(0) as u64;
     let h = (y1.min(SCREEN_H16) - y0.max(0)).max(0) as u64;
-    (w * h).div_ceil(256)
+    (w * h).div_ceil(512)
+}
+
+/// The ink of a line or circle outline (SPEC §vector.ink-cap), in square
+/// screen units: its stroke, (length + width) × (width + 3 units) with a
+/// line's length |dx| + |dy| and a circle's 8 × radius, or the box it can
+/// reach on the screen if that is smaller, in sixteenths squared, divided
+/// by 256 and rounded up. Filled shapes count 0 here; a 3D segment on the
+/// glass ([`Primitive::Beam`]) counts as a line (for hosts that shed work
+/// by it; the 3D display's own cap is SPEC §vector3d.caps).
+pub fn stroke_ink(p: &Primitive) -> u64 {
+    let (lo, hi, length, w) = match *p {
+        Primitive::Line { x0, y0, x1, y1, width, .. } | Primitive::Beam { x0, y0, x1, y1, width, .. } => {
+            let (x0, y0, x1, y1) = (x0 as i64, y0 as i64, x1 as i64, y1 as i64);
+            ((x0.min(x1), y0.min(y1)), (x0.max(x1), y0.max(y1)), (x1 - x0).abs() + (y1 - y0).abs(), width as i64)
+        }
+        Primitive::Circle { x, y, radius, width, .. } => {
+            let (x, y, r) = (x as i64, y as i64, radius as i64);
+            ((x - r, y - r), (x + r, y + r), 8 * r, width as i64)
+        }
+        _ => return 0,
+    };
+    stroke_area(lo, hi, length, w).div_ceil(256)
+}
+
+/// min((length + w) × (w + 48), the box lo–hi grown by (w + 48) / 2 and
+/// clipped to the screen), all in sixteenths: SPEC §vector.ink-cap's
+/// count before the division.
+fn stroke_area(lo: (i64, i64), hi: (i64, i64), length: i64, w: i64) -> u64 {
+    let stroke = (length + w) * (w + 48);
+    let g = (w + 48) / 2;
+    let bw = ((hi.0 + g).min(SCREEN_W16 as i64) - (lo.0 - g).max(0)).max(0);
+    let bh = ((hi.1 + g).min(SCREEN_H16 as i64) - (lo.1 - g).max(0)).max(0);
+    stroke.min(bw * bh) as u64
 }
 
 /// Iterator over the primitives of a list; see [`decode`].
@@ -302,12 +370,8 @@ pub struct Decoder<'a> {
     width: u8,
     origin: (u16, u16),
     point: (i16, i16),
-    /// Whether the fill cap applies.
-    cap: bool,
-    /// Area of the filled shapes drawn so far, in square screen units.
-    filled: u64,
-    /// The cap has been reached: no more filled shapes.
-    capped: bool,
+    /// The ink cap.
+    ink: Ink,
 }
 
 /// Operand bytes of each opcode, or `None` for End and unknown opcodes.
@@ -336,19 +400,12 @@ impl Iterator for Decoder<'_> {
     fn next(&mut self) -> Option<Primitive> {
         loop {
             let p = self.next_uncapped()?;
-            if !self.cap || matches!(p, Primitive::Line { .. } | Primitive::Circle { .. }) {
+            if self.ink.admit(&p) {
                 return Some(p);
             }
-            if self.capped {
-                continue;
-            }
-            let area = fill_area(&p);
-            if self.filled + area > FILL_CAP {
-                self.capped = true;
-                continue;
-            }
-            self.filled += area;
-            return Some(p);
+            // Over the cap: neither it nor anything after it is drawn.
+            self.at = self.list.len();
+            return None;
         }
     }
 }
@@ -408,7 +465,20 @@ pub fn dump(list: &[u8]) -> String {
 /// through. Every host draws phosphor shapes from this, so they agree on
 /// which outlines a fill becomes.
 pub fn decode_outlines(list: &[u8]) -> Outlines<'_> {
-    Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4 }
+    Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4, ink: Ink::default(), done: false }
+}
+
+/// What `list` asks of a host before the ink cap (SPEC §vector.ink-cap),
+/// in square screen units: the ink of its filled shapes (0 when
+/// `outlined`, where nothing is filled) and that of its lines and circle
+/// outlines (and, when `outlined`, of the outlines of its filled shapes).
+pub fn work(list: &[u8], outlined: bool) -> (u64, u64) {
+    let decoder = decode_uncapped(list);
+    if outlined {
+        let all = Outlines { decoder, queued: [None; 4], next: 4, ink: Ink::OFF, done: false };
+        return (0, all.map(|p| stroke_ink(&p)).sum());
+    }
+    decoder.fold((0, 0), |(f, s), p| (f + fill_ink(&p), s + stroke_ink(&p)))
 }
 
 /// Iterator over the outline primitives of a list; see [`decode_outlines`].
@@ -419,12 +489,30 @@ pub struct Outlines<'a> {
     /// Lines of the last rectangle or triangle not yet returned, from `next`.
     queued: [Option<Primitive>; 4],
     next: usize,
+    /// The ink cap, over the outlines given.
+    ink: Ink,
+    /// The cap stopped an outline: nothing more is given.
+    done: bool,
 }
 
 impl Iterator for Outlines<'_> {
     type Item = Primitive;
 
     fn next(&mut self) -> Option<Primitive> {
+        if self.done {
+            return None;
+        }
+        let p = self.next_outline()?;
+        if self.ink.admit(&p) {
+            return Some(p);
+        }
+        self.done = true;
+        None
+    }
+}
+
+impl Outlines<'_> {
+    fn next_outline(&mut self) -> Option<Primitive> {
         while self.next < self.queued.len() {
             self.next += 1;
             if let Some(p) = self.queued[self.next - 1] {
@@ -626,50 +714,74 @@ mod tests {
     }
 
     #[test]
-    fn fill_area_is_clipped_to_the_screen() {
+    fn fill_ink_is_half_the_box_clipped_to_the_screen() {
         let c = WHITE;
         let disc = |x, y, radius| Primitive::Disc { x, y, radius, rgba: c };
-        assert_eq!(fill_area(&disc(160, 160, 16)), 4); // 2 x 2 units
-        assert_eq!(fill_area(&disc(0, 0, 16)), 1); // a quarter on screen
-        assert_eq!(fill_area(&disc(5120, 3840, 60000)), 640 * 480);
-        assert_eq!(fill_area(&disc(-100, 0, 50)), 0);
-        assert_eq!(fill_area(&disc(0, 0, 1)), 1, "rounded up");
-        assert_eq!(fill_area(&disc(16, 16, 0)), 0);
+        assert_eq!(fill_ink(&disc(160, 160, 16)), 2); // 2 x 2 units, halved
+        assert_eq!(fill_ink(&disc(0, 0, 16)), 1); // a quarter on screen, rounded up
+        assert_eq!(fill_ink(&disc(5120, 3840, 60000)), 640 * 480 / 2);
+        assert_eq!(fill_ink(&disc(-100, 0, 50)), 0);
+        assert_eq!(fill_ink(&disc(0, 0, 1)), 1, "rounded up");
+        assert_eq!(fill_ink(&disc(16, 16, 0)), 0);
         let rect = Primitive::Rect { x0: 320, y0: 0, x1: -32000, y1: 32000, rgba: c };
-        assert_eq!(fill_area(&rect), 20 * 480);
+        assert_eq!(fill_ink(&rect), 10 * 480);
         let tri = Primitive::Triangle { x0: 0, y0: 0, x1: 160, y1: 0, x2: 80, y2: 320, rgba: c };
-        assert_eq!(fill_area(&tri), 10 * 20);
-        assert_eq!(fill_area(&Primitive::Line { x0: 0, y0: 0, x1: 9000, y1: 7000, width: 255, rgba: c }), 0);
+        assert_eq!(fill_ink(&tri), 100);
+        assert_eq!(fill_ink(&Primitive::Line { x0: 0, y0: 0, x1: 9000, y1: 7000, width: 255, rgba: c }), 0);
     }
 
     #[test]
-    fn fill_cap_stops_later_fills_only() {
-        // Full-screen rectangles: four fit exactly; the fifth, and every
-        // later fill however small, is not drawn; lines and circles go on.
+    fn stroke_ink_is_the_stroke_or_its_box() {
+        let c = WHITE;
+        let line = |x0, y0, x1, y1, width| Primitive::Line { x0, y0, x1, y1, width, rgba: c };
+        // 100 units long, 1 wide: (1600 + 16) x (16 + 48) / 256.
+        assert_eq!(stroke_ink(&line(1000, 1000, 2600, 1000, 16)), 404);
+        // A dot of 1/16: (0 + 1) x 49, rounded up.
+        assert_eq!(stroke_ink(&line(1000, 1000, 1000, 1000, 1)), 1);
+        // Diagonal: |dx| + |dy|.
+        assert_eq!(stroke_ink(&line(0, 0, 1600, 1600, 16)), (3216 * 64u64).div_ceil(256));
+        // Off the screen: its box is empty.
+        assert_eq!(stroke_ink(&line(-9000, -9000, -5000, -9000, 255)), 0);
+        // Along the screen's edge, half outside: the box clipped (151
+        // sixteenths high), smaller than the stroke.
+        let edge = line(0, 0, 10240, 0, 255);
+        assert_eq!(stroke_ink(&edge), (10240u64 * 151).div_ceil(256));
+        let circle = Primitive::Circle { x: 5120, y: 3840, radius: 1600, width: 32, rgba: c };
+        assert_eq!(stroke_ink(&circle), ((8 * 1600 + 32) * 80u64).div_ceil(256));
+        assert_eq!(stroke_ink(&Primitive::Rect { x0: 0, y0: 0, x1: 99, y1: 99, rgba: c }), 0);
+    }
+
+    #[test]
+    fn ink_cap_stops_the_rest_of_the_list() {
+        // A full-screen rectangle (153,600) and a half-screen one (76,800)
+        // make the cap exactly; the next shape, however small, is not
+        // drawn, nor anything after it.
         let full = cmd(op::RECT, &xy(10240, 7680));
-        let mut list = Vec::new();
-        for _ in 0..4 {
-            list.extend_from_slice(&full);
-        }
+        let half = cmd(op::RECT, &xy(10240, 3840));
+        let mut list = [full.clone(), half.clone()].concat();
+        assert_eq!(all(&list).iter().map(ink).sum::<u64>(), INK_CAP);
         list.extend_from_slice(&cmd(op::LINE, &xy(5, 5)));
-        list.extend_from_slice(&cmd(op::DISC, &[1, 0])); // area 1: over the cap
-        list.extend_from_slice(&full);
         list.extend_from_slice(&cmd(op::CIRCLE, &[9, 0]));
-        list.extend_from_slice(&[cmd(op::TRIANGLE, &xy(1, 1)), xy(2, 2).to_vec()].concat()); // area 1, also stopped
-        let got = all(&list);
-        let kinds: Vec<String> = got.iter().map(|p| p.to_string().split(' ').next().unwrap().to_string()).collect();
-        assert_eq!(kinds, ["rect", "rect", "rect", "rect", "line", "circle"]);
-        // A fill that would cross the cap is dropped even when a smaller one
-        // would still fit; the cap stays shut.
-        let mut list = [full.clone(), full.clone(), full.clone()].concat();
-        list.extend_from_slice(&cmd(op::RECT, &xy(5120, 7680))); // half a screen: 3.5
-        list.extend_from_slice(&full); // would be 4.5
-        list.extend_from_slice(&cmd(op::RECT, &xy(16, 16))); // would fit, but the cap is shut
-        assert_eq!(all(&list).len(), 4);
-        // Outlines are never capped.
-        let many: Vec<u8> = std::iter::repeat_n(full.clone(), 10).flatten().collect();
-        assert_eq!(all(&many).len(), 4);
-        assert_eq!(decode_outlines(&many).count(), 40);
+        assert_eq!(all(&list).len(), 2);
+        // A shape that would cross the cap is dropped, and so is a smaller
+        // one after it that would fit.
+        let list = [full.clone(), full.clone(), cmd(op::LINE, &xy(5, 5))].concat();
+        assert_eq!(all(&list).len(), 1);
+        // Outlines count too: full-screen rectangles' lines of the
+        // greatest width, up to the cap.
+        let wide = [cmd(op::WIDTH, &[255]), full.clone()].concat();
+        let many: Vec<u8> = [wide, std::iter::repeat_n(full.clone(), 30).flatten().collect()].concat();
+        let drawn: Vec<Primitive> = decode_outlines(&many).collect();
+        let total: u64 = drawn.iter().map(stroke_ink).sum();
+        assert!(total <= INK_CAP && total + 4000 > INK_CAP, "{total}");
+        assert_eq!(work(&many, true).1, decode_outlines_uncapped(&many).map(|p| stroke_ink(&p)).sum::<u64>());
+        assert!(work(&many, true).1 > INK_CAP);
+        assert_eq!(work(&many, false), (31 * 153_600, 0));
+    }
+
+    /// The outlines without the cap.
+    fn decode_outlines_uncapped(list: &[u8]) -> Outlines<'_> {
+        Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4, ink: Ink::OFF, done: false }
     }
 
     #[test]

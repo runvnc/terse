@@ -525,7 +525,7 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-core/   the machine: cpu.rs (the RV32IMC interpreter), machine.rs (memory,
                          frame loop, budget, calls and charges, state serialization), image
                          parsing, and the devices: system.rs, terminal.rs, vector.rs (device
-                         3 and the one display-list decoder, with the fill cap), vector3.rs
+                         3 and the one display-list decoder, with the ink cap), vector3.rs
                          (device 9: its decoder and the one projection every renderer
                          draws), content.rs,
                          page.rs (device 7: the document decoder, the reference layout, when
@@ -1182,14 +1182,16 @@ screen is 10240 × 7680. An image gets the device with `terse pack … --device 
 without it the calls return `FFFF_FFFFh` and nothing is drawn.
 
 `terse_core::vector::decode` turns a list into resolved primitives (origin added,
-colour and width tracked, the list's end rules and the fill cap applied);
+colour and width tracked, the list's end rules and the ink cap applied);
 `decode_outlines` gives what the phosphor style and fill mode 1 draw (a disc as a
 circle, a rectangle as four lines, a triangle as three), and `Vector::shapes`
 picks between them. `terse-host`, `terse run --dump-vectors` and the tests all
-draw or print from these. **Fill cap** (SPEC §vector.fill-cap): the filled shapes of one list
-may cover at most four screens of area (each counted by its bounding box, clipped
-to the screen); the fill that would go past that, and every fill after it, is not
-drawn, while lines and circles go on. **Fill mode** (`vec_fill(VEC_FILL_OFF)`)
+draw or print from these. **Ink cap** (SPEC §vector.ink-cap): one list may draw at
+most three quarters of a screen of ink, a filled shape counting half its bounding
+box and a line or circle its stroke with 3 units added to its width (or its box on
+the screen, if smaller); the shape that would go past that, and everything after
+it, is not drawn. It keeps any list within about a third of a frame of drawing on
+one thread (PERFORMANCE.md R10). **Fill mode** (`vec_fill(VEC_FILL_OFF)`)
 draws every filled shape as its outline in the clean style.
 
 `terse-host` draws lines, outlines and discs as instanced quads shaded by distance
@@ -1738,11 +1740,12 @@ What it checks (the frame plan is in `conform.c`'s header comment):
 - frames 49–108, the stress phase: every frame uses its whole budget, rewrites all
   2,400 cells (600 CJK, Extension A and Hangul characters never shown before, Latin
   Extended-A and Cyrillic rows, colours changing) and submits a new 16,384-byte
-  display list: frames 49–78 mixed shapes (about 1,900 circles and many lines; the
-  fill cap stops the fills), frames 79–108 the worst legal case: fills totalling
-  just under the cap (three screen-covering discs and a 639 × 480 rectangle), then
-  3,268 translucent lines of width 255 across the screen, about 109 screens of line
-  area (lines are not capped, SPEC §unspecified).
+  display list: frames 49–78 mixed shapes (circles, discs and lines; the ink cap
+  stops the list after its first groups), frames 79–108 the worst legal case: fills
+  making the ink cap (a screen-covering disc and a half-screen rectangle, SPEC
+  §vector.ink-cap), then 3,264 translucent lines of width 255 across the screen
+  that the cap leaves undrawn. Since the caps, no legal program can ask a host for
+  more than this phase does (PERFORMANCE.md R10).
 
 **The reading profile.** `programs/conform-reading/conform-reading.terse` is the
 same source built with `-DREADING` (`programs/conform-reading/build.sh`), for a host

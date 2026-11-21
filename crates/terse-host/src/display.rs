@@ -90,7 +90,7 @@ pub fn outlined(phosphor: bool, vector: Option<&Vector>) -> bool {
 pub const MAX_PRIMITIVES: usize = MAX_LIST / 5 * 4 + 4;
 
 /// The primitives the host draws for `list`: its outlines
-/// (`decode_outlines`) or its primitives with the fill cap (`decode`).
+/// (`decode_outlines`) or its primitives (`decode`), within the ink cap.
 pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
     out.clear();
     if outlines {
