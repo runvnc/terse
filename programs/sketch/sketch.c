@@ -21,14 +21,18 @@
  * drawn as a move to its first point and a line to each of its points in
  * turn (so a stroke of one point is a dot), 2 screen units wide. Data that
  * breaks any of these rules is not a drawing. The display list of a stroke
- * of n points takes 10 + 5n bytes; strokes whose lists would not fit in the
- * display list (16,384 bytes less 32 kept for the colour disc) are dropped
- * from the end when a drawing is loaded, and no stroke or point is added
- * once either limit is reached ("Full").
+ * of n points takes 10 + 5n bytes. The list must also stay within the ink
+ * cap (SPEC §vector.ink-cap, counted with vec_line_ink as the host counts
+ * it, the colour disc and its ring included), or the host would not draw
+ * its last strokes. Strokes whose lists would not fit in the display list
+ * (16,384 bytes less 32 kept for the colour disc) or would pass the ink cap
+ * are dropped from the end when a drawing is loaded ("Full: undo or
+ * clear"; saving then keeps only what is shown), and no stroke or point is
+ * added once a limit is reached ("Full").
  *
  * The record "drawing" holds the drawing data. It is asked for in the first
  * frame; until it has arrived (or is found missing) and been checked and
- * drawn (1,024 points a frame, a stroke counting as two more), the pointer
+ * drawn (512 points a frame, a stroke counting as two more), the pointer
  * and the keys other than F do nothing. Data that is not a drawing is not
  * shown ("The saved drawing is damaged"). Invalid drawing data in a sketch
  * document given as the argument is not shown either ("Not a sketch
@@ -67,6 +71,8 @@
 #define STROKES_END (VEC_MAX_LIST - TAIL_MAX)
 #define STATUS_ROW 29
 #define STATUS_COLS 27
+#define TAIL_X (78 * 128 + 64) /* the colour disc, in sixteenths */
+#define TAIL_Y (STATUS_ROW * 256 + 128)
 
 #define KEY_1 0x1E
 #define KEY_6 0x23
@@ -88,6 +94,9 @@ static uint32_t used;
 /* The display list: the width, the strokes up to vend, then the tail. */
 static uint8_t vlist[VEC_MAX_LIST];
 static uint32_t vend, vlen;
+/* The ink (SPEC §vector.ink-cap) the strokes count, and what the tail (the
+ * colour disc and its ring) counts in either style. */
+static uint32_t ink, tail_ink;
 
 static uint8_t colour, phosphor, viewing, full, drawing, buttons, vdirty, sdirty;
 static uint8_t keeps;     /* the machine has device 4: drawings are kept */
@@ -129,7 +138,7 @@ static void tail(void)
 {
     vec_ptr = vlist + vend;
     vec_colour(palette[colour][0], palette[colour][1], palette[colour][2], 255);
-    vec_move(78 * 128 + 64, STATUS_ROW * 256 + 128);
+    vec_move(TAIL_X, TAIL_Y);
     vec_disc(80);
     vec_colour(160, 160, 160, 255);
     vec_width(16);
@@ -144,18 +153,34 @@ static void tail(void)
  * data[bat], with bleft points of the stroke there still to come. Strokes
  * whose lists do not fit are dropped (used shrinks). Then built() is told
  * whether the data was a drawing (if not, used is 0). */
-#define BUILD_POINTS 1024
+#define BUILD_POINTS 512
 static uint32_t bat, bleft;
 static uint8_t building, from_doc;
 static void built(int ok);
+
+/* The stroke being built: where it starts in data and in the list, and
+ * the ink before it, to drop it whole if it passes the cap. */
+static uint32_t bstroke, bstroke_v, bstroke_ink;
+static uint16_t bx, by;
 
 static void build_start(void)
 {
     vend = 2;
     bat = bleft = 0;
+    ink = 0;
     full = 0;
     building = 1;
 }
+
+/* A line's ink (2 units wide) from (x0, y0) to (x1, y1) in screen units. */
+static uint32_t line_ink(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    return vec_line_ink(x0 * VEC_UNIT, y0 * VEC_UNIT, x1 * VEC_UNIT, y1 * VEC_UNIT, WIDTH);
+}
+
+/* Whether `k` more ink still leaves the list, tail included, within the
+ * cap: past it the host would not draw the last strokes. */
+static int ink_room(uint32_t k) { return ink + k + tail_ink <= VEC_INK_CAP; }
 
 static uint8_t *line_at(uint8_t *v, uint8_t op, const uint8_t *p)
 {
@@ -185,8 +210,14 @@ static void build_step(void)
                 goto bad;
             if ((uint32_t)(v - vlist) + 10 + 5 * n > STROKES_END) {
                 used = bat;
+                full = 1;
                 break;
             }
+            bstroke = bat;
+            bstroke_v = v - vlist;
+            bstroke_ink = ink;
+            bx = get16(data + bat + 3);
+            by = get16(data + bat + 5);
             c = palette[data[bat]];
             v[0] = VEC_OP_COLOUR;
             v[1] = c[0];
@@ -200,6 +231,19 @@ static void build_step(void)
         }
         if (!point_ok(data + bat))
             goto bad;
+        uint32_t k = line_ink(bx, by, get16(data + bat), get16(data + bat + 2));
+        if (!ink_room(k)) {
+            /* Past the ink cap: this stroke and the rest are dropped. */
+            v = vlist + bstroke_v;
+            ink = bstroke_ink;
+            used = bat = bstroke;
+            bleft = 0;
+            full = 1;
+            break;
+        }
+        ink += k;
+        bx = get16(data + bat);
+        by = get16(data + bat + 2);
         v = line_at(v, VEC_OP_LINE, data + bat);
         bat += 4;
         bleft--;
@@ -223,8 +267,10 @@ bad:
 /* Adds a point to the stroke being drawn: 0 if there is no room. */
 static int add_point(uint16_t x, uint16_t y)
 {
-    if (used + 4 > DATA_MAX || vend + 5 > STROKES_END)
+    uint32_t k = line_ink(lastx, lasty, x, y);
+    if (used + 4 > DATA_MAX || vend + 5 > STROKES_END || !ink_room(k))
         return 0;
+    ink += k;
     put16(data + used, x);
     put16(data + used + 2, y);
     used += 4;
@@ -247,10 +293,12 @@ static void set_full(void)
 
 static void begin_stroke(uint16_t x, uint16_t y)
 {
-    if (used + 7 > DATA_MAX || vend + 15 > STROKES_END) {
+    if (used + 7 > DATA_MAX || vend + 15 > STROKES_END || !ink_room(line_ink(x, y, x, y))) {
         set_full();
         return;
     }
+    lastx = x;
+    lasty = y;
     stroke = used;
     data[used] = colour;
     put16(data + used + 1, 0);
@@ -307,8 +355,12 @@ static void undo(void)
 {
     if (!used)
         return;
-    uint32_t at = last_stroke();
-    vend -= 10 + 5 * get16(data + at + 1);
+    uint32_t at = last_stroke(), n = get16(data + at + 1), i;
+    vend -= 10 + 5 * n;
+    /* Its ink: from its first point to each in turn. */
+    const uint8_t *p = data + at + 3;
+    for (i = 0; i < n; i++, p += 4)
+        ink -= line_ink(get16(i ? p - 4 : p), get16((i ? p - 4 : p) + 2), get16(p), get16(p + 2));
     used = at;
     full = 0;
     vdirty = 1;
@@ -319,6 +371,7 @@ static void clear(void)
 {
     used = 0;
     vend = 2;
+    ink = 0;
     full = 0;
     vdirty = 1;
     say("Cleared");
@@ -444,13 +497,15 @@ static void built(int ok)
         from_doc = 0;
         if (ok) {
             viewing = 1;
-            say("Viewing a published sketch");
+            say(full ? "Too much to show: Full" : "Viewing a published sketch");
         } else {
             say("Not a sketch drawing");
             load_drawing();
         }
     } else if (!ok)
         say("The saved drawing is damaged");
+    else if (full)
+        say("Full: undo or clear");
 }
 
 static void done(uint8_t h)
@@ -524,6 +579,8 @@ int main(void)
     vec_width(WIDTH);
     vend = 2;
     vdirty = 1;
+    /* The tail's ink: the disc as an outline (more than filled) and the ring. */
+    tail_ink = vec_circle_ink(TAIL_X, TAIL_Y, 80, WIDTH) + vec_circle_ink(TAIL_X, TAIL_Y, 104, 16);
     keeps = terse_has_device(4);
     if (!keeps)
         say("Drawings are not kept");
