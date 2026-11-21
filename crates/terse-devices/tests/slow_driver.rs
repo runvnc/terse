@@ -10,7 +10,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use terse_perflog::record::{self, Line};
@@ -21,7 +23,7 @@ fn workspace() -> PathBuf {
 }
 
 fn terse_bus() -> PathBuf {
-    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join("terse-bus")
+    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn hello() -> String {
@@ -107,6 +109,23 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
         &[("TERSE_EXAMPLE_SLOW", "sleep:60:20")],
     );
     let err = text(&out.stderr);
+    // Where the system does not say how long the driver and the frame
+    // loop waited for a CPU (Windows; TERSE_PERF_PROBE=none), the driver
+    // is blamed by its waits alone: warned about, never stopped
+    // (RECORD.md 4). The record's readings lines say which case this is.
+    let lines = record_lines(&perf);
+    let waits = |c: Component| lines.iter().any(|l| matches!(l, Line::Readings { component, readings } if *component == c && readings.wait));
+    if !(waits(Component::Core) && waits(Component::Device(2))) {
+        assert!(out.status.success(), "{err}");
+        assert!(err.contains("is slow (3 late frames)") && !err.contains("stopped by the host"), "{err}");
+        assert!(lines.iter().any(|l| matches!(l, Line::Warn { component: Component::Device(2), .. })), "{lines:?}");
+        assert!(!lines.iter().any(|l| matches!(l, Line::Stop { .. })), "{lines:?}");
+        let blamed = lines.iter().filter(|l| matches!(l, Line::Late { verdict: Verdict::Blamed, component: Component::Device(2), .. })).count();
+        assert!(blamed >= 10, "{lines:?}");
+        let summary = terse_perflog::summary::summarise(&perf).unwrap();
+        assert!(summary.contains("no CPU-wait readings for dev2"), "{summary}");
+        return;
+    }
     assert_eq!(out.status.code(), Some(4), "{err}");
     assert!(err.contains("device 2 (terminal (example) 0.1.0 fnv:") && err.contains("is slow (3 late frames)"), "{err}");
     assert!(err.contains("did not keep up (10 late frames)") && err.contains("stopped by the host: device 2"), "{err}");
@@ -114,7 +133,6 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     assert_eq!(halted_hash.len(), 64);
 
     // The record: who, what was late and why, the warning, the stop.
-    let lines = record_lines(&perf);
     assert!(lines.contains(&Line::Format(1)));
     assert!(lines.iter().any(|l| matches!(l, Line::Host(i) if i.name == "terse-bus" && i.build.starts_with("b3:"))), "{lines:?}");
     assert!(lines.iter().any(|l| matches!(l, Line::Device { component: Component::Device(2), identity, .. } if identity.name == "terminal (example)" && identity.build.starts_with("fnv:"))));
@@ -193,11 +211,13 @@ fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
 }
 
 /// A CPU hog on one CPU, stopped when dropped.
+#[cfg(target_os = "linux")]
 struct Hog {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+#[cfg(target_os = "linux")]
 impl Hog {
     fn on(cpu: usize) -> Hog {
         let stop = Arc::new(AtomicBool::new(false));
@@ -213,6 +233,7 @@ impl Hog {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for Hog {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -222,6 +243,7 @@ impl Drop for Hog {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn pin(cpu: usize) {
     // SAFETY: a zeroed cpu_set_t with one CPU set, for this thread.
     unsafe {
@@ -232,6 +254,7 @@ fn pin(cpu: usize) {
 }
 
 /// The last CPU this process may run on.
+#[cfg(target_os = "linux")]
 fn a_cpu() -> Option<usize> {
     // SAFETY: reads this process's affinity mask.
     unsafe {
@@ -248,10 +271,16 @@ fn a_cpu() -> Option<usize> {
 /// (well within its allowance of half a frame). Its frames are late and
 /// the core waits for it longer than its allowance, but it spent that
 /// time waiting for the CPU: it is never blamed, warned about or stopped.
+/// Linux only: it needs CPU affinity and SCHED_IDLE to make the case.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_starved_driver_is_not_blamed() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Some((tmp, x)) = ready() else { return };
+    if terse_perflog::probe::disabled() {
+        eprintln!("skipped: TERSE_PERF_PROBE=none (starvation cannot be read, so it is blamed)");
+        return;
+    }
     if !Path::new("/proc/self/schedstat").exists() {
         eprintln!("skipped: no schedstat (the run-queue wait cannot be read)");
         return;

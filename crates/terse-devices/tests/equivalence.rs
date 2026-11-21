@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
 use terse_bus::bus::BusConfig;
@@ -294,7 +295,11 @@ fn optional_devices_on_the_bus() {
     // A directory with the terminal and vector drivers only.
     let partial = tempfile::tempdir().unwrap();
     for name in ["terse-dev-terminal", "terse-dev-vector"] {
-        std::os::unix::fs::symlink(bin_dir().join(name), partial.path().join(name)).unwrap();
+        let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(bin_dir().join(&exe), partial.path().join(&exe)).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(bin_dir().join(&exe), partial.path().join(&exe)).unwrap();
     }
     assert_eq!(host::installed_slots(partial.path(), &img, false, &[], &[]), [2, 3, 9, 10]);
     let dirs = Dirs::new();
@@ -465,11 +470,11 @@ fn state_restore() {
 }
 
 fn terse() -> PathBuf {
-    bin_dir().join("terse")
+    bin_dir().join(format!("terse{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn terse_bus() -> PathBuf {
-    bin_dir().join("terse-bus")
+    bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn stdout(cmd: &mut Command) -> String {
@@ -516,6 +521,7 @@ fn snapshots_cross_hosts() {
 }
 
 /// The processes whose command line names `needle`.
+#[cfg(target_os = "linux")]
 fn processes_with(needle: &str) -> Vec<u32> {
     let mut out = Vec::new();
     for e in std::fs::read_dir("/proc").unwrap().flatten() {
@@ -531,6 +537,7 @@ fn processes_with(needle: &str) -> Vec<u32> {
 
 /// A copy of the crash test driver under a name of its own, so that its
 /// processes can be found.
+#[cfg(target_os = "linux")]
 fn crash_driver(dir: &Path, name: &str) -> String {
     let path = dir.join(name);
     std::fs::copy(env!("CARGO_BIN_EXE_terse-dev-crash"), &path).unwrap();
@@ -541,6 +548,7 @@ fn crash_driver(dir: &Path, name: &str) -> String {
 /// hangs, and one that is slow to start. The run stops with status 3 and
 /// the driver named; nothing is left running and the session's files are
 /// gone; a slow driver is waited for, up to --start-timeout.
+#[cfg(target_os = "linux")]
 #[test]
 fn driver_failures() {
     if !terse_bus().exists() {
@@ -575,6 +583,7 @@ fn driver_failures() {
 }
 
 /// terse-bus's output; it must have left no session files behind.
+#[cfg(target_os = "linux")]
 fn bus_output<const N: usize>(args: [&str; N]) -> std::process::Output {
     let child = Command::new(terse_bus()).args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
     let pid = child.id();
@@ -586,6 +595,7 @@ fn bus_output<const N: usize>(args: [&str; N]) -> std::process::Output {
 
 /// SIGTERM and SIGINT end a run cleanly: the drivers are shut down and
 /// the session's files removed.
+#[cfg(target_os = "linux")]
 #[test]
 fn signals_end_a_run_cleanly() {
     if !terse_bus().exists() {
@@ -625,13 +635,16 @@ fn signals_end_a_run_cleanly() {
     }
 }
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
 }
 
 /// A child process killed (and reaped) when dropped, unless it has ended.
+#[cfg(target_os = "linux")]
 struct KillOnDrop(std::process::Child);
 
+#[cfg(target_os = "linux")]
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         if let Ok(None) = self.0.try_wait() {
@@ -641,10 +654,12 @@ impl Drop for KillOnDrop {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn libc_sigterm() -> i32 {
     15
 }
 
+#[cfg(target_os = "linux")]
 fn libc_sigint() -> i32 {
     2
 }

@@ -164,7 +164,7 @@ pub fn terse_command() -> Command {
     // program is the one cargo built beside the drivers.
     let exe = option_env!("CARGO_BIN_EXE_terse").map(PathBuf::from).unwrap_or_else(|| {
         let driver = option_env!("CARGO_BIN_EXE_terse-dev-terminal").expect("built in terse-cli or terse-devices");
-        Path::new(driver).parent().unwrap().join("terse")
+        Path::new(driver).parent().unwrap().join(format!("terse{}", std::env::consts::EXE_SUFFIX))
     });
     let mut cmd = Command::new(exe);
     for var in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"] {
