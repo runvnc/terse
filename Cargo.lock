@@ -2937,6 +2937,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "terse-perflog"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "libc",
+ "tempfile",
+]
+
+[[package]]
 name = "terse-relay"
 version = "0.1.0"
 dependencies = [
