@@ -50,7 +50,7 @@ mod imp {
 
     use terse_net::address::{parse_address, parse_hints};
     use terse_net::article_parse::basic_text;
-    use terse_net::entry::{self, KIND_ARTICLE, KIND_DOCUMENT, KIND_PROGRAM};
+    use terse_net::entry::{self, KIND_ARTICLE, KIND_DOCUMENT, KIND_PROFILE, KIND_PROGRAM};
     use terse_net::identity::valid_feed_key;
     use terse_net::node::Token;
     use terse_net::timeline::Arrivals;
@@ -481,6 +481,13 @@ mod imp {
         entries: HashMap<(FeedKey, u32), Option<Held>>,
         /// Kind-1 entries by blob, in arrival order, for Title.
         by_blob: HashMap<BlobId, Vec<(FeedKey, u32)>>,
+        /// The valid entries of each feed, by `seq`.
+        by_feed: HashMap<FeedKey, BTreeSet<u32>>,
+        /// The highest `seq` of each feed's valid profile entries: its
+        /// profile in force (NETWORK.md 4.6).
+        profiles: HashMap<FeedKey, u32>,
+        /// Profile documents read so far (`None`: not held, or not one).
+        documents: HashMap<BlobId, Option<terse_net::profile::Document>>,
         /// Whether a blob is in basic text (ARTICLE.md 1.1); blobs never change.
         basic: HashMap<BlobId, bool>,
         dirty: bool,
@@ -503,6 +510,9 @@ mod imp {
                 seen: 0,
                 entries: HashMap::new(),
                 by_blob: HashMap::new(),
+                by_feed: HashMap::new(),
+                profiles: HashMap::new(),
+                documents: HashMap::new(),
                 basic: HashMap::new(),
                 dirty: false,
                 last_changed: Instant::now(),
@@ -548,10 +558,15 @@ mod imp {
                 let held = self.node.feed_store().get(&feed, seq).ok().flatten().and_then(|b| entry::decode(&b).ok()).and_then(|s| {
                     (s.entry.feed == feed && s.entry.seq == seq).then_some(Held { entry: s.entry, bytes: s.bytes, arrival })
                 });
-                if let Some(h) = &held
-                    && h.entry.kind == KIND_ARTICLE
-                {
-                    self.by_blob.entry(h.entry.blob).or_default().push((feed, seq));
+                if let Some(h) = &held {
+                    if h.entry.kind == KIND_ARTICLE {
+                        self.by_blob.entry(h.entry.blob).or_default().push((feed, seq));
+                    }
+                    if h.entry.kind == KIND_PROFILE {
+                        let best = self.profiles.entry(feed).or_insert(seq);
+                        *best = (*best).max(seq);
+                    }
+                    self.by_feed.entry(feed).or_default().insert(seq);
                 }
                 self.entries.insert((feed, seq), held);
             }
@@ -651,6 +666,9 @@ mod imp {
 
         /// The reply to a request, or `None` if it waits on the network.
         fn answer(&mut self, conn: u64, r: Request) -> Option<Vec<u8>> {
+            // Entries stored since the last request, by the node or by another
+            // program sharing the store.
+            self.refresh();
             Some(match r {
                 Request::Get { req, id } => {
                     let held = self.held(&id).is_some();
@@ -779,7 +797,6 @@ mod imp {
                     return None;
                 }
                 Request::Title { req, id, size } => {
-                    self.refresh();
                     let title = self.by_blob.get(&id).into_iter().flatten().find_map(|k| {
                         self.entries.get(k).and_then(Option::as_ref).filter(|h| h.entry.size == size).map(|h| h.entry.title.clone())
                     });
@@ -803,7 +820,26 @@ mod imp {
         /// The name of LOCAL.md 4.3: the nickname, else the display name of
         /// the profile in force, else empty.
         fn name(&self, feed: &FeedKey) -> (String, bool) {
-            self.node.display_name(feed).unwrap_or_default()
+            if let Some(n) = self.node.nicknames().get(feed) {
+                return (n.to_string(), true);
+            }
+            let title = self.profiles.get(feed).and_then(|seq| self.entries.get(&(*feed, *seq))).and_then(Option::as_ref);
+            (title.map(|h| h.entry.title.clone()).unwrap_or_default(), false)
+        }
+
+        /// The document of the feed's profile in force, if held and valid.
+        fn document(&mut self, feed: &FeedKey) -> Option<terse_net::profile::Document> {
+            let seq = self.profiles.get(feed)?;
+            let blob = self.entries.get(&(*feed, *seq))?.as_ref()?.entry.blob;
+            if let Some(Some(d)) = self.documents.get(&blob) {
+                return Some(d.clone());
+            }
+            let doc = self.held(&blob).and_then(|b| terse_net::profile::Document::parse(&b));
+            // A document not held yet may be fetched later.
+            if doc.is_some() {
+                self.documents.insert(blob, doc.clone());
+            }
+            doc
         }
 
         /// A record (LOCAL.md 4.3).
@@ -834,7 +870,6 @@ mod imp {
         }
 
         fn timeline(&mut self, req: u32, before: u32, max: u16) -> Vec<u8> {
-            self.refresh();
             let max = (max as usize).min(MAX_TIMELINE);
             let subscribed: BTreeSet<FeedKey> = self.node.subscriptions().feeds().copied().collect();
             let mut picked: Vec<(FeedKey, u32)> = Vec::new();
@@ -866,12 +901,12 @@ mod imp {
         }
 
         /// A feed record (LOCAL.md 4.3).
-        fn feed_record(&self, feed: &FeedKey) -> Vec<u8> {
+        fn feed_record(&mut self, feed: &FeedKey) -> Vec<u8> {
             let subscribed = self.node.subscriptions().contains(feed);
             let (name, nickname) = self.name(feed);
             let hints = if subscribed { self.node.subscriptions().hints(feed).unwrap_or("").to_string() } else { String::new() };
             let hint_urls: Vec<String> = parse_hints(hints.as_bytes()).unwrap_or_default().iter().map(|h| h.url()).collect();
-            let doc = self.node.profile(feed).and_then(|(_, d)| d).unwrap_or_default();
+            let doc = self.document(feed).unwrap_or_default();
             let mut r = feed.to_vec();
             r.push(subscribed as u8 | (nickname as u8) << 1);
             short(&mut r, name.as_bytes());
@@ -896,16 +931,10 @@ mod imp {
             if flags & 1 == 0 {
                 return m;
             }
-            self.refresh();
             let name = self.name(feed).0;
             let mut records: Vec<Vec<u8>> = Vec::new();
-            for seq in self.node.feed_store().seqs(feed).unwrap_or_default() {
-                if !self.entries.contains_key(&(*feed, seq)) {
-                    // Stored without an arrival record (another program
-                    // sharing the store): numbered now.
-                    let _ = self.arrivals.record(feed, seq);
-                    self.refresh();
-                }
+            let seqs: Vec<u32> = self.by_feed.get(feed).into_iter().flatten().copied().collect();
+            for seq in seqs {
                 if let Some(r) = self.record((*feed, seq), &name) {
                     records.push(r);
                 }
