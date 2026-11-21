@@ -35,7 +35,7 @@ const GIVE_UP: u32 = 600;
 /// Entries published for the sync scenarios.
 const SYNC_ENTRIES: u32 = 50;
 
-pub const USAGE: &str = "terse perf [--only <text>] [--runs <n>] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]";
+pub const USAGE: &str = "terse perf [--only <text>] [--runs <n>] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]\n       terse perf --write-worst <dir>   (the W rows' images, PERFORMANCE.md R10)";
 
 enum Verdict {
     Pass,
@@ -783,22 +783,54 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
         Some(conform) => {
             let events = conform.with_extension("events");
             for threads in ["1", "0"] {
+                // The stress phase: frames 49-108 (programs/conform/conform.c).
                 let (_, out) = timed(
-                    bench(&conform, &["--warmup", "60", "--frames", "600", "--threads", threads, "--events"]).arg(&events),
+                    bench(&conform, &["--warmup", "48", "--frames", "61", "--threads", threads, "--events"]).arg(&events),
                 )?;
                 let (p50, p99, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
                 rows.push(Row {
                     id: "H3",
                     what: format!(
-                        "programs/conform frames 60–660, software, {}",
+                        "programs/conform's stress frames 49–108, software, {}",
                         if threads == "1" { "1 thread" } else { "all threads" }
                     ),
                     measured: format!("p50 {p50:.2} ms, p99 {p99:.2} ms, max {max:.2} ms"),
-                    rule: "a deliberate worst case: no target".into(),
+                    rule: "T: ≤ 16.7 ms (a worst legal case)".into(),
                     verdict: Verdict::Info,
                 });
             }
         }
+    }
+    // R10: each device's worst legal frame (terse_core::worst), drawn on one
+    // thread; the verdict is whether the caps held, the time a target.
+    for s in terse_core::worst::scenarios() {
+        let img = image(&format!("{}.terse", s.id), &s.image)?;
+        let enforced = terse_core::worst::Enforced::of(&s.image, 4)?;
+        let mut p50s = Vec::new();
+        let mut maxes = Vec::new();
+        for _ in 0..runs {
+            let (_, out) = timed(&mut bench(&img, &["--warmup", "3", "--frames", "30", "--threads", "1"]))?;
+            let (p50, _, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
+            p50s.push(p50);
+            maxes.push(max);
+        }
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let (p50, max) = (median(p50s), median(maxes));
+        let capped = enforced.ink2.is_some() || enforced.ink3.is_some();
+        rows.push(Row {
+            id: "W",
+            what: format!("{}: {}", s.id, s.what),
+            measured: format!("1 thread p50 {p50:.1} ms, max {max:.1} ms; {enforced}"),
+            rule: if capped { "R10: within the caps; T: ≤ 16.7 ms".into() } else { "T: ≤ 16.7 ms".into() },
+            verdict: match (capped, enforced.within()) {
+                (false, _) => Verdict::Info,
+                (true, true) => Verdict::Pass,
+                (true, false) => Verdict::Fail,
+            },
+        });
     }
     Ok(())
 }
@@ -821,6 +853,15 @@ pub fn perf(args: &[String]) -> Result<ExitCode, String> {
             "--programs" => programs = Some(PathBuf::from(value()?)),
             "--host" => host = Some(PathBuf::from(value()?)),
             "--reader" => reader = Some(PathBuf::from(value()?)),
+            "--write-worst" => {
+                let dir = PathBuf::from(value()?);
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                for s in terse_core::worst::scenarios() {
+                    std::fs::write(dir.join(format!("{}.terse", s.id)), &s.image).map_err(|e| e.to_string())?;
+                    println!("{}\t{}", s.id, s.what);
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
             _ => return Err(format!("usage: {USAGE}")),
         }
     }
