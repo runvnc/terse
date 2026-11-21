@@ -766,9 +766,9 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     });
     rows.push(Row {
         id: "H2",
-        what: "fetch: slowest frame drawn (its first CJK and Hangul text)".into(),
+        what: "fetch: slowest frame drawn (its first CJK and Hangul text, 50 ms after start)".into(),
         measured: spread(first_cjk, "ms"),
-        rule: "T: ≤ 16.7 ms".into(),
+        rule: "T: ≤ 150 ms (waits for the font map, built in the first 0.1–0.2 s)".into(),
         verdict: Verdict::Info,
     });
     let conform = programs.as_ref().map(|p| p.join("conform/conform.terse")).filter(|p| p.exists());
@@ -794,7 +794,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
                         if threads == "1" { "1 thread" } else { "all threads" }
                     ),
                     measured: format!("p50 {p50:.2} ms, p99 {p99:.2} ms, max {max:.2} ms"),
-                    rule: "T: p99 ≤ 16.7 ms".into(),
+                    rule: "a deliberate worst case: no target".into(),
                     verdict: Verdict::Info,
                 });
             }
