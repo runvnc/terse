@@ -36,7 +36,10 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Tersenet: the composite's target. MAME composites into its BGFX view (the
 /// window's back buffer, 8 bits a channel, not sRGB: the shader's own
 /// 1/2.2 gamma is the encoding); this is the same, read back for the layer.
-pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// BGRA, cleared to opaque black (the composite writes no alpha), so that
+/// each pixel read back is already a light layer's word (DEVICES.md 7.1:
+/// alpha 255, then red, green, blue).
+pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
 /// The seven sliders of `create_sliders`, at their values (MAME's defaults
 /// unless changed).
@@ -290,7 +293,14 @@ fn vec4(v: [f32; 4]) -> Vec<u8> {
 /// A render pass into `view`, cleared first or not (bgfx's
 /// `setViewClear` with or without `BGFX_CLEAR_COLOR`).
 fn begin<'a>(encoder: &'a mut wgpu::CommandEncoder, view: &wgpu::TextureView, clear: bool) -> wgpu::RenderPass<'a> {
-    let load = if clear { wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT) } else { wgpu::LoadOp::Load };
+    begin_with(encoder, view, clear.then_some(wgpu::Color::TRANSPARENT))
+}
+
+fn begin_with<'a>(encoder: &'a mut wgpu::CommandEncoder, view: &wgpu::TextureView, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
+    let load = match clear {
+        Some(c) => wgpu::LoadOp::Clear(c),
+        None => wgpu::LoadOp::Load,
+    };
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -420,8 +430,9 @@ impl Crt {
         (self.width, self.height)
     }
 
-    /// `prepare` then `composite`, then the picture read back: RGBA, 8 bits
-    /// a channel, rows from the top, the 1/2.2 gamma applied.
+    /// `prepare` then `composite`, then the picture read back: BGRA (a
+    /// little-endian word 0xAARRGGBB, alpha 255), 8 bits a channel, rows
+    /// from the top, the 1/2.2 gamma applied.
     ///
     /// `frame_time` is the emulated time since the last frame
     /// (`emu_time - m_last_emu_time`): `None` when the machine has not run
@@ -516,7 +527,7 @@ impl Crt {
         // Composite persistent phosphor and bloom (added to the view, here
         // a black one).
         {
-            let mut rp = pass(&mut encoder, &self.output.view, true);
+            let mut rp = begin_with(&mut encoder, &self.output.view, Some(wgpu::Color::BLACK));
             rp.set_pipeline(&gpu.composite);
             rp.set_bind_group(0, &self.composite_groups[current], &[]);
             rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
@@ -546,7 +557,7 @@ impl Crt {
         &self.pixels
     }
 
-    /// The last picture (RGBA, rows from the top).
+    /// The last picture (BGRA, alpha 255, rows from the top).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }

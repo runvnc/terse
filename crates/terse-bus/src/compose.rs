@@ -323,34 +323,36 @@ impl Screen {
             let lin = linear_table();
             let w = picture.0 as usize;
             for r in &dirty {
-                for y in r.y0..r.y1 {
-                    let row = y as usize * w;
-                    let out = &mut self.image.data[row..row + w];
-                    for x in r.x0 as usize..r.x1 as usize {
-                        let mut sum = [0.0f32; 3];
-                        let mut n = 0;
-                        let mut only = 0;
-                        for l in &stack {
-                            let p = l[row + x];
-                            let a = p >> 24;
-                            if a == 0 {
-                                continue;
+                let bands = tile_rows(&mut self.image.data[r.y0 as usize * w..r.y1 as usize * w], w, *r);
+                pool.each(bands, |(y0, band)| {
+                    for (k, out) in band.chunks_exact_mut(w).enumerate() {
+                        let row = (y0 as usize + k) * w;
+                        for x in r.x0 as usize..r.x1 as usize {
+                            let mut sum = [0.0f32; 3];
+                            let mut n = 0;
+                            let mut only = 0;
+                            for l in &stack {
+                                let p = l[row + x];
+                                let a = p >> 24;
+                                if a == 0 || p & 0xFF_FFFF == 0 {
+                                    continue;
+                                }
+                                n += 1;
+                                only = p;
+                                let f = a as f32 / 255.0;
+                                sum[0] += lin[(p >> 16 & 255) as usize] * f;
+                                sum[1] += lin[(p >> 8 & 255) as usize] * f;
+                                sum[2] += lin[(p & 255) as usize] * f;
                             }
-                            n += 1;
-                            only = p;
-                            let k = a as f32 / 255.0;
-                            sum[0] += lin[(p >> 16 & 255) as usize] * k;
-                            sum[1] += lin[(p >> 8 & 255) as usize] * k;
-                            sum[2] += lin[(p & 255) as usize] * k;
+                            out[x] = match n {
+                                0 => 0,
+                                // One layer's full light: its colour as it is.
+                                1 if only >> 24 == 255 => only & 0xFF_FFFF,
+                                _ => srgb8(sum[0]) << 16 | srgb8(sum[1]) << 8 | srgb8(sum[2]),
+                            };
                         }
-                        out[x] = match n {
-                            0 => 0,
-                            // One layer's full light: its colour as it is.
-                            1 if only >> 24 == 255 => only & 0xFF_FFFF,
-                            _ => srgb8(sum[0]) << 16 | srgb8(sum[1]) << 8 | srgb8(sum[2]),
-                        };
                     }
-                }
+                });
                 self.damage.add(IRect::new(r.x0 + area.x0, r.y0 + area.y0, r.x1 + area.x0, r.y1 + area.y0));
             }
             return Ok(());

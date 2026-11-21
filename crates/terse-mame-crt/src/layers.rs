@@ -189,15 +189,15 @@ pub fn draw_tube(
         px.fill(0);
     }
     let clip = sp.intersect(&IRect::of_size(p.picture));
+    let (cx0, cx1) = ((clip.x0 - sp.x0) as usize, (clip.x1 - sp.x0) as usize);
     for y in clip.y0..clip.y1 {
         let sy = (y - sp.y0) as usize;
         let row = &rgba[sy * size.0 as usize * 4..][..size.0 as usize * 4];
-        let out = &mut px[y as usize * w..][..w];
-        for x in clip.x0..clip.x1 {
-            let s = &row[(x - sp.x0) as usize * 4..][..4];
-            // Light (DEVICES.md 7.1): the colour straight in bits 0–23,
-            // full coverage; no light, transparent.
-            out[x as usize] = if s[0] | s[1] | s[2] == 0 { 0 } else { 0xFF00_0000 | (s[0] as u32) << 16 | (s[1] as u32) << 8 | s[2] as u32 };
+        let out = &mut px[y as usize * w + clip.x0 as usize..][..cx1 - cx0];
+        // Light (DEVICES.md 7.1): each word as read back, 0xFFRRGGBB, the
+        // colour straight with full coverage (black: no light).
+        for (o, s) in out.iter_mut().zip(row[cx0 * 4..cx1 * 4].chunks_exact(4)) {
+            *o = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
         }
     }
     let damage = if fresh || !d.light { IRect::of_size(p.picture) } else { clip };
