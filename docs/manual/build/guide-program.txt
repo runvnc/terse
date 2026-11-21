@@ -63,6 +63,6 @@ publishes it in your feed, under its name (make your key first with `terse key n
 
 ## What you have now
 
-A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:51840b3eedad94c963aad635bc3cf01891c341b653b5194ca7568b1789cfd98b).
+A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:0b9084d263158f8e46a425e6298278d9fa11b0060c22361fcc5aea61323ac5ba).
 
 Every option of `terse build`, the C library and the Rust runtime are in [Building a program](terse:4f0b9607dc01ecc7723605b9bb83f4271f20058b1d94bc10d2f54949022096d2); running, testing and publishing in more detail in [Running and publishing a program](terse:49f555b56eb0d2367475d22399004fa0c9ad8b432549bbbc2c848b06254bab69).

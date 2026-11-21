@@ -516,8 +516,141 @@ How a core finds its drivers (`terse-bus` does this, and `tcore`):
    and one that requires it is refused (SPEC §image).
 
 The set of drivers, and so the devices a machine may be granted, is
-fixed when the run starts; section 14 sketches a per-user drivers
-directory.
+fixed when the run starts. Between `--driver` and the core's own
+directory comes the user's drivers folder (section 2.2).
+
+### 2.2 Installed drivers: the user's drivers folder
+
+A user **installs** a driver once, and every later run uses it, without
+a `--driver` option. The folder is in the user's configuration
+directory, beside the fonts (README "Fonts"):
+
+    <config>/drivers/            $XDG_CONFIG_HOME/terse/drivers (else ~/.config/terse/drivers)
+      use                        which installed driver serves which slots
+      <name>/manifest            one installed driver: what it said it is
+      <name>/<program>           a copy of its program file
+
+`terse drivers` writes it (README "Drivers"); a core only reads it, once,
+at start. `<config>` is the directory a core's `--config` names, the one
+it gives the content driver (section 2.1's table).
+
+**Groups.** A driver is installed for one of the groups of section 2.1's
+table, and serves the whole group: slots 2 and 10 (10 if it answers for
+it), 3 and 9, 4, 6, or 7. A group is named by its lowest slot.
+
+**`use`** is UTF-8 text, one line per group: the group's lowest slot, a
+space and the name of an installed driver, or `default` (the driver
+shipped with the core); blank lines and lines starting with `#` are
+ignored. A group with no line gets the shipped driver. `terse drivers
+add` writes the line for the driver it installs, so the driver installed
+last for a group is the one used; `terse drivers use` changes it.
+
+**A name** is 1 to 64 of `a`–`z`, `0`–`9`, `-` and `.`, starting with a
+letter or digit, and not `use`.
+
+**The manifest** is UTF-8 text, one field per line, a word, a space and
+the value, in this order:
+
+| Line | Value |
+|---|---|
+| `terse-driver 1` | the format's version |
+| `program <file>` | the program's file name in the driver's directory (no `/`) |
+| `slot <s> <v>` | a slot the driver answered for when it was installed and its device version; one line per slot, in increasing order |
+| `name <text>` | the name it gave in HELLO (section 1.1) |
+| `version <text>` | its version, or `-` |
+| `build <text>` | its build identifier (`PERFORMANCE.md` R13), or `-` |
+
+A reader ignores lines of words it does not know. The name, version and
+build are what `terse drivers list` shows; a run takes the driver's
+identity from its HELLO reply as for any driver, so the record
+(`RECORD.md` 2, the `device` line) and the rule of `PERFORMANCE.md` R15
+name the build that actually ran.
+
+**Installing** (`terse drivers add <file>`) is the user's own act at a
+command line, on a file the user names. It starts the program as a core
+would (section 2, no options, the socket only) once for each group, sends
+HELLO for the group's slots and SHUTDOWN after the reply, and keeps the
+group it answered for (`--slot` asks for one group only; a driver that
+answers for two groups must be given `--slot`). It refuses a driver that
+answers for none, or with a device version this host does not implement
+(SPEC §image's table). It shows the driver's name, version, build
+identifier and slots and says that a driver is a native program that
+runs with the user's full rights. It copies the program file into the
+driver's directory (a driver must be one self-contained program file;
+installing a name again replaces it), writes the manifest, and sets
+`use` for the group.
+
+**A host never installs or chooses a driver by itself.** Nothing a
+machine does, nothing in a feed, an article or a program, and nothing
+fetched from the network, can add a driver or change `use`: the folder
+is written only by `terse drivers`, run by the user. A driver is a
+native program with the user's full rights (it can read and change the
+user's files and use the network); the core trusts it as it trusts its
+own code (section 14, "Trust"), so installing one is the same decision
+as installing any program.
+
+**Which driver serves a group**, in this order:
+
+1. a `--driver` on the command line that names any slot of the group
+   (section 2.1, rule 2);
+2. else the installed driver `use` names for the group;
+3. else the driver shipped with the core (section 2.1, rule 1).
+
+An installed driver is started with the options the core gives the
+shipped driver of its group (section 2.1's table: `--config` for the
+terminal and the page, the content driver's options for content), so
+that it finds the same fonts and directories; a driver ignores the
+options it does not need (`native/driver-example` ignores them all).
+
+A `use` line of `default`, a group with no line, a name not installed,
+or a line that cannot be read gives the shipped driver (rule 3); a core
+says so on standard error for the last two. `tcore` (section 12) does
+not read the folder: a minimal core need not.
+
+**When an installed driver fails.** The run falls back to the shipped
+driver of the group, says so, and goes on, when the installed driver:
+
+- is missing (its directory, manifest or program file), or its manifest
+  cannot be read;
+- cannot be started, exits or closes its socket before its HELLO reply,
+  or does not reply in time (section 2);
+- fails its handshake: replies ERROR, answers for a slot outside its
+  group or leaves one out (section 1.1), or answers for a slot with a
+  device version other than its manifest's (a program changed after it
+  was installed).
+
+The message names the installed driver, why it was not used, and the
+command that goes back to the shipped one (`terse drivers use <slot>
+default`); `terse-bus` writes it to standard error and, in a window,
+shows it as a notice (like the slow-device notice of `PERFORMANCE.md`
+R15) for 5 seconds. If the core has no shipped driver for the group
+either, the run is refused (status 2), as for a `--driver` that fails.
+After the handshake an installed driver is like any other: one that
+will not take a machine in OPEN refuses the run (section 2.1, rule 5),
+one that fails during the run stops it (section 10, status 3), and one
+that is slow is warned about and its machines saved and stopped
+(`PERFORMANCE.md` R15). None of these falls back, and nothing is
+disabled for later runs: the next run tries the installed driver again.
+
+*Why fall back at start, unlike a `--driver`.* A `--driver` is chosen
+for one run, by someone watching it; refusing tells them at once. An
+installed driver is used by every run from then on, including the
+reader, and a user who installed one that is broken, or that a system
+update left behind, should still be able to read: R15's principle is that
+a component which does not do its job costs the user a notice, not
+their work. Before the first frame no machine has seen the device, the
+grants are not yet made (SPEC §image), and every driver of a device
+version gives the same results (section 13: a device is complete), so
+starting the shipped driver instead is just another valid choice, with
+the same state hashes. After the handshake the argument of section 10
+holds: the device's state is in the driver, so nothing can take over
+from it, and the run stops instead.
+
+**Not hot-plugged.** The folder is read only at start: the set of
+drivers, like a machine's grants (SPEC §image), is fixed at reset. A
+driver installed or chosen while a core runs is used from its next run;
+a device that appeared mid-run would contradict `device`'s answer, which
+never changes while a machine runs.
 
 ---
 
@@ -1315,20 +1448,22 @@ for a slot that is no device of v0 (section 2.1, rule 6).
   order for every device, so hashes would not change; the core would read
   the order from the drivers instead of knowing it. Not done: v0 has a
   fixed set of devices, and a declaration is one more thing to get wrong.
-- **A per-user drivers directory.** Today a core finds drivers in its
-  own directory, or as `--driver` says (section 2.1), so a third party
-  cannot ship one driver (a sound device for some hardware) without the
-  user editing a command line. A convention could fix that: a directory
-  in the user's data directory (`$XDG_DATA_HOME/terse/drivers`, or the
-  platform's equivalent), holding one subdirectory per installed driver
-  with its program and a small manifest: the slots it serves and the
-  device version of each, its command line, and a name. A user installs
-  a driver by copying its directory there. At start a core lists the
-  manifests and, for each slot, chooses in this order: an explicit
-  `--driver`; a driver of the user's directory (if two serve one slot,
-  the run refuses to guess and says so); the core's own directory. The
-  manifest is read only at start: the set of drivers, like a machine's
-  grants (SPEC §image), is fixed at reset, so hot-plugging a driver into
-  a running machine is deliberately out of scope (a device that appeared
-  mid-run would contradict `device`'s answer, which never changes while
-  the machine runs). Nothing of this is implemented.
+- **Installed drivers in a host with built-in devices.** The drivers
+  folder (section 2.2) is read by `terse-bus` only. `terse-host` runs
+  terse-core's machines with the devices compiled in (`InProcess`) and
+  draws by reading their state directly (the terminal's cells, the
+  display lists, the page's layout). Handing one group to an outside
+  driver while keeping the rest would take: a `Devices` that sends that
+  group's calls, BEGIN, END and STATE to the driver and the rest to the
+  compiled-in devices (the bus's code already does the driver's half);
+  that code in a crate `terse-host` can depend on (today `terse-bus`
+  depends on `terse-host` for composing) and only on Unix (sockets,
+  futexes), so Windows keeps the compiled-in devices; and a picture of
+  the device: either the driver draws layers (section 7) that the
+  renderer takes as images, or, for a driver that draws nothing like the
+  example, the host asks its STATE each presented frame (the terminal's
+  is about 10 KB) and draws from a mirror of it. Content and sound also
+  carry host services and properties (sections 7.2, 9), so the terminal,
+  the vector displays and the page are the natural first cases. The
+  record would then blame the driver by name, as `terse-bus` does,
+  instead of `core`.

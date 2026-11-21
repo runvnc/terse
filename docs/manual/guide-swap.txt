@@ -33,6 +33,17 @@ terse-bus programs/hello/hello.terse --frames 30 --hash \
 
 as on the previous page. `--driver` takes any slot of a device of the specification: `3,9=` for the vector displays, `4=` for content, `6=` sound, `7=` the page.
 
+## Install your device
+
+To have `terse-bus` use your driver every time, with no `--driver`, install it:
+
+```
+terse drivers add terminal
+terse-bus programs/hello/hello.terse --frames 30 --hash
+```
+
+`add` starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. `terse drivers list` shows which driver each device gets. `terse drivers use 2 default` goes back to the reference terminal, and `terse drivers remove terminal-example` removes yours. If your driver cannot start, `terse-bus` says so and uses the reference one. The rules are in DEVICES.md section 2.2.
+
 ## Your device under your core
 
 `tcore` takes `--driver` too, so the example driver runs under a core that is not the reference's either:
@@ -45,8 +56,8 @@ native/core-c/tcore programs/hello/hello.terse --frames 30 \
 ## What does not work yet
 
 - The device bus needs Unix sockets and Linux's futexes: `terse-bus` and the drivers run on Linux only, and are not in the downloads.
-- `terse-host`, the windowed host of the downloads, has its devices built in and does not load drivers. To see a driver's machine in a window, use `terse-bus --window`.
-- A core finds drivers only in its own folder or through `--driver`. A folder of drivers per user, so that you could install a driver by copying it there, is a proposal in DEVICES.md section 14; nothing of it is built.
+- `terse-host`, the windowed host of the downloads, has its devices built in and does not load drivers, installed or not. To see a driver's machine in a window, use `terse-bus --window`.
+- `tcore` does not read the drivers folder: give it `--driver`.
 - The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host's content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.
 
 ## What you have now

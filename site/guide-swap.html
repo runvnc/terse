@@ -26,6 +26,11 @@ terse run programs/hello/hello.terse --frames 30 --hash</pre>
 <pre>terse-bus programs/hello/hello.terse --frames 30 --hash \
     --driver 2=$PWD/terminal</pre>
 <p>as on the previous page. <code>--driver</code> takes any slot of a device of the specification: <code>3,9=</code> for the vector displays, <code>4=</code> for content, <code>6=</code> sound, <code>7=</code> the page.</p>
+<h2 id="install-your-device">Install your device</h2>
+<p>To have <code>terse-bus</code> use your driver every time, with no <code>--driver</code>, install it:</p>
+<pre>terse drivers add terminal
+terse-bus programs/hello/hello.terse --frames 30 --hash</pre>
+<p><code>add</code> starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. <code>terse drivers list</code> shows which driver each device gets. <code>terse drivers use 2 default</code> goes back to the reference terminal, and <code>terse drivers remove terminal-example</code> removes yours. If your driver cannot start, <code>terse-bus</code> says so and uses the reference one. The rules are in DEVICES.md section 2.2.</p>
 <h2 id="your-device-under-your-core">Your device under your core</h2>
 <p><code>tcore</code> takes <code>--driver</code> too, so the example driver runs under a core that is not the reference&#39;s either:</p>
 <pre>native/core-c/tcore programs/hello/hello.terse --frames 30 \
@@ -33,8 +38,8 @@ terse run programs/hello/hello.terse --frames 30 --hash</pre>
 <h2 id="what-does-not-work-yet">What does not work yet</h2>
 <ul>
 <li>The device bus needs Unix sockets and Linux&#39;s futexes: <code>terse-bus</code> and the drivers run on Linux only, and are not in the downloads.</li>
-<li><code>terse-host</code>, the windowed host of the downloads, has its devices built in and does not load drivers. To see a driver&#39;s machine in a window, use <code>terse-bus --window</code>.</li>
-<li>A core finds drivers only in its own folder or through <code>--driver</code>. A folder of drivers per user, so that you could install a driver by copying it there, is a proposal in DEVICES.md section 14; nothing of it is built.</li>
+<li><code>terse-host</code>, the windowed host of the downloads, has its devices built in and does not load drivers, installed or not. To see a driver&#39;s machine in a window, use <code>terse-bus --window</code>.</li>
+<li><code>tcore</code> does not read the drivers folder: give it <code>--driver</code>.</li>
 <li>The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host&#39;s content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.</li>
 </ul>
 <h2 id="what-you-have-now">What you have now</h2>

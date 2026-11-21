@@ -1657,6 +1657,30 @@ glyph is rasterised once, the first time it is shown. The device-bus drivers
 (`terse-dev-terminal`, `terse-dev-page`) take `--config <dir>` for the same file
 (`terse-bus` passes its own); without it they use the built-in fonts.
 
+## Drivers
+
+`terse-bus` runs each device as a driver process (`DEVICES.md`; it is built from
+the sources and not in the downloads) and uses the drivers built beside it, unless
+you install another one for a device. `terse drivers` keeps the installed drivers in
+`<config>/drivers` (`DEVICES.md` 2.2); `terse-bus` reads it when it starts:
+
+    cc -std=c11 -O2 -o terminal native/driver-example/terminal.c
+    terse drivers add terminal           # runs its handshake once, shows what it is, copies it
+    terse drivers list                   # which driver each device gets, and why
+    terse drivers use 2 default          # back to the shipped terminal driver
+    terse drivers use 2 terminal-example # and to the installed one again
+    terse drivers remove terminal-example
+
+`add` needs `terse-bus` beside `terse` (it makes the handshake); it shows the
+driver's name, version, build identifier and slots. A driver is a native program
+that runs with your full rights, so install only ones you trust; nothing but this
+command installs or chooses one (no program, feed or relay can). A `--driver` on
+`terse-bus`'s command line comes before the installed driver. One that is missing,
+does not start or fails its handshake gives way to the shipped driver, with a
+message saying how to stop using it; one that fails during a run stops the run, as
+any driver does. The performance record names the installed driver's own build.
+`terse-host` has its devices built in and does not load drivers.
+
 ## Sparks
 
 `programs/sparks` is a small game for the vector display, in C. Steer a small
