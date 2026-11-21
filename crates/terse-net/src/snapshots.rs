@@ -121,7 +121,11 @@ mod tests {
         assert_eq!(Snapshot::decode(&s.load(&owner, 3).unwrap().unwrap()).unwrap(), snapshot);
         // Per owner.
         assert!(s.table(&Owner::Image([1; 32])).iter().all(Option::is_none));
-        assert!(s.save(&owner, 16, b"x").is_err());
+        // 16-23: the host's automatic slots (PERFORMANCE.md R15).
+        assert!(s.save(&owner, 24, b"x").is_err());
+        s.save(&owner, 17, &snapshot.encode()).unwrap();
+        assert_eq!(s.table(&owner)[17], Some(snapshot.info()));
+        s.delete(&owner, 17).unwrap();
         s.delete(&owner, 3).unwrap();
         s.delete(&owner, 3).unwrap();
         assert_eq!(s.load(&owner, 3).unwrap(), None);

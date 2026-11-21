@@ -1193,6 +1193,7 @@ pub fn generate() -> Vec<File> {
         File { path: "local-session.txt".into(), bytes: local_session_file().into_bytes() },
         File { path: "basic-text.txt".into(), bytes: basic_text_file().into_bytes() },
         File { path: "full-text.txt".into(), bytes: full_text_file().into_bytes() },
+        File { path: "perf-record.txt".into(), bytes: include_bytes!("../../terse-perflog/example-record.txt").to_vec() },
     ];
     out.extend(article_files());
     out
@@ -1457,4 +1458,12 @@ rounded as ARTICLE.md 6.1 says, relative coordinates added up):
 
 A figure that is malformed or not closed is not a `figure`: it is shown
 as its fence (`pre`).
+
+perf-record.txt (RECORD.md)
+---------------------------
+Not a core vector: an example of a host's performance record, every type
+of line once, in the record's own line format (RECORD.md section 2, not
+these conventions). Its source is crates/terse-perflog/example-record.txt;
+`cargo test -p terse-perflog` parses it, writes every line back byte for
+byte and summarises it as `terse perf log` does.
 ";

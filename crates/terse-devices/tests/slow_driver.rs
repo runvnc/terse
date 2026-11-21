@@ -89,9 +89,11 @@ fn ready() -> Option<(tempfile::TempDir, String)> {
 /// waiting for one). The run records every frame's hash (--record), which
 /// asks the driver for its state right after each frame: that waits for
 /// END's work, in the same frame, and counts as the driver's. So it is
-/// blamed in frames 19, 20, ...; warned about in frame 21 (3 within 60:
-/// the machine is saved at once), the machine saved and stopped in frame
-/// 28 (10 within 300).
+/// blamed from frame 19 on: on an idle computer in frames 19, 20, ...,
+/// warned about in frame 21 (3 within 60: the machine is saved at once)
+/// and its machine saved and stopped in frame 28 (10 within 300). On a
+/// busy one a frame may be excused as starved, and the warning and the
+/// stop come a frame later: the test checks the rule, not the computer.
 #[test]
 fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -128,18 +130,25 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
             _ => None,
         })
         .collect();
-    assert_eq!(blamed, (19..=28).collect::<Vec<_>>(), "{lines:?}");
-    assert!(lines.contains(&Line::Warn { frame: 21, component: Component::Device(2), count: 3 }), "{lines:?}");
+    assert!(blamed.len() == 10 && blamed[0] >= 19, "nothing before the slow frames, 10 to the stop: {lines:?}");
+    // Every frame from the first slow one to the stop was late: blamed,
+    // or excused because the computer was busy.
+    let late = lines.iter().filter(|l| matches!(l, Line::Late { frame, component: Component::Device(2), .. } if *frame >= 19)).count() as u64;
+    let (warn_at, stop_at) = (blamed[2], blamed[9]);
+    assert_eq!(late, stop_at - 18, "{lines:?}");
+    assert!(stop_at <= 32, "{lines:?}");
+    assert!(lines.contains(&Line::Warn { frame: warn_at, component: Component::Device(2), count: 3 }), "{lines:?}");
     let stop = lines.iter().find_map(|l| if let Line::Stop { frame, component, machine, saved, .. } = l { Some((*frame, *component, *machine, saved.clone())) } else { None });
-    assert_eq!(stop, Some((28, Component::Device(2), 0, "file".to_string())));
-    assert!(lines.iter().any(|l| matches!(l, Line::End { frames: 29, late, .. } if *late >= 10)), "{lines:?}");
+    assert_eq!(stop, Some((stop_at, Component::Device(2), 0, "file".to_string())));
+    assert!(lines.iter().any(|l| matches!(l, Line::End { frames, late, .. } if *frames == stop_at + 1 && *late >= 10)), "{lines:?}");
 
     // The snapshot restores and goes on as the machine would have with a
-    // healthy driver: 31 more frames give the hash of 60 uninterrupted.
+    // healthy driver: the frames to 60 give the hash of 60 uninterrupted.
     let snap = std::fs::read_dir(&perf).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "tsnp")).expect("the snapshot file");
     let snap_s = snap.display().to_string();
     let whole = bus(&[&hello(), "--frames", "60", "--hash"], &[]);
-    let resumed = bus(&[&hello(), "--load-state", &snap_s, "--frames", "31", "--hash"], &[]);
+    let rest = (60 - (stop_at + 1)).to_string();
+    let resumed = bus(&[&hello(), "--load-state", &snap_s, "--frames", &rest, "--hash"], &[]);
     assert!(whole.status.success() && resumed.status.success(), "{}", text(&resumed.stderr));
     assert_eq!(text(&resumed.stdout), text(&whole.stdout));
     // (The example driver leaves RESTORE out, DEVICES.md 13: the healthy
@@ -155,7 +164,10 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
 
     // `terse perf log`'s summary of the record.
     let summary = terse_perflog::summary::summarise(&perf).unwrap();
-    assert!(summary.contains("dev2: blamed 10") && summary.contains("warning: frame 21: dev2 late 3 times") && summary.contains("stopped: frame 28: dev2"), "{summary}");
+    assert!(
+        summary.contains("dev2: blamed 10") && summary.contains(&format!("warning: frame {warn_at}: dev2 late 3 times")) && summary.contains(&format!("stopped: frame {stop_at}: dev2")),
+        "{summary}"
+    );
 }
 
 /// A driver that spins 40 ms in END (on a CPU): blamed with its time on

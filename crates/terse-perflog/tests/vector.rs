@@ -1,11 +1,12 @@
-//! `vectors/perf-record.txt`, the example record of `RECORD.md`: every line
-//! parses, writes back as it was, and sums up as `terse perf log` says.
+//! `vectors/perf-record.txt` (from `example-record.txt`), the example
+//! record of `RECORD.md`: every line parses, writes back as it was, and
+//! sums up as `terse perf log` says.
 
 use terse_perflog::record::{self, Line};
 use terse_perflog::summary::Summary;
 use terse_perflog::{Component, Verdict};
 
-const VECTOR: &str = include_str!("../../../vectors/perf-record.txt");
+const VECTOR: &str = include_str!("../example-record.txt");
 
 #[test]
 fn the_example_record() {
