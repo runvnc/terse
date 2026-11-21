@@ -43,7 +43,7 @@ terse-host --shell myshell.terse
 
 ## Where to take it
 
-From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell`, does all of these in about 1,700 lines of C.
+From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell`, does all of these in about 2,000 lines of C.
 
 ## What you have now
 

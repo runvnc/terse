@@ -20,7 +20,8 @@ The manual has two parts. The guide is a series of short steps, each one you can
 Tersenet as a whole:
 
 - [How Tersenet works](terse:{how-it-works}): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
-- [Using the shell and the reader](terse:{using}): every key, layouts, sessions, open requests and consent prompts.
+- [Using the shell](terse:{using}): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
+- [Using the reader](terse:{using-reader}): the timeline, feeds, search and reading an article, with every key.
 - [Fonts](terse:{fonts}): the fonts the host draws with, which characters they show, and adding one.
 - [Performance reports](terse:{performance-reports}): what a report of your host's record holds, publishing one, and reading many.
 

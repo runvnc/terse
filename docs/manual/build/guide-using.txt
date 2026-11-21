@@ -49,8 +49,8 @@ Then exchange addresses and follow each other. Relays have no accounts or encryp
 
 ## Open a program
 
-The launcher also lists small programs: the built-in ones, and those published by feeds you follow. Enter starts one in a tile of its own. An article may link to a program; following such a link to a program that is not built in asks you first. A program cannot read your files, and the host asks you before one publishes anything in your name.
+The launcher also lists small programs: the built-in ones, and those published by feeds you follow. Enter starts one in a tile of its own. An article may link to a program; following such a link to a program that is not built in asks you first. A program cannot read your files, and the host asks you before one publishes anything in your name. On a slow computer, Tersenet may stop a program whose device keeps making frames late; it saves its state first, and Enter on it in the launcher brings it back.
 
 ## What you have now
 
-A reader, a feed of your own, and the people you follow. The keys of every view, layouts and sessions are in [Using the shell and the reader](terse:e209761d451dcd6d791a2ec0033e2c6f6387fabdc4cf1a1d1965722a8866f767); fonts for other scripts in [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df).
+A reader, a feed of your own, and the people you follow. The keys of every view, layouts and sessions are in [Using the shell](terse:4819c3b1b0580facd005843e4b9fab8ae47d56db9d41e241bbeef75ce0181512) and [Using the reader](terse:a26c9a330b01f98347566242b5b208ff0b2655cc7667473fc1f391209f330777); fonts for other scripts in [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df).

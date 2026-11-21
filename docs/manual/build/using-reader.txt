@@ -1,0 +1,68 @@
+# Using the reader
+
+The reader is the program of the shell's launcher where you follow feeds and read articles, such as this one. This article describes it from the user's side: its views and their keys. The shell around it is described in the article before this one, "Using the shell".
+
+## The views
+
+The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed address. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then `@` and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.
+
+Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and `↳ reply` or `not downloaded` where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.
+
+| Key | In the timeline |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End, wheel | move the selection (the wheel 3 entries a step) |
+| Enter, click | open the article; a document (marked `◆`) is passed to the shell |
+| / | search |
+| F | feeds |
+| M | this manual's index |
+| ? or F1 | help |
+| T | publish a test article |
+| Esc | quit |
+
+T publishes "Test article N", a few paragraphs: the reader puts the article, publishes it and, if you do not yet follow your own feed, subscribes you to it so that it shows in the timeline. The host asks you first, and the status row says what came of each step. T works in the timeline, feeds and help views.
+
+Feeds (F): the feeds you follow, each with its name and short key (`you` marks your own, `your nickname` a name you gave it, `@ through a relay its address names` one your relays do not hold), the highest entry number and how many entries are held.
+
+| Key | In the feeds view |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End, wheel, click | select a feed |
+| Enter | the feed's page |
+| S | subscribe: type or paste a feed key or address (`key@relay`, or a `terse:feed/` link) on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes |
+| U | unsubscribe from the selected feed |
+| N | a nickname for the selected feed, which only you see; empty removes it |
+| P | your public name, then Y or N: whether search may find it |
+| /, T, ? or F1 | as in the timeline |
+| Esc, Backspace, Left | back to the timeline |
+
+Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.
+
+Search (/): type words and press Enter. The reader searches two places at once and lists the results under a heading each:
+
+- In your articles: the articles on this machine, newest first, by title and by text. The reader reads each one itself, a chunk at a time, so it can search far more than fits in its memory; the results appear as they are found, each with its title, feed, date and a line of the text around the first match (the match in colour), under a line that says how far it has got: "searched 340 of 1,204 articles · 12 skipped (not downloaded)". Articles this machine has not downloaded are searched by title only; nothing is fetched for a search. It keeps at most 64 results ("more than 64 matches; refine the search"). Typing, opening a result or leaving the view stops it. Enter on a result opens the article at its first match.
+- On your relays: listed feeds by name, and their articles by title, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second).
+
+Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so "köln" finds "Köln", but "KÖLN" does not). Up, Down, the wheel or a click select; Enter opens a feed's page or an article; Esc goes back.
+
+Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and whether it is your nickname or its own), its key in full, the relays a link's address names, and whether you follow it. S subscribes (with those relays, which your host contacts only if your relays lack the feed), U unsubscribes, Esc goes back.
+
+## Reading an article
+
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8) describes. The status row shows how far you have scrolled, from 0% to 100%.
+
+| Key | In an article |
+|---|---|
+| Up, Down | scroll by 20 units |
+| PgUp, PgDn, Space | scroll by the view less one line |
+| Home, End | the top, the end |
+| wheel | 60 units a step |
+| Tab, Shift+Tab | the next or previous link |
+| Enter, click | follow the current link |
+| Esc, Backspace, Left | back |
+
+The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (`terse:` and a blob ID) or a feed's page (`terse:feed/`); a link to a program, a program image or a document is passed to the shell, which asks you first unless it is a built-in program (see "Open requests" in Using the shell). Articles have no links to web pages: an address such as `http://example.org` is ordinary text. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.
+
+The reader also gets the first 8 article links of an article as you open it, so they open at once when you follow them.
+
+## Where to go next
+
+How articles are written: [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8). How the shell's devices work: [The machines device](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063). Feeds and consent from a program's side: [Feeds](terse:9cbb89a2324c05a5455b16e9afa48479958926b3cce38aaa6e76d9799e97d886).

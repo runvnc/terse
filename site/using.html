@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Using the shell and the reader - the Tersenet manual</title>
+<title>Using the shell - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
 <main>
 <article>
-<h1 id="using-the-shell-and-the-reader">Using the shell and the reader</h1>
-<p><code>terse-host</code> opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user&#39;s side: the keys, the screens, and the prompts the host shows.</p>
+<h1 id="using-the-shell">Using the shell</h1>
+<p><code>terse-host</code> opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user&#39;s side: the keys, the screens, and the prompts the host shows; <a href="using-reader.html">Using the reader</a> does the same for the reader.</p>
 <h2 id="starting">Starting</h2>
 <pre>cargo run --release -p terse-host -- --demo</pre>
 <p>builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (<code>~/.config/terse/identity.key</code>), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, <code>cargo run --release -p terse-host</code> with no image named opens the shell.</p>
@@ -20,12 +20,12 @@
 <h2 id="the-shell">The shell</h2>
 <p>The screen has a bar on row 0 and the machines&#39; tiles below it.</p>
 <ul>
-<li>The bar starts with the home segment <code>⌂</code>, then one segment per machine: its handle, a mark (<code>…</code> loading, <code>‖</code> paused, <code>■</code> exited, <code>!</code> faulted, <code>✗</code> failed), its title and its share of the frame budget in its last frame. The machine with the keyboard is blue, the one selected in the launcher amber; the clock (UTC) is at the right. A click on a segment gives that machine the keyboard (in the gallery it turns the ring to it instead); a click on <code>⌂</code> opens the launcher.</li>
+<li>The bar starts with the home segment <code>⌂</code>, then one segment per machine: its handle, a mark (<code>…</code> loading, <code>‖</code> paused, <code>■</code> exited, <code>!</code> faulted, <code>✗</code> failed, <code>⊘</code> halted), its title and its share of the frame budget in its last frame (for a halted machine, the word <code>halted</code> instead). The machine with the keyboard is blue, the one selected in the launcher amber; the clock (UTC) is at the right. A click on a segment gives that machine the keyboard (in the gallery it turns the ring to it instead); a click on <code>⌂</code> opens the launcher.</li>
 <li>Each tile shows a machine&#39;s whole screen, scaled, with a blue frame round the one with the keyboard. Layouts: master and stack (the first machine on the left half, the others stacked on the right; the default), grid, the gallery (below), and zoom (one machine over the whole area, the others hidden but still running).</li>
 <li>The gallery: every machine&#39;s screen is a panel standing on a ring in 3D, in a wireframe monitor case on a stand over a faint ground grid. The selected machine is at the front, on the glass; the others are turned half way towards you. Selecting a machine in the launcher (Left, Right, Tab, Shift+Tab, 1 to 8) turns the ring over 20 frames to bring it to the front; in the gallery a click on a machine&#39;s bar segment turns the ring to it (back in the launcher if a machine had the keyboard). Giving a machine the keyboard (Enter, Esc, a click on its panel, starting a program, which joins the ring) flies the whole scene over 20 frames until its panel lies flat over the area below the bar, then shows it there as in zoom; F12 flies it back to the ring. With the launcher open the ring stands to its right. The panels move with the eye (parallax) like any 3D drawing; while the scene flies, clicks reach no machine.</li>
 <li>A click on a machine&#39;s picture or panel gives it the keyboard; the click also reaches the machine. A machine that exits or faults keeps its tile and last picture (a fault is shown on its bottom row) until you stop it; the keyboard then goes back to the shell.</li>
 </ul>
-<p>F12 is the home key: wherever the keyboard is, it brings you back to the launcher, and no program ever sees it. The launcher is shown while the shell has the keyboard (at start, and after F12), with the tiles moved to its right. It lists &quot;Manual&quot; (Enter opens the reader on this manual&#39;s index), the built-in programs by title (reader, sparks, fetch, hello, sketch, holo), then &quot;From your feeds&quot;: the current version of each program of the feeds you follow, with its publisher&#39;s name and short key, marked <code>↓</code> while its image is not yet downloaded. Then come the machines with their state (a faulted one with the fault kind and <code>pc</code>, a failed one with the reason: not found, not a valid image, needs a device this host does not have, no room).</p>
+<p>F12 is the home key: wherever the keyboard is, it brings you back to the launcher, and no program ever sees it. The launcher is shown while the shell has the keyboard (at start, and after F12), with the tiles moved to its right. It lists &quot;Manual&quot; (Enter opens the reader on this manual&#39;s index), the built-in programs by title (reader, sparks, fetch, hello, sketch, holo, reports), then &quot;From your feeds&quot;: the current version of each program of the feeds you follow, with its publisher&#39;s name and short key, marked <code>↓</code> while its image is not yet downloaded. Then come the machines with their state (a faulted one with the fault kind and <code>pc</code>, a failed one with the reason: not found, not a valid image, needs a device this host does not have, no room; a halted one, below), and, under the heading SAVED BY TERSENET, the states Tersenet saved of slow machines.</p>
 <div class="table"><table>
 <thead><tr><th>Key</th><th>In the launcher</th></tr></thead>
 <tbody>
@@ -39,12 +39,15 @@
 <tr><td>Z</td><td>zoom it; Z again goes back</td></tr>
 <tr><td>L</td><td>the next layout: master and stack, grid, gallery, zoom</td></tr>
 <tr><td>S</td><td>save the session</td></tr>
-<tr><td>D</td><td>with the cursor on the restore entry (and only there): discard the saved session</td></tr>
+<tr><td>D</td><td>on the restore entry: discard the saved session; on a state saved by Tersenet: delete it</td></tr>
 </tbody></table></div>
 <p>A click on a program starts it; a click on a machine selects it and gives it the keyboard. Programs are started by their identity, built-ins too, so their named records follow them from version to version. The layout chosen with L and Z is kept for the next run.</p>
 <p>holo shows the 3D vector display: 1 to 6 (or Space) choose a scene, the arrows turn the model, P switches to the phosphor style, H makes the wireframes solid. Scene 6, the cockpit, looks out of a small craft through its canopy; its three consoles show parts of holo&#39;s own terminal (instruments, a log, a list of targets) on <a href="device-vector3-surfaces.html">Surfaces</a>, and a click on a row of the list on its tilted console selects it. The arrows bank and pitch the craft; the status line stays on the glass.</p>
 <h2 id="sessions">Sessions</h2>
 <p>S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says &quot;Session saved&quot; or &quot;Could not save the session&quot;. When the shell starts and a session was saved, the launcher&#39;s first entry is &quot;Restore last session (N programs)&quot;: Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in <a href="state.html">The state hash</a>.</p>
+<h2 id="halted-machines">Halted machines</h2>
+<p>A program runs on devices, and on a slow computer a device can keep making frames late. Tersenet then steps in, for every machine that uses that device. First it warns: it saves each such machine&#39;s state, and the machine keeps running; its line in the launcher says &quot;A device it uses was slow; Tersenet saved its state.&quot; If the device goes on making frames late, Tersenet saves them again and stops them: they are halted. The bar says so once, for example &quot;Tersenet stopped sparks: device 3 was too slow (state saved)&quot;; the machine&#39;s tile shows why in words instead of its last picture; and its line in the launcher says &quot;Tersenet stopped it: ... kept making frames late. Its state was saved: Enter restores it.&quot; Enter restores it, in the same tile.</p>
+<p>Every state saved this way is listed in the launcher under SAVED BY TERSENET: Enter restores one, D deletes it. There is one place per machine, so a new warning replaces the last save. How slowness is measured and reported is in <a href="performance-reports.html">Performance reports</a>.</p>
 <h2 id="open-requests">Open requests</h2>
 <p>A machine may ask the shell to open a program (by its identity) or a blob (by its ID); the reader does this when you follow a link to a program, an image or a document. The shell takes these requests only from the machine with the keyboard, one at a time, at most one a second from each machine, and ignores a machine&#39;s requests for ten seconds after you say no.</p>
 <ul>
@@ -64,62 +67,10 @@
 <tr><td>Set nickname</td><td>the feed key and the nickname</td></tr>
 </tbody></table></div>
 <p>Every prompt names the title of the program that asks. Y allows; N or Esc refuses; every other key, Enter included, does nothing. While the prompt is up the keyboard goes to the host, not to any program. Several requests are asked about one at a time. <code>terse-host --consent allow</code> or <code>deny</code> answers every request without asking; <code>ask</code> is the default.</p>
-<h2 id="the-reader">The reader</h2>
-<p>The reader shows every view on the page in the sans face. The terminal&#39;s bottom row is its status row: key hints, a position such as <code>2/3</code>, or the outcome of the last action. Row 28 is used while you type a feed address. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then <code>@</code> and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.</p>
-<p>Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and <code>↳ reply</code> or <code>not downloaded</code> where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.</p>
-<div class="table"><table>
-<thead><tr><th>Key</th><th>In the timeline</th></tr></thead>
-<tbody>
-<tr><td>Up, Down, PgUp, PgDn, Home, End, wheel</td><td>move the selection (the wheel 3 entries a step)</td></tr>
-<tr><td>Enter, click</td><td>open the article; a document (marked <code>◆</code>) is passed to the shell</td></tr>
-<tr><td>/</td><td>search</td></tr>
-<tr><td>F</td><td>feeds</td></tr>
-<tr><td>M</td><td>this manual&#39;s index</td></tr>
-<tr><td>? or F1</td><td>help</td></tr>
-<tr><td>T</td><td>publish a test article</td></tr>
-<tr><td>Esc</td><td>quit</td></tr>
-</tbody></table></div>
-<p>T publishes &quot;Test article N&quot;, a few paragraphs: the reader puts the article, publishes it and, if you do not yet follow your own feed, subscribes you to it so that it shows in the timeline. The host asks you first, and the status row says what came of each step. T works in the timeline, feeds and help views.</p>
-<p>Feeds (F): the feeds you follow, each with its name and short key (<code>you</code> marks your own, <code>your nickname</code> a name you gave it, <code>@ through a relay its address names</code> one your relays do not hold), the highest entry number and how many entries are held.</p>
-<div class="table"><table>
-<thead><tr><th>Key</th><th>In the feeds view</th></tr></thead>
-<tbody>
-<tr><td>Up, Down, PgUp, PgDn, Home, End, wheel, click</td><td>select a feed</td></tr>
-<tr><td>Enter</td><td>the feed&#39;s page</td></tr>
-<tr><td>S</td><td>subscribe: type or paste a feed key or address (<code>key@relay</code>, or a <code>terse:feed/</code> link) on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes</td></tr>
-<tr><td>U</td><td>unsubscribe from the selected feed</td></tr>
-<tr><td>N</td><td>a nickname for the selected feed, which only you see; empty removes it</td></tr>
-<tr><td>P</td><td>your public name, then Y or N: whether search may find it</td></tr>
-<tr><td>/, T, ? or F1</td><td>as in the timeline</td></tr>
-<tr><td>Esc, Backspace, Left</td><td>back to the timeline</td></tr>
-</tbody></table></div>
-<p>Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.</p>
-<p>Search (/): type words and press Enter. The reader searches two places at once and lists the results under a heading each:</p>
-<ul>
-<li>In your articles: the articles on this machine, newest first, by title and by text. The reader reads each one itself, a chunk at a time, so it can search far more than fits in its memory; the results appear as they are found, each with its title, feed, date and a line of the text around the first match (the match in colour), under a line that says how far it has got: &quot;searched 340 of 1,204 articles · 12 skipped (not downloaded)&quot;. Articles this machine has not downloaded are searched by title only; nothing is fetched for a search. It keeps at most 64 results (&quot;more than 64 matches; refine the search&quot;). Typing, opening a result or leaving the view stops it. Enter on a result opens the article at its first match.</li>
-<li>On your relays: listed feeds by name, and their articles by title, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second).</li>
-</ul>
-<p>Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so &quot;köln&quot; finds &quot;Köln&quot;, but &quot;KÖLN&quot; does not). Up, Down, the wheel or a click select; Enter opens a feed&#39;s page or an article; Esc goes back.</p>
-<p>Feed page (Enter on a feed, or a <code>terse:feed/</code> link): the feed&#39;s name (and whether it is your nickname or its own), its key in full, the relays a link&#39;s address names, and whether you follow it. S subscribes (with those relays, which your host contacts only if your relays lack the feed), U unsubscribes, Esc goes back.</p>
-<h2 id="reading-an-article">Reading an article</h2>
-<p>The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as <a href="writing-articles.html">Writing an article</a> describes. The status row shows how far you have scrolled, from 0% to 100%.</p>
-<div class="table"><table>
-<thead><tr><th>Key</th><th>In an article</th></tr></thead>
-<tbody>
-<tr><td>Up, Down</td><td>scroll by 20 units</td></tr>
-<tr><td>PgUp, PgDn, Space</td><td>scroll by the view less one line</td></tr>
-<tr><td>Home, End</td><td>the top, the end</td></tr>
-<tr><td>wheel</td><td>60 units a step</td></tr>
-<tr><td>Tab, Shift+Tab</td><td>the next or previous link</td></tr>
-<tr><td>Enter, click</td><td>follow the current link</td></tr>
-<tr><td>Esc, Backspace, Left</td><td>back</td></tr>
-</tbody></table></div>
-<p>The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (<code>terse:</code> and a blob ID) or a feed&#39;s page (<code>terse:feed/</code>); a link to a program, a program image or a document is passed to the shell, as described above. Articles have no links to web pages: an address such as <code>http&#58;//example.org</code> is ordinary text. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.</p>
-<p>The reader also gets the first 8 article links of an article as you open it, so they open at once when you follow them.</p>
 <h2 id="where-to-go-next">Where to go next</h2>
 <p>How articles are written: <a href="writing-articles.html">Writing an article</a>. How the shell&#39;s devices work: <a href="device-machines.html">The machines device</a>. Feeds and consent from a program&#39;s side: <a href="content-feeds.html">Feeds</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="running-programs.html">← Running and publishing a program</a><a rel="next" href="fonts.html">Fonts →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="running-programs.html">← Running and publishing a program</a><a rel="next" href="using-reader.html">Using the reader →</a></nav></footer>
 </body>
 </html>

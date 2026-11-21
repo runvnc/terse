@@ -38,7 +38,7 @@ int main(void)
 <p>runs it headless and prints the shell&#39;s screen, then each machine&#39;s: a line <code>-- machine 1 running 0 0 640 480 hello --</code> and hello&#39;s text. In a window:</p>
 <pre>terse-host --shell myshell.terse</pre>
 <h2 id="where-to-take-it">Where to take it</h2>
-<p>From here a shell is a matter of taste: a list of programs to choose from (<code>mach_builtin</code> lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, <code>programs/shell</code>, does all of these in about 1,700 lines of C.</p>
+<p>From here a shell is a matter of taste: a list of programs to choose from (<code>mach_builtin</code> lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, <code>programs/shell</code>, does all of these in about 2,000 lines of C.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>A system of machines under your own shell. That is the end of the guide&#39;s part for implementers; the last page is for people who want to use Tersenet: <a href="guide-using.html">Using Tersenet</a>.</p>
 <p>Every call of device 8 is in <a href="device-machines.html">The Machines device</a>, and panels, the 3D view and input routing in <a href="device-machines-screens.html">Screens, panels and input</a>.</p>

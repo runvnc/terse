@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using the reader - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="using-the-reader">Using the reader</h1>
+<p>The reader is the program of the shell&#39;s launcher where you follow feeds and read articles, such as this one. This article describes it from the user&#39;s side: its views and their keys. The shell around it is described in the article before this one, &quot;Using the shell&quot;.</p>
+<h2 id="the-views">The views</h2>
+<p>The reader shows every view on the page in the sans face. The terminal&#39;s bottom row is its status row: key hints, a position such as <code>2/3</code>, or the outcome of the last action. Row 28 is used while you type a feed address. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then <code>@</code> and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.</p>
+<p>Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and <code>↳ reply</code> or <code>not downloaded</code> where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.</p>
+<div class="table"><table>
+<thead><tr><th>Key</th><th>In the timeline</th></tr></thead>
+<tbody>
+<tr><td>Up, Down, PgUp, PgDn, Home, End, wheel</td><td>move the selection (the wheel 3 entries a step)</td></tr>
+<tr><td>Enter, click</td><td>open the article; a document (marked <code>◆</code>) is passed to the shell</td></tr>
+<tr><td>/</td><td>search</td></tr>
+<tr><td>F</td><td>feeds</td></tr>
+<tr><td>M</td><td>this manual&#39;s index</td></tr>
+<tr><td>? or F1</td><td>help</td></tr>
+<tr><td>T</td><td>publish a test article</td></tr>
+<tr><td>Esc</td><td>quit</td></tr>
+</tbody></table></div>
+<p>T publishes &quot;Test article N&quot;, a few paragraphs: the reader puts the article, publishes it and, if you do not yet follow your own feed, subscribes you to it so that it shows in the timeline. The host asks you first, and the status row says what came of each step. T works in the timeline, feeds and help views.</p>
+<p>Feeds (F): the feeds you follow, each with its name and short key (<code>you</code> marks your own, <code>your nickname</code> a name you gave it, <code>@ through a relay its address names</code> one your relays do not hold), the highest entry number and how many entries are held.</p>
+<div class="table"><table>
+<thead><tr><th>Key</th><th>In the feeds view</th></tr></thead>
+<tbody>
+<tr><td>Up, Down, PgUp, PgDn, Home, End, wheel, click</td><td>select a feed</td></tr>
+<tr><td>Enter</td><td>the feed&#39;s page</td></tr>
+<tr><td>S</td><td>subscribe: type or paste a feed key or address (<code>key@relay</code>, or a <code>terse:feed/</code> link) on row 28 (spaces and line breaks are ignored), Enter subscribes, Esc cancels, Backspace deletes</td></tr>
+<tr><td>U</td><td>unsubscribe from the selected feed</td></tr>
+<tr><td>N</td><td>a nickname for the selected feed, which only you see; empty removes it</td></tr>
+<tr><td>P</td><td>your public name, then Y or N: whether search may find it</td></tr>
+<tr><td>/, T, ? or F1</td><td>as in the timeline</td></tr>
+<tr><td>Esc, Backspace, Left</td><td>back to the timeline</td></tr>
+</tbody></table></div>
+<p>Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.</p>
+<p>Search (/): type words and press Enter. The reader searches two places at once and lists the results under a heading each:</p>
+<ul>
+<li>In your articles: the articles on this machine, newest first, by title and by text. The reader reads each one itself, a chunk at a time, so it can search far more than fits in its memory; the results appear as they are found, each with its title, feed, date and a line of the text around the first match (the match in colour), under a line that says how far it has got: &quot;searched 340 of 1,204 articles · 12 skipped (not downloaded)&quot;. Articles this machine has not downloaded are searched by title only; nothing is fetched for a search. It keeps at most 64 results (&quot;more than 64 matches; refine the search&quot;). Typing, opening a result or leaving the view stops it. Enter on a result opens the article at its first match.</li>
+<li>On your relays: listed feeds by name, and their articles by title, or why it could not search (no relay reached, or the relays refused: a relay refuses a connection that searches more than 4 times a second).</li>
+</ul>
+<p>Both match the same way: the words must occur as they are typed, letters A to Z matching a to z, every other character only itself (so &quot;köln&quot; finds &quot;Köln&quot;, but &quot;KÖLN&quot; does not). Up, Down, the wheel or a click select; Enter opens a feed&#39;s page or an article; Esc goes back.</p>
+<p>Feed page (Enter on a feed, or a <code>terse:feed/</code> link): the feed&#39;s name (and whether it is your nickname or its own), its key in full, the relays a link&#39;s address names, and whether you follow it. S subscribes (with those relays, which your host contacts only if your relays lack the feed), U unsubscribes, Esc goes back.</p>
+<h2 id="reading-an-article">Reading an article</h2>
+<p>The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as <a href="writing-articles.html">Writing an article</a> describes. The status row shows how far you have scrolled, from 0% to 100%.</p>
+<div class="table"><table>
+<thead><tr><th>Key</th><th>In an article</th></tr></thead>
+<tbody>
+<tr><td>Up, Down</td><td>scroll by 20 units</td></tr>
+<tr><td>PgUp, PgDn, Space</td><td>scroll by the view less one line</td></tr>
+<tr><td>Home, End</td><td>the top, the end</td></tr>
+<tr><td>wheel</td><td>60 units a step</td></tr>
+<tr><td>Tab, Shift+Tab</td><td>the next or previous link</td></tr>
+<tr><td>Enter, click</td><td>follow the current link</td></tr>
+<tr><td>Esc, Backspace, Left</td><td>back</td></tr>
+</tbody></table></div>
+<p>The current link is amber, its target is on the status row and the page scrolls just enough to show it. After you scroll, Tab starts again from the first link in view (Shift+Tab from the last). Following a link opens an article (<code>terse:</code> and a blob ID) or a feed&#39;s page (<code>terse:feed/</code>); a link to a program, a program image or a document is passed to the shell, which asks you first unless it is a built-in program (see &quot;Open requests&quot; in Using the shell). Articles have no links to web pages: an address such as <code>http&#58;//example.org</code> is ordinary text. Esc goes back through the articles you followed, up to 8, each at the place it was scrolled to, then to where you started. The reader shows at most 48 KiB of an article: one opened from the timeline that is longer ends with a note saying how much is shown; one opened by a link that is longer is not shown, and a page says so, as it does for an article that is missing or cannot be fetched.</p>
+<p>The reader also gets the first 8 article links of an article as you open it, so they open at once when you follow them.</p>
+<h2 id="where-to-go-next">Where to go next</h2>
+<p>How articles are written: <a href="writing-articles.html">Writing an article</a>. How the shell&#39;s devices work: <a href="device-machines.html">The machines device</a>. Feeds and consent from a program&#39;s side: <a href="content-feeds.html">Feeds</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="using.html">← Using the shell</a><a rel="next" href="fonts.html">Fonts →</a></nav></footer>
+</body>
+</html>

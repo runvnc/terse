@@ -43,10 +43,10 @@ terse-host --shell myshell.terse
 
 ## Where to take it
 
-From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell`, does all of these in about 1,700 lines of C.
+From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell`, does all of these in about 2,000 lines of C.
 
 ## What you have now
 
-A system of machines under your own shell. That is the end of the guide's part for implementers; the last page is for people who want to use Tersenet: [Using Tersenet](terse:e1716567f7cb9908adfb15b38159b72cdf84f47381dfecf239eda7a1ad12ffbd).
+A system of machines under your own shell. That is the end of the guide's part for implementers; the last page is for people who want to use Tersenet: [Using Tersenet](terse:376297817e054c6e8cc8bcb45cea3b4d51219e5b909a1ff65d90352a2eb30982).
 
 Every call of device 8 is in [The Machines device](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063), and panels, the 3D view and input routing in [Screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f).
