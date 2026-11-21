@@ -58,6 +58,7 @@ mod setup;
 pub mod soft;
 #[cfg(feature = "gpu")]
 mod vectors;
+pub mod watch;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -102,6 +103,9 @@ const USAGE: &str = "usage:
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
   terse-host --version
+  Every form takes --perf-log <dir>|off: where the performance record goes (RECORD.md; default: <data>/perf
+  for a window, none otherwise; it never leaves this computer). --version prints the host's name, version
+  and build identifier, then its fonts.
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
@@ -183,6 +187,8 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut size = None;
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
     let mut version = false;
+    let started = std::time::Instant::now();
+    let mut perf_log: Option<Option<PathBuf>> = None;
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
     let (mut feed_relays, mut prefetch, mut program_download, mut data) = (true, true, true, None);
     let (mut consent, mut demo) = (None, false);
@@ -240,6 +246,10 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             }
             "--demo" => demo = true,
             "--version" => version = true,
+            "--perf-log" => {
+                let v = it.next().ok_or(USAGE)?;
+                perf_log = Some(if v == "off" { None } else { Some(PathBuf::from(v)) });
+            }
             "--shell" => shell_flag = true,
             "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
             "--consent" => {
@@ -274,7 +284,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         // The fonts this host would draw with (README "Fonts").
         let config = config.clone().or_else(default_config_dir);
         let (t, p) = (fonts::TerminalFonts::load(config.as_deref()), fonts::PageFonts::load(config.as_deref()));
-        print!("terse-host {}\nfonts:\n{}", env!("CARGO_PKG_VERSION"), fonts::describe(&t, &p));
+        print!("{}\nfonts:\n{}", terse_perflog::Identity::this("terse-host").line(), fonts::describe(&t, &p));
         return Ok(ExitCode::SUCCESS);
     }
     if (bench && (selftest || screenshot.is_some() || frames.is_none())) || (sweep && !bench) {
@@ -308,6 +318,13 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     }
     let store = store.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
     let data = data.or_else(default_data_dir).ok_or("no data directory (use --data)")?;
+    // The performance record (RECORD.md): a window's runs go to the data
+    // directory's perf/; a self-test's only where --perf-log says.
+    let perf = match perf_log {
+        Some(p) => p,
+        None if windowed => Some(data.join("perf")),
+        None => None,
+    };
     // The relay: in a window, found or started as README "Getting started"
     // says; otherwise only --relay.
     let relays = if windowed {
@@ -409,7 +426,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -425,14 +442,14 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
+            let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -440,7 +457,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started })
         }
         _ => Err(USAGE.into()),
     }
@@ -498,6 +515,10 @@ pub struct Looks {
     /// `--panels`: how the software renderer draws the shell's panels
     /// (SPEC §machines.screens); the GPU renderer draws them in perspective.
     pub panels: soft::panel::PanelMode,
+    /// The performance record's directory (`RECORD.md`; `None`: none), and
+    /// when the process started.
+    pub perf: Option<PathBuf>,
+    pub started: std::time::Instant,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.

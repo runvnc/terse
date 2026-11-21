@@ -47,6 +47,16 @@ pub fn run(
     system.set_shell_identity(program.identity);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let looks_eye = looks.eye;
+    let watch = crate::watch::HostWatch::new(
+        looks.perf.clone(),
+        match looks.renderer {
+            RendererChoice::Software => "software",
+            RendererChoice::Gpu => "gpu",
+            RendererChoice::Auto => "auto",
+        },
+        if selftest.is_some() { "selftest" } else { "window" },
+        looks.started,
+    );
     // A self-test never makes a sound (it runs unattended, often in a
     // headless compositor); nor does a host told TERSE_AUDIO=off.
     #[cfg(feature = "audio")]
@@ -85,6 +95,7 @@ pub fn run(
         refresh_hz: None,
         trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
         fault_shown: false,
+        watch,
         #[cfg(feature = "audio")]
         audio,
     };
@@ -567,6 +578,8 @@ struct App {
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
     trace: bool,
     fault_shown: bool,
+    /// The watch over the host's own stages (PERFORMANCE.md R14).
+    watch: crate::watch::HostWatch,
     /// The sound device's output (SPEC §sound.presentation), opened when a machine
     /// first gives samples.
     #[cfg(feature = "audio")]
@@ -610,6 +623,8 @@ impl App {
             controllers = t.script.controllers(frame);
         }
         let start = Instant::now();
+        let late_start = start.saturating_duration_since(self.next_frame);
+        self.watch.begin();
         // SPEC §content.submit: whatever finished since the last frame completes now;
         // images the shell started arrive (SPEC §machines.frames).
         if let Some(content) = &mut self.content {
@@ -698,6 +713,7 @@ impl App {
             gfx.display_mut().update(&self.system, viewport, &ran, &layout, prompt);
             gfx.window.request_redraw();
         }
+        self.watch.stepped(emulate, start.elapsed(), late_start);
         if let Some(t) = &mut self.selftest {
             t.log.push(crate::selftest::FrameLog { emulate, upload: start.elapsed(), present: None });
         }
@@ -910,12 +926,17 @@ impl ApplicationHandler for App {
                     if let Some(t) = &mut self.selftest {
                         t.presented(acquire, render, Instant::now());
                     }
+                    for line in self.watch.presented(acquire, render) {
+                        eprintln!("{line}");
+                    }
                     // A frame that took longer than a frame to draw sheds
                     // more of the look (presentation only).
                     if !self.looks.look.no_shed
                         && let Some(floor) = self.governor.presented(render)
                     {
+                        let why = if floor > self.looks.look.floor { "late" } else { "recover" };
                         self.looks.look.floor = floor;
+                        self.watch.shed(floor, why);
                         gfx.display_mut().set_look(self.looks.look);
                         eprintln!("terse-host: frames ran long or caught up: the phosphor look sheds from level {floor}");
                     }

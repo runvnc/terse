@@ -2,6 +2,7 @@
 
 mod feed;
 mod perf;
+mod perflog;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -50,6 +51,8 @@ const USAGE: &str = "usage:
   terse vectors [--dir <vectors>]   (the core test vectors: blobs, entries, profiles, relay messages, articles)
   terse perf [--only machine|client|host] [--runs <n>] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]
              (the responsiveness scenarios of PERFORMANCE.md, headless, with relays started on ephemeral ports)
+  terse perf log [<dir or file>]   (the performance records of RECORD.md, summarised; default: the data
+             directory's perf/: late frames by component and program, worst frames, memory, start-ups)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
@@ -191,9 +194,10 @@ fn main() -> ExitCode {
         Some("records") => records(&args[1..]),
         Some("manual") => feed::manual(&args[1..]),
         Some("vectors") => vectors(&args[1..]),
+        Some("perf") if args.get(1).is_some_and(|a| a == "log") => perflog::log(&args[2..]),
         Some("perf") => perf::perf(&args[1..]),
         Some("--version") => {
-            println!("terse {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", terse_perflog::Identity::this("terse").line());
             return ExitCode::SUCCESS;
         }
         _ => Err(USAGE.to_string()),
