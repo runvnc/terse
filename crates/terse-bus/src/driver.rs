@@ -355,7 +355,10 @@ impl Server {
         self.out.clear();
         self.writes.clear();
         let known = |s: &Self| s.instances.contains_key(&to.instance);
-        if !matches!(kind, msg::OPEN | msg::BATCH | msg::SHUTDOWN | msg::ERROR | msg::CLOSE) && !known(self) {
+        // A host service may be asked on behalf of a machine that has none
+        // of the driver's devices (a shell without device 4 starting
+        // machines, DEVICES.md 1.9): the device decides what it needs of it.
+        if !matches!(kind, msg::OPEN | msg::BATCH | msg::SHUTDOWN | msg::ERROR | msg::CLOSE | msg::SERVICE) && !known(self) {
             self.error(link, to, &format!("no instance {}", to.instance))?;
             return Ok(false);
         }
