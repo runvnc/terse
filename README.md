@@ -1998,7 +1998,7 @@ builds you ran, their late frames by cause, R15 warnings and stops, start-up tim
 memory, and the computer coarsely (OS, cores, RAM in GiB, renderer, CPU model); no
 names, paths, addresses or (unless you add `--programs n`) program IDs. It is public,
 signed with your feed key, and cannot be deleted once a relay has it.
-`programs/reports` (`terse-host programs/reports/reports.terse`) gathers the reports of
+`programs/reports` (built in: the launcher's `reports`; or `terse-host programs/reports/reports.terse`) gathers the reports of
 the feeds you follow and, with F, a sample found by search, and shows each host's,
 device's and terse perf build's verdict in both: `CONFORMANT IN SAMPLE (12
 reporters)`, `NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)` or `TOO FEW REPORTS
