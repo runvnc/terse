@@ -1,6 +1,6 @@
 [package]
 name = "terse-net"
-description = "Host-side content for Terse: blob store, relay protocol and client, content service (NETWORK.md)."
+description = "Host-side content for Tersenet: blob store, relay protocol and client, content service (NETWORK.md)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fonts - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
+<main>
+<article>
+<h1 id="fonts">Fonts</h1>
+<p><code>terse-host</code> draws all text, in the terminal and on the page, with three fonts built into it: DejaVu Sans Mono (the terminal, code and preformatted text), DejaVu Sans and DejaVu Sans Bold (articles). It needs no fonts installed on the computer, and text looks the same on every system. It never looks for other fonts on its own.</p>
+<h2 id="what-they-show">What they show</h2>
+<p>The built-in fonts cover the **full repertoire**: 2,461 characters of Latin (with its accents and extensions), Greek, Cyrillic, punctuation, currency signs, arrows, mathematical operators, box drawing, shapes and common symbols such as ♥ ★ ✓ ⌂ ■. Every host with full text (device 10) draws at least these, so a program or an article that keeps to them looks right everywhere. DejaVu has some more (Hebrew, Arabic, Armenian, Georgian), which this host draws too.</p>
+<p>A character no loaded font has is shown as a box. The text itself is intact: copying, plain-text output and search keep the original characters. The reader marks a timeline entry whose title has characters beyond the full repertoire (&quot;may need a font&quot;), and says so on the status row when an article it opens has them.</p>
+<h2 id="adding-fonts">Adding fonts</h2>
+<p>Japanese, Chinese, Korean, Thai, Devanagari, emoji and other scripts need a font that has them. Name one, and <code>terse-host</code> loads it at its next start, after the built-in fonts, for the characters they lack:</p>
+<pre>    terse fonts add /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+    terse fonts list
+    terse fonts remove /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc</pre>
+<p>Fonts are used in the order they are listed. A TrueType or OpenType file works, or a collection (<code>.ttc</code>). Large fonts cost nothing at start: they are mapped, not read, and a glyph is drawn the first time it is shown.</p>
+<h2 id="replacing-a-built-in-font">Replacing a built-in font</h2>
+<pre>    terse fonts set mono /path/to/YourMono.ttf
+    terse fonts set sans /path/to/YourSans.otf
+    terse fonts set bold /path/to/YourSans-Bold.otf
+    terse fonts set mono default</pre>
+<p>A replacement must have every character of printable ASCII, and the monospace one must be monospaced, so that it fits the terminal&#39;s cells; <code>terse fonts</code> checks this when you set it, and <code>terse-host</code> again when it starts (it says why on its error output and uses the built-in font if a file is missing or unsuitable). Characters the replacement lacks still come from the built-in font behind it, so the full repertoire is always drawn.</p>
+<h2 id="where-the-settings-live">Where the settings live</h2>
+<p><code>terse fonts</code> writes <code>fonts</code> in the configuration directory (<code>~/.config/terse</code>, or <code>$XDG_CONFIG_HOME/terse</code>), one line per font: <code>mono</code>, <code>sans</code>, <code>bold</code> or <code>extra</code>, then the file. `terse-host --version` lists the fonts it would use. Every font is opened when <code>terse-host</code> starts and never again: it never waits for a font while a program runs.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="using.html">← Using the shell and the reader</a><a rel="next" href="writing-articles.html">Writing an article →</a></nav></footer>
+</body>
+</html>

@@ -28,9 +28,9 @@
 
 
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 1536, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1578, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |The Tersenet manual
-   53  15     0   sans12 |terse:e4cdef…dd971a  ·  not in your timeline  ·  4.7 KiB
+   53  15     0   sans12 |terse:326118…9b2aae  ·  not in your timeline  ·  4.9 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |This manual describes the whole Tersenet system: the Terse32
   115  19     0   sans15 |machine, its devices, the network that carries articles and
@@ -48,5 +48,5 @@
   378  19    10   sans15 |feed.
   401  19    10   sans15 |• [Using the shell and the reader]{4}: the keys of the shell and the
   420  19    10   sans15 |reader, layouts, sessions and the consent prompts.
-  443  19    10   sans15 |• [Writing an article]{5}: the article format, every construct shown as
-  462  19    10   sans15 |source and as it is shown.
+  443  19    10   sans15 |• [Fonts]{5}: the fonts the host draws with, which characters they
+  462  19    10   sans15 |show, and adding a font for other scripts.

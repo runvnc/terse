@@ -377,7 +377,7 @@ fn reader_fixture() -> Dirs {
     let alice = Identity::from_seed([11; 32]);
     node.set_identity(alice.clone());
     let demo = workspace().join("crates/terse-host/demo");
-    for (i, (title, file)) in [("How Terse works", "long.txt"), ("Hello in three languages", "languages.txt"), ("Welcome to Terse", "welcome.txt"), ("Pictures in articles", "pictures.txt")].iter().enumerate() {
+    for (i, (title, file)) in [("How Tersenet works", "long.txt"), ("Hello in three languages", "languages.txt"), ("Welcome to Tersenet", "welcome.txt"), ("Pictures in articles", "pictures.txt")].iter().enumerate() {
         let draft = Draft { data: std::fs::read(demo.join(file)).unwrap(), title: title.to_string(), reply_to: None, time: 1_794_938_400 + 600 * i as u32 };
         assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { .. }));
     }

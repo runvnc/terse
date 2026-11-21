@@ -564,7 +564,9 @@ fn timeline_list() {
     assert_eq!(lines[2], "[Emoji 😀 and tabs in a title]{1}", "a tab in a title is a space");
     let bob = short(&bob().feed_key());
     let alice = short(&alice().feed_key());
-    assert!(text.contains(&format!("[{bob}  ·  2026-11-17 19:40  ·  6 bytes]{{1}}")), "{text}");
+    assert!(text.contains(&format!("[{bob}  ·  2026-11-17 19:40  ·  6 bytes  ·  may need a font]{{1}}")), "an emoji is beyond the full repertoire: {text}");
+    assert!(text.contains("41 bytes  ·  may need a font]{7}"), "so is Japanese: {text}");
+    assert!(text.contains("6.0 KiB]{6}"), "an ASCII title needs no font: {text}");
     assert!(text.contains(&format!("{alice}  ·  2026-11-17 18:50  ·  6.")), "the long article in KB: {text}");
     assert!(text.contains("↳ reply]{5}"), "{text}");
     assert!(text.contains("4 bytes  ·  not downloaded]{4}"), "{text}");

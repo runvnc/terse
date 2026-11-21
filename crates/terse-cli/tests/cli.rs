@@ -31,7 +31,7 @@ fn put_get_and_run_by_id_without_a_relay() {
     let out = terse_ok(&["info", &id, "--store", store]);
     assert!(String::from_utf8(out.stdout).unwrap().contains(&format!("id:        {id}")));
     let out = terse(&["run", &id, "--store", store, "--frames", "3", "--dump"]);
-    assert!(String::from_utf8(out.stdout).unwrap().contains("héllo, wörld — 你好"));
+    assert!(String::from_utf8(out.stdout).unwrap().contains("héllo, wörld — привет, мир"));
     let out = terse_ok(&["get", &id, "--store", store]);
     assert!(out.stdout == std::fs::read(&image).unwrap());
 
@@ -57,7 +57,7 @@ fn info_and_run() {
     assert_eq!(out.status.code(), Some(0));
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(text.lines().count(), 30);
-    assert!(text.contains("héllo, wörld — 你好"));
+    assert!(text.contains("héllo, wörld — привет, мир"));
     assert!(text.contains("frame 00000002"));
 }
 
@@ -152,7 +152,7 @@ fn hash_every_counts_by_the_frame_counter() {
     assert_eq!(counters, ["9"]);
     // The hash after 30 frames (STATE.md 3).
     let out = String::from_utf8(terse_ok(&["run", image, "--frames", "30", "--hash-every", "30"]).stdout).unwrap();
-    assert_eq!(out, "30 cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d\n");
+    assert_eq!(out, "30 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2\n");
 }
 
 /// `--hash-all`, after the last frame only: the shell's hash, then

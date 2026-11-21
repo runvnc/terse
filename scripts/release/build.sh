@@ -63,6 +63,7 @@ linux-x86_64 | linux-aarch64)
     dir=$(stage "$name")
     cp "target/$gnu/release/terse-host" "target/$musl/release/terse" "target/$musl/release/terse-relay" "$dir/"
     cp LICENSE "$dir/LICENSE"
+    cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/linux/README.txt >"$dir/README.txt"
     tar -C "$stage_root" -czf "$out/$name.tar.gz" --owner=0 --group=0 "$name"
     ;;
@@ -93,6 +94,7 @@ macos)
     done
     codesign --force --sign - "$app"
     cp LICENSE "$dir/LICENSE"
+    cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/macos/README.txt >"$dir/README.txt"
     rm -f "$out/$name.zip"
     (cd "$stage_root" && ditto -c -k --keepParent "$name" "$out/$name.zip")
@@ -107,6 +109,7 @@ windows-x86_64)
     # here (signtool sign /fd SHA256 /tr <timestamp URL> /td SHA256 …).
     cp "target/$t/release/terse-host.exe" "target/$t/release/terse.exe" "target/$t/release/terse-relay.exe" "$dir/"
     cp LICENSE "$dir/LICENSE.txt"
+    sed 's/$/\r/' crates/terse-host/fonts/LICENSE >"$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/windows/README.txt | sed 's/$/\r/' >"$dir/README.txt"
     rm -f "$out/$name.zip"
     (cd "$stage_root" && 7z a -tzip -bd "$out/$name.zip" "$name" >/dev/null)

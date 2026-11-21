@@ -2,7 +2,7 @@
 
 An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Tersenet: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
 
-Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, `×`, `°`), dashes, curly quotes, `−`, `•`, `…` and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. Plain ASCII reads everywhere.
+Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, `×`, `°`), dashes, curly quotes, `−`, `•`, `…` and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. The Tersenet reader shows the full repertoire everywhere (Latin, Greek, Cyrillic, punctuation, common symbols) and other scripts where the user added a font. Plain ASCII reads everywhere.
 
 ## Lines and blocks
 

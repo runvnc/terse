@@ -162,7 +162,7 @@ The devices a reading host provides (the reading profile):
 | 2 | Terminal: 80 × 30 character cells |
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
-| 10 | Full text: every character in the terminal |
+| 10 | Full text: the full repertoire (Latin, Greek, Cyrillic, symbols) and more in the terminal |
 
 The devices a program host provides (the program profile):
 

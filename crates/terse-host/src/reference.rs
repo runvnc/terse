@@ -57,10 +57,10 @@ fn render(image: Option<&[u8]>, events: &str, frames: u64, consent: Consent) -> 
     let alice = Identity::from_seed([11; 32]);
     node.set_identity(alice.clone());
     let samples: [(&str, &str); 4] = [
-        ("How Terse works: a longer read", include_str!("../demo/long.txt")),
-        ("Hello in three languages: こんにちは, مرحبا", include_str!("../demo/languages.txt")),
+        ("How Tersenet works: a longer read", include_str!("../demo/long.txt")),
+        ("Hello in three languages: Γειά σας, مرحبا", include_str!("../demo/languages.txt")),
         ("Pictures in articles", include_str!("../demo/pictures.txt")),
-        ("Welcome to Terse", include_str!("../demo/welcome.txt")),
+        ("Welcome to Tersenet", include_str!("../demo/welcome.txt")),
     ];
     for (i, (title, text)) in samples.iter().enumerate() {
         let draft = Draft { data: text.as_bytes().to_vec(), title: title.to_string(), reply_to: None, time: T0 + 600 * i as u32 };

@@ -82,7 +82,7 @@
 </ul>
 <p>A line of a cell counts as a line for presses and <code>locate</code>; a row&#39;s lines are taken left to right.</p>
 <h2 id="layout-and-presentation">Layout and presentation</h2>
-<p>The host chooses fonts for the three faces and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine&#39;s frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.</p>
+<p>The host draws with fonts it loaded at start, at least the full repertoire of the terminal&#39;s full text (the reference host: DejaVu Sans, Sans Bold and Sans Mono, and fonts its user added; serif text in the sans font), and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine&#39;s frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.</p>
 <h2 id="events">Events</h2>
 <div class="table"><table>
 <thead><tr><th>Type</th><th>Name</th><th><code>a</code></th><th><code>b</code></th><th><code>c</code></th></tr></thead>

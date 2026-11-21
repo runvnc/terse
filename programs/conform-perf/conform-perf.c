@@ -72,7 +72,7 @@ int main(void)
 {
     terse_event ev;
     term_color(15, 4);
-    term_puts(" Terse · conform-perf");
+    term_puts(" Tersenet · conform-perf");
     term_cmd(TERM_CLEAR_EOL);
     term_color(7, 0);
     term_puts("\n\n");

@@ -42,7 +42,7 @@ pub fn run(
     looks: Looks,
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-    let title = if program.shell { "Terse32".to_string() } else { format!("{} — Terse32", program.image.title_lossy()) };
+    let title = if program.shell { "Tersenet".to_string() } else { format!("{} — Tersenet", program.image.title_lossy()) };
     let mut system = System::new(&program.image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
     terse_net::snapshots::load_table(&mut system, &program.data);

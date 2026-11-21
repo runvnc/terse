@@ -107,7 +107,7 @@ func TestInteractive(t *testing.T) {
 		cmd.Process.Kill()
 		t.Fatalf("%q never shown; screen:\n%q", s, screen.String())
 	}
-	waitFor("Terse — timeline")
+	waitFor("Tersenet — timeline")
 	waitFor("Hello")
 	mu.Lock()
 	screen.Reset()
