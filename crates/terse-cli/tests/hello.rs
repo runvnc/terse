@@ -45,10 +45,12 @@ fn screen_after_30_frames() {
     let t = m.terminal().unwrap();
     common::golden("hello/expected-30-frames.txt", &t.text());
     assert_eq!(t.cursor(), (5, 12));
-    for (col, row) in [(17, 2), (11, 11)] {
-        let cells: Vec<u16> = (col..col + 4).map(|c| t.cell(c, row).ch).collect();
-        assert_eq!(cells, [0x4F60, CONTINUATION, 0x597D, CONTINUATION], "row {row}");
-    }
+    // Its own text keeps to the full repertoire (SPEC §terminal.text); the
+    // typed text echoed on row 11 has wide characters.
+    let cells: Vec<u16> = (17..21).map(|c| t.cell(c, 2).ch).collect();
+    assert_eq!(cells, [0x43F, 0x440, 0x438, 0x432], "row 2");
+    let cells: Vec<u16> = (11..15).map(|c| t.cell(c, 11).ch).collect();
+    assert_eq!(cells, [0x4F60, CONTINUATION, 0x597D, CONTINUATION], "row 11");
     // The palette row: white on entries 0-6, black on the rest.
     assert_eq!((t.cell(2 + 3 * 3 + 1, 7).fg, t.cell(2 + 3 * 3 + 1, 7).bg), (15, 3));
     assert_eq!((t.cell(2 + 3 * 9 + 1, 7).fg, t.cell(2 + 3 * 9 + 1, 7).bg), (0, 9));

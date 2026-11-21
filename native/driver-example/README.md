@@ -1,6 +1,6 @@
 # A device driver to copy
 
-`terminal.c` is a complete Terse terminal (device 2, `SPEC.md` §terminal)
+`terminal.c` is a complete Terse32 terminal (device 2, `SPEC.md` §terminal)
 as a device-bus driver (`DEVICES.md`), written to be read and copied: one
 file of C11 and POSIX, 480 lines, about 160 for the device and 290 for the
 bus, socket transport only, drawing nothing. Machines run with it have the

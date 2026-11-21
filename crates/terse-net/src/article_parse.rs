@@ -195,6 +195,17 @@ pub fn basic_text(bytes: &[u8]) -> bool {
     String::from_utf8_lossy(bytes).chars().all(basic_char)
 }
 
+/// Whether text is in the full repertoire (ARTICLE.md 1.1, SPEC
+/// §terminal.text): every character it shows is one that every full-text
+/// reader of Terse draws from its built-in fonts; other characters show
+/// only where the user added a font that has them.
+pub fn full_text(bytes: &[u8]) -> bool {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .all(|c| c.is_control() || u16::try_from(c as u32).is_ok_and(terse_core::text::is_full))
+}
+
 /// A display name: 1 to 48 bytes of UTF-8, no control characters, no
 /// whitespace first or last.
 pub fn display_name(bytes: &[u8]) -> Option<String> {

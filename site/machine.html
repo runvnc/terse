@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The machine - the Terse manual</title>
+<title>The Terse32 machine - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
-<h1 id="the-machine">The machine</h1>
+<h1 id="the-terse32-machine">The Terse32 machine</h1>
 <p>This article describes machine profile 1, the only profile so far: the CPU, the memory map, how frames and the budget work, how a machine stops, the image file a program is shipped in, and how programs call devices, with the complete table of calls. Each device&#39;s calls are described in full in that device&#39;s article.</p>
-<p>The machine is the optional third layer of Terse: the network and the article format are the core, and a reader can implement them without it. Which devices a host provides (the reading and the program profile) and how a program does without some is in <a href="device-system.html">the system device</a>.</p>
+<p>The machine is the optional third layer of Tersenet: the network and the article format are the core, and a reader can implement them without it. Which devices a host provides (the reading and the program profile) and how a program does without some is in <a href="device-system.html">the system device</a>.</p>
 <h2 id="cpu">CPU</h2>
 <p>The CPU executes exactly RV32I with the M (multiply and divide) and C (compressed) extensions, little-endian, in user mode. There is no A, F, D or B extension, no Zicsr or Zifencei, and no privileged architecture: no control and status registers, counters or traps are visible.</p>
 <div class="table"><table>

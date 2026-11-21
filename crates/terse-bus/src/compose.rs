@@ -281,7 +281,7 @@ pub struct Compositor {
     overlay: Option<Overlay>,
     /// The overlay's rectangle now (empty: no prompt).
     overlay_rect: IRect,
-    glyphs: Option<terse_host::glyphs::SystemGlyphs>,
+    glyphs: Option<terse_host::glyphs::TermGlyphs>,
     /// Pixels composed (measurements).
     pub pixels_composed: u64,
 }
@@ -328,7 +328,7 @@ impl Compositor {
             composed: (Vec::new(), IRect::EMPTY),
             overlay: None,
             overlay_rect: IRect::EMPTY,
-            glyphs: terse_host::glyphs::SystemGlyphs::new(terse_host::FONT_PX, None).ok(),
+            glyphs: Some(terse_host::glyphs::TermGlyphs::builtin(terse_host::FONT_PX)),
             pixels_composed: 0,
         }
     }

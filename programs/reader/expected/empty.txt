@@ -34,5 +34,5 @@
   116  19     0   sans15 |to, newest first. New articles appear here as they arrive.
   151  19     0   sans15 |Press F to see your feeds and subscribe to one by its key.
   180  19     0   sans15 |Press T to publish a test article of your own; it shows up here.
-  209  19     0   sans15 |Press M to read the Terse manual.
+  209  19     0   sans15 |Press M to read the Tersenet manual.
   238  19     0   sans15 |Press ? for help, Esc to quit.

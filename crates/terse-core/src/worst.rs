@@ -683,8 +683,38 @@ fn terminal_scenarios() -> Vec<Scenario> {
     }
     out.push(Scenario {
         id: "term-cjk",
-        what: "terminal, full text: 1,200 CJK characters not shown before, each frame",
+        what: "terminal, full text: 1,200 CJK characters each frame (placeholders without a CJK font)",
         image: b.build("w-cjk", &[d(2), d(10)]),
+    });
+    // The whole full repertoire (SPEC §terminal.text), every glyph new: the
+    // first frame shows 2,400 of its characters, the next the rest.
+    let full: Vec<char> = crate::text::FULL
+        .iter()
+        .flat_map(|&(lo, hi)| lo..=hi)
+        .filter_map(|c| char::from_u32(c as u32))
+        .filter(|&c| c != ' ' && c != '\u{A0}')
+        .collect();
+    let mut b = Builder::new();
+    // Two screens' worth, shown in turn: the second frame brings the rest.
+    // Each is two writes: a write takes at most 4,096 bytes.
+    let screens: Vec<Vec<(u32, u32)>> = (0..2usize)
+        .map(|k| {
+            let chars: String = (0..2400).map(|i| full[(k * 2400 + i) % full.len()]).collect();
+            let half = chars.char_indices().nth(1200).unwrap().0;
+            [&chars[..half], &chars[half..]].iter().map(|part| (b.blob(part.as_bytes()), part.len() as u32)).collect()
+        })
+        .collect();
+    for f in 0..30usize {
+        let mut calls = vec![Call::new(0x202, [0, 0, 0, 0]), Call::new(0x204, [9 + f as u32 % 7, 232 + f as u32 % 24, 0, 0])];
+        for &(t, n) in &screens[f % 2] {
+            calls.push(Call::new(0x200, [t, n, 0, 0]));
+        }
+        b.frame(calls);
+    }
+    out.push(Scenario {
+        id: "term-full",
+        what: "terminal, full text: the full repertoire, 2,400 characters not shown before in the first frame",
+        image: b.build("w-full", &[d(2), d(10)]),
     });
     out
 }
@@ -797,7 +827,7 @@ fn combined_frames(b: &mut Builder, l3: &List, first: &[Call], each: &[Call]) {
 
 // ------------------------------------------------------------ systems
 
-/// How a system scenario's shell shows its machines (PERFORMANCE.md R11).
+/// How a system scenario's shell shows its machines (PERFORMANCE.md R12).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
     /// Tiles of a 3 × 3 grid, 213 × 160 units each.
@@ -864,7 +894,7 @@ pub struct SystemScenario {
     pub child: Vec<u8>,
 }
 
-/// The worst systems (PERFORMANCE.md R11): a shell at its worst with 8
+/// The worst systems (PERFORMANCE.md R12): a shell at its worst with 8
 /// machines at theirs, tiled, overlapping and as panels. `builtins`: how
 /// many built-in programs the host has before the child image.
 pub fn system_scenarios(builtins: u32) -> Vec<SystemScenario> {

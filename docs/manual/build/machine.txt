@@ -1,4 +1,4 @@
-# The machine
+# The Terse32 machine
 
 This article describes machine profile 1, the only profile so far: the
 CPU, the memory map, how frames and the budget work, how a machine stops,
@@ -6,11 +6,11 @@ the image file a program is shipped in, and how programs call devices,
 with the complete table of calls. Each device's calls are described in
 full in that device's article.
 
-The machine is the optional third layer of Terse: the network and the
+The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:19c18c81512acbb16a3d199631359874142e34711e130eebd73b6f2a7594f44d).
+[the system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9).
 
 ## CPU
 
@@ -199,7 +199,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:19c18c81512acbb16a3d199631359874142e34711e130eebd73b6f2a7594f44d), slot 1, always present:
+[The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -214,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), slot 2:
+[The terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -229,7 +229,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), slot 3:
+[The 2D vector display](terse:07032dac21c87b99b28df12c49a0f23284e969f257a91e0c562d641b3e6ba6e2), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -239,13 +239,13 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:a76400c3aecc763086c94ecfb06332f5f533aabba0b71186721e626cd6a7a1eb), [feeds](terse:1bd2a6ccf94697b751f63f50a9e8fee3fbaea79b42df4c0d34ed0633644e342b) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81)):
+The content device, slot 4 (see [blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46), [feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
 | `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected | answered |
 
-[The page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6), slot 7:
+[The page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5), slot 7:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Using the shell and the reader - the Terse manual</title>
+<title>Using the shell and the reader - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
 <h1 id="using-the-shell-and-the-reader">Using the shell and the reader</h1>
-<p><code>terse-host</code> opens a window and runs a system of machines. The first of them is the shell, a Terse program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user&#39;s side: the keys, the screens, and the prompts the host shows.</p>
+<p><code>terse-host</code> opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes both from the user&#39;s side: the keys, the screens, and the prompts the host shows.</p>
 <h2 id="starting">Starting</h2>
 <pre>cargo run --release -p terse-host -- --demo</pre>
 <p>builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (<code>~/.config/terse/identity.key</code>), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, <code>cargo run --release -p terse-host</code> with no image named opens the shell.</p>
@@ -120,6 +120,6 @@
 <p>How articles are written: <a href="writing-articles.html">Writing an article</a>. How the shell&#39;s devices work: <a href="device-machines.html">The machines device</a>. Feeds and consent from a program&#39;s side: <a href="content-feeds.html">Feeds</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="writing-programs.html">← Writing a program</a><a rel="next" href="writing-articles.html">Writing an article →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="writing-programs.html">← Writing a program</a><a rel="next" href="fonts.html">Fonts →</a></nav></footer>
 </body>
 </html>

@@ -377,7 +377,7 @@ routed by the pictures and panels as §machines.input says, plates
 included. The counts of a panel and of a 3D list are evaluated after a
 floating-point projection, so hosts may differ at the boundary by
 rounding, as §vector3d.caps says. Measured on the reference host
-(`PERFORMANCE.md` R11), the bundled shell's layouts with the bundled
+(`PERFORMANCE.md` R12), the bundled shell's layouts with the bundled
 programs count at most about 60% of the system ink.
 
 ## §machines.input Input

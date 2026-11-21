@@ -1,6 +1,6 @@
 [package]
 name = "terse-net"
-description = "Host-side content for Terse: blob store, relay protocol and client, content service (NETWORK.md)."
+description = "Host-side content for Tersenet: blob store, relay protocol and client, content service (NETWORK.md)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -15,6 +15,7 @@ ed25519-dalek = "2"
 curve25519-dalek = "4"
 sha2 = "0.10"
 getrandom = "0.4"
+ttf-parser = "0.25"
 
 [dev-dependencies]
 tempfile = "3"

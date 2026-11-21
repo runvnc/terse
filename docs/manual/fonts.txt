@@ -1,0 +1,62 @@
+# Fonts
+
+`terse-host` draws all text, in the terminal and on the page, with
+three fonts built into it: DejaVu Sans Mono (the terminal, code and
+preformatted text), DejaVu Sans and DejaVu Sans Bold (articles). It
+needs no fonts installed on the computer, and text looks the same on
+every system. It never looks for other fonts on its own.
+
+## What they show
+
+The built-in fonts cover the **full repertoire**: 2,461 characters of
+Latin (with its accents and extensions), Greek, Cyrillic, punctuation,
+currency signs, arrows, mathematical operators, box drawing, shapes and
+common symbols such as ♥ ★ ✓ ⌂ ■. Every host with full text (device
+10) draws at least these, so a program or an article that keeps to
+them looks right everywhere. DejaVu has some more (Hebrew, Arabic,
+Armenian, Georgian), which this host draws too.
+
+A character no loaded font has is shown as a box. The text itself is
+intact: copying, plain-text output and search keep the original
+characters. The reader marks a timeline entry whose title has
+characters beyond the full repertoire ("may need a font"), and says so on
+the status row when an article it opens has them.
+
+## Adding fonts
+
+Japanese, Chinese, Korean, Thai, Devanagari, emoji and other scripts
+need a font that has them. Name one, and `terse-host` loads it at its
+next start, after the built-in fonts, for the characters they lack:
+
+    terse fonts add /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+    terse fonts list
+    terse fonts remove /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+
+Fonts are used in the order they are listed. A TrueType or OpenType
+file works, or a collection (`.ttc`). Large fonts cost nothing at
+start: they are mapped, not read, and a glyph is drawn the first time
+it is shown.
+
+## Replacing a built-in font
+
+    terse fonts set mono /path/to/YourMono.ttf
+    terse fonts set sans /path/to/YourSans.otf
+    terse fonts set bold /path/to/YourSans-Bold.otf
+    terse fonts set mono default
+
+A replacement must have every character of printable ASCII, and the
+monospace one must be monospaced, so that it fits the terminal's
+cells; `terse fonts` checks this when you set it, and `terse-host`
+again when it starts (it says why on its error output and uses the
+built-in font if a file is missing or unsuitable). Characters the
+replacement lacks still come from the built-in font behind it, so the
+full repertoire is always drawn.
+
+## Where the settings live
+
+`terse fonts` writes `fonts` in the configuration directory
+(`~/.config/terse`, or `$XDG_CONFIG_HOME/terse`), one line per font:
+`mono`, `sans`, `bold` or `extra`, then the file. `terse-host
+--version` lists the fonts it would use. Every font is opened when
+`terse-host` starts and never again: it never waits for a font while a
+program runs.

@@ -1,8 +1,8 @@
 # Writing an article
 
-An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Terse: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
+An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Tersenet: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
 
-Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, `×`, `°`), dashes, curly quotes, `−`, `•`, `…` and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. Plain ASCII reads everywhere.
+Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, `×`, `°`), dashes, curly quotes, `−`, `•`, `…` and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. The Tersenet reader shows the full repertoire everywhere (Latin, Greek, Cyrillic, punctuation, common symbols) and other scripts where the user added a font. Plain ASCII reads everywhere.
 
 ## Lines and blocks
 
@@ -119,7 +119,7 @@ terse:feed/0000000000000000000000000000000000000000000000000000000000000000@rela
 
 terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
 
-Read [the page device](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) next.
+Read [the page device](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) next.
 
 The source of the last one is:
 
@@ -192,14 +192,14 @@ It puts the blob, publishes the next entry of your feed and prints `seq N blob <
 
 ## Your feed as a website
 
-Readers without Terse can read your feed on the web. This writes it as a static website, plain HTML with no scripts:
+Readers without Tersenet can read your feed on the web. This writes it as a static website, plain HTML with no scripts:
 
     terse feed site --out site --base-url https://example.org/
 
-Each article gets a page, drawn like this manual's web pages; an index lists them newest first; `feed.xml` is an Atom feed for RSS readers (only with `--base-url`, the site's own address). Every page names your feed's address, for readers who want to follow it in Terse. Run it again after publishing: it writes only the new article's page and the index, and reads no other article. Give a feed address to make the site of another feed.
+Each article gets a page, drawn like this manual's web pages; an index lists them newest first; `feed.xml` is an Atom feed for RSS readers (only with `--base-url`, the site's own address). Every page names your feed's address, for readers who want to follow it in a Tersenet reader. Run it again after publishing: it writes only the new article's page and the index, and reads no other article. Give a feed address to make the site of another feed.
 
 ## How the reader shows it
 
-In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6).
+In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5).
 
 Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.

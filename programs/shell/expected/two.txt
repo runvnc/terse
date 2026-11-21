@@ -60,9 +60,9 @@
 
  ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
 -- machine 2 running 323 23 314 235 hello --
- Terse · hello
+ Tersenet · hello
 
-  héllo, wörld — 你好
+  héllo, wörld — привет, мир
   Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
   Type to echo text below. Enter: new line, Backspace, Esc: exit.
 

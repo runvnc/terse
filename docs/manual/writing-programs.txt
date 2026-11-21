@@ -1,6 +1,6 @@
 # Writing a program
 
-A Terse program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.
+A Terse32 program is RV32IMC machine code in one image file: ROM from `0001_0000h`, RAM from `0010_0000h`, and calls to devices with `ecall`. It starts at the first ROM byte with `sp` at the end of RAM and all RAM zero. There are no interrupts: a program does a frame's work and calls `wait_frame`; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.
 
 ## Tools
 
@@ -127,7 +127,7 @@ int main(void)
 }
 ```
 
-A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). `terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
+A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. `terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
 ## Running it headless
 

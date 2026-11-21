@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Writing a program - the Terse manual</title>
+<title>Writing a program - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
 <h1 id="writing-a-program">Writing a program</h1>
-<p>A Terse program is RV32IMC machine code in one image file: ROM from <code>0001_0000h</code>, RAM from <code>0010_0000h</code>, and calls to devices with <code>ecall</code>. It starts at the first ROM byte with <code>sp</code> at the end of RAM and all RAM zero. There are no interrupts: a program does a frame&#39;s work and calls <code>wait_frame</code>; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.</p>
+<p>A Terse32 program is RV32IMC machine code in one image file: ROM from <code>0001_0000h</code>, RAM from <code>0010_0000h</code>, and calls to devices with <code>ecall</code>. It starts at the first ROM byte with <code>sp</code> at the end of RAM and all RAM zero. There are no interrupts: a program does a frame&#39;s work and calls <code>wait_frame</code>; if it runs out of budget first, it is paused and continues in the next frame without being told. This article shows how to build, run, test and publish one; the machine and each device have articles of their own.</p>
 <h2 id="tools">Tools</h2>
 <p>You need clang with the riscv32 target, ld.lld and llvm-objcopy, and the <code>terse</code> command of this repository (<code>cargo run -p terse-cli --bin terse --</code>, or <code>target/debug/terse</code> after <code>cargo build --workspace</code>). Below, <code>terse</code> stands for either.</p>
 <p>The compiler flags, the same in every <code>programs/*/build.sh</code>:</p>
@@ -117,7 +117,7 @@ int main(void)
     keep_score = terse_has_device(4);  /* content: optional */
     ...
 }</pre>
-<p>A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, <code>•</code>, <code>…</code>, <code>−</code>, box drawing and blocks) lists device 10, full text: <code>--optional 10:0</code> if a placeholder box will do on a host without it, <code>--device 10:0</code> if not (see the terminal&#39;s article). <code>terse_has_device</code> makes the system device&#39;s <code>device</code> call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (<code>terse run --profile program</code> runs it with exactly those), and lists the rest as optional. <code>terse info</code> shows both lists.</p>
+<p>A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, <code>•</code>, <code>…</code>, <code>−</code>, box drawing and blocks) lists device 10, full text: <code>--optional 10:0</code> if a placeholder box will do on a host without it, <code>--device 10:0</code> if not (see the terminal&#39;s article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. <code>terse_has_device</code> makes the system device&#39;s <code>device</code> call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (<code>terse run --profile program</code> runs it with exactly those), and lists the rest as optional. <code>terse info</code> shows both lists.</p>
 <h2 id="running-it-headless">Running it headless</h2>
 <pre>terse run prog.terse --frames 30 --dump</pre>
 <p>runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (<code>random</code> gives zeros), and controllers exist only through the script. <code>--dump-vectors</code> and <code>--dump-page</code> add the vector display&#39;s list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, <code>terse run</code> exits with its code; after a fault it prints <code>terse: fault: &lt;kind&gt; at pc &lt;pc&gt;, address &lt;addr&gt;</code> on stderr and ends itself with SIGTERM.</p>
@@ -157,6 +157,6 @@ int main(void)
 <p>Next: <a href="machine.html">The machine</a>, then the devices, from <a href="device-system.html">The system device</a> and <a href="device-terminal.html">The terminal</a> to <a href="events.html">Events</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="how-it-works.html">← How Terse works</a><a rel="next" href="using.html">Using the shell and the reader →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="how-it-works.html">← How Tersenet works</a><a rel="next" href="using.html">Using the shell and the reader →</a></nav></footer>
 </body>
 </html>

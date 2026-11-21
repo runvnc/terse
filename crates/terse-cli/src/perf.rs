@@ -766,11 +766,77 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     });
     rows.push(Row {
         id: "H2",
-        what: "fetch: slowest frame drawn (its first CJK and Hangul text, 50 ms after start)".into(),
+        what: "fetch: slowest frame drawn (its first Greek, Cyrillic and symbols, 50 ms after start)".into(),
         measured: spread(first_cjk, "ms"),
-        rule: "T: ≤ 150 ms (waits for the font map, built in the first 0.1–0.2 s)".into(),
+        rule: "T: ≤ 50 ms".into(),
         verdict: Verdict::Info,
     });
+    // R11: the frame that first shows 2,400 of the full repertoire's glyphs
+    // (term-full's first frame), against term-basic's first frame (90 ASCII
+    // glyphs), both on one thread; and start-up and the CJK frames with a
+    // 19 MB CJK collection listed as an extra font, if this system has one.
+    let worst = terse_core::worst::scenarios();
+    let first_frame = |id: &str, extra: &[&str]| -> Result<String, String> {
+        let s = worst.iter().find(|s| s.id == id).ok_or("no scenario")?;
+        let img = image(&format!("{id}.terse"), &s.image)?;
+        let mut firsts = Vec::new();
+        for _ in 0..runs {
+            let mut args = vec!["--warmup", "0", "--frames", "2", "--threads", "1"];
+            args.extend_from_slice(extra);
+            let (_, out) = timed(&mut bench(&img, &args))?;
+            firsts.push(bench_numbers(&out).ok_or("no --bench-render line")?.2);
+        }
+        Ok(spread(firsts, "ms"))
+    };
+    rows.push(Row {
+        id: "H4",
+        what: "first frame showing 2,400 new glyphs of the full repertoire, 1 thread (term-full)".into(),
+        measured: format!("{}; 90 ASCII glyphs (term-basic): {}", first_frame("term-full", &[])?, first_frame("term-basic", &[])?),
+        rule: "R11 (no font found or opened); T: ≤ 16.7 ms".into(),
+        verdict: Verdict::Info,
+    });
+    let cjk = ["/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file());
+    match cjk {
+        None => rows.push(Row {
+            id: "H5",
+            what: "start-up and CJK with a CJK font listed".into(),
+            measured: String::new(),
+            rule: String::new(),
+            verdict: Verdict::Skipped("no NotoSansCJK-Regular.ttc on this system".into()),
+        }),
+        Some(cjk) => {
+            let cfg = home.path("cfg-cjk");
+            std::fs::create_dir_all(&cfg).map_err(|e| e.to_string())?;
+            std::fs::write(cfg.join("fonts"), format!("extra {}\n", cjk.display())).map_err(|e| e.to_string())?;
+            let cfg = cfg.display().to_string();
+            let mut start = Vec::new();
+            for _ in 0..runs {
+                let (took, _) = timed(&mut bench(&hello, &["--warmup", "0", "--frames", "1", "--config", &cfg]))?;
+                start.push(took.as_secs_f64() * 1000.0);
+            }
+            rows.push(Row {
+                id: "H5",
+                what: format!("terse-host start to hello's first frame, {} listed as an extra font", cjk.display()),
+                measured: spread(start, "ms"),
+                rule: "R11; T: as H1".into(),
+                verdict: Verdict::Info,
+            });
+            let s = worst.iter().find(|s| s.id == "term-cjk").ok_or("no scenario")?;
+            let img = image("term-cjk-font.terse", &s.image)?;
+            let (_, out) = timed(&mut bench(&img, &["--warmup", "0", "--frames", "30", "--threads", "1", "--config", &cfg]))?;
+            let (p50, _, max) = bench_numbers(&out).ok_or("no --bench-render line")?;
+            rows.push(Row {
+                id: "H6",
+                what: "term-cjk with that font listed: 1,200 new CJK glyphs a frame, 1 thread".into(),
+                measured: format!("p50 {p50:.1} ms, max {max:.1} ms"),
+                rule: "T: ≤ 16.7 ms".into(),
+                verdict: Verdict::Info,
+            });
+        }
+    }
     let conform = programs.as_ref().map(|p| p.join("conform/conform.terse")).filter(|p| p.exists());
     match conform {
         None => rows.push(Row {
@@ -832,7 +898,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             },
         });
     }
-    // R11: a shell and 8 machines, each at its worst, tiled, overlapping
+    // R12: a shell and 8 machines, each at its worst, tiled, overlapping
     // and as panels, with the system ink (SPEC §machines.ink) and without.
     let all = image("all.terse", &terse_core::worst::combined_image())?;
     let all = all.to_string_lossy().into_owned();
@@ -856,7 +922,7 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             id: "W",
             what: format!("{}: {}", s.id, s.what),
             measured: format!("1 thread p50 {on:.1} ms (without the system ink {off:.1} ms)"),
-            rule: "R11: within the system ink by construction; T: ≤ 2 × the single machine's".into(),
+            rule: "R12: within the system ink by construction; T: ≤ 2 × the single machine's".into(),
             verdict: Verdict::Info,
         });
     }

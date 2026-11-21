@@ -1,6 +1,6 @@
 [package]
 name = "terse-core"
-description = "The Terse virtual machine: RV32IMC CPU, memory, devices and frame loop (no I/O, no threads)."
+description = "The Terse32 virtual machine: RV32IMC CPU, memory, devices and frame loop (no I/O, no threads)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

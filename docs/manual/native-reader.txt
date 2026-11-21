@@ -1,6 +1,6 @@
 # Writing a reader without the machine
 
-The core of Terse is the network and the article format, not the machine. A reader that implements just those two, natively, in any language and with any text toolkit, is a complete Terse client: it follows feeds, shows their articles and follows their links, side by side with machine hosts on the same relays. This article says what such a reader has to do and where the exact rules are. You need two documents, NETWORK.md and ARTICLE.md; SPEC.md and STATE.md (the machine) are not needed at all.
+The core of Tersenet is the network and the article format, not the machine. A reader that implements just those two, natively, in any language and with any text toolkit, is a complete Tersenet client: it follows feeds, shows their articles and follows their links, side by side with machine hosts on the same relays. This article says what such a reader has to do and where the exact rules are. You need two documents, NETWORK.md and ARTICLE.md; SPEC.md and STATE.md (the machine) are not needed at all.
 
 ## What it must do
 

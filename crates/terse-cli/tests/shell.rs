@@ -262,7 +262,7 @@ fn manual_entry_opens_the_manual() {
     assert_eq!(s.system.focus(), 1);
     assert_eq!(s.system.child(1).unwrap().title, "reader");
     let text = page_text(s.machine(1));
-    assert!(text.starts_with("The Terse manual\n"), "{text}");
+    assert!(text.starts_with("The Tersenet manual\n"), "{text}");
     // A click on the entry does the same.
     let mut c = Sys::new("", Setup::default());
     c.run(5);
@@ -273,7 +273,7 @@ fn manual_entry_opens_the_manual() {
     let (x, y) = (r.x as u32 + 20, r.y as u32 + line.y + 4);
     let mut c = Sys::new(&format!("8 click {x} {y}\n"), Setup::default());
     c.run(30);
-    assert!(page_text(c.machine(1)).starts_with("The Terse manual\n"), "clicked at {x} {y}");
+    assert!(page_text(c.machine(1)).starts_with("The Tersenet manual\n"), "clicked at {x} {y}");
 }
 
 /// The shell holds the ID of the manual's current index (its Manual

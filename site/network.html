@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The network - the Terse manual</title>
+<title>The network - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
 <h1 id="the-network">The network</h1>
-<p>Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see &quot;Writing an article&quot;) are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.</p>
+<p>Tersenet has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see &quot;Writing an article&quot;) are the core: a client that implements those two is a complete Tersenet client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.</p>
 <p>Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.</p>
 <h2 id="blobs">Blobs</h2>
 <p>A blob is 1 to 1,048,576 bytes. Its ID is the BLAKE3-256 hash of its bytes: 32 bytes, written as 64 lowercase hex digits. A program image is a blob, so an image ID is a blob ID.</p>
@@ -72,7 +72,7 @@
 <tbody>
 <tr><td>1</td><td>article</td><td>any title</td><td>UTF-8 text (see &quot;Writing an article&quot;)</td></tr>
 <tr><td>2</td><td>profile</td><td>the feed&#39;s display name</td><td>the profile document</td></tr>
-<tr><td>3</td><td>program</td><td>the program&#39;s name, a display name</td><td>a Terse image</td></tr>
+<tr><td>3</td><td>program</td><td>the program&#39;s name, a display name</td><td>a Terse32 image</td></tr>
 <tr><td>4</td><td>document</td><td>any title</td><td>a document (starts with <code>TDOC</code>)</td></tr>
 </tbody></table></div>
 <p>Program and document entries are valid whatever their blob holds; that is found out on use. A feed&#39;s current version of a program is its valid program entry with that name and the highest <code>seq</code> the client or relay holds. A program&#39;s identity is (feed key, name).</p>

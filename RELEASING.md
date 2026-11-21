@@ -12,7 +12,9 @@ The downloads are built by `.github/workflows/release.yml`, which runs
 | `tersereader-<v>-{linux,macos}-{amd64,arm64}.tar.gz` | ubuntu-24.04 | the Go terminal reader (`native/reader-go`), static |
 | `SHA256SUMS.txt` | | the SHA-256 of every file above |
 
-Each archive also has `LICENSE` and a `README.txt` from `packaging/<system>/`.
+Each archive also has `LICENSE` and a `README.txt` from `packaging/<system>/`;
+the `terse-host` archives also have `FONTS-LICENSE.txt`, the licence of the
+DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
 fallback, `--renderer auto`) and with sound (`--features audio`).
 
@@ -31,7 +33,7 @@ from source. `tersereader` has no Windows build: its terminal code is Unix-only.
        git push origin v0.1.0
 
 3. Wait for the workflow (Actions tab, "release"; about 20 to 30 minutes). It
-   ends by making a **draft** release named "Terse 0.1.0" with every file
+   ends by making a **draft** release named "Tersenet 0.1.0" with every file
    attached and the notes from `packaging/release-notes.md`.
 4. Check the draft: download the file for your system, run it, open the
    manual. Edit the notes if you like (say what changed).

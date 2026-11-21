@@ -68,9 +68,10 @@ document. A **program-profile host** (§profiles) implements:
   characters (printable ASCII, the Latin-1 Supplement, dashes, quotation
   marks, bullet, ellipsis, minus, box drawing and block elements, U+FFFD;
   the articles' basic text repertoire), one fixed-width font; every other
-  character is drawn as a placeholder box. Full text, every character, is device 10, which
-  a program-profile host may leave out: no shaping, bidirectional text or
-  font fallback is needed.
+  character is drawn as a placeholder box. Full text, the full repertoire
+  of 2,461 characters at least (`vectors/full-text.txt`), is device 10,
+  which a program-profile host may leave out: no shaping, bidirectional
+  text or font fallback is needed.
 
 What a host draws beyond what each device requires (fonts, smoothing, the
 phosphor style's look) is up to it and is never machine state. The vector
@@ -418,8 +419,8 @@ provides the machine's **reading profile**:
 
 - the machine, profile 1 (§profile), and devices 1 System (§system, §events and §controllers), 2 Terminal (§terminal), 4 Content (§content), 7 Page
   (§page) and 10 Full text (§terminal.text: the reader shows feeds' titles
-  and names, in any script, in the terminal; the page draws every
-  character in any case, §page.layout), each complete except as said next for device 4;
+  and names, in any script, in the terminal; the page draws text with
+  its own fonts in any case, §page.layout), each complete except as said next for device 4;
 - within Content it must carry out get (`01h`, §content.submit),
   subscriptions (`03h`), timeline (`04h`), names (`09h`), identity
   (`08h`, with the own address's hints), subscribe (`05h`, with the hints
@@ -869,17 +870,50 @@ machine's state. Only what is drawn differs:
   Asian Width is A, such as × and …, are narrow like every other), so
   one fixed-width font of 8 × 16 cells covers them.
   `vectors/basic-text.txt` gives the list as ranges.
-- **Full text** is every other character as well, drawn with fonts and
-  fallback the host chooses, a wide character across its two cells
-  (§terminal.cells).
+- The **full repertoire** is what a host with full text draws at
+  least: the basic repertoire and the Latin, Greek and Cyrillic letters,
+  IPA, combining diacritics, punctuation, super- and subscripts,
+  currency signs, letterlike symbols, number forms, arrows, mathematical
+  operators, technical symbols, geometric shapes, miscellaneous symbols
+  and dingbats that the reference fonts (DejaVu Sans Mono, Sans and Sans
+  Bold) all have, 2,461 characters in 156 ranges, every one narrow.
+  `vectors/full-text.txt` lists them exactly; by block:
+
+      U+0020-U+007E, U+00A0-U+00FF  the basic Latin of basic text  191
+      U+0100-U+024F  Latin Extended-A and -B                       308
+      U+0250-U+036F  IPA, modifier letters, combining marks       213
+      U+0370-U+03FF  Greek and Coptic                             116
+      U+0400-U+052F  Cyrillic and its supplement                  186
+      U+1E00-U+1FFF  Latin Extended Additional, Greek Extended    415
+      U+2000-U+209F  punctuation, super- and subscripts            96
+      U+20A0-U+218F  currency, letterlike symbols, number forms    60
+      U+2190-U+23FF  arrows, mathematical operators, technical    347
+      U+2500-U+259F  box drawing and block elements               160
+      U+25A0-U+27BF  geometric shapes, symbols, dingbats          368
+      U+FFFD         replacement character                          1
+
+  A host draws it with fonts it loads when it starts (the reference
+  host's are built in), and draws a character of it that a font lacks
+  from another of them; a wide character is never in it. **Full text**
+  is the full repertoire and every other character that the host has a
+  font for: a host may load more fonts (the reference host loads those
+  the user names, `README.md` "Fonts"), but never looks for one while a
+  machine runs (§responsiveness). A character that none of its fonts
+  has is drawn as the placeholder (below), one in each of its cells
+  (two for a wide character), and a control code as its background only.
 
 A machine has full text if it has **device 10, Full text** (version 0),
 a capability: a device with no calls, no events and no state. An image
 lists (10, 00h) if it cannot do without it, so that a host without full
 text refuses it (§image), or (10, 80h) if it can, and then asks `device`
 (§system) whether it was granted and may choose what it prints. A call
-to slot 10 returns `FFFF_FFFFh`. A host provides device 10 if it can
-draw full text; device 10 without device 2 changes nothing.
+to slot 10 returns `FFFF_FFFFh`. A host provides device 10 if it draws
+the full repertoire; device 10 without device 2 changes nothing. A
+program can rely on no character beyond the full repertoire: whether a
+host shows, say, Japanese depends on the fonts its user added, which a
+program cannot ask for or learn. Such text is still held, copied and
+given to programs and assistive tools as it is; only how it looks
+differs.
 
 A machine that does not have device 10 is drawn with the basic
 repertoire on every host, also on one that could draw more, so that it
@@ -1229,7 +1263,7 @@ with every device at its cap at once, takes it no more than one frame's
 time on one thread (`PERFORMANCE.md` R10, with how it is measured). In a
 system the machines the shell shows share one more budget, the system
 ink (§machines.ink), so a whole system asks about what two machines can
-(`PERFORMANCE.md` R11). A
+(`PERFORMANCE.md` R12). A
 host may draw more than a device requires (§vector.presentation's look,
 glow and afterglow, fonts), but should shed that extra work rather than
 let it make a frame slow.
@@ -1251,6 +1285,12 @@ tested (at 60 frames a second a frame is 16.7 ms):
 4. **Starting a program.** An image the host holds that a shell starts
    (§machines.calls) runs its first frame within 2 frames of the frame of
    the start call.
+5. **Fonts.** The frame loop never waits on finding or loading a font:
+   every font the host draws text with (the terminal's and the page's,
+   §terminal.text, §page.layout) is opened when the host starts, and no
+   file is opened, nor any directory of fonts read, for text after that.
+   A glyph is rasterised when it is first shown, which is bounded per
+   glyph (`PERFORMANCE.md` R11).
 
 How a host presents a frame (drawing, the phosphor style) is not machine
 state and has no requirement here; `PERFORMANCE.md` gives the reference
@@ -1294,8 +1334,8 @@ versions.
 
 ## §unspecified Not yet specified
 
-- Font selection, combining marks and complex scripts in the terminal
-  (with full text, §terminal.text).
+- Combining marks and complex scripts in the terminal (with full text,
+  §terminal.text).
 - Device 5.
 
 Each device document lists what is not yet specified for its device.

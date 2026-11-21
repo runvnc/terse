@@ -1,4 +1,4 @@
-# How Terse works
+# How Tersenet works
 
 ## Sharing information
 
@@ -7,7 +7,7 @@ headings, lists, tables, preformatted text and links. A diagram is
 written into the article as path data in the style of SVG, so it is
 part of the text and needs no image file. There are no scripts, no
 styles and no embedded programs, and an article cannot link to a web
-page, only to other Terse articles, feeds and programs.
+page, only to other Tersenet articles, feeds and programs.
 
 Authors publish articles in feeds. A feed belongs to a key that its
 author holds, not to a website: every entry is signed, so a reader can
@@ -21,7 +21,7 @@ the article format and nothing else.
 
 ## Sharing programs
 
-A Terse program is a small file of machine code for a simple virtual
+A Terse32 program is a small file of machine code for a simple virtual
 computer. The machine is isolated: a program sees only its own memory
 and the few devices its host offers, such as a terminal, a vector
 display and the content store. It gets a fixed amount of work per
@@ -29,15 +29,15 @@ frame, so it cannot slow its host down, and it behaves the same on
 every host.
 
 All of this is optional. A host may leave out the machine altogether,
-or any device it does not want to build, and still be a complete Terse
+or any device it does not want to build, and still be a complete Tersenet
 reader. Articles never contain programs: they can only link to them.
 
 ## The three layers
 
-Terse has three layers. The network (blobs, relays, feeds, entries,
+Tersenet has three layers. The network (blobs, relays, feeds, entries,
 profiles, names and search) and the article format are the core: a
 native reader that implements those two, with no virtual machine at all,
-is a complete Terse client. The machine is an optional third layer that
+is a complete Tersenet client. The machine is an optional third layer that
 reuses them: a small virtual computer whose programs are shared the same
 way articles are. This article goes through the network and articles
 first, then the machine and what surrounds it.
@@ -162,7 +162,7 @@ The devices a reading host provides (the reading profile):
 | 2 | Terminal: 80 × 30 character cells |
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
-| 10 | Full text: every character in the terminal |
+| 10 | Full text: the full repertoire (Latin, Greek, Cyrillic, symbols) and more in the terminal |
 
 The devices a program host provides (the program profile):
 
@@ -238,7 +238,7 @@ in a tile of its own.
 ## Where to go next
 
 - [Writing programs](terse:{writing-programs}): building a C program and packing it as an image.
-- [Using Terse](terse:{using}): the tools, the shell and the reader.
+- [Using Tersenet](terse:{using}): the tools, the shell and the reader.
 - [Writing articles](terse:{writing-articles}): the article format, tables and figures.
 - [The machine](terse:{machine}): the CPU, memory, frames, image format and the full call table.
 - [The system device](terse:{device-system}), [the terminal](terse:{device-terminal}), [the 2D vector display](terse:{device-vector}), [the 3D vector display](terse:{device-vector3}), [the page](terse:{device-page}) and [machines](terse:{device-machines}).

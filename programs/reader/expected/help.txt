@@ -44,7 +44,7 @@
   315  18    12   sans14b |F   feeds
   337  18    12   sans14b |? or F1   this help
   359  18    12   sans14b |T   publish a test article
-  381  18    12   sans14b |M   the Terse manual
+  381  18    12   sans14b |M   the Tersenet manual
   403  18    12   sans14b |Esc   quit
   437  22     0   sans17b |Article
   463  18    12   sans14b |↑ ↓  PgUp PgDn Space  Home End  wheel   scroll

@@ -361,6 +361,8 @@
  * string, per separator byte, per byte of a number, per token, per segment
  * converted and per figure. */
 #define BUILD_UNITS 80000
+/* Per byte of text looked through for characters beyond the full repertoire. */
+#define W_FULL 3
 #define W_FIND 3
 #define W_EMIT 7
 #define W_LINE 200
@@ -1160,6 +1162,96 @@ static void spend(uint32_t units)
     b_work = b_work > units ? b_work - units : 0;
 }
 
+/* The full repertoire (SPEC §terminal.text, vectors/full-text.txt): what
+ * every host with full text draws with its built-in fonts. Other characters
+ * show only where the user added a font that has them (ARTICLE.md 1.1). */
+static const uint16_t full_ranges[][2] = {
+    {0x0020, 0x007E}, {0x00A0, 0x01C3}, {0x01CD, 0x01E3}, {0x01E6, 0x01F0}, {0x01F4, 0x01F6}, {0x01F8, 0x01F9},
+    {0x01FC, 0x0221}, {0x0224, 0x0241}, {0x0243, 0x0245}, {0x024C, 0x024D}, {0x0250, 0x02B9}, {0x02BB, 0x02C1},
+    {0x02C6, 0x02C9}, {0x02CC, 0x02D3}, {0x02D6, 0x02DE}, {0x02E0, 0x02E9}, {0x02EE, 0x02EE}, {0x02F3, 0x02F3},
+    {0x0300, 0x033F}, {0x0343, 0x0343}, {0x0358, 0x0358}, {0x0361, 0x0361}, {0x0374, 0x0377}, {0x037A, 0x037F},
+    {0x0384, 0x038A}, {0x038C, 0x038C}, {0x038E, 0x03A1}, {0x03A3, 0x03CE}, {0x03D0, 0x03E1}, {0x03F0, 0x045F},
+    {0x0462, 0x0463}, {0x0472, 0x0473}, {0x0490, 0x049B}, {0x04A2, 0x04A5}, {0x04AA, 0x04B3}, {0x04BA, 0x04BB},
+    {0x04C0, 0x04C4}, {0x04C7, 0x04C8}, {0x04CB, 0x04CC}, {0x04CF, 0x04F9}, {0x0510, 0x0511}, {0x051A, 0x051D},
+    {0x1E00, 0x1E13}, {0x1E18, 0x1E2D}, {0x1E30, 0x1E4D}, {0x1E54, 0x1E63}, {0x1E68, 0x1E79}, {0x1E7C, 0x1E99},
+    {0x1E9B, 0x1E9B}, {0x1E9F, 0x1EA1}, {0x1EAC, 0x1EAD}, {0x1EB0, 0x1EB1}, {0x1EB6, 0x1EB9}, {0x1EBC, 0x1EBD},
+    {0x1EC6, 0x1EC7}, {0x1ECA, 0x1ECD}, {0x1ED8, 0x1EDD}, {0x1EE0, 0x1EE5}, {0x1EE8, 0x1EEB}, {0x1EEE, 0x1EF5},
+    {0x1EF8, 0x1EF9}, {0x1F00, 0x1F15}, {0x1F18, 0x1F1D}, {0x1F20, 0x1F45}, {0x1F48, 0x1F4D}, {0x1F50, 0x1F57},
+    {0x1F59, 0x1F59}, {0x1F5B, 0x1F5B}, {0x1F5D, 0x1F5D}, {0x1F5F, 0x1F7D}, {0x1F80, 0x1FB4}, {0x1FB6, 0x1FC4},
+    {0x1FC6, 0x1FD3}, {0x1FD6, 0x1FDB}, {0x1FDD, 0x1FEF}, {0x1FF2, 0x1FF4}, {0x1FF6, 0x1FFE}, {0x2000, 0x200A},
+    {0x2010, 0x2023}, {0x2026, 0x2026}, {0x202F, 0x2037}, {0x2039, 0x203A}, {0x203C, 0x203F}, {0x2045, 0x2049},
+    {0x204B, 0x204B}, {0x205F, 0x205F}, {0x2070, 0x2071}, {0x2074, 0x208E}, {0x2090, 0x209C}, {0x20A0, 0x20B5},
+    {0x20B8, 0x20BA}, {0x20BD, 0x20BD}, {0x2102, 0x2102}, {0x2105, 0x2105}, {0x210D, 0x210F}, {0x2115, 0x2117},
+    {0x2119, 0x211A}, {0x211D, 0x211D}, {0x2122, 0x2122}, {0x2124, 0x2124}, {0x2126, 0x2126}, {0x212A, 0x212B},
+    {0x212E, 0x212E}, {0x2148, 0x2148}, {0x2150, 0x2151}, {0x2153, 0x215F}, {0x2189, 0x2189}, {0x2190, 0x2213},
+    {0x2215, 0x2215}, {0x2217, 0x2220}, {0x2223, 0x2223}, {0x2227, 0x222D}, {0x2234, 0x223D}, {0x2241, 0x2269},
+    {0x226D, 0x228B}, {0x228D, 0x22A5}, {0x22B2, 0x22B5}, {0x22B8, 0x22B8}, {0x22C2, 0x22C6}, {0x22CD, 0x22D1},
+    {0x22DA, 0x22E9}, {0x22EF, 0x22EF}, {0x2300, 0x2306}, {0x2308, 0x2311}, {0x2318, 0x2319}, {0x231C, 0x2321},
+    {0x2325, 0x2328}, {0x232B, 0x232B}, {0x2373, 0x2375}, {0x237A, 0x237A}, {0x237D, 0x237D}, {0x239B, 0x23AE},
+    {0x23CE, 0x23CF}, {0x2500, 0x25FC}, {0x25FF, 0x2613}, {0x2616, 0x262F}, {0x2638, 0x2647}, {0x2654, 0x267E},
+    {0x2680, 0x2689}, {0x2690, 0x2692}, {0x2694, 0x269C}, {0x26A0, 0x26A0}, {0x26B0, 0x26B1}, {0x2701, 0x2704},
+    {0x2706, 0x2709}, {0x270C, 0x2727}, {0x2729, 0x274B}, {0x274D, 0x274D}, {0x274F, 0x2752}, {0x2756, 0x2756},
+    {0x2758, 0x275E}, {0x2761, 0x2775}, {0x2794, 0x2794}, {0x2798, 0x27AF}, {0x27B1, 0x27BE}, {0xFFFD, 0xFFFD}
+};
+#define FULL_N (sizeof full_ranges / sizeof full_ranges[0])
+
+static uint8_t in_full(uint32_t cp)
+{
+    uint32_t lo = 0, hi = FULL_N, m;
+    if (cp > 0xFFFF)
+        return 0;
+    while (lo < hi) {
+        m = (lo + hi) / 2;
+        if (full_ranges[m][1] < cp)
+            lo = m + 1;
+        else
+            hi = m;
+    }
+    return lo < FULL_N && full_ranges[lo][0] <= cp;
+}
+
+/* Whether the n bytes of UTF-8 at p show a character outside the full
+ * repertoire (control characters are not shown; a malformed sequence is
+ * U+FFFD, which is in it). */
+static uint8_t beyond_full(const uint8_t *p, uint32_t n)
+{
+    const uint8_t *e = p + n;
+    uint32_t cp;
+    uint8_t c;
+    while (p < e) {
+        /* ASCII a word at a time. */
+        if (!((uintptr_t)p & 3))
+            while (p + 4 <= e && !(*(const uint32_t *)p & 0x80808080u))
+                p += 4;
+        if (p >= e)
+            break;
+        c = *p;
+        if (c < 0xC0) { /* ASCII, or a stray continuation byte */
+            p++;
+            continue;
+        }
+        if (c >= 0xF0 && p + 3 < e)
+            return 1; /* above U+FFFF */
+        if (c >= 0xE0 && p + 2 < e) {
+            cp = (uint32_t)(c & 0x0F) << 12 | (uint32_t)(p[1] & 0x3F) << 6 | (p[2] & 0x3F);
+            p += 3;
+        } else if (c < 0xE0 && p + 1 < e) {
+            cp = (uint32_t)(c & 0x1F) << 6 | (p[1] & 0x3F);
+            p += 2;
+        } else {
+            p++;
+            continue;
+        }
+        if (cp >= 0xA0 && !in_full(cp))
+            return 1;
+    }
+    return 0;
+}
+
+/* The article shown holds a character outside the full repertoire: the
+ * status row has said so (ARTICLE.md 1.1). */
+static uint8_t art_beyond;
+
 static void doc_rgb(const uint8_t *c)
 {
     doc_colour(c[0], c[1], c[2]);
@@ -1186,11 +1278,23 @@ static uint32_t cell_text(const uint8_t *p, uint32_t n)
     return done;
 }
 
-/* Article bytes from b_text to `to` into the document as text. */
+/* Article bytes from b_text to `to` into the document as text. The first
+ * that hold a character the built-in fonts may lack make the status row
+ * say so. */
 static void flush_text(uint32_t to)
 {
-    if (to > b_text && !doc_overflow)
+    if (to > b_text && !doc_overflow) {
+        if (!art_beyond) {
+            spend((to - b_text) * W_FULL);
+            if (beyond_full(art + b_text, to - b_text)) {
+                art_beyond = 1;
+                tb_n = 0;
+                tb_s("Some characters here may need a font: terse fonts add <font file>");
+                say(C_INFO);
+            }
+        }
         b_shown = b_text + cell_text(art + b_text, to - b_text);
+    }
     b_text = to;
 }
 
@@ -2638,6 +2742,7 @@ static void build(void)
     if (art_state != READY || b_phase == B_DONE || lk_handle)
         return;
     if (b_phase == B_START) {
+        art_beyond = 0;
         heading_title();
         doc_begin(doc, DOC_CAP - DOC_RESERVE);
         doc_head();
@@ -3212,7 +3317,7 @@ static void empty_doc(void)
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press T to publish a test article of your own; it shows up here.");
     doc_paragraph(DOC_START, 0, 10, 0);
-    doc_s("Press M to read the Terse manual.");
+    doc_s("Press M to read the Tersenet manual.");
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press ? for help, Esc to quit.");
     column_submit();
@@ -3271,6 +3376,8 @@ static void timeline_doc(void)
             tb_s("  \xC2\xB7  \xE2\x86\xB3 reply");
         if (!(r[R_FLAGS] & TIMELINE_LOCAL))
             tb_s("  \xC2\xB7  not downloaded");
+        if (beyond_full(r + R_TITLE, r[R_N]))
+            tb_s("  \xC2\xB7  may need a font"); /* ARTICLE.md 1.1 */
         doc_text(tb, tb_n);
         slot_end(i + 1);
     }
@@ -4302,7 +4409,7 @@ static const char *const help_keys[] = {
     "F", "feeds",
     "? or F1", "this help",
     "T", "publish a test article",
-    "M", "the Terse manual",
+    "M", "the Tersenet manual",
     "Esc", "quit",
     0, "Article",
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn Space  Home End  wheel", "scroll",
@@ -5159,7 +5266,7 @@ static void test_publish(void)
     test_title[tb_n] = 0;
     test_tlen = tb_n;
     tb_n = 0;
-    tb_s("This is a test article, published from the Terse reader to check that publishing works. "
+    tb_s("This is a test article, published from the Tersenet reader to check that publishing works. "
          "It was written in frame ");
     tb_u(frame);
     if (now) {

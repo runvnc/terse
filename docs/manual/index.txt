@@ -1,16 +1,16 @@
-# The Terse manual
+# The Tersenet manual
 
-This manual describes the whole Terse system: the machine, its devices,
+This manual describes the whole Tersenet system: the Terse32 machine, its devices,
 the network that carries articles and programs, and the programs that
-come with it. It is written as Terse articles, so you can read it in the
+come with it. It is written as Tersenet articles, so you can read it in the
 reader, follow its links with Tab and Enter, and publish it to a feed.
 Each article below says what it covers.
 
 ## Start here
 
-- [What Terse is](terse:{overview}): what Terse is for, in one
+- [What Tersenet is](terse:{overview}): what Tersenet is for, in one
   paragraph.
-- [How Terse works](terse:{how-it-works}): the technical details in
+- [How Tersenet works](terse:{how-it-works}): the technical details in
   three pages: sharing articles and programs, the network, the machine
   and its frame budget, the devices, determinism and the shell.
 - [Writing a program](terse:{writing-programs}): the toolchain, the C
@@ -18,6 +18,8 @@ Each article below says what it covers.
   publishing it in a feed.
 - [Using the shell and the reader](terse:{using}): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
+- [Fonts](terse:{fonts}): the fonts the host draws with, which
+  characters they show, and adding a font for other scripts.
 - [Writing an article](terse:{writing-articles}): the article format,
   every construct shown as source and as it is shown.
 - [State, replay and conformance](terse:{state}): what a machine's state
@@ -72,5 +74,5 @@ Each article below says what it covers.
   profiles, names and search, programs, and relays that mirror each
   other.
 - [Writing a reader without the machine](terse:{native-reader}): what
-  a native reader must do to be a complete Terse client, with only the
+  a native reader must do to be a complete Tersenet client, with only the
   network and the article format.

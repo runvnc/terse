@@ -89,6 +89,15 @@ mark that starts it, control characters that are not shown), is in
 **basic text**; any other article **needs full text**.
 
 A **full-text reader** shows every character as its text toolkit can.
+The Terse reader (section 11) is one with fonts of its own: it shows
+the **full repertoire** (`SPEC.md` §terminal.text: the basic text
+repertoire and 2,100 more characters of Latin, Greek, Cyrillic,
+punctuation and common symbols; `vectors/full-text.txt`) on every host,
+and other characters only where the user added a font that has them; it
+shows the others as placeholders, by the rules for a basic reader
+below, and says so: in its timeline for a title, and when an article it
+opens holds such characters.
+
 A **basic reader** may show a character outside the repertoire as a
 **placeholder**, one per character (code point; a reader may show a
 character and the combining marks after it as one), a mark that cannot

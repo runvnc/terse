@@ -243,3 +243,37 @@ fn basic_text_lists_agree() {
         .collect();
     assert_eq!(ranges, listed);
 }
+
+/// SPEC §terminal.text counts the full repertoire block by block; the
+/// counts are those of `terse_core::text::FULL`, which
+/// `vectors/full-text.txt` lists.
+#[test]
+fn full_text_counts_agree() {
+    let root = common::workspace();
+    let spec = std::fs::read_to_string(root.join("SPEC.md")).unwrap();
+    let blocks = list_after(&spec, "lists them exactly; by block:");
+    let hex = |s: &str| u16::from_str_radix(s.trim_start_matches("U+").trim_end_matches(','), 16).unwrap();
+    let mut total = 0;
+    for line in &blocks {
+        let n: u32 = line.split_whitespace().last().unwrap().parse().unwrap();
+        let mut have = 0;
+        for w in line.split_whitespace().filter(|w| w.starts_with("U+")) {
+            let w = w.trim_end_matches(',');
+            let (lo, hi) = w.split_once('-').map_or_else(|| (hex(w), hex(w)), |(a, b)| (hex(a), hex(b)));
+            have += (lo..=hi).filter(|&c| terse_core::text::is_full(c)).count() as u32;
+        }
+        assert_eq!(have, n, "{line}");
+        total += n;
+    }
+    assert_eq!(total, terse_core::text::FULL_COUNT);
+    let vectors = std::fs::read_to_string(root.join("vectors/full-text.txt")).unwrap();
+    let ranges: Vec<(u16, u16)> = vectors
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("range "))
+        .map(|r| {
+            let (a, b) = r.split_once(' ').unwrap();
+            (u16::from_str_radix(a, 16).unwrap(), u16::from_str_radix(b, 16).unwrap())
+        })
+        .collect();
+    assert_eq!(ranges, terse_core::text::FULL);
+}

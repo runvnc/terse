@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>State, replay and conformance - the Terse manual</title>
+<title>State, replay and conformance - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Terse</a> <a href="contents.html">Manual</a></nav></header>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Manual</a></nav></header>
 <main>
 <article>
 <h1 id="state-replay-and-conformance">State, replay and conformance</h1>
-<p>A Terse machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.</p>
+<p>A Terse32 machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.</p>
 <h2 id="the-state-serialization">The state serialization</h2>
 <p>The serialization covers everything that can influence later frames or what is shown, and nothing else. It exists only between frames: after a frame ends and before the next begins (a machine just reset counts). Integers are little-endian, <code>u32</code> unsigned, <code>i32</code> two&#39;s complement; a flag is <code>00h</code> or <code>01h</code>. There is no padding. Sections follow in this order.</p>
 <div class="table"><table>
@@ -95,9 +95,9 @@
 <h2 id="the-hash">The hash</h2>
 <p>The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as 64 lowercase hex digits. Test vectors from the reference implementation, with no input:</p>
 <p><code>programs/hello/hello.terse</code> at reset (serialization 18,812 bytes), after 1 frame and after 30 frames:</p>
-<pre>2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18
-8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42
-cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d</pre>
+<pre>f82b7079daea85863f079eaba67e0ad2816b905e9a1a494e7dab587889a4c058
+2c8994cf8408449f927b16377cf44750419682c7fcc744d84748459c7ec8f9cf
+819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p>&quot;No input&quot; means no events, Unix time 0, no random bytes (so <code>random</code> gives zeros), controllers disconnected and no completions. That is what <code>terse run</code> supplies, apart from its <code>--events</code> script.</p>
 <ul>
 <li><code>terse run &lt;image&gt; --hash</code> prints the hash after the last frame.</li>
@@ -138,6 +138,6 @@ cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d</pre>
 <p>See <a href="machine.html">the machine</a> for frames and the budget, and <a href="charges.html">charges</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="native-reader.html">← Writing a reader without the machine</a><a rel="next" href="machine.html">The machine →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="native-reader.html">← Writing a reader without the machine</a><a rel="next" href="machine.html">The Terse32 machine →</a></nav></footer>
 </body>
 </html>

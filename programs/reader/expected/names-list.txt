@@ -34,11 +34,11 @@
    51  20     0   sans16 |[Carol's first post]{1}
    71  15     0   sans12 |[91a28a…9a4b3a  ·  2026-11-17 19:50  ·  18 bytes]{1}
    94  20     0   sans16 |[Emoji 😀 and tabs in a title]{2}
-  114  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes]{2}
+  114  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:40  ·  6 bytes  ·  may need a font]{2}
   137  20     0   sans16 |[A big article (over 48 KiB)]{3}
   157  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:30  ·  50.8 KiB]{3}
   180  20     0   sans16 |[A title long enough that the list has to cut it short with an ellipsis,…]{4}
-  200  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:20  ·  7 bytes]{4}
+  200  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 19:20  ·  7 bytes  ·  may need a font]{4}
   223  20     0   sans16 |[An article that is not in the store]{5}
   243  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 19:10  ·  4 bytes  ·  not downloaded]{5}
   266  20     0   sans16 |[Re: Welcome to the Terse reader]{6}
@@ -46,8 +46,8 @@
   309  20     0   sans16 |[A long article]{7}
   329  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 18:50  ·  6.0 KiB]{7}
   352  20     0   sans16 |[日本語の記事：テスト]{8}
-  372  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 18:40  ·  41 bytes]{8}
+  372  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 18:40  ·  41 bytes  ·  may need a font]{8}
   395  20     0   sans16 |[Welcome to the Terse reader]{9}
   415  15     0   sans12 |[Alice (66be7e…0c473a)  ·  2026-11-17 18:30  ·  53 bytes]{9}
   438  20     0   sans16 |[Tea in three languages: お茶, الشاي]{10}
-  458  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 18:20  ·  1.2 KiB]{10}
+  458  15     0   sans12 |[Bobby (0b513a…e39f2d)  ·  2026-11-17 18:20  ·  1.2 KiB  ·  may need a font]{10}

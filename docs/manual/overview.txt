@@ -1,6 +1,6 @@
-# What Terse is
+# What Tersenet is
 
-First and foremost, Terse is a way to share information: formatted text,
+First and foremost, Tersenet is a way to share information: formatted text,
 with diagrams where they help, without the bloat of web browsers
 (JavaScript, ads, tracking) and without the centralised control of
 websites like Reddit. Secondly, and completely optionally, it can be

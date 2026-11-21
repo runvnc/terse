@@ -91,17 +91,17 @@
 
 
 -- machine 3 running 382 176 196 147 fetch --
- Terse · fetch
+ Tersenet · fetch
 
-Getting blob 471960666a1299b8… (message.txt)
+Getting blob ee2c89094a2da2d7… (message.txt)
 fetching… status 01 done
-size: 303 bytes. Text:
+size: 348 bytes. Text:
 
 Hello from a blob! These bytes were fetched by their BLAKE3-256 ID and
 checked by the host before the program saw them.
 
-  日本語: こんにちは、世界   中文: 你好，世界   한국어: 안녕하세요
-  Full width: ＴＥＲＳＥ   Box drawing: ┌──┬──┐ └──┴──┘
+  Ελληνικά: Γειά σου, κόσμε   Русский: Привет, мир   Čeština: Ahoj, světe
+  Symbols: ← ↑ → ↓ ∀ ∈ ≤ ≠ ♥ ★ ✓   Box drawing: ┌──┬──┐ └──┴──┘
 
 Putting 256 bytes built in RAM… status 01 done
 blob ID: 4a495ba42461748e…
@@ -122,9 +122,9 @@ Esc: exit.
 
 
 -- machine 4 running 381 329 197 148 hello --
- Terse · hello
+ Tersenet · hello
 
-  héllo, wörld — 你好
+  héllo, wörld — привет, мир
   Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
   Type to echo text below. Enter: new line, Backspace, Esc: exit.
 

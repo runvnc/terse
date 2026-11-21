@@ -30,6 +30,7 @@ pub mod blob;
 pub mod builtin;
 pub mod entry;
 pub mod feeds;
+pub mod fontlist;
 pub mod identity;
 pub mod local;
 pub mod manual;

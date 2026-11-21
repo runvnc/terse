@@ -134,6 +134,15 @@ text's bytes (`hex`) and `basic`: `yes` if the text is in basic text
 starts it, and control characters, are not shown; malformed UTF-8 is
 shown as U+FFFD), `no` if it needs full text.
 
+full-text.txt (SPEC.md §terminal.text, ARTICLE.md section 1.1)
+---------------------------------------------------------------
+The full repertoire, which a Terse host with device 10 (full text)
+draws, and a full-text reader shows, with its built-in fonts: one
+record `repertoire full-text` in the form of basic-text.txt, then the
+same texts with `full`: `yes` if every character the text shows is in
+the full repertoire, `no` if it holds one that only a font the user
+added can show.
+
 articles/ (ARTICLE.md)
 ----------------------
 An article corpus: each `<name>.txt` is an article (bytes as they are,
