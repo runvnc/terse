@@ -2259,7 +2259,7 @@ fn reading_profile() {
     run.press("esc");
     run.press("m");
     run.frames(6);
-    assert!(run.view().contains("sans26b |The Tersenet manual\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |Tersenet\n"), "{}", run.view());
     let (worst, waited) = run.busiest();
     assert!(waited, "every frame ended in wait_frame ({worst} units)");
 }
