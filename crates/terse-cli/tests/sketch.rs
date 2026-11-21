@@ -332,11 +332,11 @@ fn fills_the_data() {
     assert_eq!(run.lines().len(), 2047);
     run.frames(1);
     let used = run.used.clone();
-    // Loading it takes a few frames (1,024 points a frame).
+    // Loading it takes a few frames (512 points a frame).
     let mut again = Run::with("", Consent::Deny, Some(&run.data()), |_| {});
     again.frames(3);
     assert!(again.lines().len() < 2047);
-    again.frames(2);
+    again.frames(4);
     assert_eq!(again.lines(), run.lines());
     report("fills the data (drawing)", &used);
     report("fills the data (loading)", &again.used);
@@ -378,10 +378,62 @@ fn loading_caps_the_list() {
     assert_eq!(d.len(), 8190);
     Records::in_data_dir(data.path()).save(&owner(), b"drawing", &d).unwrap();
     let mut run = Run::with("", Consent::Deny, Some(data.path()), |_| {});
-    run.frames(6);
+    run.frames(10);
     assert_eq!(run.lines().len(), 1090);
-    assert_eq!(run.status(), "");
+    assert_eq!(run.status(), "Full: undo or clear");
     report("loading a full list", &run.used);
+}
+
+/// What the list asks of the host, in either style, is within the ink cap
+/// (SPEC §vector.ink-cap): every stroke is drawn, the colour disc too.
+fn within_the_ink_cap(run: &Run) -> u64 {
+    let list = run.m.vector_list();
+    for outlined in [false, true] {
+        let (fill, stroke) = terse_core::vector::work(list, outlined);
+        assert!(fill + stroke <= terse_core::vector::INK_CAP, "outlined {outlined}: {}", fill + stroke);
+    }
+    run.lines();
+    let (fill, stroke) = terse_core::vector::work(list, true);
+    fill + stroke
+}
+
+/// Fast strokes across the screen fill the ink cap long before the list:
+/// sketch says "Full" before the host would leave its last strokes
+/// undrawn, and undo makes room again.
+#[test]
+fn fast_strokes_stop_at_the_ink_cap() {
+    let mut script = String::from("2 pointer 10 10 1\n");
+    for i in 0..400u32 {
+        script += &format!("{} pointer {} {} 1\n", 3 + i / 10, if i % 2 == 0 { 630 } else { 10 }, 10 + i % 460);
+    }
+    script += "45 pointer 10 10 0\n";
+    let mut run = Run::new(&script);
+    run.frames(46);
+    assert_eq!(run.status(), "Full: undo or clear");
+    let ink = within_the_ink_cap(&run);
+    assert!(ink > terse_core::vector::INK_CAP - 4000, "{ink}");
+    assert!(run.lines().len() < 100, "{}", run.lines().len());
+    report("fast strokes", &run.used);
+}
+
+/// A drawing saved before sketch counted ink, which the host would cut:
+/// the strokes past the cap are dropped when it is loaded, and it says
+/// so.
+#[test]
+fn loading_caps_the_ink() {
+    let data = tempfile::tempdir().unwrap();
+    let mut d = Vec::new();
+    for i in 0..40u16 {
+        d.extend(stroke((i % 6) as u8, &[(0, i * 10), (639, i * 10 + 5), (0, i * 10 + 9)]));
+    }
+    Records::in_data_dir(data.path()).save(&owner(), b"drawing", &d).unwrap();
+    let mut run = Run::with("", Consent::Deny, Some(data.path()), |_| {});
+    run.frames(4);
+    assert_eq!(run.status(), "Full: undo or clear");
+    within_the_ink_cap(&run);
+    // Whole strokes: 3 lines each (a dot, then two across the screen).
+    let n = run.lines().len();
+    assert!(n % 3 == 0 && n < 40 * 3, "{n}");
 }
 
 fn report(what: &str, used: &[u64]) {

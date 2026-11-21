@@ -260,7 +260,14 @@ impl fmt::Display for Primitive {
 /// mode 0 draws it: up to the shape that the ink cap (SPEC §vector.ink-cap)
 /// stops.
 pub fn decode(list: &[u8]) -> Decoder<'_> {
-    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), ink: Ink::default() }
+    decode_within(list, INK_CAP)
+}
+
+/// [`decode`] with the ink cap lowered to `cap` (at most [`INK_CAP`]): a
+/// machine's share of a system's ink (SPEC §machines.ink).
+pub fn decode_within(list: &[u8], cap: u64) -> Decoder<'_> {
+    let ink = Ink { off: false, total: 0, cap: cap.min(INK_CAP) };
+    Decoder { list, at: 0, rgba: [255; 4], width: 16, origin: (0, 0), point: (0, 0), ink }
 }
 
 /// Decodes a display list without the ink cap (for outlines, where
@@ -276,10 +283,12 @@ struct Ink {
     off: bool,
     /// Ink of the shapes drawn so far.
     total: u64,
+    /// The cap: [`INK_CAP`], or less in a system (SPEC §machines.ink).
+    cap: u64,
 }
 
 impl Ink {
-    const OFF: Ink = Ink { off: true, total: 0 };
+    const OFF: Ink = Ink { off: true, total: 0, cap: INK_CAP };
 
     /// Whether `p` is drawn, counting it if so.
     fn admit(&mut self, p: &Primitive) -> bool {
@@ -287,7 +296,7 @@ impl Ink {
             return true;
         }
         let ink = ink(p);
-        if self.total + ink > INK_CAP {
+        if self.total + ink > self.cap {
             return false;
         }
         self.total += ink;
@@ -465,7 +474,20 @@ pub fn dump(list: &[u8]) -> String {
 /// through. Every host draws phosphor shapes from this, so they agree on
 /// which outlines a fill becomes.
 pub fn decode_outlines(list: &[u8]) -> Outlines<'_> {
-    Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4, ink: Ink::default(), done: false }
+    decode_outlines_within(list, INK_CAP)
+}
+
+/// [`decode_outlines`] with the ink cap lowered to `cap` (at most
+/// [`INK_CAP`]).
+pub fn decode_outlines_within(list: &[u8], cap: u64) -> Outlines<'_> {
+    let ink = Ink { off: false, total: 0, cap: cap.min(INK_CAP) };
+    Outlines { decoder: decode_uncapped(list), queued: [None; 4], next: 4, ink, done: false }
+}
+
+/// The ink the shapes of `list` that are drawn within `cap` count (SPEC
+/// §vector.ink-cap): as outlines when `outlined`.
+pub fn drawn_ink(list: &[u8], outlined: bool, cap: u64) -> u64 {
+    if outlined { decode_outlines_within(list, cap).map(|p| ink(&p)).sum() } else { decode_within(list, cap).map(|p| ink(&p)).sum() }
 }
 
 /// What `list` asks of a host before the ink cap (SPEC §vector.ink-cap),

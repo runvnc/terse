@@ -402,6 +402,19 @@ void vec_rect(int16_t x, int16_t y);
 void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
 void vec_end(void);
 
+/* The ink cap (SPEC §vector.ink-cap): what one list may draw, in square
+ * screen units. A shape that would take a list's total above it is not
+ * drawn, nor anything after it. These count ink as the spec does, so a
+ * program can stay under the cap (coordinates resolved, in sixteenths;
+ * w the width in effect, 1-255): a line's or circle outline's, a filled
+ * shape's box (x0, y0)-(x1, y1), and a whole list's (`outlined`: in the
+ * phosphor style or with fill off, where filled shapes are outlines). */
+#define VEC_INK_CAP 230400u
+uint32_t vec_line_ink(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t w);
+uint32_t vec_circle_ink(int32_t x, int32_t y, uint32_t r, uint32_t w);
+uint32_t vec_fill_ink(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
+uint32_t vec_list_ink(const uint8_t *list, uint32_t len, int outlined);
+
 /* Submits `len` bytes at `list` (which must be in RAM); returns VEC_DONE or
  * VEC_REJECTED. Costs 1 unit per 4 bytes. */
 static inline uint8_t vec_submit(const void *list, uint32_t len) { return terse_call(CALL_VEC_SUBMIT, (uint32_t)list, len, 0); }

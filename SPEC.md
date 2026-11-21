@@ -1150,8 +1150,10 @@ quickly at first, then with a dim tail multiplied by persistence ÷ 256
 each frame, down to black (with persistence 0, no tail). Something that
 stays put grows no brighter than about its own light, and a shape that
 keeps its structure and only moves leaves a continuous smear rather than
-separate copies. A program may be written with this look in mind, but its
-picture should not depend on it: on another host it may be plain lines.
+separate copies. A frame whose light passes a quarter of a screen of ink
+sheds the look step by step, down to plain lines (`PERFORMANCE.md` §4).
+A program may be written with this look in mind, but its picture should
+not depend on it: on another host it may be plain lines.
 
 ### §vector.determinism Determinism
 
@@ -1258,7 +1260,10 @@ among them (§vector3d.caps); the page's figure caps and its layout outside
 the frames (§page.layout); the sound device's 16 voices (§sound). They are
 set so that the most a machine can ask of the reference host in one frame,
 with every device at its cap at once, takes it no more than one frame's
-time on one thread (`PERFORMANCE.md` R10, with how it is measured). A
+time on one thread (`PERFORMANCE.md` R10, with how it is measured). In a
+system the machines the shell shows share one more budget, the system
+ink (§machines.ink), so a whole system asks about what two machines can
+(`PERFORMANCE.md` R12). A
 host may draw more than a device requires (§vector.presentation's look,
 glow and afterglow, fonts), but should shed that extra work rather than
 let it make a frame slow.
@@ -1332,10 +1337,6 @@ versions.
 - Combining marks and complex scripts in the terminal (with full text,
   §terminal.text).
 - Device 5.
-- A bound on what a system of machines asks of a host together: each
-  machine's lists are capped on their own (§vector.ink-cap,
-  §vector3d.caps), so a shell and 8 machines whose pictures all cover the
-  screen can ask 9 times one machine's worst (`PERFORMANCE.md` R10).
 
 Each device document lists what is not yet specified for its device.
 

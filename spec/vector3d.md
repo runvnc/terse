@@ -257,7 +257,7 @@ Surface's are those of its panel), the faces × segments cap the work of
 hiding; together, measured on the reference host, a list at its caps
 costs about a quarter of a frame to draw (`PERFORMANCE.md` R10). Screens
 are the shell's view of other machines, each of which has its own caps,
-and are not counted as ink (§machines.screens).
+and are not counted as the shell's ink: the system ink counts them (§machines.ink).
 
 | Faces | Segments at most |
 |---|---|

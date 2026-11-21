@@ -427,6 +427,105 @@ void vec_tri(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
     }
 }
 
+/* Ink (SPEC §vector.ink-cap): a stroke's (L + w) x (w + 48), or its box
+ * grown by (w + 48) / 2 and clipped to the screen if smaller, / 256 up. */
+static uint32_t stroke_ink(int32_t lx, int32_t ly, int32_t hx, int32_t hy, uint32_t length, uint32_t w)
+{
+    uint32_t stroke = (length + w) * (w + 48);
+    int32_t g = (int32_t)(w + 48) / 2;
+    int32_t x0 = lx - g < 0 ? 0 : lx - g, y0 = ly - g < 0 ? 0 : ly - g;
+    int32_t x1 = hx + g > VEC_SCREEN_W ? VEC_SCREEN_W : hx + g, y1 = hy + g > VEC_SCREEN_H ? VEC_SCREEN_H : hy + g;
+    uint32_t box = x1 > x0 && y1 > y0 ? (uint32_t)(x1 - x0) * (uint32_t)(y1 - y0) : 0;
+    return ((stroke < box ? stroke : box) + 255) / 256;
+}
+
+uint32_t vec_line_ink(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t w)
+{
+    int32_t dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y1 - y0 : y0 - y1;
+    return stroke_ink(x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1, x0 < x1 ? x1 : x0, y0 < y1 ? y1 : y0, (uint32_t)(dx + dy), w);
+}
+
+uint32_t vec_circle_ink(int32_t x, int32_t y, uint32_t r, uint32_t w)
+{
+    return stroke_ink(x - (int32_t)r, y - (int32_t)r, x + (int32_t)r, y + (int32_t)r, 8 * r, w);
+}
+
+uint32_t vec_fill_ink(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    int32_t lx = x0 < x1 ? x0 : x1, hx = x0 < x1 ? x1 : x0, ly = y0 < y1 ? y0 : y1, hy = y0 < y1 ? y1 : y0;
+    if (lx < 0)
+        lx = 0;
+    if (ly < 0)
+        ly = 0;
+    if (hx > VEC_SCREEN_W)
+        hx = VEC_SCREEN_W;
+    if (hy > VEC_SCREEN_H)
+        hy = VEC_SCREEN_H;
+    return hx > lx && hy > ly ? ((uint32_t)(hx - lx) * (uint32_t)(hy - ly) + 511) / 512 : 0;
+}
+
+static int32_t min3(int32_t a, int32_t b, int32_t c) { return a < b ? (a < c ? a : c) : (b < c ? b : c); }
+static int32_t max3(int32_t a, int32_t b, int32_t c) { return a > b ? (a > c ? a : c) : (b > c ? b : c); }
+
+uint32_t vec_list_ink(const uint8_t *list, uint32_t len, int outlined)
+{
+    static const uint8_t operands[10] = { 0, 4, 1, 4, 4, 4, 2, 2, 4, 8 };
+    uint32_t at = 0, total = 0, w = 16;
+    uint16_t ox = 0, oy = 0;
+    int32_t px = 0, py = 0;
+    while (at < len) {
+        uint8_t op = list[at];
+        if (op == VEC_OP_END || op > VEC_OP_TRIANGLE || at + 1 + operands[op] > len)
+            break;
+        const uint8_t *o = list + at + 1;
+        at += 1 + operands[op];
+        /* Coordinate pair i, the origin added with 16-bit wrap. */
+#define X(i) ((int32_t)(int16_t)(uint16_t)((o[4 * (i)] | o[4 * (i) + 1] << 8) + ox))
+#define Y(i) ((int32_t)(int16_t)(uint16_t)((o[4 * (i) + 2] | o[4 * (i) + 3] << 8) + oy))
+        uint32_t r = o[0] | o[1] << 8;
+        switch (op) {
+        case VEC_OP_WIDTH:
+            w = o[0] ? o[0] : 1;
+            break;
+        case VEC_OP_ORIGIN:
+            ox = o[0] | o[1] << 8;
+            oy = o[2] | o[3] << 8;
+            break;
+        case VEC_OP_MOVE:
+            px = X(0);
+            py = Y(0);
+            break;
+        case VEC_OP_LINE:
+            total += vec_line_ink(px, py, X(0), Y(0), w);
+            px = X(0);
+            py = Y(0);
+            break;
+        case VEC_OP_CIRCLE:
+            total += vec_circle_ink(px, py, r, w);
+            break;
+        case VEC_OP_DISC:
+            total += outlined ? vec_circle_ink(px, py, r, w) : vec_fill_ink(px - (int32_t)r, py - (int32_t)r, px + (int32_t)r, py + (int32_t)r);
+            break;
+        case VEC_OP_RECT:
+            if (outlined)
+                total += vec_line_ink(px, py, X(0), py, w) + vec_line_ink(X(0), py, X(0), Y(0), w) + vec_line_ink(X(0), Y(0), px, Y(0), w)
+                    + vec_line_ink(px, Y(0), px, py, w);
+            else
+                total += vec_fill_ink(px, py, X(0), Y(0));
+            break;
+        case VEC_OP_TRIANGLE:
+            if (outlined)
+                total += vec_line_ink(px, py, X(0), Y(0), w) + vec_line_ink(X(0), Y(0), X(1), Y(1), w) + vec_line_ink(X(1), Y(1), px, py, w);
+            else
+                total += vec_fill_ink(min3(px, X(0), X(1)), min3(py, Y(0), Y(1)), max3(px, X(0), X(1)), max3(py, Y(0), Y(1)));
+            break;
+        }
+#undef X
+#undef Y
+    }
+    return total;
+}
+
 /* Device 9 display-list builder, packed the same way. */
 uint8_t *v3_ptr, *v3_limit;
 uint8_t v3_overflow;

@@ -300,6 +300,24 @@ impl HaloChain {
         HaloChain { passes, halo: levels[0][3].clone() }
     }
 
+    /// Records a pass that leaves no halo: the sum the composite samples
+    /// cleared.
+    pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("halo shed"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.halo,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+
     /// Records the passes.
     pub fn encode(&self, pipes: &HaloPipelines, encoder: &mut wgpu::CommandEncoder) {
         for p in &self.passes {

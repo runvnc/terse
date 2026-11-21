@@ -573,6 +573,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     let mut audio = AudioOut::new(&args);
     // --work: the most each machine's displays asked of the host in a frame.
     let mut work: std::collections::BTreeMap<String, terse_core::worst::Work> = Default::default();
+    let (mut system_ink, mut system_cut, mut frame_no) = ((0u64, 0u32, 0usize), 0u32, 0u32);
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
         let start = std::time::Instant::now();
         headless.frame(&mut system);
@@ -589,6 +590,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if let Some(m) = &c.machine {
                     note(format!("{h} {}", c.title), m, 0);
                 }
+            }
+            // SPEC §machines.ink: the system ink the machines used.
+            if system.is_system() {
+                let s = system.shares();
+                frame_no += 1;
+                if s.used > system_ink.0 {
+                    system_ink = (s.used, frame_no, s.shares.len());
+                }
+                system_cut += s.cut() as u32;
             }
         }
         stopped = system.stopped();
@@ -613,6 +623,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
     audio.finish()?;
+    if args.has("--work") && system.is_system() {
+        let (used, at, n) = system_ink;
+        eprintln!(
+            "terse: work: system ink: at most {used} of {} (frame {at}, {n} machines shown); frames with a picture or list cut: {system_cut}",
+            terse_core::system_ink::SYSTEM_INK
+        );
+    }
     for (name, w) in &work {
         eprintln!("terse: work: {name}: {w}");
     }

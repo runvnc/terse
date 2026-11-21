@@ -9,6 +9,12 @@
 //! over everything. The scene, the panels and their pyramids are
 //! terse-host's (`soft::scene`, `soft::panel`); the frame is XRGB8888
 //! (softbuffer's and DRM's format).
+//!
+//! Not yet here: the system ink (SPEC §machines.ink). Each machine is
+//! drawn within its own caps only. The core holds the pictures and the 3D
+//! lists but not the 2D lists, which live in the vector driver; to share
+//! the system ink the driver must publish its list's ink at each cap (or
+//! the list) and take the caps it is given, as a property like `core.eye`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -373,7 +379,7 @@ impl Compositor {
         // With Screens in effect the shell's 3D lines are drawn over the
         // panels (SPEC §machines.screens); with its own Surfaces, over them (SPEC §vector3d.presentation).
         let scene = system.scene(eye);
-        let layers: Option<SceneLayers> = scene_layers(system, eye).or_else(|| surface_layers(system.shell(), eye));
+        let layers: Option<SceneLayers> = scene_layers(system, eye).or_else(|| surface_layers(system.shell(), eye, terse_core::vector3::INK_CAP));
         let view = scene.as_ref().map_or_else(Vec::new, |s| view_bytes(&s.view));
         // The properties the drivers draw with: the eye, the view, a fault.
         let shell = system.shell_mut();
@@ -392,7 +398,7 @@ impl Compositor {
             let serial = child.serial;
             let Some(machine) = &mut child.machine else { continue };
             let rect = picture_rect(shell_rect, *p);
-            let own = surface_layers(machine, eye);
+            let own = surface_layers(machine, eye, terse_core::vector3::INK_CAP);
             let st = status(machine);
             let d = machine.devices_mut();
             d.set_property(property::EYE, &eye_bytes(eye))?;
@@ -415,7 +421,7 @@ impl Compositor {
             let current = self.children.get(&serial).filter(|c| c.panel.is_some()).map(|c| c.screen.cell);
             let cw = panel_cell_width(panel_width_px(p, eye, shell_rect), cap, current);
             let size = (cw * COLS as u32, cw * COLS as u32 * 3 / 4);
-            let own = surface_layers(machine, eye);
+            let own = surface_layers(machine, eye, terse_core::vector3::INK_CAP);
             let st = status(machine);
             let d = machine.devices_mut();
             d.set_property(property::EYE, &eye_bytes(eye))?;

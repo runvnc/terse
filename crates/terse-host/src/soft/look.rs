@@ -93,7 +93,7 @@ impl Renderer {
         let mut v = Vector::default();
         v.submit(list);
         v.set_style(phosphor as u32);
-        let scene = VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) };
+        let scene = VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: crate::display::Caps::FULL };
         match self {
             Renderer::Soft => {
                 let pool = Pool::new(4);
@@ -425,13 +425,13 @@ fn tube_presets_and_glass_checks() {
         let xy = r.draw(g(), size, &blank(), &list, true, Look::default());
         let c = at(&xy, 400);
         assert!(c[0] > 150 && c[1] < 40 && c[2] < 40, "{}: colour tube {c:?}", r.name());
-        let p31 = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::P31, vignette: false });
+        let p31 = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::P31, ..Look::default() });
         let c = at(&p31, 400);
         assert!(c[1] > 120 && c[1] > c[0] + 40 && c[1] > c[2] + 40, "{}: P31 {c:?}", r.name());
-        let amber = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Amber, vignette: false });
+        let amber = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Amber, ..Look::default() });
         let c = at(&amber, 400);
         assert!(c[0] > c[1] && c[1] > c[2], "{}: amber {c:?}", r.name());
-        let glass = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Xy, vignette: true });
+        let glass = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Xy, vignette: true, ..Look::default() });
         let (centre, corner) = (at(&glass, 400), at(&glass, 60));
         let plain = at(&xy, 400);
         assert!((0..3).all(|i| centre[i].abs_diff(plain[i]) <= 1), "{}: the centre {centre:?} {plain:?}", r.name());

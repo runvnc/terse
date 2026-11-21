@@ -326,6 +326,60 @@ smoothing) is presentation (§terminal.presentation), and so are the resolution 
 panel's picture is drawn at, how it is filtered, and the smoothing of a
 panel's edges.
 
+## §machines.ink The system ink
+
+Each machine's lists are capped on their own (§vector.ink-cap,
+§vector3d.caps). In a system the machines the shell shows also share one
+budget, the **system ink**: 691,200 square units of the shell's screen,
+what one machine shown over the whole screen may count (its picture,
+640 × 480, and both its lists at their caps). So a system can ask of a
+host about what two machines can: the shell's, and the machines' together.
+The shell's own screen is not counted: it is drawn as a single machine's,
+within its own caps, whatever the machines ask, so no machine can take
+from the picture the user needs to regain control.
+
+The host counts, for what it shows after each of the shell's frames
+(§machines.screens), from the machines' lists and device 8's records
+alone:
+
+1. **The pictures**, in increasing handle order. A machine shown flat
+   counts its picture's area, pw × ph. A machine shown as a panel counts
+   the area of the box its four corners make on the glass, moved by the
+   view where it is (§machines.calls `face`, at its progress), seen from
+   the reference eye and clipped to the screen, rounded up; 640 × 480 if
+   a corner is not in front of the near plane. A picture whose area would
+   take the total above the system ink is a **plate**: nothing of its
+   machine's screen is drawn. A flat plate shows a plain rectangle of a
+   colour the host chooses; a panel that is a plate is not drawn (the
+   shell's screen shows there, and it still hides the shell's lines as a
+   face does). The count goes on with the next picture.
+2. **The lists**, in the same order, of each machine whose picture is not
+   a plate, each at its picture's **scale**, n 640ths: n = pw for a flat
+   picture; for a panel, the larger of its box's width and 4/3 of its
+   height on the glass before clipping, rounded up, at most 640 (640 if a
+   corner is not in front of the near plane). With R the system ink not
+   yet counted, its 2D list is drawn as §vector.ink-cap says with the cap
+   the smaller of 230,400 and ⌊R × 640 / n⌋, and counts ⌈k × n / 640⌉,
+   k being the ink of what it drew. Then its 3D list is drawn as
+   §vector3d.caps says with its ink cap the smaller of 153,600 and
+   ⌊R × 640 / n⌋ (R now less what the 2D list counted), and counts the
+   lesser of ⌈k × n / 640⌉ and R.
+
+A list counts its ink times the scale, not times the scale squared: a
+shape drawn smaller covers fewer pixels, but the edge a host smooths
+stays as wide, so the work of a thin line shrinks with its length only.
+A machine with no picture (none, or a rectangle that shows none and no
+Screen in effect) is not drawn and counts nothing.
+
+What the system ink cuts is not machine state: no machine can observe
+it, the machine runs exactly as if it were shown alone, and input is
+routed by the pictures and panels as §machines.input says, plates
+included. The counts of a panel and of a 3D list are evaluated after a
+floating-point projection, so hosts may differ at the boundary by
+rounding, as §vector3d.caps says. Measured on the reference host
+(`PERFORMANCE.md` R12), the bundled shell's layouts with the bundled
+programs count at most about 60% of the system ink.
+
 ## §machines.input Input
 
 The host's input events (§events) are in the shell's screen units. In each
@@ -506,7 +560,9 @@ Provisional values (§provisional):
 - the number of machines a shell can start, 8, and of its snapshot slots,
   16 (§machines.shell, §machines.snapshots); program names of 48 bytes (§machines.calls); the
   longest view motion, 600 frames, and the view's progress steps, 4,096
-  (§machines.calls `face`).
+  (§machines.calls `face`);
+- the system ink, 691,200 square units, and how it is counted: pictures'
+  areas first, then lists' ink times their scale (§machines.ink).
 
 ## §machines.unspecified Not yet specified
 

@@ -954,3 +954,74 @@ fn gallery_budget() {
     assert!(all.busiest < terse_core::BUDGET_PER_FRAME as u64 / 4, "{}", all.describe());
     assert!(gallery.median < terse_core::BUDGET_PER_FRAME as u64 / 50, "{}", gallery.describe());
 }
+
+/// Starts launcher entries `entries` (0 the first) one after another
+/// from frame 2, each 10 frames after the one before; returns the script
+/// and the frame after the last.
+fn start_script(entries: &[usize]) -> (String, u32) {
+    let mut out = String::new();
+    let mut f = 2;
+    for (k, &e) in entries.iter().enumerate() {
+        if k > 0 {
+            out += &format!("{f} home\n");
+            out += &format!("{} press up\n", f + 1).repeat(14);
+        }
+        out += &format!("{} press down\n", f + 2).repeat(e);
+        out += &format!("{} press enter\n", f + 3);
+        f += 10;
+    }
+    (out, f)
+}
+
+/// SPEC §machines.ink: the bundled shell's layouts with the bundled
+/// programs (zoom, master, grid, the gallery with a machine faced and
+/// back) never come near the system ink: no picture is a plate and no
+/// list is cut. Prints each phase's peak (`--nocapture`).
+#[test]
+fn the_layouts_stay_within_the_system_ink() {
+    for (name, entries) in [("the six programs", &[0usize, 2, 3, 4, 5, 6][..]), ("fetch, three sparks, four holo", &[2, 2, 2, 2, 6, 6, 6, 6])] {
+        let (mut script, at) = start_script(entries);
+        // From master: L to grid, to the gallery (faced and back), to zoom, to master.
+        let phases = [
+            ("master", at),
+            ("grid", at + 60),
+            ("gallery", at + 120),
+            ("gallery faced", at + 180),
+            ("gallery back", at + 240),
+            ("zoom", at + 300),
+            ("master again", at + 360),
+        ];
+        script += &format!(
+            "{} home\n{} press l\n{} press l\n{} press enter\n{} home\n{} press l\n{} press l\n",
+            at,
+            at + 60,
+            at + 120,
+            at + 180,
+            at + 240,
+            at + 300,
+            at + 360
+        );
+        let mut s = Sys::new(&script, Setup::default());
+        s.run_until(at);
+        let titles: Vec<String> = s.system.children().map(|(_, c)| c.title.clone()).collect();
+        for (k, (phase, from)) in phases.iter().enumerate() {
+            let to = phases.get(k + 1).map_or(from + 60, |p| p.1);
+            let mut peak = (0u64, 0usize);
+            while s.system.shell().frame() < to {
+                s.run(1);
+                let shares = s.system.shares();
+                assert!(!shares.cut(), "{name}, {phase}: {shares:?}");
+                if shares.used > peak.0 {
+                    peak = (shares.used, shares.shares.len());
+                }
+            }
+            eprintln!(
+                "system ink, {name} ({}), {phase}: peak {} of {} ({} shown)",
+                titles.join(", "),
+                peak.0,
+                terse_core::system_ink::SYSTEM_INK,
+                peak.1
+            );
+        }
+    }
+}

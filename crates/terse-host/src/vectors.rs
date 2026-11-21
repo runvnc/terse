@@ -707,6 +707,13 @@ impl VectorLayer {
     /// With `advance` false only the beam is redrawn and nothing fades.
     /// `fast_decay` is the fast component's factor per frame.
     #[allow(clippy::too_many_arguments)]
+    /// How much of the phosphor look the shapes uploaded now shed
+    /// (`phosphor::shed_level`).
+    pub fn shed_level(&self, look: &phosphor::Look) -> u8 {
+        phosphor::shed_level(look, &self.shapes)
+    }
+
+    /// `shed`: from `phosphor::SHED_SMEAR` the moving shapes leave no smear.
     pub fn phosphor_frame(
         &mut self,
         queue: &wgpu::Queue,
@@ -717,6 +724,7 @@ impl VectorLayer {
         fast_decay: f32,
         clear: bool,
         advance: bool,
+        shed: u8,
     ) {
         let rect = (0.0, 0.0, size.0 as f32, size.1 as f32);
         queue.write_buffer(&self.phosphor_params, 0, &params_bytes(size, rect, true, false));
@@ -749,7 +757,7 @@ impl VectorLayer {
         }
         if trails {
             let smear = !clear && self.opcodes == self.prev_opcodes;
-            phosphor::deposits(&self.prev_shapes, &self.shapes, smear, fast_decay, slow_decay, &mut self.deposits);
+            phosphor::deposits(&self.prev_shapes, &self.shapes, smear, shed, fast_decay, slow_decay, &mut self.deposits);
             self.scratch.clear();
             for d in &self.deposits {
                 instance(&d.shape, [d.fast, d.slow], self.dwell[d.index], &mut self.scratch);

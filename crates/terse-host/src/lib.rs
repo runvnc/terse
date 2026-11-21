@@ -115,6 +115,10 @@ const USAGE: &str = "usage:
   display style (SPEC §vector.phosphor) is drawn: a colour XY monitor with each line in its colour
   (xy, the default), a green P31 oscilloscope tube, an amber tube or the Vectrex's white tube (the
   monochrome ones show colours as brightness), and with --vignette a glass darker towards the corners.
+  The phosphor look sheds its costliest parts when a frame draws much (more than a quarter of a
+  screen of ink: no smear; a third: no halo; two fifths: plain lines, as SPEC §vector.phosphor
+  allows), and in a window also after 3 frames in a row that took longer than a frame to draw (one
+  level more each time; one less after 120 quick frames); --no-shed keeps the whole look always.
   With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
   built-in programs (reader, sparks, fetch, hello, sketch, holo, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
@@ -207,6 +211,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 look.preset = phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
             }
             "--vignette" => look.vignette = true,
+            "--no-shed" => look.no_shed = true,
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
                 warmup = Some(v.parse::<u64>().map_err(|_| format!("bad --warmup {v}"))?);
@@ -512,6 +517,24 @@ fn displayed_terminal(machine: &Machine) -> std::borrow::Cow<'_, Terminal> {
     t.write(format!(" fault: {fault}").as_bytes());
     t.command(0x06);
     Cow::Owned(t)
+}
+
+/// The machines' shares of the system's ink (SPEC §machines.ink).
+/// `TERSE_SYSTEM_INK=off` draws every machine within its own caps only,
+/// as before the rule (for measuring what the rule bounds; not
+/// conforming).
+fn system_shares(system: &System) -> terse_core::system_ink::Shares {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("TERSE_SYSTEM_INK").is_ok_and(|v| v == "off")) {
+        return Default::default();
+    }
+    system.shares()
+}
+
+/// The terminal a machine the shell shows draws: [`displayed_terminal`], or
+/// a blank one when its picture is a plate (SPEC §machines.ink).
+fn shown_terminal<'a>(machine: &'a Machine, share: Option<&terse_core::system_ink::Share>) -> std::borrow::Cow<'a, Terminal> {
+    if share.is_some_and(|s| s.plate) { std::borrow::Cow::Owned(Terminal::default()) } else { displayed_terminal(machine) }
 }
 
 #[cfg(feature = "window")]

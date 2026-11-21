@@ -144,6 +144,84 @@ pub const SMEAR_SPACING: i32 = 16;
 /// programs draw (holo's city, about 51,000), so that the look that
 /// multiplies the work of drawing is shed when a list is heavy.
 pub const SMEAR_INK_MAX: u64 = 640 * 480 / 4;
+/// Above this much ink (a third of a screen) a frame's light also
+/// has no halo, above [`PLAIN_INK_MAX`] (two fifths) its lines are drawn
+/// plain: flat strokes of their width, as the clean style draws them, in
+/// their colours on the black screen (SPEC §vector.phosphor: a host that
+/// draws plain lines conforms). The beam's Gaussian, whose skirt reaches
+/// [`BEAM_REACH`] σ beyond a wide line, is most of the look's cost.
+pub const HALO_INK_MAX: u64 = 640 * 480 / 3;
+pub const PLAIN_INK_MAX: u64 = 640 * 480 * 2 / 5;
+
+/// How much of the phosphor look a frame sheds (presentation only, never
+/// machine state): 0 the whole look, [`SHED_SMEAR`] no smear,
+/// [`SHED_HALO`] no halo either, [`SHED_PLAIN`] plain lines. Decided by
+/// the ink of the frame's shapes (SPEC §vector.ink-cap, as the caps count
+/// it: the same picture on every run), and never below `look.floor`.
+pub const SHED_SMEAR: u8 = 1;
+pub const SHED_HALO: u8 = 2;
+pub const SHED_PLAIN: u8 = 3;
+
+/// A window's governor of the look (presentation only, never machine
+/// state; off for `--screenshot`, `--bench-render` and `--no-shed`): after
+/// [`LATE_FRAMES`] frames in a row that took longer than a frame to draw
+/// and present, the least shedding level ([`Look::floor`]) goes up one;
+/// after [`GOOD_FRAMES`] in a row that took less than half a frame, down
+/// one. The gap between the two keeps it from flickering.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Governor {
+    pub floor: u8,
+    late: u32,
+    good: u32,
+}
+
+pub const LATE_FRAMES: u32 = 3;
+pub const GOOD_FRAMES: u32 = 120;
+
+impl Governor {
+    /// Takes how long a frame took to draw and present; returns the new
+    /// floor if it changed.
+    pub fn presented(&mut self, took: std::time::Duration) -> Option<u8> {
+        let frame = FRAME_SECONDS;
+        let t = took.as_secs_f32();
+        if t > frame {
+            self.good = 0;
+            self.late += 1;
+            if self.late >= LATE_FRAMES && self.floor < SHED_PLAIN {
+                self.late = 0;
+                self.floor += 1;
+                return Some(self.floor);
+            }
+        } else {
+            self.late = 0;
+            if t < frame / 2.0 {
+                self.good += 1;
+                if self.good >= GOOD_FRAMES && self.floor > 0 {
+                    self.good = 0;
+                    self.floor -= 1;
+                    return Some(self.floor);
+                }
+            } else {
+                self.good = 0;
+            }
+        }
+        None
+    }
+}
+
+pub fn shed_level(look: &Look, shapes: &[Primitive]) -> u8 {
+    if look.no_shed {
+        return 0;
+    }
+    let ink: u64 = shapes.iter().map(terse_core::vector::stroke_ink).sum();
+    let by_ink = match ink {
+        i if i > PLAIN_INK_MAX => SHED_PLAIN,
+        i if i > HALO_INK_MAX => SHED_HALO,
+        i if i > SMEAR_INK_MAX => SHED_SMEAR,
+        _ => 0,
+    };
+    by_ink.max(look.floor.min(SHED_PLAIN))
+}
 /// Most deposit instances in one frame.
 pub const DEPOSIT_BUDGET: usize = crate::display::MAX_SHAPES * SUBSTEPS as usize;
 /// A shape that jumped further than this between frames (in sixteenths of
@@ -224,6 +302,11 @@ pub struct Look {
     pub preset: Preset,
     /// Darken towards the corners ([`VIGNETTE`]).
     pub vignette: bool,
+    /// `--no-shed`: the whole look whatever a frame draws ([`shed_level`]).
+    pub no_shed: bool,
+    /// The least shedding level, set by a window's governor when frames
+    /// run long ([`shed_level`]); 0 for screenshots and benchmarks.
+    pub floor: u8,
     // An overlay (the Vectrex's coloured plastic, an RGBA image multiplied
     // over the light before the glass) would go here; none is implemented.
 }
@@ -586,12 +669,12 @@ fn between(prev: &Primitive, cur: &Primitive, t: f32) -> Option<Primitive> {
 /// the [`SUBSTEPS`] − 1 or more positions from just after `prev` up to (not
 /// including) `cur`, already decayed for the part of a frame since.
 /// `fast_decay` and `slow_decay` are the components' per-frame factors.
-pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, fast_decay: f32, slow_decay: f32, out: &mut Vec<Deposit>) {
+/// `shed`: the frame's [`shed_level`]; from [`SHED_SMEAR`] on there is no
+/// smear (each smeared shape is drawn again 3 to 15 times).
+pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, shed: u8, fast_decay: f32, slow_decay: f32, out: &mut Vec<Deposit>) {
     out.clear();
     let smear = smear && prev.len() == cur.len() && prev != cur;
-    // Shed under load: a frame that draws more ink than SMEAR_INK_MAX gets
-    // no smear (each smeared shape is drawn again 3 to 15 times).
-    if !smear || cur.iter().map(terse_core::vector::stroke_ink).sum::<u64>() > SMEAR_INK_MAX {
+    if !smear || shed >= SHED_SMEAR {
         return;
     }
     let (fast, slow) = (SMEAR * DEPOSIT * FAST_SHARE, SMEAR * DEPOSIT * (1.0 - FAST_SHARE));
@@ -820,14 +903,14 @@ mod tests {
         let mut out = Vec::new();
         let fd = Preset::Xy.fast_decay();
         // The earlier positions only: the current one is in the beam.
-        deposits(&[line(0)], &[line(64)], true, fd, 0.5, &mut out);
+        deposits(&[line(0)], &[line(64)], true, 0, fd, 0.5, &mut out);
         assert_eq!(out.len(), SUBSTEPS as usize - 1);
         // Faster: more steps, up to the most.
-        deposits(&[line(0)], &[line(10 * SMEAR_SPACING as i16)], true, fd, 0.5, &mut out);
+        deposits(&[line(0)], &[line(10 * SMEAR_SPACING as i16)], true, 0, fd, 0.5, &mut out);
         assert_eq!(out.len(), 9);
-        deposits(&[line(0)], &[line(MAX_SMEAR as i16)], true, fd, 0.5, &mut out);
+        deposits(&[line(0)], &[line(MAX_SMEAR as i16)], true, 0, fd, 0.5, &mut out);
         assert_eq!(out.len(), MAX_SUBSTEPS as usize - 1);
-        deposits(&[line(0), line(9)], &[line(64), line(9)], true, fd, 0.5, &mut out);
+        deposits(&[line(0), line(9)], &[line(64), line(9)], true, 0, fd, 0.5, &mut out);
         let xs: Vec<i16> = out
             .iter()
             .map(|d| match d.shape {
@@ -841,11 +924,76 @@ mod tests {
         assert!(out.windows(2).all(|w| w[0].fast < w[1].fast && w[0].slow < w[1].slow));
         assert!(out[2].fast < SMEAR * DEPOSIT * FAST_SHARE);
         // A different structure, a teleport or no movement: nothing extra.
-        deposits(&[line(0)], &[line(64)], false, fd, 0.5, &mut out);
+        deposits(&[line(0)], &[line(64)], false, 0, fd, 0.5, &mut out);
         assert!(out.is_empty());
-        deposits(&[line(0)], &[line(4000)], true, fd, 0.5, &mut out);
+        deposits(&[line(0)], &[line(4000)], true, 0, fd, 0.5, &mut out);
         assert!(out.is_empty());
-        deposits(&[line(64)], &[line(64)], true, fd, 0.5, &mut out);
+        deposits(&[line(64)], &[line(64)], true, 0, fd, 0.5, &mut out);
         assert!(out.is_empty());
+        deposits(&[line(0)], &[line(64)], true, SHED_SMEAR, fd, 0.5, &mut out);
+        assert!(out.is_empty(), "shed: no smear");
+    }
+
+    /// The look is shed by the frame's ink alone, step by step, never
+    /// below the governor's floor, and not at all with --no-shed.
+    #[test]
+    fn shedding_follows_the_ink() {
+        // Lines across the screen, 16 units wide, about 9,500 units of ink each.
+        let wide = |n: usize| -> Vec<Primitive> {
+            (0..n).map(|k| Primitive::Line { x0: 0, y0: 16 * k as i16, x1: 10_240, y1: 16 * k as i16, width: 255, rgba: [255; 4] }).collect()
+        };
+        let ink = |s: &[Primitive]| s.iter().map(terse_core::vector::stroke_ink).sum::<u64>();
+        let look = Look::default();
+        let levels: Vec<u8> = [1, 10, 12, 15].iter().map(|&n| shed_level(&look, &wide(n))).collect();
+        assert_eq!(levels, [0, SHED_SMEAR, SHED_HALO, SHED_PLAIN], "{:?}", [1, 10, 12, 15].map(|n| ink(&wide(n))));
+        assert_eq!(shed_level(&Look { floor: SHED_HALO, ..look }, &wide(1)), SHED_HALO);
+        assert_eq!(shed_level(&Look { no_shed: true, floor: SHED_PLAIN, ..look }, &wide(15)), 0);
+    }
+
+    /// The bundled programs that draw keep the whole look: sparks and holo
+    /// (each of its scenes: Space switches) in the phosphor style, frame by
+    /// frame, never shed. Prints the most ink a frame drew (`--nocapture`).
+    #[test]
+    fn bundled_scenes_keep_the_whole_look() {
+        use terse_core::{Event, FrameInput, Image, Machine};
+        for (name, image, key) in [("sparks", terse_net::builtin::PROGRAMS[1], None), ("holo", terse_net::builtin::PROGRAMS[5], Some(0x2Cu8))] {
+            let mut m = Machine::new(&Image::parse(image).unwrap());
+            let (mut most, mut shapes, mut opcodes) = (0u64, Vec::new(), Vec::new());
+            for f in 0..1200u32 {
+                // Holo: the next scene every 150 frames (Space).
+                let events: Vec<Event> = match key {
+                    Some(k) if f % 150 == 149 => vec![Event::key_down(k, 0), Event::key_up(k, 0)],
+                    _ => Vec::new(),
+                };
+                m.run_frame(&FrameInput { events: &events, ..Default::default() });
+                let scene = crate::display::VectorScene { vector: m.vector(), vector3: m.vector3(), eye: (0.0, 0.0), caps: crate::display::Caps::FULL };
+                scene.shapes(true, &mut shapes, &mut opcodes);
+                most = most.max(shapes.iter().map(terse_core::vector::stroke_ink).sum());
+                assert_eq!(shed_level(&Look::default(), &shapes), 0, "{name}, frame {f}");
+            }
+            eprintln!("{name}: at most {most} square units of beam ink a frame (smear shed above {SMEAR_INK_MAX})");
+        }
+    }
+
+    /// The governor steps down after 3 late frames, up after 120 quick
+    /// ones, and holds in between.
+    #[test]
+    fn the_governor_has_hysteresis() {
+        use std::time::Duration;
+        let (late, ok, quick) = (Duration::from_millis(25), Duration::from_millis(12), Duration::from_millis(4));
+        let mut g = Governor::default();
+        assert_eq!([late, late].map(|t| g.presented(t)), [None, None]);
+        assert_eq!(g.presented(late), Some(1));
+        for _ in 0..1000 {
+            assert_eq!(g.presented(ok), None);
+        }
+        for _ in 0..119 {
+            assert_eq!(g.presented(quick), None);
+        }
+        assert_eq!(g.presented(quick), Some(0));
+        for k in 1..=3 {
+            assert_eq!([late, late, late].map(|t| g.presented(t))[2], Some(k));
+        }
+        assert_eq!([late, late, late].map(|t| g.presented(t)), [None; 3], "at most plain lines");
     }
 }

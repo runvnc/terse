@@ -842,7 +842,8 @@ impl Renderer {
         let targets = PhosphorTargets { beam: &t.beam, text: &t.text, beam_group: &t.beam_group, fast: &t.fast, slow: &t.slow };
         let clear = self.phosphor_stale;
         let fast_decay = self.look.preset.fast_decay();
-        self.vectors.phosphor_frame(queue, encoder, &targets, t.size, persistence, fast_decay, clear, advance);
+        let shed = self.vectors.shed_level(&self.look);
+        self.vectors.phosphor_frame(queue, encoder, &targets, t.size, persistence, fast_decay, clear, advance, shed);
         if advance {
             self.phosphor_stale = false;
         }
@@ -859,8 +860,13 @@ impl Renderer {
             })
             .collect();
         self.vectors.mask(encoder, &targets, &rects);
-        // The halo of all that light.
-        t.halo.encode(&self.halo, encoder);
+        // The halo of all that light, unless the frame sheds it (the GPU
+        // draws plain lines' level as this one: its beam costs it little).
+        if shed >= crate::phosphor::SHED_HALO {
+            t.halo.clear(encoder);
+        } else {
+            t.halo.encode(&self.halo, encoder);
+        }
     }
 
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
