@@ -36,7 +36,9 @@
  *                          advanced by ms (a fixed amount of work).
  */
 #define _GNU_SOURCE                     /* sched_setaffinity, SCHED_IDLE */
-#include <sched.h>
+#ifdef __linux__
+#include <sched.h>                      /* the test switches only (Linux) */
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -440,6 +442,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "--version")) { printf("terminal " VERSION " %s\n", build); return 0; }
     const char *env = getenv("TERSE_EXAMPLE_SLOW");
     if (env && *env) parse_slow(env);
+#ifdef __linux__
     if ((env = getenv("TERSE_BUS_CPU")) && *env) {
         cpu_set_t set;
         CPU_ZERO(&set); CPU_SET(atoi(env), &set);
@@ -448,6 +451,7 @@ int main(int argc, char **argv)
     if ((env = getenv("TERSE_EXAMPLE_IDLE")) && !strcmp(env, "1")
         && sched_setscheduler(0, SCHED_IDLE, &(struct sched_param){0}))
         perror("terminal example: TERSE_EXAMPLE_IDLE");
+#endif
 
     /* STEP 1. Connect to the socket the core named. */
     const char *path = getenv("TERSE_BUS_SOCKET");

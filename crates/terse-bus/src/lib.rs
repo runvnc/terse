@@ -1,9 +1,11 @@
 //! The device bus prototype (DEVICES.md): a small core host that runs one
 //! Terse machine and reaches its devices (all but the System device) as
-//! separate driver processes, over a Unix socket or shared memory.
+//! separate driver processes, over a Unix-domain socket or shared memory.
 //!
 //! - `proto`: the messages and the call table;
 //! - `transport`: the socket and shared-memory transports;
+//! - `sys`: what they need of the operating system, one file per system
+//!   (Linux, macOS, Windows; DEVICES.md 4.3);
 //! - `bus`: terse-core's `Devices` over driver processes, so that
 //!   terse-core's `Machine` (the CPU, the System device, the frame loop and
 //!   the state serialization's frame: the same loop `terse run` runs) runs
@@ -25,4 +27,5 @@ pub mod record;
 pub mod services;
 pub mod signals;
 pub mod stats;
+pub mod sys;
 pub mod transport;

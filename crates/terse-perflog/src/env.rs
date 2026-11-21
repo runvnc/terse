@@ -3,10 +3,13 @@
 //! machine or its user. No host name, user name, serial number, network
 //! address or path; the RAM is rounded to whole GiB.
 
+use crate::os;
+
 /// The computer, as the record's `env` line gives it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Environment {
-    /// The operating system's name (`Linux`) and release (the kernel's).
+    /// The operating system's name (`Linux`, `Darwin`, `Windows`) and
+    /// release (the kernel's; Windows: major.minor.build).
     pub os: String,
     pub os_version: String,
     /// The processor architecture (`x86_64`, `aarch64`).
@@ -25,51 +28,17 @@ pub struct Environment {
 impl Environment {
     /// This computer, with `renderer`.
     pub fn detect(renderer: &str) -> Environment {
-        let (os, os_version) = uname();
+        let (os, os_version) = os::os_name();
         Environment {
             os,
             os_version,
             arch: std::env::consts::ARCH.to_string(),
             cores: std::thread::available_parallelism().map_or(0, |n| n.get() as u32),
-            ram_gib: ram_gib().unwrap_or(0),
+            ram_gib: os::ram_kib().map_or(0, |kib| ((kib + 512 * 1024) / (1024 * 1024)) as u32),
             renderer: renderer.to_string(),
-            cpu: cpu_model().unwrap_or_default(),
+            cpu: os::cpu_model().unwrap_or_default(),
         }
     }
-}
-
-fn uname() -> (String, String) {
-    // SAFETY: uname fills a struct of fixed-size arrays it NUL-terminates.
-    unsafe {
-        let mut u: libc::utsname = std::mem::zeroed();
-        if libc::uname(&mut u) != 0 {
-            return (std::env::consts::OS.to_string(), String::new());
-        }
-        let s = |a: &[libc::c_char]| std::ffi::CStr::from_ptr(a.as_ptr()).to_string_lossy().into_owned();
-        (s(&u.sysname), s(&u.release))
-    }
-}
-
-/// MemTotal, rounded to the nearest GiB (Linux).
-fn ram_gib() -> Option<u32> {
-    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let kib: u64 = text.lines().find_map(|l| l.strip_prefix("MemTotal:"))?.split_whitespace().next()?.parse().ok()?;
-    Some(((kib + 512 * 1024) / (1024 * 1024)) as u32)
-}
-
-/// The first CPU's model name (Linux: `model name`, or `Hardware` /
-/// `Processor` on some ARM systems).
-fn cpu_model() -> Option<String> {
-    let text = std::fs::read_to_string("/proc/cpuinfo").ok()?;
-    for key in ["model name", "Hardware", "Processor", "cpu model"] {
-        if let Some(v) = text.lines().find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            (k.trim() == key).then(|| v.trim().to_string())
-        }) {
-            return Some(v);
-        }
-    }
-    None
 }
 
 #[cfg(test)]

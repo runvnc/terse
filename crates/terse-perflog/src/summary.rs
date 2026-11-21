@@ -31,6 +31,8 @@ pub struct Summary {
     pub stops: Vec<String>,
     pub checks: Vec<String>,
     pub dropped: u64,
+    /// Devices whose CPU wait the system did not say (`readings`).
+    pub unmeasured: std::collections::BTreeSet<String>,
 }
 
 impl Summary {
@@ -53,6 +55,11 @@ impl Summary {
                 Line::Device { component, slots, identity } => {
                     let s: Vec<String> = slots.iter().map(u8::to_string).collect();
                     self.devices.insert(component.name(), format!("slots {}: {}", s.join(","), identity.line()));
+                }
+                Line::Readings { component, readings } => {
+                    if component.is_device() && !readings.wait {
+                        self.unmeasured.insert(component.name());
+                    }
                 }
                 Line::Start { ms, cold } => self.starts.push((*ms, cold.clone())),
                 Line::Late { frame, ms, verdict, component, own_ms, cpu_ms, blocked_ms, starved_ms, image } => {
@@ -106,6 +113,10 @@ impl Summary {
         }
         for (c, d) in &self.devices {
             let _ = writeln!(o, "  device {c}: {d}");
+        }
+        if !self.unmeasured.is_empty() {
+            let v: Vec<&str> = self.unmeasured.iter().map(String::as_str).collect();
+            let _ = writeln!(o, "  no CPU-wait readings for {}: blamed by their waits alone, never stopped", v.join(", "));
         }
         if !self.starts.is_empty() {
             let mut v: Vec<f64> = self.starts.iter().map(|s| s.0).collect();

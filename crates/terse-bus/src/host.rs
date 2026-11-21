@@ -176,7 +176,7 @@ pub fn installed_drivers(config: &Path) -> (Vec<InstalledDriver>, Vec<crate::bus
 /// of their group (DEVICES.md 2.2): each is started with the options the
 /// default driver would get, and falls back to it.
 pub fn drivers_with(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u8>, Vec<String>)], installed: &[InstalledDriver]) -> Result<Vec<Driven>, String> {
-    let exe = |name: &str| dir.join(name).display().to_string();
+    let exe = |name: &str| dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)).display().to_string();
     let defaults: [(Vec<u8>, Vec<String>); 5] = DEFAULT_DRIVERS.map(|(s, name)| {
         let mut cmd = vec![exe(name)];
         if s.contains(&4) {
@@ -273,7 +273,7 @@ pub fn installed_slots_with(dir: &Path, image: &Image, shell: bool, without: &[u
     let installed = |s: u8| {
         overrides.iter().any(|(o, _)| o.contains(&s))
             || installed.iter().any(|i| i.group.contains(&s))
-            || DEFAULT_DRIVERS.iter().any(|(d, name)| d.contains(&s) && dir.join(name).exists())
+            || DEFAULT_DRIVERS.iter().any(|(d, name)| d.contains(&s) && dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)).exists())
     };
     slots
         .into_iter()

@@ -4,7 +4,6 @@
 //! drivers in other languages speak DEVICES.md themselves.
 
 use std::collections::HashMap;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,7 +11,7 @@ use terse_core::Event;
 use terse_core::content::ram_range;
 
 use crate::proto::{self, Addr, CallEntry, DeviceInfo, Hello, Open, PosEvent, Reader, Writer, access, hello_flags, msg};
-use crate::transport::{Mapping, ShmEnd, SocketEnd, Spin};
+use crate::transport::{Mapping, ShmEnd, SocketEnd, Spin, UnixStream};
 
 /// Guest memory as a driver reaches it: through the core (socket) or the
 /// instance's memory file (shared memory).

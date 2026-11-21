@@ -226,7 +226,7 @@ static const char *fault_name[] = {"", "illegal instruction", "breakpoint", "fet
 static void print_version(void)
 {
     char build[24] = "unknown";
-    FILE *f = fopen("/proc/self/exe", "rb");
+    FILE *f = fopen(self_exe(), "rb");
     if (f) {
         size_t n = 0, cap = 1 << 20, k;
         uint8_t *p = malloc(cap), h[32];

@@ -67,6 +67,17 @@ both sides). Without `XDG_RUNTIME_DIR` the directory is
 Suggested: a node also checks the peer's user ID (for example
 `SO_PEERCRED`) and closes connections from another user.
 
+**Windows** 10 version 1803 and later has Unix domain sockets (`AF_UNIX`
+through Winsock, as the device bus uses them, `DEVICES.md` 4.3), so the
+above applies, with: the directory is `terse` in the user's local
+application data directory (`%LOCALAPPDATA%\terse\`, else
+`TERSE_NODE_SOCKET`), whose access the user's profile already limits to
+the user, so there are no modes to set or check. The path is UTF-8 and at
+most 103 bytes. Windows before 10 version 1803 uses the TCP port below.
+(Not implemented yet: `terse node` says it is not available on Windows,
+and `native/reader-go` has no Windows build. `crates/terse-bus/src/sys`
+has the Winsock socket a node there could use.)
+
 **Other systems** (no Unix domain sockets): the node listens on a TCP
 port of the loopback address 127.0.0.1, chosen by the system, and writes
 the port and a random token of 32 bytes (64 lowercase hexadecimal

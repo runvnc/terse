@@ -525,8 +525,14 @@ one over it.
   work as the next request finds it, PRESENT, GET, the state it is asked
   for); starting a machine (OPEN and a machine's first two frames), host
   services and the snapshots the rule takes are recorded but never
-  blamed. Each driver process's CPU time (`clock_getcpuclockid`) and its
-  threads' run-queue wait (schedstat) come from the operating system.
+  blamed. Each driver process's CPU time and its threads' run-queue wait
+  come from the operating system where it says: Linux
+  (`clock_getcpuclockid`, schedstat, and PSI for the memory stall);
+  macOS (`proc_pid_rusage`: CPU time and run-queue wait, no memory
+  stall; the frame loop's own wait is its process's); Windows
+  (`GetProcessTimes`: CPU time only). What a host could read is in the
+  record (`readings`, `RECORD.md` 2), and what it may conclude without a
+  reading is `RECORD.md` 4's.
 - *A host with built-in devices* (`terse-host`) can only time its own
   stages: the emulation (the devices' calls within it), taking the
   screens and drawing, presenting, and how late a frame began after its
@@ -571,7 +577,15 @@ ms p50). The record's writer is a thread of its own.
    exact: the stop is an input, recorded in a recording at the frame
    after which it happened (`DEVICES.md` 8), and a replay stops there.
    A device serves every machine of a system, so a shell that uses it is
-   stopped too: the system stops, its machines saved first.
+   stopped too: the system stops, its machines saved first. **A host
+   stops only for certain blame**: late frames in which the operating
+   system said how long the driver's threads and the frame loop waited
+   for a CPU (condition 2 of R14 could be checked). Where it cannot say
+   (Windows; Linux without schedstats; a driver of another user), a
+   device is blamed by its waits alone, which on a busy computer may be
+   the computer's doing: the host warns and saves (step 2) as usual,
+   records every late frame, and never stops a machine for it
+   (`RECORD.md` 4).
 4. **The host's own components** (the core, composing, presenting): a
    host cannot stop itself usefully. It records them and shows them, as
    for a warning.

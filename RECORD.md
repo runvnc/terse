@@ -59,6 +59,7 @@ of a line). The first line of every file is `terse-perf 1`.
 | `host` | name, version, build | The host's identity (R13) |
 | `env` | os, os-version, arch, cores, ram-gib, renderer, cpu | The computer: `Linux`, the kernel's release, `x86_64`, logical CPUs, GiB, the renderer (`software`, `gpu`, `auto`, `drivers`: the drivers draw, `none`), the CPU's model string |
 | `device` | component, slots, name, version, build | A device implementation: its slots (comma-separated) and identity. A host whose devices are built in writes one line for `core` with its own identity |
+| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three |
 | `start` | ms, cold | From the process's start to its first frame presented. Cold: `build` (the first run of this build: no record of it yet), `boot` (the first since the computer or the user's session started: no marker in the runtime directory), `warm`, or `-` (unknown) |
 | `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked, its starvation, and the program it worked for most |
 | `block` | frame, ms, component, what | One wait of 100 ms or more on a component: `frame` work, `start` (a machine's first frames), `open` (starting a machine), `service` (a host service, an image fetched), `state` (a snapshot the rule took) |
@@ -110,11 +111,28 @@ starvation (time its threads were runnable but not running: Linux
 4. `spread`: no component's own time was over its allowance.
 
 Own time is split by the component's waited-on thread's time on a CPU
-(`cpu-ms`); the rest is `blocked-ms`. Where the operating system does not
-say (no schedstat, another system), starvation is unknown and counted as
-none: the record then blames by the waits alone, and `env` says which
-system it was. A driver stopped by a signal (a debugger, job control)
-counts as blocked.
+(`cpu-ms`); the rest is `blocked-ms`. A driver stopped by a signal (a
+debugger, job control) counts as blocked.
+
+**Where the operating system does not say.** Each reading may be missing,
+and the `readings` lines say which were there:
+
+| Missing | Counted as | What follows |
+|---|---|---|
+| A component's `wait` | no starvation (`starved-ms` 0.0) | its own time is all the time waited for it |
+| The frame loop's `wait` (`core`) | no starvation | |
+| Any `wait` | | `starved` is given only if the starvation that was read suffices; a frame that a busy computer made late may be `blamed` instead |
+| `stall` | no stall | `memory` is never given |
+| A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0 |
+
+So a host on Linux with schedstats and PSI gives every verdict; on macOS
+(no memory stall) never `memory`; on Windows (CPU time only) only
+`blamed` and `spread`. A `blamed` verdict is **certain** when the
+blamed device's `wait` and the frame loop's were both read: the time a
+busy computer took is then known not to be in its own time. Only certain
+blame counts towards stopping a machine (`PERFORMANCE.md` R15 step 3);
+uncertain blame counts towards the warning and is recorded like any
+other. `terse perf log` names the devices without a `wait` reading.
 
 ## 5. Performance reports
 

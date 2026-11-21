@@ -160,7 +160,7 @@ fn can_draw() -> bool {
     if !ok {
         eprintln!("skipped: no fonts for pictures");
     }
-    let there = bin_dir().join("terse-bus").exists();
+    let there = bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX)).exists();
     if !there {
         eprintln!("skipped: no terse-bus program beside the drivers");
     }
@@ -201,7 +201,7 @@ pub fn host_and_bus(tmp: &Path, name: &str, args: &[String]) -> f64 {
     let mut bus = args.to_vec();
     bus.extend(["--screenshot".into(), b.display().to_string(), "--relay".into(), "none".into()]);
     bus.extend(dirs(&tmp.join(format!("{name}-bus"))));
-    let out = Command::new(bin_dir().join("terse-bus")).args(&bus).output().unwrap();
+    let out = Command::new(bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))).args(&bus).output().unwrap();
     assert!(out.status.success(), "terse-bus {bus:?}: {}", String::from_utf8_lossy(&out.stderr));
     let same = assert_close(&a, &b);
     eprintln!("{name}: {:.2} % of the pixels the same", same * 100.0);

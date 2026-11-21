@@ -21,7 +21,9 @@
 //! The rule (`Rule::default`): after 3 late frames of one component within
 //! 60 frames the host warns the user; after 10 within 300 it stops the
 //! machines that use it (a device), or only shows it (the host's own
-//! components: the core, composing, presenting). Everything here is
+//! components: the core, composing, presenting). A device is stopped only
+//! for blames that are [`certain`]: the system said how long it and the
+//! frame loop waited for a CPU. Everything here is
 //! deterministic given the samples: tests feed it frames.
 
 use std::collections::{HashMap, VecDeque};
@@ -225,8 +227,8 @@ impl Default for Rule {
 pub struct Judge {
     pub rule: Rule,
     /// Frames each component was blamed in, oldest first, within the
-    /// longest window.
-    blamed: HashMap<Component, VecDeque<u64>>,
+    /// longest window, and whether the blame is certain ([`Late::certain`]).
+    blamed: HashMap<Component, VecDeque<(u64, bool)>>,
     /// Components warned about and not yet back to good behaviour.
     warned: HashMap<Component, u64>,
 }
@@ -264,7 +266,7 @@ impl Judge {
         let r = self.rule;
         let horizon = r.warn_within.max(r.stop_within);
         for q in self.blamed.values_mut() {
-            while q.front().is_some_and(|&f| f + horizon <= s.frame) {
+            while q.front().is_some_and(|&(f, _)| f + horizon <= s.frame) {
                 q.pop_front();
             }
         }
@@ -273,9 +275,11 @@ impl Judge {
         if let Some(l) = late.filter(|l| l.verdict == Verdict::Blamed) {
             let c = l.top.component;
             let q = self.blamed.entry(c).or_default();
-            q.push_back(s.frame);
-            let within = |w: u64| q.iter().filter(|&&f| f + w > s.frame).count() as u32;
-            let (warn, stop) = (within(r.warn_within), within(r.stop_within));
+            q.push_back((s.frame, certain(s, &l.top)));
+            // Every blame counts towards a warning; only certain ones
+            // towards a stop.
+            let within = |w: u64, only_certain: bool| q.iter().filter(|&&(f, sure)| f + w > s.frame && (sure || !only_certain)).count() as u32;
+            let (warn, stop) = (within(r.warn_within, false), within(r.stop_within, true));
             if stop >= r.stop_after {
                 actions.push(Action::Stop { component: c, count: stop });
                 q.clear();
@@ -295,8 +299,19 @@ impl Judge {
     /// How many frames `c` was blamed in within the last `window` frames
     /// before `frame` (inclusive).
     pub fn count(&self, c: Component, frame: u64, window: u64) -> u32 {
-        self.blamed.get(&c).map_or(0, |q| q.iter().filter(|&&f| f + window > frame).count() as u32)
+        self.blamed.get(&c).map_or(0, |q| q.iter().filter(|&&(f, _)| f + window > frame).count() as u32)
     }
+}
+
+/// Whether blaming `top` in frame `s` is certain enough to stop machines
+/// for (`RECORD.md` section 4): for a device, the operating system said
+/// how long its threads and the frame loop's waited for a CPU, so that
+/// time on a busy computer was not taken for its own. Where it cannot
+/// (Windows; Linux without schedstats; readings turned off), a device is
+/// blamed by its waits alone: warned about and recorded, never stopped.
+/// The host's own components are never stopped anyway.
+pub fn certain(s: &FrameSample, top: &Part) -> bool {
+    !top.component.is_device() || (top.starved_ns.is_some() && s.host_starved_ns.is_some())
 }
 
 #[cfg(test)]
@@ -366,6 +381,29 @@ mod tests {
         let mut j = Judge::default();
         let stops: Vec<u64> = (0..1000u64).filter(|&n| j.judge(&if n % 30 == 0 { slow(n) } else { good(n) }).1.iter().any(|a| matches!(a, Action::Stop { .. }))).collect();
         assert_eq!(stops, vec![270, 570, 870]);
+    }
+
+    #[test]
+    fn without_starvation_readings_a_device_is_warned_about_never_stopped() {
+        // Windows, or Linux without schedstats: the driver's wait is all
+        // the host knows.
+        let unknown = |n| FrameSample { frame: n, wall_ns: 50 * MS, parts: vec![Part::new(Component::Device(2), 45 * MS)], host_starved_ns: None, memory_stall_ns: None };
+        let mut j = Judge::default();
+        let mut actions = Vec::new();
+        for n in 0..600u64 {
+            let (late, a) = j.judge(&unknown(n));
+            assert_eq!(late.unwrap().verdict, Verdict::Blamed);
+            actions.extend(a.into_iter().map(|a| (n, a)));
+        }
+        assert_eq!(actions, vec![(2, Action::Warn { component: Component::Device(2), count: 3 })]);
+        // The driver's starvation read but not the frame loop's (macOS
+        // gives both, but a system might give one): still uncertain.
+        let mut j = Judge::default();
+        for n in 0..600u64 {
+            let mut f = frame(n, 50 * MS, &[dev(2, 45 * MS, 45 * MS, 0)]);
+            f.host_starved_ns = None;
+            assert!(j.judge(&f).1.iter().all(|a| matches!(a, Action::Warn { .. })));
+        }
     }
 
     #[test]

@@ -290,16 +290,13 @@ fn faulted(stopped: Stopped) -> ExitCode {
 }
 
 /// Ends the process by SIGTERM (restoring its default action first: the
-/// run's handler only notes a signal).
+/// run's handler only notes a signal); on Windows, which has no signals,
+/// with status 255, as `terse run` does.
 fn fault_exit() -> ExitCode {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
-    // SAFETY: resets one signal's action and sends it to this process.
-    unsafe {
-        libc::signal(libc::SIGTERM, libc::SIG_DFL);
-        libc::raise(libc::SIGTERM);
-    }
+    terse_bus::sys::exit_by_signal();
     ExitCode::from(255)
 }
 

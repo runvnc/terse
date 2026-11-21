@@ -1,16 +1,18 @@
-//! The two transports (DEVICES.md 3, 4): a Unix socket carrying framed
-//! messages, and shared memory: a bus file with a request and a reply
-//! area, handed over with sequence words and Linux futexes.
+//! The two transports (DEVICES.md 3, 4): a Unix-domain socket carrying
+//! framed messages, and shared memory: a bus file with a request and a
+//! reply area, handed over with sequence words, an end that waits
+//! sleeping on the system's address wait (Linux futexes, macOS ulocks) or
+//! on the socket ([`crate::sys`], DEVICES.md 4.3).
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read, Write};
-use std::os::fd::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::proto::MAX_MESSAGE;
+use crate::sys;
+pub use crate::sys::{UnixListener, UnixStream, peer_gone};
 
 /// A file mapped into memory, shared with other processes.
 pub struct Mapping {
@@ -41,13 +43,8 @@ impl Mapping {
         if len == 0 {
             return Err("cannot map an empty file".into());
         }
-        let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
-        // SAFETY: a fresh shared mapping of a file we hold open.
-        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, file.as_raw_fd(), 0) };
-        if ptr == libc::MAP_FAILED {
-            return Err(format!("mmap: {}", std::io::Error::last_os_error()));
-        }
-        Ok(Mapping { ptr: ptr as *mut u8, len, _file: file })
+        let ptr = sys::map(&file, len, writable)?;
+        Ok(Mapping { ptr, len, _file: file })
     }
 
     pub fn len(&self) -> usize {
@@ -86,43 +83,9 @@ impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: our own mapping.
         unsafe {
-            libc::munmap(self.ptr as *mut libc::c_void, self.len);
+            sys::unmap(self.ptr, self.len);
         }
     }
-}
-
-fn futex_wait(word: &AtomicU32, expected: u32, timeout: Duration) {
-    let ts = libc::timespec { tv_sec: timeout.as_secs() as libc::time_t, tv_nsec: timeout.subsec_nanos() as libc::c_long };
-    // SAFETY: a futex on a word of a shared mapping (not private: shared
-    // between processes).
-    unsafe {
-        libc::syscall(libc::SYS_futex, word.as_ptr(), libc::FUTEX_WAIT, expected, &ts as *const libc::timespec, 0usize, 0u32);
-    }
-}
-
-fn futex_wake(word: &AtomicU32) {
-    // SAFETY: as above.
-    unsafe {
-        libc::syscall(libc::SYS_futex, word.as_ptr(), libc::FUTEX_WAKE, i32::MAX, 0usize, 0usize, 0u32);
-    }
-}
-
-/// Whether the peer of a socket has closed it (without reading anything).
-pub fn peer_gone(sock: &UnixStream) -> bool {
-    let mut p = libc::pollfd { fd: sock.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-    // SAFETY: one pollfd, no wait.
-    let n = unsafe { libc::poll(&mut p, 1, 0) };
-    if n <= 0 {
-        return false;
-    }
-    if p.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
-        return true;
-    }
-    // Readable: EOF if a peek reads nothing.
-    let mut b = [0u8; 1];
-    // SAFETY: peek one byte.
-    let r = unsafe { libc::recv(sock.as_raw_fd(), b.as_mut_ptr() as *mut libc::c_void, 1, libc::MSG_PEEK | libc::MSG_DONTWAIT) };
-    r == 0
 }
 
 // The bus file's control block (DEVICES.md 4.2).
@@ -135,6 +98,25 @@ const DRIVER_SLEEPING: usize = 72;
 const REP_SEQ: usize = 128;
 const REP_LEN: usize = 132;
 const CORE_SLEEPING: usize = 136;
+
+/// A sleeping word's values (DEVICES.md 4.2): awake (spinning or
+/// working); asleep on the system's address wait on the sequence word
+/// (woken by the system's address wake); asleep on the socket (woken by a
+/// byte written to it).
+pub const AWAKE: u32 = 0;
+pub const SLEEPS_ON_ADDRESS: u32 = 1;
+pub const SLEEPS_ON_SOCKET: u32 = 2;
+
+/// The longest sleep before an end looks again (and checks that the other
+/// end is alive): a wake that is lost costs at most this.
+const NAP: Duration = Duration::from_millis(50);
+
+/// Whether an end sleeps on the socket: where the system has no address
+/// wait across processes (Windows), or when `TERSE_BUS_WAKE=socket` asks
+/// (to test that way on any system).
+pub fn wake_by_socket() -> bool {
+    !sys::address_wait_available() || std::env::var("TERSE_BUS_WAKE").is_ok_and(|v| v == "socket")
+}
 
 /// The bus file's size.
 pub const BUS_FILE: usize = CONTROL + 2 * AREA;
@@ -184,8 +166,11 @@ pub struct ShmEnd {
     next: usize,
     /// Giving up on the other end after this long (a hung driver).
     pub deadline: Option<Duration>,
-    /// For noticing that the other end has gone.
+    /// For noticing that the other end has gone, and for waking an end
+    /// that sleeps on it.
     pub socket: UnixStream,
+    /// This end sleeps on the socket rather than on the address.
+    pub sleep_on_socket: bool,
     /// Time spent spinning, and waits that slept (measurements).
     pub spun: Duration,
     pub sleeps: u64,
@@ -197,7 +182,19 @@ impl ShmEnd {
             return Err("not a bus file".into());
         }
         let seen = map.word(if core { REP_SEQ } else { REQ_SEQ }).load(Ordering::Acquire);
-        Ok(ShmEnd { map, core, seen, spin, recent: [0; RECENT], next: 0, deadline: None, socket, spun: Duration::ZERO, sleeps: 0 })
+        Ok(ShmEnd {
+            map,
+            core,
+            seen,
+            spin,
+            recent: [0; RECENT],
+            next: 0,
+            deadline: None,
+            socket,
+            sleep_on_socket: wake_by_socket(),
+            spun: Duration::ZERO,
+            sleeps: 0,
+        })
     }
 
     fn out_area(&self) -> usize {
@@ -220,7 +217,8 @@ impl ShmEnd {
         }
     }
 
-    /// Writes a packet and hands it over.
+    /// Writes a packet and hands it over, waking the other end the way it
+    /// sleeps.
     pub fn send(&mut self, packet: &[u8]) -> Result<(), String> {
         if packet.len() > AREA {
             return Err(format!("a packet of {} bytes is larger than the bus area", packet.len()));
@@ -229,9 +227,19 @@ impl ShmEnd {
         let (seq, len, sleeping) = if self.core { (REQ_SEQ, REQ_LEN, DRIVER_SLEEPING) } else { (REP_SEQ, REP_LEN, CORE_SLEEPING) };
         self.map.bytes_mut()[at..at + packet.len()].copy_from_slice(packet);
         self.map.word(len).store(packet.len() as u32, Ordering::Relaxed);
-        self.map.word(seq).fetch_add(1, Ordering::Release);
-        if self.map.word(sleeping).load(Ordering::SeqCst) != 0 {
-            futex_wake(self.map.word(seq));
+        // Sequentially consistent, so that the read of the other side's
+        // sleeping word cannot move before it (on ARM a release alone
+        // would let it: a wake missed, a nap taken).
+        self.map.word(seq).fetch_add(1, Ordering::SeqCst);
+        match self.map.word(sleeping).load(Ordering::SeqCst) {
+            AWAKE => {}
+            SLEEPS_ON_SOCKET => {
+                // One byte, of any value: the other end drops it. A failed
+                // write means the other end has gone, which its next wait
+                // finds out.
+                let _ = self.socket.write_all(&[0]);
+            }
+            _ => sys::address_wake(self.map.word(seq)),
         }
         Ok(())
     }
@@ -261,14 +269,21 @@ impl ShmEnd {
                 self.sleeps += 1;
                 slept = true;
             }
-            // Sleep until the number changes.
-            self.map.word(sleeping).store(1, Ordering::SeqCst);
+            // Sleep until the number changes: say how, look again, sleep.
+            let how = if self.sleep_on_socket { SLEEPS_ON_SOCKET } else { SLEEPS_ON_ADDRESS };
+            self.map.word(sleeping).store(how, Ordering::SeqCst);
+            let mut gone = false;
             if self.map.word(seq).load(Ordering::SeqCst) == self.seen {
-                futex_wait(self.map.word(seq), self.seen, Duration::from_millis(50));
+                if self.sleep_on_socket {
+                    // Woken by a byte, or by the end of the stream.
+                    gone = sys::wait_readable(&self.socket, NAP) && !sys::drain(&self.socket);
+                } else {
+                    sys::address_wait(self.map.word(seq), self.seen, NAP);
+                }
             }
-            self.map.word(sleeping).store(0, Ordering::SeqCst);
+            self.map.word(sleeping).store(AWAKE, Ordering::SeqCst);
             if self.map.word(seq).load(Ordering::Acquire) == self.seen {
-                if peer_gone(&self.socket) {
+                if gone || peer_gone(&self.socket) {
                     return Err("the other end has gone".into());
                 }
                 if let Some(d) = self.deadline.filter(|&d| start.elapsed() > d) {
@@ -288,7 +303,7 @@ impl ShmEnd {
     }
 }
 
-/// A socket end: framed messages on a Unix stream.
+/// A socket end: framed messages on a Unix-domain stream.
 pub struct SocketEnd {
     pub stream: UnixStream,
     reader: BufReader<UnixStream>,
@@ -332,24 +347,29 @@ impl SocketEnd {
     }
 }
 
-/// Pins the calling thread to `cpu`.
+/// Pins the calling thread to `cpu` (where the system can: not macOS).
 pub fn pin_to(cpu: usize) {
-    // SAFETY: a zeroed cpu_set_t with one bit set, for this thread.
-    unsafe {
-        let mut set: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(cpu, &mut set);
-        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-    }
+    sys::pin_to(cpu);
 }
 
-/// A directory for the session's shared files: in /dev/shm when there is
-/// one, else the system's temporary directory.
+/// The longest path a socket may have on every system (`sun_path` is 104
+/// bytes on macOS, 108 on Linux and Windows, with its NUL).
+pub const SOCKET_PATH_MAX: usize = 103;
+
+/// A directory, only the user's, for the session's shared files and
+/// sockets (DEVICES.md 4.3): in `/dev/shm` on Linux, `/tmp` on macOS, the
+/// user's temporary directory on Windows, or `TERSE_BUS_DIR`.
 pub fn session_dir() -> Result<std::path::PathBuf, String> {
-    let base = if Path::new("/dev/shm").is_dir() { std::path::PathBuf::from("/dev/shm") } else { std::env::temp_dir() };
+    let base = sys::session_base();
     let mut seed = [0u8; 8];
     getrandom::fill(&mut seed).map_err(|e| e.to_string())?;
     let dir = base.join(format!("terse-bus-{}-{:016x}", std::process::id(), u64::from_le_bytes(seed)));
-    std::fs::create_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // The longest socket in it.
+    let longest = dir.join("driver99.sock");
+    if longest.to_str().is_none_or(|p| p.len() > SOCKET_PATH_MAX) {
+        return Err(format!("{}: too long (or not UTF-8) for a socket's path; set TERSE_BUS_DIR to a short directory", dir.display()));
+    }
+    sys::make_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(dir)
 }
 
@@ -357,34 +377,60 @@ pub fn session_dir() -> Result<std::path::PathBuf, String> {
 mod tests {
     use super::*;
 
-    /// Packets go both ways through a bus file, sleeping and spinning.
+    /// Packets go both ways through a bus file, sleeping and spinning,
+    /// each end sleeping on the address (where the system has one) or on
+    /// the socket, in every combination.
     #[test]
     fn shared_memory_hand_over() {
-        let dir = session_dir().unwrap();
-        let path = dir.join("bus");
-        let m = Mapping::create(&path, BUS_FILE).unwrap();
-        init_bus(&m);
-        let (a, b) = UnixStream::pair().unwrap();
-        let mut core = ShmEnd::new(m, true, Spin::fixed(Duration::from_micros(50)), a).unwrap();
-        // The driver maps the file before the core's first packet, as after
-        // the handshake.
-        let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Spin { max: Duration::from_micros(200), adaptive: true }, b).unwrap();
-        let driver = std::thread::spawn(move || {
-            for _ in 0..1000 {
-                let p = d.recv().unwrap().to_vec();
-                let reply: Vec<u8> = p.iter().map(|x| x.wrapping_add(1)).collect();
-                d.send(&reply).unwrap();
+        for (core_socket, driver_socket) in [(false, false), (true, true), (false, true), (true, false)] {
+            if !sys::address_wait_available() && !(core_socket && driver_socket) {
+                continue;
             }
-        });
-        for i in 0..1000u32 {
-            let p = i.to_le_bytes();
-            core.send(&p).unwrap();
-            let r = core.recv().unwrap();
-            assert_eq!(r, p.map(|x| x.wrapping_add(1)));
+            let dir = session_dir().unwrap();
+            let path = dir.join("bus");
+            let m = Mapping::create(&path, BUS_FILE).unwrap();
+            init_bus(&m);
+            let (a, b) = sys::pair().unwrap();
+            let mut core = ShmEnd::new(m, true, Spin::fixed(Duration::from_micros(50)), a).unwrap();
+            core.sleep_on_socket = core_socket;
+            // The driver maps the file before the core's first packet, as
+            // after the handshake.
+            let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Spin { max: Duration::from_micros(200), adaptive: true }, b).unwrap();
+            d.sleep_on_socket = driver_socket;
+            let driver = std::thread::spawn(move || {
+                for i in 0..1000 {
+                    // Now and then the core is slow, so that this end sleeps.
+                    let p = d.recv().unwrap().to_vec();
+                    let reply: Vec<u8> = p.iter().map(|x| x.wrapping_add(1)).collect();
+                    if i % 100 == 0 {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    d.send(&reply).unwrap();
+                }
+                // The core goes: the next wait says so.
+                assert!(d.recv().is_err());
+            });
+            let mut napped = 0;
+            for i in 0..1000u32 {
+                if i % 100 == 50 {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                let p = i.to_le_bytes();
+                let start = Instant::now();
+                core.send(&p).unwrap();
+                let r = core.recv().unwrap();
+                assert_eq!(r, p.map(|x| x.wrapping_add(1)));
+                if start.elapsed() >= NAP - Duration::from_millis(5) {
+                    napped += 1;
+                }
+            }
+            // The sleeps (about 20) were woken: a lost wake would have cost
+            // a whole nap. A few slow round trips are a busy computer.
+            assert!(napped < 5, "core {core_socket}, driver {driver_socket}: {napped} round trips took a nap");
+            drop(core.socket.shutdown(std::net::Shutdown::Both));
+            drop(core);
+            driver.join().unwrap();
+            std::fs::remove_dir_all(dir).unwrap();
         }
-        driver.join().unwrap();
-        // The other end gone: recv says so.
-        drop(core.socket.shutdown(std::net::Shutdown::Both));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

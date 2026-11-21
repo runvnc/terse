@@ -82,6 +82,7 @@ fn run_exit_code_is_the_machines() {
 
 /// A fault (SPEC §stopping) is printed and ends `terse run` by SIGTERM, which no
 /// exit code can be mistaken for.
+#[cfg(unix)]
 #[test]
 fn a_fault_ends_run_by_sigterm() {
     use std::os::unix::process::ExitStatusExt;
@@ -198,6 +199,7 @@ fn state_files_are_not_for_a_shell() {
 }
 
 /// An image title is UTF-8 (SPEC §image): `terse pack` refuses one that is not.
+#[cfg(unix)]
 #[test]
 fn pack_refuses_a_title_that_is_not_utf8() {
     use std::os::unix::ffi::OsStrExt;

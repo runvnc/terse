@@ -8,6 +8,9 @@
 //! gives way to the shipped one with a message; one that dies during the
 //! run stops it (status 3), with no fallback. Every directory is a
 //! temporary one: the user's own configuration is never read.
+//!
+//! Unix only: the planted drivers are shell scripts and modes.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

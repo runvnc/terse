@@ -2860,6 +2860,7 @@ dependencies = [
  "terse-net",
  "terse-perflog",
  "terse-relay",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -2949,6 +2950,7 @@ dependencies = [
  "blake3",
  "libc",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

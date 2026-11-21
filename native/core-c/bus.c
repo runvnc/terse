@@ -14,7 +14,24 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "core.h"
+
+const char *self_exe(void)
+{
+    static char p[4096];
+    if (p[0]) return p;
+#ifdef __APPLE__
+    uint32_t n = sizeof p;
+    if (_NSGetExecutablePath(p, &n) != 0) p[0] = 0;
+#else
+    ssize_t k = readlink("/proc/self/exe", p, sizeof p - 1);
+    p[k > 0 ? k : 0] = 0;
+#endif
+    return p;
+}
 
 typedef struct Entry {
     int valid;
@@ -268,11 +285,19 @@ static void parse_entry(Entry *e, const uint8_t *p)
     e->clow = rd32(p + 52); e->chigh = rd32(p + 56); e->cadd = rd32(p + 60);
 }
 
+/* fd, closed in the drivers this core starts (socket() and accept() with
+   SOCK_CLOEXEC are Linux and BSD; macOS has only fcntl). */
+static int cloexec(int fd)
+{
+    if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return fd;
+}
+
 static void start(Driver *d, char **argv, const uint8_t *ask, int nask)
 {
     static int serial;
     snprintf(d->sock, sizeof d->sock, "%s/d%d.sock", session, serial++);
-    int ls = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int ls = cloexec(socket(AF_UNIX, SOCK_STREAM, 0));
     struct sockaddr_un sa = {.sun_family = AF_UNIX};
     snprintf(sa.sun_path, sizeof sa.sun_path, "%s", d->sock);
     if (ls < 0 || bind(ls, (struct sockaddr *)&sa, sizeof sa) || listen(ls, 1))
@@ -295,7 +320,7 @@ static void start(Driver *d, char **argv, const uint8_t *ask, int nask)
         if (waitpid(d->pid, &st, WNOHANG) == d->pid) { d->pid = 0; die(2, "driver %s exited before it connected", argv[0]); }
         if (t >= 100) die(2, "driver %s did not connect within 10 s", argv[0]);
     }
-    d->fd = accept4(ls, 0, 0, SOCK_CLOEXEC);
+    d->fd = cloexec(accept(ls, 0, 0));
     close(ls);
     if (d->fd < 0) die(2, "accept: %s", strerror(errno));
 
@@ -388,8 +413,7 @@ int bus_setup(M *m, char *err, size_t el)
     req[3] = req[9] = req[3] || req[9];
     if (!bus_driver_dir) {          /* the default: the directory of tcore itself */
         static char self[4096];
-        ssize_t k = readlink("/proc/self/exe", self, sizeof self - 1);
-        self[k > 0 ? k : 0] = 0;
+        snprintf(self, sizeof self, "%s", self_exe());
         char *slash = strrchr(self, '/');
         if (slash) *slash = 0;
         bus_driver_dir = self;

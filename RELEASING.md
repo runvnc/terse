@@ -5,10 +5,10 @@ The downloads are built by `.github/workflows/release.yml`, which runs
 
 | File | Built on | Contents |
 | --- | --- | --- |
-| `terse-<v>-linux-x86_64.tar.gz` | ubuntu-22.04 | `terse-host` (glibc 2.35+), `terse` and `terse-relay` (static, musl) |
+| `terse-<v>-linux-x86_64.tar.gz` | ubuntu-22.04 | `terse-host` (glibc 2.35+), `terse` and `terse-relay` (static, musl); `bus/`: `terse-bus` and its drivers (glibc) |
 | `terse-<v>-linux-aarch64.tar.gz` | ubuntu-22.04-arm | the same for 64-bit ARM |
-| `terse-<v>-macos.zip` | macos-15 | `Terse.app`, `terse-host`, `terse`, `terse-relay`: universal (Apple silicon and Intel), macOS 11+ |
-| `terse-<v>-windows-x86_64.zip` | windows-latest | `terse-host.exe` (no console window), `terse.exe`, `terse-relay.exe`, C runtime linked in |
+| `terse-<v>-macos.zip` | macos-15 | `Terse.app`, `terse-host`, `terse`, `terse-relay`, `bus/`: universal (Apple silicon and Intel), macOS 11+ |
+| `terse-<v>-windows-x86_64.zip` | windows-latest | `terse-host.exe` (no console window), `terse.exe`, `terse-relay.exe`, `bus\` (Windows 10 1803+), C runtime linked in |
 | `tersereader-<v>-{linux,macos}-{amd64,arm64}.tar.gz` | ubuntu-24.04 | the Go terminal reader (`native/reader-go`), static |
 | `SHA256SUMS.txt` | | the SHA-256 of every file above |
 
@@ -18,9 +18,28 @@ DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
 fallback, `--renderer auto`) and with sound (`--features audio`).
 
-Left out on purpose: the device bus (`terse-bus`, `terse-dev-*`), which uses
-Unix sockets and so does not build for Windows; it is for developers, who build
-from source. `tersereader` has no Windows build: its terminal code is Unix-only.
+**The device bus** (`bus/`: `terse-bus` and the drivers `terse-dev-terminal`,
+`-vector`, `-content`, `-sound` and `-page`, for people who build or swap a
+device, `DEVICES.md`) is in every download, in a folder of its own, since
+`terse-bus` finds its drivers beside itself. It is run and tested on Linux
+only. **Untested on macOS and Windows**: there it is checked to compile
+(`DEVICES.md` 4.3 says what differs: AF_UNIX sockets through Winsock and a
+socket byte for waking on Windows, ulock waits on macOS), and the READMEs say
+"not yet tried". Remove that wording here and in `packaging/macos/README.txt`
+and `packaging/windows/README.txt` once `.github/workflows/test.yml` (by hand:
+Actions, "test") has passed on the macOS and Windows runners and someone has
+run a shell with it there. `terse-dev-crash` (a test driver) is left out.
+
+`tersereader` has no Windows build: its terminal code is Unix-only.
+
+## Testing on every system
+
+`.github/workflows/test.yml` runs the workspace's tests on ubuntu-24.04,
+macos-15 and windows-latest, the bus tests also with every end sleeping on the
+socket and no process timing and with the socket transport only, then the C
+core, the example driver and the Go reader where they build (Linux, macOS). It
+runs only by hand (Actions, "test", "Run workflow"; or `gh workflow run
+test.yml --ref <branch>`), never on a push.
 
 ## Cutting a release
 
