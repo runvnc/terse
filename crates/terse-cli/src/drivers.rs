@@ -200,7 +200,7 @@ fn remove(config: &Path, name: &str) -> Result<ExitCode, String> {
     driverlist::write_use(config, &choices)?;
     println!("Removed {name}.");
     for g in freed {
-        println!("{} uses the shipped driver from terse-bus's next start.", what(driverlist::group_of(g).unwrap_or(&[])));
+        println!("{}: the shipped driver, from terse-bus's next start.", what(driverlist::group_of(g).unwrap_or(&[])));
     }
     Ok(ExitCode::SUCCESS)
 }

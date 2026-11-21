@@ -12,6 +12,11 @@ under `native/core-c`'s independent one:
     terse-bus programs/hello/hello.terse --hash --driver 2=$PWD/terminal
     tcore     programs/hello/hello.terse --hash --driver 2=$PWD/terminal
     ./test.sh                         # both cores, against the reference driver
+    terse drivers add terminal        # installed: terse-bus uses it from now on
+
+`terse drivers add` installs it in your drivers folder (`DEVICES.md`
+2.2), so that `terse-bus` uses it without `--driver`; `terse drivers use 2
+default` goes back to the reference terminal driver.
 
 `test.sh` builds it (no warnings with `-Werror`), checks `STATE.md` 3's
 `hello` vectors, then runs `hello` (idle and typed into),

@@ -589,6 +589,12 @@ as installing any program.
 2. else the installed driver `use` names for the group;
 3. else the driver shipped with the core (section 2.1, rule 1).
 
+An installed driver is started with the options the core gives the
+shipped driver of its group (section 2.1's table: `--config` for the
+terminal and the page, the content driver's options for content), so
+that it finds the same fonts and directories; a driver ignores the
+options it does not need (`native/driver-example` ignores them all).
+
 A `use` line of `default`, a group with no line, a name not installed,
 or a line that cannot be read gives the shipped driver (rule 3); a core
 says so on standard error for the last two. `tcore` (section 12) does
@@ -1398,6 +1404,21 @@ for a slot that is no device of v0 (section 2.1, rule 6).
   the order from the drivers instead of knowing it. Not done: v0 has a
   fixed set of devices, and a declaration is one more thing to get wrong.
 - **Installed drivers in a host with built-in devices.** The drivers
-  folder (section 2.2) is read by `terse-bus` only. `terse-host` has its
-  devices compiled in and could hand one group to an outside driver
-  while keeping the rest; what that would take is in `README` "Drivers".
+  folder (section 2.2) is read by `terse-bus` only. `terse-host` runs
+  terse-core's machines with the devices compiled in (`InProcess`) and
+  draws by reading their state directly (the terminal's cells, the
+  display lists, the page's layout). Handing one group to an outside
+  driver while keeping the rest would take: a `Devices` that sends that
+  group's calls, BEGIN, END and STATE to the driver and the rest to the
+  compiled-in devices (the bus's code already does the driver's half);
+  that code in a crate `terse-host` can depend on (today `terse-bus`
+  depends on `terse-host` for composing) and only on Unix (sockets,
+  futexes), so Windows keeps the compiled-in devices; and a picture of
+  the device: either the driver draws layers (section 7) that the
+  renderer takes as images, or, for a driver that draws nothing like the
+  example, the host asks its STATE each presented frame (the terminal's
+  is about 10 KB) and draws from a mirror of it. Content and sound also
+  carry host services and properties (sections 7.2, 9), so the terminal,
+  the vector displays and the page are the natural first cases. The
+  record would then blame the driver by name, as `terse-bus` does,
+  instead of `core`.
