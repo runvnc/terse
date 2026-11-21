@@ -6,10 +6,11 @@ without web browsers, ads or tracking. https://github.com/runvnc/terse
 
 In this folder
 --------------
-  terse-host.exe    the Terse32 window: the reader, the manual, the built-in programs
+  terse-host.exe    the Tersenet window: the reader, the manual, the built-in programs
   terse.exe         the command-line tool (publish articles, manage feeds and relays)
   terse-relay.exe   a relay, to share with other people (see the manual)
   LICENSE.txt       Apache License 2.0
+  FONTS-LICENSE.txt the licence of the DejaVu fonts built into terse-host.exe
 
 Start
 -----

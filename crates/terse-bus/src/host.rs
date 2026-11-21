@@ -124,6 +124,14 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
         if s.contains(&4) {
             cmd.extend_from_slice(content);
         }
+        // The terminal and the page draw with the fonts the config
+        // directory's `fonts` names (README "Fonts").
+        if (s.contains(&2) || s.contains(&7))
+            && let Some(i) = content.iter().position(|a| a == "--config")
+            && let Some(dir) = content.get(i + 1)
+        {
+            cmd.extend(["--config".to_string(), dir.clone()]);
+        }
         (s.to_vec(), cmd)
     });
     let mut out: Vec<Driven> = Vec::new();

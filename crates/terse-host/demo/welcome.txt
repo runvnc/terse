@@ -1,5 +1,5 @@
-Welcome to Terse. This is the reader, a small program running inside the
-Terse machine: a 32-bit RISC-V computer with a fixed budget of work per
+Welcome to Tersenet. This is the reader, a small program running inside the
+Terse32 machine: a 32-bit RISC-V computer with a fixed budget of work per
 frame, a text terminal, a page of typeset text and a content device that
 moves articles between hosts. Everything you see here was drawn by the
 program; the host only lays the text out with its own fonts.
@@ -7,7 +7,7 @@ program; the host only lays the text out with its own fonts.
 Three more articles came with it. Press Tab to move to a link and Enter
 to follow it (or click it); Esc brings you back here:
 
-- [How Terse works](terse:LONG), a longer read
+- [How Tersenet works](terse:LONG), a longer read
 - [Hello in three languages](terse:LANGUAGES)
 - [Pictures in articles](terse:PICTURES)
 
@@ -34,7 +34,7 @@ line of dashes under the first row makes it a header:
 
 | Key | What it does |
 |---|---|
-| M | open the Terse manual, which says all of this in detail |
+| M | open the Tersenet manual, which says all of this in detail |
 | T | publish a test article of your own |
 
 A word between backquotes, like `this`, is shown as code.
@@ -45,7 +45,7 @@ terse: followed by its ID, the 64 hex digits of its hash; one to a feed
 is terse:feed/ followed by the feed's key; one to a program is
 terse:program/, the publisher's key, / and the program's name. Written
 out on their own, without brackets, they are links too. Links lead only
-to articles, feeds and programs on the Terse network: a web address is
+to articles, feeds and programs on Tersenet: a web address is
 ordinary text.
 
 A block between two lines of three backquotes is kept as written too;

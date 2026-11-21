@@ -133,7 +133,7 @@ impl Renderer {
 
 /// Glyphs whose cells are as wide as the screen's at `size`.
 fn glyphs(size: (u32, u32)) -> Option<Box<dyn GlyphSource>> {
-    let g = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, Some("DejaVu Sans Mono")).ok()?;
+    let g = crate::glyphs::TermGlyphs::builtin(crate::FONT_PX);
     Some(g.resized(size.0 / terse_core::COLS as u32))
 }
 
@@ -339,6 +339,10 @@ fn text_checks(clean: &Picture, ph: &Picture) -> (f64, f64, f64) {
 /// any build).
 #[test]
 fn phosphor_look_checks() {
+    crate::gpu_test::or_skip("phosphor_look_checks", phosphor_look_checks_checks);
+}
+
+fn phosphor_look_checks_checks() {
     let report = std::env::var_os("TERSE_LOOK_REPORT").is_some();
     #[cfg_attr(not(feature = "gpu"), allow(unused_mut))]
     let mut renderers = vec![Renderer::Soft];
@@ -398,6 +402,10 @@ fn phosphor_look_checks() {
 /// agree.
 #[test]
 fn tube_presets_and_glass() {
+    crate::gpu_test::or_skip("tube_presets_and_glass", tube_presets_and_glass_checks);
+}
+
+fn tube_presets_and_glass_checks() {
     #[cfg_attr(not(feature = "gpu"), allow(unused_mut))]
     let mut renderers = vec![Renderer::Soft];
     #[cfg(feature = "gpu")]

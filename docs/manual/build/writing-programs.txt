@@ -127,7 +127,7 @@ int main(void)
 }
 ```
 
-A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). `terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
+A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. `terse_has_device` makes the system device's `device` call; the answer never changes while the machine runs. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
 ## Running it headless
 
@@ -164,7 +164,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 
 ## The state hash
 
-`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:ae4dcfe08bc2bad1beab7d01e712478e6bdcc90224e22ac49fcc8c38ca762e4c).
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f).
 
 ## Running it in a window
 
@@ -172,7 +172,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 cargo run -p terse-host -- prog.terse
 ```
 
-runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:3d5c94b9b5836d6e905b41aa30d124b39b870705cac817f89ba22f347eea2dd4) shows the shell, where programs run side by side.
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:2d55c04f7505cc5ecedb4a3c7ee49ea5668000752e1285b193adb9458c977c3d) shows the shell, where programs run side by side.
 
 ## Costs to keep in mind
 
@@ -190,4 +190,4 @@ checks the image and publishes it as a program entry; it prints `seq N program <
 
 Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [The machines device](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
 
-Next: [The machine](terse:65226db98065ba9d4c9374ea40e4b0ee7b974b2348867a980b0f20714297e7d1), then the devices, from [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9) and [The terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2) to [Events](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462).
+Next: [The machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42), then the devices, from [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9) and [The terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938) to [Events](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462).

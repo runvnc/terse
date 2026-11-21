@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 #[cfg(feature = "gpu")]
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
@@ -68,100 +67,80 @@ const FIGURE_UPLOADS: usize = 32;
 #[cfg(feature = "gpu")]
 const FIGURE_UPLOAD_BYTES: usize = 8 << 20;
 
-/// The fonts of the three faces (SPEC §page.document): family names as given (or as
-/// loaded from a file), `None` for the system's default of that kind.
-#[derive(Clone, Debug, Default)]
-pub struct PageFonts {
-    pub sans: Option<String>,
-    pub serif: Option<String>,
-    pub mono: Option<String>,
-}
+pub use crate::fonts::PageFonts;
 
-/// One face, resolved: the family to ask for and its natural line height
-/// as a multiple of the size.
+/// One kind of text (sans, bold, mono), resolved: the family and weight to
+/// ask for and its natural line height as a multiple of the size.
 #[derive(Clone, Debug)]
 struct Face {
     family: String,
+    weight: Weight,
     line_height: f32,
 }
 
-/// A FontSystem with the three faces resolved.
+/// A FontSystem holding exactly the host's fonts (`PageFonts`), with the
+/// three kinds of text resolved.
 pub struct Typesetter {
     fonts: FontSystem,
+    /// Sans, bold, mono.
     faces: [Face; 3],
 }
 
-/// The family a generic name (`sans-serif`, `serif`, `monospace`) stands
-/// for on this system: what `fc-match` says, if fontconfig is there and
-/// the family is in `db`; else what fontdb's own reading of the fontconfig
-/// files gives.
-fn generic(db: &Database, family: Family) -> String {
-    let name = match family {
-        Family::Serif => "serif",
-        Family::Monospace => "monospace",
-        _ => "sans-serif",
-    };
-    let matched = std::process::Command::new("fc-match")
-        .args(["-f", "%{family[0]}", name])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .filter(|f| has_family(db, f));
-    matched.unwrap_or_else(|| {
-        db.query(&Query { families: &[family], ..Query::default() })
-            .and_then(|id| db.face(id))
-            .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
-            .unwrap_or_else(|| db.family_name(&family).to_string())
-    })
-}
+/// Font fallback within the loaded fonts only: a character the requested
+/// font lacks comes from the built-in fonts (which cover the full
+/// repertoire, SPEC §terminal.text), then from the other fonts in the
+/// order they were loaded (the user's extra fonts). No family is looked for
+/// by script: there is nothing else to look in.
+struct LoadedOnly;
 
-fn has_family(db: &Database, name: &str) -> bool {
-    db.faces().any(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)))
+impl cosmic_text::Fallback for LoadedOnly {
+    fn common_fallback(&self) -> &[&'static str] {
+        &["DejaVu Sans", "DejaVu Sans Mono"]
+    }
+
+    fn forbidden_fallback(&self) -> &[&'static str] {
+        &[]
+    }
+
+    fn script_fallback(&self, _: unicode_script::Script, _: &str) -> &[&'static str] {
+        &[]
+    }
 }
 
 impl Typesetter {
-    /// Loads the system fonts (and any font files named in `fonts`) and
-    /// resolves the faces. Takes a while (system fonts are scanned): call it
-    /// off the frame loop.
+    /// Puts `fonts` (already in memory: nothing is read from disk here) in a
+    /// font system and resolves the kinds of text. Parsing the fonts takes
+    /// a little while: call it off the frame loop.
     pub fn new(fonts: &PageFonts) -> Result<Self, String> {
         let mut db = Database::new();
-        // With fontconfig, this also sets the generic families (sans-serif,
-        // serif, monospace) to the system's preferred ones.
-        db.load_system_fonts();
-        if let Some(name) = crate::glyphs::platform_monospace(|n| has_family(&db, n)) {
-            db.set_monospace_family(name);
-        }
-        let mut family = |given: &Option<String>, kind: Family| -> Result<String, String> {
-            let Some(name) = given else { return Ok(generic(&db, kind)) };
-            if Path::new(name).is_file() {
-                let before: Vec<ID> = db.faces().map(|f| f.id).collect();
-                db.load_font_file(name).map_err(|e| format!("{name}: {e}"))?;
-                let new = db.faces().find(|f| !before.contains(&f.id));
-                return new
-                    .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
-                    .ok_or(format!("{name}: not a font file this host can read"));
+        let mut first = |list: &[crate::fonts::FontData]| -> Result<(String, Weight), String> {
+            let mut chosen = None;
+            for f in list {
+                let ids = db.load_font_source(fontdb::Source::Binary(f.bytes.clone()));
+                let face = ids.first().and_then(|&id| db.face(id)).ok_or(format!("{}: not a font", f.label))?;
+                let name = face.families.first().map(|(n, _)| n.clone()).unwrap_or_default();
+                chosen.get_or_insert((name, face.weight));
             }
-            if !has_family(&db, name) {
-                return Err(format!("no font family named {name:?} (fc-list : family lists them)"));
-            }
-            Ok(name.clone())
+            chosen.ok_or("no font".into())
         };
-        let names = [
-            family(&fonts.sans, Family::SansSerif)?,
-            family(&fonts.serif, Family::Serif)?,
-            family(&fonts.mono, Family::Monospace)?,
-        ];
+        // The built-in fonts behind each replacement, all loaded before the
+        // extras, so that they come first in fallback.
+        let sans = first(&fonts.sans)?;
+        let bold = first(&fonts.bold)?;
+        let mono = first(&fonts.mono)?;
+        for f in &fonts.extras {
+            db.load_font_source(fontdb::Source::Binary(f.bytes.clone()));
+        }
         let locale = std::env::var("LANG")
             .ok()
             .and_then(|l| l.split('.').next().map(|s| s.replace('_', "-")))
             .filter(|l| !l.is_empty() && l != "C" && l != "POSIX")
             .unwrap_or_else(|| "en-US".into());
-        let mut fonts = FontSystem::new_with_locale_and_db(locale, db);
-        let faces = names.map(|family| {
-            let id = fonts.db().query(&Query { families: &[Family::Name(&family)], ..Query::default() });
+        let mut fonts = FontSystem::new_with_locale_and_db_and_fallback(locale, db, LoadedOnly);
+        let faces = [sans, (bold.0, Weight::BOLD), mono].map(|(family, weight)| {
+            let id = fonts.db().query(&Query { families: &[Family::Name(&family)], weight, ..Query::default() });
             let line_height = id
-                .and_then(|id| fonts.get_font(id, Weight::NORMAL))
+                .and_then(|id| fonts.get_font(id, weight))
                 .map(|f| {
                     let m = f.metrics();
                     (m.ascent - m.descent + m.leading) / m.units_per_em as f32
@@ -169,17 +148,17 @@ impl Typesetter {
                 .filter(|h| h.is_finite())
                 .unwrap_or(MIN_LINE_HEIGHT)
                 .max(MIN_LINE_HEIGHT);
-            Face { family, line_height }
+            Face { family, weight, line_height }
         });
         Ok(Typesetter { fonts, faces })
     }
 
-    /// The families of sans, serif and monospace, for the user.
+    /// The families of sans, bold and mono text, for the user.
     pub fn describe(&self) -> String {
-        let [s, r, m] = &self.faces;
+        let [s, b, m] = &self.faces;
         format!(
-            "sans {} (line {:.2}), serif {} (line {:.2}), mono {} (line {:.2})",
-            s.family, s.line_height, r.family, r.line_height, m.family, m.line_height
+            "sans {} (line {:.2}), bold {} (line {:.2}), mono {} (line {:.2})",
+            s.family, s.line_height, b.family, b.line_height, m.family, m.line_height
         )
     }
 
@@ -250,12 +229,18 @@ impl Typesetter {
 
 /// The cosmic-text attributes of a run's style.
 fn attrs<'a>(faces: &'a [Face; 3], style: &core_page::Style) -> Attrs<'a> {
-    let face = &faces[style.face as usize];
+    // SPEC §page.document's serif face is drawn with the sans fonts; bold
+    // monospace with the monospace font, emboldened (`render_glyph`).
+    let face = match (style.face, style.bold) {
+        (2, _) => &faces[2],
+        (_, false) => &faces[0],
+        (_, true) => &faces[1],
+    };
     let [r, g, b] = style.rgb;
     let size = style.size as f32;
     Attrs::new()
         .family(Family::Name(&face.family))
-        .weight(if style.bold { Weight::BOLD } else { Weight::NORMAL })
+        .weight(if style.bold { Weight::BOLD } else { face.weight })
         .style(if style.italic { Style::Italic } else { Style::Normal })
         .color(Color::rgb(r, g, b))
         .metadata(style.anchor as usize)
@@ -802,9 +787,14 @@ pub(crate) fn render_glyph(scale_context: &mut ScaleContext, font: &Font, key: C
             f32::from(key.font_weight.0).clamp(v.min_value(), v.max_value()),
         )]));
     }
+    // Bold text in a font without a bold face (the monospace font) is
+    // emboldened.
+    let size = f32::from_bits(key.font_size_bits);
+    let embolden = if wght.is_none() && key.font_weight.0 >= 600 && swash_font.attributes().weight().0 < 600 { size / 28.0 } else { 0.0 };
     let mut scaler = builder.build();
     Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline])
         .format(Format::Alpha)
+        .embolden(embolden)
         .offset(Vector::new(key.x_bin.as_float(), key.y_bin.as_float()))
         .transform(
             key.flags

@@ -1,6 +1,6 @@
 [package]
 name = "terse-relay"
-description = "WebSocket blob relay for Terse (NETWORK.md section 3)."
+description = "WebSocket blob relay for Tersenet (NETWORK.md section 3)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

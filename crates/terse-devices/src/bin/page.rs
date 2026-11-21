@@ -7,8 +7,8 @@
 //! software page renderer. It subscribes to the vector display's
 //! figures-as-outlines flag (SPEC §page.layout).
 //!
-//! Options: `--fonts` or `--reference` force the layout; `--page-sans`,
-//! `--page-serif`, `--page-mono` name the fonts.
+//! Options: `--fonts` or `--reference` force the layout; `--config <dir>`:
+//! the fonts `<dir>/fonts` names (README "Fonts"), else the built-in ones.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -273,20 +273,23 @@ impl Device for PageDriver {
 
 fn main() -> std::process::ExitCode {
     let mut fonts = None;
-    let mut page_fonts = PageFonts::default();
+    let mut config = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--fonts" => fonts = Some(true),
             "--reference" => fonts = Some(false),
-            "--page-sans" => page_fonts.sans = args.next(),
-            "--page-serif" => page_fonts.serif = args.next(),
-            "--page-mono" => page_fonts.mono = args.next(),
+            "--config" => config = args.next().map(std::path::PathBuf::from),
             _ => {
                 eprintln!("terse-dev-page: unknown option {a}");
                 return std::process::ExitCode::from(2);
             }
         }
+    }
+    // Every font is opened now, at start (SPEC §responsiveness item 5).
+    let page_fonts = PageFonts::load(config.as_deref());
+    for n in &page_fonts.notes {
+        eprintln!("terse-dev-page: fonts: {n}");
     }
     let mut d = PageDriver { fonts, page_fonts, typesetter: None, replay: false, presents: false, inst: HashMap::new() };
     terse_bus::driver::run(&mut d, "terse-dev-page")

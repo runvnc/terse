@@ -1,0 +1,34 @@
+The fonts built into Terse
+==========================
+
+terse-host draws all text with three fonts that are built into it
+(include_bytes!, src/fonts.rs), so it needs no installed fonts and draws
+the same on every system (SPEC.md §terminal.text, README "Fonts"):
+
+  DejaVuSansMono.ttf   the terminal, and the page's monospace face   340,712 bytes
+  DejaVuSans.ttf       the page's sans (and serif) face              757,076 bytes
+  DejaVuSans-Bold.ttf  the page's bold text                          705,684 bytes
+                                                            together 1,803,472 bytes
+
+They are DejaVu fonts version 2.37, unmodified, from the project's
+official release:
+
+  https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2
+  sha256 fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7
+  (downloaded 2026-11-21; the three files are ttf/ in that archive)
+
+  sha256 of the files:
+  b4a6c3e4faab8773f4ff761d56451646409f29abedd68f05d38c2df667d3c582  DejaVuSansMono.ttf
+  7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954  DejaVuSans.ttf
+  e6476c1b80502924294eed40894c5b18e06c181444ca953e5334262df9c27724  DejaVuSans-Bold.ttf
+
+LICENSE is the archive's LICENSE file: the Bitstream Vera fonts licence
+(DejaVu's changes are in the public domain) and the Arev fonts licence.
+It allows the fonts to be copied, embedded and redistributed with other
+software as long as the copyright and permission notices are included;
+every Terse download ships this LICENSE as FONTS-LICENSE.txt.
+
+The fonts are shipped whole, not subset to the full repertoire: no
+subsetting tool is part of the build, and the characters beyond the
+repertoire (Armenian, Georgian, Hebrew, Arabic, more symbols) are drawn
+too.

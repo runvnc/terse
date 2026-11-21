@@ -45,7 +45,7 @@ holo shows the 3D vector display: 1 to 6 (or Space) choose a scene, the arrows t
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:ae4dcfe08bc2bad1beab7d01e712478e6bdcc90224e22ac49fcc8c38ca762e4c).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f).
 
 ## Open requests
 
@@ -114,7 +114,7 @@ Feed page (Enter on a feed, or a `terse:feed/` link): the feed's name (and wheth
 
 ## Reading an article
 
-The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:c148cde4359bb7215a75e9ad23c2f69fedccd1a1012c488f564da1307d44c999) describes. The status row shows how far you have scrolled, from 0% to 100%.
+The article fills the screen above the status row as a centred column 512 units wide: the title, a grey line (feed key prefix, entry number, date, size), a rule, then the text formatted as [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8) describes. The status row shows how far you have scrolled, from 0% to 100%.
 
 | Key | In an article |
 |---|---|
@@ -132,4 +132,4 @@ The reader also gets the first 8 article links of an article as you open it, so 
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:c148cde4359bb7215a75e9ad23c2f69fedccd1a1012c488f564da1307d44c999). How the shell's devices work: [The machines device](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450). Feeds and consent from a program's side: [Feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea).
+How articles are written: [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8). How the shell's devices work: [The machines device](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450). Feeds and consent from a program's side: [Feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea).

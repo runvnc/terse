@@ -103,7 +103,7 @@ int main(void)
 {
     terse_event ev;
     term_color(15, 4);
-    term_puts(" Terse · fetch");
+    term_puts(" Tersenet · fetch");
     term_cmd(TERM_CLEAR_EOL);
     term_color(7, 0);
 

@@ -448,15 +448,16 @@ group of slots, with fixed names:
 
 | Slots | Program | Options |
 |---|---|---|
-| 2, and 10 (full text) | `terse-dev-terminal` | none |
+| 2, and 10 (full text) | `terse-dev-terminal` | `--config <dir>`: the fonts `<dir>/fonts` names (README "Fonts"), loaded at start; without it the built-in font |
 | 3 and 9 (shared state, section 1.1) | `terse-dev-vector` | none |
 | 4 | `terse-dev-content` | `--store <dir>`, `--config <dir>`, `--data <dir>`, `--relay <ws://…>` (repeatable; `none` for no relay), `--consent allow\|deny\|ask`, `--profile reading`, `--no-feed-relays`, `--no-program-download`: those of `terse run`, with the same defaults, which are **the user's own** blob store, configuration and data directories. A test must always give `--store`, `--config` and `--data` (and `--relay none` to stay off the network) |
 | 6 | `terse-dev-sound` | none |
-| 7 | `terse-dev-page` | `--fonts` or `--reference` (lay pages out with real fonts, or with the reference layout; by default real fonts only when the core presents), `--page-sans`, `--page-serif`, `--page-mono <font file>` |
+| 7 | `terse-dev-page` | `--fonts` or `--reference` (lay pages out with real fonts, or with the reference layout; by default real fonts only when the core presents), `--config <dir>` (the fonts `<dir>/fonts` names, loaded at start; without it the built-in fonts) |
 
 Options follow the program name on its command line. The content and
 page drivers refuse an option they do not know (status 2); the others
-ignore their arguments. Every Rust driver also reads
+ignore the arguments they do not know. `terse-bus` gives the terminal
+and page drivers the `--config` it gives the content driver. Every Rust driver also reads
 `TERSE_BUS_TRANSPORT=socket` (never take shared memory),
 `TERSE_BUS_SPIN=fixed` and `TERSE_BUS_SPIN_US` (section 4.2). The other
 drivers in the repository take no options:

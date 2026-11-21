@@ -240,9 +240,9 @@ write:
     ret
 
     .section .rodata
-title:  .asciz " Terse · hello"
+title:  .asciz " Tersenet · hello"
 texts:  .byte 2, 2, 11, 0
-        .asciz "héllo, wörld — 你好"
+        .asciz "héllo, wörld — привет, мир"
         .byte 3, 2, 7, 0
         .asciz "Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓"
         .byte 4, 2, 8, 0

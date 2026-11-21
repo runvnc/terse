@@ -82,10 +82,10 @@ struct Sample {
 /// The welcome article's `terse:LONG`, `terse:LANGUAGES` and
 /// `terse:PICTURES` become links to the other three ([`sample_text`]).
 const SAMPLES: [Sample; 4] = [
-    Sample { title: "How Terse works: a longer read", text: include_str!("../demo/long.txt") },
-    Sample { title: "Hello in three languages: こんにちは, مرحبا", text: include_str!("../demo/languages.txt") },
+    Sample { title: "How Tersenet works: a longer read", text: include_str!("../demo/long.txt") },
+    Sample { title: "Hello in three languages: Γειά σας, مرحبا", text: include_str!("../demo/languages.txt") },
     Sample { title: "Pictures in articles", text: include_str!("../demo/pictures.txt") },
-    Sample { title: "Welcome to Terse", text: include_str!("../demo/welcome.txt") },
+    Sample { title: "Welcome to Tersenet", text: include_str!("../demo/welcome.txt") },
 ];
 
 /// The display name of the profile `--demo` gives a new identity (not

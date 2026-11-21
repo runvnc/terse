@@ -685,7 +685,7 @@ func row(b *strings.Builder, y int, content string) {
 func (u *ui) draw() {
 	var b strings.Builder
 	s := u.cur()
-	title := "Terse"
+	title := "Tersenet"
 	switch s.kind {
 	case scTimeline:
 		con, total := 0, 0
@@ -695,7 +695,7 @@ func (u *ui) draw() {
 				con++
 			}
 		}
-		title = fmt.Sprintf("Terse — timeline · %d feeds · relays %d/%d connected", len(u.n.Subscriptions()), con, total)
+		title = fmt.Sprintf("Tersenet — timeline · %d feeds · relays %d/%d connected", len(u.n.Subscriptions()), con, total)
 	case scArticle:
 		title = s.art.title
 	case scFeed:

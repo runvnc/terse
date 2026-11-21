@@ -29,9 +29,9 @@
 
 
 -- machine 1 exited 203 23 214 160 hello --
- Terse · hello
+ Tersenet · hello
 
-  héllo, wörld — 你好
+  héllo, wörld — привет, мир
   Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
   Type to echo text below. Enter: new line, Backspace, Esc: exit.
 

@@ -162,7 +162,7 @@ The devices a reading host provides (the reading profile):
 | 2 | Terminal: 80 × 30 character cells |
 | 4 | Content: blobs, feeds, search, named records |
 | 7 | Page: typeset proportional text and figures |
-| 10 | Full text: every character in the terminal |
+| 10 | Full text: the full repertoire (Latin, Greek, Cyrillic, symbols) and more in the terminal |
 
 The devices a program host provides (the program profile):
 
@@ -237,12 +237,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:29f5941c2bfd3a01899311b83da2203e396bc8113134e55bfab44a6038d7e640): building a C program and packing it as an image.
-- [Using Tersenet](terse:3d5c94b9b5836d6e905b41aa30d124b39b870705cac817f89ba22f347eea2dd4): the tools, the shell and the reader.
-- [Writing articles](terse:c148cde4359bb7215a75e9ad23c2f69fedccd1a1012c488f564da1307d44c999): the article format, tables and figures.
-- [The machine](terse:65226db98065ba9d4c9374ea40e4b0ee7b974b2348867a980b0f20714297e7d1): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), [the terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), [the 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
+- [Writing programs](terse:07b469b2c875f5adfa245a87bbb3d0ade52510fe4bbcce88255f109b889fecd6): building a C program and packing it as an image.
+- [Using Tersenet](terse:2d55c04f7505cc5ecedb4a3c7ee49ea5668000752e1285b193adb9458c977c3d): the tools, the shell and the reader.
+- [Writing articles](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format, tables and figures.
+- [The machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42): the CPU, memory, frames, image format and the full call table.
+- [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), [the terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938), [the 2D vector display](terse:07032dac21c87b99b28df12c49a0f23284e969f257a91e0c562d641b3e6ba6e2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
 - [Blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46), [feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81) on the content device.
 - [The network](terse:f5ddaf54feef02f988f85a90effdcfce5faf1222c6d2783e6b30f1f17fd68ef4): relays and feeds as the host sees them.
-- [Machine state](terse:ae4dcfe08bc2bad1beab7d01e712478e6bdcc90224e22ac49fcc8c38ca762e4c): the state serialization and the state hash.
+- [Machine state](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f): the state serialization and the state hash.
 - [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462) and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

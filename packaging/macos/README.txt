@@ -6,11 +6,12 @@ without web browsers, ads or tracking. https://github.com/runvnc/terse
 
 In this folder
 --------------
-  Terse.app     the Terse32 window: the reader, the manual, the built-in programs
+  Terse.app     the Tersenet window: the reader, the manual, the built-in programs
   terse-host    the same program, for starting from Terminal with options
   terse         the command-line tool (publish articles, manage feeds and relays)
   terse-relay   a relay, to share with other people (see the manual)
   LICENSE       Apache License 2.0
+  FONTS-LICENSE.txt  the licence of the DejaVu fonts built into terse-host
 
 First: let macOS open it
 ------------------------

@@ -18,6 +18,8 @@ Each article below says what it covers.
   publishing it in a feed.
 - [Using the shell and the reader](terse:{using}): the keys of the
   shell and the reader, layouts, sessions and the consent prompts.
+- [Fonts](terse:{fonts}): the fonts the host draws with, which
+  characters they show, and adding a font for other scripts.
 - [Writing an article](terse:{writing-articles}): the article format,
   every construct shown as source and as it is shown.
 - [State, replay and conformance](terse:{state}): what a machine's state

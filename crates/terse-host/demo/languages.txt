@@ -1,16 +1,20 @@
-The page device lays out text in any script the host has fonts for, and
-each paragraph runs in its own direction. Here is the same short greeting
-in three languages.
+The page device lays out text in any script its fonts cover, and each
+paragraph runs in its own direction. Here is the same short greeting in
+three languages.
 
 Hello, and welcome. This article was published from your own feed when the
-demo started. If you can read the next two paragraphs, your host found
-fonts for Japanese and for Arabic, shaped the Arabic letters so that they
-join, and set the Arabic paragraph from right to left.
+demo started. The next two paragraphs are in Greek and in Arabic, drawn
+with the fonts built into the host: the Arabic letters are shaped so that
+they join, and that paragraph is set from right to left.
 
-こんにちは。これはTerseのデモ記事です。この段落は日本語で書かれていて、ホストのフォントで組版されています。日本語には単語の間に空白がないので、行はどの文字の後でも折り返すことができます。
+Γειά σας. Αυτό είναι ένα δοκιμαστικό άρθρο του Tersenet. Η παράγραφος είναι γραμμένη στα ελληνικά και στοιχειοθετείται με τις γραμματοσειρές του προγράμματος.
 
-مرحبًا بك. هذه مقالة تجريبية من Terse. تُكتب العربية من اليمين إلى اليسار، وتتصل حروفها ببعضها، ويقوم المضيف بتشكيل النص وعرضه بالاتجاه الصحيح.
+مرحبًا بك. هذه مقالة تجريبية من Tersenet. تُكتب العربية من اليمين إلى اليسار، وتتصل حروفها ببعضها، ويقوم المضيف بتشكيل النص وعرضه بالاتجاه الصحيح.
 
-A paragraph may also mix them: the word for tea is お茶 (ocha) in Japanese
+A paragraph may also mix them: the word for tea is τσάι (tsai) in Greek
 and شاي (shay) in Arabic, and the line still reads from left to right
 because it begins with an English word.
+
+Scripts the built-in fonts lack, such as Japanese, Chinese and Korean,
+show as boxes until you add a font that has them, with
+`terse fonts add <file>`.

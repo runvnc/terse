@@ -1165,9 +1165,13 @@ mod tests {
     /// of its own, and a renderer on it is built without a validation error.
     #[test]
     fn shaders_are_per_device() {
+        crate::gpu_test::or_skip("shaders_are_per_device", shaders_are_per_device_checks);
+    }
+
+    fn shaders_are_per_device_checks() {
         let Some((_a, first)) = device() else { return eprintln!("no GPU adapter: not tested") };
         let Some((_b, second)) = device() else { return };
-        let Ok(glyphs) = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, None) else { return };
+        let glyphs = crate::glyphs::TermGlyphs::builtin(crate::FONT_PX);
         let shaders = Shaders::new(&first);
         let one = shaders.module("terminal", || format!("{}{SHADER}", phosphor::wgsl()));
         let again = shaders.clone().module("terminal", || unreachable!("compiled once per device"));

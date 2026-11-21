@@ -330,7 +330,7 @@ are supported. `--relay` may be given several times, and every command that take
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>] [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
+`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
 which starts the built-in programs (reader, sparks, fetch, hello, sketch and holo, also built in, and
@@ -374,8 +374,8 @@ phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 The 3D vector display is seen from an eye that follows the pointer (parallax; see
 [3D vector display](#3d-vector-display)); `--parallax off` keeps it still, at `--eye`.
-`--font` draws the grid with another font (see [Fonts](#fonts)); `--page-sans`,
-`--page-serif` and `--page-mono` choose the page's three faces (see [Page](#page)).
+Text is drawn with the built-in fonts and those `terse fonts` lists (see
+[Fonts](#fonts)); `--version` prints them.
 Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
 (wgpu) or by the CPU (see [Software renderer](#software-renderer)); `auto`, the
 default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
@@ -1508,7 +1508,7 @@ figures are outlines, and in the phosphor style they glow like the text.
 
 **In `terse-host`.** [cosmic-text](https://crates.io/crates/cosmic-text) lays the
 document out (HarfRust shaping, the Unicode bidirectional algorithm and line
-breaking, fallback to other installed fonts for scripts the face lacks) on a worker
+breaking, fallback within the host's own fonts for characters the face lacks) on a worker
 thread, in screen units and without hinting, so a window of any size uses the same
 layout; the machine keeps running at 60 frames/s and shows the previous layout (or
 only the background) until the new one is ready, then the height event goes in at
@@ -1517,10 +1517,10 @@ at the window's own pixel size (not at 640 × 480 and scaled), cached in a 2048 
 2048 atlas, and drawn as quads clipped to the rectangle; only the lines in view are
 drawn, each line's baseline on a whole pixel. Scrolling moves the lines only (no new
 layout) and eases towards the program's scroll value over a few frames, so on a
-large window it moves in steps finer than a screen unit. The three faces are the
-system's `sans-serif`, `serif` and `monospace` families as `fc-match` resolves them
-(Noto Sans, Noto Serif and Noto Sans Mono on the development machine), or the
-families or font files given with `--page-sans`, `--page-serif` and `--page-mono`;
+large window it moves in steps finer than a screen unit. Text is set in the
+built-in DejaVu Sans (and the serif face too), DejaVu Sans Bold for bold and DejaVu
+Sans Mono for the monospace face (bold monospace emboldened), or the replacements
+`terse fonts set` names, with the user's extra fonts behind them (see [Fonts](#fonts));
 the line height is the face's own (ascent + descent + gap), at least 1.3 × the size.
 `terse-host` prints the faces it uses. In the phosphor style the page's background
 is not drawn and its text is light on the tube, drawn as terminal text is. Figures are rasterised with [tiny-skia](https://crates.io/crates/tiny-skia)
@@ -1532,36 +1532,50 @@ that has just come into view may appear a frame or two late. `--screenshot` lays
 the page out with the same fonts between frames, and rasterises figures at once,
 so the picture shows the finished page.
 
-    fc-list : family | sort -u
-    cargo run --release -p terse-host -- programs/reader/reader.terse --page-serif "DejaVu Serif"
-    cargo run --release -p terse-host -- programs/reader/reader.terse --page-sans /usr/share/fonts/TTF/SomeFont.ttf
-
 Setting `TERSE_PAGE_TRACE=1` makes `terse-host` print, per frame, when a layout is
 pending and when its height event is queued (with the layout's time), and each
 figure as it is rasterised (with the time and the figure memory held).
 
 ## Fonts
 
-`terse-host` draws the terminal grid with the system's monospace font (the
-`monospace` family as [fontdb](https://crates.io/crates/fontdb) resolves it, which
-need not be what `fc-match monospace` says), falling back to other installed fonts
-for characters it lacks (CJK, symbols). `--font` picks another one, by family name
-as `fc-list` shows it or by the path of a `.ttf`, `.otf` or `.ttc` file; in a window
-`terse-host` prints the font it uses on stderr:
+`terse-host` draws all text with fonts it loads when it starts and never looks
+for others: three built in (`include_bytes!`, so nothing need be installed and text
+looks the same on every system), DejaVu Sans Mono 2.37 for the terminal and the
+page's monospace text, DejaVu Sans and DejaVu Sans Bold for the page (1.8 MB
+together; source, checksums and licence in `crates/terse-host/fonts/`, whose
+`LICENSE` every download carries as `FONTS-LICENSE.txt`). They cover the **full
+repertoire** of SPEC.md §terminal.text, 2,461 characters of Latin, Greek, Cyrillic,
+punctuation and common symbols (`vectors/full-text.txt`), and DejaVu's other
+scripts besides. A character no loaded font has is drawn as the placeholder box;
+the text itself is unchanged.
 
-    fc-list : family | sort -u
-    cargo run --release -p terse-host -- programs/reader/reader.terse --font "DejaVu Sans Mono"
-    cargo run --release -p terse-host -- programs/reader/reader.terse --font "Noto Sans"
-    cargo run --release -p terse-host -- programs/reader/reader.terse --font /usr/share/fonts/liberation/LiberationSerif-Regular.ttf
-    cargo run --release -p terse-host -- programs/hello/hello.terse --font "DejaVu Serif" --screenshot /tmp/serif.png --frames 30
+Other scripts need a font the user names, in `<config>/fonts`, which `terse fonts`
+writes (one `mono`, `sans`, `bold` or `extra` line per file):
 
-A monospace font sets the cell size from its own advance, as the default does.
-A proportional font is only a look test: the machine's terminal is still a grid, so
-the cell stays the size the default monospace font gives, the font is sized so its
-text body (ascent to descent) is as tall as that font's, and each glyph is centred in
-its cell (a wide character in its two cells), squeezed horizontally only if it would
-not fit (`m` and `W` usually are). Characters the font lacks come from the fallbacks
-as usual.
+    terse fonts add /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc   # Japanese, Chinese, Korean
+    terse fonts list
+    terse fonts remove /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+    terse fonts set mono ~/fonts/SomeMono.ttf      # replace a built-in font
+    terse fonts set mono default
+    terse-host --version                           # the fonts it would use
+
+Extra fonts come after the built-in ones, in the order listed, for the characters
+those lack. A replacement goes in front of the built-in font it replaces, which
+still draws whatever the replacement lacks, so the full repertoire is always drawn
+and device 10 always granted. A replacement must have all of printable ASCII and
+the monospace one must be monospaced (every printable ASCII character as wide as
+`0`), so that it fills the terminal's cells; `terse fonts` checks a file when it is
+given, and `terse-host` again at start, where a missing or unsuitable file is
+reported on stderr and the built-in font used instead.
+
+Each file is memory-mapped and checked once, at start: listing a 19 MB CJK
+collection adds nothing measurable to start-up and nothing to the memory until one
+of its glyphs is drawn, and no file is opened for text after start (SPEC §responsiveness item 5, PERFORMANCE.md R11).
+The terminal's cell is the monospace font's advance; the first monospace font is
+parsed whole by fontdue (small), the others a glyph at a time with swash, and every
+glyph is rasterised once, the first time it is shown. The device-bus drivers
+(`terse-dev-terminal`, `terse-dev-page`) take `--config <dir>` for the same file
+(`terse-bus` passes its own); without it they use the built-in fonts.
 
 ## Sparks
 
@@ -1921,9 +1935,10 @@ starts runs in the next frame; the reader opens a held article 1 frame after Ent
 `terse get` of a held article takes 7 ms as a whole process and `tersereader
 --dump` 12 ms; syncing 50 entries takes 59 ms (`terse`) and 303 ms (`tersereader`),
 with one Subscribe; `terse-host` draws its first frame 170 ms after it starts.
-Fetch's first frame of CJK text used to take about a second (PERFORMANCE.md 3): it
-now takes 90 ms even when fetch starts 50 ms after the host, most of it waiting for
-the font map the host builds as it starts.
+Fetch's first frame of CJK text used to take about a second, then 90 ms with a font
+map built as the host started (PERFORMANCE.md 3); the host now draws only with the
+fonts it loads at start and never looks for one, and fetch's text keeps to the full
+repertoire of its built-in fonts.
 
 ## Measurements
 
@@ -1957,8 +1972,8 @@ The frames over 16.7 ms are the ones in which a machine first appears (a rendere
 of its own, its glyphs: 15–19 ms), in which a new machine makes the others' tiles
 change size (glyphs and textures for the new size: 13–15 ms), and the first frame
 showing hello's CJK and Greek text (600–640 ms looking through the system's fonts for
-the characters the monospace font lacks; `terse-host hello.terse` alone pays the
-same at its first frame).
+the characters the monospace font lacks; `terse-host hello.terse` alone paid the
+same at its first frame; measured before the host stopped looking for fonts).
 
 Host cost per budget unit, for a frame spent entirely in one kind of call
 (`cargo test --release -p terse-core --test charges -- --ignored --nocapture

@@ -86,7 +86,7 @@ A line of a cell counts as a line for presses and `locate`; a row's lines are ta
 
 ## Layout and presentation
 
-The host chooses fonts for the three faces and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine's frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.
+The host draws with fonts it loaded at start, at least the full repertoire of the terminal's full text (the reference host: DejaVu Sans, Sans Bold and Sans Mono, and fonts its user added; serif text in the sans font), and does shaping, the bidirectional algorithm within each line, Unicode line breaking and font fallback. It draws the background, then what is in view, clipped to the rectangle. How text looks cannot be observed. Layout happens outside the machine's frames, is never charged and may take the host several frames (it shows the previous layout or nothing meanwhile); the machine never waits.
 
 ## Events
 

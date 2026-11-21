@@ -1,4 +1,4 @@
- Terse · conform-perf
+ Tersenet · conform-perf
 
 timeline: done in 1 frame (at most 2)  PASS
 held get (the blob just put): done in 1 frame (at most 2)  PASS

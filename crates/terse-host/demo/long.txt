@@ -2,11 +2,11 @@ This is a longer article, several screens of it, so that you can try the
 reader's scrolling: Up and Down move a line at a time, Page Up and Page Down
 (or Space) a screen, Home and End go to the ends, and the mouse wheel works
 too. The status line shows how far through the article you are. It is also
-a short tour of how Terse works, from the bottom up.
+a short tour of how Tersenet works, from the bottom up.
 
 # The machine
 
-Terse is a virtual computer. Its processor runs the RISC-V instruction set,
+Terse32 is a virtual computer. Its processor runs the RISC-V instruction set,
 the 32-bit base with multiplication and the compressed encodings, which is
 small enough to implement in an afternoon and well supported by ordinary
 compilers. A program is a single image of at most 128 KiB of code and
@@ -18,7 +18,7 @@ Every frame has a budget of 125,000 units of work. An instruction costs one
 unit when it is fetched from read-only memory and four when it is fetched
 from RAM; calls to devices cost a few units plus a little for every byte
 they copy. When the budget runs out, the machine simply pauses the program
-until the next frame. This is what makes a Terse program behave the same on
+until the next frame. This is what makes a Terse32 program behave the same on
 a fast desktop and a slow phone: it can never ask for more than its share,
 and a host that can deliver the budget sixty times a second runs every
 program at full speed.
@@ -81,7 +81,7 @@ that prompt, read it or answer it.
 
 # Why so small?
 
-Everything about Terse is meant to be small enough to understand and to
+Everything about Tersenet is meant to be small enough to understand and to
 implement again. The machine fits in a few thousand lines; the network
 protocol fits on a page; a program like this reader is a single file of C.
 Small parts make it possible to check them, to port them, and to trust that

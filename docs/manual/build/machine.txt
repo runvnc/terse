@@ -214,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), slot 2:
+[The terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -229,7 +229,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), slot 3:
+[The 2D vector display](terse:07032dac21c87b99b28df12c49a0f23284e969f257a91e0c562d641b3e6ba6e2), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -245,7 +245,7 @@ The content device, slot 4 (see [blobs](terse:faf914f7849ceadf13bfead243df1a9525
 |---|---|---|---|---|
 | `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected | answered |
 
-[The page](terse:5b1ca4df05b8c3a82fe37761b38fd781b452e0f664152e2f43153dd775d0c3f6), slot 7:
+[The page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5), slot 7:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

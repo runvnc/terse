@@ -244,6 +244,62 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `terse fonts`: the font settings terse-host reads at start
+/// (`<config>/fonts`, README "Fonts"). Files are checked when they are
+/// added, as the host checks them when it starts.
+pub fn fonts(args: &[String]) -> Result<ExitCode, String> {
+    use terse_net::fontlist::{self, Role};
+    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    let args = Args::parse(rest, &[])?;
+    known(&args, &[])?;
+    let config = config_dir(&args)?;
+    let mut s = fontlist::read(&config)?;
+    let checked = |role: Role, file: &str| -> Result<std::path::PathBuf, String> {
+        let path = std::fs::canonicalize(file).map_err(|e| format!("{file}: {e}"))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let info = fontlist::check(role, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        eprintln!("terse: {}: {}, {} characters", path.display(), info.family, fontlist::count_chars(&bytes));
+        Ok(path)
+    };
+    match (command.as_str(), args.positional.as_slice()) {
+        ("list", []) => {
+            for role in [Role::Mono, Role::Sans, Role::Bold] {
+                let r = s.replacement_mut(role).unwrap();
+                let shown = r.as_ref().map_or(format!("{} (built in)", role.builtin()), |p| p.display().to_string());
+                println!("{:<6}{shown}", role.name());
+            }
+            for p in &s.extra {
+                println!("extra {}", p.display());
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        ("add", [file]) => {
+            let path = checked(Role::Extra, file)?;
+            if s.extra.contains(&path) {
+                return Err(format!("{} is already listed", path.display()));
+            }
+            s.extra.push(path);
+        }
+        ("remove", [file]) => {
+            let path = std::fs::canonicalize(file).unwrap_or_else(|_| file.into());
+            let before = s.extra.len();
+            s.extra.retain(|p| p != &path && p.as_os_str() != file.as_str());
+            if s.extra.len() == before {
+                return Err(format!("{file} is not listed (terse fonts list)"));
+            }
+        }
+        ("set", [role, file]) => {
+            let role = Role::parse(role).filter(|&r| r != Role::Extra).ok_or("set takes mono, sans or bold")?;
+            let path = if file == "default" { None } else { Some(checked(role, file)?) };
+            *s.replacement_mut(role).unwrap() = path;
+        }
+        _ => return Err(USAGE.into()),
+    }
+    let path = fontlist::write(&config, &s)?;
+    eprintln!("terse: fonts saved in {}; terse-host uses them from its next start", path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
 /// The name to show beside a feed key: the nickname, else the declared
 /// name (NETWORK 4.6), with control characters replaced.
 fn name_of(node: &Node, key: &FeedKey) -> Option<String> {

@@ -6,10 +6,11 @@ without web browsers, ads or tracking. https://github.com/runvnc/terse
 
 In this folder
 --------------
-  terse-host    the Terse32 window: the reader, the manual, the built-in programs
+  terse-host    the Tersenet window: the reader, the manual, the built-in programs
   terse         the command-line tool (publish articles, manage feeds and relays)
   terse-relay   a relay, to share with other people (see the manual)
   LICENSE       Apache License 2.0
+  FONTS-LICENSE.txt  the licence of the DejaVu fonts built into terse-host
 
 Start
 -----
@@ -34,8 +35,9 @@ What it needs
 - libasound.so.2 (ALSA, for sound) and libudev.so.1 (for game controllers):
   terse-host does not start without them. Desktop distributions have both;
   PipeWire and PulseAudio play the sound.
-- Fonts: the system's monospace, sans-serif and serif fonts (found through
-  fontconfig). `--font <family>` picks another one for the grid.
+- No fonts: terse-host has its own (DejaVu, built in; FONTS-LICENSE.txt).
+  For Japanese, Chinese, Korean and other scripts it lacks, add a font:
+  terse fonts add <font file> (the manual article "Fonts").
 terse and terse-relay are static programs and need nothing at all.
 
 Where Tersenet keeps things

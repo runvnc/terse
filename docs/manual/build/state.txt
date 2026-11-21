@@ -98,9 +98,9 @@ The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as
 `programs/hello/hello.terse` at reset (serialization 18,812 bytes), after 1 frame and after 30 frames:
 
 ```
-2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18
-8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42
-cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d
+f82b7079daea85863f079eaba67e0ad2816b905e9a1a494e7dab587889a4c058
+2c8994cf8408449f927b16377cf44750419682c7fcc744d84748459c7ec8f9cf
+819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
 "No input" means no events, Unix time 0, no random bytes (so `random` gives zeros), controllers disconnected and no completions. That is what `terse run` supplies, apart from its `--events` script.
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:65226db98065ba9d4c9374ea40e4b0ee7b974b2348867a980b0f20714297e7d1) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+See [the machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

@@ -1,6 +1,6 @@
 [package]
 name = "terse-bus"
-description = "Device bus prototype (DEVICES.md): a small core host running one Terse machine, its devices as driver processes."
+description = "Device bus prototype (DEVICES.md): a small core host running one Terse32 machine, its devices as driver processes."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "terse-host"
-description = "Host for Terse: a window drawn with the GPU or the CPU, screenshots, benchmarks."
+description = "Host for Tersenet: a window drawn with the GPU or the CPU, screenshots, benchmarks."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -40,13 +40,13 @@ pollster = { version = "0.4", optional = true }
 softbuffer = { version = "0.4", optional = true }
 rayon = "1.10"
 fontdue = "0.9"
-fontdb = "0.24"
-ttf-parser = "0.25"
+memmap2 = "0.9"
+unicode-script = "0.5"
 png = "0.18"
 getrandom = "0.4"
 gilrs = { version = "0.11", optional = true }
 cpal = { version = "0.15", optional = true }
-cosmic-text = "0.19"
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 swash = "0.2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"], optional = true }

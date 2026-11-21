@@ -140,7 +140,7 @@ pub fn with_prompt(shown: &Terminal, program: &str, prompt: &Prompt, waiting: us
         0 | 1 => String::new(),
         n => format!("{} more waiting ", n - 1),
     };
-    let head = " Terse32 host · permission";
+    let head = " Tersenet · permission";
     let pad = COLS.saturating_sub(head.chars().count() + more.chars().count());
     line(&mut t, FIRST_ROW, BG_BAND, &[(FG_KEY, head), (FG_TEXT, &" ".repeat(pad)), (FG_DIM, &more)]);
     line(&mut t, FIRST_ROW + 1, BG_BASE, &[(FG_TEXT, " "), (FG_TEXT, &fit(&what, COLS - 2))]);

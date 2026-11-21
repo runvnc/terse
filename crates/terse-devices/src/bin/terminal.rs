@@ -121,6 +121,8 @@ struct TerminalDriver {
     /// Atlases by cell width (0: the native glyphs, there if the core
     /// presents).
     atlases: HashMap<u32, Glyphs>,
+    /// The fonts, loaded when the driver starts (SPEC §responsiveness item 5).
+    fonts: terse_host::fonts::TerminalFonts,
     generations: u64,
     inst: HashMap<u32, Inst>,
 }
@@ -303,7 +305,7 @@ impl Device for TerminalDriver {
         let mut native = (0, 0);
         let mut layers = Vec::new();
         if session.presents() {
-            match terse_host::glyphs::SystemGlyphs::new(terse_host::FONT_PX, None) {
+            match terse_host::glyphs::TermGlyphs::new(terse_host::FONT_PX, &self.fonts) {
                 Ok(g) => {
                     let cell = g.cell_size();
                     let width = COLS as u32 * cell.0;
@@ -461,6 +463,14 @@ impl Device for TerminalDriver {
 }
 
 fn main() -> std::process::ExitCode {
-    let mut d = TerminalDriver { atlases: HashMap::new(), generations: 0, inst: HashMap::new() };
+    // `--config <dir>`: the fonts `<dir>/fonts` names (README "Fonts"); else
+    // the built-in font. Other arguments are ignored (DEVICES.md 2.1).
+    let args: Vec<String> = std::env::args().collect();
+    let config = args.iter().position(|a| a == "--config").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
+    let fonts = terse_host::fonts::TerminalFonts::load(config.as_deref());
+    for n in &fonts.notes {
+        eprintln!("terse-dev-terminal: fonts: {n}");
+    }
+    let mut d = TerminalDriver { atlases: HashMap::new(), fonts, generations: 0, inst: HashMap::new() };
     terse_bus::driver::run(&mut d, "terse-dev-terminal")
 }
