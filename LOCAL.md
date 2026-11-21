@@ -226,6 +226,17 @@ node ignores them like any unknown type.
 Pushes go to every connection that has said Hello, between replies,
 never inside one. A reader ignores pushed types it does not know.
 
+### 4.5 Answering at once
+
+Held, Timeline, Subscriptions, Feed, Relays and Title, and Get of a blob
+the node holds, are answered from the node's own state: the node asks no
+relay for them, does not wait for one to connect or answer, and does not
+hold their replies behind a request that waits on the network (a Get of
+a blob not held, Find, Lookup, Sync; replies may come in any order,
+section 2). So a reader on a node sees what is held in one round trip on
+the local socket, whatever the network is doing. `PERFORMANCE.md` says
+how this is tested and gives the reference's times as information.
+
 ## 5. Builds
 
 - A **node-only** program speaks `NETWORK.md` and this protocol and shows

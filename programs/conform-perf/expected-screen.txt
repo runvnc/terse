@@ -1,0 +1,30 @@
+ Terse · conform-perf
+
+timeline: done in 1 frame (at most 2)  PASS
+held get (the blob just put): done in 1 frame (at most 2)  PASS
+frame rate: the clock stands still (a headless run): not checked
+
+Every requirement met. Esc: exit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

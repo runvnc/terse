@@ -35,6 +35,12 @@ pub trait Transport: Send {
     fn send(&mut self, message: Vec<u8>) -> io::Result<()>;
     /// The next received message, or `None` if none is ready. May wait briefly.
     fn try_recv(&mut self) -> io::Result<Option<Vec<u8>>>;
+
+    /// The next received message if one is already here, without waiting
+    /// (for the messages after the first in one poll).
+    fn try_recv_now(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.try_recv()
+    }
 }
 
 pub fn websocket_config() -> WebSocketConfig {
@@ -118,12 +124,8 @@ pub fn check_addrs(addrs: &[SocketAddr], public_only: bool) -> io::Result<()> {
     Ok(())
 }
 
-impl Transport for WsTransport {
-    fn send(&mut self, message: Vec<u8>) -> io::Result<()> {
-        self.ws.send(Message::binary(message)).map_err(io_error)
-    }
-
-    fn try_recv(&mut self) -> io::Result<Option<Vec<u8>>> {
+impl WsTransport {
+    fn read(&mut self) -> io::Result<Option<Vec<u8>>> {
         match self.ws.read() {
             Ok(Message::Binary(b)) => Ok(Some(b.to_vec())),
             Ok(Message::Close(_)) => Err(io::ErrorKind::ConnectionAborted.into()),
@@ -132,6 +134,26 @@ impl Transport for WsTransport {
             Err(tungstenite::Error::Io(e)) if is_timeout(&e) => Ok(None),
             Err(e) => Err(io_error(e)),
         }
+    }
+}
+
+impl Transport for WsTransport {
+    fn send(&mut self, message: Vec<u8>) -> io::Result<()> {
+        self.ws.send(Message::binary(message)).map_err(io_error)
+    }
+
+    fn try_recv(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.read()
+    }
+
+    /// Without the read timeout's wait: after one message, `poll` takes the
+    /// others already here and returns (waiting `RECV_WAIT` once more after
+    /// every reply added that much to every request).
+    fn try_recv_now(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.ws.get_ref().set_nonblocking(true)?;
+        let got = self.read();
+        self.ws.get_ref().set_nonblocking(false)?;
+        got
     }
 }
 
@@ -402,9 +424,12 @@ impl RelayClient {
     pub fn poll(&mut self) -> Vec<(u32, RelayReply)> {
         self.check_attempt(RECV_WAIT);
         // Read while connected, not only while busy: entries may be pushed.
+        let mut first = true;
         loop {
             let Some(transport) = &mut self.transport else { break };
-            let message = match transport.try_recv() {
+            let next = if first { transport.try_recv() } else { transport.try_recv_now() };
+            first = false;
+            let message = match next {
                 Ok(Some(m)) => m,
                 Ok(None) => break,
                 Err(_) => {

@@ -1,6 +1,7 @@
 //! `terse`: headless runner, image tools and feeds.
 
 mod feed;
+mod perf;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -47,6 +48,8 @@ const USAGE: &str = "usage:
   terse manual site --out <dir> [--dir <docs/manual>]   (the manual as a static website)
   terse manual publish   (the manual built into terse, as articles of your feed)
   terse vectors [--dir <vectors>]   (the core test vectors: blobs, entries, profiles, relay messages, articles)
+  terse perf [--only machine|client|host] [--runs <n>] [--programs <dir>] [--host <terse-host>] [--reader <tersereader>]
+             (the responsiveness scenarios of PERFORMANCE.md, headless, with relays started on ephemeral ports)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   terse --version
@@ -181,6 +184,7 @@ fn main() -> ExitCode {
         Some("records") => records(&args[1..]),
         Some("manual") => feed::manual(&args[1..]),
         Some("vectors") => vectors(&args[1..]),
+        Some("perf") => perf::perf(&args[1..]),
         Some("--version") => {
             println!("terse {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;

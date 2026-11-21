@@ -74,6 +74,11 @@ just the **program profile** (devices 1, 2 and 3), since a program lists the oth
 devices it can do without as optional (SPEC §image). This repository is the first
 prototype of all three layers.
 
+Each specification also says how quick an implementation must be, in units any
+implementation can be tested against (round trips, frames, "never waits for a
+relay"): `PERFORMANCE.md` collects those requirements, says how to test them and
+gives the reference's times; see [Performance](#performance).
+
 **A second reader.** `native/reader-go/` is such a native reader: a terminal
 program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
 `ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
@@ -542,7 +547,8 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     crates/terse-relay/  `terse-relay`: the WebSocket blob and feed relay, with peers and
                          search (a library too: `terse-host` runs one in-process when it
                          finds none)
-    crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds; the
+    crates/terse-cli/    `terse`: headless runner, image info/pack, blobs, feeds, perf.rs
+                         (`terse perf`, the scenarios of PERFORMANCE.md); the
                          program tests (tests/hello.rs, fetch.rs, reader.rs, sparks.rs,
                          sketch.rs, holo.rs, shell.rs, conform.rs)
     crates/terse-host/   `terse-host`: winit window, drawn by the GPU or the CPU behind
@@ -578,6 +584,9 @@ running as in [Trying the relay locally](#trying-the-relay-locally):
     programs/conform-reading/, programs/conform-program/
                          the same source built for the reading and the program
                          profile, each with its build.sh, events and expected files
+    programs/conform-perf/
+                         the machine host's responsiveness checks (PERFORMANCE.md):
+                         conform-perf.c, build.sh and its expected files
 
 ## Writing programs
 

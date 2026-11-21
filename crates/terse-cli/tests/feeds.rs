@@ -143,14 +143,25 @@ fn author_and_reader() {
     assert_eq!(reader.feed(&["sync"], Some(&url)), "");
 
     // Watch mode: a new article arrives by push and is downloaded.
-    let mut watcher = common::terse_command()
-        .args(reader.feed_args(&["sync", "--watch"], Some(&url)))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    // Killed when dropped, also when an assertion below fails, so that it
+    // never outlives the test.
+    struct Watcher(std::process::Child);
+    impl Drop for Watcher {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut watcher = Watcher(
+        common::terse_command()
+            .args(reader.feed_args(&["sync", "--watch"], Some(&url)))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let (tx, rx) = mpsc::channel();
-    let stdout = watcher.stdout.take().unwrap();
+    let stdout = watcher.0.stdout.take().unwrap();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let _ = tx.send((Instant::now(), line.unwrap()));
@@ -165,8 +176,7 @@ fn author_and_reader() {
     author.feed(&["publish", fresh.to_str().unwrap(), "--title", "fresh"], Some(&url));
     let published = Instant::now();
     let (arrived, line) = rx.recv_timeout(Duration::from_secs(5)).expect("pushed entry");
-    let _ = watcher.kill();
-    let _ = watcher.wait();
+    drop(watcher);
     assert!(line.contains("#5 ") && line.contains(" local ") && line.ends_with("fresh"), "{line}");
     assert!(arrived - published < Duration::from_secs(1), "took {:?}", arrived - published);
     assert!(reader.has_blob(b"Breaking news.\n"));

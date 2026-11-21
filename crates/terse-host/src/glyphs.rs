@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use fontdb::{Database, Family, ID, Query, Source, Style, Weight};
 use fontdue::{Font, FontSettings};
+use swash::scale::{Render, ScaleContext};
+use swash::zeno::Format;
 
 use crate::display::GlyphSource;
 
@@ -36,7 +38,16 @@ struct Faces {
     db: Database,
     /// Other regular-weight upright faces, monospaced ones first.
     fallbacks: Vec<ID>,
+    /// The primary face (and the monospace face a proportional one is sized
+    /// by), parsed whole by fontdue.
     fonts: HashMap<ID, Option<Font>>,
+    /// Fallback faces, whose glyphs are read and drawn one at a time (with
+    /// swash) as they are first shown. fontdue reads every glyph of a font
+    /// when it parses it, which for a CJK collection of 20 MB took 0.7 s, in
+    /// the frame that first showed one of its characters, and 300 MB of
+    /// memory.
+    fallback_fonts: HashMap<ID, Option<LazyFont>>,
+    scaler: ScaleContext,
     /// The fallback face that last had a glyph: tried before the full scan,
     /// since text in another script tends to come from one font.
     last_fallback: Option<ID>,
@@ -44,6 +55,60 @@ struct Faces {
     missing: HashSet<char>,
     /// The face found for a character that the primary lacks.
     found: HashMap<char, ID>,
+    /// Which fallback has each character, worked out on a thread of its own
+    /// as soon as the fonts are loaded.
+    coverage: Coverage,
+}
+
+/// For each character, the first fallback face (an index into
+/// `Faces::fallbacks`) with a glyph for it. Reading every font's character
+/// map takes a few hundred milliseconds on a system with a thousand faces,
+/// so it is done once, beside the frame loop, from the moment the host
+/// starts. (Looking for a character by reading the font files one by one,
+/// in the frame that first showed it, took about 0.1 s for the first
+/// character of each script on such a system.)
+struct Coverage {
+    map: Option<HashMap<char, u32>>,
+    building: Option<std::thread::JoinHandle<HashMap<char, u32>>>,
+}
+
+impl Coverage {
+    fn start(db: &Database, fallbacks: &[ID]) -> Self {
+        let (db, order) = (db.clone(), fallbacks.to_vec());
+        let building = std::thread::Builder::new()
+            .name("terse-font-coverage".into())
+            .spawn(move || {
+                let mut map = HashMap::new();
+                for (i, &id) in order.iter().enumerate() {
+                    db.with_face_data(id, |data, index| {
+                        let Ok(face) = ttf_parser::Face::parse(data, index) else { return };
+                        let Some(cmap) = face.tables().cmap else { return };
+                        for sub in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
+                            sub.codepoints(|c| {
+                                if let Some(ch) = char::from_u32(c)
+                                    && !map.contains_key(&ch)
+                                    && face.glyph_index(ch).is_some()
+                                {
+                                    map.insert(ch, i as u32);
+                                }
+                            });
+                        }
+                    });
+                }
+                map
+            })
+            .ok();
+        Coverage { map: None, building }
+    }
+
+    /// The first fallback with a glyph for `ch`, waiting for the map if it
+    /// is still being built.
+    fn get(&mut self, ch: char) -> Option<u32> {
+        if let Some(handle) = self.building.take() {
+            self.map = handle.join().ok();
+        }
+        self.map.as_ref()?.get(&ch).copied()
+    }
 }
 
 /// The monospace family to use where fontconfig does not choose one (macOS,
@@ -102,12 +167,16 @@ impl SystemGlyphs {
             .map(|f| (!f.monospaced, f.families.first().map(|(n, _)| n.clone()).unwrap_or_default(), f.id))
             .collect();
         fallbacks.sort();
-        let fallbacks = fallbacks.into_iter().map(|(_, _, id)| id).collect();
+        let fallbacks: Vec<ID> = fallbacks.into_iter().map(|(_, _, id)| id).collect();
 
+        let coverage = Coverage::start(&db, &fallbacks);
         let mut faces = Faces {
+            coverage,
             db,
             fallbacks,
             fonts: HashMap::new(),
+            fallback_fonts: HashMap::new(),
+            scaler: ScaleContext::new(),
             last_fallback: None,
             missing: HashSet::new(),
             found: HashMap::new(),
@@ -153,6 +222,34 @@ impl SystemGlyphs {
     }
 }
 
+/// A fallback face's bytes, for swash.
+struct LazyFont {
+    data: Vec<u8>,
+    offset: u32,
+    key: swash::CacheKey,
+}
+
+impl LazyFont {
+    fn font(&self) -> swash::FontRef<'_> {
+        swash::FontRef { data: &self.data, offset: self.offset, key: self.key }
+    }
+
+    fn has_glyph(&self, ch: char) -> bool {
+        self.font().charmap().map(ch) != 0
+    }
+}
+
+/// A glyph's coverage mask, placed as fontdue places one: `xmin` from the
+/// pen position, `ymin` from the baseline up to the mask's bottom edge.
+struct Mask {
+    xmin: i32,
+    ymin: i32,
+    width: usize,
+    height: usize,
+    advance: f32,
+    bitmap: Vec<u8>,
+}
+
 impl Faces {
     fn font(&mut self, id: ID) -> Option<&Font> {
         let db = &self.db;
@@ -168,10 +265,23 @@ impl Faces {
             .as_ref()
     }
 
+    fn fallback_font(&mut self, id: ID) -> Option<&LazyFont> {
+        let db = &self.db;
+        self.fallback_fonts
+            .entry(id)
+            .or_insert_with(|| {
+                db.with_face_data(id, |data, index| {
+                    let f = swash::FontRef::from_index(data, index as usize)?;
+                    Some(LazyFont { data: data.to_vec(), offset: f.offset, key: f.key })
+                })
+                .flatten()
+            })
+            .as_ref()
+    }
+
     /// A face that has a glyph for `ch`: the primary, else the fallback that
-    /// last had one, else the first fallback that does. Coverage is checked
-    /// with ttf-parser so fallback fonts are only fully loaded when needed;
-    /// that scan reads every font file, so its results are remembered.
+    /// last had one, else the first fallback that does (from the coverage
+    /// map).
     fn face_for(&mut self, primary: ID, ch: char) -> Option<ID> {
         if self.font(primary).is_some_and(|f| f.has_glyph(ch)) {
             return Some(primary);
@@ -183,23 +293,46 @@ impl Faces {
             return Some(id);
         }
         if let Some(id) = self.last_fallback
-            && self.font(id).is_some_and(|f| f.has_glyph(ch))
+            && self.fallback_font(id).is_some_and(|f| f.has_glyph(ch))
         {
             return Some(id);
         }
-        let db = &self.db;
-        let Some(id) = self.fallbacks.iter().copied().find(|&id| {
-            db.with_face_data(id, |data, index| {
-                ttf_parser::Face::parse(data, index).is_ok_and(|f| f.glyph_index(ch).is_some())
-            })
-            .unwrap_or(false)
-        }) else {
+        let Some(id) = self.coverage.get(ch).and_then(|i| self.fallbacks.get(i as usize).copied()) else {
             self.missing.insert(ch);
             return None;
         };
         self.last_fallback = Some(id);
         self.found.insert(ch, id);
-        self.font(id).map(|_| id)
+        self.fallback_font(id).map(|_| id)
+    }
+
+    /// Fallback face `id`'s advance for `ch` at `px`.
+    fn fallback_advance(&mut self, id: ID, ch: char, px: f32) -> Option<f32> {
+        let font = self.fallback_font(id)?.font();
+        Some(font.glyph_metrics(&[]).scale(px).advance_width(font.charmap().map(ch)))
+    }
+
+    /// Fallback face `id`'s glyph for `ch` at `px` (as fontdue's `rasterize`
+    /// gives one), and the face's ascent and descent (below the baseline:
+    /// negative) at `line_px`.
+    fn fallback_mask(&mut self, id: ID, ch: char, px: f32, line_px: f32) -> Option<(Mask, (f32, f32))> {
+        let font = self.fallback_fonts.get(&id)?.as_ref()?.font();
+        let glyph = font.charmap().map(ch);
+        let advance = font.glyph_metrics(&[]).scale(px).advance_width(glyph);
+        let line = font.metrics(&[]).scale(line_px);
+        let mut scaler = self.scaler.builder(font).size(px).hint(false).build();
+        let mask = match Render::new(&[swash::scale::Source::Outline]).format(Format::Alpha).render(&mut scaler, glyph) {
+            Some(img) => Mask {
+                xmin: img.placement.left,
+                ymin: img.placement.top - img.placement.height as i32,
+                width: img.placement.width as usize,
+                height: img.placement.height as usize,
+                advance,
+                bitmap: img.data,
+            },
+            None => Mask { xmin: 0, ymin: 0, width: 0, height: 0, advance, bitmap: Vec::new() },
+        };
+        Some((mask, (line.ascent, -line.descent)))
     }
 }
 
@@ -226,25 +359,33 @@ impl GlyphSource for SystemGlyphs {
         let mut faces = self.faces.lock().unwrap();
         let Some(id) = faces.face_for(self.primary, ch) else { return };
         let (cw, ch_px, baseline, px) = ((self.cell.0 * cells) as i32, self.cell.1 as i32, self.baseline, self.px);
-        let squeeze = self.proportional && id == self.primary;
-        let font = faces.font(id).expect("face_for loaded it");
-        let advance = font.metrics(ch, px).advance_width;
-        if squeeze {
-            return squeezed(font, ch, px, cw, ch_px, baseline, out);
-        }
         // Shrink glyphs wider than their cells (e.g. a wide character drawn
         // in one cell because no continuation cell follows it).
-        let scale = if advance > cw as f32 * 1.05 { cw as f32 / advance } else { 1.0 };
-        let (m, bitmap) = font.rasterize(ch, px * scale);
+        let shrink = |advance: f32| if advance > cw as f32 * 1.05 { cw as f32 / advance } else { 1.0 };
+        let (m, line, scale) = if id == self.primary {
+            let font = faces.font(id).expect("face_for loaded it");
+            if self.proportional {
+                return squeezed(font, ch, px, cw, ch_px, baseline, out);
+            }
+            let scale = shrink(font.metrics(ch, px).advance_width);
+            let (m, bitmap) = font.rasterize(ch, px * scale);
+            let mask = Mask { xmin: m.xmin, ymin: m.ymin, width: m.width, height: m.height, advance: m.advance_width, bitmap };
+            (mask, font.horizontal_line_metrics(px).map(|l| (l.ascent, l.descent)), scale)
+        } else {
+            let Some(advance) = faces.fallback_advance(id, ch, px) else { return };
+            let scale = shrink(advance);
+            let Some((mask, line)) = faces.fallback_mask(id, ch, px * scale, px) else { return };
+            (mask, Some(line), scale)
+        };
         // Centre shrunk glyphs vertically around the normal text body.
         let lift = (1.0 - scale) * baseline / 2.0;
-        let x0 = m.xmin + ((cw as f32 - m.advance_width) / 2.0).round().max(0.0) as i32;
+        let x0 = m.xmin + ((cw as f32 - m.advance) / 2.0).round().max(0.0) as i32;
         let y0 = (baseline - lift).round() as i32 - m.ymin - m.height as i32;
         // Box drawing (U+2500-U+257F) is designed to span the font's ascent to
         // descent; stretch that band over the whole cell height so lines join
         // across rows.
-        let band = match font.horizontal_line_metrics(px) {
-            Some(l) if ('\u{2500}'..='\u{257F}').contains(&ch) => (baseline - l.ascent, l.ascent - l.descent),
+        let band = match line {
+            Some((ascent, descent)) if ('\u{2500}'..='\u{257F}').contains(&ch) => (baseline - ascent, ascent - descent),
             _ => (0.0, ch_px as f32),
         };
         for ty in 0..ch_px {
@@ -256,7 +397,7 @@ impl GlyphSource for SystemGlyphs {
             for x in 0..m.width as i32 {
                 let tx = x0 + x;
                 if (0..cw).contains(&tx) {
-                    let v = bitmap[(y * m.width as i32 + x) as usize];
+                    let v = m.bitmap[(y * m.width as i32 + x) as usize];
                     let o = &mut out[(ty * cw + tx) as usize];
                     *o = (*o).max(v);
                 }
@@ -301,6 +442,29 @@ fn squeezed(font: &Font, ch: char, px: f32, cw: i32, ch_px: i32, baseline: f32, 
             let v = (sum / (g1 - g0)).round().min(255.0) as u8;
             let o = &mut out[(ty * cw + tx) as usize];
             *o = (*o).max(v);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The coverage map names, for each character, the face a scan of the
+    /// font files one by one finds: the first fallback with a glyph for it
+    /// (or none). Checked on this system's fonts.
+    #[test]
+    fn coverage_agrees_with_a_scan() {
+        let Ok(glyphs) = SystemGlyphs::new(16.0, None) else { return };
+        let mut faces = glyphs.faces.lock().unwrap();
+        for ch in "日本語こんにちは世界中文你好한국어안녕하세요ＴＥＲＳＥ┌─┬αβγ∀∂€😀\u{10FFFD}".chars() {
+            let scanned = faces.fallbacks.iter().position(|&id| {
+                faces
+                    .db
+                    .with_face_data(id, |data, index| ttf_parser::Face::parse(data, index).is_ok_and(|f| f.glyph_index(ch).is_some()))
+                    .unwrap_or(false)
+            });
+            assert_eq!(faces.coverage.get(ch), scanned.map(|i| i as u32), "{ch:?}");
         }
     }
 }

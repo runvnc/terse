@@ -1123,6 +1123,42 @@ the program profile, requires only devices 2 and 3, leaves out the
 sections of content, the page and the 3D display, and checks `device`;
 `terse run --profile program` runs it on exactly that profile.
 
+`programs/conform-perf` checks what a program can see of
+§responsiveness in a host's real frame loop (a window or a self-test,
+not a headless run, where every request completes in the next frame by
+definition): content that needs no network, and the frame rate.
+
+## §responsiveness Responsiveness
+
+**What the budget guarantees.** A frame's work for a program is bounded
+(§frames), and the charges keep a host's cost per unit about that of an
+instruction (§charges), so a host that keeps up with a frame of
+instructions runs every program at 60 frames a second: no program can
+make a frame slow.
+
+**What a host must also do**, stated in frames so that any host can be
+tested (at 60 frames a second a frame is 16.7 ms):
+
+1. **Input.** An input event the host has received before a frame
+   begins is in that frame's input (§frames step 1), not held back to a
+   later frame (pointer movement is coalesced to one event a frame,
+   §events).
+2. **Pacing.** Frames run at 60 a second while the host keeps up, and
+   never faster to catch up (§frames). The frame loop never waits on
+   the network, a relay, the user's answer to a prompt or storage:
+   that work is done beside it and completes in a later frame.
+3. **Content.** A content request that needs no network (a held blob,
+   the host's own state) completes within 2 frames of its submit
+   (§content.submit).
+4. **Starting a program.** An image the host holds that a shell starts
+   (§machines.calls) runs its first frame within 2 frames of the frame of
+   the start call.
+
+How a host presents a frame (drawing, the phosphor style) is not machine
+state and has no requirement here; `PERFORMANCE.md` gives the reference
+host's drawing times on a named machine as targets, with how to measure
+them (`terse perf`, `terse-host --bench-render`).
+
 ## §provisional Provisional values
 
 These numbers are placeholders until weak hosts have been measured. Every
