@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use terse_perflog::env::Environment;
 use terse_perflog::probe::{Pressure, ProcProbe, ProcSample};
-use terse_perflog::record::{self, BLOCK_NS, Line, MEM_EVERY, Recorder};
+use terse_perflog::record::{self, BLOCK_NS, Line, MEM_EVERY, Readings, Recorder};
 use terse_perflog::{Action, Component, FrameSample, Identity, Judge, Part, Rule};
 
 use crate::bus::{Acct, Bus};
@@ -45,6 +45,8 @@ struct Watched {
     component: Component,
     probe: Option<ProcProbe>,
     before: Option<ProcSample>,
+    /// What the system reads of it (once, at the start).
+    readings: Readings,
 }
 
 /// The watch.
@@ -55,6 +57,7 @@ pub struct Monitor {
     pub dir: Option<PathBuf>,
     drivers: Vec<Watched>,
     core: ProcProbe,
+    core_wait: bool,
     core_before: Option<ProcSample>,
     me: ProcProbe,
     psi: Pressure,
@@ -88,17 +91,34 @@ impl Monitor {
                 });
             }
         }
-        let drivers = bus.procs.iter().map(|d| Watched { component: Component::Device(d.slots[0]), probe: d.pid.map(ProcProbe::process), before: None }).collect();
+        let drivers: Vec<Watched> = bus.procs.iter().map(|d| {
+                let probe = d.pid.map(ProcProbe::process);
+                let p = probe.as_ref();
+                let readings = Readings { cpu: p.is_some_and(ProcProbe::has_cpu), wait: p.is_some_and(ProcProbe::has_wait), stall: false };
+                Watched { component: Component::Device(d.slots[0]), probe, before: None, readings }
+            }).collect();
+        let core = ProcProbe::this_thread();
+        let psi = Pressure::default();
+        if let Some(r) = &rec {
+            // What the operating system tells us (RECORD.md 4): without a
+            // driver's CPU wait, it is blamed by its waits alone and never
+            // stopped.
+            r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: core.has_cpu(), wait: core.has_wait(), stall: psi.available() } });
+            for w in &drivers {
+                r.add(Line::Readings { component: w.component, readings: w.readings });
+            }
+        }
         Monitor {
             judge: Judge::new(cfg.rule),
             act: cfg.act,
             rec,
             dir: cfg.record.clone(),
             drivers,
-            core: ProcProbe::this_thread(),
+            core_wait: core.has_wait(),
+            core,
             core_before: None,
             me: ProcProbe::process(std::process::id()),
-            psi: Pressure::default(),
+            psi,
             psi_before: None,
             frame: 0,
             t0: Instant::now(),
@@ -159,13 +179,12 @@ impl Monitor {
                 (Some(a), Some(b)) => Some(a.since(&b)),
                 _ => None,
             };
-            let has_wait = w.probe.as_ref().is_some_and(ProcProbe::has_wait);
             counted += d.acct.frame_ns;
             parts.push(Part {
                 component: w.component,
                 wall_ns: d.acct.frame_ns,
-                run_ns: delta.filter(|_| has_wait).map(|s| s.run_ns),
-                starved_ns: delta.filter(|_| has_wait).map(|s| s.wait_ns),
+                run_ns: delta.filter(|_| w.readings.cpu).map(|s| s.run_ns),
+                starved_ns: delta.filter(|_| w.readings.wait).map(|s| s.wait_ns),
                 image: d.acct.top_instance().and_then(&image),
             });
             if d.acct.longest.0 >= BLOCK_NS {
@@ -191,7 +210,7 @@ impl Monitor {
             (Some(a), Some(b)) => Some(a.saturating_sub(b)),
             _ => None,
         };
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.map(|c| c.wait_ns), memory_stall_ns: memory };
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory };
         let (late, actions) = self.judge.judge(&sample);
         if let Some(l) = &late {
             self.late += 1;

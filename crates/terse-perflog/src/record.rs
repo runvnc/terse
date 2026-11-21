@@ -50,6 +50,11 @@ pub enum Line {
     /// devices are built in writes one, for the component `core`, with
     /// its own identity ([`Line::host_devices`]).
     Device { component: Component, slots: Vec<u8>, identity: Identity },
+    /// `readings <component> <list>`: what the operating system tells the
+    /// host about the component (`RECORD.md` section 4): `cpu` its time on
+    /// a CPU, `wait` the time its threads waited for one, `stall` (`core`
+    /// only) the system's memory stall; `-` none of them.
+    Readings { component: Component, readings: Readings },
     /// `start <ms> <cold>`: from the process's start to its first frame
     /// presented; cold is `build` (the first run of this build), `boot`
     /// (the first since the computer started), `warm` or `-`.
@@ -80,6 +85,37 @@ pub enum Line {
     Drop(u64),
     /// A line of a type this reader does not know (kept, not understood).
     Other(String),
+}
+
+/// Which readings a host has of a component ([`Line::Readings`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Readings {
+    pub cpu: bool,
+    pub wait: bool,
+    pub stall: bool,
+}
+
+impl Readings {
+    /// As the record writes it: `cpu,wait,stall`, a subset, or `-`.
+    pub fn encode(&self) -> String {
+        let names: Vec<&str> = [(self.cpu, "cpu"), (self.wait, "wait"), (self.stall, "stall")].iter().filter(|r| r.0).map(|r| r.1).collect();
+        if names.is_empty() { "-".into() } else { names.join(",") }
+    }
+
+    /// The inverse of [`Readings::encode`]; names it does not know (a later
+    /// version's) are ignored.
+    pub fn parse(s: &str) -> Readings {
+        let mut r = Readings::default();
+        for n in s.split(',') {
+            match n {
+                "cpu" => r.cpu = true,
+                "wait" => r.wait = true,
+                "stall" => r.stall = true,
+                _ => {}
+            }
+        }
+        r
+    }
 }
 
 /// A string as one field: bytes outside `!`..`~`, and `%`, as `%XX`;
@@ -178,6 +214,7 @@ impl Line {
                 let s: Vec<String> = slots.iter().map(u8::to_string).collect();
                 format!("device {component} {} {}", if s.is_empty() { "-".into() } else { s.join(",") }, id(identity))
             }
+            Line::Readings { component, readings } => format!("readings {component} {}", readings.encode()),
             Line::Start { ms, cold } => format!("start {ms:.1} {}", escape(cold)),
             Line::Late { frame, ms, verdict, component, own_ms, cpu_ms, blocked_ms, starved_ms, image } => {
                 format!("late {frame} {ms:.1} {} {component} {own_ms:.1} {cpu_ms:.1} {blocked_ms:.1} {starved_ms:.1} {}", verdict.name(), escape(image))
@@ -222,6 +259,7 @@ impl Line {
                 slots: if f[2] == "-" { Vec::new() } else { f[2].split(',').map(|v| v.parse().ok()).collect::<Option<_>>()? },
                 identity: id(3)?,
             },
+            "readings" if want(3) => Line::Readings { component: c(1)?, readings: Readings::parse(f[2]) },
             "start" if want(3) => Line::Start { ms: x(1)?, cold: s(2)? },
             "late" if want(10) => Line::Late {
                 frame: n(1)?,
@@ -242,7 +280,7 @@ impl Line {
             "check" if want(4) => Line::Check { component: c(1)?, ms: x(2)?, result: s(3)? },
             "end" if want(4) => Line::End { frames: n(1)?, late: n(2)?, seconds: n(3)? },
             "drop" if want(2) => Line::Drop(n(1)?),
-            "terse-perf" | "run" | "host" | "env" | "device" | "start" | "late" | "block" | "shed" | "warn" | "stop" | "mem" | "check" | "end" | "drop" => return None,
+            "terse-perf" | "run" | "host" | "env" | "device" | "readings" | "start" | "late" | "block" | "shed" | "warn" | "stop" | "mem" | "check" | "end" | "drop" => return None,
             t if !t.is_empty() && !t.starts_with('#') => Line::Other(line.to_string()),
             _ => return None,
         })
@@ -251,7 +289,7 @@ impl Line {
     /// Whether the line describes the run (repeated at the head of a
     /// rotated file, so that every file can be read alone).
     fn is_header(&self) -> bool {
-        matches!(self, Line::Run { .. } | Line::Host(_) | Line::Env(_) | Line::Device { .. } | Line::Start { .. }) || matches!(self, Line::Other(s) if s.starts_with("device "))
+        matches!(self, Line::Run { .. } | Line::Host(_) | Line::Env(_) | Line::Device { .. } | Line::Readings { .. } | Line::Start { .. }) || matches!(self, Line::Other(s) if s.starts_with("device "))
     }
 }
 
@@ -536,6 +574,8 @@ mod tests {
             Line::Host(i.clone()),
             Line::Env(Environment::detect("software")),
             Line::Device { component: Component::Device(2), slots: vec![2, 10], identity: i },
+            Line::Readings { component: Component::Device(2), readings: Readings { cpu: true, wait: true, stall: false } },
+            Line::Readings { component: Component::Core, readings: Readings::default() },
             Line::Start { ms: 84.2, cold: "build".into() },
             Line::late(&late),
             Line::Block { frame: 3, ms: 812.0, component: Component::Device(4), what: "service".into() },

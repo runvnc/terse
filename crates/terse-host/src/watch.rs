@@ -89,7 +89,7 @@ impl HostWatch {
         let Some((emulate, upload, late)) = self.step.take() else { return Vec::new() };
         let ns = |d: Duration| d.as_nanos() as u64;
         let (starved, memory) = match (self.thread.sample(), self.before.take()) {
-            (Some(now), Some((b, psi))) => (Some(now.since(&b).wait_ns), self.psi.memory_full_ns().zip(psi).map(|(a, b)| a.saturating_sub(b))),
+            (Some(now), Some((b, psi))) => (Some(now.since(&b).wait_ns).filter(|_| self.thread.has_wait()), self.psi.memory_full_ns().zip(psi).map(|(a, b)| a.saturating_sub(b))),
             _ => (None, None),
         };
         let parts = vec![

@@ -18,7 +18,9 @@ fn the_example_record() {
     assert_eq!(lines[0], Line::Format(1));
     assert!(matches!(&lines[3], Line::Env(e) if e.cpu == "Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz" && e.ram_gib == 15));
     assert!(matches!(&lines[4], Line::Device { component: Component::Device(2), slots, identity } if slots == &[2, 10] && identity.name == "terse-dev-terminal (Rust)"));
-    assert!(matches!(&lines[14], Line::Late { frame: 1200, verdict: Verdict::Blamed, component: Component::Device(7), blocked_ms, .. } if *blocked_ms == 46.5));
+    assert!(matches!(&lines[9], Line::Readings { component: Component::Core, readings } if readings.cpu && readings.wait && readings.stall));
+    assert!(matches!(&lines[10], Line::Readings { component: Component::Device(2), readings } if readings.cpu && readings.wait && !readings.stall));
+    assert!(matches!(&lines[16], Line::Late { frame: 1200, verdict: Verdict::Blamed, component: Component::Device(7), blocked_ms, .. } if *blocked_ms == 46.5));
     assert!(matches!(lines.iter().find(|l| matches!(l, Line::Other(_))), Some(Line::Other(s)) if s == "future-type 1 2 3"));
 
     let mut s = Summary::default();

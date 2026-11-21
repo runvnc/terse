@@ -2949,6 +2949,7 @@ dependencies = [
  "blake3",
  "libc",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

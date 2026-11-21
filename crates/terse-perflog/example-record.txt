@@ -7,6 +7,8 @@ device dev3 3,9 terse-dev-vector%20(Rust) 0.1.0 b3:9a0b44c1e5f60d27
 device dev4 4 terse-dev-content%20(Rust) 0.1.0 b3:97f8a7cc7bf5e08c
 device dev6 6 terse-dev-sound%20(Rust) 0.1.0 b3:0d5e6f7a8b9c0d1e
 device dev7 7 terse-dev-page%20(Rust) 0.1.0 b3:f8f5a88bb33ad6eb
+readings core cpu,wait,stall
+readings dev2 cpu,wait
 start 131.4 boot
 mem 0 core 51200
 mem 0 dev7 20480

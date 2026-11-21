@@ -22,6 +22,14 @@ pub mod env;
 pub mod identity;
 pub mod judge;
 pub mod probe;
+
+/// What each operating system gives [`probe`] and [`env`]: one file per
+/// system, the same interface.
+#[cfg_attr(target_os = "linux", path = "os/linux.rs")]
+#[cfg_attr(target_os = "macos", path = "os/macos.rs")]
+#[cfg_attr(windows, path = "os/windows.rs")]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), path = "os/other.rs")]
+mod os;
 pub mod record;
 pub mod report;
 pub mod summary;
