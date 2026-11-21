@@ -71,7 +71,7 @@ if "$TC" --help 2>&1 | grep -q -- --identities; then
     grep -Eq "^driver 2 terminal \(example\) 0\.1\.0 fnv:[0-9a-f]{16}$" "$T/ids" \
         && ok "tcore --identities: its HELLO identity" || { no "tcore --identities"; cat "$T/ids"; }
 fi
-ms() { echo $(( $(date +%s%N) / 1000000 )); }
+ms() { python3 -I -c 'import time; print(int(time.time() * 1000))'; } # date +%N is GNU's
 t0=$(ms); a=$("$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t1=$(ms)
 b=$(TERSE_EXAMPLE_SLOW=sleep:30:5:8 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t2=$(ms)
 extra=$(( (t2 - t1) - (t1 - t0) ))
@@ -83,7 +83,11 @@ for k in spin:1.5:0:3 cpu:0.5:2; do
 done
 
 echo "== every driver started was reaped"
-left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
+if [ -d /proc/self ]; then
+    left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
+else # macOS: ps -e shows each process's environment after its command
+    left=$(ps -axeww -o command= 2>/dev/null | grep "TERSE_BUS_SOCKET=$T" | grep -vc grep)
+fi
 [ "$left" -eq 0 ] && ok "no driver process left" || no "$left driver processes left"
 
 echo "$pass passed, $fail failed"

@@ -23,9 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <linux/futex.h>
 #include <poll.h>
-#include <sched.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -35,10 +33,24 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+
+/* What is particular to a system (DEVICES.md 4.3): Linux sleeps on a futex
+ * and pins to a CPU; macOS wakes a core asleep on its address with
+ * __ulock_wake (shared, macOS 10.12 or later) and itself sleeps on the
+ * socket; elsewhere both ends sleep on the socket. */
+#ifdef __linux__
+#include <linux/futex.h>
+#include <sched.h>
+#include <sys/syscall.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+extern int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
+#define UL_COMPARE_AND_WAIT_SHARED 3
+#define ULF_WAKE_ALL 0x100
+#endif
 
 /* ---------------------------------------------------------------- device */
 
@@ -413,6 +425,7 @@ static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 
 static int sock = -1;
 static int shm;                      /* the shared-memory transport chosen */
+static int sleep_on_socket;          /* sleep on the socket, not the futex */
 static uint8_t *bus;                 /* the mapped bus file */
 static size_t bus_size;
 static uint32_t req_off, req_cap, rep_off, rep_cap, last_seq;
@@ -462,8 +475,19 @@ static void send_msg(Buf *b) {
     memcpy(bus + rep_off, b->p, b->len);
     atomic_store_explicit(word(132), (unsigned)b->len, memory_order_relaxed);
     atomic_fetch_add_explicit(word(128), 1, memory_order_seq_cst);
-    if (atomic_load_explicit(word(136), memory_order_seq_cst) == 1)
+    /* Wake the core the way it sleeps (DEVICES.md 4.2): 1 on its address,
+     * 2 on the socket (a byte of any value). */
+    unsigned how = atomic_load_explicit(word(136), memory_order_seq_cst);
+    if (how == 2) {
+        char z = 0;
+        if (write(sock, &z, 1) < 0) { /* the core has gone: its socket says so */ }
+    } else if (how != 0) {
+#ifdef __linux__
         syscall(SYS_futex, (void *)word(128), FUTEX_WAKE, INT_MAX, NULL, NULL, 0);
+#elif defined(__APPLE__)
+        __ulock_wake(UL_COMPARE_AND_WAIT_SHARED | ULF_WAKE_ALL, (void *)word(128), 0);
+#endif
+    }
 }
 
 /* Sends ERROR (to the address of the message being handled) and stops: the
@@ -520,10 +544,24 @@ static void shm_wait(void) {
             continue;
         }
         slept = 1;
-        atomic_store_explicit(sleeping, 1, memory_order_seq_cst);
+        /* Say how it sleeps, look again, sleep at most 50 ms. */
+        atomic_store_explicit(sleeping, sleep_on_socket ? 2 : 1, memory_order_seq_cst);
         if (atomic_load_explicit(seq, memory_order_seq_cst) == last_seq) {
-            struct timespec to = { 0, 50000000 };
-            syscall(SYS_futex, (void *)seq, FUTEX_WAIT, last_seq, &to, NULL, 0);
+            if (sleep_on_socket) {
+                /* Woken by a byte (dropped) or by the end of the stream. */
+                struct pollfd p = { .fd = sock, .events = POLLIN };
+                char drop[64];
+                if (poll(&p, 1, 50) > 0) {
+                    ssize_t k;
+                    while ((k = recv(sock, drop, sizeof drop, MSG_DONTWAIT)) > 0) {}
+                    if (k == 0) exit(0); /* the end of the stream: the core has gone */
+                }
+            } else {
+#ifdef __linux__
+                struct timespec to = { 0, 50000000 };
+                syscall(SYS_futex, (void *)seq, FUTEX_WAIT, last_seq, &to, NULL, 0);
+#endif
+            }
         }
         atomic_store_explicit(sleeping, 0, memory_order_seq_cst);
         if (atomic_load_explicit(seq, memory_order_acquire) == last_seq && socket_closed()) exit(0);
@@ -864,7 +902,13 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
 #define PROGRAM_VERSION "0.1.0"
 static char build_id[32] = "unknown";
 static void compute_build_id(void) {
+#ifdef __APPLE__
+    char self[4096];
+    uint32_t len = sizeof self;
+    FILE *f = _NSGetExecutablePath(self, &len) == 0 ? fopen(self, "rb") : NULL;
+#else
     FILE *f = fopen("/proc/self/exe", "rb");
+#endif
     if (!f) return;
     uint64_t h = 14695981039346656037ull;
     uint8_t buf[65536];
@@ -917,18 +961,26 @@ int main(int argc, char **argv) {
     const char *path = getenv("TERSE_BUS_SOCKET"), *cpu = getenv("TERSE_BUS_CPU");
     const char *spin_us = getenv("TERSE_BUS_SPIN_US"), *spin = getenv("TERSE_BUS_SPIN");
     if (!path) { fputs("terse-dev-terminal-c: started without TERSE_BUS_SOCKET\n", stderr); return 1; }
+#ifdef __linux__
     if (cpu) {
         cpu_set_t set;
         CPU_ZERO(&set);
         CPU_SET(atoi(cpu), &set);
         sched_setaffinity(0, sizeof set, &set);
     }
+    const char *wake = getenv("TERSE_BUS_WAKE");
+    sleep_on_socket = wake && strcmp(wake, "socket") == 0;
+#else
+    (void)cpu;
+    sleep_on_socket = 1;
+#endif
     if (spin_us && *spin_us) spin_max_us = strtoull(spin_us, NULL, 10);
     spin_fixed = spin && strcmp(spin, "fixed") == 0;
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     if (strlen(path) >= sizeof addr.sun_path) { fputs("terse-dev-terminal-c: socket path too long\n", stderr); return 1; }
     strcpy(addr.sun_path, path);
-    sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock >= 0) fcntl(sock, F_SETFD, FD_CLOEXEC);
     if (sock < 0 || connect(sock, (struct sockaddr *)&addr, sizeof addr) != 0) {
         perror("terse-dev-terminal-c: connect");
         return 1;

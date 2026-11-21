@@ -169,7 +169,11 @@ printf 'driver 2 x - -\n' | grep -Eq "$ID" && printf 'driver 3 terse-dev-vector 
     && ok "--identities line pattern takes absent and b3: identities" || no "identity pattern"
 
 echo "== every driver started was reaped"
-left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
+if [ -d /proc/self ]; then
+    left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
+else # macOS: ps -e shows each process's environment after its command
+    left=$(ps -axeww -o command= 2>/dev/null | grep "TERSE_BUS_SOCKET=$T" | grep -vc grep)
+fi
 [ "$left" -eq 0 ] && ok "no driver process left" || no "$left driver processes left"
 
 echo "$pass passed, $fail failed"

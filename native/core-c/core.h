@@ -64,6 +64,8 @@ void bus_identities(void);
 extern int bus_nobatch;
 extern const char *bus_driver_dir;
 void bus_set_driver(const char *slots_eq_cmd);
+/* The path of this program's file ("" if unknown). */
+const char *self_exe(void);
 extern int bus_withheld[256];
 _Noreturn void die(int status, const char *fmt, ...);
 #endif
