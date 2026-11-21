@@ -4,14 +4,14 @@ The manual has two parts. The guide is a series of short steps, each one you can
 
 ## Guide
 
-- [Make a reader, step 1: show an article](terse:c363852bfd42594b87be8da2b43d23992413291fc8c356e7cbf0a4cb27ca39fa): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:84b9ca56b13a4749b96ccad88a565881973976648b8c5f95a7454fb7b5aa03e1): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d): follow links, subscribe to a feed, check its signatures.
-- [Write a program](terse:bc912a4c1145e5846532f3ec47d1ab5cce7390da50351e2c44fa0236fbc45c47): a first Terse32 program, built and run in three commands.
-- [Draw a line and read a key](terse:cb15a734bd22fa96fb5489c6ea3ee488a7628d8ec826a39df21665f3469ffd58): the 2D vector display and keyboard events.
-- [Make a host](terse:25d55da82fb9ddd1d6eefc62c26815c447efd9791f58dd36e08b74dedc8bab08): your own Terse32 machine, step by step, checked against the reference.
-- [Make a device](terse:e22547a461d2716b35626580d18dc9ceb10d377a42115d7c701e9b39ea6b64bf): a device as a separate program on the device bus.
-- [Swap in your own part](terse:a569551baa714144459f7d6a0d37ebd756384611229c0a273d201dbe85bd3a5b): your reader, core or device with the reference for everything else.
+- [Make a reader, step 1: show an article](terse:545af12bc47fe5d1c0d02e383c9ae3a8ae1fb4815c312810726df228e5bfe671): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:a569ff2f0c2277212e756494cbae6f9eee8816092216092c8a4b4e17b9dc1782): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:d7d511cefd9ccba765ed4256c64c4196a188062ee2cc647a04e3af9e3690fa5e): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:eb4ea7334593678eeb140012c1cea2d2f8cd381605d1c4aeb9fb84079fccd2f1): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:ae69171c3ec5e777c126f24dbfd4585209a7a09d51aa703052fa11146b50d236): the 2D vector display and keyboard events.
+- [Make a host](terse:c4982639b62fce6d78a9b975dfe458e54e0f8f0154345b911d535504063c2f18): your own Terse32 machine, step by step, checked against the reference.
+- [Make a device](terse:f882d2950370c15a2da23cfe29cd2aaf939327498a1a6331dea86e23c5a8058b): a device as a separate program on the device bus.
+- [Swap in your own part](terse:b7ce44c41d8d6e4f0fa46a2d2e1a9d3c53a30ed2f66be2886785802b8bdf4194): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:6f152dd0396239eaa6e7629626791d00b9579ab35e10cae6cec0de9d2accbf5e): the program that starts other machines and lays out their screens.
 - [Using Tersenet](terse:376297817e054c6e8cc8bcb45cea3b4d51219e5b909a1ff65d90352a2eb30982): install, read, follow, write and publish; no programming needed.
 

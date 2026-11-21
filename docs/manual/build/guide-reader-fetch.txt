@@ -53,6 +53,6 @@ The first command, needed once, tells it which relay to use. It listens on the U
 
 ## What you have now
 
-A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d).
+A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:d7d511cefd9ccba765ed4256c64c4196a188062ee2cc647a04e3af9e3690fa5e).
 
 The relay's messages are in NETWORK.md section 3 and [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862).

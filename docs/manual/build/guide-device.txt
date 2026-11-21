@@ -36,6 +36,6 @@ Run a program with `--hash-every 1` under `terse-bus`, once with the reference d
 
 ## What you have now
 
-A device of your own, running under the reference core and giving its hashes. Next, mix your parts with the reference ones: [Swap in your own part](terse:a569551baa714144459f7d6a0d37ebd756384611229c0a273d201dbe85bd3a5b).
+A device of your own, running under the reference core and giving its hashes. Next, mix your parts with the reference ones: [Swap in your own part](terse:b7ce44c41d8d6e4f0fa46a2d2e1a9d3c53a30ed2f66be2886785802b8bdf4194).
 
 The bus in full is DEVICES.md; section 13 is the list of what a minimal driver must do, and the example's README says it with the reasons.
