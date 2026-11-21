@@ -12,7 +12,7 @@ use crate::devices::{Devices, InProcess};
 use crate::image::Image;
 use crate::machine::{FrameResult, Machine, Stopped};
 use crate::machines::{Command, MAX_MACHINES, ProgramId, StartFailure, failure, map_into, picture, state};
-use crate::snapshot::{SLOTS, Snapshot, SnapshotInfo};
+use crate::snapshot::{Snapshot, SnapshotInfo, TABLE};
 use crate::system::{CONTROLLERS, Controller, Event};
 
 /// Which machine a driver is asked to run: handle 0 is the shell; `serial`
@@ -157,11 +157,20 @@ impl<D: Devices> System<D> {
 
     /// The shell's snapshot slots as the host has them when the system
     /// starts (SPEC §machines.snapshots).
-    pub fn set_snapshot_table(&mut self, table: [Option<SnapshotInfo>; SLOTS]) {
+    pub fn set_snapshot_table(&mut self, table: [Option<SnapshotInfo>; TABLE]) {
         if let Some(dev) = self.shell.machines_mut() {
             for (slot, info) in table.into_iter().enumerate() {
                 dev.set_snapshot(slot as u8, info);
             }
+        }
+    }
+
+    /// The host stored a snapshot of its own in `slot` (an automatic slot,
+    /// SPEC §machines.snapshots): `snapshot_info` tells it from now on. No
+    /// event: the shell did not ask for it.
+    pub fn set_snapshot_info(&mut self, slot: u8, info: Option<SnapshotInfo>) {
+        if let Some(dev) = self.shell.machines_mut() {
+            dev.set_snapshot(slot, info);
         }
     }
 
@@ -560,7 +569,7 @@ impl<D: Devices> System<D> {
                     }
                     None => {}
                 },
-                state::RUNNING => {
+                state::RUNNING | state::PAUSED => {
                     let s = dev.slot_mut(h);
                     match child.machine.as_ref().and_then(|m| m.stopped()) {
                         Some(Stopped::Exit(code)) => {
@@ -571,6 +580,12 @@ impl<D: Devices> System<D> {
                             s.fault_kind = crate::machine::fault_number(&f);
                             s.fault_pc = f.pc;
                             new = Some(state::FAULTED);
+                        }
+                        // Stopped by the host (PERFORMANCE.md R15), running
+                        // or paused: the device's slot where an exit code goes.
+                        Some(Stopped::Halted(slot)) => {
+                            s.exit_code = slot;
+                            new = Some(state::HALTED);
                         }
                         None => {}
                     }

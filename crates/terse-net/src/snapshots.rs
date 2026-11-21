@@ -1,10 +1,10 @@
 //! Snapshots (SPEC §machines.snapshots): the machines a shell asked to keep, private to
-//! this host, in slots 0-15 per shell (by the shell's owner, as named
+//! this host, in slots 0-15 per shell (16-23: the host's automatic slots, PERFORMANCE.md R15) (by the shell's owner, as named
 //! records are, SPEC §content.records). They are never sent anywhere.
 //!
 //! Layout under the snapshots directory (`<data>/snapshots`): the owner's
 //! directory as for records (`program/<publisher hex>/<name hex>` or
-//! `image/<image ID hex>`), and in it one file per slot, `00` to `15`, in
+//! `image/<image ID hex>`), and in it one file per slot, `00` to `23`, in
 //! the snapshot file format of STATE.md 4. A file is written to a
 //! temporary file, synced and renamed into place, and the directory is
 //! synced.
@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use terse_core::snapshot::{SLOTS, SnapshotInfo};
+use terse_core::snapshot::{SnapshotInfo, TABLE};
 
 use crate::records::{Owner, sync_dir};
 
@@ -43,7 +43,7 @@ impl Snapshots {
 
     /// Replaces slot `slot`'s snapshot file, durably.
     pub fn save(&self, owner: &Owner, slot: u8, file: &[u8]) -> io::Result<()> {
-        if slot as usize >= SLOTS {
+        if slot as usize >= TABLE {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "no such slot"));
         }
         let dir = owner.dir(&self.root);
@@ -60,7 +60,7 @@ impl Snapshots {
 
     /// Slot `slot`'s snapshot file, if there is one.
     pub fn load(&self, owner: &Owner, slot: u8) -> io::Result<Option<Vec<u8>>> {
-        if slot as usize >= SLOTS {
+        if slot as usize >= TABLE {
             return Ok(None);
         }
         match fs::read(self.file(owner, slot)) {
@@ -83,8 +83,8 @@ impl Snapshots {
     /// What each slot holds, from the head of its file (a file whose head
     /// cannot be read counts as empty; the rest of a file is checked when
     /// it is restored).
-    pub fn table(&self, owner: &Owner) -> [Option<SnapshotInfo>; SLOTS] {
-        let mut out: [Option<SnapshotInfo>; SLOTS] = Default::default();
+    pub fn table(&self, owner: &Owner) -> [Option<SnapshotInfo>; TABLE] {
+        let mut out: [Option<SnapshotInfo>; TABLE] = Default::default();
         for (slot, info) in out.iter_mut().enumerate() {
             *info = self.load(owner, slot as u8).ok().flatten().and_then(|f| SnapshotInfo::from_file_head(&f));
         }

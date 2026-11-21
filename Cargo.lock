@@ -2858,6 +2858,7 @@ dependencies = [
  "terse-core",
  "terse-host",
  "terse-net",
+ "terse-perflog",
  "terse-relay",
  "winit",
 ]
@@ -2870,6 +2871,7 @@ dependencies = [
  "terse-bus",
  "terse-core",
  "terse-net",
+ "terse-perflog",
  "terse-relay",
  "tungstenite",
 ]
@@ -2886,12 +2888,14 @@ dependencies = [
 name = "terse-devices"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "png",
  "tempfile",
  "terse-bus",
  "terse-core",
  "terse-host",
  "terse-net",
+ "terse-perflog",
  "terse-relay",
 ]
 
@@ -2914,6 +2918,7 @@ dependencies = [
  "tempfile",
  "terse-core",
  "terse-net",
+ "terse-perflog",
  "terse-relay",
  "tiny-skia",
  "unicode-script",

@@ -168,6 +168,7 @@ impl Device for VectorDriver {
             publishes: vec![property::OUTLINES.into(), property::LIST3.into()],
             subscribes: vec![property::EYE.into(), property::VIEW.into()],
             services: Vec::new(),
+            ..Default::default()
         }
     }
 

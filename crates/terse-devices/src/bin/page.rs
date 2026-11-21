@@ -137,6 +137,7 @@ impl Device for PageDriver {
             publishes: Vec::new(),
             subscribes: vec![property::OUTLINES.into()],
             services: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -272,6 +273,9 @@ impl Device for PageDriver {
 }
 
 fn main() -> std::process::ExitCode {
+    if terse_bus::driver::version("terse-dev-page") {
+        return std::process::ExitCode::SUCCESS;
+    }
     let mut fonts = None;
     let mut config = None;
     let mut args = std::env::args().skip(1);

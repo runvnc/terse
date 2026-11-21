@@ -797,6 +797,11 @@ fn finish(args: &Args, system: &System, stopped: Option<Stopped>, times: &mut [s
     match stopped {
         Some(Stopped::Fault(_)) => Ok(fault_exit()),
         Some(Stopped::Exit(code)) => Ok(ExitCode::from(code)),
+        // A restored state the host had stopped (PERFORMANCE.md R15).
+        Some(Stopped::Halted(slot)) => {
+            eprintln!("terse: stopped by the host: device {slot} did not keep up");
+            Ok(ExitCode::from(4))
+        }
         None => Ok(ExitCode::SUCCESS),
     }
 }

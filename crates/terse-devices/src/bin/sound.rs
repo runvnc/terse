@@ -56,6 +56,7 @@ impl Device for SoundDriver {
             publishes: vec![property::SOUND_FRAME.into()],
             subscribes: Vec::new(),
             services: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -155,9 +155,34 @@ pub fn with_prompt(shown: &Terminal, program: &str, prompt: &Prompt, waiting: us
     t
 }
 
+/// `shown` with the host's notice in its bottom rows (`PERFORMANCE.md`
+/// R15: a device that does not keep up): a heading and two lines. Like
+/// the prompt it is the host's own drawing, over everything a program
+/// shows; unlike it, it asks nothing and takes no key.
+pub fn with_notice(shown: &Terminal, heading: &str, what: &str, then: &str) -> Terminal {
+    let mut t = shown.clone();
+    t.set_full_text(true);
+    let head = format!(" Tersenet · {heading}");
+    line(&mut t, FIRST_ROW, BG_BAND, &[(FG_KEY, &fit(&head, COLS))]);
+    line(&mut t, FIRST_ROW + 1, BG_BASE, &[(FG_TEXT, " "), (FG_TEXT, &fit(what, COLS - 2))]);
+    line(&mut t, FIRST_ROW + 2, BG_BASE, &[(FG_DIM, " "), (FG_DIM, &fit(then, COLS - 2))]);
+    line(&mut t, FIRST_ROW + 3, BG_BASE, &[(FG_DIM, " This notice takes no keys; it goes by itself.")]);
+    t.command(0x06);
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notice_text() {
+        let t = with_notice(&Terminal::default(), "a slow device", "Device 7 (terse-dev-page 0.1.0 b3:00) is slow.", "If it goes on, its machines are saved and stopped.");
+        let text = t.text();
+        let rows: Vec<&str> = text.lines().collect();
+        assert!(rows[FIRST_ROW].contains("Tersenet · a slow device") && rows[FIRST_ROW + 1].contains("is slow"), "{text}");
+        assert!(rows[..FIRST_ROW].iter().all(|r| r.trim().is_empty()));
+    }
 
     #[test]
     fn prompt_text() {
