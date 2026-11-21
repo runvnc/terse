@@ -61,7 +61,7 @@ work in between ran out of budget and was paused.
 four bytes, type, `a`, `b`, `c`, to the buffer, and returns 1. If the queue
 is empty it writes nothing and returns 0. The buffer is checked first: a
 buffer not wholly in RAM gives `FFFF_FFFEh` and removes no event. Event
-types and their bytes are in [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462). In C,
+types and their bytes are in [Events and input](terse:93889f0ec2158c0a4fcf4d3de03e2038c19e8d56a28dcf2d714aebdbbd9b85e0). In C,
 `terse_event_pop(&e)` returns the event's type, or `EV_NONE` (0) when the
 queue is empty.
 
@@ -100,7 +100,7 @@ bytes; `terse_random_byte()` returns one byte.
 at the start of the frame, and returns byte 0 (1 if connected, else 0).
 Controllers are numbered 0 to 3; a number above 3 reads as a controller
 that is not connected (eight zero bytes, result 0). The layout of the
-eight bytes is in [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462). In a system only the
+eight bytes is in [Events and input](terse:93889f0ec2158c0a4fcf4d3de03e2038c19e8d56a28dcf2d714aebdbbd9b85e0). In a system only the
 machine with the focus (the shell when the focus is 0) sees the
 controllers; every other machine reads all four as not connected. A new
 focus takes effect at the next frame. In C: `terse_pad_read(n, &pad)` with a
@@ -145,7 +145,7 @@ the request is its own policy, and the machine is not told. The built-in
 shell, for example, takes requests only from the machine with the
 keyboard, asks the user before starting a program that is not built in,
 and opens a blob according to its first bytes. See [the machines
-device](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
+device](terse:fdb83fd223ff338f09d45364f62342eab161f01e45a8064e326d6e792e50b895).
 
 In C, `terse_open(request)` with the kinds `OPEN_BLOB` and `OPEN_PROGRAM`:
 
@@ -217,7 +217,7 @@ these devices, and `--without S` withholds one more.
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46)), they are what a host records per frame to
+[blobs](terse:760dc901819ac975759010476844e7c751d399e37980b5a97931fb0c71f14324)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.
@@ -255,4 +255,4 @@ int main(void)
 ```
 
 The charges of all devices are listed together in
-[charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+[charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).

@@ -59,6 +59,7 @@
 <p>Two examples. A deferred call that copies nothing costs 5 units from ROM (the <code>ecall</code> and 4), an answered one 65. Writing a whole 80-column row costs 165 with one <code>write</code> of 80 bytes, 85 with one <code>cells_write</code> of 80 cells, against at least 560 for 80 one-byte writes.</p>
 <h2 id="what-a-frame-asks-of-the-host">What a frame asks of the host</h2>
 <p>The budget bounds the program&#39;s own work. Drawing, hiding lines and laying out text are the host&#39;s, and are bounded by the limits below instead: the terminal&#39;s 2,400 cells, the two vector displays&#39; ink caps (a list over its cap is cut where it passes it, the rest not drawn), the 3D display&#39;s other caps, and the page&#39;s layout outside the frames. They are set so that every device at its cap at once costs the reference host no more than one frame&#39;s time on one thread; no legal program can make a frame slow.</p>
+<p>In a system the machines the shell shows also share one budget, the system ink: 691,200 square units of the shell&#39;s screen, what one machine shown over the whole screen may count. The pictures count their areas first, then each machine&#39;s lists their ink times the picture&#39;s scale; a picture that does not fit is a plain plate, a list is cut where the ink runs out. The shell&#39;s own screen is not counted. So a whole system asks of the host about what two machines can (Screens, panels and input gives the rules).</p>
 <h2 id="machine-and-image">Machine and image</h2>
 <div class="table"><table>
 <thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
@@ -197,6 +198,7 @@
 <tr><td>Screens in effect</td><td>the first of each handle, in the shell&#39;s 3D list; each counts as a face</td><td></td></tr>
 <tr><td>Program name</td><td>1 to 48 bytes</td><td>provisional</td></tr>
 <tr><td>Records written</td><td><code>info</code> 48, <code>identity</code> 81, <code>request</code> 82, <code>snapshot_info</code> 122 bytes</td><td></td></tr>
+<tr><td>System ink</td><td>691,200 square units: pictures&#39; areas, then lists&#39; ink times their scale</td><td></td></tr>
 </tbody></table></div>
 <h2 id="network">Network</h2>
 <div class="table"><table>
@@ -215,6 +217,14 @@
 <tr><td>Reconnecting</td><td>after 1 s, doubling up to 30 s</td></tr>
 <tr><td>Peer get</td><td>not found after 3 s without an answer</td></tr>
 </tbody></table></div>
+<h2 id="performance">Performance</h2>
+<p>Tersenet&#39;s speed is specified in three tiers, collected in PERFORMANCE.md and checked by <code>terse perf</code>:</p>
+<ul>
+<li>**Requirements**, in units any implementation can be tested against on any machine: frames, round trips, and what may not wait on what. A held article is shown with no request to any relay; a blob not held costs one round trip; a content request that needs no network completes within 2 frames; a program the shell starts runs within 2 frames; a host&#39;s first frame waits on nothing but the image, its settings and the fonts they list. They pass or fail.</li>
+<li>**Ceilings**, in milliseconds or frames, far above what a correct implementation takes on any reasonable computer (a 2-core 2 GHz machine of the last ten years): a host&#39;s first frame within 1.5 s, a held article shown by a whole process within 250 ms, a worst legal frame drawn on one thread within 4 frames. They fail on any machine: going over one means something is wrong, not that the computer is slow.</li>
+<li>**Targets**, the reference implementation&#39;s times on a named machine: a first frame within 50 ms, a held article within 25 ms, a worst legal frame within one frame. They are information, and fail only with <code>terse perf --strict</code>.</li>
+</ul>
+<p>Ceilings and targets judge the median of several runs, so one slow run on a busy machine fails nothing. An implementation is expected to run <code>terse perf</code> (another host or reader plugs in with <code>--host</code> or <code>--reader</code>) and pass every requirement and ceiling.</p>
 </article>
 </main>
 <footer><nav class="pn"><a rel="prev" href="events.html">← Events and input</a></nav></footer>
