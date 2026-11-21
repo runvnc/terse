@@ -7,6 +7,13 @@ websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
 that run on tiny isolated virtual machines. That machine is called Terse32.
 
+**New here?** [Write your own Tersenet reader](docs/manual/guide-reader.txt):
+it starts with a text file and a few rules. Everything else is in the
+manual's [contents](docs/manual/contents.txt): a step-by-step guide (a reader,
+a program, a host, a device, a shell, and using Tersenet), then the complete
+reference. The same pages are the website in `site/` and, once installed, the
+reader's manual (press M).
+
 Tersenet names the whole system and its reading side (the network, articles,
 feeds, relays and readers); Terse32 names the machine and its programs. The
 commands (`terse`, `terse-host`, `terse-relay`), file names and `terse:` links
@@ -46,56 +53,6 @@ To check a download, compare it with `SHA256SUMS.txt` from the same release:
 To build from source instead, see [Getting started](#getting-started) and
 [Build, run, test](#build-run-test). `RELEASING.md` says how the downloads are
 made.
-
-The Terse32 machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
-of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
-and host devices reached through system calls (`ecall`): a text terminal, a
-2D vector display, a page of typeset proportional text, and a content device
-that fetches and publishes blobs and reads feeds. Several machines can run
-side by side as one system: a shell program starts them and lays their screens
-out as tiles.
-
-Tersenet has three layers, each with its own specification:
-
-- **(a) The network**, `NETWORK.md`: blobs named by their hash, relays,
-  signed feeds and their entries, profiles and names, search.
-- **(b) Tersenet articles**, `ARTICLE.md`: the article format and what a reader
-  must do with it.
-- **(c) The Terse32 machine**: `SPEC.md`, the core machine (the CPU, the
-  System, Terminal and 2D vector devices: everything a host that only runs
-  programs needs, with a one-page summary of it at the top); one document per
-  further device in `spec/` (content, page, machines, 3D vector display,
-  sound); and `STATE.md`, the machine state hash that conformance compares.
-  Sections are cited by stable ids, `SPEC §terminal.put`
-  (`spec/RENUMBERING.md` maps the old section numbers).
-
-(a) and (b) are **the core**: a native reader with no virtual machine that
-implements them is a complete, conforming Tersenet client. The machine is optional
-and reuses the core: programs are blobs published in feeds, and the reader that
-comes with this repository is a machine program that shows articles on the page
-device. A machine host that only runs that reader needs just the machine's
-**reading profile** (devices 1, 2, 4 and 7; SPEC §profiles); one that runs programs needs
-just the **program profile** (devices 1, 2 and 3), since a program lists the other
-devices it can do without as optional (SPEC §image). This repository is the first
-prototype of all three layers.
-
-Each specification also says how quick an implementation must be, in units any
-implementation can be tested against (round trips, frames, "never waits for a
-relay"): `PERFORMANCE.md` collects those requirements, says how to test them and
-gives the reference's times; see [Performance](#performance).
-
-**A second reader.** `native/reader-go/` is such a native reader: a terminal
-program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
-`ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
-its `SPEC-FINDINGS.md` lists where the specifications left it guessing.
-
-**A second core.** `native/core-c/` (`tcore`) is the machine's core alone,
-about 1,450 lines of C written from `SPEC.md`, `STATE.md` and `DEVICES.md`:
-the CPU, frames and budget, the System device and the state hash, with every
-other device left to the reference drivers, started as processes on the
-device bus. It gives the expected hashes of `conform-program`, `conform` and
-`conform-reading` frame by frame; its `SPEC-FINDINGS.md` lists where the
-documents left it guessing.
 
 Shell commands below are written for fish; they also work in bash and zsh
 unless they set variables (`set X value` in fish is `X=value` in bash).
@@ -187,6 +144,58 @@ from then on, appears in your timeline. The relay protocol is plain
 WebSocket (`ws://`) without encryption or accounts: anyone who can reach
 the relay can read and publish through it; entries are signed, so nobody
 can publish in your name.
+
+## How Tersenet is built
+
+The Terse32 machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
+of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
+and host devices reached through system calls (`ecall`): a text terminal, a
+2D vector display, a page of typeset proportional text, and a content device
+that fetches and publishes blobs and reads feeds. Several machines can run
+side by side as one system: a shell program starts them and lays their screens
+out as tiles.
+
+Tersenet has three layers, each with its own specification:
+
+- **(a) The network**, `NETWORK.md`: blobs named by their hash, relays,
+  signed feeds and their entries, profiles and names, search.
+- **(b) Tersenet articles**, `ARTICLE.md`: the article format and what a reader
+  must do with it.
+- **(c) The Terse32 machine**: `SPEC.md`, the core machine (the CPU, the
+  System, Terminal and 2D vector devices: everything a host that only runs
+  programs needs, with a one-page summary of it at the top); one document per
+  further device in `spec/` (content, page, machines, 3D vector display,
+  sound); and `STATE.md`, the machine state hash that conformance compares.
+  Sections are cited by stable ids, `SPEC §terminal.put`
+  (`spec/RENUMBERING.md` maps the old section numbers).
+
+(a) and (b) are **the core**: a native reader with no virtual machine that
+implements them is a complete, conforming Tersenet client. The machine is optional
+and reuses the core: programs are blobs published in feeds, and the reader that
+comes with this repository is a machine program that shows articles on the page
+device. A machine host that only runs that reader needs just the machine's
+**reading profile** (devices 1, 2, 4 and 7; SPEC §profiles); one that runs programs needs
+just the **program profile** (devices 1, 2 and 3), since a program lists the other
+devices it can do without as optional (SPEC §image). This repository is the first
+prototype of all three layers.
+
+Each specification also says how quick an implementation must be, in units any
+implementation can be tested against (round trips, frames, "never waits for a
+relay"): `PERFORMANCE.md` collects those requirements, says how to test them and
+gives the reference's times; see [Performance](#performance).
+
+**A second reader.** `native/reader-go/` is such a native reader: a terminal
+program in Go (`tersereader`), no virtual machine, written from `NETWORK.md`,
+`ARTICLE.md` and `vectors/` alone. Its `README.md` says how to build and use it;
+its `SPEC-FINDINGS.md` lists where the specifications left it guessing.
+
+**A second core.** `native/core-c/` (`tcore`) is the machine's core alone,
+about 1,450 lines of C written from `SPEC.md`, `STATE.md` and `DEVICES.md`:
+the CPU, frames and budget, the System device and the state hash, with every
+other device left to the reference drivers, started as processes on the
+device bus. It gives the expected hashes of `conform-program`, `conform` and
+`conform-reading` frame by frame; its `SPEC-FINDINGS.md` lists where the
+documents left it guessing.
 
 ## Build, run, test
 
@@ -761,7 +770,11 @@ so an article still reads as plain text.
 
 `docs/manual` is the Tersenet manual: the articles listed in `docs/manual/manifest`, written in the article format,
 that describe the whole system (the machine, every device call, event, record and
-limit, the network, the tools, the shell and the reader). Every host carries it:
+limit, the network, the tools, the shell and the reader). It has two parts: a
+**guide** of short steps (`guide-*.txt`: make a reader, write a program, make a
+host, a device and a shell, swap in your own part, use Tersenet), each ending with a
+link to the next, and the **reference**, everything in full; `contents` lists both.
+Every host carries it:
 `terse-host` and `terse run` put its articles into the store at start (for an image with the content device, or a shell), and M on
 the reader's timeline, or the shell launcher's "Manual" entry, opens its index, from
 which Tab and Enter follow its links.
@@ -787,8 +800,11 @@ content operation and status of the machine specification (SPEC.md and spec/), a
 ### The website
 
 `site/` is the manual as a static website, so that it can be read before
-installing Tersenet: one HTML page per article (the overview, "What Tersenet is", is
-`index.html`; the manual's index is `contents.html`), made from the same sources by
+installing Tersenet: one HTML page per article (the manual's first page, the
+paragraph at the top of this README with a link to the guide and one to the
+contents, is `index.html`,
+with no navigation or list of articles; the contents, guide then reference, is
+`contents.html`), made from the same sources by
 the reference article parser, with figures as inline SVG. It is plain static files:
 no JavaScript, nothing loaded from anywhere else (no fonts, no images, no
 analytics), one small `style.css`, light and dark following the system. Any file

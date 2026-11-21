@@ -6,6 +6,19 @@ system written as Tersenet articles (ARTICLE.md), read in the reader (M
 on its timeline opens the index) and published with `terse manual
 publish`.
 
+Its shape:
+
+- `index`, the first page (the reader's M, the website's `index.html`):
+  the project's paragraph, unchanged, then exactly two links, to the
+  guide's first page and to `contents`. Nothing else goes there.
+- `contents`: one line per article, the guide first, then the reference.
+- The **guide** (`guide-*.txt`): short pages, each a step someone can
+  finish in a sitting, showing the smallest thing that works with real
+  commands, ending with "What you have now" and a link to the next page,
+  and pointing into the reference for detail (no long tables, full call
+  lists or compiler flags).
+- The **reference**: every other article, complete and exact.
+
 - `manifest` lists the articles in reading order, the index first; each is
   `<name>.txt`, whose first line is `# <title>` (the reader shows it as the
   article's title, and `terse manual publish` uses it as the entry's).
