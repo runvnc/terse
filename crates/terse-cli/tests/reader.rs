@@ -966,7 +966,7 @@ fn publish_a_test_article() {
     run.frames(2);
     let text = run.page_text();
     assert!(text.starts_with("Test article 1\n"), "{text}");
-    assert!(text.contains("This is a test article, published from the Terse reader"), "{text}");
+    assert!(text.contains("This is a test article, published from the Tersenet reader"), "{text}");
     assert!(text.contains("[the manual]{1}"), "{text}");
     assert!(text.contains("Some shape\n") && text.contains("• and a figure:\n"), "{text}");
     assert!(text.replace('\n', " ").trim_end().ends_with("which opens when pressed."), "not cut: {text}");
@@ -2257,7 +2257,7 @@ fn reading_profile() {
     run.press("esc");
     run.press("m");
     run.frames(6);
-    assert!(run.view().contains("sans26b |The Terse manual\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |The Tersenet manual\n"), "{}", run.view());
     let (worst, waited) = run.busiest();
     assert!(waited, "every frame ended in wait_frame ({worst} units)");
 }
@@ -2865,17 +2865,17 @@ fn manual_key_opens_the_index() {
     run.frames(20);
     let view = run.view();
     golden("manual-index", &view);
-    assert!(view.contains("sans26b |The Terse manual\n"), "{view}");
-    assert!(!view.contains("sans21b |The Terse manual"), "the heading is the title: {view}");
-    assert!(view.contains("[What Terse is]{1}"), "{view}");
+    assert!(view.contains("sans26b |The Tersenet manual\n"), "{view}");
+    assert!(!view.contains("sans21b |The Tersenet manual"), "the heading is the title: {view}");
+    assert!(view.contains("[What Tersenet is]{1}"), "{view}");
     // Following the first link opens the overview; Esc comes back.
     run.press("tab");
     run.press("enter");
     run.frames(6);
-    assert!(run.view().contains("sans26b |What Terse is\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |What Tersenet is\n"), "{}", run.view());
     run.press("esc");
     run.frames(4);
-    assert!(run.view().contains("sans26b |The Terse manual\n"));
+    assert!(run.view().contains("sans26b |The Tersenet manual\n"));
 }
 
 /// The reader holds the ID of the manual's current index: a change of the

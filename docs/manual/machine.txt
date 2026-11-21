@@ -1,4 +1,4 @@
-# The machine
+# The Terse32 machine
 
 This article describes machine profile 1, the only profile so far: the
 CPU, the memory map, how frames and the budget work, how a machine stops,
@@ -6,7 +6,7 @@ the image file a program is shipped in, and how programs call devices,
 with the complete table of calls. Each device's calls are described in
 full in that device's article.
 
-The machine is the optional third layer of Terse: the network and the
+The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in

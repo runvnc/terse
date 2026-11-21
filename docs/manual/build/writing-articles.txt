@@ -1,6 +1,6 @@
 # Writing an article
 
-An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Terse: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
+An article is a blob of UTF-8 text, published in a feed, that reads well as plain text and that a reader formats by a few rules. The rules are exact in ARTICLE.md, which, with the network, is the core of Tersenet: any reader, with or without the machine, shows articles by it. This manual is written in the format. Each rule below is shown as source, in a monospaced block, and then written for real, so you see right after it what the reader makes of it.
 
 Any Unicode text may be written, but a reader need only show the basic text repertoire: printable ASCII, Latin-1 (accented letters, `×`, `°`), dashes, curly quotes, `−`, `•`, `…` and box drawing (ARTICLE.md section 1.1). It shows other characters if it can, else as placeholders, so an article in another script or with symbols may be read in a simpler reader as marks. Plain ASCII reads everywhere.
 
@@ -192,11 +192,11 @@ It puts the blob, publishes the next entry of your feed and prints `seq N blob <
 
 ## Your feed as a website
 
-Readers without Terse can read your feed on the web. This writes it as a static website, plain HTML with no scripts:
+Readers without Tersenet can read your feed on the web. This writes it as a static website, plain HTML with no scripts:
 
     terse feed site --out site --base-url https://example.org/
 
-Each article gets a page, drawn like this manual's web pages; an index lists them newest first; `feed.xml` is an Atom feed for RSS readers (only with `--base-url`, the site's own address). Every page names your feed's address, for readers who want to follow it in Terse. Run it again after publishing: it writes only the new article's page and the index, and reads no other article. Give a feed address to make the site of another feed.
+Each article gets a page, drawn like this manual's web pages; an index lists them newest first; `feed.xml` is an Atom feed for RSS readers (only with `--base-url`, the site's own address). Every page names your feed's address, for readers who want to follow it in a Tersenet reader. Run it again after publishing: it writes only the new article's page and the index, and reads no other article. Give a feed address to make the site of another feed.
 
 ## How the reader shows it
 

@@ -47,7 +47,7 @@ impl Identity {
 
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let seed = parse_hex(text.trim()).ok_or(format!("{}: not a Terse secret key file", path.display()))?;
+        let seed = parse_hex(text.trim()).ok_or(format!("{}: not a Tersenet secret key file", path.display()))?;
         Ok(Self::from_seed(seed))
     }
 

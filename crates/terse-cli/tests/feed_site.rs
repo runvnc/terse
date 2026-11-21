@@ -323,7 +323,7 @@ fn check_site(dir: &Path, key: &str) {
         }
         assert!(data.starts_with("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">"), "{name}");
         assert!(data.contains("<meta name=\"viewport\"") && data.contains("<title>"), "{name}");
-        assert!(data.contains(&format!("terse:feed/{key}")) && data.contains("follow this feed in a Terse reader"), "{name}: the footer");
+        assert!(data.contains(&format!("terse:feed/{key}")) && data.contains("follow this feed in a Tersenet reader"), "{name}: the footer");
         assert_eq!(attrs(data, "href").iter().filter(|h| h.ends_with(".css")).count(), 1, "{name}: one stylesheet");
         for href in attrs(data, "href") {
             assert!(!href.contains(':') && !href.starts_with('/') && !href.contains("//"), "{name}: {href} is not relative");

@@ -405,7 +405,7 @@ impl Site<'_> {
         let _ = write!(
             out,
             "<p class=\"feed\">This site is the feed <code class=\"addr\">terse:feed/{}</code>. \
-             Read this without a browser: follow this feed in a Terse reader.</p></footer>\n</body>\n</html>\n",
+             Read this without a browser: follow this feed in a Tersenet reader.</p></footer>\n</body>\n</html>\n",
             esc(&self.address)
         );
         out
@@ -483,8 +483,8 @@ impl Site<'_> {
         let mut out = self.head(&format!("Programs - {}", self.title));
         out.push_str(&self.header(true));
         out.push_str(
-            "<main>\n<h1>Programs</h1>\n<p>These programs run on a Terse machine, not in a web browser. \
-             Open one in a Terse reader by its address.</p>\n<ul>\n",
+            "<main>\n<h1>Programs</h1>\n<p>These programs run on a Terse32 machine, not in a web browser. \
+             Open one in a Tersenet reader by its address.</p>\n<ul>\n",
         );
         for n in names {
             let a = address(&Target::Program(*feed, n.clone()));

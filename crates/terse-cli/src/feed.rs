@@ -297,7 +297,7 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
     }
     let path = args.require("--program")?;
     let image = read(path)?;
-    let parsed = terse_core::Image::parse(&image).map_err(|e| format!("{path}: not a Terse image: {e}"))?;
+    let parsed = terse_core::Image::parse(&image).map_err(|e| format!("{path}: not a Terse32 image: {e}"))?;
     let name = match args.get("--name") {
         Some(n) => n.to_string(),
         None => String::from_utf8(parsed.title.clone()).map_err(|_| format!("{path}: the title is not UTF-8; give --name"))?,

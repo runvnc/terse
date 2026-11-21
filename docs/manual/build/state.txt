@@ -1,6 +1,6 @@
 # State, replay and conformance
 
-A Terse machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.
+A Terse32 machine is deterministic: the same image with the same inputs gives the same state after every frame, on any host. This article defines that state byte for byte (the state serialization), its hash, how a run is replayed and compared, and the snapshot file that saves a machine and restores it. It is how two implementations are checked against each other: run the same image with the same inputs on both and compare hashes; the first frame that differs is where they diverge.
 
 ## The state serialization
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:23d95b734681da3ab2949d587214cf9ff989e1804eac2c617bb05bdc2f6a7a4d) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+See [the machine](terse:65226db98065ba9d4c9374ea40e4b0ee7b974b2348867a980b0f20714297e7d1) for frames and the budget, and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

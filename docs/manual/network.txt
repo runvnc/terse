@@ -1,6 +1,6 @@
 # The network
 
-Terse has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Terse client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.
+Tersenet has three layers. The network, described here (NETWORK.md is exact), and the article format (ARTICLE.md, see "Writing an article") are the core: a client that implements those two is a complete Tersenet client, with or without the machine. The machine (SPEC.md, spec/ and STATE.md) is an optional third layer that reuses them.
 
 Clients exchange immutable blobs and signed feeds through relays: blob stores reachable over WebSocket. A client is anything that speaks the protocol for a person: a native reader, a machine host (which speaks it for the programs it runs), the command line tool. There are no messages between users and no direct links between clients yet.
 
@@ -72,7 +72,7 @@ An entry is valid if: `n` is at most 120 and the entry's length matches it; the 
 |---|---|---|---|
 | 1 | article | any title | UTF-8 text (see "Writing an article") |
 | 2 | profile | the feed's display name | the profile document |
-| 3 | program | the program's name, a display name | a Terse image |
+| 3 | program | the program's name, a display name | a Terse32 image |
 | 4 | document | any title | a document (starts with `TDOC`) |
 
 Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name).
