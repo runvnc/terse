@@ -1036,6 +1036,25 @@ fn local_session_file() -> String {
     out
 }
 
+fn full_text_file() -> String {
+    use terse_core::text::{FULL, FULL_COUNT};
+    let mut out = String::from(
+        "# Terse test vectors: the full repertoire (SPEC.md \u{a7}terminal.text, ARTICLE.md 1.1):\n\
+         # what a host with device 10 draws, and a full-text reader shows, with its built-in fonts.\n\
+         # Format: vectors/README.\n\n\
+         repertoire full-text\n",
+    );
+    let _ = writeln!(out, "  count {FULL_COUNT}");
+    for (lo, hi) in FULL {
+        let _ = writeln!(out, "  range {lo:04x} {hi:04x}");
+    }
+    for (name, bytes, note) in basic_text_cases() {
+        let full = if article_parse::full_text(&bytes) { "yes" } else { "no" };
+        let _ = writeln!(out, "\ntext {name}\n  note {note}\n  hex {}\n  full {full}", hex(&bytes));
+    }
+    out
+}
+
 // --- Everything ----------------------------------------------------------------
 // --- The basic text repertoire (ARTICLE.md 1.1, SPEC §terminal.text) ---------------
 
@@ -1056,6 +1075,10 @@ fn basic_text_cases() -> Vec<(&'static str, Vec<u8>, &'static str)> {
         ("figure-dash", t("1\u{2012}2"), "U+2012, next to the en dash"),
         ("black-square", t("\u{25a0}"), "U+25A0, just after block elements"),
         ("greek", t("\u{3a9}mega"), "another script"),
+        ("cyrillic", t("\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}"), "another script, in the full repertoire"),
+        ("symbols", t("\u{2665} \u{2605} \u{2713} \u{2302} \u{2192} \u{2264}"), "symbols of the full repertoire"),
+        ("hebrew", t("\u{5e9}\u{5dc}\u{5d5}\u{5dd}"), "a script outside the full repertoire"),
+        ("umbrella", t("\u{2614}"), "a wide symbol, outside the full repertoire"),
         ("cjk", t("\u{4f60}\u{597d}"), "wide characters"),
         ("emoji", t("\u{1f600}"), "beyond the BMP"),
     ]
@@ -1169,6 +1192,7 @@ pub fn generate() -> Vec<File> {
         File { path: "relay-session.txt".into(), bytes: session_file().into_bytes() },
         File { path: "local-session.txt".into(), bytes: local_session_file().into_bytes() },
         File { path: "basic-text.txt".into(), bytes: basic_text_file().into_bytes() },
+        File { path: "full-text.txt".into(), bytes: full_text_file().into_bytes() },
     ];
     out.extend(article_files());
     out
@@ -1333,6 +1357,15 @@ text's bytes (`hex`) and `basic`: `yes` if the text is in basic text
 (every character it shows is in the repertoire; a byte order mark that
 starts it, and control characters, are not shown; malformed UTF-8 is
 shown as U+FFFD), `no` if it needs full text.
+
+full-text.txt (SPEC.md §terminal.text, ARTICLE.md section 1.1)
+---------------------------------------------------------------
+The full repertoire, which a Terse host with device 10 (full text)
+draws, and a full-text reader shows, with its built-in fonts: one
+record `repertoire full-text` in the form of basic-text.txt, then the
+same texts with `full`: `yes` if every character the text shows is in
+the full repertoire, `no` if it holds one that only a font the user
+added can show.
 
 articles/ (ARTICLE.md)
 ----------------------

@@ -222,8 +222,16 @@ colours are r, g, b, a (1 byte each, `a` the opacity).
 The host lays the document out with proportional fonts it chooses for the
 three faces: shaping (ligatures, joining scripts such as Arabic), the
 Unicode bidirectional algorithm within each line, Unicode line breaking at
-the rectangle's width less the paragraph's indent, and fallback to other
-fonts for characters the chosen font lacks. It draws the background over the
+the rectangle's width less the paragraph's indent, and fallback to its
+other fonts for characters the chosen font lacks. Its fonts are those
+it loaded when it started (§responsiveness item 5 of `SPEC.md`: it
+never looks for one while a machine runs); they cover at least the full
+repertoire of `SPEC.md` §terminal.text, and a character none of them
+has is drawn as a box. Since layout depends on the fonts, two hosts
+with different fonts (one whose user replaced a font or added one) lay
+the same document out differently; that is allowed, because what a
+program learns of layout reaches it only as events (§page.events),
+which are inputs recorded for replay. It draws the background over the
 rectangle, then the lines and figures that intersect the rectangle after
 scrolling, clipped to it. How the text looks (fonts, hinting, smoothing, how
 a line that does not fit is cut) and how figures are smoothed are up to the

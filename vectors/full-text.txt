@@ -1,0 +1,257 @@
+# Terse test vectors: the full repertoire (SPEC.md §terminal.text, ARTICLE.md 1.1):
+# what a host with device 10 draws, and a full-text reader shows, with its built-in fonts.
+# Format: vectors/README.
+
+repertoire full-text
+  count 2461
+  range 0020 007e
+  range 00a0 01c3
+  range 01cd 01e3
+  range 01e6 01f0
+  range 01f4 01f6
+  range 01f8 01f9
+  range 01fc 0221
+  range 0224 0241
+  range 0243 0245
+  range 024c 024d
+  range 0250 02b9
+  range 02bb 02c1
+  range 02c6 02c9
+  range 02cc 02d3
+  range 02d6 02de
+  range 02e0 02e9
+  range 02ee 02ee
+  range 02f3 02f3
+  range 0300 033f
+  range 0343 0343
+  range 0358 0358
+  range 0361 0361
+  range 0374 0377
+  range 037a 037f
+  range 0384 038a
+  range 038c 038c
+  range 038e 03a1
+  range 03a3 03ce
+  range 03d0 03e1
+  range 03f0 045f
+  range 0462 0463
+  range 0472 0473
+  range 0490 049b
+  range 04a2 04a5
+  range 04aa 04b3
+  range 04ba 04bb
+  range 04c0 04c4
+  range 04c7 04c8
+  range 04cb 04cc
+  range 04cf 04f9
+  range 0510 0511
+  range 051a 051d
+  range 1e00 1e13
+  range 1e18 1e2d
+  range 1e30 1e4d
+  range 1e54 1e63
+  range 1e68 1e79
+  range 1e7c 1e99
+  range 1e9b 1e9b
+  range 1e9f 1ea1
+  range 1eac 1ead
+  range 1eb0 1eb1
+  range 1eb6 1eb9
+  range 1ebc 1ebd
+  range 1ec6 1ec7
+  range 1eca 1ecd
+  range 1ed8 1edd
+  range 1ee0 1ee5
+  range 1ee8 1eeb
+  range 1eee 1ef5
+  range 1ef8 1ef9
+  range 1f00 1f15
+  range 1f18 1f1d
+  range 1f20 1f45
+  range 1f48 1f4d
+  range 1f50 1f57
+  range 1f59 1f59
+  range 1f5b 1f5b
+  range 1f5d 1f5d
+  range 1f5f 1f7d
+  range 1f80 1fb4
+  range 1fb6 1fc4
+  range 1fc6 1fd3
+  range 1fd6 1fdb
+  range 1fdd 1fef
+  range 1ff2 1ff4
+  range 1ff6 1ffe
+  range 2000 200a
+  range 2010 2023
+  range 2026 2026
+  range 202f 2037
+  range 2039 203a
+  range 203c 203f
+  range 2045 2049
+  range 204b 204b
+  range 205f 205f
+  range 2070 2071
+  range 2074 208e
+  range 2090 209c
+  range 20a0 20b5
+  range 20b8 20ba
+  range 20bd 20bd
+  range 2102 2102
+  range 2105 2105
+  range 210d 210f
+  range 2115 2117
+  range 2119 211a
+  range 211d 211d
+  range 2122 2122
+  range 2124 2124
+  range 2126 2126
+  range 212a 212b
+  range 212e 212e
+  range 2148 2148
+  range 2150 2151
+  range 2153 215f
+  range 2189 2189
+  range 2190 2213
+  range 2215 2215
+  range 2217 2220
+  range 2223 2223
+  range 2227 222d
+  range 2234 223d
+  range 2241 2269
+  range 226d 228b
+  range 228d 22a5
+  range 22b2 22b5
+  range 22b8 22b8
+  range 22c2 22c6
+  range 22cd 22d1
+  range 22da 22e9
+  range 22ef 22ef
+  range 2300 2306
+  range 2308 2311
+  range 2318 2319
+  range 231c 2321
+  range 2325 2328
+  range 232b 232b
+  range 2373 2375
+  range 237a 237a
+  range 237d 237d
+  range 239b 23ae
+  range 23ce 23cf
+  range 2500 25fc
+  range 25ff 2613
+  range 2616 262f
+  range 2638 2647
+  range 2654 267e
+  range 2680 2689
+  range 2690 2692
+  range 2694 269c
+  range 26a0 26a0
+  range 26b0 26b1
+  range 2701 2704
+  range 2706 2709
+  range 270c 2727
+  range 2729 274b
+  range 274d 274d
+  range 274f 2752
+  range 2756 2756
+  range 2758 275e
+  range 2761 2775
+  range 2794 2794
+  range 2798 27af
+  range 27b1 27be
+  range fffd fffd
+
+text ascii
+  note tab, CR and LF are handled by ARTICLE.md 1
+  hex 506c61696e2041534349492c207461627309616e640d0a6c696e65732e
+  full yes
+
+text punctuation
+  note the nine marks beyond Latin-1
+  hex 3320c397203420e28892203120e2809420e2809c796573e2809d2c20e280986e6fe2809920e2809320e280a220e280a6
+  full yes
+
+text latin-1
+  note accented letters and signs
+  hex 636166c3a9206e61c3af76652c20313220c2b0432c20c2bd20c2a32c20c2bf73c3ad3f
+  full yes
+
+text no-break-space
+  note U+00A0
+  hex 78c2a079
+  full yes
+
+text box-drawing
+  note U+2500 to U+259F
+  hex e2948ce29480e2949020e29688e29693e29692e2969120e2969f
+  full yes
+
+text malformed
+  note shown as U+FFFD, which is basic
+  hex 6d616c666f726d656420ff20697320552b46464644
+  full yes
+
+text bom-at-start
+  note a byte order mark that starts the text is not shown
+  hex efbbbf74657874
+  full yes
+
+text control
+  note control characters are not shown
+  hex 6101627f63c28564
+  full yes
+
+text bom-inside
+  note U+FEFF anywhere else is text, and not basic
+  hex 61efbbbf62
+  full no
+
+text euro
+  note U+20AC
+  hex 3520e282ac
+  full yes
+
+text figure-dash
+  note U+2012, next to the en dash
+  hex 31e2809232
+  full yes
+
+text black-square
+  note U+25A0, just after block elements
+  hex e296a0
+  full yes
+
+text greek
+  note another script
+  hex cea96d656761
+  full yes
+
+text cyrillic
+  note another script, in the full repertoire
+  hex d09fd180d0b8d0b2d0b5d182
+  full yes
+
+text symbols
+  note symbols of the full repertoire
+  hex e299a520e2988520e29c9320e28c8220e2869220e289a4
+  full yes
+
+text hebrew
+  note a script outside the full repertoire
+  hex d7a9d79cd795d79d
+  full no
+
+text umbrella
+  note a wide symbol, outside the full repertoire
+  hex e29894
+  full no
+
+text cjk
+  note wide characters
+  hex e4bda0e5a5bd
+  full no
+
+text emoji
+  note beyond the BMP
+  hex f09f9880
+  full no

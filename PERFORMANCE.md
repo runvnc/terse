@@ -27,8 +27,8 @@ implementation.
 
 **The reference machine**: an Intel Core i7-10750H laptop (6 cores, 12
 threads), 15 GB of RAM, NVIDIA RTX 2060, Linux (CachyOS), with about a
-thousand font faces installed (which matters for text in scripts the
-monospace font lacks, §3). Times are the median of 5 runs, with the
+thousand font faces installed (which no longer matters: the host draws
+text only with the fonts it loads at start, §3). Times are the median of 5 runs, with the
 spread, from `terse perf` on a release build.
 
 ## 1. Requirements
@@ -45,6 +45,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R8 | Frames run at 60 a second while the host keeps up, never faster to catch up; the frame loop never waits on the network, the user or storage | frames a second | `programs/conform-perf` (frames counted against the clock over four seconds; `terse perf` M10) |
 | Machine host | R9 | A held image a shell starts runs its first frame within 2 frames of the start call | frames | `terse perf` M6 |
 | Machine host | R10 | The host work a frame can demand is bounded: what a machine's displays make a host draw in a frame is within the caps, counted in square screen units of ink from the lists alone (the 2D list at most 230,400, `SPEC.md` §vector.ink-cap; the 3D list at most 153,600, with its segment, face and faces × segments caps, §vector3d.caps), the terminal's 2,400 cells and the page's lines in view (its layout outside the frames, §page.layout) | square screen units; cells | `terse perf` W rows: each device's worst legal list, built to ask far more than the cap, is drawn only up to it (PASS or FAIL), and its drawing time on one thread is a target; `cargo test -p terse-core` (`vector`, `vector3`: the counts and where the lists are cut) |
+| Machine host | R11 | The frame loop never waits on finding or loading a font: every font is opened when the host starts, and no file is opened, nor any font directory read, for text after that; a glyph is rasterised on first use, at a bounded cost per glyph | files opened | `cargo test -p terse-host fonts` (the fonts are loaded from bytes the host holds: built in, or files read once at start, which the test counts); `terse perf` H2 and the W row `term-full`: the first frame of the whole full repertoire |
 
 What the machine already guarantees needs no row: a frame's work for a
 program is bounded by the budget (`SPEC.md` §frames, §charges), so no
@@ -73,7 +74,7 @@ its rows):
 `terse perf` runs every scenario headless, in temporary directories,
 with relays it starts on ephemeral loopback ports (never 7878, never your
 config, cache or data directories), and prints one line per scenario:
-its id, what it measures, the measurement, the requirement (R1–R10, §1)
+its id, what it measures, the measurement, the requirement (R1–R11, §1)
 or target (T), and PASS, FAIL, `info` (a target) or `skipped` (terse-host or the Go
 reader not found). It exits with 1 if a requirement failed. `--only
 machine|client|host` runs one group, `--runs n` changes the 5 runs of the

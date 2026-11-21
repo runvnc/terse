@@ -80,6 +80,26 @@ text greek
   hex cea96d656761
   basic no
 
+text cyrillic
+  note another script, in the full repertoire
+  hex d09fd180d0b8d0b2d0b5d182
+  basic no
+
+text symbols
+  note symbols of the full repertoire
+  hex e299a520e2988520e29c9320e28c8220e2869220e289a4
+  basic no
+
+text hebrew
+  note a script outside the full repertoire
+  hex d7a9d79cd795d79d
+  basic no
+
+text umbrella
+  note a wide symbol, outside the full repertoire
+  hex e29894
+  basic no
+
 text cjk
   note wide characters
   hex e4bda0e5a5bd
