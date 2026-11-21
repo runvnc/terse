@@ -65,7 +65,21 @@
  * restores the machines in their order (new handles, so the same tiles),
  * the layout and the focus; D discards the session (its slots and the
  * record). A machine that cannot be restored shows why, like a failed
- * start. */
+ * start.
+ *
+ * Halted machines and automatic snapshots (PERFORMANCE.md R15, SPEC
+ * §machines.snapshots): a machine the host stopped because a device it
+ * used kept making frames late is "halted". Its tile shows that in words
+ * instead of its last picture (which device, whether its state was saved),
+ * its bar segment says "halted", the bar says so once, and its line in the
+ * launcher explains it; Enter on that line restores it in its place from
+ * its automatic slot (15 + its handle). The launcher lists every
+ * automatic snapshot (slots 16-23) under "SAVED BY TERSENET": Enter
+ * restores one (in place of its halted machine, if that is still there),
+ * D deletes it. A running machine whose automatic slot received a
+ * snapshot of it since it started was warned about (the host saved it at
+ * the warning): its launcher line says so. The slots are read every 15
+ * frames and when a machine is halted. */
 
 #include <stdint.h>
 #include "terse.h"
@@ -151,6 +165,14 @@ static uint8_t layout_buf[2], layout_handle;
 static content_req sess_req, sess_save_req, sess_del_req;
 static uint8_t sess_buf[SESSION_LEN], sess_handle, sess_save_handle, sess_n;
 static uint8_t save_left, save_bad;
+
+/* The host's automatic snapshots (slots 16-23) as last read; the listed
+ * ones (present), in slot order; and, per handle, slot 15 + h as it was
+ * when machine h began to run (a later snapshot there is a warning). */
+static mach_snapshot_record auto_rec[MACH_MAX];
+static uint8_t auto_n, auto_list[MACH_MAX];
+static uint8_t seen_present[MACH_MAX + 1];
+static uint32_t seen_frames[MACH_MAX + 1], seen_time[MACH_MAX + 1];
 
 /* Each machine's title (from its image's header, for a machine that is not
  * a built-in) and the name it was started under. */
@@ -244,8 +266,27 @@ static uint8_t prog_ix[MACH_MAX + 1]; /* each machine's program, MAX_PROGS if no
 static uint8_t top(void) { return sess_n != 0; }
 static uint8_t first(void) { return top() + 1; }
 
-/* The entries the launcher lists before the machines. */
-static uint8_t nprogs(void) { return first() + prog_n + fprog_n; }
+/* The automatic snapshots' entries start at autos(); nprogs(): the
+ * entries the launcher lists before the machines. */
+static uint8_t autos(void) { return first() + prog_n + fprog_n; }
+static uint8_t nprogs(void) { return autos() + auto_n; }
+
+/* Whether h's automatic slot holds a snapshot of the image h runs. */
+static uint8_t auto_of(uint8_t h)
+{
+    mach_snapshot_record *r = &auto_rec[h - 1];
+    return r->present && !memcmp(r->image, info[h].image, 32);
+}
+
+/* Machine h runs (or is paused) and the host saved it since it started:
+ * it was warned about (PERFORMANCE.md R15). */
+static uint8_t warned(uint8_t h)
+{
+    mach_snapshot_record *r = &auto_rec[h - 1];
+    uint8_t s = info[h].state;
+    return (s == MACH_RUNNING || s == MACH_PAUSED) && auto_of(h)
+           && (!seen_present[h] || r->frames != seen_frames[h] || r->time != seen_time[h]);
+}
 
 /* A machine's title: a built-in's, else its image's, else the name it was
  * started under. */
@@ -371,6 +412,8 @@ static void place_all(void)
         tile[h] = r;
         if (layout == GALLERY)
             r = pic[h];
+        else if (info[h].state == MACH_HALTED)
+            r.w = r.h = 0; /* its tile shows words instead (draw_labels) */
         mach_place(h, r.x, r.y, r.w, r.h);
     }
 }
@@ -584,6 +627,7 @@ static uint16_t mark(uint8_t state)
     case MACH_EXITED: return full_text ? 0x25A0 : 0x2584; /* ■, else ▄ */
     case MACH_FAULTED: return '!';
     case MACH_FAILED: return full_text ? 0x2717 : 0xD7;   /* ✗, else × */
+    case MACH_HALTED: return full_text ? 0x2298 : 0xF8;   /* ⊘, else ø */
     default: return ' ';
     }
 }
@@ -632,13 +676,17 @@ static void draw_bar(void)
             bar[col + i] = cell(' ', fg, bg);
         bar[col] = cell('0' + h, fg, bg);
         bar[col + 1] = cell(mark(info[h].state), fg, bg);
-        /* The share of the budget, right-aligned. */
+        /* The share of the budget, right-aligned; "halted" instead for a
+         * machine the host stopped. */
         uint32_t pct = info[h].units * 100 / BUDGET;
         if (pct > 999)
             pct = 999;
-        uint8_t digits = pct >= 100 ? 3 : pct >= 10 ? 2 : 1;
+        uint8_t halted = info[h].state == MACH_HALTED;
+        uint8_t digits = halted ? 5 : pct >= 100 ? 3 : pct >= 10 ? 2 : 1;
         uint8_t pc = w >= 6 + digits ? col + w - digits - 1 : 0;
-        if (pc) {
+        if (pc && halted)
+            bar_text(pc, 6, (const uint8_t *)"halted", 6, fg, bg);
+        else if (pc) {
             bar_num(pc, pct, fg, bg);
             bar[pc + digits] = cell('%', fg, bg);
         }
@@ -672,28 +720,50 @@ static const char *failure_name(uint8_t f)
     return f < 6 ? names[f] : names[0];
 }
 
+/* The name of device `slot` (the slot a halted machine's record gives). */
+static const char *device_name(uint8_t slot)
+{
+    static const char *const names[] = { "a device", "the system device", "the terminal", "the vector display",
+                                         "the content device", "a device", "the sound device", "the page",
+                                         "the machines device", "the 3D display", "full text" };
+    return slot < 11 ? names[slot] : names[0];
+}
+
 /* Labels in the shell's own cells where a machine has no picture yet (or
- * never will): loading, failed. */
+ * never will): loading, failed; and halted, whose tile shows words. */
 static void draw_labels(void)
 {
     term_cmd(TERM_CLEAR); /* the bar is written again at once */
     for (uint8_t h = 1; h <= MACH_MAX; h++) {
         uint8_t s = info[h].state;
-        if ((s != MACH_LOADING && s != MACH_FAILED) || !tile[h].w || !tile[h].h)
+        if ((s != MACH_LOADING && s != MACH_FAILED && s != MACH_HALTED) || !tile[h].w || !tile[h].h)
             continue;
-        /* Two lines, each cut to the tile's width: the handle and title,
-         * then what is happening. */
+        /* Lines cut to the tile's width: the handle and title, then what
+         * is happening (for a halted machine: why, and its saved state). */
         uint8_t row = (tile[h].y + tile[h].h / 2) / 16, col = tile[h].x / 8 + 1;
         uint8_t room = (tile[h].x + tile[h].w) / 8 > col + 1 ? (tile[h].x + tile[h].w) / 8 - col - 1 : 1;
+        if (s == MACH_HALTED && row > 3)
+            row -= 2;
         term_goto(col, row);
-        term_color(s == MACH_FAILED ? 9 : 244, 0);
+        term_color(s == MACH_FAILED ? 9 : s == MACH_HALTED ? 214 : 244, 0);
         term_putc('0' + h);
         if (room > 2) {
             term_putc(' ');
             term_put_ascii(room - 2 < 16 ? room - 2 : 16, title_of(h));
         }
         term_goto(col, row + 1);
-        term_put_ascii(room, (const uint8_t *)(s == MACH_FAILED ? failure_name(info[h].failure) : "loading"));
+        if (s != MACH_HALTED) {
+            term_put_ascii(room, (const uint8_t *)(s == MACH_FAILED ? failure_name(info[h].failure) : "loading"));
+            continue;
+        }
+        term_put_ascii(room, (const uint8_t *)"halted: stopped by Tersenet");
+        term_goto(col, row + 2);
+        term_color(250, 0);
+        term_put_ascii(room, (const uint8_t *)device_name(info[h].exit_code));
+        term_goto(col, row + 3);
+        term_put_ascii(room, (const uint8_t *)"kept making frames late");
+        term_goto(col, row + 4);
+        term_put_ascii(room, (const uint8_t *)(auto_of(h) ? "its state was saved" : "its state was not saved"));
     }
     term_color(7, 0);
 }
@@ -749,8 +819,8 @@ static void doc_num(uint32_t v, uint8_t hex)
 
 static const char *state_name(uint8_t s)
 {
-    static const char *const names[] = { "", "loading", "running", "paused", "exited", "faulted", "failed" };
-    return s < 7 ? names[s] : "?";
+    static const char *const names[] = { "", "loading", "running", "paused", "exited", "faulted", "failed", "halted" };
+    return s < 8 ? names[s] : "?";
 }
 
 static const char *fault_name(uint8_t k)
@@ -783,6 +853,29 @@ static const feed_name *name_of(const uint8_t *key)
         if (!memcmp(names[i].key, key, 32))
             return &names[i];
     return 0;
+}
+
+/* The title of a snapshot's program: its identity's name, else a
+ * built-in's title by its image, else "?". At most 16 bytes, ending in 0. */
+static const uint8_t *snapshot_title(const mach_snapshot_record *r)
+{
+    static uint8_t t[17];
+    if (r->name_len) {
+        uint8_t n = r->name_len < 16 ? r->name_len : 16;
+        memcpy(t, r->name, n);
+        t[n] = 0;
+        return t;
+    }
+    uint8_t p = prog_of(r->image);
+    return p < MAX_PROGS && prog_known[p] ? prog_title[p] : (const uint8_t *)"?";
+}
+
+/* The time of day of Unix time t, UTC: hh:mm. */
+static void doc_clock(uint32_t t)
+{
+    uint32_t m = t / 60 % 60, h = t / 3600 % 24;
+    char s[5] = { (char)('0' + h / 10), (char)('0' + h % 10), ':', (char)('0' + m / 10), (char)('0' + m % 10) };
+    doc_text(s, 5);
 }
 
 /* One line of the launcher: highlighted when the cursor is on it. */
@@ -851,6 +944,29 @@ static void build_launcher(void)
             doc_short_key(f->key);
         }
     }
+    if (auto_n) {
+        doc_anchor(0);
+        doc_font(DOC_SANS, DOC_BOLD);
+        doc_size(13);
+        doc_colour(150, 160, 180);
+        doc_paragraph(DOC_START, 6, 14, 0);
+        doc_str("SAVED BY TERSENET");
+        doc_font(DOC_SANS, 0);
+        for (uint8_t i = 0; i < auto_n; i++) {
+            mach_snapshot_record *r = &auto_rec[auto_list[i] - MACH_AUTO_SLOT(1)];
+            doc_size(15);
+            line(autos() + i, 400 + i);
+            doc_text(snapshot_title(r), title_len(snapshot_title(r)));
+            /* When: the time of day it was taken (UTC) and its frame. */
+            doc_paragraph(DOC_START, 18, 0, DOC_NOWRAP | DOC_ELLIPSIS);
+            doc_size(11);
+            doc_colour(130, 138, 155);
+            doc_str("saved when a device was slow, ");
+            doc_clock(r->time);
+            doc_str(" UTC, frame ");
+            doc_num(r->frames, 0);
+        }
+    }
     if (n) {
         doc_anchor(0);
         doc_font(DOC_SANS, DOC_BOLD);
@@ -892,6 +1008,22 @@ static void build_launcher(void)
                 doc_colour(255, 120, 110);
                 doc_str(failure_name(r->failure));
             }
+            if (r->state == MACH_HALTED) {
+                /* Why (PERFORMANCE.md R15), and what can be done. */
+                doc_paragraph(DOC_START, 24, 0, 0);
+                doc_colour(255, 175, 95);
+                doc_str("Tersenet stopped it: ");
+                doc_str(device_name(r->exit_code));
+                doc_str(" (device ");
+                doc_num(r->exit_code, 0);
+                doc_str(") kept making frames late. ");
+                doc_str(auto_of(h) ? "Its state was saved: Enter restores it." : "Its state could not be saved.");
+            }
+            if (warned(h)) {
+                doc_paragraph(DOC_START, 24, 0, 0);
+                doc_colour(255, 175, 95);
+                doc_str("A device it uses was slow; Tersenet saved its state.");
+            }
         }
     }
     doc_anchor(0);
@@ -909,6 +1041,8 @@ static void build_launcher(void)
               : "Up, Down choose \xC2\xB7 Enter start \xC2\xB7 the home key comes back here");
     if (sess_n)
         doc_str(" \xC2\xB7 D discards the session");
+    if (auto_n)
+        doc_str(" \xC2\xB7 D deletes a saved state");
     doc_end();
     page_submit_doc(doc);
 }
@@ -1044,6 +1178,12 @@ static void q_short(const uint8_t *key)
         uint8_t h[2] = { (uint8_t)hex[key[i] >> 4], (uint8_t)hex[key[i] & 15] };
         q_add(h, 2);
     }
+}
+
+static void bmsg_add(const uint8_t *p, uint32_t n)
+{
+    while (n-- && bmsg_n < sizeof bmsg)
+        bmsg[bmsg_n++] = *p++;
 }
 
 /* A message in the bar for three seconds. */
@@ -1374,6 +1514,97 @@ static void discard_session(void)
     bar_msg("Session discarded", 0, 0);
 }
 
+/* --- Halted machines and the automatic snapshots ------------------------- */
+
+/* Reads the automatic slots (16-23); if any changed, the list again (the
+ * cursor stays on its line) and everything that shows them. */
+static void refresh_auto(void)
+{
+    mach_snapshot_record r;
+    uint8_t changed = 0;
+    for (uint8_t k = 0; k < MACH_MAX; k++) {
+        mach_snapshot_info(MACH_AUTO_SLOT(1) + k, &r);
+        if (memcmp(&r, &auto_rec[k], sizeof r)) {
+            memcpy(&auto_rec[k], &r, sizeof r);
+            changed = 1;
+        }
+    }
+    if (!changed)
+        return;
+    uint8_t old = auto_n, at = autos();
+    auto_n = 0;
+    for (uint8_t k = 0; k < MACH_MAX; k++)
+        if (auto_rec[k].present)
+            auto_list[auto_n++] = MACH_AUTO_SLOT(1) + k;
+    if (cursor >= at + old)
+        cursor = cursor + auto_n - old;
+    else if (cursor >= at + auto_n)
+        cursor = auto_n ? at + auto_n - 1 : at;
+    uint8_t items = nprogs() + machine_count();
+    if (cursor >= items && cursor)
+        cursor = items - 1;
+    dirty = doc_dirty = 1;
+}
+
+/* Restores automatic slot `slot` (16-23): in place of its machine if that
+ * is halted with the same image, so that it comes back in the same tile. */
+static void restore_auto(uint8_t slot)
+{
+    mach_snapshot_record *r = &auto_rec[slot - MACH_AUTO_SLOT(1)];
+    uint8_t old = slot - MACH_AUTO_SLOT(0);
+    note[0] = 0;
+    doc_dirty = 1;
+    if (info[old].state == MACH_HALTED && !memcmp(info[old].image, r->image, 32)) {
+        mach_stop(old);
+        info[old].state = MACH_NONE;
+    }
+    uint32_t h = mach_restore(slot);
+    if (!h) {
+        set_note("No free handle: stop a machine first (X).");
+        return;
+    }
+    info[h].state = MACH_LOADING;
+    memset(info[h].image, 0, 32);
+    const uint8_t *t = r->name_len ? snapshot_title(r) : (const uint8_t *)"";
+    memcpy(mname[h], t, title_len(t));
+    mname[h][title_len(t)] = 0;
+    mtitle_state[h] = 0;
+    focus_machine(h);
+}
+
+/* D on a saved state: its slot is emptied. */
+static void delete_auto(uint8_t slot)
+{
+    mach_snapshot_delete(slot);
+    refresh_auto();
+    bar_msg("Saved state deleted", 0, 0);
+}
+
+/* Enter (or a press) on machine h's line: a halted machine whose state
+ * was saved is restored in its place; any other is focused. */
+static void machine_entry(uint8_t h)
+{
+    if (info[h].state == MACH_HALTED && auto_of(h))
+        restore_auto(MACH_AUTO_SLOT(h));
+    else
+        focus_machine(h);
+}
+
+/* The bar says once that machine h was halted, and why. */
+static void halted_msg(uint8_t h)
+{
+    const uint8_t *t = title_of(h);
+    uint8_t d = info[h].exit_code;
+    uint8_t num[3] = { (uint8_t)('0' + d / 10), (uint8_t)('0' + d % 10), 0 };
+    bar_msg("Tersenet stopped ", t, title_len(t));
+    bmsg_add((const uint8_t *)": device ", 9);
+    bmsg_add(d >= 10 ? num : num + 1, d >= 10 ? 2 : 1);
+    if (auto_of(h))
+        bmsg_add((const uint8_t *)" was too slow (state saved)", 27);
+    else
+        bmsg_add((const uint8_t *)" was too slow", 13);
+}
+
 static void step_machine(int8_t d)
 {
     uint8_t n = machine_count();
@@ -1414,10 +1645,12 @@ static void command_key(uint8_t key, uint8_t mods)
             open_manual();
         else if (cursor < first() + prog_n)
             start_program(cursor - first());
-        else if (cursor < nprogs())
+        else if (cursor < autos())
             start_feed_program(cursor - first() - prog_n);
+        else if (cursor < nprogs())
+            restore_auto(auto_list[cursor - autos()]);
         else
-            focus_machine(nth_machine(cursor - nprogs()));
+            machine_entry(nth_machine(cursor - nprogs()));
         return;
     case KEY_S:
         save_session();
@@ -1425,6 +1658,8 @@ static void command_key(uint8_t key, uint8_t mods)
     case KEY_D:
         if (cursor < top())
             discard_session();
+        else if (cursor >= autos() && cursor < nprogs())
+            delete_auto(auto_list[cursor - autos()]);
         return;
     case KEY_ESCAPE:
         if (sel && live(sel))
@@ -1555,6 +1790,11 @@ static void handle(void)
         uint8_t h = ev.a;
         info[h].state = ev.b;
         open_changed(h, ev.b);
+        if (ev.b == MACH_HALTED) {
+            mach_info(h, &info[h]); /* the device's slot */
+            refresh_auto();
+            halted_msg(h);
+        }
         if (h == focus && !live(h)) {
             focus = 0;
             select_machine(h);
@@ -1592,8 +1832,10 @@ static void handle(void)
             start_program(id - 100);
         else if (id >= 200 && id < 200 + fprog_n)
             start_feed_program(id - 200);
+        else if (id >= 400 && id < 400 + auto_n)
+            restore_auto(auto_list[id - 400]);
         else if (id >= 1 && id <= MACH_MAX)
-            focus_machine(id);
+            machine_entry(id);
         break;
     }
     case EV_FEEDS_UPDATED:
@@ -1678,6 +1920,7 @@ int main(void)
     layout_handle = record_load(&layout_req, "layout", 0, 2, layout_buf);
     /* A session kept from an earlier run is offered in the launcher. */
     sess_handle = record_load(&sess_req, "session", 0, SESSION_LEN, sess_buf);
+    refresh_auto();
     uint8_t last_state[MACH_MAX + 1] = { 0 };
     for (;;) {
         /* The programs of the followed feeds and their publishers' names,
@@ -1689,7 +1932,7 @@ int main(void)
         /* The title of each machine that is not a built-in, from its
          * image's header. */
         for (uint8_t h = 1; h <= MACH_MAX; h++) {
-            if (mtitle_state[h] == 0 && info[h].state >= MACH_RUNNING && info[h].state <= MACH_FAULTED
+            if (mtitle_state[h] == 0 && ((info[h].state >= MACH_RUNNING && info[h].state <= MACH_FAULTED) || info[h].state == MACH_HALTED)
                 && prog_ix[h] == MAX_PROGS
                 && (mtitle_handle[h] = content_get(&mtitle_req[h], info[h].image, 0, 32, mtitle_hdr[h])))
                 mtitle_state[h] = 1;
@@ -1710,11 +1953,24 @@ int main(void)
             if (info[h].state != last_state[h]) {
                 if (info[h].state == MACH_NONE)
                     mtitle_state[h] = 0;
+                /* Its automatic slot as it starts to run: a snapshot that
+                 * comes there later was taken at a warning. */
+                uint8_t s = info[h].state, was = last_state[h];
+                if ((s == MACH_RUNNING || s == MACH_PAUSED) && (was == MACH_NONE || was == MACH_LOADING)) {
+                    mach_snapshot_record r;
+                    mach_snapshot_info(MACH_AUTO_SLOT(h), &r);
+                    seen_present[h] = r.present;
+                    seen_frames[h] = r.frames;
+                    seen_time[h] = r.time;
+                    doc_dirty = 1;
+                }
                 last_state[h] = info[h].state;
                 prog_ix[h] = prog_of(info[h].image);
                 dirty = doc_dirty = 1;
             }
         }
+        if (terse_frame() % 15 == 0)
+            refresh_auto();
         if (sel && !in_use(sel))
             sel = nth_machine(0);
         if (focus && !in_use(focus))

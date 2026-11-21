@@ -883,6 +883,7 @@ void path_points(uint8_t op, uint32_t n, const int16_t *xy);
 #define MACH_EXITED 4
 #define MACH_FAULTED 5
 #define MACH_FAILED 6
+#define MACH_HALTED 7 /* stopped by the host: a device it used did not keep up; exit_code is the device's slot */
 
 /* Why a start failed (mach_record.failure, when the state is failed). */
 #define MACH_FAIL_NOT_FOUND 1
@@ -938,10 +939,13 @@ static inline uint32_t mach_request(uint32_t h, uint8_t *out) { return terse_cal
 static inline uint32_t mach_argument(uint32_t h, const uint8_t *id) { return terse_call(CALL_MACH_ARGUMENT, h, (uint32_t)id, 0); }
 
 /* Snapshots (SPEC §machines.snapshots): slots 0-15 of the host's snapshots for this
- * shell. mach_snapshot keeps machine h (running or paused) in a slot at
+ * shell; 16-23 are the host's automatic slots (slot 15 + h: machine h,
+ * saved when a device it used was slow, PERFORMANCE.md R15), which
+ * mach_restore, mach_snapshot_info and mach_snapshot_delete also take. mach_snapshot keeps machine h (running or paused) in a slot at
  * the end of this frame; EV_SNAPSHOT_DONE tells how it went. 1 if
  * accepted. */
 #define MACH_SNAPSHOT_SLOTS 16
+#define MACH_AUTO_SLOT(h) (15 + (h))
 static inline uint32_t mach_snapshot(uint32_t h, uint32_t slot) { return terse_call(CALL_MACH_SNAPSHOT, h, slot, 0); }
 /* A new machine from the slot's snapshot, as it was (running, hidden): its
  * handle, 0 if none is free. Loading until the host has the image; failed
