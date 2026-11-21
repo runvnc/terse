@@ -39,7 +39,7 @@ use terse_core::vector3::{SLOT as SLOT3, SceneView, Transform};
 use terse_core::{COLS, ERR_BUFFER, ERR_UNKNOWN, Primitive, ROWS, Terminal, Vector, Vector3};
 use terse_host::display::decode_shapes_within;
 use terse_mame_crt::beams::Line;
-use terse_mame_crt::layers::{Drawn, Times, Tube, draw_clean, draw_empty, draw_tube};
+use terse_mame_crt::layers::{Drawn, Times, Tube, TubeLook, draw_clean, draw_empty, draw_tube};
 use terse_mame_crt::pipeline::{Gpu, Params};
 use terse_mame_crt::text;
 
@@ -117,6 +117,8 @@ struct VInst {
     view: SceneView,
     caps: (u64, f64),
     light: bool,
+    /// The host's shed level (`core.shed`, DEVICES.md 7.2).
+    shed: u8,
     frames: u64,
     drawn: [Option<Drawn>; 2],
     tube: Option<Tube>,
@@ -148,6 +150,8 @@ struct TInst {
     t: Terminal,
     status: String,
     light: bool,
+    /// The host's shed level (`core.shed`).
+    shed: u8,
     frames: u64,
     /// Backgrounds (clean style) and characters.
     drawn: [Option<Drawn>; 2],
@@ -167,6 +171,8 @@ struct Driver {
     slots: Vec<u8>,
     gpu: Option<Gpu>,
     params: Params,
+    /// The look at shed level 0 (`TubeLook::from_env`).
+    look: TubeLook,
     vinst: HashMap<u32, VInst>,
     tinst: HashMap<u32, TInst>,
     times: Times,
@@ -190,7 +196,8 @@ impl Driver {
                 (Some(gpu), true) if Some(k) == beam_layer => {
                     let prims: Vec<Primitive> = i.primitives(0, true).into_iter().chain(i.primitives(1, true)).collect();
                     let (drawn, tube) = (&mut i.drawn[k], &mut i.tube);
-                    draw_tube(drawn, tube, gpu, self.params, p, session.dir(), instance, slot, 0, i.frames, |s| {
+                    let look = TubeLook::at(i.shed, self.look.max_lines, self.look.delivery);
+                    draw_tube(drawn, tube, gpu, self.params, look, p, session.dir(), instance, slot, 0, i.frames, |s| {
                         let mut lines = Vec::new();
                         s.lines(&prims, &mut lines);
                         lines
@@ -244,7 +251,7 @@ impl Driver {
         };
         let lit = text::screen(&t);
         let fg = match (&self.gpu, i.light) {
-            (Some(gpu), true) => draw_tube(&mut i.drawn[1], &mut i.tube, gpu, self.params, p, dir, instance, 2, FG, i.frames, |s| {
+            (Some(gpu), true) => draw_tube(&mut i.drawn[1], &mut i.tube, gpu, self.params, TubeLook::at(i.shed, self.look.max_lines, self.look.delivery), p, dir, instance, 2, FG, i.frames, |s| {
                 lit.iter()
                     .map(|l| {
                         let st = l.s;
@@ -321,7 +328,7 @@ impl Device for Driver {
                 }
                 (
                     vec![property::OUTLINES.into(), property::LIST3.into(), property::LIST2.into(), TUBE.into()],
-                    vec![property::EYE.into(), property::VIEW.into(), property::CAPS.into(), property::LIGHT.into()],
+                    vec![property::EYE.into(), property::VIEW.into(), property::CAPS.into(), property::LIGHT.into(), property::SHED.into()],
                 )
             }
             Group::Terminal => {
@@ -335,7 +342,7 @@ impl Device for Driver {
                 if session.asks(2) {
                     slots.push(SlotInfo { slot: 2, version: 0, layers, table: table_terminal() });
                 }
-                (Vec::new(), vec![property::STATUS.into(), property::LIGHT.into()])
+                (Vec::new(), vec![property::STATUS.into(), property::LIGHT.into(), property::SHED.into()])
             }
         };
         DeviceInfo {
@@ -364,6 +371,7 @@ impl Device for Driver {
                     view: SceneView::LISTED,
                     caps: FULL_CAPS,
                     light: false,
+                    shed: 0,
                     frames: 0,
                     drawn: [None, None],
                     tube: None,
@@ -372,7 +380,7 @@ impl Device for Driver {
             }
             Group::Terminal => {
                 // Without full text: the basic repertoire (SPEC §terminal.text).
-                let t = TInst { t: Terminal::with_full_text(false), status: String::new(), light: false, frames: 0, drawn: [None, None], bg_drawn: None, tube: None };
+                let t = TInst { t: Terminal::with_full_text(false), status: String::new(), light: false, shed: 0, frames: 0, drawn: [None, None], bg_drawn: None, tube: None };
                 self.tinst.insert(instance, t);
             }
         }
@@ -584,6 +592,7 @@ impl Device for Driver {
                 property::VIEW => i.view = decode_view(value),
                 property::CAPS => i.caps = decode_caps(value),
                 property::LIGHT => i.light = on,
+                property::SHED => i.shed = value.first().copied().unwrap_or(0),
                 _ => {}
             }
         }
@@ -591,6 +600,7 @@ impl Device for Driver {
             match name {
                 property::STATUS => i.status = String::from_utf8_lossy(value).into_owned(),
                 property::LIGHT => i.light = on,
+                property::SHED => i.shed = value.first().copied().unwrap_or(0),
                 _ => {}
             }
         }
@@ -617,6 +627,7 @@ fn main() -> std::process::ExitCode {
         slots: Vec::new(),
         gpu: None,
         params: Params::from_env(),
+        look: TubeLook::from_env(),
         vinst: HashMap::new(),
         tinst: HashMap::new(),
         times: Times::default(),
