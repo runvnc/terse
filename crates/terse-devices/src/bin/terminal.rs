@@ -5,7 +5,9 @@
 //! glyphs rasterised for the cell width the core asks for (as terse-host
 //! does for a machine shown in a tile or on a panel). It subscribes to the
 //! core's status line, which it shows over the bottom row as terse-host
-//! shows a fault.
+//! shows a fault, and to light mode (the phosphor style, DEVICES.md 7.1),
+//! in which the backgrounds are left out and the characters are light:
+//! their colour straight, their coverage in the alpha.
 
 use std::collections::HashMap;
 
@@ -61,6 +63,8 @@ struct Drawn {
     cells: Vec<(u32, u8, u8)>,
     palette: [[u8; 3]; 256],
     cursor: Option<(usize, usize)>,
+    /// Drawn as light (`core.light`).
+    light: bool,
 }
 
 /// Glyphs of one cell size, shared by every machine drawn at it.
@@ -114,6 +118,8 @@ struct Inst {
     t: Terminal,
     /// The core's status line (a fault), shown over the bottom row.
     status: String,
+    /// Light mode (`core.light`).
+    light: bool,
     drawn: Option<Drawn>,
 }
 
@@ -220,13 +226,15 @@ impl TerminalDriver {
                 cells: Vec::new(),
                 palette,
                 cursor: None,
+                light: i.light,
             });
             fresh = true;
         }
         let d = i.drawn.as_mut().unwrap();
         // What changed: the whole picture, or rows of cells and the cursor.
         let mut damage: Vec<IRect> = Vec::new();
-        if fresh || d.palette != palette || d.atlas != g.generation {
+        let light = i.light;
+        if fresh || d.palette != palette || d.atlas != g.generation || d.light != light {
             damage.push(IRect::of_size(p.picture));
         } else {
             for row in 0..ROWS {
@@ -255,6 +263,10 @@ impl TerminalDriver {
                 for x in r.x0.max(0)..r.x1.min(p.picture.0 as i32) {
                     let cv = d.cols[x as usize];
                     let at = y as usize * w + x as usize;
+                    if light {
+                        bg_px[at] = 0;
+                        continue;
+                    }
                     if rv == OUTSIDE || cv == OUTSIDE {
                         bg_px[at] = pal[0];
                         continue;
@@ -281,7 +293,11 @@ impl TerminalDriver {
                         cov = 255;
                     }
                     let [cr, cg, cb] = palette[fg as usize];
-                    fg_px[at] = if cov == 0 { 0 } else { terse_devices::premul(cr, cg, cb, cov) };
+                    fg_px[at] = match (cov, light) {
+                        (0, _) => 0,
+                        (_, true) => (cov as u32) << 24 | (cr as u32) << 16 | (cg as u32) << 8 | cb as u32,
+                        (_, false) => terse_devices::premul(cr, cg, cb, cov),
+                    };
                 }
             }
         }
@@ -289,6 +305,7 @@ impl TerminalDriver {
         d.palette = palette;
         d.cursor = cursor;
         d.atlas = g.generation;
+        d.light = light;
         let all = damage.iter().fold(IRect::EMPTY, |a, &b| union(a, b));
         let dmg = if all.is_empty() { Vec::new() } else { vec![rect(all)] };
         Ok(PresentOut {
@@ -331,7 +348,7 @@ impl Device for TerminalDriver {
             .filter(|s| session.asks(s.slot))
             .collect(),
             publishes: Vec::new(),
-            subscribes: vec![property::STATUS.into()],
+            subscribes: vec![property::STATUS.into(), property::LIGHT.into()],
             services: Vec::new(),
             ..Default::default()
         }
@@ -339,7 +356,7 @@ impl Device for TerminalDriver {
 
     fn open(&mut self, instance: u32, open: &Open, _: &Session) -> Result<(), String> {
         let full_text = open.listed.iter().any(|&(s, _)| s == terse_core::text::FULL_TEXT);
-        self.inst.insert(instance, Inst { t: Terminal::with_full_text(full_text), status: String::new(), drawn: None });
+        self.inst.insert(instance, Inst { t: Terminal::with_full_text(full_text), status: String::new(), light: false, drawn: None });
         Ok(())
     }
 
@@ -448,10 +465,11 @@ impl Device for TerminalDriver {
     }
 
     fn set(&mut self, instance: u32, name: &str, value: &[u8]) {
-        if let Some(i) = self.inst.get_mut(&instance)
-            && name == property::STATUS
-        {
-            i.status = String::from_utf8_lossy(value).into_owned();
+        let Some(i) = self.inst.get_mut(&instance) else { return };
+        match name {
+            property::STATUS => i.status = String::from_utf8_lossy(value).into_owned(),
+            property::LIGHT => i.light = value.first().is_some_and(|&v| v != 0),
+            _ => {}
         }
     }
 

@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use terse_bus::bus::BusConfig;
-use terse_bus::compose::{Compositor, write_png};
+use terse_bus::compose::{Compositor, Looks, write_png};
 use terse_bus::host::{self, BusSystem, Start};
 use terse_bus::inproc::{ContentOptions, InProcessHost};
 use terse_bus::record::{self, FrameRecord};
@@ -31,6 +31,7 @@ const USAGE: &str = "usage:
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
             [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
             [--without <slot>]... [--perf-log <dir>|off] [--perf-rule on|off]
+            [--tube xy|p31|amber|vectrex] [--vignette] [--no-trails] [--force-phosphor] [--no-shed]
   terse-bus --probe-driver <program> [--slot <n>]
   terse-bus --version
 
@@ -50,7 +51,9 @@ run` (snapshot files are the same). --screenshot composes the picture after the 
 default the terminal's native size; --eye, the eye for 3D lists); --present-every-frame composes
 every frame (as a window does) and --bench then times it too. --window shows the picture in a window
 (F12 is the home key, Ctrl+V or Shift+Insert pastes; with --parallax pointer the eye follows the
-pointer); --selftest runs --frames frames (default 300) in the window with the scripted input only and
+pointer). A machine in the phosphor style is drawn as terse-host draws it: --tube, --vignette,
+--no-trails, --force-phosphor and --no-shed as terse-host's (in a window the look is shed when frames
+run long, unless --no-shed); a --screenshot draws the last 600 frames to build up the afterglow; --selftest runs --frames frames (default 300) in the window with the scripted input only and
 prints the emulation, bus, composition and present-interval timings. --realtime runs at 60 frames a
 second. --frame-times writes each frame's emulation time (ms). --bench prints the frame times
 (emulation including the bus) and per-driver latencies. --pin puts the core on CPU 1 and the drivers
@@ -113,6 +116,8 @@ struct Opts {
     /// The record's directory: `Some(None)` off.
     perf_log: Option<Option<PathBuf>>,
     perf_rule: Option<bool>,
+    /// How the phosphor style is drawn.
+    looks: Looks,
 }
 
 fn parse(args: Vec<String>) -> Result<Opts, String> {
@@ -156,6 +161,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         without: Vec::new(),
         perf_log: None,
         perf_rule: None,
+        looks: Looks::default(),
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -254,6 +260,14 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
                 })
             }
             "--replay" => o.replay = Some(value()?.into()),
+            "--tube" => {
+                let v = value()?;
+                o.looks.look.preset = terse_host::phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
+            }
+            "--vignette" => o.looks.look.vignette = true,
+            "--no-shed" => o.looks.look.no_shed = true,
+            "--no-trails" => o.looks.no_trails = true,
+            "--force-phosphor" => o.looks.force_phosphor = true,
             "--help" | "-h" => return Err(USAGE.into()),
             s if s.starts_with('-') => return Err(format!("unknown option {s}\n{USAGE}")),
             _ if o.image.is_none() => o.image = Some(a),
@@ -524,6 +538,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             threads: opts.threads,
             flat: opts.panels_flat,
             startup,
+            looks: opts.looks,
         };
         return window::run(bs, script, native, w);
     }
@@ -534,12 +549,18 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     headless(&opts, &mut bs, &script, replay.as_deref(), native, startup)
 }
 
+/// The frames whose phosphor light a `--screenshot` draws (terse-host's
+/// `PHOSPHOR_FRAMES`): a trail fades below 2 % within 60 frames at
+/// persistence 240, and below 10 % within 600 at 255.
+const PHOSPHOR_FRAMES: u64 = 600;
+
 /// Runs the frames headless and prints what was asked for.
 fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[FrameRecord]>, native: (u32, u32), startup: Duration) -> Result<ExitCode, String> {
     let presents = opts.screenshot.is_some() || opts.present_every;
     let mut comp = presents.then(|| Compositor::new(bs.system.shell().devices(), native, opts.threads));
     if let Some(c) = &mut comp {
         c.set_eye(opts.eye);
+        c.looks = opts.looks;
         if opts.panels_flat {
             c.panel_mode = terse_host::soft::panel::PanelMode::Flat;
         }
@@ -583,8 +604,11 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
             None => (bs.input(script.events(frame).to_vec())?, script.controllers(frame)),
         };
         let start = Instant::now();
-        bs.frame(&events, controllers)?;
+        let done = bs.frame(&events, controllers)?;
         let took = start.elapsed();
+        if let Some(c) = &mut comp {
+            c.ran(&done, &bs.system);
+        }
         if opts.audio_out.is_some() {
             let mut frame = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
             bs.system.take_audio(&mut frame);
@@ -593,13 +617,18 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
         if opts.bench {
             times.push(took.as_secs_f64() * 1000.0);
         }
-        if opts.present_every
+        // A screenshot builds up the phosphor style's afterglow over the
+        // last frames, as terse-host's does.
+        let shot = opts.screenshot.is_some() && total - i <= PHOSPHOR_FRAMES;
+        if (opts.present_every || shot)
             && let Some(c) = &mut comp
         {
             let t = Instant::now();
             let prompt = bs.prompt()?;
             c.draw(&mut bs.system, picture, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
-            present_times.push(t.elapsed().as_secs_f64() * 1000.0);
+            if opts.present_every {
+                present_times.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
         }
         // The host's own work after the frame (hashes) comes first: it
         // asks the drivers for their state, which waits for their END.
@@ -684,6 +713,8 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
         && let Some(c) = &mut comp
     {
         let prompt = bs.prompt()?;
+        // The beams of what is shown now, the afterglow not moved on.
+        c.refresh();
         let frame = c.draw(&mut bs.system, picture, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         write_png(path, &frame.to_rgba(), picture)?;
     }

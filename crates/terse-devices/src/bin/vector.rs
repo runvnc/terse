@@ -5,9 +5,12 @@
 //! `Vector3` for the state; per machine two layers drawn with terse-host's
 //! shapes in the clean style: the 2D list (z 30) and the 3D list's
 //! segments seen from the eye (z 35). It publishes the figures-as-outlines
-//! flag the page needs and device 9's list, which the core needs for
-//! device 8 and the shell's scene; it subscribes to the eye and to the
-//! view of the shell's scene (DEVICES.md 7.2).
+//! flag the page needs, device 9's list, which the core needs for device 8
+//! and the shell's scene, and device 3's state, which the core needs for
+//! the system ink and the phosphor style's beam; it subscribes to the eye,
+//! to the view of the shell's scene, to the ink caps the core gives the
+//! machine (SPEC §machines.ink) and to light mode, in which it leaves its
+//! layers empty: the core draws the beam (DEVICES.md 7.1, 7.2).
 
 use std::collections::HashMap;
 
@@ -17,7 +20,7 @@ use terse_core::machine::copy_charge;
 use terse_core::vector3::{SLOT as SLOT3, SceneView, Transform};
 use terse_core::{ERR_UNKNOWN, Primitive, Vector, Vector3};
 use terse_devices::{clear, over4, rect, scissor, union};
-use terse_host::display::decode_shapes;
+use terse_host::display::decode_shapes_within;
 use terse_host::soft::base::IRect;
 use terse_host::soft::shapes::{Geom, Mode, Shape, visit};
 
@@ -63,6 +66,10 @@ struct Inst {
     lists2: bool,
     eye: (f32, f32),
     view: SceneView,
+    /// The ink caps (`core.caps`): 2D, 3D.
+    caps: (u64, f64),
+    /// Light mode (`core.light`): the layers stay empty.
+    light: bool,
     drawn: [Option<Drawn>; 2],
 }
 
@@ -75,10 +82,11 @@ impl Inst {
     fn primitives(&self, k: usize) -> Vec<Primitive> {
         let mut out = Vec::new();
         match k {
-            0 => decode_shapes(self.v.list(), self.outlines(), &mut out),
+            _ if self.light => {}
+            0 => decode_shapes_within(self.v.list(), self.outlines(), self.caps.0, &mut out),
             _ => {
                 if let Some(v3) = self.v3.as_ref().filter(|v| !v.list().is_empty()) {
-                    terse_core::vector3::project_scene(v3.list(), self.eye, &self.view, &mut out, &mut Vec::new(), &mut Vec::new());
+                    terse_core::vector3::project_scene_within(v3.list(), self.eye, &self.view, &mut out, &mut Vec::new(), &mut Vec::new(), self.caps.1);
                 }
             }
         }
@@ -138,6 +146,20 @@ fn draw(drawn: &mut Option<Drawn>, p: &Present, session: &Session, instance: u32
     Ok(LayerOut { slot, id: LAYER, new_file: fresh.then(|| d.layer.path.clone()), damage: if damage.is_empty() { vec![] } else { vec![rect(damage)] } })
 }
 
+/// The devices' own ink caps (SPEC §vector.ink-cap, §vector3d.caps).
+const FULL_CAPS: (u64, f64) = (terse_core::vector::INK_CAP, terse_core::vector3::INK_CAP);
+
+/// The ink caps from `core.caps`: the 2D cap (u64) and the 3D cap (f64),
+/// each at most the device's own; empty or malformed: the devices' own.
+fn decode_caps(b: &[u8]) -> (u64, f64) {
+    if b.len() != 16 {
+        return FULL_CAPS;
+    }
+    let c2 = u64::from_le_bytes(b[..8].try_into().unwrap());
+    let c3 = f64::from_le_bytes(b[8..].try_into().unwrap());
+    (c2.min(FULL_CAPS.0), if c3.is_nan() { FULL_CAPS.1 } else { c3.clamp(0.0, FULL_CAPS.1) })
+}
+
 /// The view of the shell's scene from its property: which Screens, then
 /// the transform as 12 f64 (rows, then the translation).
 fn decode_view(b: &[u8]) -> SceneView {
@@ -165,8 +187,8 @@ impl Device for VectorDriver {
             name: "terse-dev-vector (Rust)".into(),
             native: (0, 0),
             slots,
-            publishes: vec![property::OUTLINES.into(), property::LIST3.into()],
-            subscribes: vec![property::EYE.into(), property::VIEW.into()],
+            publishes: vec![property::OUTLINES.into(), property::LIST3.into(), property::LIST2.into()],
+            subscribes: vec![property::EYE.into(), property::VIEW.into(), property::CAPS.into(), property::LIGHT.into()],
             services: Vec::new(),
             ..Default::default()
         }
@@ -182,6 +204,8 @@ impl Device for VectorDriver {
             lists2: open.lists(3),
             eye: (0.0, 0.0),
             view: SceneView::LISTED,
+            caps: FULL_CAPS,
+            light: false,
             drawn: [None, None],
         };
         self.inst.insert(instance, inst);
@@ -283,6 +307,11 @@ impl Device for VectorDriver {
         match name {
             property::OUTLINES => Some(vec![i.outlines() as u8]),
             property::LIST3 => Some(i.v3.as_ref().map_or(Vec::new(), |v| v.list().to_vec())),
+            property::LIST2 => {
+                let mut out = Vec::new();
+                i.v.write_state(&mut out);
+                Some(out)
+            }
             _ => None,
         }
     }
@@ -295,6 +324,8 @@ impl Device for VectorDriver {
                 i.eye = (f(0), f(4));
             }
             property::VIEW => i.view = decode_view(value),
+            property::CAPS => i.caps = decode_caps(value),
+            property::LIGHT => i.light = value.first().is_some_and(|&v| v != 0),
             _ => {}
         }
     }
