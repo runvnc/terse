@@ -57,6 +57,14 @@ pub fn run(
         if selftest.is_some() { "selftest" } else { "window" },
         looks.started,
     );
+    if let Some(c) = &looks.check {
+        for l in c.lines() {
+            watch.add(l);
+        }
+        if c.shed_look() {
+            watch.shed(crate::phosphor::SHED_PLAIN, "check");
+        }
+    }
     // A self-test never makes a sound (it runs unattended, often in a
     // headless compositor); nor does a host told TERSE_AUDIO=off.
     #[cfg(feature = "audio")]
