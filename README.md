@@ -1659,8 +1659,9 @@ glyph is rasterised once, the first time it is shown. The device-bus drivers
 
 ## Drivers
 
-`terse-bus` runs each device as a driver process (`DEVICES.md`; it is built from
-the sources and not in the downloads) and uses the drivers built beside it, unless
+`terse-bus` runs each device as a driver process (`DEVICES.md`; in the downloads
+it and its drivers are in the folder `bus/`: run and tested on Linux, built for
+macOS and Windows but not yet tried there, `DEVICES.md` 4.3) and uses the drivers built beside it, unless
 you install another one for a device. `terse drivers` keeps the installed drivers in
 `<config>/drivers` (`DEVICES.md` 2.2); `terse-bus` reads it when it starts:
 
