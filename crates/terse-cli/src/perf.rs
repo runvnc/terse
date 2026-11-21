@@ -1433,3 +1433,39 @@ mod tests {
 fn load() -> String {
     std::fs::read_to_string("/proc/loadavg").map_or("unknown".into(), |s| s.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
 }
+
+// --- For a performance report (RECORD.md 5) --------------------------------
+
+/// The rows of a `terse perf` run (every layer, `runs` runs each) as a
+/// report's `bench` lines (`crate::report::bench_of`): each timed
+/// measurement's median with its ceiling and target judged, as the
+/// result column judges them.
+pub fn bench_for_report(runs: usize) -> Result<Vec<terse_perflog::report::Bench>, String> {
+    let mut rows = Vec::new();
+    machine_rows(&mut rows, runs)?;
+    client_rows(&mut rows, runs, None)?;
+    let programs = PathBuf::from("programs");
+    host_rows(&mut rows, runs.min(3), sibling("terse-host"), programs.exists().then_some(programs))?;
+    let rows = rows
+        .into_iter()
+        .filter(|r| (!r.measured.is_empty() || !r.measures.is_empty()) && !matches!(r.verdict, Verdict::Skipped(_)))
+        .map(|r| {
+            let requirement = match r.verdict {
+                Verdict::Pass => Some(true),
+                Verdict::Fail => Some(false),
+                _ => None,
+            };
+            let measures = r
+                .measures
+                .iter()
+                .map(|m| {
+                    let v = m.median();
+                    let unit = if m.limit.unit == Unit::Frames { "frames" } else { "ms" };
+                    crate::report::PerfMeasure { name: m.name.clone(), value: v, unit: unit.into(), ceiling_ok: v <= m.limit.ceiling, target_ok: v <= m.limit.target }
+                })
+                .collect();
+            crate::report::PerfRow { id: r.id.to_string(), what: r.what, measured: r.measured, requirement, measures }
+        })
+        .collect::<Vec<_>>();
+    Ok(crate::report::bench_of(&rows))
+}

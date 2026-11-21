@@ -1710,6 +1710,12 @@ impl Node {
         self.wait_for(0)
     }
 
+    /// Publishes a document (kind 4), blocking.
+    pub fn publish_document(&mut self, data: &[u8], title: &str, time: u32) -> Done {
+        self.start_publish_document(0, data, title, time);
+        self.wait_for(0)
+    }
+
     /// Publishes a program, blocking.
     pub fn publish_program(&mut self, image: &[u8], name: &str, time: u32) -> Done {
         self.start_publish_program(0, image, name, time);

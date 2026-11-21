@@ -1,0 +1,47 @@
+# Performance reports
+
+Your host keeps a record of which of its parts made a frame late: a device driver, the renderer, its core. That record never leaves your computer. A performance report is a short summary of it that you may choose to publish, so that hosts and devices that are slow on many people's computers come to light and are not passed on. Nothing is ever sent automatically. This article says what a report holds, how to make, check and publish one, and how to read many of them together with the reports program. Tersenet is the system; Terse32 is the machine its programs run on.
+
+## What a report holds
+
+A report covers one host build over a period of days (30 by default). It names the host and each device build it used, and says how many runs and frames there were, how many frames were late and why (blamed on a part, the computer busy, memory, or spread), which parts were warned about or halted, the start-up times, memory, and the hardware check. It describes the computer coarsely: operating system, architecture, number of cores, memory in whole GiB, the renderer and the CPU model. It holds no names, paths, network addresses or serial numbers, and no program IDs unless you ask for them, since they would say what you run. If you made a `terse perf` run, its results are added.
+
+It is a document of the `reports` format, plain text after a short header, at most 8,192 bytes (usually about one).
+
+## Making and checking one
+
+```
+terse perf report              # prints the report
+terse perf report --run        # also runs terse perf
+terse perf report --out r.doc  # and writes it to a file
+terse perf report --check r.doc
+```
+
+The report is printed in full: what you see is exactly what would be published. `--days` and `--to` set the period, `--host` the host build, `--programs 3` adds the three programs most often running when a frame was blamed.
+
+## Publishing one
+
+`terse perf report --publish` prints the report, then asks. Before you answer, know that:
+
+- it is public: anyone who follows your feed, or finds it with a relay's search, can read it;
+- it is signed with your feed key, so it is yours;
+- it cannot be deleted: once a relay has it there is no way to take it back;
+- one report per period is enough: a newer one replaces your older one for every build it names.
+
+Only typing `yes` publishes. To stop, publish no more. Programs cannot make reports: no machine can read the record. Only the `terse` command makes them.
+
+## Reading many: the reports program
+
+The reports program gathers the reports in the feeds you follow, and with F a sample found by searching the relays. Run it with `terse-host programs/reports/reports.terse`, or publish it to your feed with `terse feed publish --program` to start it from the shell's launcher. For every host, device and terse perf build it shows a verdict twice: among the feeds you follow, and among all found.
+
+| Verdict | When |
+|---|---|
+| TOO FEW REPORTS (n) | fewer than 5 judged reporters |
+| NON-CONFORMANT IN SAMPLE | at least 1 in 3 of them failed |
+| CONFORMANT IN SAMPLE | otherwise |
+
+Each feed key counts once, with its newest report, however many it published. Computers with fewer than 4 cores or 4 GiB are listed but not judged. A reporter fails a build if the host halted a machine because of it, or a terse perf requirement or ceiling failed; frames late because the computer was busy never count.
+
+Trust the first column. Anyone can make feed keys, so "all found" may hold fakes: fifty reports from fifty new keys say little. Enter on a build lists its reporters with their names, so you can judge. P publishes the table as an article, with the sample sizes, the rule and the date; it is a sample, never a ruling. `terse perf aggregate <files>` computes the same verdicts from report files.
+
+The format, the rule and what is still open are in RECORD.md, section 5.

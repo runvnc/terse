@@ -1194,6 +1194,7 @@ pub fn generate() -> Vec<File> {
         File { path: "basic-text.txt".into(), bytes: basic_text_file().into_bytes() },
         File { path: "full-text.txt".into(), bytes: full_text_file().into_bytes() },
         File { path: "perf-record.txt".into(), bytes: include_bytes!("../../terse-perflog/example-record.txt").to_vec() },
+        File { path: "perf-reports.txt".into(), bytes: include_bytes!("../../terse-perflog/example-reports.txt").to_vec() },
     ];
     out.extend(article_files());
     out
@@ -1466,4 +1467,17 @@ of line once, in the record's own line format (RECORD.md section 2, not
 these conventions). Its source is crates/terse-perflog/example-record.txt;
 `cargo test -p terse-perflog` parses it, writes every line back byte for
 byte and summarises it as `terse perf log` does.
+
+perf-reports.txt (RECORD.md 5)
+----------------------------
+Not a core vector: performance reports (RECORD.md 5.2), valid and
+malformed. Records `report <name>` with a `note`, `valid` (`yes` or `no`),
+for a malformed one the `reason` (the code RECORD.md 5.2 gives for
+the first rule it breaks), and the report's `text` (quoted). The document
+is the header of the `reports` format (`TDOC`, 00h, 32 zero bytes, 07h,
+`reports`) and then the text, unless `format <name>` names another format
+(the same header with that name) or `header-hex` gives the header's bytes.
+Its source is crates/terse-perflog/example-reports.txt; `cargo test -p
+terse-perflog` checks every record and `cargo test -p terse-cli --test
+reports` gives them all to programs/reports.
 ";

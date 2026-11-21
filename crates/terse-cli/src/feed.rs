@@ -42,7 +42,7 @@ pub fn identity_path(args: &Args) -> Result<PathBuf, String> {
     Ok(config_dir(args)?.join("identity.key"))
 }
 
-fn load_identity(args: &Args) -> Result<Identity, String> {
+pub(crate) fn load_identity(args: &Args) -> Result<Identity, String> {
     let path = identity_path(args)?;
     if !path.exists() {
         return Err(format!("no identity in {} (create one with `terse key new`)", path.display()));
@@ -60,7 +60,7 @@ pub fn load_nicknames(args: &Args) -> Result<Nicknames, String> {
 
 /// A node on `--store` and `relays` with the saved subscriptions and
 /// nicknames.
-fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
+pub(crate) fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
     let mut node = crate::open_node(args, relays)?;
     node.set_subscriptions(load_subscriptions(args)?);
     node.set_nicknames(load_nicknames(args)?);

@@ -624,6 +624,15 @@ threads (138 ms on one thread, where the 3D points in the phosphor style,
 every device's plain worst frame is within 5 ms. `terse-host
 --hardware-check` runs and prints it.
 
+**Reports.** A user may publish a summary of their record and of a
+`terse perf` run as a performance report (`terse perf report`, never
+automatically), and anyone may aggregate the published reports with
+`programs/reports` or `terse perf aggregate`: a verdict per host, device
+and `terse perf` build in a stated sample, "NON-CONFORMANT IN SAMPLE"
+when at least 1 in 3 of at least 5 reporters had it halted (R15) or a
+requirement or ceiling failed. `RECORD.md` section 5 is the format, the
+publishing and the rule.
+
 ## 7. Not yet specified
 
 - Presenting: the time from the end of a frame to its picture on the
