@@ -1,0 +1,156 @@
+# Terse test vectors: performance reports (REPORT.md). Format: vectors/README.
+
+report full
+  note "every type of line; the example of REPORT.md"
+  valid yes
+  text "terse-report 1\nperiod 2026-11-01 2026-11-21\nhost terse-bus 0.1.0 b3:5faccb21bc9113fb\nenv Linux 7.3.1-1-cachyos x86_64 12 15 drivers Intel(R)%20Core(TM)%20i7-10750H%20CPU%20@%202.60GHz\ndevice dev2 2,10 terse-dev-terminal%20(Rust) 0.1.0 b3:3c1f0a9e77d2b410\ndevice dev3 3,9 terse-dev-vector%20(Rust) 0.1.0 b3:9a0b44c1e5f60d27\ndevice dev4 4 terse-dev-content%20(Rust) 0.1.0 b3:97f8a7cc7bf5e08c\ndevice dev7 7 terse-dev-page%20(Rust) 0.1.0 b3:f8f5a88bb33ad6eb\nruns 14 12 2592000 61\nstart 14 131.4 412.0 2 412.0\nlate outside 0 0 0 1\nlate core 0 0 1 0\nlate dev7 41 12 0 0\nwarn dev7 2\nhalt dev7 1\nshed 1 0\nmem core 50.2 0.13\nmem dev7 80.0 6.00\ncheck dev3 6.5 ok\nperf terse 0.1.0 b3:0f1e2d3c4b5a6978 2026-11-21\nbench M1a 1 frames pass - -\nbench M2 1 trips pass - -\nbench H1 22 ms - - met\nbench H6 22.4 ms - - missed\nbench W - - pass - -\nprogram abababababababab 3\nend 26\n"
+
+report minimal
+  note "only the lines every report has"
+  valid yes
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report later-version-lines
+  note "a type this version does not know, and fields added at the end of lines: both ignored"
+  valid yes
+  text "terse-report 1 extra-field\nperiod 2026-11-20 2026-11-21\nhost terse-host 0.1.0 b3:1111111111111111\nfuture-type 1 2 3\nenv Linux 6.8.0 x86_64 8 16 gpu AMD%20Ryzen%207%205800X later-field\nruns 3 3 10800 0\nend 6\n"
+
+report not-text
+  note "a tab: the text is printable ASCII and LF only"
+  valid no
+  reason not-text
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch\t64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report no-final-newline
+  note "the last line is not ended"
+  valid no
+  reason no-final-newline
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5"
+
+report first-line
+  note "does not start with terse-report"
+  valid no
+  reason first-line
+  text "period 2026-11-21 2026-11-21\nterse-report 1\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report version-2
+  note "a version this reader does not know"
+  valid no
+  reason version
+  text "terse-report 2\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report long-line
+  note "a line of more than 255 bytes"
+  valid no
+  reason long-line
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nruns 1 0 0 0\nend 5\n"
+
+report two-spaces
+  note "fields are separated by single spaces"
+  valid no
+  reason bad-spacing
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns  1 0 0 0\nend 5\n"
+
+report order
+  note "host before period"
+  valid no
+  reason order
+  text "terse-report 1\nhost terse-host 0.1.0 -\nperiod 2026-11-21 2026-11-21\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report duplicate-host
+  note "two host lines"
+  valid no
+  reason duplicate
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 6\n"
+
+report missing-env
+  note "no env line"
+  valid no
+  reason missing-env
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nruns 1 0 0 0\nend 4\n"
+
+report undeclared-component
+  note "a halt for a device no device line declares"
+  valid no
+  reason undeclared-component
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nhalt dev3 1\nend 6\n"
+
+report period-backwards
+  note "the period ends before it begins"
+  valid no
+  reason bad-period
+  text "terse-report 1\nperiod 2026-11-21 2026-11-20\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report bad-date
+  note "no such day"
+  valid no
+  reason bad-period
+  text "terse-report 1\nperiod 2026-02-30 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report end-count
+  note "end does not count the lines before it"
+  valid no
+  reason end-count
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 4\n"
+
+report after-end
+  note "a line after end"
+  valid no
+  reason after-end
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\nruns 1 0 0 0\n"
+
+report ms-without-decimal
+  note "a time in ms has exactly one decimal"
+  valid no
+  reason bad-field
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nstart 1 131 131.0 0 -\nend 6\n"
+
+report late-over-frames
+  note "more late frames than frames"
+  valid no
+  reason bad-field
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 1 100 101\nend 5\n"
+
+report leading-zero
+  note "numbers have no leading zeros"
+  valid no
+  reason bad-field
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 01 0 0 0\nend 5\n"
+
+report bad-escape
+  note "% must be followed by two uppercase hex digits"
+  valid no
+  reason bad-field
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software Intel%2\nruns 1 0 0 0\nend 5\n"
+
+report bench-without-perf
+  note "bench lines need a perf line before them"
+  valid no
+  reason bench-without-perf
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nbench M1a 1 frames pass - -\nend 6\n"
+
+report too-many-programs
+  note "at most 5 program lines"
+  valid no
+  reason too-many
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nprogram 0000000000000000 1\nprogram 0000000000000001 1\nprogram 0000000000000002 1\nprogram 0000000000000003 1\nprogram 0000000000000004 1\nprogram 0000000000000005 1\nend 11\n"
+
+report fields-missing
+  note "runs has four fields"
+  valid no
+  reason fields
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0\nend 5\n"
+
+report sketch-document
+  note "a document of another format (sketch)"
+  valid no
+  reason other-format
+  format sketch
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"
+
+report not-a-document
+  note "the header is not a document header"
+  valid no
+  reason not-a-document
+  header-hex 54444f58000000000000000000000000000000000000000000000000000000000000000000077265706f727473
+  text "terse-report 1\nperiod 2026-11-21 2026-11-21\nhost terse-host 0.1.0 -\nenv Linux 6.8.0 aarch64 4 4 software -\nruns 1 0 0 0\nend 5\n"

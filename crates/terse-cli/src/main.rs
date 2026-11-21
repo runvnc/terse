@@ -3,6 +3,7 @@
 mod feed;
 mod perf;
 mod perflog;
+mod report;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,11 @@ const USAGE: &str = "usage:
              (the responsiveness scenarios of PERFORMANCE.md, headless, with relays started on ephemeral ports)
   terse perf log [<dir or file>]   (the performance records of RECORD.md, summarised; default: the data
              directory's perf/: late frames by component and program, worst frames, memory, start-ups)
+  terse perf report [--days <n>] [--to <date>] [--host <name>] [--run] [--programs <n>] [--out <file>] [--publish [--yes]]
+             (a performance report from the record, REPORT.md, printed in full; published only with --publish,
+             after you confirm: it is public, signed with your feed key, and cannot be deleted)
+  terse perf report --check <file>   (whether a file is a valid report)
+  terse perf aggregate [--follow <keys file>] <report file or dir>...   (verdicts per host and device, REPORT.md 5)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
@@ -195,6 +201,8 @@ fn main() -> ExitCode {
         Some("manual") => feed::manual(&args[1..]),
         Some("vectors") => vectors(&args[1..]),
         Some("perf") if args.get(1).is_some_and(|a| a == "log") => perflog::log(&args[2..]),
+        Some("perf") if args.get(1).is_some_and(|a| a == "report") => report::report(&args[2..]),
+        Some("perf") if args.get(1).is_some_and(|a| a == "aggregate") => report::aggregate(&args[2..]),
         Some("perf") => perf::perf(&args[1..]),
         Some("--version") => {
             println!("{}", terse_perflog::Identity::this("terse").line());

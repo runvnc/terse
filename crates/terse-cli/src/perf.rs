@@ -1036,3 +1036,28 @@ pub fn perf(args: &[String]) -> Result<ExitCode, String> {
 fn load() -> String {
     std::fs::read_to_string("/proc/loadavg").map_or("unknown".into(), |s| s.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
 }
+
+// --- For a performance report (REPORT.md) --------------------------------
+
+/// The rows of a `terse perf` run (every layer, `runs` runs each) as a
+/// report's `bench` lines (`crate::report::bench_of`).
+pub fn bench_for_report(runs: usize) -> Result<Vec<terse_perflog::report::Bench>, String> {
+    let mut rows = Vec::new();
+    machine_rows(&mut rows, runs)?;
+    client_rows(&mut rows, runs, None)?;
+    let programs = PathBuf::from("programs");
+    host_rows(&mut rows, runs.min(3), sibling("terse-host"), programs.exists().then_some(programs))?;
+    let rows = rows
+        .into_iter()
+        .filter(|r| !r.measured.is_empty() && !matches!(r.verdict, Verdict::Skipped(_)))
+        .map(|r| {
+            let requirement = match r.verdict {
+                Verdict::Pass => Some(true),
+                Verdict::Fail => Some(false),
+                _ => None,
+            };
+            crate::report::PerfRow { id: r.id.to_string(), what: r.what, measured: r.measured, rule: r.rule, requirement }
+        })
+        .collect::<Vec<_>>();
+    Ok(crate::report::bench_of(&rows))
+}
