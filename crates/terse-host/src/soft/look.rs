@@ -133,7 +133,7 @@ impl Renderer {
 
 /// Glyphs whose cells are as wide as the screen's at `size`.
 fn glyphs(size: (u32, u32)) -> Option<Box<dyn GlyphSource>> {
-    let g = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, Some("DejaVu Sans Mono")).ok()?;
+    let g = crate::glyphs::TermGlyphs::builtin(crate::FONT_PX);
     Some(g.resized(size.0 / terse_core::COLS as u32))
 }
 

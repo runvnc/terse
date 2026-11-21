@@ -52,6 +52,7 @@ const USAGE: &str = "usage:
              (the responsiveness scenarios of PERFORMANCE.md, headless, with relays started on ephemeral ports)
   terse relay add|remove|set <ws://host:port>
   terse relay list|show
+  terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
   terse --version
   (key, feed, profile, find and relay commands all take [--relay ws://...|none]... [--store <dir>]
   [--config <dir>] [--no-feed-relays])
@@ -73,7 +74,10 @@ profile names relays. `feed address` prints your own, with hints from your profi
 lines, then your relays.
 --store defaults to $XDG_CACHE_HOME/terse/blobs (or ~/.cache/terse/blobs); feed
 entries are kept in <store>/feeds.
---config holds the identity, subscriptions, nicknames and relay list; it defaults to
+fonts: the fonts terse-host draws with, besides its built-in ones (<config>/fonts, read when it
+starts; README, Fonts): add lists an extra font for characters the built-in fonts lack, set
+replaces one of them (mono must be monospaced). Each file is checked as it is given.
+--config holds the identity, subscriptions, nicknames, relay list and fonts; it defaults to
 $XDG_CONFIG_HOME/terse (or ~/.config/terse).
 profile set publishes your profile: the display name (1-48 bytes), --listed to let search
 find it (default: as in your current profile, else unlisted), the description from a file
@@ -181,6 +185,7 @@ fn main() -> ExitCode {
         Some("key") => feed::key(&args[1..]),
         Some("feed") => feed::feed(&args[1..]),
         Some("relay") => feed::relay(&args[1..]),
+        Some("fonts") => feed::fonts(&args[1..]),
         Some("profile") => feed::profile(&args[1..]),
         Some("find") => feed::find(&args[1..]),
         Some("records") => records(&args[1..]),

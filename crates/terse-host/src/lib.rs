@@ -12,6 +12,7 @@ mod app;
 mod audio;
 pub mod consent;
 pub mod display;
+pub mod fonts;
 mod figures;
 #[cfg(feature = "window")]
 mod gamepad;
@@ -52,7 +53,7 @@ use terse_net::{
 };
 
 use crate::display::{Display, RendererChoice};
-use crate::glyphs::SystemGlyphs;
+use crate::glyphs::TermGlyphs;
 
 /// Font size in logical pixels.
 pub const FONT_PX: f32 = 18.0;
@@ -68,15 +69,14 @@ const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 const USAGE: &str = "usage:
   terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
              [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
-             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>] [--size <W>x<H>]
-             [--page-sans <family|file>] [--page-serif <family|file>] [--page-mono <family|file>]
+             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--size <W>x<H>]
              [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]
   terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--eye <dx>,<dy>]
              [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
-             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--font <family|file>]
+             [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor]
              [--builtin <image|id>]...
   terse-host --selftest <image|id> | --selftest --shell [<image|id>] [--frames <N>] [--events <file>] [--csv <file>]
-             [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor] [--font <family|file>]
+             [--size <W>x<H>] [--consent allow|deny] [--no-trails] [--force-phosphor]
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
@@ -128,11 +128,8 @@ const USAGE: &str = "usage:
   the image's name with .events, if that file exists) and prints per-frame timings;
   --csv writes them per frame. --no-trails: the phosphor display style (SPEC §vector.phosphor) without
   persistence. --force-phosphor: show the phosphor presentation (the whole screen as a glowing
-  tube) whatever style the program sets; for testing. --font: draw the grid with this font (a
-  family name as fc-list shows it, or a .ttf/.otf file) instead of the system's monospace font;
-  a proportional font keeps the grid, each glyph centred in its cell. --page-sans, --page-serif,
-  --page-mono: the fonts of the page device's three faces (default: the system's sans-serif, serif
-  and monospace families); every form of the command takes them.
+  tube) whatever style the program sets; for testing. Text is drawn with the built-in fonts and
+  those <config>/fonts names (`terse fonts`; README, Fonts), loaded at start; --version lists them.
   --bench-render runs the image (or the system) headless like --screenshot, with the page's scroll
   animated as in a window, and draws every frame offscreen with the chosen renderer, timing only the
   drawing (taking the machines' screens and drawing the picture; a GPU frame is timed until the GPU
@@ -160,8 +157,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut frames = None;
     let mut size = None;
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
-    let mut font = None;
-    let mut page_fonts = page::PageFonts::default();
+    let mut version = false;
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
     let (mut feed_relays, mut prefetch, mut program_download, mut data) = (true, true, true, None);
     let (mut consent, mut demo) = (None, false);
@@ -217,10 +213,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 };
             }
             "--demo" => demo = true,
-            "--version" => {
-                println!("terse-host {}", env!("CARGO_PKG_VERSION"));
-                return Ok(ExitCode::SUCCESS);
-            }
+            "--version" => version = true,
             "--shell" => shell_flag = true,
             "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
             "--consent" => {
@@ -229,10 +222,6 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             }
             "--no-trails" => no_trails = true,
             "--force-phosphor" => force_phosphor = true,
-            "--font" => font = Some(it.next().ok_or(USAGE)?),
-            "--page-sans" => page_fonts.sans = Some(it.next().ok_or(USAGE)?),
-            "--page-serif" => page_fonts.serif = Some(it.next().ok_or(USAGE)?),
-            "--page-mono" => page_fonts.mono = Some(it.next().ok_or(USAGE)?),
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relays.push(it.next().ok_or(USAGE)?),
             "--no-feed-relays" => feed_relays = false,
@@ -255,6 +244,13 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ => return Err(USAGE.into()),
         }
     }
+    if version {
+        // The fonts this host would draw with (README "Fonts").
+        let config = config.clone().or_else(default_config_dir);
+        let (t, p) = (fonts::TerminalFonts::load(config.as_deref()), fonts::PageFonts::load(config.as_deref()));
+        print!("terse-host {}\nfonts:\n{}", env!("CARGO_PKG_VERSION"), fonts::describe(&t, &p));
+        return Ok(ExitCode::SUCCESS);
+    }
     if (bench && (selftest || screenshot.is_some() || frames.is_none())) || (sweep && !bench) {
         return Err(USAGE.into());
     }
@@ -275,6 +271,15 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         None => Consent::Deny,
     };
     let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
+    // Every font is opened here, at start, and never again (SPEC
+    // §responsiveness item 5).
+    let term_fonts = fonts::TerminalFonts::load(Some(&config));
+    let page_fonts = fonts::PageFonts::load(Some(&config));
+    let mut notes: Vec<&String> = term_fonts.notes.iter().chain(&page_fonts.notes).collect();
+    notes.dedup();
+    for n in notes {
+        eprintln!("terse-host: fonts: {n}");
+    }
     let store = store.or_else(default_store_dir).ok_or("no blob store directory (use --store)")?;
     let data = data.or_else(default_data_dir).ok_or("no data directory (use --data)")?;
     // The relay: in a window, found or started as README "Getting started"
@@ -378,7 +383,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, look, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -394,14 +399,14 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, font, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
+            let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -409,7 +414,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            run_window(program, content, None, Looks { no_trails, force_phosphor, font, page_fonts, window: size, renderer, threads, look, eye, parallax, panels })
+            run_window(program, content, None, Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels })
         }
         _ => Err(USAGE.into()),
     }
@@ -447,10 +452,9 @@ struct SelfTestStub;
 pub struct Looks {
     pub no_trails: bool,
     pub force_phosphor: bool,
-    /// `--font`: a family name or font file instead of the monospace font.
-    pub font: Option<String>,
-    /// `--page-sans`, `--page-serif`, `--page-mono`: the page's fonts.
-    pub page_fonts: page::PageFonts,
+    /// The terminal's fonts and the page's (`<config>/fonts`), loaded at start.
+    pub term_fonts: fonts::TerminalFonts,
+    pub page_fonts: fonts::PageFonts,
     /// `--size` of a window.
     pub window: Option<(u32, u32)>,
     /// `--renderer`.
@@ -537,7 +541,7 @@ enum Headless {
 
 /// The renderer `--renderer` asks for, offscreen.
 fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
-    let glyphs = SystemGlyphs::new(FONT_PX, looks.font.as_deref())?;
+    let glyphs = TermGlyphs::new(FONT_PX, &looks.term_fonts)?;
     if looks.renderer != RendererChoice::Software {
         #[cfg(feature = "gpu")]
         {
@@ -562,7 +566,7 @@ fn headless_display(looks: &Looks) -> Result<Box<dyn Display>, String> {
 /// The GPU renderer drawing offscreen; with `hardware_only` (`--renderer
 /// auto`), an error if the only adapter is a software one.
 #[cfg(feature = "gpu")]
-fn gpu_display(glyphs: SystemGlyphs, hardware_only: bool) -> Result<Box<dyn Display>, String> {
+fn gpu_display(glyphs: TermGlyphs, hardware_only: bool) -> Result<Box<dyn Display>, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let (adapter, device, queue) = pollster::block_on(request_device(Default::default(), &instance))?;
     let info = adapter.get_info();

@@ -681,7 +681,7 @@ fn assert_close(a: &Path, b: &Path) {
 
 /// Whether the fonts the reference pictures assume are here.
 fn have_fonts() -> bool {
-    let ok = terse_host::glyphs::SystemGlyphs::new(terse_host::FONT_PX, None).is_ok() && terse_host::page::Typesetter::new(&Default::default()).is_ok();
+    let ok = terse_host::page::Typesetter::new(&Default::default()).is_ok();
     if !ok {
         eprintln!("skipped: no fonts for pictures");
     }

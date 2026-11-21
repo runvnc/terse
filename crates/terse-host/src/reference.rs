@@ -30,24 +30,13 @@ fn reference_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/reference")
 }
 
-/// The fonts the pictures were made with, if this system has them.
+/// The looks the pictures were made with: the built-in fonts.
 fn looks() -> Option<Looks> {
-    let page_fonts = page::PageFonts {
-        sans: Some("DejaVu Sans".into()),
-        serif: Some("DejaVu Serif".into()),
-        mono: Some("DejaVu Sans Mono".into()),
-    };
-    let have = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, Some("DejaVu Sans Mono")).is_ok()
-        && page::Typesetter::new(&page_fonts).is_ok();
-    if !have {
-        eprintln!("reference pictures: the DejaVu fonts are not installed; not compared");
-        return None;
-    }
     Some(Looks {
         no_trails: false,
         force_phosphor: false,
-        font: Some("DejaVu Sans Mono".into()),
-        page_fonts,
+        term_fonts: crate::fonts::TerminalFonts::builtin(),
+        page_fonts: page::PageFonts::builtin(),
         window: None,
         renderer: RendererChoice::Software,
         threads: 2,
@@ -262,7 +251,7 @@ fn displays() -> Vec<Box<dyn crate::display::Display>> {
     let mut out = vec![crate::headless_display(&looks).unwrap()];
     #[cfg(feature = "gpu")]
     {
-        let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+        let glyphs = crate::glyphs::TermGlyphs::new(crate::FONT_PX, &looks.term_fonts).unwrap();
         match crate::gpu_display(glyphs, false) {
             Ok(d) => out.push(d),
             Err(e) => eprintln!("no GPU ({e}): the GPU renderer is not compared"),
@@ -407,7 +396,7 @@ fn surfaces_of_a_machine(displays: &mut [Box<dyn crate::display::Display>]) {
     }
     // Idle: nothing drawn again.
     let Some(looks) = looks() else { return };
-    let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+    let glyphs = crate::glyphs::TermGlyphs::new(crate::FONT_PX, &looks.term_fonts).unwrap();
     let mut soft = crate::soft::SoftScreens::new(Box::new(glyphs), 1);
     use crate::display::Display;
     system.shell_mut().vector3_mut().unwrap().submit(&surface_list((320, 300, 100), [0, 0, 320, 240], 300));
@@ -522,7 +511,7 @@ fn an_idle_gallery_draws_nothing() {
     // it is paused with P.
     let system = system_after("2 press l\n3 press l\n4 press down\n5 press down\n6 press down\n7 press enter\n30 home\n31 press p\n", 60);
     assert!(system.scene((0.0, 0.0)).is_some());
-    let glyphs = crate::glyphs::SystemGlyphs::new(crate::FONT_PX, looks.font.as_deref()).unwrap();
+    let glyphs = crate::glyphs::TermGlyphs::new(crate::FONT_PX, &looks.term_fonts).unwrap();
     let mut soft = crate::soft::SoftScreens::new(Box::new(glyphs), 1);
     use crate::display::Display;
     let ran: Vec<u32> = std::iter::once(0).chain(system.children().map(|(_, c)| c.serial)).collect();

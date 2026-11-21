@@ -15,6 +15,7 @@ ed25519-dalek = "2"
 curve25519-dalek = "4"
 sha2 = "0.10"
 getrandom = "0.4"
+ttf-parser = "0.25"
 
 [dev-dependencies]
 tempfile = "3"

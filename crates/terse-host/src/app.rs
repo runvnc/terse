@@ -22,7 +22,7 @@ use winit::window::{Window, WindowId};
 
 use crate::display::{Display, GlyphSource, RendererChoice};
 use crate::gamepad::Gamepads;
-use crate::glyphs::SystemGlyphs;
+use crate::glyphs::TermGlyphs;
 use crate::keymap::{HOME_KEY, MAX_PASTE, hid_usage, modifier_bits, paste_chars, prompt_answer, swallow};
 use crate::page::{PageThread, PageWorker};
 use crate::selftest::SelfTest;
@@ -136,7 +136,7 @@ impl Gfx {
     fn new(event_loop: &ActiveEventLoop, title: &str, looks: &Looks, test: bool) -> Result<Self, String> {
         // Size the window for the grid at the primary monitor's scale.
         let scale = event_loop.primary_monitor().map_or(1.0, |m| m.scale_factor());
-        let glyphs = SystemGlyphs::new(FONT_PX * scale as f32, looks.font.as_deref())?;
+        let glyphs = TermGlyphs::new(FONT_PX * scale as f32, &looks.term_fonts)?;
         eprintln!("terse-host: font {}", glyphs.primary_family());
 
         let (cell_w, cell_h) = glyphs.cell_size();
@@ -200,7 +200,7 @@ impl Gfx {
     fn gpu(
         event_loop: &ActiveEventLoop,
         window: &Arc<Window>,
-        glyphs: SystemGlyphs,
+        glyphs: TermGlyphs,
         size: (u32, u32),
         hardware_only: bool,
     ) -> Result<Presenter, String> {
