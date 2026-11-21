@@ -32,9 +32,9 @@ six processes, not forty-five.
 Design rules:
 
 1. **One message format**, independent of the transport. Two transports
-   carry it: a Unix-domain socket (section 3) and shared memory (section
-   4). A core supports both at once; each driver chooses one at the
-   handshake.
+   carry it: a Unix-domain socket (section 3; `AF_UNIX` on Linux, macOS
+   and Windows alike, section 4.3) and shared memory (section 4). A core
+   supports both at once; each driver chooses one at the handshake.
 2. **The machine's semantics are kept exactly.** A run with drivers gives
    the same state hash after every frame as the same run with the devices
    built in (`STATE.md`), for every machine of a system. Charges, results
@@ -445,11 +445,11 @@ variables:
 
 | Variable | Value |
 |---|---|
-| `TERSE_BUS_SOCKET` | Path of a Unix-domain stream socket the core listens on |
-| `TERSE_BUS_CPU` | Optional: a CPU number the driver should run on |
+| `TERSE_BUS_SOCKET` | Path of a Unix-domain (`AF_UNIX`) stream socket the core listens on, on every system (section 4.3) |
+| `TERSE_BUS_CPU` | Optional: a CPU number the driver should run on (a hint: a driver on a system that cannot pin a thread, macOS, ignores it) |
 
-Standard input is not used (the reference cores give `/dev/null`); a
-driver writes diagnostics to standard error.
+Standard input is not used (the reference cores give `/dev/null`, `NUL`
+on Windows); a driver writes diagnostics to standard error.
 
 The driver connects to the socket and waits for HELLO. The core accepts
 one connection per driver, waits at most 10 seconds (`--start-timeout`)
@@ -462,7 +462,7 @@ driver that has not exited 2 seconds later.
 ### 2.1 Which driver serves which slot
 
 A core chooses its drivers. The reference drivers are one program per
-group of slots, with fixed names:
+group of slots, with fixed names (and `.exe` after them on Windows):
 
 | Slots | Program | Options |
 |---|---|---|
@@ -477,7 +477,8 @@ page drivers refuse an option they do not know (status 2); the others
 ignore the arguments they do not know. `terse-bus` gives the terminal
 and page drivers the `--config` it gives the content driver. Every Rust driver also reads
 `TERSE_BUS_TRANSPORT=socket` (never take shared memory),
-`TERSE_BUS_SPIN=fixed` and `TERSE_BUS_SPIN_US` (section 4.2). The other
+`TERSE_BUS_SPIN=fixed`, `TERSE_BUS_SPIN_US` and `TERSE_BUS_WAKE=socket`
+(section 4.2; `terse-bus` reads the last too). The other
 drivers in the repository take no options:
 `crates/terse-devices/c/terminal.c` (slots 2 and 10; the socket unless
 `TERSE_C_SHM=1`), `crates/terse-devices/python/vector.py` (slots 3 and 9,
@@ -524,8 +525,8 @@ directory.
 ## 3. Socket transport
 
 Messages are written to the stream one after another, each as section 1
-says. That is all: any language that can open a Unix socket can be a
-driver.
+says. That is all: any language that can open a Unix-domain socket can be
+a driver (on Windows, an `AF_UNIX` socket through Winsock: section 4.3).
 
 ## 4. Shared-memory transport
 
@@ -560,10 +561,10 @@ request area and the reply area:
 | 20 | 4 | Reply area capacity |
 | 64 | 4 | `req_seq`: incremented by the core after it writes a packet |
 | 68 | 4 | `req_len`: the packet's length |
-| 72 | 4 | `driver_sleeping`: 1 while the driver waits in the kernel |
+| 72 | 4 | `driver_sleeping`: how the driver is waiting: `0` awake (spinning or working), `1` asleep on `req_seq`'s address, `2` asleep on the socket (below) |
 | 128 | 4 | `rep_seq`: incremented by the driver after it writes a packet |
 | 132 | 4 | `rep_len` |
-| 136 | 4 | `core_sleeping` |
+| 136 | 4 | `core_sleeping`: the same for the core, on `rep_seq` |
 
 The core creates the file in the session directory with areas of 4 MiB
 each (the file is sparse; pages that are never written cost nothing).
@@ -583,12 +584,36 @@ before it sends its HELLO reply, since the core may send its first
 request as soon as it has the reply.
 
 **Hand-over.** The writer writes the packet, then its length, then
-increments the sequence number with release ordering; if the other side's
-sleeping word is 1 it wakes it. The reader spins on the sequence number
-(acquire) for a while; if it has not changed, it stores 1 in its sleeping
-word, checks the sequence number again, and sleeps in the kernel until the
-number changes (or a timeout passes, after which it checks that the other
-end is alive: the socket is not closed), then stores 0.
+increments the sequence number (sequentially consistent: at least release
+ordering, and nothing after it, the next read included, moves before it),
+then reads the other side's sleeping word and wakes it as the word says:
+
+- `0`: nothing;
+- `1`: the system's address wake on the sequence word it just
+  incremented (section 4.3: a futex on Linux, a shared ulock on macOS;
+  never written on Windows);
+- `2`: one byte, of any value, written to the socket;
+- any other value: as `1` (room for later ways of sleeping).
+
+The reader spins on the sequence number (acquire) for a while; if it has
+not changed, it stores how it will sleep (`1` or `2`) in its sleeping word,
+checks the sequence number again, and sleeps until the number changes or
+at most 100 ms pass (the reference: 50 ms): `1` in the system's address
+wait on the sequence word, given the value it last saw; `2` waiting until
+the socket can be read, then reading and dropping every byte that has
+arrived. Then it stores `0`, and if the number has still not changed it
+checks that the other end is alive (the socket has not reached its end:
+sleeping on the socket, the end wakes it at once) before it sleeps again.
+
+Each end chooses how it sleeps, every time, and the other wakes it the way
+its word says, so a driver that sleeps on the socket works with a core that
+sleeps on the address, and the other way round. An end that offers or
+takes shared memory must therefore be able to do both wakes of its system,
+even if it only ever sleeps one way. The socket carries nothing else after
+the handshake, so the bytes are never mistaken for a message. A wake is
+only ever an optimisation: the reader looks again at least every 100 ms,
+so a wake that is lost (or that an older end does not give for `2`) costs
+time, never correctness.
 
 **How long to spin.** A fixed spin costs a CPU whenever the other end is
 idle: a driver that spins 2 ms after each reply spends 2 ms of every 16.7
@@ -602,15 +627,101 @@ between frames is long, so the driver sleeps almost at once.
 `TERSE_BUS_SPIN=fixed` restores the fixed spin. The core spins up to
 100 µs for a reply (`--spin-us`; `--spin adaptive` makes it adaptive too).
 
-**What is OS-specific.** The files live in `/dev/shm` (any tmpfs; the
-reference core falls back to the system's temporary directory) and are
-mapped with `mmap(MAP_SHARED)`. The sleep and wake are Linux futexes on
-the sequence words (`FUTEX_WAIT` with a timeout, `FUTEX_WAKE`, not
-private, because the words are shared between processes). Elsewhere they
-would be `WaitOnAddress`/`WakeByAddressAll` (Windows),
-`__ulock_wait`/`os_sync_wait_on_address` (macOS), or a pipe written after
-the sequence number (anywhere, at the cost of the system calls the
-transport is meant to avoid).
+### 4.3 What is particular to each system
+
+Everything above is the same on every system: the messages, the
+handshake, the bus file's layout, the sequence and sleeping words and the
+memory files. What differs is how a core and a driver reach each other,
+how a file is shared and how an end sleeps until the other has written. A
+core and a driver interoperate on a system when each does what this
+section says for it. (`terse-bus` and the Rust drivers implement all
+three systems in `crates/terse-bus/src/sys`; they are run on Linux and,
+for now, only checked to compile for macOS and Windows.)
+
+**Finding each other, on every system.** The core makes a session
+directory that only the user can open, and in it, for each driver, binds a
+Unix-domain stream socket (`AF_UNIX`, `SOCK_STREAM`) to a path, listens on
+it and starts the driver with the path in `TERSE_BUS_SOCKET` (section 2).
+The driver connects to that path, and the two speak section 1 on the
+connection. The path is UTF-8 and at most 103 bytes (`sun_path` holds 104
+bytes with its terminating NUL on macOS, 108 on Linux and Windows); a core
+whose usual directory would make it longer uses a shorter one, or refuses
+the run (status 2). The core removes the socket's file once the driver has
+connected, and the session directory at the end of the run. The socket is a
+byte stream; each end must be able to read it with a time limit, to tell
+without reading whether it can be read, and to see its end (the other
+process closed it or exited). Handles and descriptors of the session are
+not inherited by the drivers a core starts (a driver holding another's
+connection would hide that one's exit).
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| The socket | `AF_UNIX` | `AF_UNIX` | `AF_UNIX` through Winsock 2.2 (`afunix.h`), Windows 10 version 1803 or later, Windows Server 2019 or later |
+| The session directory (reference) | in `/dev/shm` (a tmpfs) if there is one, else the temporary directory; mode 0700 | in `/tmp` (`$TMPDIR` makes socket paths too long); mode 0700 | in the user's temporary directory (`%TEMP%`), which only the user may open |
+| A shared file is mapped with | `mmap(PROT_READ \| PROT_WRITE, MAP_SHARED)`, the whole file | the same | `CreateFileMappingW(file, NULL, PAGE_READWRITE, 0, 0, NULL)` and `MapViewOfFile(FILE_MAP_READ \| FILE_MAP_WRITE)`, the whole file; every end opens the file with `FILE_SHARE_READ \| FILE_SHARE_WRITE \| FILE_SHARE_DELETE` |
+| Sleeping on the address (`1`) | `FUTEX_WAIT` with a timeout and `FUTEX_WAKE`, not the private variants (the word is shared between processes) | `os_sync_wait_on_address_with_timeout` and `os_sync_wake_by_address_all` with their `SHARED` flags (macOS 14.4 or later), or `__ulock_wait` and `__ulock_wake` with `UL_COMPARE_AND_WAIT_SHARED` (and `ULF_WAKE_ALL`; macOS 10.12 or later) | none: an end never writes `1` |
+| Sleeping on the socket (`2`) | yes | yes | yes: the only way |
+| Pinning to a CPU (`TERSE_BUS_CPU`) | `sched_setaffinity` | not possible: ignored | `SetThreadAffinityMask` (CPUs 0 to 63) |
+| What ends a run cleanly (section 10) | `SIGINT`, `SIGTERM`, `SIGHUP` | the same | Ctrl+C, Ctrl+Break, closing the console |
+| A driver's CPU time and waits (`PERFORMANCE.md` R14) | all of them | CPU time and run-queue wait | CPU time only |
+
+**Why `AF_UNIX` on Windows, not a named pipe.** Windows has had
+Unix-domain stream sockets since Windows 10 version 1803 (2018), with the
+semantics the other systems have: a byte stream at a path, its end seen
+when the other process closes it or exits, `WSAPoll` to wait for it with a
+time limit, `SO_RCVTIMEO` for a read with one. So the protocol, the
+handshake (a path in `TERSE_BUS_SOCKET`, one connection accepted), the
+liveness check and the socket wake below need no Windows variant, and C
+(Winsock), Go (`net.Dial("unix", path)`), .NET (`UnixDomainSocketEndPoint`)
+and Rust (Winsock through `windows-sys`: Rust's standard library has Unix
+sockets only on Unix, so the reference makes the dozen calls itself) all
+reach them. A named pipe is another model: a server instance to create
+before each client connects, byte or message mode, no time limit on a read
+of a synchronous handle (overlapped I/O for one), the reads and writes of a
+synchronous handle serialised against each other, and nothing like `poll`;
+two independent implementations would need a second transport section to
+agree. The cost of the choice: Windows before 10 version 1803 is not
+supported, and a language whose library has no `AF_UNIX` on Windows (the
+Python driver, `crates/terse-devices/python`, among them as written) cannot
+be a driver there without calling Winsock itself.
+
+**Why the socket wakes on Windows.** `WaitOnAddress` and
+`WakeByAddressAll` work only between the threads of one process (they key
+on the address in the process), so they cannot wake another process.
+Named events or semaphores could, but their names would have to be agreed
+and passed, and they would cost what a byte on the socket costs: one system
+call to wake, one to sleep, and only when the other end has gone to sleep
+(the calls of a busy frame follow each other while the ends spin, with no
+system call at all). The socket is already open, needs no name, and
+doubles as the liveness check: its end wakes a sleeper at once.
+
+**macOS.** The two address waits are the same kernel wait (`os_sync_*` is
+built on the ulock calls), so an end that sleeps in one is woken by the
+other's wake; a reference end uses `os_sync_*` where the system has it and
+the ulock calls before 14.4, and looks both up when it starts, so that one
+program runs on both (with neither, it sleeps on the socket). The ulock
+calls are not a public API, though stable since 10.12 and used by the C++
+and Rust standard libraries. Neither has been run yet; the wake between
+the two kinds is to be confirmed on a Mac. `/tmp` is
+on a disk: pages of a shared file stay in memory while mapped, but the
+system may write dirty ones back now and then; a core may put its session
+directory on a RAM disk (the reference: `TERSE_BUS_DIR`).
+
+**What a conforming implementation may fall back to, on any system:**
+
+1. **The socket alone.** Shared memory is for speed only (section 12): a
+   core that cannot share files on a system (or does not want to) does not
+   offer it, and a driver may always decline it. The socket transport is
+   always enough.
+2. **Sleeping on the socket.** On shared memory an end may always sleep on
+   the socket (`2`) rather than on the address, on any system (the
+   reference: `TERSE_BUS_WAKE=socket`, which is how the tests run that way
+   on Linux). It must still wake the other end the way that end's word
+   says.
+3. **No timing of other processes.** A core that cannot read a driver's
+   CPU time or run-queue wait still runs it; `PERFORMANCE.md` R15 and
+   `RECORD.md` section 4 say what it may conclude without them (it warns,
+   it never stops a machine for it).
 
 ---
 
@@ -1096,10 +1207,12 @@ the record there to the data directory's `perf/` (`--perf-log <dir>|off`).
 `native/driver-example` has a deliberately slow mode for testing it
 (`TERSE_EXAMPLE_SLOW`, its README).
 
-`terse-bus` also ends cleanly on SIGINT, SIGTERM and SIGHUP and when its
-window is closed: it finishes the frame, sends SHUTDOWN to every driver,
-reaps them (killing one that does not exit within 2 s) and removes the
-session directory.
+`terse-bus` also ends cleanly on SIGINT, SIGTERM and SIGHUP (on Windows:
+Ctrl+C, Ctrl+Break and closing its console) and when its window is
+closed: it finishes the frame, sends SHUTDOWN to every driver, reaps them
+(killing one that does not exit within 2 s) and removes the session
+directory. A fault ends it by SIGTERM, as `terse run`; on Windows, which
+has no signals, with status 255.
 
 ## 11. Measurements
 

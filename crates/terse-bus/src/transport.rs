@@ -227,7 +227,10 @@ impl ShmEnd {
         let (seq, len, sleeping) = if self.core { (REQ_SEQ, REQ_LEN, DRIVER_SLEEPING) } else { (REP_SEQ, REP_LEN, CORE_SLEEPING) };
         self.map.bytes_mut()[at..at + packet.len()].copy_from_slice(packet);
         self.map.word(len).store(packet.len() as u32, Ordering::Relaxed);
-        self.map.word(seq).fetch_add(1, Ordering::Release);
+        // Sequentially consistent, so that the read of the other side's
+        // sleeping word cannot move before it (on ARM a release alone
+        // would let it: a wake missed, a nap taken).
+        self.map.word(seq).fetch_add(1, Ordering::SeqCst);
         match self.map.word(sleeping).load(Ordering::SeqCst) {
             AWAKE => {}
             SLEEPS_ON_SOCKET => {
