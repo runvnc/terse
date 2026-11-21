@@ -1,30 +1,41 @@
 //! The core's compositor (DEVICES.md 7): the picture of a system (SPEC
 //! §machines.screens) or of a single machine, put together from the drivers' layers
-//! as terse-host's software renderer puts its screens together (the clean
-//! style): each machine's layers composed into its screen's image at the
-//! size it is shown at (the drivers draw each machine at that size), the
-//! shell's image at the bottom, the children's pictures over it in handle
-//! order, a scene's panels (Screens of other machines, a machine's own
-//! Surfaces) and its 3D layer over them, and the host's consent prompt
-//! over everything. The scene, the panels and their pyramids are
-//! terse-host's (`soft::scene`, `soft::panel`); the frame is XRGB8888
-//! (softbuffer's and DRM's format).
+//! as terse-host's software renderer puts its screens together: each
+//! machine's layers composed into its screen's image at the size it is
+//! shown at (the drivers draw each machine at that size), the shell's
+//! image at the bottom, the children's pictures over it in handle order, a
+//! scene's panels (Screens of other machines, a machine's own Surfaces)
+//! and its 3D layer over them, and the host's consent prompt over
+//! everything. The scene, the panels and their pyramids are terse-host's
+//! (`soft::scene`, `soft::panel`); the frame is XRGB8888 (softbuffer's and
+//! DRM's format).
 //!
-//! Not yet here: the system ink (SPEC §machines.ink). Each machine is
-//! drawn within its own caps only. The core holds the pictures and the 3D
-//! lists but not the 2D lists, which live in the vector driver; to share
-//! the system ink the driver must publish its list's ink at each cap (or
-//! the list) and take the caps it is given, as a property like `core.eye`.
+//! A machine in the phosphor style (SPEC §vector.phosphor) is drawn as
+//! terse-host draws it, with terse-host's tube (`soft::screen`,
+//! `soft::phosphor`): its drivers draw their layers as light (DEVICES.md
+//! 7.1, `core.light`: no backgrounds, straight colour), which is the text's
+//! light, and the core draws the beam of the vector displays' lists itself
+//! (`vector.list`, `vector3.list`), with the afterglow and the halo.
+//!
+//! The machines a shell shows share the system ink (SPEC §machines.ink):
+//! terse-core counts it from the pictures and the lists (`vector.list`
+//! for the 2D lists, which live in the vector driver); a picture that does
+//! not fit is a plate, drawn here without asking its drivers, and each
+//! machine's lists are drawn within the caps it is given (`core.caps`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use terse_core::{COLS, Machine, System, Terminal};
+use terse_core::system_ink::Shares;
+use terse_core::{COLS, Machine, System, Terminal, Vector, Vector3};
 use terse_host::display::{
-    Eye, SceneLayers, cell_width_for, grid_rect, panel_cell_width, panel_width_px, picture_rect, scene_layers, surface_layers, system_rect,
+    Caps, Eye, GlyphSource, SceneLayers, VectorScene, cell_width_for, grid_rect, panel_cell_width, panel_width_px, picture_rect, plate_panels,
+    scene_layers, surface_layers, system_rect,
 };
+use terse_host::phosphor::Look;
 use terse_host::soft::base::{Damage, IRect, Pixels, Pool, tile_rows};
 use terse_host::soft::panel::{PanelMode, Pyramid};
+use terse_host::soft::phosphor::LightLayers;
 use terse_host::soft::scene::{SceneImage, Top};
 use terse_host::soft::screen::SoftScreen;
 use terse_net::Prompt;
@@ -66,6 +77,82 @@ impl Layer {
     }
 }
 
+/// How a machine is shown in a draw, as the compositor decided it.
+#[derive(Clone)]
+pub struct Show {
+    /// Its picture is a plate (SPEC §machines.ink): a plain rectangle.
+    pub plate: bool,
+    /// In the phosphor style (the program's, or forced): drawn with the tube.
+    pub phosphor: bool,
+    /// Device 3's state (`vector.list`), for the beam.
+    pub vector: Option<Vector>,
+    /// Device 9's list, drawn in the tube (not over a scene's panels).
+    pub list3: Option<Vec<u8>>,
+    /// The ink caps its lists are drawn within.
+    pub caps: Caps,
+    /// Its Surfaces' sources, which give no light.
+    pub excluded: Vec<[u16; 4]>,
+    /// The afterglow: `Some(true)` moves on (it ran a frame), `Some(false)`
+    /// the beam is drawn again, `None` the tube is drawn only if it must be.
+    pub advance: Option<bool>,
+    /// The slots whose layers are light in the phosphor style.
+    pub light_slots: Vec<u8>,
+}
+
+impl Default for Show {
+    fn default() -> Self {
+        Show { plate: false, phosphor: false, vector: None, list3: None, caps: Caps::FULL, excluded: Vec::new(), advance: None, light_slots: Vec::new() }
+    }
+}
+
+/// How the phosphor style is drawn (`--tube`, `--vignette`, `--no-trails`,
+/// `--no-shed`, `--force-phosphor`, as terse-host's).
+#[derive(Clone, Copy, Default)]
+pub struct Looks {
+    pub look: Look,
+    pub no_trails: bool,
+    /// Every machine in the phosphor style (`--force-phosphor`).
+    pub force_phosphor: bool,
+}
+
+/// Glyphs that draw nothing: the tube's own terminal is blank (the text's
+/// light comes from the drivers' layers).
+struct NoGlyphs(u32);
+
+impl GlyphSource for NoGlyphs {
+    fn cell_size(&self) -> (u32, u32) {
+        (self.0, 2 * self.0)
+    }
+    fn rasterize(&mut self, _: char, _: u32, _: &mut [u8]) {}
+    fn resized(&self, width: u32) -> Box<dyn GlyphSource> {
+        Box::new(NoGlyphs(width.max(2)))
+    }
+}
+
+/// A machine's phosphor tube: terse-host's screen given the shapes and the
+/// drivers' light, and device 9's list as last given.
+struct Tube {
+    screen: SoftScreen,
+    v3: Vector3,
+}
+
+/// The colour of a plate: what terse-host draws there (a blank terminal's
+/// background).
+fn plate_colour() -> u32 {
+    let [r, g, b] = Terminal::default().palette()[0];
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// The columns of row `y` of a layer `w` pixels wide that hold light (an
+/// alpha above zero), as x0..x1; (0, 0) if none.
+fn extent(px: &[u32], w: usize, y: usize) -> (u32, u32) {
+    let row = &px[y * w..(y + 1) * w];
+    match row.iter().position(|&p| p >> 24 != 0) {
+        None => (0, 0),
+        Some(a) => (a as u32, (w - row.iter().rev().position(|&p| p >> 24 != 0).unwrap_or(0)) as u32),
+    }
+}
+
 /// One machine's screen: its layers, composed into `image`, which covers
 /// `area` (in the frame's coordinates, or its own for a panel).
 pub struct Screen {
@@ -81,11 +168,20 @@ pub struct Screen {
     /// The 3D display's layer is drawn over a scene's panels rather than
     /// among the others.
     scene: bool,
-    place: Option<((u32, u32), (f32, f32, f32, f32), u32, bool)>,
+    place: Option<((u32, u32), (f32, f32, f32, f32), u32, bool, bool)>,
     pub image: Pixels,
     damage: Damage,
     /// The 3D layer changed since the scene was last put together.
     top_changed: bool,
+    /// How it is shown in this draw.
+    pub show: Show,
+    /// The phosphor tube, in the phosphor style.
+    tube: Option<Tube>,
+    /// In the phosphor style, per light layer and row of the picture: the
+    /// columns that hold light.
+    extents: HashMap<(u8, u8), Vec<(u32, u32)>>,
+    /// The area drawn as a plate, if it is one.
+    plated: Option<IRect>,
 }
 
 /// The layer of device 9 (SPEC §vector3d).
@@ -103,6 +199,10 @@ impl Screen {
             image: Pixels::default(),
             damage: Damage::default(),
             top_changed: false,
+            show: Show::default(),
+            tube: None,
+            extents: HashMap::new(),
+            plated: None,
         }
     }
 
@@ -110,8 +210,21 @@ impl Screen {
         self.rect.unwrap_or_else(|| grid_rect(native, viewport))
     }
 
+    /// The picture: the tube's in the phosphor style, else the layers'.
+    pub fn image(&self) -> &Pixels {
+        match &self.tube {
+            Some(t) if self.phosphor() => &t.screen.image,
+            _ => &self.image,
+        }
+    }
+
+    /// Whether it is shown in the phosphor style.
+    pub fn phosphor(&self) -> bool {
+        self.show.phosphor && !self.show.plate
+    }
+
     pub fn area(&self) -> IRect {
-        self.image.area
+        self.image().area
     }
 
     fn take_damage(&mut self, into: &mut Damage) {
@@ -121,15 +234,32 @@ impl Screen {
 
     /// Brings the image up to date: PRESENT to the machine's drivers for a
     /// picture of its area's size, then the layers composed where they
-    /// changed.
-    fn render(&mut self, devices: &mut BusDevices, native: (u32, u32), viewport: (u32, u32)) -> Result<(), String> {
+    /// changed (or, in the phosphor style, the tube drawn from the lists and
+    /// the layers' light); a plate is drawn without its drivers.
+    fn render(&mut self, devices: &mut BusDevices, native: (u32, u32), viewport: (u32, u32), pool: &Pool, eye: Eye, looks: &Looks) -> Result<(), String> {
         let rect = self.screen_rect(native, viewport);
         let full = IRect::of_size(viewport);
         let area = match self.rect {
             Some(r) => IRect::covering(r).intersect(&full),
             None => full,
         };
-        let place = (viewport, rect, self.cell, self.scene);
+        if self.show.plate {
+            // SPEC §machines.ink: nothing of the machine's screen is drawn.
+            self.tube = None;
+            self.extents.clear();
+            if self.plated != Some(area) {
+                self.image = Pixels::new(area);
+                self.image.data.fill(plate_colour());
+                self.damage = Damage::new(viewport);
+                self.damage.add(area);
+                self.plated = Some(area);
+                self.place = None;
+            }
+            return Ok(());
+        }
+        self.plated = None;
+        let light = self.show.phosphor;
+        let place = (viewport, rect, self.cell, self.scene, light);
         let mut all = false;
         if self.place != Some(place) {
             if self.image.area != area {
@@ -143,9 +273,37 @@ impl Screen {
             return Ok(());
         }
         let picture = (area.width() as u32, area.height() as u32);
-        let local = (rect.0 - area.x0 as f32, rect.1 - area.y0 as f32, rect.2, rect.3);
+        // In the phosphor style the screen's top left is a whole pixel, as
+        // in terse-host's tube.
+        let local = if light {
+            ((rect.0 as i32 - area.x0) as f32, (rect.1 as i32 - area.y0) as f32, rect.2, rect.3)
+        } else {
+            (rect.0 - area.x0 as f32, rect.1 - area.y0 as f32, rect.2, rect.3)
+        };
         let updates = devices.present(picture, local, self.cell)?;
         let damage = self.take_updates(&updates, picture)?;
+        if light {
+            let slots = &self.show.light_slots;
+            self.extents.retain(|k, _| slots.contains(&k.0));
+            let (w, h) = (picture.0 as usize, picture.1 as usize);
+            for (key, r) in damage.iter().filter(|(k, _)| slots.contains(&k.0)) {
+                let Some(l) = self.layers.get(key) else { continue };
+                let px = l.pixels();
+                let rows = self.extents.entry(*key).or_default();
+                if rows.len() != h {
+                    *rows = (0..h).map(|y| extent(px, w, y)).collect();
+                } else {
+                    for y in r.y0.max(0) as usize..(r.y1.max(0) as usize).min(h) {
+                        rows[y] = extent(px, w, y);
+                    }
+                }
+            }
+            self.draw_tube(native, viewport, pool, eye, looks, picture, local);
+            return Ok(());
+        }
+        self.tube = None;
+        self.extents.clear();
+        let damage: Vec<IRect> = damage.into_iter().filter(|(k, _)| !(self.scene && *k == LAYER3)).map(|(_, r)| r).collect();
         let mut dirty: Vec<IRect> = if all { vec![IRect::of_size(picture)] } else { damage };
         dirty.retain(|r| !r.is_empty());
         if dirty.is_empty() {
@@ -174,8 +332,61 @@ impl Screen {
         Ok(())
     }
 
-    /// The drivers' news: new files mapped; the damage (picture pixels).
-    fn take_updates(&mut self, updates: &[LayerUpdate], picture: (u32, u32)) -> Result<Vec<IRect>, String> {
+    /// The phosphor style: terse-host's tube, given the vector displays'
+    /// shapes (within the machine's caps) and the light layers' light, its
+    /// afterglow moved on as `show.advance` says.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_tube(&mut self, native: (u32, u32), viewport: (u32, u32), pool: &Pool, eye: Eye, looks: &Looks, picture: (u32, u32), local: (f32, f32, f32, f32)) {
+        let rect = self.rect;
+        let tube = self.tube.get_or_insert_with(|| {
+            let mut screen = SoftScreen::new(Box::new(NoGlyphs((native.0 / COLS as u32).max(2))));
+            screen.set_page_animation(false);
+            Tube { screen, v3: Vector3::default() }
+        });
+        match self.show.list3.as_deref() {
+            Some(l) if !l.is_empty() => {
+                tube.v3.submit(l);
+            }
+            _ => tube.v3.clear(),
+        }
+        let s = &mut tube.screen;
+        s.set_grid_size(Some(native));
+        s.set_rect(rect);
+        s.set_force_phosphor(true);
+        s.set_no_trails(looks.no_trails);
+        s.set_look(looks.look);
+        let vector3 = self.show.list3.is_some().then_some(&tube.v3);
+        s.update_vectors(&VectorScene { vector: self.show.vector.as_ref(), vector3, eye, caps: self.show.caps });
+        s.set_excluded(&self.show.excluded);
+        s.place(viewport);
+        let advance = match self.show.advance {
+            Some(a) => Some(a || s.needs_light()),
+            None => s.needs_light().then_some(true),
+        };
+        if let Some(advance) = advance {
+            let mut layers = Vec::new();
+            let mut extents = Vec::new();
+            for k in self.order.iter().filter(|k| self.show.light_slots.contains(&k.0)) {
+                if let (Some(l), Some(e)) = (self.layers.get(k), self.extents.get(k)) {
+                    layers.push(l.pixels());
+                    extents.push(&e[..]);
+                }
+            }
+            let ll = LightLayers {
+                layers,
+                width: picture.0 as usize,
+                height: picture.1 as usize,
+                origin: (local.0.max(0.0) as usize, local.1.max(0.0) as usize),
+                extents,
+            };
+            s.accumulate_with(viewport, advance, pool, Some(&ll));
+        }
+        s.take_damage(&mut self.damage);
+    }
+
+    /// The drivers' news: new files mapped; each layer's damage (picture
+    /// pixels).
+    fn take_updates(&mut self, updates: &[LayerUpdate], picture: (u32, u32)) -> Result<Vec<((u8, u8), IRect)>, String> {
         let mut out = Vec::new();
         for u in updates {
             let key = (u.slot, u.id);
@@ -187,6 +398,7 @@ impl Screen {
                     return Err(format!("slot {}: layer file {} is too small", u.slot, p.display()));
                 }
                 self.layers.insert(key, Layer { map, path: p.clone(), size: picture });
+                self.extents.remove(&key);
             }
             let in3d = self.scene && key == LAYER3;
             for d in &u.damage {
@@ -196,9 +408,8 @@ impl Screen {
                 }
                 if in3d {
                     self.top_changed = true;
-                } else {
-                    out.push(r);
                 }
+                out.push((key, r));
             }
             if in3d && u.path.is_some() {
                 self.top_changed = true;
@@ -207,8 +418,12 @@ impl Screen {
         Ok(out)
     }
 
-    /// The 3D layer, to go over a scene's panels.
+    /// The 3D layer, to go over a scene's panels (not in the phosphor
+    /// style: its scene's lines are the core's).
     fn top(&self) -> Option<LayerTop<'_>> {
+        if self.phosphor() {
+            return None;
+        }
         let l = self.layers.get(&LAYER3)?;
         let (x0, y0) = (self.image.area.x0, self.image.area.y0);
         Some(LayerTop { px: l.pixels(), width: l.size.0 as usize, origin: (x0, y0) })
@@ -252,7 +467,7 @@ struct Child {
 
 impl Child {
     fn image(&self) -> &Pixels {
-        self.scene.as_ref().map_or(&self.screen.image, |s| &s.image)
+        self.scene.as_ref().map_or(self.screen.image(), |s| &s.image)
     }
 }
 
@@ -287,6 +502,19 @@ pub struct Compositor {
     /// The host's notice (a slow device, `PERFORMANCE.md` R15): heading and
     /// two lines, drawn as the prompt is when no prompt is asked.
     pub notice: Option<(String, String, String)>,
+    /// How the phosphor style is drawn.
+    pub looks: Looks,
+    /// The system ink is shared (SPEC §machines.ink); off only for
+    /// measuring (`TERSE_SYSTEM_INK=off`, as terse-host).
+    pub system_ink: bool,
+    /// The machines (serials) that ran a frame since the last draw: their
+    /// afterglow moves on in the next.
+    ran: Vec<u32>,
+    /// The next draw draws every phosphor screen's beam again without
+    /// moving the afterglow on (`refresh`).
+    refresh: bool,
+    /// The shares of the system ink in the last draw.
+    pub shares: Shares,
 }
 
 /// The eye as the `core.eye` property.
@@ -308,9 +536,28 @@ fn view_bytes(v: &terse_core::vector3::SceneView) -> Vec<u8> {
     out
 }
 
+/// The ink caps as the `core.caps` property: empty for the devices' own.
+fn caps_bytes(c: Caps) -> Vec<u8> {
+    if c == Caps::FULL {
+        return Vec::new();
+    }
+    [c.ink2.to_le_bytes(), c.ink3.to_le_bytes()].concat()
+}
+
 /// What the terminal shows over its bottom row (`core.status`).
 fn status(m: &Machine<BusDevices>) -> String {
     m.fault().map_or(String::new(), |f| format!("fault: {f}"))
+}
+
+/// Whether the system ink is shared: not with `TERSE_SYSTEM_INK=off`.
+fn system_ink_on() -> bool {
+    std::env::var("TERSE_SYSTEM_INK").map_or(true, |v| v != "off")
+}
+
+/// The shares of the system ink (SPEC §machines.ink): terse-core's count,
+/// the 2D lists' ink from the vector driver's `vector.list`.
+pub fn shares(system: &System<BusDevices>) -> Shares {
+    system.shares_with(&|m, cap| m.devices().vector().map_or(0, |v| terse_core::vector::drawn_ink(v.list(), v.outlined(), cap)))
 }
 
 impl Compositor {
@@ -334,6 +581,11 @@ impl Compositor {
             glyphs: Some(terse_host::glyphs::TermGlyphs::builtin(terse_host::FONT_PX)),
             pixels_composed: 0,
             notice: None,
+            looks: Looks::default(),
+            system_ink: system_ink_on(),
+            ran: Vec::new(),
+            refresh: false,
+            shares: Shares::default(),
         }
     }
 
@@ -343,6 +595,32 @@ impl Compositor {
 
     pub fn eye(&self) -> Eye {
         self.eye
+    }
+
+    /// The machines (serials) that ran a frame since the last draw (from
+    /// the system frame's result): in the phosphor style their afterglow
+    /// moves on in the next draw, as terse-host's does each frame.
+    pub fn ran(&mut self, frame: &terse_core::SystemFrame, system: &System<BusDevices>) {
+        if frame.shell.is_some() {
+            self.ran.push(0);
+        }
+        for (h, _) in &frame.children {
+            if let Some(c) = system.child(*h) {
+                self.ran.push(c.serial);
+            }
+        }
+    }
+
+    /// The next draw draws the beams of what is shown now without moving
+    /// the afterglow on (a screenshot's last picture, as terse-host's
+    /// `refresh_beams`).
+    pub fn refresh(&mut self) {
+        self.refresh = true;
+    }
+
+    /// Whether any machine was shown in the phosphor style in the last draw.
+    pub fn any_phosphor(&self) -> bool {
+        self.shell.phosphor() || self.children.values().any(|c| c.screen.phosphor())
     }
 
     /// The frame drawn last.
@@ -365,6 +643,25 @@ impl Compositor {
         self.shell.screen_rect(self.native, viewport)
     }
 
+    /// How a machine is shown: its style, its lists (the 3D one only with
+    /// `lines`), its caps, whether a plate; and its drivers told what they
+    /// need to draw it (the eye, its status, light mode, the caps).
+    fn show(&self, serial: u32, d: &mut BusDevices, status: String, lines: Option<Vec<u8>>, share: Option<&terse_core::system_ink::Share>, excluded: Vec<[u16; 4]>) -> Result<Show, String> {
+        let plate = share.is_some_and(|s| s.plate);
+        let caps = Caps::of(share);
+        let vector = if plate { None } else { d.vector() };
+        let phosphor = !plate && (self.looks.force_phosphor || vector.as_ref().is_some_and(Vector::phosphor));
+        let advance = if self.refresh { Some(false) } else { self.ran.contains(&serial).then_some(true) };
+        if !plate {
+            d.set_property(property::EYE, &eye_bytes(self.eye))?;
+            d.set_property(property::STATUS, status.as_bytes())?;
+            d.set_property(property::LIGHT, &[phosphor as u8])?;
+            d.set_property(property::CAPS, &caps_bytes(caps))?;
+        }
+        let light_slots = if phosphor { d.light_slots() } else { Vec::new() };
+        Ok(Show { plate, phosphor, vector, list3: lines, caps, excluded, advance, light_slots })
+    }
+
     /// Draws the picture of `system` for `viewport` after a frame, with the
     /// consent prompt (the question, how many wait, the asking machine's
     /// title) if one is asked: each machine's drivers draw what changed,
@@ -380,38 +677,48 @@ impl Compositor {
             self.shell.cell = if w == self.native_cell() { 0 } else { w };
         }
         let shell_rect = self.shell.screen_rect(self.native, viewport);
+        // SPEC §machines.ink: each machine's share of the system's ink.
+        self.shares = if self.system_ink && system.is_system() { shares(system) } else { Shares::default() };
+        let shares = self.shares.clone();
         // With Screens in effect the shell's 3D lines are drawn over the
         // panels (SPEC §machines.screens); with its own Surfaces, over them (SPEC §vector3d.presentation).
         let scene = system.scene(eye);
-        let layers: Option<SceneLayers> = scene_layers(system, eye).or_else(|| surface_layers(system.shell(), eye, terse_core::vector3::INK_CAP));
+        let mut layers: Option<SceneLayers> = scene_layers(system, eye).or_else(|| surface_layers(system.shell(), eye, terse_core::vector3::INK_CAP));
+        plate_panels(&mut layers, &shares);
         let view = scene.as_ref().map_or_else(Vec::new, |s| view_bytes(&s.view));
-        // The properties the drivers draw with: the eye, the view, a fault.
+        // The properties the drivers draw with: the eye, the view, a fault,
+        // light mode.
         let shell = system.shell_mut();
         let st = status(shell);
+        let lines = layers.is_none().then(|| shell.list3().into_owned());
+        let excluded = layers.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
         let d = shell.devices_mut();
-        d.set_property(property::EYE, &eye_bytes(eye))?;
         d.set_property(property::VIEW, &view)?;
-        d.set_property(property::STATUS, st.as_bytes())?;
+        self.shell.show = self.show(0, d, st, lines, None, excluded)?;
         self.shell.scene = layers.is_some();
         // The pictures shown flat and the panels, with the machines'.
         let pictures = system.pictures();
         let panels: Vec<terse_core::vector3::Panel> = layers.as_ref().map_or_else(Vec::new, |l| l.panels.iter().filter(|p| !p.is_surface()).copied().collect());
         let mut keep = Vec::new();
         for (h, p) in &pictures {
+            let share = shares.of(*h).copied();
             let Some(child) = system.child_mut(*h) else { continue };
             let serial = child.serial;
             let Some(machine) = &mut child.machine else { continue };
             let rect = picture_rect(shell_rect, *p);
-            let own = surface_layers(machine, eye, terse_core::vector3::INK_CAP);
+            let plate = share.is_some_and(|s| s.plate);
+            let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !plate);
             let st = status(machine);
+            let lines = own.is_none().then(|| machine.list3().into_owned());
+            let excluded = own.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
             let d = machine.devices_mut();
-            d.set_property(property::EYE, &eye_bytes(eye))?;
-            d.set_property(property::STATUS, st.as_bytes())?;
+            let show = self.show(serial, d, st, lines, share.as_ref(), excluded)?;
             let c = self.children.entry(serial).or_insert_with(|| Child { handle: *h, serial, screen: Screen::new(d), panel: None, scene: None });
             c.panel = None;
             c.screen.rect = Some(rect);
             c.screen.cell = cell_width_for(rect);
             c.screen.scene = own.is_some();
+            c.screen.show = show;
             if SceneImage::update(&mut c.scene, own) {
                 self.damage.add(c.screen.area());
             }
@@ -419,17 +726,22 @@ impl Compositor {
         }
         let cap = (shell_rect.2 / COLS as f32).floor() as u32;
         for p in &panels {
+            let share = shares.of(p.handle).copied();
+            if share.is_some_and(|s| s.plate) {
+                continue; // a plate: no picture to make
+            }
             let Some(child) = system.child_mut(p.handle) else { continue };
             let serial = child.serial;
             let Some(machine) = &mut child.machine else { continue };
             let current = self.children.get(&serial).filter(|c| c.panel.is_some()).map(|c| c.screen.cell);
             let cw = panel_cell_width(panel_width_px(p, eye, shell_rect), cap, current);
             let size = (cw * COLS as u32, cw * COLS as u32 * 3 / 4);
-            let own = surface_layers(machine, eye, terse_core::vector3::INK_CAP);
+            let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3);
             let st = status(machine);
+            let lines = own.is_none().then(|| machine.list3().into_owned());
+            let excluded = own.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
             let d = machine.devices_mut();
-            d.set_property(property::EYE, &eye_bytes(eye))?;
-            d.set_property(property::STATUS, st.as_bytes())?;
+            let show = self.show(serial, d, st, lines, share.as_ref(), excluded)?;
             let c = self.children.entry(serial).or_insert_with(|| Child { handle: p.handle, serial, screen: Screen::new(d), panel: None, scene: None });
             if c.panel.is_none() || current != Some(cw) {
                 c.panel = Some(None);
@@ -437,6 +749,7 @@ impl Compositor {
             c.screen.rect = Some((0.0, 0.0, size.0 as f32, size.1 as f32));
             c.screen.cell = cw;
             c.screen.scene = own.is_some();
+            c.screen.show = show;
             if SceneImage::update(&mut c.scene, own)
                 && let Some(panel) = &mut c.panel
             {
@@ -448,6 +761,8 @@ impl Compositor {
         if SceneImage::update(&mut self.shell_scene, layers) {
             self.damage.add(self.shell.area());
         }
+        self.ran.clear();
+        self.refresh = false;
         self.overlay_rect = self.prompt(prompt, shell_rect, viewport);
         self.render(system, viewport)
     }
@@ -491,9 +806,9 @@ impl Compositor {
             self.damage.add_all();
             self.composed = (Vec::new(), IRect::EMPTY);
         }
-        let (eye, mode, native) = (self.eye, self.panel_mode, self.native);
+        let (eye, mode, native, looks) = (self.eye, self.panel_mode, self.native, self.looks);
         let none = HashMap::new();
-        self.shell.render(system.shell_mut().devices_mut(), native, viewport)?;
+        self.shell.render(system.shell_mut().devices_mut(), native, viewport, &self.pool, eye, &looks)?;
         let mut shell_damage = Damage::new(viewport);
         self.shell.take_damage(&mut shell_damage);
         // Each child's screen; panels in their own images, with a new
@@ -511,7 +826,7 @@ impl Compositor {
             let Some(panel) = &mut c.panel else { continue };
             let s = &mut c.screen;
             let size = (s.rect.unwrap().2 as u32, s.rect.unwrap().3 as u32);
-            s.render(m.devices_mut(), native, size)?;
+            s.render(m.devices_mut(), native, size, &self.pool, eye, &looks)?;
             let mut d = Damage::new(size);
             s.take_damage(&mut d);
             let mut changed = !d.is_empty();
@@ -520,10 +835,10 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = s.top();
-                changed = scene.refresh(&s.image, changed, &none, s.screen_rect(native, size), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top));
+                changed = scene.refresh(s.image(), changed, &none, s.screen_rect(native, size), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top));
             }
             if changed || panel.is_none() {
-                let image = c.scene.as_ref().map_or(&s.image, |sc| &sc.image);
+                let image = c.scene.as_ref().map_or(s.image(), |sc| &sc.image);
                 *panel = Some(Pyramid::build(image));
                 panels_changed = true;
             }
@@ -539,7 +854,7 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = self.shell.top();
-                if scene.refresh(&self.shell.image, !shell_damage.is_empty(), &pyramids, rect, eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
+                if scene.refresh(self.shell.image(), !shell_damage.is_empty(), &pyramids, rect, eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                     self.damage.add(scene.image.area);
                 }
             }
@@ -549,7 +864,7 @@ impl Compositor {
         for c in order.iter_mut() {
             let Some(m) = by_serial.get_mut(&c.serial) else { continue };
             let s = &mut c.screen;
-            s.render(m.devices_mut(), native, viewport)?;
+            s.render(m.devices_mut(), native, viewport, &self.pool, eye, &looks)?;
             match &mut c.scene {
                 None => s.take_damage(&mut self.damage),
                 Some(scene) => {
@@ -559,7 +874,7 @@ impl Compositor {
                         scene.stale = true;
                     }
                     let top = s.top();
-                    if scene.refresh(&s.image, !d.is_empty(), &none, s.screen_rect(native, viewport), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
+                    if scene.refresh(s.image(), !d.is_empty(), &none, s.screen_rect(native, viewport), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                         self.damage.add(scene.image.area);
                     }
                 }
@@ -584,7 +899,7 @@ impl Compositor {
             return Ok(&self.frame);
         }
         // Put the frame together, a tile row per thread.
-        let bottom = self.shell_scene.as_ref().map_or(&self.shell.image, |s| &s.image);
+        let bottom = self.shell_scene.as_ref().map_or(self.shell.image(), |s| &s.image);
         let screens: Vec<&Pixels> = std::iter::once(bottom).chain(order.iter().map(|c| c.image())).collect();
         let top = self.overlay.as_ref().map(|o| &o.screen.image);
         let rows = self.damage.rows();

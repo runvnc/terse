@@ -45,7 +45,7 @@ pub mod page;
 mod halo;
 #[cfg(feature = "gpu")]
 mod panels;
-mod phosphor;
+pub mod phosphor;
 #[cfg(test)]
 mod reference;
 #[cfg(feature = "gpu")]
