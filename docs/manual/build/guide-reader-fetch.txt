@@ -42,17 +42,16 @@ tersereader --relay ws://127.0.0.1:7878 show <id>
 
 ## Or let a node do the network
 
-If you would rather not write the WebSocket and hashing parts now, there is a shortcut. A node is a separate program that talks to relays, checks everything and keeps the store; your reader asks it over a local socket and trusts its answers. `tersereader node` is one:
+If you would rather not write the WebSocket and hashing parts now, there is a shortcut. A node is a separate program that talks to relays, checks everything and keeps the store; your reader asks it over a local socket and trusts its answers. Start the reference one, which finds your relay as the other `terse` commands do:
 
 ```
-tersereader relay add ws://127.0.0.1:7878
-tersereader node
+terse node
 ```
 
-The first command, needed once, tells it which relay to use. It listens on the Unix socket `$XDG_RUNTIME_DIR/terse/node.sock`. Each message there is its length (4 bytes, least significant first) and then its bytes. Send a Hello first (`20h`, a request number, a version byte 0 and a length byte 0), then the same Get as above. The node fetches from its relays, checks the blob and stores it; you only show it. A reader made this way needs no cryptography, no hash and no store; tersereader's own "thin" build is one. LOCAL.md has every message.
+It listens on the Unix socket `$XDG_RUNTIME_DIR/terse/node.sock` until you stop it with Ctrl-C. Each message there is its length (4 bytes, least significant first) and then its bytes. Send a Hello first (`20h`, a request number, a version byte 0 and a length byte 0), then the same Get as above. The node fetches from its relays, checks the blob and stores it; you only show it. A reader made this way needs no cryptography, no hash and no store; tersereader's own "thin" build is one. `tersereader node` is another node that answers the same messages. LOCAL.md has every message.
 
 ## What you have now
 
-A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:bf9f8979ed120b45f4fe721c50f4781fa18236d19735b35d8c0afed73b57f97d).
+A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:8b8ff30d72cea799c9d96b6eaa000dc17afb862b6a6f967c57829d59527ba34a).
 
 The relay's messages are in NETWORK.md section 3 and [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862).

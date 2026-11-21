@@ -26,7 +26,7 @@ terse feed publish hello.txt --title &quot;Hello&quot;</pre>
 <h2 id="check-the-signature">Check the signature</h2>
 <p>Verify each entry&#39;s Ed25519 signature before you keep it, and drop the entries that fail. Use a library, but note that an ordinary Ed25519 verify is not quite enough: Tersenet adds a few strict checks, listed in NETWORK.md section 4.2, and <code>vectors/entries.txt</code> holds a forged entry for each, which your reader must refuse.</p>
 <p>Then fetch the article each entry names (step 2) and list the titles, newest first: that is your timeline. Show each feed&#39;s key, or its first and last six hexadecimal digits, beside anything you show for it, since names are not unique.</p>
-<p>With a node (step 2), all of this is two messages: Subscribe (<code>25h</code>, with the feed&#39;s key as text) and Timeline (<code>22h</code>), whose entries the node has already checked.</p>
+<p>With a node (step 2), all of this is two messages: Subscribe (<code>25h</code>, with the feed&#39;s key as text) and Timeline (<code>22h</code>), whose entries the node has already checked. <code>terse node</code> keeps what you subscribe to with your other settings, so <code>terse feed subscriptions</code> lists it too.</p>
 <h2 id="compare-with-the-reference">Compare with the reference</h2>
 <p><code>tersereader</code> does the same, so you can check your timeline against it:</p>
 <pre>tersereader relay add ws&#58;//127.0.0.1:7878

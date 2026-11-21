@@ -522,6 +522,18 @@ Commands:
   program entry as `[program: <name>]`, a document entry as `[document: <name>]`.
 - `feed read <key> <seq>` prints the article, fetching it from `--relay` if it
   is not in the store. Control characters are replaced on output.
+- `node [--socket <path>]` (Unix only) runs a node for readers (LOCAL.md): it follows
+  your subscriptions on your relays as `feed sync --watch` does, with the same store,
+  config and options (`--relay`, `--auto-download`, `--no-prefetch`,
+  `--no-program-download`, `--no-feed-relays`), and serves a program that only shows
+  articles on a local socket: `--socket`, else `$TERSE_NODE_SOCKET`, else
+  `$XDG_RUNTIME_DIR/terse/node.sock` (else `/tmp/terse-<uid>/node.sock`), in a
+  directory only you can use. It refuses to start if a node already answers there,
+  replaces a stale socket file, and removes its socket when stopped (Ctrl-C or
+  SIGTERM). Subscriptions, nicknames and relays a reader changes through it are saved
+  in `--config`, as the other commands save them. `tersereader node`
+  (`native/reader-go`) is another node; the Go reader's thin build is a client of
+  either.
 
 Two users on one machine (each with their own store and config), with a relay
 running as in [Trying the relay locally](#trying-the-relay-locally):

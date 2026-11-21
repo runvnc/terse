@@ -7,8 +7,10 @@ Every part of Tersenet has a reference version in the sources, and each can be r
 Run a relay, `terse-relay --store try-relay`, and point your reader at `ws://127.0.0.1:7878`. Publish to it with `terse feed publish` (step 3 of the reader guide). Or let the reference node do the network and talk to it over its socket:
 
 ```
-tersereader node
+terse node
 ```
+
+`tersereader node` answers the same messages, so you can try your reader on both.
 
 ## Your core, the reference devices
 
@@ -45,7 +47,7 @@ native/core-c/tcore programs/hello/hello.terse --frames 30 \
 - The device bus needs Unix sockets and Linux's futexes: `terse-bus` and the drivers run on Linux only, and are not in the downloads.
 - `terse-host`, the windowed host of the downloads, has its devices built in and does not load drivers. To see a driver's machine in a window, use `terse-bus --window`.
 - A core finds drivers only in its own folder or through `--driver`. A folder of drivers per user, so that you could install a driver by copying it there, is a proposal in DEVICES.md section 14; nothing of it is built.
-- The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host's content device does not use it yet.
+- The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host's content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.
 
 ## What you have now
 
