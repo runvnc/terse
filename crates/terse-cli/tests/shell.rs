@@ -246,13 +246,32 @@ fn launcher_at_start() {
     assert_eq!(s.system.children().count(), 0);
     let launcher = s.launcher();
     assert!(
-        launcher.starts_with("PROGRAMS\n[Manual]{301}\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n"),
+        launcher.starts_with("PROGRAMS\n[Manual]{301}\n[reader]{100}\n[sparks]{101}\n[fetch]{102}\n[hello]{103}\n[sketch]{104}\n[holo]{105}\n[reports]{106}\n"),
         "{launcher}"
     );
     let page = s.system.shell().page().unwrap().region();
     assert_eq!((page.x, page.y, page.w), (160, 80, 320), "centred while there are no machines");
     assert!(page.h < 340, "as high as the launcher's text: {}", page.h);
     golden("launcher", &format!("{}-- launcher --\n{launcher}", s.dump()));
+}
+
+/// The reports aggregator (programs/reports, RECORD.md 5.4) is a built-in:
+/// the last in the launcher, started by its identity (the zero key and
+/// its title) like the others, and it runs.
+#[test]
+fn reports_is_a_built_in() {
+    let reports = Image::parse(builtin::PROGRAMS[6]).unwrap();
+    assert_eq!(reports.title, b"reports");
+    let script: String = (2..8).map(|f| format!("{f} press down\n")).collect::<String>() + "8 press enter\n";
+    let mut s = Sys::new(&script, Setup::default());
+    s.run(40);
+    assert_eq!((s.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "reports"));
+    let child = s.system.child(1).unwrap();
+    assert_eq!(child.identity, Some(ProgramId { publisher: [0; 32], name: b"reports".to_vec() }));
+    assert_eq!(s.machine(1).image_id(), &terse_net::blob_id(builtin::PROGRAMS[6]));
+    assert_eq!(s.system.focus(), 1);
+    assert!(s.bar().contains("1 reports"), "{}", s.bar());
+    assert!(s.machine(1).stopped().is_none());
 }
 
 /// The launcher's Manual entry (above the programs; the cursor starts on
