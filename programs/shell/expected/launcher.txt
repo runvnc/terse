@@ -37,5 +37,6 @@ PROGRAMS
 [hello]{103}
 [sketch]{104}
 [holo]{105}
+[reports]{106}
 Up, Down choose · Enter start · the home key comes back
 here

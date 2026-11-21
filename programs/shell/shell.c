@@ -1524,8 +1524,13 @@ static void refresh_auto(void)
     uint8_t changed = 0;
     for (uint8_t k = 0; k < MACH_MAX; k++) {
         mach_snapshot_info(MACH_AUTO_SLOT(1) + k, &r);
-        if (memcmp(&r, &auto_rec[k], sizeof r)) {
-            memcpy(&auto_rec[k], &r, sizeof r);
+        /* Another snapshot differs in when it was taken, its image or its
+         * name: compared by those fields (byte by byte, the whole record
+         * would cost some 2,000 units a read). */
+        mach_snapshot_record *o = &auto_rec[k];
+        if (r.present != o->present || r.frames != o->frames || r.time != o->time
+            || memcmp(r.image, o->image, 4) || r.name_len != o->name_len) {
+            memcpy(o, &r, sizeof r);
             changed = 1;
         }
     }
@@ -1920,7 +1925,6 @@ int main(void)
     layout_handle = record_load(&layout_req, "layout", 0, 2, layout_buf);
     /* A session kept from an earlier run is offered in the launcher. */
     sess_handle = record_load(&sess_req, "session", 0, SESSION_LEN, sess_buf);
-    refresh_auto();
     uint8_t last_state[MACH_MAX + 1] = { 0 };
     for (;;) {
         /* The programs of the followed feeds and their publishers' names,
