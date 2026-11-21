@@ -44,10 +44,10 @@ ARM64 computer from the last ten years (an Intel Core i5-6200U laptop,
 or a Raspberry Pi 5), with 4 GB of RAM and an SSD, and a GPU driver if
 the GPU renderer is used. Its single-thread speed is at worst about 2.5
 times slower than the reference machine's (5 GHz turbo against 2 GHz on
-the same Skylake core; the Pi 5's Cortex-A76 at 2.4 GHz is about as
-fast), its multi-thread speed about 6 times. Each ceiling is at least 3
-times the reference's time on one thread, and was checked by running
-`terse perf` on the reference restricted to 2 cores at 40 % each (§1.1).
+the same Skylake core; a Raspberry Pi 5 is in the same class), its
+multi-thread speed about 7 times. Each ceiling is at least 3 times its
+target, and was checked by running `terse perf` on the reference slowed
+to that floor (§1.1).
 
 **An implementation is expected to run `terse perf`**, or its
 equivalent, and pass: every requirement and every ceiling. A host or a
@@ -102,13 +102,36 @@ Every timed row of `terse perf` has a ceiling (C: fails on any machine)
 and a target (T: the reference machine's; fails only with `--strict`),
 judged on the median of its runs (`crates/terse-cli/src/perf.rs`, the
 `Limit` constants). "Reference" is the median measured on the reference
-machine (§3, 2026-11-21); "floor" the median with `terse perf` run on
-the reference restricted to 2 of its cores and 80 % of one core's time
-between them (`systemd-run --user --scope -p AllowedCPUs=0,1 -p
-CPUQuota=80%`: two cores at about 2 GHz each, throttled in 100 ms
-slices, which is harsher on latency than a real slow machine).
+machine (`terse perf --runs 5`, 2026-11-21, load average 1.2 to 2.6);
+"floor" the median with the same run on the reference slowed to the
+hardware floor: 2 of its cores and 40 % of one core's time between them,
+given in 1 ms slices (`systemd-run --user --scope -p AllowedCPUs=0,1 -p
+CPUQuota=40% -p CPUQuotaPeriodSec=1ms terse perf`), so one thread runs
+2.5 times slower (measured) and two threads 5 times: harsher than the
+floor wherever more than one thread works. Every requirement and every
+ceiling passed there too.
 
-FLOOR_TABLE
+| Limit | Rows | Ceiling | Target | Reference | Floor |
+|---|---|---|---|---|---|
+| A held article or the timeline, shown by a whole process | C2–C5, G2–G5 | 250 ms | 25 ms | 2.0–11.6 ms | 4.7–27.2 ms |
+| A feed of 50 entries synced from a local relay | C1, G1 | 2 s | 400 ms | 49 / 304 ms | 70 / 305 ms |
+| A key to what it shows, held, real-time loop | M7–M9 | 15 frames | 3 frames | 1–2 frames | 1–2 frames |
+| Host start to its first frame, software renderer | H1, H5 | 1.5 s | 50 ms | 19 / 19 ms | 48 / 57 ms |
+| The same, cold: a first run, terse-host not cached | H7 | 1.5 s | 100 ms | 63 ms (warm 20) | 62 ms (warm 55) |
+| The same, GPU renderer (the driver's start) | H8 | 1.5 s | 500 ms | 293 ms (276–1,102) | 1,178 ms (892–1,954) |
+| A worst frame of the host's drawing, 1 thread: fetch's slowest, conform's stress, the full repertoire's first, each W device row, the phosphor look shed | H2–H4, W | 4 frames (66.7 ms) | 1 frame (16.7 ms) | at most 15.6 ms (W all) | at most 46.6 ms (W all) |
+| 1,200 new CJK glyphs a frame from a listed font | H6 | 6 frames (100 ms) | 2 frames (33.3 ms) | 20.5 ms | 64.9 ms |
+| A shell and 8 machines, every device at its worst | W sys-* | 12 frames (200 ms) | 4 frames (66.7 ms) | 32–60 ms | 95–148 ms |
+
+Why these multiples. A ceiling must hold on the floor with room, and be
+low enough that a real fault crosses it: a wait for a relay's 10 s
+timeout, a scan of the system's fonts (a second or more on the
+reference before R11), a cap not enforced (the worst legal frames took
+up to a minute before R10). Start-up keeps the owner's 1.5 s: 3 to 30
+times the reference, and the GPU's start on the floor (1.2 s, the
+tightest row) still under it. A worst frame may take 4 frame times on
+one thread: the floor takes at most 47 ms (W "all"), and a missing cap
+costs far more. The system rows, 9 machines at their worst, get 12.
 
 **Targets tightened** (2026-11-21), each to a few times what the
 reference now measures: a held article or the timeline from a whole
@@ -202,35 +225,37 @@ perf`: on a busy machine they would fail for the wrong reason.
 ## 3. Targets on the reference machine
 
 Measured with `terse perf --runs 5` on the machine above, release build,
-2026-11-21, load average 12 (another build was running; rows H1, H2 and H4 to H6
-measured again after the fonts were built in, with --runs 3, load average 3 to 4): the median,
-with the lowest and highest run where there were several. Every
-requirement passed.
+2026-11-21, load average 1.2 to 2.6: the median, with the lowest and
+highest run. Every requirement, ceiling and target passed, also with
+`--strict`. The ceilings are in §1.1.
 
 | Id | Scenario | Measured | Target |
 |---|---|---|---|
-| M1a–c | held get (fetch's message): no relay / a connected relay / a relay that never answers | 1 frame each; the service answers in 0.1 ms / 7 ms / 0.07 ms; no relay asked | — (R6: 2 frames) |
-| M2 | get of a blob on a connected local relay | 1 Get; 6.2 ms; fetch's get done in 1 frame | — |
+| M1a–c | held get (fetch's message): no relay / a connected relay / a relay that never answers | 1 frame each; the service answers in 0.1 ms / 6 ms / 0.07 ms; no relay asked | — (R6: 2 frames) |
+| M2 | get of a blob on a connected local relay | 1 Get; 6.4 ms; fetch's get done in 1 frame | — |
 | M5 | shell start to the launcher on screen | 4 frames (the shell's own) | — |
 | M6 | Enter on fetch in the launcher to fetch's first frame | 1 frame | — (R9: 2 frames) |
-| M7 | Enter on fetch to its message on the screen | 2 frames (33 ms) | ≤ 6 frames |
-| M8, M9 | reader: M to the manual's index; Enter on a link to the article | 1 frame each | ≤ 6 frames |
+| M7 | Enter on fetch to its message on the screen | 2 frames (33 ms) | ≤ 3 frames |
+| M8, M9 | reader: M to the manual's index; Enter on a link to the article | 1 frame each | ≤ 3 frames |
 | M10 | conform-perf in the real-time loop | every line PASS: 1 frame, 1 frame, 60 60 60 60 frames a second | — |
-| C1 | `terse feed sync`: 50 entries and their articles | 59 ms; 1 Subscribe, 50 Get | ≤ 500 ms |
-| C2, C3 | `terse get` of a held article (the whole process); relay connected / never answering | 7.1 ms (6.9–8.0) / 6.6 ms | ≤ 50 ms |
-| C4 | `terse feed list`, relay never answering | 5.4 ms | ≤ 50 ms |
-| C5 | `terse get` of an article on a local relay | 7.9 ms (7.9–10.0); 1 Get | ≤ 50 ms |
-| G1 | `tersereader sync`: 50 entries and their articles | 303 ms; 1 Subscribe, 50 Get | ≤ 500 ms |
-| G2, G3 | `tersereader --dump` of a held article; relay connected / never answering | 12.2 ms (11.9–18.1) / 12.6 ms | ≤ 50 ms |
-| G4 | `tersereader list`, relay never answering | 12.3 ms | ≤ 50 ms |
-| G5 | the same through the Go node on the local socket: `--dump`, `list` | 1.9 ms (1.8–2.3), 2.6 ms | ≤ 50 ms |
-| H1 | `terse-host` start to hello's first frame drawn (software, offscreen) | 22 ms (20–28; before the built-in fonts: 202 ms, 150–513) | ≤ 500 ms |
-| H2 | fetch's slowest frame (its first Greek, Cyrillic and symbols, 50 ms after start) | 1.0 ms (before, its CJK and Hangul line: 102 ms) | ≤ 50 ms |
-| H4 | the first frame showing 2,400 glyphs of the full repertoire never drawn before, 1 thread (`term-full`) | 9.2 ms (the first frame of basic text, 90 glyphs: 4.4 ms) | ≤ 16.7 ms |
-| H5 | H1 with a 19 MB CJK collection listed as an extra font | 19 ms (19–21) | as H1 |
-| H6 | 1,200 CJK glyphs never drawn before, each frame, from that font, 1 thread (`term-cjk`) | p50 22 ms, max 26 ms | ≤ 16.7 ms |
-| H3 | programs/conform's stress frames 49–108 on the software renderer, 1 / 12 threads | p50 6.4 / 1.6 ms, max 8.7 / 2.3 ms (before the ink caps: p99 1,678 / 361 ms) | ≤ 16.7 ms |
-| W | each device's worst legal frame, and all of them at once (§4) | every cap held (PASS); 1 thread at most 6.5 ms a device, 15.8 ms all at once | ≤ 16.7 ms |
+| C1 | `terse feed sync`: 50 entries and their articles | 49 ms (47–54); 1 Subscribe, 50 Get | ≤ 400 ms |
+| C2, C3 | `terse get` of a held article (the whole process); relay connected / never answering | 7.0 ms (6.9–8.1) / 6.0 ms (5.9–6.0) | ≤ 25 ms |
+| C4 | `terse feed list`, relay never answering | 4.1 ms (4.0–4.4) | ≤ 25 ms |
+| C5 | `terse get` of an article on a local relay | 7.4 ms (6.9–8.0); 1 Get | ≤ 25 ms |
+| G1 | `tersereader sync`: 50 entries and their articles | 304 ms (304–306); 1 Subscribe, 50 Get | ≤ 400 ms |
+| G2, G3 | `tersereader --dump` of a held article; relay connected / never answering | 11.6 ms (11.0–16.6) / 10.2 ms | ≤ 25 ms |
+| G4 | `tersereader list`, relay never answering | 10.7 ms | ≤ 25 ms |
+| G5 | the same through the Go node on the local socket: `--dump`, `list` | 2.0 ms (1.7–2.1), 2.3 ms | ≤ 25 ms |
+| H1 | `terse-host` start to hello's first frame drawn (software, offscreen) | 19 ms (18–27; before the built-in fonts: 202 ms, 150–513) | ≤ 50 ms |
+| H7 | cold start: the built-in shell's first frame on a first run, terse-host not in the page cache (§1.1) | 63 ms (61–82); warm 20 ms | ≤ 100 ms |
+| H8 | H1 on the GPU renderer (RTX 2060, the driver's start) | 293 ms (276–1,102) | ≤ 500 ms |
+| H2 | fetch's slowest frame (its first Greek, Cyrillic and symbols, 50 ms after start) | 0.7 ms (before, its CJK and Hangul line: 102 ms) | ≤ 1 frame |
+| H4 | the first frame showing 2,400 glyphs of the full repertoire never drawn before, 1 thread (`term-full`) | 8.7 ms (the first frame of basic text, 90 glyphs: 4.4 ms) | ≤ 1 frame |
+| H5 | H1 with a 19 MB CJK collection listed as an extra font | 19 ms (18–32) | ≤ 50 ms |
+| H6 | 1,200 CJK glyphs never drawn before, each frame, from that font, 1 thread (`term-cjk`) | p50 20.5 ms, max 24 ms | ≤ 2 frames |
+| H3 | programs/conform's stress frames 49–108 on the software renderer, 1 / 12 threads | p50 6.3 / 1.6 ms, max 8.5 / 2.0 ms (before the ink caps: p99 1,678 / 361 ms) | ≤ 1 frame (p50) |
+| W | each device's worst legal frame, and all of them at once (§4) | every cap held (PASS); 1 thread at most 6.5 ms a device, 15.6 ms all at once | ≤ 1 frame (p50) |
+| W sys-* | a shell and 8 machines at their worst (§5) | 32 to 60 ms | ≤ 4 frames |
 
 The machine rows' milliseconds are those of the content service; the
 frames are what a program sees. Drawing times of the renderers for the

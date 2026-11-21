@@ -1928,7 +1928,7 @@ implementation, and gives the reference's numbers.
 it starts on ephemeral loopback ports (never 7878, never your own config, cache or
 data). Performance is specified in three tiers:
 
-- **requirements** (`R1`–`R13`): in frames, round trips or "never waits for a
+- **requirements** (`R1`–`R17`): in frames, round trips or "never waits for a
   relay", the same on any machine; PASS or FAIL;
 - **ceilings** (`C`): milliseconds (or frames) far above what a correct
   implementation takes on any reasonable computer (the floor assumed is a 2-core
@@ -1954,7 +1954,21 @@ that never answers, conform-perf's headless screen and hashes, a host's first fr
 waiting on nothing but its image, settings and listed fonts) are in `cargo test`;
 the timed ones are only in `terse perf`.
 
-README_NUMBERS
+On the reference machine (i7-10750H, 12 threads, 15 GB, RTX 2060; load average 1.2
+to 2.6; `terse perf --runs 5`, every requirement, ceiling and target passing, also
+with `--strict`): a held blob reaches a program in 1 frame, with or without relays,
+including one that never answers; a blob on a local relay in 1 Get (6 ms); a program
+the shell starts runs in the next frame; the reader opens a held article 1 frame after
+Enter; `terse get` of a held article takes 7 ms as a whole process and `tersereader
+--dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 304 ms (`tersereader`),
+with one Subscribe; `terse-host` draws its first frame 19 ms after it starts (63 ms
+cold, on a first run with the program not in the page cache; 293 ms on the GPU
+renderer, which starts the graphics driver); every device's worst legal frame takes
+at most 6.5 ms on one thread, all of them at once 15.6 ms. Slowed to the hardware
+floor (PERFORMANCE.md 1.1) every ceiling still passes, the closest the GPU start
+(1.2 s of 1.5). Fetch's first frame of CJK text used to take about a second, then 90
+ms with a font map built as the host started; the host now draws only with the fonts
+it loads at start and never looks for one.
 
 ## Measurements
 
