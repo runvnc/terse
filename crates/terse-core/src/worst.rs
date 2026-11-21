@@ -15,20 +15,30 @@ use crate::image::{DeviceReq, Image};
 const ROM: u32 = 0x0001_0000;
 const RAM: u32 = 0x0010_0000;
 
-/// A call of a frame: `a7`, `a0`–`a3`, and the address of the byte
-/// to store `(frame × 16) & F0h` at first (0: none).
+/// A call of a frame: `a7`, `a0`–`a3`, `a4` and `a5` (`more`), and the
+/// address of the byte to store `(frame × 16) & F0h` at first (0: none).
 #[derive(Clone, Copy, Debug)]
 pub struct Call {
     pub a7: u32,
     pub args: [u32; 4],
     pub poke: u32,
+    pub more: [u32; 2],
 }
 
 impl Call {
     pub fn new(a7: u32, args: [u32; 4]) -> Self {
-        Call { a7, args, poke: 0 }
+        Call { a7, args, poke: 0, more: [0; 2] }
+    }
+
+    /// A call with six arguments, `a0`–`a5`.
+    pub fn six(a7: u32, a: [u32; 6]) -> Self {
+        Call { a7, args: [a[0], a[1], a[2], a[3]], poke: 0, more: [a[4], a[5]] }
     }
 }
+
+/// Bytes of a call in the table: `a7`, `a0`, `a1`, `a2`, the poke, `a3`,
+/// `a4`, `a5`.
+const ENTRY: usize = 32;
 
 /// An image under construction: data blobs (copied to RAM at reset) and
 /// the calls of each frame of the cycle.
@@ -68,7 +78,7 @@ impl Builder {
         // ROM: code, table (K, K pointers, the entries), blobs.
         let table_at = code.len() as u32;
         let k = self.frames.len().max(1);
-        let entries_len: usize = self.frames.iter().map(|f| (f.len() + 1) * 24).sum::<usize>();
+        let entries_len: usize = self.frames.iter().map(|f| (f.len() + 1) * ENTRY).sum::<usize>();
         let blobs_at = (table_at as usize + 4 + 4 * k + entries_len).next_multiple_of(4) as u32;
         let addr = |v: u32| if v & 0x8000_0000 != 0 { RAM + blobs_at + (v & 0x7FFF_FFFF) } else { v };
         let mut rom = code;
@@ -77,16 +87,16 @@ impl Builder {
         let mut at = table_at + 4 + 4 * k as u32;
         for f in self.frames.iter().chain((self.frames.is_empty()).then_some(&Vec::new())) {
             table.extend_from_slice(&(RAM + at).to_le_bytes());
-            at += (f.len() as u32 + 1) * 24;
+            at += (f.len() + 1) as u32 * ENTRY as u32;
         }
         for f in self.frames.iter().chain((self.frames.is_empty()).then_some(&Vec::new())) {
             for c in f {
-                let words = [c.a7, addr(c.args[0]), addr(c.args[1]), addr(c.args[2]), addr(c.poke), addr(c.args[3])];
+                let words = [c.a7, addr(c.args[0]), addr(c.args[1]), addr(c.args[2]), addr(c.poke), addr(c.args[3]), addr(c.more[0]), addr(c.more[1])];
                 for w in words {
                     table.extend_from_slice(&w.to_le_bytes());
                 }
             }
-            table.extend_from_slice(&[0; 24]);
+            table.extend_from_slice(&[0; ENTRY]);
         }
         rom.extend_from_slice(&table);
         while rom.len() < blobs_at as usize {
@@ -122,6 +132,8 @@ const A0: u32 = 10;
 const A1: u32 = 11;
 const A2: u32 = 12;
 const A3: u32 = 13;
+const A4: u32 = 14;
+const A5: u32 = 15;
 const A7: u32 = 17;
 
 fn i_type(imm: i32, rs1: u32, f3: u32, rd: u32, op: u32) -> u32 {
@@ -204,8 +216,10 @@ fn code() -> Vec<u8> {
     w.push(lw(A1, T0, 8));
     w.push(lw(A2, T0, 12));
     w.push(lw(A3, T0, 20));
+    w.push(lw(A4, T0, 24));
+    w.push(lw(A5, T0, 28));
     w.push(ECALL);
-    w.push(addi(T0, T0, 24));
+    w.push(addi(T0, T0, ENTRY as i32));
     w.push(j_type((entry as i32 - w.len() as i32) * 4, 0));
     let done = w.len();
     w[to_done] = b_type((done as i32 - to_done as i32) * 4, 0, A7, 0);
@@ -417,7 +431,7 @@ fn vector_image(title: &str, list: &List, setup: &[Call]) -> Vec<u8> {
     let mut b = Builder::new();
     let l = b.blob(&list.0);
     let mut calls = setup.to_vec();
-    calls.push(Call { a7: V_SUBMIT, args: [l, list.len() as u32, 0, 0], poke: at(l, 1) });
+    calls.push(Call { a7: V_SUBMIT, args: [l, list.len() as u32, 0, 0], poke: at(l, 1), more: [0; 2] });
     b.frame(calls);
     b.build(title, &[d(2), d(3)])
 }
@@ -427,7 +441,7 @@ fn vector3_image(title: &str, list: &List, setup: &[Call]) -> Vec<u8> {
     let mut b = Builder::new();
     let l = b.blob(&list.0);
     let mut calls = setup.to_vec();
-    calls.push(Call { a7: V3_SUBMIT, args: [l, list.len() as u32, 0, 0], poke: at(l, 1) });
+    calls.push(Call { a7: V3_SUBMIT, args: [l, list.len() as u32, 0, 0], poke: at(l, 1), more: [0; 2] });
     b.frame(calls);
     b.build(title, &[d(2), d(9)])
 }
@@ -737,12 +751,27 @@ pub fn points_behind_faces_3d(faces: usize) -> List {
 /// page's smallest text scrolled, rectangles up to the 2D ink cap (the costliest per unit), and points
 /// up to the 3D caps behind 256 faces.
 fn combined_scenario() -> Scenario {
+    Scenario {
+        id: "all",
+        what: "every device at its worst at once: terminal, page, 2D rectangles, 3D points behind faces",
+        image: combined_image(),
+    }
+}
+
+/// The image of [`combined_scenario`]: a machine's worst frame.
+pub fn combined_image() -> Vec<u8> {
     let mut b = Builder::new();
+    combined_frames(&mut b, &points_behind_faces_3d(256), &[], &[]);
+    b.build("w-all", &[d(2), d(3), d(7), d(9)])
+}
+
+/// The 8 frames of every device at its worst, with `l3` as the 3D list,
+/// `first` calls in the first frame and `each` in every frame.
+fn combined_frames(b: &mut Builder, l3: &List, first: &[Call], each: &[Call]) {
     let doc = page_doc();
     let p = b.blob(&doc);
     let l2 = rects_2d();
     let v2 = b.blob(&l2.0);
-    let l3 = points_behind_faces_3d(256);
     let v3 = b.blob(&l3.0);
     for f in 0..8u32 {
         let text: Vec<u8> = (0..2400u32).map(|i| b'!' + ((i + f) % 90) as u8).collect();
@@ -751,22 +780,103 @@ fn combined_scenario() -> Scenario {
         if f == 0 {
             calls.push(Call::new(0x702, [0, 0, 640, 480]));
             calls.push(Call::new(0x700, [p, doc.len() as u32, 0, 0]));
+            calls.extend_from_slice(first);
         }
+        calls.extend_from_slice(each);
         calls.extend([
             Call::new(0x703, [f * 37, 0, 0, 0]),
             Call::new(0x202, [0, 0, 0, 0]),
             Call::new(0x204, [9 + f, 232 + f, 0, 0]),
             Call::new(0x200, [t, 2400, 0, 0]),
-            Call { a7: V_SUBMIT, args: [v2, l2.len() as u32, 0, 0], poke: at(v2, 1) },
-            Call { a7: V3_SUBMIT, args: [v3, l3.len() as u32, 0, 0], poke: at(v3, 1) },
+            Call { a7: V_SUBMIT, args: [v2, l2.len() as u32, 0, 0], poke: at(v2, 1), more: [0; 2] },
+            Call { a7: V3_SUBMIT, args: [v3, l3.len() as u32, 0, 0], poke: at(v3, 1), more: [0; 2] },
         ]);
         b.frame(calls);
     }
-    Scenario {
-        id: "all",
-        what: "every device at its worst at once: terminal, page, 2D rectangles, 3D points behind faces",
-        image: b.build("w-all", &[d(2), d(3), d(7), d(9)]),
+}
+
+// ------------------------------------------------------------ systems
+
+/// How a system scenario's shell shows its machines (PERFORMANCE.md R11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// Tiles of a 3 × 3 grid, 213 × 160 units each.
+    Tiles,
+    /// Every picture over the whole screen.
+    Overlap,
+    /// Every machine a panel of the whole screen in the shell's 3D scene,
+    /// each a little behind the one before.
+    Panels,
+    /// One picture `w` units wide at the top left.
+    Scaled(u16),
+}
+
+const M_START: u32 = 0x800;
+const M_PLACE: u32 = 0x802;
+const M_BUILTIN: u32 = 0x806;
+
+/// A shell that draws its own worst frame (every device at its cap, as
+/// [`combined_image`]) and starts `n` machines (1 to 8) of the host's
+/// built-in program number `child` (an image the host was given with
+/// `terse-host --builtin`, such as [`combined_image`]), shown in `layout`.
+pub fn system_shell(layout: Layout, n: u8, child: u32) -> Vec<u8> {
+    let mut b = Builder::new();
+    let id = b.blob(&[0; 32]);
+    let mut first = vec![Call::new(M_BUILTIN, [child, id, 0, 0])];
+    first.extend((0..n).map(|_| Call::new(M_START, [id, 0, 0, 0])));
+    let mut each = Vec::new();
+    for h in 1..=n as u32 {
+        let (x, y, w, ht) = match layout {
+            Layout::Tiles => (((h - 1) % 3) * 213, ((h - 1) / 3) * 160, 213, 160),
+            Layout::Overlap => (0, 0, 640, 480),
+            Layout::Panels => (0, 0, 0, 0),
+            Layout::Scaled(w) => (0, 0, w as u32, w as u32 * 3 / 4),
+        };
+        each.push(Call::six(M_PLACE, [h, x, y, w, ht, 0]));
     }
+    // The shell's 3D list: points behind faces, as a machine's worst; with
+    // panels, a Screen of each machine before them (a Screen is a face).
+    let l3 = match layout {
+        Layout::Panels => {
+            // A Translate first: its x is what moves every frame.
+            let mut l = List::default();
+            l.op(0x09).u16(0).u16(0).u16(0);
+            for h in 1..=n {
+                l.op(0x07).op(0x09).i16(5120).i16(3840).i16(16 * 8 * h as i16);
+                l.op(0x0D).u8(h).u16(10_240).op(0x08);
+            }
+            let rest = points_behind_faces_3d(256 - n as usize);
+            let room = 16_384 - l.len();
+            l.0.extend_from_slice(&rest.0[..rest.len().min(room)]);
+            l
+        }
+        _ => points_behind_faces_3d(256),
+    };
+    combined_frames(&mut b, &l3, &first, &each);
+    b.build("w-shell", &[d(2), d(3), d(7), d(8), d(9)])
+}
+
+/// A system scenario: its shell and the image of its machines.
+pub struct SystemScenario {
+    pub id: &'static str,
+    pub what: &'static str,
+    pub shell: Vec<u8>,
+    pub child: Vec<u8>,
+}
+
+/// The worst systems (PERFORMANCE.md R11): a shell at its worst with 8
+/// machines at theirs, tiled, overlapping and as panels. `builtins`: how
+/// many built-in programs the host has before the child image.
+pub fn system_scenarios(builtins: u32) -> Vec<SystemScenario> {
+    let child = combined_image();
+    [
+        ("sys-tiles", "a shell and 8 machines in a 3 x 3 grid, each with every device at its worst", Layout::Tiles),
+        ("sys-overlap", "a shell and 8 machines each over the whole screen, every device at its worst", Layout::Overlap),
+        ("sys-panels", "a shell and 8 machines as panels of the whole screen, every device at its worst", Layout::Panels),
+    ]
+    .into_iter()
+    .map(|(id, what, layout)| SystemScenario { id, what, shell: system_shell(layout, 8, builtins), child: child.clone() })
+    .collect()
 }
 
 #[cfg(test)]

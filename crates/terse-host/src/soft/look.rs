@@ -93,7 +93,7 @@ impl Renderer {
         let mut v = Vector::default();
         v.submit(list);
         v.set_style(phosphor as u32);
-        let scene = VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) };
+        let scene = VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL };
         match self {
             Renderer::Soft => {
                 let pool = Pool::new(4);

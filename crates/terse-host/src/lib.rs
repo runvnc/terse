@@ -489,6 +489,24 @@ fn displayed_terminal(machine: &Machine) -> std::borrow::Cow<'_, Terminal> {
     Cow::Owned(t)
 }
 
+/// The machines' shares of the system's ink (SPEC §machines.ink).
+/// `TERSE_SYSTEM_INK=off` draws every machine within its own caps only,
+/// as before the rule (for measuring what the rule bounds; not
+/// conforming).
+fn system_shares(system: &System) -> terse_core::system_ink::Shares {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("TERSE_SYSTEM_INK").is_ok_and(|v| v == "off")) {
+        return Default::default();
+    }
+    system.shares()
+}
+
+/// The terminal a machine the shell shows draws: [`displayed_terminal`], or
+/// a blank one when its picture is a plate (SPEC §machines.ink).
+fn shown_terminal<'a>(machine: &'a Machine, share: Option<&terse_core::system_ink::Share>) -> std::borrow::Cow<'a, Terminal> {
+    if share.is_some_and(|s| s.plate) { std::borrow::Cow::Owned(Terminal::default()) } else { displayed_terminal(machine) }
+}
+
 #[cfg(feature = "window")]
 /// Ends the process after a fault by signal SIGTERM, as `terse run` does,
 /// so that no exit code can be mistaken for it.

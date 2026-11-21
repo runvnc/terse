@@ -49,7 +49,9 @@ use crate::display::{
     picture_rect, scene_layers, surface_layers, system_rect,
 };
 use crate::page::HostLayout;
-use crate::{consent, displayed_terminal};
+use crate::{consent, displayed_terminal, shown_terminal};
+use crate::display::Caps;
+use terse_core::system_ink::Share;
 
 /// Where finished frames go: a window (softbuffer), or later a KMS/DRM
 /// display of the bootable image.
@@ -330,8 +332,11 @@ impl Display for SoftScreens {
         // With Screens in effect the shell's 3D lines are drawn over the
         // panels, not in its own screen (SPEC §machines.screens); with its own
         // Surfaces, over them (SPEC §vector3d.presentation).
-        let layers = scene_layers(system, eye).or_else(|| surface_layers(shell, eye));
-        show(&mut self.shell, shell, layout(0), eye, layers.is_none());
+        // SPEC §machines.ink: each machine's share of the system's ink.
+        let shares = crate::system_shares(system);
+        let mut layers = scene_layers(system, eye).or_else(|| surface_layers(shell, eye, terse_core::vector3::INK_CAP));
+        crate::display::plate_panels(&mut layers, &shares);
+        show(&mut self.shell, shell, layout(0), eye, layers.is_none(), None);
         self.shell.set_excluded(layers.as_ref().map_or(&[][..], |l| &l.rects));
         self.shell.place(viewport);
         if ran.contains(&0) {
@@ -349,6 +354,7 @@ impl Display for SoftScreens {
             s
         };
         for (h, p) in system.pictures() {
+            let share = shares.of(h).copied();
             let Some(child) = system.child(h) else { continue };
             let Some(machine) = &child.machine else { continue };
             let rect = picture_rect(shell_rect, p);
@@ -361,11 +367,11 @@ impl Display for SoftScreens {
                 scene: None,
             });
             c.panel = None;
-            let own = surface_layers(machine, eye);
+            let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !share.is_some_and(|s| s.plate));
             let s = &mut c.screen;
             s.set_rect(Some(rect));
-            s.update(&displayed_terminal(machine));
-            show(s, machine, layout(child.serial), eye, own.is_none());
+            s.update(&shown_terminal(machine, share.as_ref()));
+            show(s, machine, layout(child.serial), eye, own.is_none(), share.as_ref());
             s.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
             s.place(viewport);
             if fresh || ran.contains(&child.serial) {
@@ -381,6 +387,10 @@ impl Display for SoftScreens {
             let cap = (shell_rect.2 / terse_core::COLS as f32).floor() as u32;
             for p in layers.panels.iter().filter(|p| !p.is_surface()) {
                 let Some(child) = system.child(p.handle) else { continue };
+                let share = shares.of(p.handle).copied();
+                if share.is_some_and(|s| s.plate) {
+                    continue; // drawn as a plate: no picture to make
+                }
                 let Some(machine) = &child.machine else { continue };
                 let fresh = !self.children.contains_key(&child.serial);
                 let current = self.children.get(&child.serial).filter(|c| c.panel.is_some()).map(|c| c.screen.screen_rect((0, 0)).2 as u32 / terse_core::COLS as u32);
@@ -397,11 +407,11 @@ impl Display for SoftScreens {
                 if c.panel.is_none() {
                     c.panel = Some(PanelImage { pyramid: None });
                 }
-                let own = surface_layers(machine, eye);
+                let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !share.is_some_and(|s| s.plate));
                 let s = &mut c.screen;
                 s.set_rect(Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
-                s.update(&displayed_terminal(machine));
-                show(s, machine, layout(child.serial), eye, own.is_none());
+                s.update(&shown_terminal(machine, share.as_ref()));
+                show(s, machine, layout(child.serial), eye, own.is_none(), share.as_ref());
                 s.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
                 s.place(size);
                 if fresh || resized || ran.contains(&child.serial) {
@@ -493,8 +503,16 @@ impl Display for SoftScreens {
 
 /// A machine's vector list and page to its screen; its 3D list only with
 /// `lines` (drawn over the panels when Screens or Surfaces are in effect).
-fn show(s: &mut SoftScreen, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool) {
-    s.update_vectors(&VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye });
+/// `share`: a machine's share of the system's ink (SPEC §machines.ink): its
+/// lists' caps, or a plate, nothing of its screen drawn.
+fn show(s: &mut SoftScreen, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool, share: Option<&Share>) {
+    let caps = Caps::of(share);
+    if share.is_some_and(|s| s.plate) {
+        s.update_vectors(&VectorScene { vector: None, vector3: None, eye, caps });
+        s.update_page(None, None);
+        return;
+    }
+    s.update_vectors(&VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye, caps });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));
     s.update_page(machine.page(), layout);
 }
@@ -534,7 +552,7 @@ mod tests {
     /// Brings `s` up to date and draws it; returns the damage.
     fn show(s: &mut SoftScreen, t: &Terminal, v: &Vector, pool: &Pool) -> Damage {
         s.update(t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(v), vector3: None, eye: (0.0, 0.0) });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
         s.update_page(None, None);
         s.render(VIEWPORT, pool);
         let mut d = Damage::new(VIEWPORT);
@@ -689,7 +707,7 @@ mod tests {
         let mut v3 = Vector3::default();
         let show3 = |s: &mut SoftScreen, v3: &Vector3, eye: (f32, f32)| {
             s.update(&t);
-            s.update_vectors(&VectorScene { vector: Some(&v), vector3: Some(v3), eye });
+            s.update_vectors(&VectorScene { vector: Some(&v), vector3: Some(v3), eye, caps: Caps::FULL });
             s.update_page(None, None);
             s.render(VIEWPORT, &pool);
             let mut d = Damage::new(VIEWPORT);
@@ -740,7 +758,7 @@ mod tests {
         v.set_persistence(200);
         let mut s = SoftScreen::new(Box::new(Blocks(8)));
         s.update(&t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
         s.update_page(None, None);
         s.accumulate(VIEWPORT, true, &pool);
         let lit = |s: &SoftScreen| s.image.data.iter().filter(|&&p| p != 0).count();
@@ -750,7 +768,7 @@ mod tests {
         t.command(0x01);
         t.command(0x06);
         s.update(&t);
-        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0) });
+        s.update_vectors(&crate::display::VectorScene { vector: Some(&v), vector3: None, eye: (0.0, 0.0), caps: Caps::FULL });
         s.accumulate(VIEWPORT, true, &pool);
         let fading = lit(&s);
         assert!(fading > 0, "an afterglow");

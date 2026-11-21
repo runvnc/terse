@@ -27,7 +27,9 @@ use crate::page::HostLayout;
 use crate::panels::{PANEL_FORMAT, PanelPipeline, PanelQuads, PanelTexture, Quad};
 use crate::renderer::{Renderer, Shaders};
 use crate::vectors::VectorLayer;
-use crate::{consent, displayed_terminal};
+use crate::{consent, shown_terminal};
+use crate::display::Caps;
+use terse_core::system_ink::Share;
 
 /// A machine the shell started, as shown: flat, or as a panel with its
 /// texture, which is drawn again when the machine ran a frame.
@@ -119,10 +121,11 @@ const SETTLE: u8 = 30;
 /// and the page's layout, and the eye if it has a 3D list; the same
 /// digest, the same picture (but for the phosphor style's afterglow and
 /// the page's scroll animation).
-fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>, eye: Eye) -> u64 {
+fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>, eye: Eye, share: Option<&Share>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    let t = displayed_terminal(machine);
+    share.map(|s| (s.plate, s.cap2, s.cap3.to_bits())).hash(&mut h);
+    let t = shown_terminal(machine, share);
     t.cell_bytes().hash(&mut h);
     t.palette().hash(&mut h);
     (t.cursor(), t.cursor_visible()).hash(&mut h);
@@ -164,6 +167,7 @@ fn update_surfaced(
     slot: &mut Option<Surfaced>,
     layers: Option<SceneLayers>,
     machine: &Machine,
+    share: Option<&Share>,
     layout: Option<Arc<HostLayout>>,
     glass: (f32, f32, f32, f32),
     format: wgpu::TextureFormat,
@@ -202,9 +206,9 @@ fn update_surfaced(
     }
     let r = &mut s.renderer;
     r.set_rect(make.device, Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
-    r.update(make.queue, &displayed_terminal(machine));
-    let d = digest(machine, &layout, (0.0, 0.0));
-    show(r, make.queue, machine, layout, make.eye, false);
+    r.update(make.queue, &shown_terminal(machine, share));
+    let d = digest(machine, &layout, (0.0, 0.0), share);
+    show(r, make.queue, machine, layout, make.eye, false, share);
     if d != s.shown.0 {
         s.shown = (d, SETTLE);
     }
@@ -324,7 +328,7 @@ impl Screens {
             // multiple of the native grid.
             self.shell.set_rect(device, Some(system_rect(viewport)));
         }
-        let shown = displayed_terminal(shell);
+        let shown = crate::displayed_terminal(shell);
         match &prompt {
             Some((p, waiting, title)) => {
                 self.shell.update(queue, &consent::with_prompt(&shown, title, p, *waiting));
@@ -340,12 +344,15 @@ impl Screens {
         // panels, not in its own screen (SPEC §machines.screens); with Surfaces, over
         // them (SPEC §vector3d.presentation). The shell's Surfaces are then among the
         // scene's panels, or drawn over its glass on their own.
-        let layers = scene_layers(system, eye);
+        // SPEC §machines.ink: each machine's share of the system's ink.
+        let shares = crate::system_shares(system);
+        let mut layers = scene_layers(system, eye);
+        crate::display::plate_panels(&mut layers, &shares);
         let shell_surfaces = match &layers {
             Some(l) => l.has_surfaces().then(|| l.clone()),
-            None => surface_layers(shell, eye),
+            None => surface_layers(shell, eye, terse_core::vector3::INK_CAP),
         };
-        show(&mut self.shell, queue, shell, layout(0), eye, layers.is_none() && shell_surfaces.is_none());
+        show(&mut self.shell, queue, shell, layout(0), eye, layers.is_none() && shell_surfaces.is_none(), None);
         self.shell.set_excluded(shell_surfaces.as_ref().map_or(&[][..], |l| &l.rects));
         // Every screen's phosphor light of this frame, in one submission
         // (none if no screen is in the phosphor style).
@@ -379,8 +386,9 @@ impl Screens {
         let surface_renderer = |width: u32| fresh_renderer(PANEL_FORMAT, width);
         let mut make =
             Make { device, queue, shaders: &shaders, pipelines: &mut self.pipelines, renderer: &surface_renderer, eye };
-        update_surfaced(&mut self.shell_surfaced, shell_surfaces, shell, layout(0), shell_rect, self.format, ran.contains(&0), &mut make);
+        update_surfaced(&mut self.shell_surfaced, shell_surfaces, shell, None, layout(0), shell_rect, self.format, ran.contains(&0), &mut make);
         for (h, p) in system.pictures() {
+            let share = shares.of(h).copied();
             let Some(child) = system.child(h) else { continue };
             let Some(machine) = &child.machine else { continue };
             let rect = picture_rect(shell_rect, p);
@@ -396,17 +404,17 @@ impl Screens {
                 r.set_clears(false);
                 Shown { handle: h, renderer: r, panel: None, shown: (0, 0), surfaced: None }
             });
-            let own = surface_layers(machine, eye);
+            let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !share.is_some_and(|s| s.plate));
             let r = &mut c.renderer;
             r.set_rect(device, Some(rect));
-            r.update(queue, &displayed_terminal(machine));
-            show(r, queue, machine, layout(child.serial), eye, own.is_none());
+            r.update(queue, &shown_terminal(machine, share.as_ref()));
+            show(r, queue, machine, layout(child.serial), eye, own.is_none(), share.as_ref());
             r.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
             if fresh || ran.contains(&child.serial) {
                 light(r, viewport);
             }
             let ran_now = fresh || ran.contains(&child.serial);
-            update_surfaced(&mut c.surfaced, own, machine, layout(child.serial), rect, format, ran_now, &mut make);
+            update_surfaced(&mut c.surfaced, own, machine, share.as_ref(), layout(child.serial), rect, format, ran_now, &mut make);
             keep.push(child.serial);
         }
         // The panels: each machine drawn into a texture of the size its
@@ -415,6 +423,10 @@ impl Screens {
             let cap = (shell_rect.2 / terse_core::COLS as f32).floor() as u32;
             for p in layers.panels.iter().filter(|p| !p.is_surface()) {
                 let Some(child) = system.child(p.handle) else { continue };
+                let share = shares.of(p.handle).copied();
+                if share.is_some_and(|s| s.plate) {
+                    continue; // drawn as a plate: no texture to draw
+                }
                 let Some(machine) = &child.machine else { continue };
                 if self.children.get(&child.serial).is_some_and(|c| c.panel.is_none()) {
                     self.children.remove(&child.serial);
@@ -433,13 +445,13 @@ impl Screens {
                 if resized {
                     c.panel = Some((pipeline.texture(device, size), true));
                 }
-                let own = surface_layers(machine, eye);
+                let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !share.is_some_and(|s| s.plate));
                 let r = &mut c.renderer;
                 r.set_rect(device, Some((0.0, 0.0, size.0 as f32, size.1 as f32)));
-                r.update(queue, &displayed_terminal(machine));
+                r.update(queue, &shown_terminal(machine, share.as_ref()));
                 let shown_layout = layout(child.serial);
-                let d = digest(machine, &shown_layout, eye);
-                show(r, queue, machine, shown_layout.clone(), eye, own.is_none());
+                let d = digest(machine, &shown_layout, eye, share.as_ref());
+                show(r, queue, machine, shown_layout.clone(), eye, own.is_none(), share.as_ref());
                 r.set_excluded(own.as_ref().map_or(&[][..], |l| &l.rects));
                 // Drawn again only when what it shows changed (or glows).
                 if d != c.shown.0 {
@@ -455,7 +467,7 @@ impl Screens {
                     }
                 }
                 let ran_now = fresh || ran.contains(&child.serial);
-                update_surfaced(&mut c.surfaced, own, machine, shown_layout, (0.0, 0.0, size.0 as f32, size.1 as f32), PANEL_FORMAT, ran_now, &mut make);
+                update_surfaced(&mut c.surfaced, own, machine, share.as_ref(), shown_layout, (0.0, 0.0, size.0 as f32, size.1 as f32), PANEL_FORMAT, ran_now, &mut make);
                 keep.push(child.serial);
             }
         }
@@ -532,7 +544,11 @@ impl Screens {
                     self.children.values().find(|c| c.handle == p.handle).and_then(|c| c.panel.as_ref()).map(|(t, _)| t)
                 }
             };
-            let drawn: Vec<(Quad, &PanelTexture)> = layers.panels.iter().filter_map(|p| Some((Quad::panel(p), texture(p)?))).collect();
+            // A panel seen from behind (or a plate, SPEC §machines.ink) samples
+            // no texture: any one is bound for it.
+            let any = layers.panels.iter().find_map(|p| texture(p));
+            let drawn: Vec<(Quad, &PanelTexture)> =
+                layers.panels.iter().filter_map(|p| Some((Quad::panel(p), texture(p).or(any.filter(|_| !p.front))?))).collect();
             let mut quads: Vec<(Quad, &PanelTexture)> = match drawn.first() {
                 Some(&(_, any)) => layers.rects.iter().map(|&r| (Quad::black(r), any)).collect(),
                 None => Vec::new(),
@@ -578,8 +594,16 @@ fn scissor(rect: (f32, f32, f32, f32), viewport: (u32, u32)) -> Option<(u32, u32
 /// Uploads a machine's vector list and page to its renderer; its 3D list
 /// only with `lines` (the shell's goes over the panels when Screens are in
 /// effect, any machine's over its Surfaces).
-fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool) {
-    r.update_vectors(queue, &VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye });
+/// `share`: a machine's share of the system's ink (SPEC §machines.ink): its
+/// lists' caps, or a plate, nothing of its screen drawn.
+fn show(r: &mut Renderer, queue: &wgpu::Queue, machine: &Machine, layout: Option<Arc<HostLayout>>, eye: Eye, lines: bool, share: Option<&Share>) {
+    let caps = Caps::of(share);
+    if share.is_some_and(|s| s.plate) {
+        r.update_vectors(queue, &VectorScene { vector: None, vector3: None, eye, caps });
+        r.update_page(None, None);
+        return;
+    }
+    r.update_vectors(queue, &VectorScene { vector: machine.vector(), vector3: machine.vector3().filter(|_| lines), eye, caps });
     let layout = layout.filter(|_| machine.page().is_some_and(|p| p.document().is_some()));
     r.update_page(machine.page(), layout);
 }

@@ -832,6 +832,34 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
             },
         });
     }
+    // R11: a shell and 8 machines, each at its worst, tiled, overlapping
+    // and as panels, with the system ink (SPEC §machines.ink) and without.
+    let all = image("all.terse", &terse_core::worst::combined_image())?;
+    let all = all.to_string_lossy().into_owned();
+    for s in terse_core::worst::system_scenarios(builtin::PROGRAMS.len() as u32) {
+        let img = image(&format!("{}.terse", s.id), &s.shell)?;
+        let mut p50 = |off: bool| -> Result<f64, String> {
+            let mut v = Vec::new();
+            for _ in 0..runs {
+                let mut c = bench(&img, &["--shell", "--builtin", &all, "--warmup", "12", "--frames", "30", "--threads", "1"]);
+                if off {
+                    c.env("TERSE_SYSTEM_INK", "off");
+                }
+                let (_, out) = timed(&mut c)?;
+                v.push(bench_numbers(&out).ok_or("no --bench-render line")?.0);
+            }
+            v.sort_by(f64::total_cmp);
+            Ok(v[v.len() / 2])
+        };
+        let (on, off) = (p50(false)?, p50(true)?);
+        rows.push(Row {
+            id: "W",
+            what: format!("{}: {}", s.id, s.what),
+            measured: format!("1 thread p50 {on:.1} ms (without the system ink {off:.1} ms)"),
+            rule: "R11: within the system ink by construction; T: ≤ 2 × the single machine's".into(),
+            verdict: Verdict::Info,
+        });
+    }
     Ok(())
 }
 
@@ -859,6 +887,11 @@ pub fn perf(args: &[String]) -> Result<ExitCode, String> {
                 for s in terse_core::worst::scenarios() {
                     std::fs::write(dir.join(format!("{}.terse", s.id)), &s.image).map_err(|e| e.to_string())?;
                     println!("{}\t{}", s.id, s.what);
+                }
+                // The systems: run as terse-host --shell <id>.terse --builtin all.terse.
+                for s in terse_core::worst::system_scenarios(builtin::PROGRAMS.len() as u32) {
+                    std::fs::write(dir.join(format!("{}.terse", s.id)), &s.shell).map_err(|e| e.to_string())?;
+                    println!("{}\t{} (--shell {}.terse --builtin all.terse)", s.id, s.what, s.id);
                 }
                 return Ok(ExitCode::SUCCESS);
             }

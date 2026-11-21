@@ -1224,7 +1224,10 @@ among them (§vector3d.caps); the page's figure caps and its layout outside
 the frames (§page.layout); the sound device's 16 voices (§sound). They are
 set so that the most a machine can ask of the reference host in one frame,
 with every device at its cap at once, takes it no more than one frame's
-time on one thread (`PERFORMANCE.md` R10, with how it is measured). A
+time on one thread (`PERFORMANCE.md` R10, with how it is measured). In a
+system the machines the shell shows share one more budget, the system
+ink (§machines.ink), so a whole system asks about what two machines can
+(`PERFORMANCE.md` R11). A
 host may draw more than a device requires (§vector.presentation's look,
 glow and afterglow, fonts), but should shed that extra work rather than
 let it make a frame slow.
@@ -1292,10 +1295,6 @@ versions.
 - Font selection, combining marks and complex scripts in the terminal
   (with full text, §terminal.text).
 - Device 5.
-- A bound on what a system of machines asks of a host together: each
-  machine's lists are capped on their own (§vector.ink-cap,
-  §vector3d.caps), so a shell and 8 machines whose pictures all cover the
-  screen can ask 9 times one machine's worst (`PERFORMANCE.md` R10).
 
 Each device document lists what is not yet specified for its device.
 

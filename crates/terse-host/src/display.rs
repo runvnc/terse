@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use terse_core::vector::{MAX_LIST, decode, decode_outlines};
+use terse_core::vector::{MAX_LIST, decode_outlines_within, decode_within};
+#[cfg(test)]
+use terse_core::vector::{decode, decode_outlines};
 use terse_core::vector3::Panel;
 use terse_core::{Primitive, SCREEN_HEIGHT, SCREEN_WIDTH, System, Vector, Vector3};
 use terse_net::Prompt;
@@ -92,11 +94,35 @@ pub const MAX_PRIMITIVES: usize = MAX_LIST / 5 * 4 + 4;
 /// The primitives the host draws for `list`: its outlines
 /// (`decode_outlines`) or its primitives (`decode`), within the ink cap.
 pub fn decode_shapes(list: &[u8], outlines: bool, out: &mut Vec<Primitive>) {
+    decode_shapes_within(list, outlines, terse_core::vector::INK_CAP, out)
+}
+
+/// [`decode_shapes`] within a lower ink cap (a machine's share of a
+/// system's ink, SPEC §machines.ink).
+pub fn decode_shapes_within(list: &[u8], outlines: bool, cap: u64, out: &mut Vec<Primitive>) {
     out.clear();
     if outlines {
-        out.extend(decode_outlines(list).take(MAX_PRIMITIVES));
+        out.extend(decode_outlines_within(list, cap).take(MAX_PRIMITIVES));
     } else {
-        out.extend(decode(list).take(MAX_PRIMITIVES));
+        out.extend(decode_within(list, cap).take(MAX_PRIMITIVES));
+    }
+}
+
+/// The ink caps a machine's lists are drawn within: the devices' own
+/// (SPEC §vector.ink-cap, §vector3d.caps), or its share of a system's ink
+/// (SPEC §machines.ink).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Caps {
+    pub ink2: u64,
+    pub ink3: f64,
+}
+
+impl Caps {
+    pub const FULL: Caps = Caps { ink2: terse_core::vector::INK_CAP, ink3: terse_core::vector3::INK_CAP };
+
+    /// The caps of a machine's share.
+    pub fn of(share: Option<&terse_core::system_ink::Share>) -> Caps {
+        share.map_or(Caps::FULL, |s| Caps { ink2: s.cap2, ink3: s.cap3 })
     }
 }
 
@@ -116,6 +142,8 @@ pub struct VectorScene<'a> {
     pub vector: Option<&'a Vector>,
     pub vector3: Option<&'a Vector3>,
     pub eye: Eye,
+    /// The ink caps its lists are drawn within.
+    pub caps: Caps,
 }
 
 /// Identifies what [`VectorScene::shapes`] gives: the lists' generations,
@@ -124,6 +152,7 @@ pub struct VectorScene<'a> {
 pub struct SceneKey {
     lists: (u64, u64),
     eye: Option<(u32, u32)>,
+    caps: (u64, u64),
     outlines: bool,
 }
 
@@ -134,6 +163,7 @@ impl VectorScene<'_> {
             lists: (self.vector.map_or(0, Vector::generation), self.vector3.map_or(0, Vector3::generation)),
             eye: v3.map(|_| (self.eye.0.to_bits(), self.eye.1.to_bits())),
             outlines,
+            caps: (self.caps.ink2, self.caps.ink3.to_bits()),
         }
     }
 
@@ -142,13 +172,14 @@ impl VectorScene<'_> {
     /// same shapes, maybe moved: for the afterglow's smear).
     pub fn shapes(&self, outlines: bool, out: &mut Vec<Primitive>, opcodes: &mut Vec<u8>) {
         let list = self.vector.map_or(&[][..], Vector::list);
-        decode_shapes(list, outlines, out);
+        decode_shapes_within(list, outlines, self.caps.ink2, out);
         *opcodes = crate::phosphor::opcodes(list);
         if let Some(v) = self.vector3.filter(|v| !v.list().is_empty()) {
             // With faces, how many segments each figure gave is part of the
             // signature: what is hidden changes as the models turn.
             let mut pieces = Vec::new();
-            terse_core::vector3::project_pieces(v.list(), self.eye, out, &mut pieces);
+            let scene = terse_core::vector3::SceneView::LISTED;
+            terse_core::vector3::project_scene_within(v.list(), self.eye, &scene, out, &mut pieces, &mut Vec::new(), self.caps.ink3);
             opcodes.push(0xFF);
             opcodes.extend(terse_core::vector3::opcodes(v.list()));
             opcodes.extend(pieces);
@@ -190,21 +221,31 @@ pub fn scene_layers<D: terse_core::devices::Devices>(system: &System<D>, eye: Ey
     Some(SceneLayers { panels, lines, rects: p.surface_rects().to_vec() })
 }
 
+/// The panels of machines whose pictures did not fit the system ink (SPEC
+/// §machines.ink) are not drawn: the shell's screen shows where they are
+/// (they still hide the shell's lines, as faces do).
+pub fn plate_panels(layers: &mut Option<SceneLayers>, shares: &terse_core::system_ink::Shares) {
+    if let Some(l) = layers {
+        l.panels.retain(|p| p.is_surface() || !shares.of(p.handle).is_some_and(|s| s.plate));
+    }
+}
+
 /// A machine's own scene seen from `eye` when its 3D list has Surfaces in
 /// effect (SPEC §vector3d.presentation): its Surfaces, its 3D segments and the rectangles
 /// left off its glass.
-pub fn surface_layers<D: terse_core::devices::Devices>(machine: &terse_core::Machine<D>, eye: Eye) -> Option<SceneLayers> {
-    surface_layers_of(&machine.list3(), eye)
+/// `cap3`: the ink cap its 3D list is drawn within ([`Caps`]).
+pub fn surface_layers<D: terse_core::devices::Devices>(machine: &terse_core::Machine<D>, eye: Eye, cap3: f64) -> Option<SceneLayers> {
+    surface_layers_of(&machine.list3(), eye, cap3)
 }
 
 /// [`surface_layers`] of a machine whose 3D list is `list`.
-pub fn surface_layers_of(list: &[u8], eye: Eye) -> Option<SceneLayers> {
+pub fn surface_layers_of(list: &[u8], eye: Eye, cap3: f64) -> Option<SceneLayers> {
     if !terse_core::vector3::has_surface(list) {
         return None;
     }
     let (mut lines, mut panels) = (Vec::new(), Vec::new());
     let scene = terse_core::vector3::SceneView::LISTED;
-    let p = terse_core::vector3::project_scene(list, eye, &scene, &mut lines, &mut Vec::new(), &mut panels);
+    let p = terse_core::vector3::project_scene_within(list, eye, &scene, &mut lines, &mut Vec::new(), &mut panels, cap3);
     (p.surfaces > 0).then(|| SceneLayers { panels, lines, rects: p.surface_rects().to_vec() })
 }
 
@@ -422,7 +463,7 @@ mod tests {
         let mut v3 = Vector3::default();
         let z = (-4000i16).to_le_bytes();
         v3.submit(&[0x03, 0, 1, 0, 1, z[0], z[1], 0x04, 0, 2, 0, 2, 0, 0, 0x05]);
-        let scene = |eye| VectorScene { vector: Some(&v), vector3: Some(&v3), eye };
+        let scene = |eye| VectorScene { vector: Some(&v), vector3: Some(&v3), eye, caps: Caps::FULL };
         let (mut shapes, mut opcodes) = (Vec::new(), Vec::new());
         scene((40.0, 0.0)).shapes(false, &mut shapes, &mut opcodes);
         let mut want = v.shapes().collect::<Vec<_>>();
@@ -437,10 +478,10 @@ mod tests {
         list.extend([0u8; 18]);
         list.push(0x05);
         v3f.submit(&list);
-        VectorScene { vector: None, vector3: Some(&v3f), eye: (0.0, 0.0) }.shapes(false, &mut shapes, &mut opcodes);
+        VectorScene { vector: None, vector3: Some(&v3f), eye: (0.0, 0.0), caps: Caps::FULL }.shapes(false, &mut shapes, &mut opcodes);
         assert_eq!(opcodes, [0xFF, 0x0C, 0x05, 1, 0]);
         assert_ne!(scene((40.0, 0.0)).key(false), scene((0.0, 0.0)).key(false));
-        let flat = |eye| VectorScene { vector: Some(&v), vector3: None, eye };
+        let flat = |eye| VectorScene { vector: Some(&v), vector3: None, eye, caps: Caps::FULL };
         assert_eq!(flat((40.0, 0.0)).key(false), flat((0.0, 0.0)).key(false));
         assert_ne!(scene((0.0, 0.0)).key(false), scene((0.0, 0.0)).key(true));
     }

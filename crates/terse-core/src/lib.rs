@@ -19,6 +19,7 @@ pub mod shell;
 pub mod snapshot;
 pub mod sound;
 pub mod system;
+pub mod system_ink;
 pub mod terminal;
 pub mod text;
 pub mod vector;

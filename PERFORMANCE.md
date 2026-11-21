@@ -45,6 +45,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R8 | Frames run at 60 a second while the host keeps up, never faster to catch up; the frame loop never waits on the network, the user or storage | frames a second | `programs/conform-perf` (frames counted against the clock over four seconds; `terse perf` M10) |
 | Machine host | R9 | A held image a shell starts runs its first frame within 2 frames of the start call | frames | `terse perf` M6 |
 | Machine host | R10 | The host work a frame can demand is bounded: what a machine's displays make a host draw in a frame is within the caps, counted in square screen units of ink from the lists alone (the 2D list at most 230,400, `SPEC.md` §vector.ink-cap; the 3D list at most 153,600, with its segment, face and faces × segments caps, §vector3d.caps), the terminal's 2,400 cells and the page's lines in view (its layout outside the frames, §page.layout) | square screen units; cells | `terse perf` W rows: each device's worst legal list, built to ask far more than the cap, is drawn only up to it (PASS or FAIL), and its drawing time on one thread is a target; `cargo test -p terse-core` (`vector`, `vector3`: the counts and where the lists are cut) |
+| Machine host | R11 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut) |
 
 What the machine already guarantees needs no row: a frame's work for a
 program is bounded by the budget (`SPEC.md` §frames, §charges), so no
@@ -73,7 +74,7 @@ its rows):
 `terse perf` runs every scenario headless, in temporary directories,
 with relays it starts on ephemeral loopback ports (never 7878, never your
 config, cache or data directories), and prints one line per scenario:
-its id, what it measures, the measurement, the requirement (R1–R10, §1)
+its id, what it measures, the measurement, the requirement (R1–R11, §1)
 or target (T), and PASS, FAIL, `info` (a target) or `skipped` (terse-host or the Go
 reader not found). It exits with 1 if a requirement failed. `--only
 machine|client|host` runs one group, `--runs n` changes the 5 runs of the
@@ -252,14 +253,64 @@ counted, below); reader, fetch, hello and tune draw no vector list.
   23 ms (fonts found, glyphs rasterised) on any renderer. The work
   depends on the host's fonts; a rule that lets a host show a new glyph
   a few frames late, as the page may show a figure late, would bound it.
-- *A system of machines.* The caps are per machine: a shell and 8
-  machines whose pictures each cover the screen can ask 9 times one
-  machine's worst. A machine's picture costs in proportion to its area,
-  so tiles that share the screen cost one screen in all; the shell's
-  Screens (panels, about 5 ms per screen of panel on one thread) are not
-  counted as ink.
+- *A system of machines* is bounded by R11, §5.
 
-## 5. Not yet specified
+## 5. What a system can ask of a host (R11)
+
+Each machine's caps (R10) bound one machine; a shell and 8 machines
+whose pictures each cover the screen could ask 9 times as much, and the
+shell's panels were not counted at all. The system ink (`spec/machines.md`
+§machines.ink) gives the machines the shell shows one budget together,
+what one machine shown over the whole screen may count: 640 × 480 +
+230,400 + 153,600 = 691,200 square units. Pictures count their area
+first (the terminal, the page and the backgrounds a host draws there
+cost in proportion to it, about as much per unit as ink); then the
+lists, each counting its ink times its picture's scale. The scale, not
+its square: measured, a list drawn in a tile a third of the screen wide
+costs about a third of what it costs over the whole screen for lines,
+points and outlines (the smoothed edge does not shrink), a ninth only
+for filled shapes. The shell is never counted: its screen is the one the
+user needs to regain control, and stays within its own caps.
+
+Measured 2026-11-21 on the reference machine (release build, software
+renderer at 880 × 660, load average about 3): the median of 3 runs of 30
+frames, each scenario a shell with every device at its worst (as the W
+row "all") and 8 machines each with every device at its worst.
+`TERSE_SYSTEM_INK=off` in terse-host's environment draws every machine
+within its own caps only, as before (for measuring; not conforming).
+
+| Scenario | 1 thread, before / after | 12 threads | GPU |
+|---|---|---|---|
+| One machine, every device at its worst (W "all") | 16.4 ms | 6.5 ms | 1.8 ms |
+| 8 machines in a 3 × 3 grid of tiles | 47.6 / 40.8 ms | 21.6 / 20.1 ms | 14.8 / 15.2 ms |
+| 8 machines each over the whole screen | 137.2 / 31.8 ms | 38.1 / 10.6 ms | 15.9 / 6.6 ms |
+| 8 machines as panels of the whole screen | 187.9 / 51.3 ms | 59.1 / 18.2 ms | 17.2 / 6.0 ms |
+
+What the machines add to the shell's own frame is now at most about one
+and a half times one machine's worst: 24 ms in tiles, 15 ms overlapping,
+15 ms as panels (over 36 ms for the same shell showing static panels).
+Two costs are not in proportion to a picture's area and remain:
+
+- *Text in small pictures.* A page of the smallest text scrolled every
+  frame costs about 1.7 ms in a tile a ninth of the screen, half of what
+  it costs over the whole screen: the glyphs in view are as many at any
+  size. Eight such tiles cost 14 ms whatever the system ink says. The
+  bound for them is the number of machines, 8.
+- *The shell's scene.* A shell at its own caps with Screens in effect
+  (its 3D list drawn over the panels, the scene put together again every
+  frame) takes the software renderer 36 ms on one thread, twice a single
+  machine's worst: R10's calibration counted the shell's Screens as
+  nothing. This is the shell's own cost, not the machines'; the software
+  renderer's scene is the place to make it cheaper.
+
+The bundled shell's layouts with the bundled programs (six programs, and
+fetch, three sparks and four holo; master, grid, the gallery with a
+machine faced and back, zoom) count at most 416,744 of the 691,200 (the
+gallery with a machine faced, the panels behind it counted too); master
+and grid at most 168,401; no picture is a plate and no list is cut
+(`the_layouts_stay_within_the_system_ink`).
+
+## 6. Not yet specified
 
 - Presenting: the time from the end of a frame to its picture on the
   screen, and the frame time budget for drawing. The reference host's

@@ -888,10 +888,30 @@ pub fn project_scene(
     pieces: &mut Vec<u8>,
     panels: &mut Vec<Panel>,
 ) -> Projection {
+    project_scene_within(list, eye, scene, out, pieces, panels, INK_CAP)
+}
+
+/// The ink a 3D list's commands that are drawn within `cap` count (SPEC
+/// §vector3d.caps), from the reference eye, its Screens not in effect.
+pub fn drawn_ink(list: &[u8], cap: f64) -> f64 {
+    walk_capped(list, eye_at((0.0, 0.0)), &SceneView::LISTED, &mut Vec::new(), cap.min(INK_CAP)).projection.ink
+}
+
+/// [`project_scene`] with the ink cap lowered to `cap` (at most
+/// [`INK_CAP`]): a machine's share of a system's ink (SPEC §machines.ink).
+pub fn project_scene_within(
+    list: &[u8],
+    eye: (f32, f32),
+    scene: &SceneView,
+    out: &mut Vec<Primitive>,
+    pieces: &mut Vec<u8>,
+    panels: &mut Vec<Panel>,
+    cap: f64,
+) -> Projection {
     let eye = eye_at(eye);
     let start = out.len();
     pieces.clear();
-    let Walk { drawn, faces, mut projection } = walk(list, eye, scene, panels);
+    let Walk { drawn, faces, mut projection } = walk_capped(list, eye, scene, panels, cap.min(INK_CAP));
     let mut hider = Hider::new(&faces, eye);
     let mut s = Segments { eye, hider: &mut hider, out, room: start + SEGMENT_CAP, capped: false };
     for (figure, width, rgba) in drawn {
