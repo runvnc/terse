@@ -13,6 +13,18 @@ use crate::machines::{IDENTITY_BYTES, MAX_PROGRAM_NAME, ProgramId};
 
 /// Snapshot slots a shell has (SPEC §machines.calls `snapshot`): 0 to 15.
 pub const SLOTS: usize = 16;
+/// The host's automatic slots (SPEC §machines.snapshots): slot 15 + h
+/// holds the snapshot the host took of machine h before it stopped it
+/// because a device did not keep up (`PERFORMANCE.md` R15). A shell reads,
+/// restores and deletes them as its own; only the host writes them.
+pub const AUTO_SLOTS: usize = 8;
+/// Every slot a shell can read: 0 to 23.
+pub const TABLE: usize = SLOTS + AUTO_SLOTS;
+
+/// The automatic slot of machine handle `h` (1–8).
+pub fn auto_slot(h: u8) -> u8 {
+    SLOTS as u8 + h - 1
+}
 /// The record `snapshot_info` writes (SPEC §machines.calls).
 pub const INFO_BYTES: usize = 1 + 32 + IDENTITY_BYTES + 4 + 4;
 /// A snapshot file starts with these bytes (STATE.md 4).

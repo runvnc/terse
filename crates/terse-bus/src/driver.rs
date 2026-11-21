@@ -240,7 +240,15 @@ pub fn serve(device: &mut dyn Device) -> Result<(), String> {
     sock.recv(&mut buf)?.ok_or("the core closed the socket")?;
     let hello = Hello::decode(proto::split(&buf)?.body)?;
     let session = Session { hello };
-    let info = device.info(&session);
+    let mut info = device.info(&session);
+    // Its identity (DEVICES.md 1.1, PERFORMANCE.md R13): every Rust driver
+    // carries the workspace's version and its executable's build.
+    if info.version.is_empty() {
+        info.version = terse_perflog::identity::VERSION.to_string();
+    }
+    if info.build.is_empty() {
+        info.build = terse_perflog::identity::build_id().to_string();
+    }
     let shm = session.hello.flags & hello_flags::SHM != 0 && !want_socket;
     // Shared memory: the bus file is mapped, and the core's sequence
     // number taken, before the reply, after which the core may send its
@@ -582,8 +590,18 @@ impl Drop for LayerFile {
     }
 }
 
+/// `--version` among the arguments: prints the driver's identity (`name`,
+/// the version, the build identifier: PERFORMANCE.md R13) and returns
+/// true; the driver then exits without connecting.
+pub fn version(name: &str) -> bool {
+    terse_perflog::identity::print_if_asked(name, &std::env::args().skip(1).collect::<Vec<_>>())
+}
+
 /// Exits the process with a message if `serve` fails.
 pub fn run(device: &mut dyn Device, name: &str) -> std::process::ExitCode {
+    if version(name) {
+        return std::process::ExitCode::SUCCESS;
+    }
     match serve(device) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {

@@ -113,7 +113,7 @@ while (terse_event_pop(&amp;e) != EV_NONE)
 <div class="table"><table>
 <thead><tr><th>Type</th><th>Name</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>0Ah</code></td><td>Machine changed</td><td>machine <code>a</code> is now in state <code>b</code> (1 loading, 2 running, 3 paused, 4 exited, 5 faulted, 6 failed), a change the shell did not make with a call</td></tr>
+<tr><td><code>0Ah</code></td><td>Machine changed</td><td>machine <code>a</code> is now in state <code>b</code> (1 loading, 2 running, 3 paused, 4 exited, 5 faulted, 6 failed, 7 halted), a change the shell did not make with a call</td></tr>
 <tr><td><code>0Bh</code></td><td>Home</td><td>the user pressed the host&#39;s home key; the focus is now the shell</td></tr>
 <tr><td><code>0Ch</code></td><td>Machine pressed</td><td>a pointer button was pressed over machine <code>a</code>&#39;s picture; <code>b</code> is the buttons</td></tr>
 <tr><td><code>0Fh</code></td><td>Open requested</td><td>machine <code>a</code> made an open request the shell can read with <code>request</code></td></tr>

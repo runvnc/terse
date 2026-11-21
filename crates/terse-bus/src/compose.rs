@@ -284,6 +284,9 @@ pub struct Compositor {
     glyphs: Option<terse_host::glyphs::TermGlyphs>,
     /// Pixels composed (measurements).
     pub pixels_composed: u64,
+    /// The host's notice (a slow device, `PERFORMANCE.md` R15): heading and
+    /// two lines, drawn as the prompt is when no prompt is asked.
+    pub notice: Option<(String, String, String)>,
 }
 
 /// The eye as the `core.eye` property.
@@ -330,6 +333,7 @@ impl Compositor {
             overlay_rect: IRect::EMPTY,
             glyphs: Some(terse_host::glyphs::TermGlyphs::builtin(terse_host::FONT_PX)),
             pixels_composed: 0,
+            notice: None,
         }
     }
 
@@ -451,10 +455,14 @@ impl Compositor {
     /// The consent prompt over the shell's screen: drawn, and its
     /// rectangle (empty: none).
     fn prompt(&mut self, prompt: Option<(&Prompt, usize, String)>, rect: (f32, f32, f32, f32), viewport: (u32, u32)) -> IRect {
-        use terse_host::consent::{FIRST_ROW, with_prompt};
-        let Some((p, waiting, title)) = prompt else {
-            self.overlay = None;
-            return IRect::EMPTY;
+        use terse_host::consent::{FIRST_ROW, with_notice, with_prompt};
+        let shown = match (prompt, &self.notice) {
+            (Some((p, waiting, title)), _) => with_prompt(&Terminal::default(), &title, p, waiting),
+            (None, Some((h, a, b))) => with_notice(&Terminal::default(), h, a, b),
+            (None, None) => {
+                self.overlay = None;
+                return IRect::EMPTY;
+            }
         };
         let Some(glyphs) = &self.glyphs else { return IRect::EMPTY };
         let cell = if self.shell.rect.is_some() { cell_width_for(rect) } else { self.native_cell() };
@@ -466,7 +474,7 @@ impl Compositor {
         }
         let o = self.overlay.as_mut().unwrap();
         o.screen.set_rect(self.shell.rect);
-        o.screen.update(&with_prompt(&Terminal::default(), &title, p, waiting));
+        o.screen.update(&shown);
         o.screen.update_page(None, None);
         o.screen.set_overlay(Some(FIRST_ROW));
         o.screen.place(viewport);

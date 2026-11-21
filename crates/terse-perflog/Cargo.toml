@@ -1,0 +1,14 @@
+[package]
+name = "terse-perflog"
+description = "The performance record (RECORD.md): who a host and its devices are, which of them made a frame late, and the rule that does not tolerate it (PERFORMANCE.md R13-R16)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3 = { version = "1.8", default-features = false, features = ["std"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

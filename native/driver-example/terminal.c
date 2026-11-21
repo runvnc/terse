@@ -19,14 +19,31 @@
  * The file has two halves: the device itself (pure SPEC §terminal, nothing
  * about the bus), then the bus. A new device keeps the second half and
  * replaces the first.
+ *
+ * `terminal --version` prints its name, version and build identifier (the
+ * same identity its HELLO reply states): `fnv:` and the FNV-1a 64-bit hash
+ * of its own executable.
+ *
+ * For tests, three environment variables (none changes a state hash):
+ *   TERSE_BUS_CPU=<n>      pin itself to CPU n before connecting
+ *   TERSE_EXAMPLE_IDLE=1   run as SCHED_IDLE, so a CPU hog starves it
+ *   TERSE_EXAMPLE_SLOW=<kind>:<ms>:<from>[:<to>]
+ *                          a deliberately slow driver: at END of the frames
+ *                          from <= f < to (to omitted: forever), wait ms
+ *                          milliseconds (fractional allowed). kind `sleep`:
+ *                          blocked (nanosleep); `spin`: busy for ms of wall
+ *                          time; `cpu`: busy until its own CPU time has
+ *                          advanced by ms (a fixed amount of work).
  */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE                     /* sched_setaffinity, SCHED_IDLE */
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ======================================================= the device ===== */
@@ -359,8 +376,79 @@ static void call(const uint8_t *m, size_t n, Buf *r)
     if (wlen) { u32(r, waddr); u32(r, wlen); put_bytes(r, out, wlen); }
 }
 
-int main(void)
+/* The identity a HELLO reply ends with (DEVICES.md 1.1): a version and a
+   build identifier, here FNV-1a 64-bit of this program's own file. Self-
+   reported, for accountability among honest drivers, not for security. */
+#define VERSION "0.1.0"
+static char build[32] = "unknown";
+static void compute_build(void)
 {
+    FILE *f = fopen("/proc/self/exe", "rb");
+    if (!f) return;
+    uint64_t h = 14695981039346656037ull;
+    for (int c; (c = getc(f)) != EOF;) { h ^= (uint8_t)c; h *= 1099511628211ull; }
+    if (!ferror(f)) snprintf(build, sizeof build, "fnv:%016llx", (unsigned long long)h);
+    fclose(f);
+}
+
+/* TERSE_EXAMPLE_SLOW (see the top of the file): a test of how a core
+   copes with a driver that is late at END. */
+static struct { char kind; double ms; uint32_t from, to; } slow;
+static double secs(clockid_t c)
+{
+    struct timespec ts;
+    clock_gettime(c, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+static void parse_slow(const char *s)
+{
+    char *e;
+    if (!strncmp(s, "sleep:", 6)) slow.kind = 's';
+    else if (!strncmp(s, "spin:", 5)) slow.kind = 'w';
+    else if (!strncmp(s, "cpu:", 4)) slow.kind = 'c';
+    else goto bad;
+    s = strchr(s, ':') + 1;
+    slow.ms = strtod(s, &e);
+    if (e == s || *e != ':' || !(slow.ms >= 0)) goto bad;
+    slow.from = strtoul(s = e + 1, &e, 10);
+    if (e == s) goto bad;
+    slow.to = UINT32_MAX;
+    if (*e == ':') { slow.to = strtoul(s = e + 1, &e, 10); if (e == s) goto bad; }
+    if (*e) goto bad;
+    return;
+bad:
+    fputs("terminal example: TERSE_EXAMPLE_SLOW is <sleep|spin|cpu>:<ms>:<from>[:<to>]\n", stderr);
+    exit(2);
+}
+static void be_slow(uint32_t frame)
+{
+    if (!slow.kind || frame < slow.from || frame >= slow.to) return;
+    double s = slow.ms / 1000;
+    if (slow.kind == 's') {
+        struct timespec ts = {(time_t)s, (long)((s - (time_t)s) * 1e9)};
+        while (nanosleep(&ts, &ts)) {}
+    } else {
+        clockid_t c = slow.kind == 'w' ? CLOCK_MONOTONIC : CLOCK_THREAD_CPUTIME_ID;
+        double until = secs(c) + s;
+        while (secs(c) < until) {}
+    }
+}
+
+int main(int argc, char **argv)
+{
+    compute_build();
+    if (argc > 1 && !strcmp(argv[1], "--version")) { printf("terminal " VERSION " %s\n", build); return 0; }
+    const char *env = getenv("TERSE_EXAMPLE_SLOW");
+    if (env && *env) parse_slow(env);
+    if ((env = getenv("TERSE_BUS_CPU")) && *env) {
+        cpu_set_t set;
+        CPU_ZERO(&set); CPU_SET(atoi(env), &set);
+        if (sched_setaffinity(0, sizeof set, &set)) perror("terminal example: TERSE_BUS_CPU");
+    }
+    if ((env = getenv("TERSE_EXAMPLE_IDLE")) && !strcmp(env, "1")
+        && sched_setscheduler(0, SCHED_IDLE, &(struct sched_param){0}))
+        perror("terminal example: TERSE_EXAMPLE_IDLE");
+
     /* STEP 1. Connect to the socket the core named. */
     const char *path = getenv("TERSE_BUS_SOCKET");
     struct sockaddr_un sa = {.sun_family = AF_UNIX};
@@ -403,6 +491,7 @@ int main(void)
                character, so it gives it. */
             if (s10) { u8(&r, 10); u8(&r, 0); u8(&r, 0); u8(&r, 0); }
             u8(&r, 0); u8(&r, 0); u8(&r, 0);                    /* no properties, subscriptions, services */
+            str(&r, VERSION); str(&r, build);                   /* identity: version, build */
             send_reply(&r);
             break;
         }
@@ -457,7 +546,8 @@ int main(void)
             u32(&r, 0); u32(&r, 0); u32(&r, 0); u32(&r, 0);    /* charge, events, writes, record */
             send_reply(&r);
             break;
-        case 0x31: /* STEP 8. END: nothing to do between frames */
+        case 0x31: /* STEP 8. END: nothing to do between frames (but the slow test mode) */
+            if (n >= 8) be_slow(rd32(m + 4));
             break;
         case 0x40: { /* STEP 9. STATE: the section of STATE.md 1.6 */
             if (slot != 2) fail("STATE of a slot that has no section here");

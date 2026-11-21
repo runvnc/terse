@@ -74,7 +74,7 @@
 <tr><td>a request this machine made earlier still waits (the shell has not read it with <code>request</code>)</td><td>0, nothing else happens</td></tr>
 <tr><td>otherwise</td><td>1: the request waits for the shell</td></tr>
 </tbody></table></div>
-<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:9736a6…4a9450</a>).</p>
+<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:99e9a0…47d897</a>).</p>
 <p>In C, <code>terse_open(request)</code> with the kinds <code>OPEN_BLOB</code> and <code>OPEN_PROGRAM</code>:</p>
 <pre>#include &quot;terse.h&quot;
 

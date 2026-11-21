@@ -19,6 +19,7 @@ pub mod compose;
 pub mod host;
 pub mod driver;
 pub mod inproc;
+pub mod monitor;
 pub mod proto;
 pub mod record;
 pub mod services;

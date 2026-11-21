@@ -3,7 +3,7 @@
 //! driver alike.
 
 use terse_core::machines::{ProgramId, StartFailure, failure};
-use terse_core::snapshot::{INFO_BYTES, SLOTS, SnapshotInfo, identity_from_record};
+use terse_core::snapshot::{INFO_BYTES, SnapshotInfo, TABLE, identity_from_record};
 use terse_core::{Image, Snapshot};
 use terse_net::{Asked, Prompt};
 
@@ -127,13 +127,13 @@ pub fn read_restored(b: &[u8]) -> Result<(Image, Snapshot), StartFailure> {
 
 /// `snapshot.table`'s answer: each slot's `snapshot_info` record (SPEC
 /// §machines.calls: all zero for an empty slot).
-pub fn table(t: &[Option<SnapshotInfo>; SLOTS]) -> Vec<u8> {
+pub fn table(t: &[Option<SnapshotInfo>; TABLE]) -> Vec<u8> {
     t.iter().flat_map(|i| i.as_ref().map_or([0; INFO_BYTES], SnapshotInfo::record)).collect()
 }
 
-pub fn read_table(b: &[u8]) -> [Option<SnapshotInfo>; SLOTS] {
-    let mut out: [Option<SnapshotInfo>; SLOTS] = Default::default();
-    for (slot, rec) in b.chunks_exact(INFO_BYTES).take(SLOTS).enumerate() {
+pub fn read_table(b: &[u8]) -> [Option<SnapshotInfo>; TABLE] {
+    let mut out: [Option<SnapshotInfo>; TABLE] = Default::default();
+    for (slot, rec) in b.chunks_exact(INFO_BYTES).take(TABLE).enumerate() {
         if rec[0] != 1 {
             continue;
         }
@@ -223,7 +223,7 @@ mod tests {
         let p = Prompt { tag: 1, handle: 2, asked: Asked::Subscribe { feed: [9; 32], hints: "relay.example".into() } };
         assert_eq!(read_prompt(&prompt(Some((&p, 1)))).unwrap(), (p, 1));
         assert!(read_prompt(&prompt(None)).is_none());
-        let mut t: [Option<SnapshotInfo>; SLOTS] = Default::default();
+        let mut t: [Option<SnapshotInfo>; TABLE] = Default::default();
         t[3] = Some(SnapshotInfo { image: [5; 32], identity: Some(ProgramId { publisher: [0; 32], name: b"holo".to_vec() }), frames: 9, time: 77 });
         assert_eq!(read_table(&table(&t)), t);
         let image = Image::parse(&Image::build("t", 1, &[], &[0x6f, 0, 0, 0])).unwrap();

@@ -30,7 +30,8 @@ const USAGE: &str = "usage:
             [--driver-timeout S] [--start-timeout S] [--record <file>] [--replay <file>]
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
             [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
-            [--without <slot>]...
+            [--without <slot>]... [--perf-log <dir>|off] [--perf-rule on|off]
+  terse-bus --version
 
 Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
 (slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
@@ -59,7 +60,13 @@ machine; --replay runs one again, checking every frame's hash. --audio-out write
 devices played (SPEC §sound.presentation: every machine's frame, mixed) as a WAV file, as `terse run` does; nothing
 is ever played. --without withholds an optional device (SPEC §image: the machine runs without it); a
 device only optional devices use whose driver is not installed is left out the same way, while a
-required device without a driver stops the run.";
+required device without a driver stops the run.
+--perf-log: where the performance record goes (RECORD.md; default: none headless, and
+$XDG_DATA_HOME/terse/perf with --window or --realtime; it never leaves this computer). --perf-rule
+(default: on with --window or --realtime, off headless): the rule of PERFORMANCE.md R15: a driver
+that makes 3 frames late within 60 is warned about (its machines are saved at once), one that makes
+10 late within 300 has its machines saved and stopped (a machine alone: exit status 4, its snapshot
+in the record's directory). --version prints this program's name, version and build.";
 
 struct Opts {
     image: Option<String>,
@@ -100,6 +107,9 @@ struct Opts {
     content: ContentOptions,
     /// Optional devices withheld (SPEC §image).
     without: Vec<u8>,
+    /// The record's directory: `Some(None)` off.
+    perf_log: Option<Option<PathBuf>>,
+    perf_rule: Option<bool>,
 }
 
 fn parse(args: Vec<String>) -> Result<Opts, String> {
@@ -141,6 +151,8 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         audio_out: None,
         content: ContentOptions::default(),
         without: Vec::new(),
+        perf_log: None,
+        perf_rule: None,
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -227,6 +239,17 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             "--start-timeout" => o.start_timeout = value()?.parse().map_err(|_| "bad --start-timeout")?,
             "--without" => o.without.push(value()?.parse().ok().filter(|&s: &u8| s >= 2).ok_or("bad --without (a device slot, 2 to 255)")?),
             "--record" => o.record = Some(value()?.into()),
+            "--perf-log" => {
+                let v = value()?;
+                o.perf_log = Some(if v == "off" { None } else { Some(v.into()) });
+            }
+            "--perf-rule" => {
+                o.perf_rule = Some(match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("bad --perf-rule {v} (on or off)")),
+                })
+            }
             "--replay" => o.replay = Some(value()?.into()),
             "--help" | "-h" => return Err(USAGE.into()),
             s if s.starts_with('-') => return Err(format!("unknown option {s}\n{USAGE}")),
@@ -264,6 +287,10 @@ fn fault_exit() -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().skip(1).any(|a| a == "--version") {
+        println!("{}", terse_perflog::Identity::this("terse-bus").line());
+        return ExitCode::SUCCESS;
+    }
     signals::install();
     match run(std::env::args().skip(1).collect()) {
         Ok(_) if FAULTED.load(std::sync::atomic::Ordering::SeqCst) => fault_exit(),
@@ -375,6 +402,26 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     let mut bs = start.start()?;
     let startup = started.elapsed();
+    // The watch (PERFORMANCE.md R14, R15; RECORD.md).
+    let live = opts.window || opts.realtime;
+    let (record, default_dir) = match &opts.perf_log {
+        Some(Some(d)) => (Some(d.clone()), false),
+        Some(None) => (None, false),
+        None if live => (terse_perflog::record::default_dir(), true),
+        None => (None, false),
+    };
+    let act = opts.perf_rule.unwrap_or(live);
+    if (record.is_some() || act) && replay.is_none() {
+        bs.watch(&terse_bus::monitor::WatchConfig {
+            record,
+            act,
+            mode: if opts.window { "window" } else if opts.realtime { "realtime" } else { "headless" },
+            renderer: if presents { "drivers" } else { "none" },
+            started,
+            default_dir,
+            rule: Default::default(),
+        });
+    }
     if opts.bench {
         for d in &bs.bus.borrow().procs {
             eprintln!("bus: slots {:?} {} ({}), transport {}", d.slots, d.info.name, d.command, if d.transport == 1 { "shm" } else { "socket" });
@@ -468,11 +515,41 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
             c.draw(&mut bs.system, picture, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
             present_times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
-        if recording.is_some() || replay.is_some() {
+        // The host's own work after the frame (hashes) comes first: it
+        // asks the drivers for their state, which waits for their END.
+        let hashed = if recording.is_some() || replay.is_some() {
             let records = bs.system.shell_mut().devices_mut().take_records();
-            let hash = bs.system.shell_mut().try_state_hash()?;
+            Some((records, bs.system.shell_mut().try_state_hash()?))
+        } else {
+            None
+        };
+        if let Some(n) = opts.hash_every
+            && bs.system.shell().frame() % n == 0
+        {
+            let f = bs.system.shell().frame();
+            println!("{f} {}", hex(&bs.system.shell_mut().try_state_hash()?));
+        }
+        // The watch judges the frame; the rule may stop the machine (R15).
+        for line in bs.end_frame(Duration::ZERO)? {
+            eprintln!("{line}");
+        }
+        // A replay stops the machine where the recording says the host did.
+        if let Some(r) = replay
+            && r[i as usize].halted != 0
+        {
+            bs.system.shell_mut().halt(r[i as usize].halted);
+        }
+        if let Some((records, mut hash)) = hashed {
+            // The frame's record holds the stop and the hash after it.
+            let halted = match bs.system.shell().stopped() {
+                Some(Stopped::Halted(s)) => s,
+                _ => 0,
+            };
+            if halted != 0 {
+                hash = bs.system.shell_mut().try_state_hash()?;
+            }
             if let Some(out) = &mut recording {
-                let f = FrameRecord { frame, time: 0, controllers: controllers.map(|c| c.bytes()), events: events.clone(), random: Vec::new(), drivers: records, hash };
+                let f = FrameRecord { frame, time: 0, controllers: controllers.map(|c| c.bytes()), events: events.clone(), random: Vec::new(), drivers: records, halted, hash };
                 f.encode(out);
             }
             if let Some(r) = replay
@@ -480,12 +557,6 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
             {
                 return Err(format!("the replay differs from the recording after frame {frame}"));
             }
-        }
-        if let Some(n) = opts.hash_every
-            && bs.system.shell().frame() % n == 0
-        {
-            let f = bs.system.shell().frame();
-            println!("{f} {}", hex(&bs.system.shell_mut().try_state_hash()?));
         }
         if bs.system.stopped().is_some() {
             break;
@@ -518,6 +589,10 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
             eprintln!("bench: present and compose per frame p50 {p50:.3} ms, p99 {p99:.3} ms, max {max:.3} ms");
         }
         report(bs);
+        if let Some(m) = &bs.monitor {
+            let o = &m.overhead;
+            eprintln!("bench: the watch's own cost per frame (two calls): {}", o.summary_us());
+        }
     }
     if let Some(path) = &opts.screenshot
         && let Some(c) = &mut comp
@@ -548,8 +623,17 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
     Ok(match bs.system.stopped() {
         Some(Stopped::Exit(c)) => ExitCode::from(c),
         Some(stopped @ Stopped::Fault(_)) => faulted(stopped),
+        Some(Stopped::Halted(slot)) => halted(slot, bs),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// The host stopped the shell or the machine because device `slot` did not
+/// keep up (PERFORMANCE.md R15): exit status 4 (STATE.md 6.4).
+pub fn halted(slot: u8, bs: &BusSystem) -> ExitCode {
+    let saved = bs.halted.as_ref().map_or(String::new(), |(_, d)| format!("; its state before the stop: {d}"));
+    eprintln!("terse-bus: stopped by the host: device {slot} did not keep up{saved}");
+    ExitCode::from(4)
 }
 
 /// A machine's terminal text, from its driver's state section.
@@ -635,6 +719,7 @@ fn in_process(opts: &Opts, core: &mut Machine<InProcessHost>, script: &Script, s
     Ok(match core.stopped() {
         Some(Stopped::Exit(c)) => ExitCode::from(c),
         Some(stopped @ Stopped::Fault(_)) => faulted(stopped),
+        Some(Stopped::Halted(_)) => ExitCode::from(4),
         None => ExitCode::SUCCESS,
     })
 }

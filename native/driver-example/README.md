@@ -2,8 +2,9 @@
 
 `terminal.c` is a complete Terse32 terminal (device 2, `SPEC.md` §terminal)
 as a device-bus driver (`DEVICES.md`), written to be read and copied: one
-file of C11 and POSIX, 480 lines, about 160 for the device and 290 for the
-bus, socket transport only, drawing nothing. Machines run with it have the
+file of C11 and POSIX, 570 lines, about 160 for the device, 290 for the
+bus and 90 for its identity and a slow mode for tests; socket transport
+only, drawing nothing. Machines run with it have the
 reference terminal driver's state hashes, under the reference core and
 under `native/core-c`'s independent one:
 
@@ -70,7 +71,10 @@ These are DEVICES.md 13's steps; `STEP n` in `terminal.c` marks each.
    one 64-byte entry per call, saying where its buffer is, which argument
    is checked, and, for a deferred call, the rule for its result and
    charge). Then three zero counts: no properties, subscriptions or
-   services. If you cannot serve the slots asked, reply ERROR.
+   services. Then, optionally, your identity: a version and a build
+   identifier, two strings (here `0.1.0` and `fnv:` with the FNV-1a 64-bit
+   hash of the executable, which `terminal --version` also prints). If you
+   cannot serve the slots asked, reply ERROR.
 3. **Answer OPEN**: a new machine (instance), with your device at its
    reset state; keep one state per instance. Reply `01h`, or `00h` and a
    reason (a device version you do not implement).
@@ -110,3 +114,24 @@ yours); RESTORE (1.7: snapshots; parse your section back and refuse one
 that would not serialize the same); input records (section 8: only a
 device with inputs). The reference core never sends RESET, but the
 driver answers it anyway: it is three lines.
+
+## A deliberately slow driver, for tests
+
+Three environment variables make it a test of how a core copes with a
+late or starved driver; none changes a state hash.
+
+- `TERSE_EXAMPLE_SLOW=<kind>:<ms>:<from>[:<to>]`: at END of every frame
+  whose counter `f` (END's frame counter, after the frame) has
+  `from <= f < to` (`to` left out: forever), wait `ms` milliseconds
+  (fractional allowed). `sleep` sleeps (blocked, off the CPU); `spin`
+  busy-loops for `ms` of wall time; `cpu` busy-loops until its own CPU
+  time has advanced by `ms`, a fixed amount of work however long the
+  scheduler takes to give it.
+- `TERSE_BUS_CPU=<n>` (DEVICES.md 2): pin itself to CPU `n` before
+  connecting.
+- `TERSE_EXAMPLE_IDLE=1`: run as `SCHED_IDLE`, so a CPU hog on the same
+  CPU starves it (a busy computer).
+
+For example, `TERSE_EXAMPLE_SLOW=sleep:30:5:8` makes frames 5, 6 and 7
+each about 30 ms late, and `test.sh` checks that the hashes stay the
+reference's.

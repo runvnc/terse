@@ -8,6 +8,7 @@ members = [
     "crates/terse-host",
     "crates/terse-bus",
     "crates/terse-devices",
+    "crates/terse-perflog",
 ]
 
 [workspace.package]
@@ -22,6 +23,7 @@ terse-net = { path = "crates/terse-net" }
 terse-relay = { path = "crates/terse-relay" }
 terse-bus = { path = "crates/terse-bus", default-features = false }
 terse-host = { path = "crates/terse-host", default-features = false }
+terse-perflog = { path = "crates/terse-perflog" }
 
 # Debug info is off to keep target/ small: with it on, each test binary was
 # about 270 MB. For a build that needs a debugger, turn it on for that build:

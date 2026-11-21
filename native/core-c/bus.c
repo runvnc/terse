@@ -30,6 +30,7 @@ typedef struct {
     uint8_t want[8]; int nwant;      /* slots of this spec */
     pid_t pid; int fd;
     char name[64], sock[256];
+    char version[33], build[33];     /* HELLO's identity; empty if not given */
     int nslots; uint8_t slots[16], vers[16];
     Buf batch; uint32_t nbatch;
     Buf in;                          /* last message read */
@@ -325,7 +326,23 @@ static void start(Driver *d, char **argv, const uint8_t *ask, int nask)
         table[slot] = calloc(256, sizeof(Entry));
         for (int j = 0; j < nm; j++, r += 64) parse_entry(&table[slot][r[0]], r);
     }
-    /* properties and services follow; a headless core uses none of them */
+    /* properties published, subscribed to, services: a headless core uses
+       none of them, but skips them to reach the identity */
+    for (int l = 0; l < 3; l++) {
+        NEED(1);
+        for (int j = 0, c = *r++; j < c; j++) { NEED(2); uint32_t k = rd16(r); NEED(2 + k); r += 2 + k; }
+    }
+    /* the optional identity (DEVICES.md 1.1): version and build, both or
+       neither; bytes after them are for later fields and ignored */
+    if (r < e)
+        for (int l = 0; l < 2; l++) {
+            char *to = l ? d->build : d->version;
+            NEED(2); uint32_t k = rd16(r); NEED(2 + k);
+            if (k > 32) k = 32;
+            for (uint32_t j = 0; j < k; j++) to[j] = r[2 + j] > ' ' && r[2 + j] < 127 ? r[2 + j] : '?';
+            to[k] = 0;
+            r += 2 + rd16(r);
+        }
     /* DEVICES.md 1.1: exactly the slots asked for, or all of them but 10 */
     for (int j = 0; j < nask; j++) {
         int ok = ask[j] == 10;
@@ -339,6 +356,14 @@ static int lowest(const Driver *d)
     int s = 256;
     for (int j = 0; j < d->nslots; j++) if (d->slots[j] < s) s = d->slots[j];
     return s;
+}
+
+/* --identities: one line per driver, in order of its lowest slot */
+void bus_identities(void)
+{
+    for (int i = 0; i < ndrv; i++)
+        fprintf(stderr, "driver %d %s %s %s\n", lowest(&drv[i]), drv[i].name,
+                drv[i].version[0] ? drv[i].version : "-", drv[i].build[0] ? drv[i].build : "-");
 }
 
 int bus_setup(M *m, char *err, size_t el)

@@ -111,6 +111,7 @@ pub fn run_to_exit(m: &mut Machine, max: u32) -> u8 {
             match s {
                 terse_core::Stopped::Exit(code) => return code,
                 terse_core::Stopped::Fault(f) => panic!("fault: {f}"),
+                terse_core::Stopped::Halted(s) => panic!("halted for device {s}"),
             }
         }
     }

@@ -26,6 +26,7 @@
 <tr><td>4</td><td>exited</td><td>stopped by <code>exit</code></td></tr>
 <tr><td>5</td><td>faulted</td><td>stopped by a fault</td></tr>
 <tr><td>6</td><td>failed</td><td>could not start; <code>info</code> gives the reason</td></tr>
+<tr><td>7</td><td>halted</td><td>stopped by the host: a device it used did not keep up</td></tr>
 </tbody></table></div>
 <p>Each handle also has a run flag, a rectangle (x, y, width, height in the shell&#39;s screen units) and possibly an identity. The focus is a handle, or 0 for the shell. The system also has a view of the shell&#39;s 3D scene, set by <code>face</code> (see Screens and the view, below).</p>
 <p>A program&#39;s identity is (publisher&#39;s feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with <code>start_program</code> keeps that identity for life; one started with <code>start</code> has none; a restored one has its snapshot&#39;s. Identity decides whose named records a machine reads (<a href="content-records.html">named records</a>).</p>
@@ -65,6 +66,7 @@
 <li><code>builtin</code>: the image ID of built-in program <code>a0</code> (order fixed for the run). Read its title from the image&#39;s first 32 bytes with a content get.</li>
 <li><code>request</code>: if machine <code>a0</code> has an open request waiting that the shell was told of (event <code>0Fh</code>), writes it and returns 1; it no longer waits, so the machine may make another. A <code>stop</code>, or a start that reuses the handle, drops it.</li>
 <li><code>argument</code>: if the handle is loading, the blob ID becomes the machine&#39;s argument (replacing an earlier one), given to it when it becomes running or paused; else 0. For a handle being restored it returns 0 and changes nothing: the snapshot&#39;s argument stays. (The device knows such a handle as loading with image ID zero and no identity; a <code>start</code> of the all-zero ID looks the same.) The buffer is checked first, and the 32 bytes are charged whenever they are read.</li>
+<li>Slots 16-23 are the host&#39;s automatic slots: 15 + h holds what the host saved of machine h before halting it. Only the host writes them; <code>restore</code>, <code>snapshot_info</code> and <code>snapshot_delete</code> take 0-23.</li>
 <li><code>snapshot</code>: for a running or paused handle and slot 0-15, the host stores the machine&#39;s snapshot in the slot at the end of this system frame, replacing what was there. The result arrives as event <code>10h</code>: 1 stored, 3 failed (content&#39;s done and failed). A snapshot deleted later in the same frame is stored, then deleted: its event says 1 and the slot is empty.</li>
 <li><code>restore</code>: slot out of range, or no free handle: 0. Otherwise the lowest free handle becomes loading (run flag set, zero rectangle, image ID zero, no identity). Later it becomes running or paused as the machine was when the snapshot was taken, with the snapshot&#39;s image ID and identity, or failed: reason 5 for no, unreadable or unfitting snapshot, 1-3 if its image cannot be had or run.</li>
 <li><code>snapshot_info</code>: the slots as at the start of the frame, with this frame&#39;s deletes. An empty slot writes 122 zero bytes and returns 0; a slot out of range writes nothing.</li>
@@ -78,7 +80,7 @@
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
 <tbody>
 <tr><td>0</td><td>1</td><td>State</td></tr>
-<tr><td>1</td><td>1</td><td>Exit code if exited, else 0</td></tr>
+<tr><td>1</td><td>1</td><td>Exit code if exited; the device&#39;s slot if halted; else 0</td></tr>
 <tr><td>2</td><td>1</td><td>Fault kind if faulted (1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned), else 0</td></tr>
 <tr><td>3</td><td>1</td><td>Failure reason if failed, else 0</td></tr>
 <tr><td>4</td><td>4</td><td>Units used in the machine&#39;s last frame (delivered content included), 0 before its first</td></tr>

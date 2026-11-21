@@ -13,8 +13,8 @@ The serialization covers everything that can influence later frames or what is s
 | 45 | 4 | `pc` (after a fault, the faulting instruction) |
 | 49 | 124 | `x1` to `x31`, u32 each |
 | 173 | 4 | Frame counter (what `frame_count` returns next frame) |
-| 177 | 1 | Stopped: 0 running, 1 exited, 2 faulted |
-| 178 | 1 | Exit code, else 0 |
+| 177 | 1 | Stopped: 0 running, 1 exited, 2 faulted, 3 halted by the host |
+| 178 | 1 | Exit code; if halted, the slow device's slot; else 0 |
 | 179 | 1 | Fault kind: 1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned; else 0 |
 | 180 | 4 | Illegal instruction's encoding (16-bit in the low half), else 0 |
 | 184 | 4 | Fault `pc`, else 0 |

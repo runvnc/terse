@@ -7,7 +7,7 @@
 use crate::content::{ram_range, readable};
 use crate::machine::{ERR_BUFFER, copy_charge};
 use crate::page::Region;
-use crate::snapshot::{INFO_BYTES as SNAPSHOT_INFO_BYTES, SLOTS, SnapshotInfo};
+use crate::snapshot::{INFO_BYTES as SNAPSHOT_INFO_BYTES, SLOTS, SnapshotInfo, TABLE};
 use crate::system::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 /// The device slot and the version this implementation provides.
@@ -144,6 +144,9 @@ pub mod state {
     pub const EXITED: u8 = 4;
     pub const FAULTED: u8 = 5;
     pub const FAILED: u8 = 6;
+    /// Stopped by the host: a device it uses did not keep up
+    /// (`PERFORMANCE.md` R15).
+    pub const HALTED: u8 = 7;
 
     /// The state's name, as dumps show it.
     pub fn name(s: u8) -> &'static str {
@@ -155,6 +158,7 @@ pub mod state {
             EXITED => "exited",
             FAULTED => "faulted",
             FAILED => "failed",
+            HALTED => "halted",
             _ => "?",
         }
     }
@@ -281,7 +285,7 @@ impl Slot {
 
     /// Whether the machine has a picture to show: it has been loaded.
     pub fn has_picture(&self) -> bool {
-        matches!(self.state, state::RUNNING | state::PAUSED | state::EXITED | state::FAULTED)
+        matches!(self.state, state::RUNNING | state::PAUSED | state::EXITED | state::FAULTED | state::HALTED)
     }
 }
 
@@ -345,7 +349,7 @@ pub struct Machines {
     commands: Vec<Command>,
     /// The shell's snapshot slots as the host has them (SPEC §machines.snapshots): host
     /// data, an input; not machine state.
-    snapshots: [Option<SnapshotInfo>; SLOTS],
+    snapshots: [Option<SnapshotInfo>; TABLE],
     /// The host's view of the shell's 3D scene (`face`, `unface`).
     view: View,
 }
@@ -503,7 +507,7 @@ impl Machines {
                 (1, 0)
             }
             call::RESTORE => {
-                if a0 as usize >= SLOTS {
+                if a0 as usize >= TABLE {
                     return (0, 0);
                 }
                 let Some(i) = self.slots.iter().position(|s| s.state == state::NONE) else { return (0, 0) };
@@ -515,7 +519,7 @@ impl Machines {
             }
             call::SNAPSHOT_INFO => {
                 let Some(at) = ram_range(ram.len(), a1, SNAPSHOT_INFO_BYTES) else { return (ERR_BUFFER, 0) };
-                if a0 as usize >= SLOTS {
+                if a0 as usize >= TABLE {
                     return (0, 0);
                 }
                 let record = self.snapshots[a0 as usize].as_ref().map_or([0; SNAPSHOT_INFO_BYTES], SnapshotInfo::record);
@@ -523,7 +527,7 @@ impl Machines {
                 (record[0] as u32, copy_charge(SNAPSHOT_INFO_BYTES))
             }
             call::SNAPSHOT_DELETE => {
-                if a0 as usize >= SLOTS {
+                if a0 as usize >= TABLE {
                     return (0, 0);
                 }
                 self.snapshots[a0 as usize] = None;
@@ -646,7 +650,7 @@ impl Machines {
     }
 
     /// The shell's snapshot slots as the host has them (SPEC §machines.snapshots).
-    pub fn snapshots(&self) -> &[Option<SnapshotInfo>; SLOTS] {
+    pub fn snapshots(&self) -> &[Option<SnapshotInfo>; TABLE] {
         &self.snapshots
     }
 
@@ -696,13 +700,13 @@ mod tests {
         let mut m = Machines::new(Vec::new());
         let call = |m: &mut Machines, n, a: [u32; 5], ram: &mut Vec<u8>| m.call(n, [a[0], a[1], a[2], a[3], a[4], 0], &[], ram, CallContext::default()).0;
         assert_eq!(call(&mut m, call::SNAPSHOT, [1, 0, 0, 0, 0], &mut ram), 0, "no machine");
-        assert_eq!(call(&mut m, call::RESTORE, [16, 0, 0, 0, 0], &mut ram), 0, "no slot 16");
+        assert_eq!(call(&mut m, call::RESTORE, [24, 0, 0, 0, 0], &mut ram), 0, "no slot 24 (16-23 are the host's automatic slots)");
         assert_eq!(call(&mut m, call::RESTORE, [3, 0, 0, 0, 0], &mut ram), 1);
         assert_eq!((m.slot(1).state, m.slot(1).run, m.slot(1).image), (state::LOADING, true, [0; 32]));
         assert_eq!(call(&mut m, call::SNAPSHOT, [1, 0, 0, 0, 0], &mut ram), 0, "a loading machine");
         m.slot_mut(1).state = state::PAUSED;
         assert_eq!(call(&mut m, call::SNAPSHOT, [1, 15, 0, 0, 0], &mut ram), 1);
-        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 16, 0, 0, 0], &mut ram), 0);
+        assert_eq!(call(&mut m, call::SNAPSHOT, [1, 16, 0, 0, 0], &mut ram), 0); // 16-23: the host's
         // Info: an empty slot, a full one, out of range, a bad buffer.
         ram[..122].fill(0xEE);
         assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 0);
@@ -712,11 +716,11 @@ mod tests {
         assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 1);
         assert_eq!(ram[..122], info.record());
         assert_eq!((ram[0], &ram[1..33], &ram[114..122]), (1, &[7; 32][..], &[99, 0, 0, 0, 5, 0, 0, 0][..]));
-        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [16, base, 0, 0, 0], &mut ram), 0);
+        assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [24, base, 0, 0, 0], &mut ram), 0);
         assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base + 8190, 0, 0, 0], &mut ram), crate::machine::ERR_BUFFER);
         assert_eq!(call(&mut m, call::SNAPSHOT_DELETE, [4, 0, 0, 0, 0], &mut ram), 1);
         assert_eq!(call(&mut m, call::SNAPSHOT_INFO, [4, base, 0, 0, 0], &mut ram), 0, "empty at once");
-        assert_eq!(call(&mut m, call::SNAPSHOT_DELETE, [16, 0, 0, 0, 0], &mut ram), 0);
+        assert_eq!(call(&mut m, call::SNAPSHOT_DELETE, [24, 0, 0, 0, 0], &mut ram), 0);
         assert_eq!(
             m.take_commands(),
             [Command::Restore { handle: 1, slot: 3 }, Command::Snapshot { handle: 1, slot: 15 }, Command::DeleteSnapshot { slot: 4 }]

@@ -32,6 +32,7 @@ audio = ["window", "dep:cpal"]
 
 [dependencies]
 terse-core.workspace = true
+terse-perflog.workspace = true
 terse-net.workspace = true
 terse-relay.workspace = true
 winit = { version = "0.30", optional = true }

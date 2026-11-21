@@ -233,3 +233,11 @@ rounded as ARTICLE.md 6.1 says, relative coordinates added up):
 
 A figure that is malformed or not closed is not a `figure`: it is shown
 as its fence (`pre`).
+
+perf-record.txt (RECORD.md)
+---------------------------
+Not a core vector: an example of a host's performance record, every type
+of line once, in the record's own line format (RECORD.md section 2, not
+these conventions). Its source is crates/terse-perflog/example-record.txt;
+`cargo test -p terse-perflog` parses it, writes every line back byte for
+byte and summarises it as `terse perf log` does.

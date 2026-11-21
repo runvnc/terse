@@ -33,6 +33,7 @@ path = "src/bin/crash.rs"
 
 [dependencies]
 terse-core.workspace = true
+terse-perflog.workspace = true
 terse-net.workspace = true
 terse-bus.workspace = true
 terse-host.workspace = true
@@ -41,3 +42,4 @@ terse-host.workspace = true
 tempfile = "3"
 terse-relay.workspace = true
 png = "0.18"
+libc = "0.2"

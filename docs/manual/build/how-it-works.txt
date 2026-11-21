@@ -204,6 +204,12 @@ draw; the rest of the look (fonts, smoothing, the phosphor style's
 glow and afterglow) is the host's, so a plain host and an elaborate
 one show the same picture.
 
+## When a part of the host is slow
+
+A program cannot make a frame late: its work is bounded by the budget and the caps. What can is the host's own: a device driver, the renderer. Every host and device states its name, version and build (`--version`), and the host keeps a record on your computer of which part made a frame late, never sent anywhere (`terse perf log` sums it up). A part that is only waiting because your computer is busy is not blamed.
+
+A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names.
+
 ## Determinism and replay
 
 A machine's state is a pure function of its image and its inputs: the
@@ -237,12 +243,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:07b469b2c875f5adfa245a87bbb3d0ade52510fe4bbcce88255f109b889fecd6): building a C program and packing it as an image.
-- [Using Tersenet](terse:2d55c04f7505cc5ecedb4a3c7ee49ea5668000752e1285b193adb9458c977c3d): the tools, the shell and the reader.
+- [Writing programs](terse:8e0765276b3721b137e635517dc5dd08fc34da695e8b96f7229e37bb963ffb80): building a C program and packing it as an image.
+- [Using Tersenet](terse:0c1f9a64f0c7edaff819684a0509e21b5ca31e32d1cc47ae57ce83a23c5b174a): the tools, the shell and the reader.
 - [Writing articles](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format, tables and figures.
-- [The machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), [the terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938), [the 2D vector display](terse:07032dac21c87b99b28df12c49a0f23284e969f257a91e0c562d641b3e6ba6e2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
-- [Blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46), [feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81) on the content device.
-- [The network](terse:f5ddaf54feef02f988f85a90effdcfce5faf1222c6d2783e6b30f1f17fd68ef4): relays and feeds as the host sees them.
-- [Machine state](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f): the state serialization and the state hash.
-- [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462) and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+- [The machine](terse:e77aa2d4e5fc5c4c34fda20fdf16f1ec962ec7fee8bc9ceb9e46feed46d0686a): the CPU, memory, frames, image format and the full call table.
+- [The system device](terse:4cfeea7d194eb8ec059041b071faab492e51849fe42e065fadfe54ab0a83b426), [the terminal](terse:4ebc95fae6e074afffe16e86e7ee54ef264a86615d3fe36c21da06ec5fe8a181), [the 2D vector display](terse:f2e18a2c70811b9cbba0ee476b7496b6342249d55d5ba88ca51286ddf5edb56f), [the 3D vector display](terse:6d64ba8b8c5357a4ba1223f24e38c38d16bf91a1d453d2f4b4865d45dead2181), [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) and [machines](terse:99e9a01d2ccd5a4288b0f876c24394fb245f5164aab413504d3cbb7a8047d897).
+- [Blobs](terse:e77de4bead262640fbf52addecf90011bdd52e87335d0e971351274ccddb1004), [feeds](terse:a9185b9df7bcda7a2875c2e8ce999d59adba395b5bbf6124af43e7375c8f748d) and [named records](terse:979011e5b7952c43e3ad76f4b59dd3ca61334100666ab08af45a1a14b40f0867) on the content device.
+- [The network](terse:96171c571b8f778abd489bcb741828a3f8aa237fe71bdd8099e34cc281de5dac): relays and feeds as the host sees them.
+- [Machine state](terse:3eb0dfdf22c94e083f5d1cc5468a17aa865e2d95991204e26356f32654f6e144): the state serialization and the state hash.
+- [Events and input](terse:bcaeca8f685ab7b5d4263291c487e2c3d604dc37d9e3a9d8ec89c6d2f7a3e42b) and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

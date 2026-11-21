@@ -41,6 +41,9 @@ fn looks() -> Option<Looks> {
         look: crate::phosphor::Look::default(),
         eye: (0.0, 0.0),
         parallax: false,
+        perf: None,
+        started: std::time::Instant::now(),
+        check: None,
         panels: crate::soft::panel::PanelMode::Perspective,
     })
 }

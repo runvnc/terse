@@ -200,6 +200,7 @@ impl Device for ContentDriver {
             publishes: vec![property::PROMPT.into()],
             subscribes: vec![property::ANSWER.into()],
             services: services.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         }
     }
 
@@ -451,6 +452,9 @@ mod tests {
 }
 
 fn main() -> std::process::ExitCode {
+    if terse_bus::driver::version("terse-dev-content") {
+        return std::process::ExitCode::SUCCESS;
+    }
     let mut options = ContentOptions::default();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {

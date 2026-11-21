@@ -78,6 +78,45 @@ pub struct DriverStats {
     pub gets: u64,
 }
 
+/// What a driver cost the frame loop in the current frame (`PERFORMANCE.md`
+/// R14): the time the core waited for its replies, by kind of work.
+#[derive(Clone, Debug, Default)]
+pub struct Acct {
+    /// Work it does every frame (BEGIN, calls, END, PRESENT, GET): the
+    /// time it is accountable for.
+    pub frame_ns: u64,
+    /// Other waits: starting a machine (OPEN, and a machine's first two
+    /// frames), host services, state and restore. Recorded, never blamed.
+    pub other_ns: u64,
+    /// The frame work's time by instance (machine), for naming the program.
+    pub by_instance: Vec<(u32, u64)>,
+    /// The longest single wait and its kind (`frame`, `start`, `open`,
+    /// `service`, `state`).
+    pub longest: (u64, &'static str),
+}
+
+impl Acct {
+    fn add(&mut self, class: &'static str, instance: u32, ns: u64) {
+        if class == "frame" {
+            self.frame_ns += ns;
+            match self.by_instance.iter_mut().find(|(i, _)| *i == instance) {
+                Some(e) => e.1 += ns,
+                None => self.by_instance.push((instance, ns)),
+            }
+        } else {
+            self.other_ns += ns;
+        }
+        if ns > self.longest.0 {
+            self.longest = (ns, class);
+        }
+    }
+
+    /// The instance it worked for most in the frame.
+    pub fn top_instance(&self) -> Option<u32> {
+        self.by_instance.iter().max_by_key(|e| e.1).map(|e| e.0)
+    }
+}
+
 /// One driver process.
 pub struct Proc {
     pub info: DeviceInfo,
@@ -98,6 +137,10 @@ pub struct Proc {
     pub stats: DriverStats,
     /// The command line, for messages.
     pub command: String,
+    /// Its process ID (to read its CPU time and memory).
+    pub pid: Option<u32>,
+    /// This frame's waits for it.
+    pub acct: Acct,
 }
 
 /// How to start the bus.
@@ -147,6 +190,11 @@ pub struct Bus {
     pub failed: Option<String>,
     /// Instances open, for messages.
     pub open: usize,
+    /// Instances in their first two frames: their drivers' work for them
+    /// is starting a machine, not counted against the drivers (R14).
+    pub grace: Vec<u32>,
+    /// The host is taking the snapshots the rule asks for (R15).
+    pub saving: bool,
 }
 
 /// A machine's memory as its memory file (DEVICES.md 4.1): the guest's
@@ -204,7 +252,7 @@ impl Bus {
     /// Starts and connects every driver, in order (the order of their
     /// lowest slots).
     pub fn start(config: &BusConfig, drivers: &[Wanted]) -> Result<Bus, String> {
-        let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0 };
+        let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0, grace: Vec::new(), saving: false };
         let mut drivers = drivers.to_vec();
         drivers.sort_by_key(|w| w.slots.iter().copied().min());
         for (i, want) in drivers.iter().enumerate() {
@@ -233,6 +281,7 @@ impl Bus {
             cmd.env("TERSE_BUS_CPU", cpu.to_string());
         }
         let child = cmd.spawn().map_err(|e| format!("{what}: cannot start: {e}"))?;
+        let pid = Some(child.id());
         let mut child = Some(child);
         let fail = |child: &mut Option<Child>, e: String| {
             reap(child);
@@ -320,6 +369,8 @@ impl Bus {
             reply: Vec::new(),
             stats: DriverStats::default(),
             command: want.command.join(" "),
+            pid,
+            acct: Acct::default(),
         })
     }
 
@@ -382,8 +433,37 @@ impl Bus {
         if let Some(e) = &self.failed {
             return Err(e.clone());
         }
+        let start = Instant::now();
         let r = self.procs[p].request(to, kind, f, mem);
+        let class = self.class(kind, to.instance);
+        self.procs[p].acct.add(class, to.instance, start.elapsed().as_nanos() as u64);
         r.map_err(|e| self.fail(p, e))
+    }
+
+    /// What kind of work a request is, for the accounts (R14).
+    fn class(&self, kind: u8, instance: u32) -> &'static str {
+        match kind {
+            msg::OPEN => "open",
+            msg::SERVICE => "service",
+            // A device's state is its own work (hashing, a snapshot the
+            // shell asked for, and the first request after END waits for
+            // END's work too), but not the snapshot the rule itself takes.
+            msg::STATE | msg::RESTORE | msg::RESET if self.saving => "state",
+            _ if self.grace.contains(&instance) => "start",
+            _ => "frame",
+        }
+    }
+
+    /// Sets how long every driver has to answer (DEVICES.md 10); the
+    /// host shortens it while it takes the snapshot of a machine whose
+    /// device is slow (R15).
+    pub fn set_reply_timeout(&mut self, d: Duration) {
+        for p in &mut self.procs {
+            match &mut p.link {
+                Link::Socket(s) => s.set_deadline(Some(d)),
+                Link::Shm(s) => s.deadline = Some(d),
+            }
+        }
     }
 
     /// Sends what is batched for every driver (on the socket; on shared
@@ -580,6 +660,7 @@ impl Bus {
             replay: None,
             records: Vec::new(),
             audio_frame: None,
+            frames_begun: 0,
         };
         Ok(Machine::with_devices(image, grants, Memory::Backed(Box::new(memory)), devices))
     }
@@ -761,6 +842,8 @@ pub struct BusDevices {
     pub records: Vec<(u8, Vec<u8>)>,
     /// The frame of the sound driver's samples taken last.
     audio_frame: Option<u32>,
+    /// Frames begun since it was opened.
+    frames_begun: u32,
 }
 
 impl BusDevices {
@@ -936,6 +1019,7 @@ impl Drop for BusDevices {
             let _ = bus.post(p, Addr::of(self.instance), msg::CLOSE, |_| {});
         }
         bus.open = bus.open.saturating_sub(1);
+        bus.grace.retain(|&i| i != self.instance);
     }
 }
 
@@ -947,6 +1031,15 @@ impl Devices for BusDevices {
         }
         let replay = self.replay.take();
         self.records.clear();
+        // A machine's first two frames start it (R14).
+        {
+            let mut bus = self.bus.borrow_mut();
+            bus.grace.retain(|&i| i != self.instance);
+            if self.frames_begun < 2 {
+                bus.grace.push(self.instance);
+            }
+        }
+        self.frames_begun += 1;
         let to = Addr::of(self.instance);
         let mut inputs = FrameInputs::default();
         let mut bus = self.bus.borrow_mut();
@@ -978,8 +1071,11 @@ impl Devices for BusDevices {
         }
         *self.list.borrow_mut() = None;
         for (p, start) in sent {
+            let waited = Instant::now();
             let reply = bus.procs[p].wait_reply(to, msg::BEGIN, Some((mem.rom, &*mem.ram))).map_err(|e| bus.fail(p, e))?;
+            let class = bus.class(msg::BEGIN, self.instance);
             let d = &mut bus.procs[p];
+            d.acct.add(class, self.instance, waited.elapsed().as_nanos() as u64);
             d.stats.begin.add(start.elapsed());
             let first = d.slots[0];
             let mut r = Reader::new(&reply);

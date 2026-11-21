@@ -292,6 +292,7 @@ A machine is running, or stopped in one of two ways:
 |---|---|---|
 | Exit | the `exit` call (§system) | the exit code, 0–255 |
 | Fault | one of the faults below | the kind, `pc` and an address |
+| Halted | the host stopped it: a device it uses did not keep up (`PERFORMANCE.md` R15) | the device's slot |
 
 A fault and an exit are never confused: a fault has no exit code. The
 faulting instruction is not executed and is not charged, and `pc` is left
@@ -311,6 +312,15 @@ outside memory is a misaligned fault.
 
 A host must show the user that the program faulted, with the kind and the
 addresses, and must not present a fault as an exit code.
+
+**Halted.** A host stops a machine between frames, never within one,
+when a device the machine uses does not keep up with its frames, after
+warning the user and taking the machine's snapshot (`PERFORMANCE.md`
+R15). The program did nothing wrong and is not told: nothing runs in
+later frames, as after an exit. The stop is an input of the run, recorded
+with the frame after which it happened (`STATE.md` 5, `DEVICES.md` 8), so
+a replay stops at the same frame. A host must show the user which device
+did not keep up, and must not present it as an exit or a fault.
 
 ## §image Image format
 
@@ -1291,6 +1301,15 @@ tested (at 60 frames a second a frame is 16.7 ms):
    file is opened, nor any directory of fonts read, for text after that.
    A glyph is rasterised when it is first shown, which is bounded per
    glyph (`PERFORMANCE.md` R11).
+
+**What a host does about its own components.** With programs bounded,
+what can still make a frame late is the host's own: a device driver, a
+renderer, its core. A host states the identity of itself and its devices,
+attributes each late frame to one of them, keeps a record of it on the
+computer (never sent: `RECORD.md`), warns the user about a device that
+keeps making frames late and then stops the machines that use it, saved
+first (stopped state Halted, §stopping). `PERFORMANCE.md` R13–R16 give the
+rule and its numbers.
 
 How a host presents a frame (drawing, the phosphor style) is not machine
 state and has no requirement here; `PERFORMANCE.md` gives the reference

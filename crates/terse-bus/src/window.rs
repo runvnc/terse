@@ -131,6 +131,7 @@ impl App {
         let start = Instant::now();
         let prompt = self.bs.prompt()?;
         let viewport = self.viewport;
+        self.comp.notice = self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone()));
         self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         let compose = start.elapsed().as_secs_f64() * 1000.0;
         let start = Instant::now();
@@ -141,7 +142,11 @@ impl App {
             buffer[..n].copy_from_slice(&frame.data[..n]);
             buffer.present().map_err(|e| e.to_string())?;
         }
-        let present = start.elapsed().as_secs_f64() * 1000.0;
+        let present_took = start.elapsed();
+        let present = present_took.as_secs_f64() * 1000.0;
+        for line in self.bs.end_frame(present_took)? {
+            eprintln!("{line}");
+        }
         self.presents.push(Instant::now());
         if self.first_frame.is_none() {
             self.first_frame = Some(self.opts.startup + self.created.elapsed());
@@ -412,6 +417,11 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
     let code = match app.bs.system.stopped() {
         Some(terse_core::Stopped::Exit(c)) => ExitCode::from(c),
         Some(terse_core::Stopped::Fault(_)) => ExitCode::from(255),
+        Some(terse_core::Stopped::Halted(slot)) => {
+            let saved = app.bs.halted.as_ref().map_or(String::new(), |(_, d)| format!("; its state before the stop: {d}"));
+            eprintln!("terse-bus: stopped by the host: device {slot} did not keep up{saved}");
+            ExitCode::from(4)
+        }
         None => ExitCode::SUCCESS,
     };
     match app.error.take() {

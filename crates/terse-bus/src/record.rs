@@ -6,6 +6,9 @@ use terse_core::{CONTROLLERS, Controller, Event};
 use crate::proto::Reader;
 
 pub const MAGIC: &[u8; 4] = b"TBRC";
+/// Version 1 adds, per frame, the device the host stopped the machine for
+/// (PERFORMANCE.md R15); version 0 recordings are still read.
+pub const VERSION: u8 = 1;
 
 /// One frame's inputs.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -16,6 +19,9 @@ pub struct FrameRecord {
     pub events: Vec<Event>,
     pub random: Vec<u8>,
     pub drivers: Vec<(u8, Vec<u8>)>,
+    /// 0, or the slot of the device for which the host stopped the machine
+    /// after this frame (the hash is after the stop).
+    pub halted: u8,
     pub hash: [u8; 32],
 }
 
@@ -23,7 +29,7 @@ pub struct FrameRecord {
 /// per optional device the image lists (none for most images).
 pub fn header(image_id: &[u8; 32], grants: &terse_core::Grants) -> Vec<u8> {
     let mut v = MAGIC.to_vec();
-    v.push(0);
+    v.push(VERSION);
     v.extend_from_slice(image_id);
     v.extend(grants.0.iter().map(|&g| g as u8));
     v
@@ -48,6 +54,7 @@ impl FrameRecord {
             out.extend_from_slice(&(b.len() as u32).to_le_bytes());
             out.extend_from_slice(b);
         }
+        out.push(self.halted);
         out.extend_from_slice(&self.hash);
     }
 
@@ -65,8 +72,12 @@ impl FrameRecord {
 /// and the frames.
 pub fn parse(bytes: &[u8], image: &terse_core::Image) -> Result<([u8; 32], terse_core::Grants, Vec<FrameRecord>), String> {
     let mut r = Reader::new(bytes);
-    if r.take(4)? != MAGIC || r.u8()? != 0 {
+    if r.take(4)? != MAGIC {
         return Err("not a terse-bus recording".into());
+    }
+    let version = r.u8()?;
+    if version > VERSION {
+        return Err(format!("a terse-bus recording of version {version}"));
     }
     let id: [u8; 32] = r.take(32)?.try_into().unwrap();
     if id != image.id {
@@ -96,6 +107,9 @@ pub fn parse(bytes: &[u8], image: &terse_core::Image) -> Result<([u8; 32], terse
         for _ in 0..d {
             let slot = r.u8()?;
             f.drivers.push((slot, r.blob()?.to_vec()));
+        }
+        if version >= 1 {
+            f.halted = r.u8()?;
         }
         f.hash = r.take(32)?.try_into().unwrap();
         frames.push(f);
