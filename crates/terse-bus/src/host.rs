@@ -131,7 +131,7 @@ pub struct Notice {
 }
 
 /// How long a notice stays (frames).
-const NOTICE_FRAMES: u64 = 300;
+pub const NOTICE_FRAMES: u64 = 300;
 /// How long a driver has to give its state for a snapshot before a stop.
 const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -141,6 +141,41 @@ const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 /// slots in `slots`; `overrides` (slots, command line) replace the
 /// default driver of those slots.
 pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u8>, Vec<String>)]) -> Result<Vec<Driven>, String> {
+    drivers_with(dir, slots, content, overrides, &[])
+}
+
+/// An installed driver chosen for a group (DEVICES.md 2.2).
+#[derive(Clone, Debug)]
+pub struct InstalledDriver {
+    /// The group's slots (DEVICES.md 2.1's table).
+    pub group: Vec<u8>,
+    pub name: String,
+    pub program: PathBuf,
+    /// The slots and device versions of its manifest.
+    pub versions: Vec<(u8, u8)>,
+}
+
+/// The installed drivers the user's drivers folder (`<config>/drivers`)
+/// chooses, and notes for the user about choices that cannot be used.
+/// Lines of the folder's `use` that cannot be read are the last item.
+pub fn installed_drivers(config: &Path) -> (Vec<InstalledDriver>, Vec<crate::bus::Unused>, Vec<String>) {
+    use terse_net::driverlist::{Source, resolve};
+    let (sources, bad) = resolve(config);
+    let (mut out, mut unused) = (Vec::new(), Vec::new());
+    for (group, source) in sources {
+        match source {
+            Source::Installed { name, program, manifest } => out.push(InstalledDriver { group: group.to_vec(), name, program, versions: manifest.slots }),
+            Source::Shipped { note: Some((name, why)), .. } => unused.push(crate::bus::Unused { name, slot: group[0], why }),
+            Source::Shipped { .. } => {}
+        }
+    }
+    (out, unused, bad)
+}
+
+/// [`drivers`], with the installed drivers that replace the default driver
+/// of their group (DEVICES.md 2.2): each is started with the options the
+/// default driver would get, and falls back to it.
+pub fn drivers_with(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u8>, Vec<String>)], installed: &[InstalledDriver]) -> Result<Vec<Driven>, String> {
     let exe = |name: &str| dir.join(name).display().to_string();
     let defaults: [(Vec<u8>, Vec<String>); 5] = DEFAULT_DRIVERS.map(|(s, name)| {
         let mut cmd = vec![exe(name)];
@@ -169,14 +204,25 @@ pub fn drivers(dir: &Path, slots: &[u8], content: &[String], overrides: &[(Vec<u
         let s: Vec<u8> = s.iter().copied().filter(|x| slots.contains(x)).collect();
         if !s.is_empty() {
             covered.extend(&s);
-            out.push(Driven { slots: s, command: cmd.clone() });
+            out.push(Driven { slots: s, command: cmd.clone(), installed: None });
         }
     }
-    for (s, cmd) in defaults {
-        let s: Vec<u8> = s.into_iter().filter(|x| slots.contains(x) && !covered.contains(x)).collect();
-        if !s.is_empty() {
-            covered.extend(&s);
-            out.push(Driven { slots: s, command: cmd });
+    for (group, cmd) in defaults {
+        let s: Vec<u8> = group.iter().copied().filter(|x| slots.contains(x) && !covered.contains(x)).collect();
+        if s.is_empty() {
+            continue;
+        }
+        covered.extend(&s);
+        match installed.iter().find(|i| i.group.first() == group.first()) {
+            // Only a whole group goes to an installed driver: a --driver
+            // that took part of it leaves the rest to the default one.
+            Some(i) if s.len() == group.iter().filter(|x| slots.contains(x)).count() => {
+                let mut command = vec![i.program.display().to_string()];
+                command.extend_from_slice(&cmd[1..]);
+                let shipped = Path::new(&cmd[0]).exists().then_some(cmd);
+                out.push(Driven { slots: s, command, installed: Some(crate::bus::Installed { name: i.name.clone(), versions: i.versions.clone(), shipped }) });
+            }
+            _ => out.push(Driven { slots: s, command: cmd, installed: None }),
         }
     }
     if let Some(s) = slots.iter().find(|s| !covered.contains(s)) {
@@ -205,6 +251,11 @@ const DEFAULT_DRIVERS: [(&[u8], &str); 5] = [
 /// requires stays, so that a missing driver still stops the run. A shell
 /// gets every slot, as before.
 pub fn installed_slots(dir: &Path, image: &Image, shell: bool, without: &[u8], overrides: &[(Vec<u8>, Vec<String>)]) -> Vec<u8> {
+    installed_slots_with(dir, image, shell, without, overrides, &[])
+}
+
+/// [`installed_slots`], counting the installed drivers too (DEVICES.md 2.2).
+pub fn installed_slots_with(dir: &Path, image: &Image, shell: bool, without: &[u8], overrides: &[(Vec<u8>, Vec<String>)], installed: &[InstalledDriver]) -> Vec<u8> {
     let slots = needed_slots(image, shell);
     if shell {
         return slots;
@@ -221,6 +272,7 @@ pub fn installed_slots(dir: &Path, image: &Image, shell: bool, without: &[u8], o
     };
     let installed = |s: u8| {
         overrides.iter().any(|(o, _)| o.contains(&s))
+            || installed.iter().any(|i| i.group.contains(&s))
             || DEFAULT_DRIVERS.iter().any(|(d, name)| d.contains(&s) && dir.join(name).exists())
     };
     slots
