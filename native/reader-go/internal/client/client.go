@@ -323,6 +323,11 @@ func (cn *conn) run() {
 		cl.mu.Unlock()
 		w, err := cn.dial()
 		if err != nil {
+			select {
+			case <-cn.stop: // dropped while connecting (removeConnLocked)
+				return
+			default:
+			}
 			cl.mu.Lock()
 			cn.tried = true
 			cn.connecting = false
@@ -387,7 +392,7 @@ func (cn *conn) refusedNow() bool {
 // or link-local, and the connection goes to an address that was checked.
 func (cn *conn) dial() (*ws.Conn, error) {
 	if cn.own {
-		return ws.Dial(cn.url, "", dialTimeout)
+		return ws.DialStop(cn.url, "", dialTimeout, cn.stop)
 	}
 	u, err := url.Parse(cn.url)
 	if err != nil {
@@ -426,7 +431,7 @@ func (cn *conn) dial() (*ws.Conn, error) {
 		}
 	}
 	addr := ips[0].Unmap().String()
-	return ws.Dial(cn.url, net.JoinHostPort(addr, port), dialTimeout)
+	return ws.DialStop(cn.url, net.JoinHostPort(addr, port), dialTimeout, cn.stop)
 }
 
 func (cn *conn) send(m []byte) error {

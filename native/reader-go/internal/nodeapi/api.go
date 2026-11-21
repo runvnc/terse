@@ -109,9 +109,9 @@ type Node interface {
 	HeldBlob(id string) ([]byte, bool)
 	// Blob returns a blob from the store or the relays, verified.
 	Blob(id string) ([]byte, error)
-	// ArticleTitle is the title of an article entry held for a blob of
-	// that size, or "".
-	ArticleTitle(id string, size int) string
+	// ArticleTitle is the title of the first article entry stored for a
+	// blob of that size; ok is false if none is held (a title may be "").
+	ArticleTitle(id string, size int) (title string, ok bool)
 
 	Relays() []Relay
 	ConfiguredRelays() []string

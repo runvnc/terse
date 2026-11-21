@@ -25,6 +25,7 @@ type Node struct {
 	changed chan struct{}
 	logs    chan string
 	stop    chan struct{}
+	live    bool // Connect has been called: relays set later are connected at once
 }
 
 var _ nodeapi.Node = (*Node)(nil)
@@ -50,6 +51,7 @@ func Open(dir string, opt client.Options) (*Node, error) {
 	return n, nil
 }
 
+// relays is the user's relay list in use (n.mu held).
 func (n *Node) relays() []string {
 	if n.opt.Relays != nil {
 		return n.opt.Relays
@@ -61,6 +63,7 @@ func (n *Node) relays() []string {
 func (n *Node) Connect() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.live = true
 	if n.cl != nil {
 		return nil
 	}
@@ -96,40 +99,61 @@ func (n *Node) Sync(timeout time.Duration) (bool, error) {
 	if err := n.Connect(); err != nil {
 		return false, err
 	}
+	n.mu.Lock()
+	none := len(n.relays()) == 0
+	n.mu.Unlock()
+	if none {
+		return false, errors.New("no relay")
+	}
 	return n.client().WaitIdle(timeout), nil
 }
 
 func (n *Node) Changed() <-chan struct{} { return n.changed }
 func (n *Node) Log() <-chan string       { return n.logs }
 
-func (n *Node) entry(e *terse.Entry) nodeapi.Entry {
+// names caches the feeds' names while a list of entries is made (finding
+// a feed's profile in force looks at all its entries).
+type names map[[32]byte]string
+
+func (m names) of(st *store.Store, key [32]byte) string {
+	v, ok := m[key]
+	if !ok {
+		v = st.Name(key)
+		m[key] = v
+	}
+	return v
+}
+
+func (n *Node) entry(e *terse.Entry, nm names) nodeapi.Entry {
 	b, held := n.st.BlobForEntry(e)
 	full := !article.BasicText([]byte(e.Title)) || held && e.Kind == terse.KindArticle && !article.BasicText(b)
+	name := nm.of(n.st, e.Key)
 	return nodeapi.Entry{
-		Feed: e.KeyHex(), Label: n.st.Label(e.Key), Seq: e.Seq, Time: e.Time, Kind: e.Kind,
+		Feed: e.KeyHex(), Label: nodeapi.LabelOf(name, e.KeyHex()), Seq: e.Seq, Time: e.Time, Kind: e.Kind,
 		Size: e.Size, Blob: e.BlobHex(), Title: e.Title, Held: held,
-		Arrival: e.Arrival, Name: n.st.Name(e.Key), FullText: full, Raw: e.Raw,
+		Arrival: e.Arrival, Name: name, FullText: full, Raw: e.Raw,
 	}
 }
 
 func (n *Node) Timeline() []nodeapi.Entry {
 	var out []nodeapi.Entry
+	nm := names{}
 	for _, e := range n.st.Timeline() {
-		out = append(out, n.entry(e))
+		out = append(out, n.entry(e, nm))
 	}
 	return out
 }
 
 func (n *Node) feed(a terse.Address, withEntries bool) nodeapi.Feed {
+	// The hints are those the feed was subscribed with, whatever the
+	// address asked about carries (LOCAL.md 4.3, a feed record).
+	a = terse.Address{Key: a.Key}
+	if sb, ok := n.st.Subscribed(a.Key); ok {
+		a = sb.Addr
+	}
 	f := nodeapi.Feed{Key: a.KeyHex(), Address: a.String(), Label: n.st.Label(a.Key), Name: n.st.Name(a.Key)}
 	f.Nickname = n.st.Nickname(a.Key) != ""
-	if sb, ok := n.st.Subscribed(a.Key); ok {
-		f.Subscribed = true
-		if len(a.Hints) == 0 {
-			a = sb.Addr
-			f.Address = a.String()
-		}
-	}
+	_, f.Subscribed = n.st.Subscribed(a.Key)
 	for _, h := range a.Hints {
 		f.Hints = append(f.Hints, h.URL())
 	}
@@ -141,8 +165,9 @@ func (n *Node) feed(a terse.Address, withEntries bool) nodeapi.Feed {
 		f.Description = p.Description
 	}
 	if withEntries {
+		nm := names{a.Key: f.Name}
 		for _, e := range n.st.FeedEntries(a.Key) {
-			f.Entries = append(f.Entries, n.entry(e))
+			f.Entries = append(f.Entries, n.entry(e, nm))
 		}
 	}
 	return f
@@ -248,24 +273,29 @@ func (n *Node) Blob(id string) ([]byte, error) {
 	return n.client().Get(k)
 }
 
-func (n *Node) ArticleTitle(id string, size int) string {
+// ArticleTitle is the title of the first article entry stored for that
+// blob and size (LOCAL.md 4.3, Title); ok is false if there is none.
+func (n *Node) ArticleTitle(id string, size int) (string, bool) {
 	k, err := parseID(id)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, e := range n.st.EntriesForBlob(k) {
 		if e.Kind == terse.KindArticle && int(e.Size) == size {
-			return e.Title
+			return e.Title, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 func (n *Node) Relays() []nodeapi.Relay {
 	cl := n.client()
 	if cl == nil {
+		n.mu.Lock()
+		urls := n.relays()
+		n.mu.Unlock()
 		var out []nodeapi.Relay
-		for _, u := range n.relays() {
+		for _, u := range urls {
 			out = append(out, nodeapi.Relay{URL: u, Own: true})
 		}
 		return out
@@ -279,16 +309,37 @@ func (n *Node) Relays() []nodeapi.Relay {
 
 func (n *Node) ConfiguredRelays() []string { return n.st.Relays() }
 
+// SetRelays replaces the user's relay list (a URL given twice counts
+// once) and, once the node is connecting, uses it at once: relays no
+// longer listed are disconnected and new ones connected (LOCAL.md 4.3).
 func (n *Node) SetRelays(urls []string) error {
-	if len(urls) > 8 {
-		return errors.New("at most eight relays")
-	}
+	var list []string
+	seen := map[string]bool{}
 	for _, u := range urls {
 		if !terse.IsRelayURL(u) {
 			return fmt.Errorf("a relay is a ws:// or wss:// URL: %s", u)
 		}
+		if !seen[u] {
+			seen[u] = true
+			list = append(list, u)
+		}
 	}
-	return n.st.SetRelays(urls)
+	if len(list) > 8 {
+		return errors.New("at most eight relays")
+	}
+	if err := n.st.SetRelays(list); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.opt.Relays = nil // from now on the list just set, not --relay
+	cl, live := n.cl, n.live
+	n.mu.Unlock()
+	if cl != nil {
+		cl.SetOwnRelays(list)
+	} else if live && len(list) > 0 {
+		return n.Connect()
+	}
+	return nil
 }
 
 func (n *Node) Close() {
