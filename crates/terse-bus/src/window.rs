@@ -43,12 +43,19 @@ pub struct Options {
 }
 
 /// One frame's timings (ms).
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct FrameLog {
     emulate: f64,
     bus: f64,
+    /// Composition: the drivers' PRESENT waits and the core's own work.
     compose: f64,
+    /// Each driver's PRESENT, from sending it to its reply (by driver).
+    drivers: Vec<f64>,
     present: f64,
+    /// Of `present`, waiting for the compositor to release a buffer.
+    buffer_wait: f64,
+    /// The compositor's own account of the draw.
+    profile: terse_bus::compose::Profile,
 }
 
 struct App {
@@ -79,6 +86,11 @@ struct App {
     created: Instant,
     /// Sheds the phosphor look when frames run long.
     governor: terse_host::phosphor::Governor,
+    /// The last presents' frame sizes and damage, newest first (what a
+    /// buffer of an age is missing).
+    presented: VecDeque<((u32, u32), Vec<terse_host::soft::base::IRect>)>,
+    /// The last present's wait for a buffer the compositor had released (ms).
+    buffer_wait: f64,
 }
 
 impl App {
@@ -92,6 +104,11 @@ impl App {
                 h.iter().map(|x| x.sum_ns as f64).sum::<f64>() / 1e6
             })
             .sum()
+    }
+
+    /// Each driver's PRESENT waits so far (ms).
+    fn present_ms(&self) -> Vec<f64> {
+        self.bs.bus.borrow().procs.iter().map(|d| d.stats.present.sum_ns as f64 / 1e6).collect()
     }
 
     fn frame(&mut self) -> Result<(), String> {
@@ -133,19 +150,59 @@ impl App {
             self.eye = (step(self.eye.0, target.0), step(self.eye.1, target.1));
         }
         self.comp.set_eye(self.eye);
+        let presents_before = self.present_ms();
         let start = Instant::now();
         let prompt = self.bs.prompt()?;
         let viewport = self.viewport;
         self.comp.notice = self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone()));
         self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         let compose = start.elapsed().as_secs_f64() * 1000.0;
+        let drivers: Vec<f64> = self.present_ms().iter().zip(&presents_before).map(|(a, b)| a - b).collect();
         let start = Instant::now();
         if let Some(surface) = &mut self.surface {
             let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
+            self.buffer_wait = start.elapsed().as_secs_f64() * 1000.0;
             let frame = self.comp.frame();
-            let n = buffer.len().min(frame.data.len());
-            buffer[..n].copy_from_slice(&frame.data[..n]);
-            buffer.present().map_err(|e| e.to_string())?;
+            let size = (frame.area.width() as u32, frame.area.height() as u32);
+            let damage = self.comp.damage().to_vec();
+            // Only what changed is copied and presented: the buffer holds
+            // the frame of `age` presents ago (softbuffer), so the damage
+            // since then. A new size, or an older buffer, is copied whole.
+            let age = buffer.age() as usize;
+            let known = age >= 1 && age <= self.presented.len() + 1 && self.presented.iter().take(age - 1).all(|p| p.0 == size) && buffer.len() == frame.data.len();
+            let whole = [terse_host::soft::base::IRect::of_size(size)];
+            let mut copy: Vec<terse_host::soft::base::IRect> = damage.clone();
+            if known {
+                for p in self.presented.iter().take(age - 1) {
+                    copy.extend_from_slice(&p.1);
+                }
+            } else {
+                copy = whole.to_vec();
+            }
+            let w = size.0 as usize;
+            for r in &copy {
+                let r = r.intersect(&whole[0]);
+                for y in r.y0..r.y1 {
+                    let row = y as usize * w;
+                    buffer[row + r.x0 as usize..row + r.x1 as usize].copy_from_slice(&frame.data[row + r.x0 as usize..row + r.x1 as usize]);
+                }
+            }
+            self.presented.push_front((size, damage.clone()));
+            self.presented.truncate(2);
+            let rects: Vec<softbuffer::Rect> = (if known { &damage[..] } else { &whole[..] })
+                .iter()
+                .filter_map(|r| {
+                    let r = r.intersect(&whole[0]);
+                    Some(softbuffer::Rect { x: r.x0 as u32, y: r.y0 as u32, width: NonZeroU32::new(r.width() as u32)?, height: NonZeroU32::new(r.height() as u32)? })
+                })
+                .collect();
+            if rects.is_empty() {
+                // Nothing changed: the same picture again (a commit keeps
+                // the frame callbacks going), one pixel's damage.
+                buffer.present_with_damage(&[softbuffer::Rect { x: 0, y: 0, width: NonZeroU32::MIN, height: NonZeroU32::MIN }]).map_err(|e| e.to_string())?;
+            } else {
+                buffer.present_with_damage(&rects).map_err(|e| e.to_string())?;
+            }
         }
         let present_took = start.elapsed();
         let present = present_took.as_secs_f64() * 1000.0;
@@ -168,7 +225,7 @@ impl App {
         if self.first_frame.is_none() {
             self.first_frame = Some(self.opts.startup + self.created.elapsed());
         }
-        self.log.push(FrameLog { emulate, bus, compose, present });
+        self.log.push(FrameLog { emulate, bus, compose, drivers, present, buffer_wait: self.buffer_wait, profile: self.comp.profile });
         self.frames += 1;
         Ok(())
     }
@@ -303,8 +360,38 @@ impl App {
         println!("selftest: emulation incl. bus p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms");
         println!("selftest: bus waits (summed over drivers) p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms");
         println!("selftest: composition p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms");
+        {
+            let bus = self.bs.bus.borrow();
+            for (i, d) in bus.procs.iter().enumerate() {
+                let (a, b, c) = spread(&mut self.log.iter().map(|l| l.drivers.get(i).copied().unwrap_or(0.0)).collect::<Vec<_>>());
+                if c > 0.0 {
+                    println!("selftest:   PRESENT to slots {:?} ({}) p50 {a:.3} ms, p99 {b:.3} ms, max {c:.3} ms", d.slots, d.info.name);
+                }
+            }
+        }
+        // The drivers draw at once: the core's own is what is left of the
+        // composition after the PRESENT round (sent to all, then collected).
+        let (o50, o99, omax) = col(|l| l.compose - l.profile.present_ns as f64 / 1e6);
+        let (r50, r99, rmax) = col(|l| l.profile.present_ns as f64 / 1e6);
+        println!("selftest:   the PRESENT round (all drivers) p50 {r50:.3} ms, p99 {r99:.3} ms, max {rmax:.3} ms");
+        println!("selftest:   the core's own composition p50 {o50:.3} ms, p99 {o99:.3} ms, max {omax:.3} ms");
+        for (what, f) in [
+            ("properties and styles", (|l: &FrameLog| l.profile.show_ns) as fn(&FrameLog) -> u64),
+            ("layers composed (or the tube)", |l| l.profile.layers_ns),
+            ("the frame put together", |l| l.profile.frame_ns),
+        ] {
+            let (a, b, c) = spread(&mut self.log.iter().map(|l| f(l) as f64 / 1e6).collect::<Vec<_>>());
+            println!("selftest:     {what} p50 {a:.3} ms, p99 {b:.3} ms, max {c:.3} ms");
+        }
         println!("selftest: present (copy) p50 {p50:.3} ms, p99 {p99:.3} ms, max {pmax:.3} ms");
+        let (w50, w99, wmax) = col(|l| l.buffer_wait);
+        println!("selftest:   waiting for the window system to release a buffer p50 {w50:.3} ms, p99 {w99:.3} ms, max {wmax:.3} ms");
         println!("selftest: present interval p50 {i50:.3} ms, p99 {i99:.3} ms, max {imax:.3} ms");
+        let (t50, t99, tmax) = col(|l| l.emulate + l.compose + l.present);
+        println!("selftest: frame work (emulation + composition + present) p50 {t50:.3} ms, p99 {t99:.3} ms, max {tmax:.3} ms");
+        if let Some(m) = &self.bs.monitor {
+            println!("selftest: late frames {} (the record has who)", m.late);
+        }
         if let Some(f) = self.first_frame {
             println!("selftest: start-up to first frame {:.1} ms", f.as_secs_f64() * 1000.0);
         }
@@ -421,6 +508,8 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         first_frame: None,
         created: Instant::now(),
         governor: Default::default(),
+        presented: VecDeque::new(),
+        buffer_wait: 0.0,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if app.opts.selftest.is_some() {
