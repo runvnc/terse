@@ -6,7 +6,6 @@
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -20,7 +19,7 @@ use terse_core::{DeviceReq, ERR_UNKNOWN, Event, FrameInput, Grants, Image, Machi
 
 use crate::proto::{self, Addr, CallEntry, DeviceInfo, Hello, LayerDecl, Open, PosEvent, Reader, Writer, access, hello_flags, msg, property};
 use crate::stats::Histogram;
-use crate::transport::{self, Mapping, ShmEnd, SocketEnd, Spin};
+use crate::transport::{self, Mapping, ShmEnd, SocketEnd, Spin, UnixListener, UnixStream};
 
 /// How the core reaches one driver.
 pub enum Link {

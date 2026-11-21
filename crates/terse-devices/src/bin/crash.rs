@@ -106,10 +106,25 @@ fn main() -> std::process::ExitCode {
     if mode == "slow" {
         std::thread::sleep(std::time::Duration::from_secs(2));
         if let Ok(then) = std::env::var("TERSE_CRASH_THEN") {
-            use std::os::unix::process::CommandExt;
-            let e = std::process::Command::new(then).exec();
-            eprintln!("terse-dev-crash: {e}");
-            return std::process::ExitCode::from(1);
+            // Becomes that program (the same process, so the core waits for
+            // it); on Windows, which cannot, runs it and ends with it.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let e = std::process::Command::new(then).exec();
+                eprintln!("terse-dev-crash: {e}");
+                return std::process::ExitCode::from(1);
+            }
+            #[cfg(not(unix))]
+            {
+                return match std::process::Command::new(&then).status() {
+                    Ok(s) => std::process::ExitCode::from(s.code().unwrap_or(1).clamp(0, 255) as u8),
+                    Err(e) => {
+                        eprintln!("terse-dev-crash: {then}: {e}");
+                        std::process::ExitCode::from(1)
+                    }
+                };
+            }
         }
     }
     let at = std::env::var("TERSE_CRASH_AT").ok().and_then(|s| s.parse().ok()).unwrap_or(u64::MAX);
