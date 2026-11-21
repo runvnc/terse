@@ -49,6 +49,7 @@ pub fn run(
     let looks_eye = looks.eye;
     let watch = crate::watch::HostWatch::new(
         looks.perf.clone(),
+        looks.perf.is_some() && looks.perf == terse_perflog::record::default_dir(),
         match looks.renderer {
             RendererChoice::Software => "software",
             RendererChoice::Gpu => "gpu",

@@ -66,7 +66,6 @@ pub struct Monitor {
     emulated: Option<(Instant, u64)>,
     started: Instant,
     start_written: bool,
-    default_dir: bool,
     run_start: Instant,
     pub late: u64,
     /// The monitor's own cost per frame.
@@ -77,11 +76,9 @@ impl Monitor {
     /// Starts watching `bus`'s drivers: the record's head (run, host,
     /// computer, devices).
     pub fn new(cfg: &WatchConfig, bus: &Bus) -> Monitor {
-        let host = Identity::this("terse-bus");
-        let rec = cfg.record.as_ref().map(|d| Recorder::open(d, &host));
+        let rec = cfg.record.as_ref().map(|d| Recorder::open(d, "terse-bus", cfg.default_dir));
         if let Some(r) = &rec {
             r.add(Line::Run { date: record::utc_date(), mode: cfg.mode.to_string() });
-            r.add(Line::Host(host.clone()));
             r.add(Line::Env(Environment::detect(cfg.renderer)));
             for d in &bus.procs {
                 r.add(Line::Device {
@@ -108,7 +105,6 @@ impl Monitor {
             emulated: None,
             started: cfg.started,
             start_written: false,
-            default_dir: cfg.default_dir,
             run_start: Instant::now(),
             late: 0,
             overhead: Histogram::default(),
@@ -204,8 +200,7 @@ impl Monitor {
         if !self.start_written {
             self.start_written = true;
             let ms = self.started.elapsed().as_secs_f64() * 1000.0;
-            let first = self.rec.as_ref().is_some_and(|r| r.first);
-            self.add(Line::Start { ms: (ms * 10.0).round() / 10.0, cold: cold(first, self.default_dir) });
+            self.add(Line::Start { ms: (ms * 10.0).round() / 10.0, cold: "auto".into() });
         }
         if self.frame % MEM_EVERY == 0 && self.rec.is_some() {
             let s = self.run_start.elapsed().as_secs();
@@ -228,25 +223,5 @@ impl Drop for Monitor {
     fn drop(&mut self) {
         let seconds = self.run_start.elapsed().as_secs();
         self.add(Line::End { frames: self.frame, late: self.late, seconds });
-    }
-}
-
-/// `build` for the first run of this build, `boot` for the first since
-/// the computer (or the user's session) started, else `warm`; `-` when
-/// the record is not the user's own.
-fn cold(first: bool, default_dir: bool) -> String {
-    if first {
-        return "build".into();
-    }
-    if !default_dir {
-        return "-".into();
-    }
-    let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) else { return "-".into() };
-    let marker = PathBuf::from(run).join(format!("terse-perf-{}", terse_perflog::identity::build_id().replace(':', "-")));
-    if marker.exists() {
-        "warm".into()
-    } else {
-        let _ = std::fs::write(&marker, b"");
-        "boot".into()
     }
 }

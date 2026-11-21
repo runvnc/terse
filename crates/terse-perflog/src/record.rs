@@ -46,7 +46,9 @@ pub enum Line {
     Host(Identity),
     /// `env <os> <os-version> <arch> <cores> <ram-gib> <renderer> <cpu>`.
     Env(Environment),
-    /// `device <component> <slots> <name> <version> <build>`.
+    /// `device <component> <slots> <name> <version> <build>`. A host whose
+    /// devices are built in writes one, for the component `core`, with
+    /// its own identity ([`Line::host_devices`]).
     Device { component: Component, slots: Vec<u8>, identity: Identity },
     /// `start <ms> <cold>`: from the process's start to its first frame
     /// presented; cold is `build` (the first run of this build), `boot`
@@ -133,6 +135,13 @@ pub fn image_field(id: Option<&[u8; 32]>) -> String {
 }
 
 impl Line {
+    /// The `device` line of a host whose devices `slots` are built in: the
+    /// writer puts the host's identity in it.
+    pub fn host_devices(slots: &[u8]) -> Line {
+        let s: Vec<String> = slots.iter().map(u8::to_string).collect();
+        Line::Other(format!("device core {} =host", s.join(",")))
+    }
+
     /// The line for a late frame.
     pub fn late(l: &Late) -> Line {
         let p = &l.top;
@@ -242,7 +251,7 @@ impl Line {
     /// Whether the line describes the run (repeated at the head of a
     /// rotated file, so that every file can be read alone).
     fn is_header(&self) -> bool {
-        matches!(self, Line::Run { .. } | Line::Host(_) | Line::Env(_) | Line::Device { .. } | Line::Start { .. })
+        matches!(self, Line::Run { .. } | Line::Host(_) | Line::Env(_) | Line::Device { .. } | Line::Start { .. }) || matches!(self, Line::Other(s) if s.starts_with("device "))
     }
 }
 
@@ -298,29 +307,51 @@ pub struct Recorder {
     thread: Option<JoinHandle<()>>,
     dropped: Arc<AtomicU64>,
     late_lines: AtomicU64,
-    pub path: PathBuf,
-    /// Whether this host identity had no record yet (its first run).
-    pub first: bool,
+    path: Arc<std::sync::OnceLock<PathBuf>>,
     /// The writer's first error, if any (the record is then lost, the run
     /// goes on).
     pub error: Arc<Mutex<Option<String>>>,
 }
 
 impl Recorder {
-    /// Starts the writer of `host`'s record in `dir` (created if need be).
-    pub fn open(dir: &Path, host: &Identity) -> Recorder {
-        let path = file_of(dir, host);
-        let first = !path.exists() && !path.with_extension("log.1").exists();
+    /// Starts the writer of the record of the host `name` (this program)
+    /// in `dir` (created if need be). Returns at once: the writer thread
+    /// works out the host's identity (hashing the program file takes
+    /// milliseconds), writes its `host` line and decides a `start` line's
+    /// `auto` cold flag (`default_dir`: the record is the user's own, so a
+    /// marker in the runtime directory can tell the first run since the
+    /// computer started).
+    pub fn open(dir: &Path, name: &str, default_dir: bool) -> Recorder {
+        Self::open_as(dir, Box::new({
+            let name = name.to_string();
+            move || Identity::this(&name)
+        }), default_dir)
+    }
+
+    /// The same for a given identity (tests).
+    pub fn open_as(dir: &Path, host: Box<dyn FnOnce() -> Identity + Send>, default_dir: bool) -> Recorder {
         let (tx, rx) = sync_channel(QUEUE);
         let dropped = Arc::new(AtomicU64::new(0));
         let error = Arc::new(Mutex::new(None));
+        let path: Arc<std::sync::OnceLock<PathBuf>> = Arc::default();
         let (d, p, e, dir) = (dropped.clone(), path.clone(), error.clone(), dir.to_path_buf());
         let thread = std::thread::Builder::new().name("terse-perf-record".into()).spawn(move || {
-            if let Err(err) = write_loop(&dir, &p, rx, &d) {
+            let host = host();
+            let file = file_of(&dir, &host);
+            let first = !file.exists() && !file.with_extension("log.1").exists();
+            let _ = p.set(file.clone());
+            let cold = cold(first, default_dir, &host.build);
+            if let Err(err) = write_loop(&dir, &file, rx, &d, Line::Host(host).encode(), &cold) {
                 *e.lock().unwrap() = Some(err.to_string());
             }
         });
-        Recorder { tx: Some(tx), thread: thread.ok(), dropped, late_lines: AtomicU64::new(0), path, first, error }
+        Recorder { tx: Some(tx), thread: thread.ok(), dropped, late_lines: AtomicU64::new(0), path, error }
+    }
+
+    /// The record file (waits for the writer to know it).
+    pub fn path(&self) -> Option<PathBuf> {
+        self.flush();
+        self.path.get().cloned()
     }
 
     /// Queues a line (never waits). Late lines past [`MAX_LATE_LINES`]
@@ -381,7 +412,28 @@ fn prune(dir: &Path, keep: &Path) {
     }
 }
 
-fn write_loop(dir: &Path, path: &Path, rx: Receiver<Msg>, dropped: &AtomicU64) -> std::io::Result<()> {
+/// `build` for the first run of this build (no record yet), `boot` for
+/// the first since the computer (or the user's session) started (no
+/// marker in the runtime directory), else `warm`; `-` for a record that is
+/// not the user's own (it cannot tell).
+fn cold(first: bool, default_dir: bool, build: &str) -> String {
+    if first {
+        return "build".into();
+    }
+    if !default_dir {
+        return "-".into();
+    }
+    let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) else { return "-".into() };
+    let marker = PathBuf::from(run).join(format!("terse-perf-{}", build.replace(':', "-")));
+    if marker.exists() {
+        "warm".into()
+    } else {
+        let _ = fs::write(&marker, b"");
+        "boot".into()
+    }
+}
+
+fn write_loop(dir: &Path, path: &Path, rx: Receiver<Msg>, dropped: &AtomicU64, host: String, cold: &str) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let open = |path: &Path| -> std::io::Result<(BufWriter<File>, u64)> {
         let f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -395,7 +447,9 @@ fn write_loop(dir: &Path, path: &Path, rx: Receiver<Msg>, dropped: &AtomicU64) -
         size += l.len() as u64;
     }
     prune(dir, path);
-    let mut header: Vec<String> = Vec::new();
+    let mut header: Vec<String> = vec![host.clone()];
+    out.write_all(format!("{host}\n").as_bytes())?;
+    size += host.len() as u64 + 1;
     let mut reported = 0;
     loop {
         let Ok(first) = rx.recv() else { break };
@@ -406,7 +460,14 @@ fn write_loop(dir: &Path, path: &Path, rx: Receiver<Msg>, dropped: &AtomicU64) -
         let mut flushes = Vec::new();
         for m in batch {
             match m {
-                Msg::Line(l, is_header) => {
+                Msg::Line(mut l, is_header) => {
+                    if l.starts_with("start ") && l.ends_with(" auto") {
+                        l = format!("{} {}", &l[..l.len() - 5], escape(cold));
+                    }
+                    // A built-in device reports the host's identity.
+                    if l.starts_with("device ") && l.ends_with(" =host") {
+                        l = format!("{} {}", &l[..l.len() - 6], &host["host ".len()..]);
+                    }
                     if is_header {
                         header.push(l.clone());
                     }
@@ -504,11 +565,11 @@ mod tests {
     fn writes_rotates_and_bounds() {
         let dir = tempfile::tempdir().unwrap();
         let host = Identity { name: "terse-bus".into(), version: "0.1.0".into(), build: "b3:00112233aabbccdd".into() };
-        let r = Recorder::open(dir.path(), &host);
-        assert!(r.first);
-        assert_eq!(r.path, dir.path().join("terse-bus-00112233aabbccdd.log"));
+        let h = host.clone();
+        let r = Recorder::open_as(dir.path(), Box::new(move || h), false);
+        assert_eq!(r.path(), Some(dir.path().join("terse-bus-00112233aabbccdd.log")));
         r.add(Line::Run { date: utc_date(), mode: "headless".into() });
-        r.add(Line::Host(host.clone()));
+        r.add(Line::Start { ms: 5.0, cold: "auto".into() });
         for n in 0..30_000u64 {
             r.add(Line::Mem { seconds: n, component: Component::Device(3), rss_kib: 1000 + n });
             if n % 500 == 0 {
@@ -523,12 +584,18 @@ mod tests {
         for t in [&a, &b] {
             let l = parse(t);
             assert_eq!(l[0], Line::Format(1));
-            assert!(matches!(l[1], Line::Run { .. }) && l[2] == Line::Host(host.clone()), "{:?}", &l[..3]);
+            assert!(l[1] == Line::Host(host.clone()) && matches!(l[2], Line::Run { .. }), "{:?}", &l[..3]);
         }
+        // The first run of this build: the cold flag says so.
+        assert!(parse(&b).contains(&Line::Start { ms: 5.0, cold: "build".into() }), "{b}");
         let last = parse(&a).into_iter().rev().find_map(|l| if let Line::Mem { seconds, .. } = l { Some(seconds) } else { None });
         assert_eq!(last, Some(29_999));
-        let again = Recorder::open(dir.path(), &host);
-        assert!(!again.first);
+        let h = host.clone();
+        let again = Recorder::open_as(dir.path(), Box::new(move || h), false);
+        again.add(Line::Start { ms: 5.0, cold: "auto".into() });
+        drop(again);
+        let a = fs::read_to_string(dir.path().join("terse-bus-00112233aabbccdd.log")).unwrap();
+        assert!(parse(&a).contains(&Line::Start { ms: 5.0, cold: String::new() }), "not the first run: \"-\", which reads as empty");
     }
 
     #[test]

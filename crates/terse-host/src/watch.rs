@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use terse_perflog::env::Environment;
 use terse_perflog::probe::{Pressure, ProcProbe, ProcSample};
 use terse_perflog::record::{self, Line, MEM_EVERY, Recorder};
-use terse_perflog::{Action, Component, FrameSample, Identity, Judge, Part};
+use terse_perflog::{Action, Component, FrameSample, Judge, Part};
 
 /// The watch.
 pub struct HostWatch {
@@ -37,15 +37,13 @@ pub struct HostWatch {
 
 impl HostWatch {
     /// `dir`: the record's directory (`None`: judge and show only).
-    pub fn new(dir: Option<PathBuf>, renderer: &str, mode: &str, started: Instant) -> HostWatch {
-        let host = Identity::this("terse-host");
-        let rec = dir.as_ref().map(|d| Recorder::open(d, &host));
+    pub fn new(dir: Option<PathBuf>, default_dir: bool, renderer: &str, mode: &str, started: Instant) -> HostWatch {
+        let rec = dir.as_ref().map(|d| Recorder::open(d, "terse-host", default_dir));
         if let Some(r) = &rec {
             r.add(Line::Run { date: record::utc_date(), mode: mode.to_string() });
-            r.add(Line::Host(host.clone()));
             r.add(Line::Env(Environment::detect(renderer)));
             // Every device is built in: each reports the host's identity.
-            r.add(Line::Device { component: Component::Core, slots: vec![2, 3, 4, 6, 7, 9, 10], identity: host });
+            r.add(Line::host_devices(&[2, 3, 4, 6, 7, 9, 10]));
         }
         HostWatch {
             judge: Judge::default(),
@@ -109,8 +107,7 @@ impl HostWatch {
         }
         if !self.start_written {
             self.start_written = true;
-            let first = self.rec.as_ref().is_some_and(|r| r.first);
-            self.add(Line::Start { ms: (self.started.elapsed().as_secs_f64() * 10_000.0).round() / 10.0, cold: if first { "build".into() } else { "-".into() } });
+            self.add(Line::Start { ms: (self.started.elapsed().as_secs_f64() * 10_000.0).round() / 10.0, cold: "auto".into() });
         }
         if self.frame % MEM_EVERY == 0
             && let Some(k) = self.me.rss_kib()
@@ -143,7 +140,7 @@ mod tests {
     #[test]
     fn records_late_frames_by_stage() {
         let dir = tempfile::tempdir().unwrap();
-        let mut w = HostWatch::new(Some(dir.path().to_path_buf()), "software", "window", Instant::now());
+        let mut w = HostWatch::new(Some(dir.path().to_path_buf()), false, "software", "window", Instant::now());
         let ms = Duration::from_millis;
         for n in 0..10 {
             w.begin();
@@ -154,7 +151,7 @@ mod tests {
             assert_eq!(shown.len(), usize::from(n == 7), "{n}: {shown:?}");
         }
         w.shed(1, "late");
-        let path = w.rec.as_ref().unwrap().path.clone();
+        let path = w.rec.as_ref().unwrap().path().unwrap();
         drop(w);
         let lines = record::parse(&std::fs::read_to_string(path).unwrap());
         let late: Vec<(u64, Component)> = lines.iter().filter_map(|l| if let Line::Late { frame, component, .. } = l { Some((*frame, *component)) } else { None }).collect();

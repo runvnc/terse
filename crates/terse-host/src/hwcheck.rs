@@ -120,9 +120,14 @@ pub fn run(looks: &Looks) -> Result<Check, String> {
 }
 
 /// The cached check of this build on this computer, or a new one (cached
-/// in `<cache>/terse/hwcheck-<build>.txt`). `None` if it cannot be made.
+/// in `<cache>/terse/hwcheck-<size>-<mtime>.txt` of the program file). `None` if it cannot be made.
 pub fn cached(looks: &Looks, cache: Option<PathBuf>) -> Option<(Check, bool)> {
-    let build = terse_perflog::identity::build_id().replace(':', "-");
+    // The build, known without hashing the program (start-up must not
+    // wait for that): its file's size and modification time.
+    let build = std::env::current_exe()
+        .and_then(std::fs::metadata)
+        .map(|m| format!("{}-{}", m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())))
+        .unwrap_or_default();
     let path = cache.map(|d| d.join(format!("hwcheck-{build}.txt")));
     if let Some(p) = &path
         && let Some(c) = std::fs::read_to_string(p).ok().and_then(|t| Check::decode(&t))
