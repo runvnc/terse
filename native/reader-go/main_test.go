@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -25,6 +26,19 @@ func repoRoot(t *testing.T) string {
 			t.Fatal("repository root not found")
 		}
 		d = p
+	}
+}
+
+// --version: name, version, and "s2:" with 16 hex digits of SHA-256 of
+// the executable (here the test binary).
+func TestVersion(t *testing.T) {
+	c, err := parseArgs([]string{"--version"})
+	if err != nil || !c.version {
+		t.Fatalf("parseArgs --version: %v %v", c, err)
+	}
+	line := versionLine()
+	if !regexp.MustCompile(`^tersereader 0\.1\.0 s2:[0-9a-f]{16}$`).MatchString(line) {
+		t.Errorf("version line %q", line)
 	}
 }
 

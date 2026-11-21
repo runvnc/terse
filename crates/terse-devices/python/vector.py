@@ -13,16 +13,35 @@ It answers for exactly the slots the core asks for in HELLO (3, or 3 and
 (`--driver 3,9=...`).
 
     TERSE_BUS_SOCKET=<path> vector.py
+    vector.py --version        # name, version and build identifier
+
+Its HELLO reply ends with its identity (DEVICES.md 1.1): the version and a
+build identifier, `b2:` and the BLAKE2b hash (8 bytes) of this file.
 """
+import hashlib
 import os
 import socket
 import struct
+import sys
 
 MAX_LIST = 16384
 SLOT2D, SLOT3D = 3, 9
 VERSION = 1
 ERR_UNKNOWN = 0xFFFFFFFF
 OUTLINES, LIST3 = b"vector.outlines", b"vector3.list"
+PROGRAM_VERSION = "0.1.0"
+
+
+def build_id():
+    """`b2:` and BLAKE2b (digest 8 bytes) of this script, or `unknown`."""
+    try:
+        with open(os.path.abspath(__file__), "rb") as f:
+            return "b2:" + hashlib.blake2b(f.read(), digest_size=8).hexdigest()
+    except OSError:
+        return "unknown"
+
+
+BUILD = build_id()
 
 
 class Instance:
@@ -203,6 +222,7 @@ def hello(bus, m):
     for slot in asked:  # each: version 0, no layers, the call table
         out += bytes([slot, 0, 0, len(TABLES[slot])]) + b"".join(TABLES[slot])
     out += names([OUTLINES, LIST3]) + names([]) + names([])
+    out += string(PROGRAM_VERSION.encode()) + string(BUILD.encode())  # the identity
     bus.send(0, 0, out)
     return asked
 
@@ -220,6 +240,9 @@ def open_instance(m, served):
 
 
 def main():
+    if sys.argv[1:] == ["--version"]:
+        print("vector.py %s %s" % (PROGRAM_VERSION, BUILD))
+        return
     bus = Bus(os.environ["TERSE_BUS_SOCKET"])
     served = None
     insts = {}

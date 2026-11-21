@@ -10,7 +10,8 @@
 static const char *usage =
     "usage: tcore <image.terse> [--frames N] [--events <file>] [--hash] [--hash-every N]\n"
     "             [--dump] [--state <file>] [--drivers <dir>] [--driver <slots>=<command line>]...\n"
-    "             [--without <slot>]... [--no-batch] [--bench]\n";
+    "             [--without <slot>]... [--no-batch] [--bench] [--identities]\n"
+    "       tcore --version\n";
 
 /* ---- scripted input: the events file of STATE.md 6.2 ---- */
 typedef struct { uint32_t frame; size_t seq; int pad; uint8_t ev[4]; uint8_t ps[8]; } In;
@@ -220,6 +221,27 @@ static void on_signal(int s) { (void)s; quit = 1; }
 
 static const char *fault_name[] = {"", "illegal instruction", "breakpoint", "fetch", "load", "store", "misaligned"};
 
+/* tcore --version: its name, version and build identifier, `b3:` and the
+   first 8 bytes of the BLAKE3 hash of its own executable. */
+static void print_version(void)
+{
+    char build[24] = "unknown";
+    FILE *f = fopen("/proc/self/exe", "rb");
+    if (f) {
+        size_t n = 0, cap = 1 << 20, k;
+        uint8_t *p = malloc(cap), h[32];
+        while (p && (k = fread(p + n, 1, cap - n, f)) > 0)
+            if ((n += k) == cap) p = realloc(p, cap *= 2);
+        if (p && !ferror(f)) {
+            blake3(p, n, h);
+            snprintf(build, sizeof build, "b3:%02x%02x%02x%02x%02x%02x%02x%02x", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+        }
+        free(p);
+        fclose(f);
+    }
+    printf("tcore 0.1.0 %s\n", build);
+}
+
 int main(int argc, char **argv)
 {
     const char *image = 0, *events = 0, *state_file = 0;
@@ -228,6 +250,8 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, on_signal); signal(SIGTERM, on_signal); signal(SIGHUP, on_signal);
     bus_driver_dir = getenv("TERSE_DRIVERS");
+    int identities = 0;
+    if (argc == 2 && !strcmp(argv[1], "--version")) { print_version(); return 0; }
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
 #define ARG() (i + 1 < argc ? argv[++i] : (die(2, "%s needs a value", a), ""))
@@ -242,6 +266,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--without")) bus_withheld[atoi(ARG()) & 255] = 1;
         else if (!strcmp(a, "--no-batch")) bus_nobatch = 1;
         else if (!strcmp(a, "--bench")) bench = 1;
+        else if (!strcmp(a, "--identities")) identities = 1;
         else if (a[0] == '-' || image) { fputs(usage, stderr); return 2; }
         else image = a;
     }
@@ -256,6 +281,7 @@ int main(int argc, char **argv)
     if (!image_load(&m, file, len, err, sizeof err)) die(2, "%s: %s", image, err);
     if (events) load_events(events);
     if (!bus_setup(&m, err, sizeof err)) die(2, "%s: %s", image, err);
+    if (identities) bus_identities();
 
     uint8_t pads[4][8] = {{0}}, (*ev)[4] = malloc(4 * (nin + 1)), h[32];
     size_t next = 0;

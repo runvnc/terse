@@ -10,16 +10,16 @@ state hash. Every other device stays in the **reference drivers**
 over the device bus's socket transport (`DEVICES.md`). It is headless: no
 window, no sound.
 
-About 1,520 lines of C11, five files, nothing but libc and POSIX:
+About 1,570 lines of C11, five files, nothing but libc and POSIX:
 
 | File | Lines | What |
 |---|---|---|
 | `cpu.c` | 262 | RV32IMC, every faulting encoding of SPEC §cpu |
 | `machine.c` | 195 | image, memory map, System device, queue, state serialization |
-| `bus.c` | 614 | the core side of the bus: drivers, call tables, batching, frames, STATE |
-| `main.c` | 309 | command line, the events file (STATE.md 6.2), `--dump` (6.3), `--bench` |
+| `bus.c` | 639 | the core side of the bus: drivers, call tables, batching, frames, STATE |
+| `main.c` | 335 | command line, the events file (STATE.md 6.2), `--dump` (6.3), `--bench`, `--version` |
 | `blake3.c` | 76 | BLAKE3-256, one-shot |
-| `core.h` | 68 | the machine structure |
+| `core.h` | 69 | the machine structure |
 
 The core proper (CPU, machine, BLAKE3) is about 530 lines; the bus client
 is the largest part.
@@ -64,7 +64,8 @@ The reference drivers are built with the workspace
 
     tcore <image.terse> [--frames N] [--events <file>] [--hash] [--hash-every N]
           [--dump] [--state <file>] [--drivers <dir>] [--driver <slots>=<command line>]...
-          [--without <slot>]... [--no-batch] [--bench]
+          [--without <slot>]... [--no-batch] [--bench] [--identities]
+    tcore --version
 
 - `--frames N` (default 30), stopping earlier if the program exits or faults.
 - `--events <file>`: the scripted input of `terse run --events`
@@ -85,6 +86,12 @@ The reference drivers are built with the workspace
 - `--no-batch`: send deferred calls one at a time and check the driver's
   answer against the call table.
 - `--bench`: frames per second, units per second, messages by type.
+- `--identities`: after every driver's handshake, one line per driver on
+  standard error, `driver <lowest slot> <name> <version> <build>`: the
+  identity at the end of its HELLO reply (DEVICES.md 1.1), `-` for a
+  version or build it did not give (an older driver).
+- `--version`: `tcore 0.1.0 b3:<16 hex digits>`, the first 8 bytes of the
+  BLAKE3 hash of its own executable.
 
 Exit status (STATE.md 6.4): the program's exit code; 143 after a fault
 (with the fault on standard error); 2 if the run did not start (a refused
