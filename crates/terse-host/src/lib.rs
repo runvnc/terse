@@ -125,7 +125,7 @@ const USAGE: &str = "usage:
   allows), and in a window also after 3 frames in a row that took longer than a frame to draw (one
   level more each time; one less after 120 quick frames); --no-shed keeps the whole look always.
   With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
-  built-in programs (reader, sparks, fetch, hello, sketch, holo, and each --builtin image) as machines of their
+  built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
   launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
   --screenshot and --selftest, --shell alone is the built-in shell. <image> alone runs that image

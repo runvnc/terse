@@ -76,7 +76,7 @@ feed got the first three samples from an earlier `--demo`, publish the fourth
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 **The shell.** The window opens on the launcher: the programs built into
-`terse-host` (reader, sparks, fetch, hello, sketch, holo). Up and Down choose one, Enter
+`terse-host` (reader, sparks, fetch, hello, sketch, holo, reports). Up and Down choose one, Enter
 starts it as a machine of its own, and it gets the keyboard. Start more the
 same way: **F12 is the home key**, which always brings you back to the
 launcher (no program ever sees F12). The bar at the top shows each machine:
@@ -224,7 +224,7 @@ images were built with clang and LLD 23.1.4.
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
   below runs a system (SPEC §machines): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
-  sparks, fetch, hello, sketch, holo, then each `--builtin` image) are put into the store
+  sparks, fetch, hello, sketch, holo, reports, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
   script's events are the host's input and the system routes them: `home` is the
   home key, pointer positions are in units of the whole screen, keys and text go to
@@ -342,7 +342,7 @@ also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 
 `terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
-which starts the built-in programs (reader, sparks, fetch, hello, sketch and holo, also built in, and
+which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo and reports, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
 machine, with every key (F12 included) going to it. With `--demo` it first sets up the
@@ -882,14 +882,15 @@ file, synced and renamed.
 ## The shell
 
 `programs/shell` is the program `terse-host` runs when no image is named: a small C
-program (19 KB of ROM, 3 RAM pages) with device 8 (SPEC §machines), which starts the host's
+program (23 KB of ROM, 3 RAM pages) with device 8 (SPEC §machines), which starts the host's
 built-in programs as machines of their own (at most 8) and shows them as tiles.
 Everything about the layout is the shell's; the host only runs the machines, draws
 each one's screen where the shell placed it, and routes input.
 
 - **The bar** (row 0): the home segment `⌂`, then one segment per machine: its handle,
-  a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed), its title and
-  the units it used in its last frame as a share of the budget; the machine with the
+  a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed, `⊘` halted), its title and
+  the units it used in its last frame as a share of the budget (`halted` instead for a
+  halted machine); the machine with the
   keyboard in blue, the one selected in the launcher in amber; the clock (UTC) at the
   right. A click on a segment gives that machine the keyboard (in the gallery it
   turns the ring to it instead, back in the launcher); one on `⌂` opens the launcher.
@@ -937,6 +938,18 @@ each one's screen where the shell placed it, and routes input.
   it, or the snapshot is unreadable) shows why, like a failed start. A snapshot holds
   one exact version of a program; named records are not in it. Nothing is saved
   without S yet.
+- **Halted machines** (PERFORMANCE.md R15): when a device a machine uses keeps making
+  frames late, the host (terse-bus) warns, saves the machine into its automatic
+  snapshot slot (15 + its handle, slots 16–23), and if it goes on saves it again and
+  stops it: the machine is *halted*. The bar says once "Tersenet stopped sparks:
+  device 3 was too slow (state saved)"; the machine's tile shows that in words instead
+  of its last picture, its bar segment says `halted`, and its launcher line explains
+  it ("Tersenet stopped it: the vector display (device 3) kept making frames late. Its
+  state was saved: Enter restores it."). Enter on that line restores it from its
+  automatic slot in its own tile. A running machine the host saved at a warning says
+  "A device it uses was slow; Tersenet saved its state." The launcher lists every
+  automatic snapshot under "SAVED BY TERSENET" (title, time of day UTC and frame):
+  Enter restores one, D deletes it. The shell reads the slots every 15 frames.
 - A click on a machine's picture gives it the keyboard (the click also reaches the
   machine). A machine that exits or faults keeps its tile, with its last picture (a
   fault shown on its bottom row), until X stops it; the keyboard goes back to the
@@ -2001,7 +2014,7 @@ builds you ran, their late frames by cause, R15 warnings and stops, start-up tim
 memory, and the computer coarsely (OS, cores, RAM in GiB, renderer, CPU model); no
 names, paths, addresses or (unless you add `--programs n`) program IDs. It is public,
 signed with your feed key, and cannot be deleted once a relay has it.
-`programs/reports` (`terse-host programs/reports/reports.terse`) gathers the reports of
+`programs/reports` (built in: the launcher's `reports`; or `terse-host programs/reports/reports.terse`) gathers the reports of
 the feeds you follow and, with F, a sample found by search, and shows each host's,
 device's and terse perf build's verdict in both: `CONFORMANT IN SAMPLE (12
 reporters)`, `NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)` or `TOO FEW REPORTS
