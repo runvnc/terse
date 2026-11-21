@@ -221,7 +221,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   frames (0–600), and shows it there as a flat picture in the rectangle
   `a2`–`a5` (x, y, width, height, clamped as `place` clamps). It is
   refused (returns 0, nothing changes) unless `a0` is 1–8, its machine
-  has a picture (running, paused, exited or faulted), its own rectangle
+  has a picture (running, paused, exited, faulted or halted), its own rectangle
   shows no picture (§machines.screens), the shell's 3D list as it holds it now
   has a Screen of `a0` (§vector3d.list; decoded only, the caps not counted),
   `a1` is at most 600 and the rectangle shows a picture. Otherwise the view
@@ -252,8 +252,8 @@ A machine's **picture** is its screen scaled uniformly into its rectangle
 pw = w wide and ph = ⌊w × 480 / 640⌋ high, otherwise pw = ⌊h × 640 / 480⌋
 and ph = h; it starts at px = x + ⌊(w − pw) / 2⌋, py = y + ⌊(h − ph) / 2⌋.
 If pw or ph is 0 nothing is shown. A machine that is running, paused,
-exited or faulted has a picture; one that is loading or failed has none.
-Exited and faulted machines show the screen as it was at their last frame.
+exited, faulted or halted has a picture; one that is loading or failed has none.
+Exited, faulted and halted machines show the screen as it was at their last frame.
 A machine's screen here is its complete picture, its own Surfaces (§vector3d.presentation) included.
 
 A machine is shown **flat** in its picture: the picture of its own
