@@ -367,11 +367,11 @@ From this repository's implementation (the reference):
 - `programs/hello/hello.terse` (which lists device 10, full text, as
   optional: one grant byte, granted) at reset (no frame run): serialization
   18,812 bytes, hash
-  `2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18`.
+  `f82b7079daea85863f079eaba67e0ad2816b905e9a1a494e7dab587889a4c058`.
 - The same after 1 frame with no input:
-  `8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42`;
+  `2c8994cf8408449f927b16377cf44750419682c7fcc744d84748459c7ec8f9cf`;
   after 30 frames:
-  `cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d`.
+  `819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2`.
 - `exit`: the 42-byte image
   `5445525300010a000001000000000000657869740000000000000000000000001d459308601073000000`
   (no devices, one RAM page, title `exit`; ROM `c.li a0, 7`,

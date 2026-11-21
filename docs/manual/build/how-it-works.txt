@@ -237,12 +237,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Writing programs](terse:7d68465b8d3046aa575f55c2f0ffebd93fbb6a4621c162f0b5cec13cc22c7897): building a C program and packing it as an image.
-- [Using Tersenet](terse:0da6ed0a172a16ae16c2c99f1349ccc57da60b5b2e87cbffe163580d5f645a02): the tools, the shell and the reader.
+- [Writing programs](terse:07b469b2c875f5adfa245a87bbb3d0ade52510fe4bbcce88255f109b889fecd6): building a C program and packing it as an image.
+- [Using Tersenet](terse:2d55c04f7505cc5ecedb4a3c7ee49ea5668000752e1285b193adb9458c977c3d): the tools, the shell and the reader.
 - [Writing articles](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8): the article format, tables and figures.
 - [The machine](terse:8274e856d09cc8d2a5cd758bc379ac431868bb0ebd0d25e632976c97b1bc8d42): the CPU, memory, frames, image format and the full call table.
 - [The system device](terse:d7e1a41530156e84c04108ff4e335bff8053f6267ce65203bf29a6f9953f7af9), [the terminal](terse:ca7c6c7b8394f4f3c1a528d5f3933acffcf6e473a5b715346242a907a6ed7938), [the 2D vector display](terse:07032dac21c87b99b28df12c49a0f23284e969f257a91e0c562d641b3e6ba6e2), [the 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) and [machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450).
 - [Blobs](terse:faf914f7849ceadf13bfead243df1a9525c2ae74711d086c965aea902f34bf46), [feeds](terse:098efcd64308bceef111f997303690aeb8c7fb7cae4444af57f1d2d5275b45ea) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81) on the content device.
 - [The network](terse:f5ddaf54feef02f988f85a90effdcfce5faf1222c6d2783e6b30f1f17fd68ef4): relays and feeds as the host sees them.
-- [Machine state](terse:ed00005604369478b19df4d24e82dda768ea97a1c5530334f52a18a341cfd8a7): the state serialization and the state hash.
+- [Machine state](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f): the state serialization and the state hash.
 - [Events and input](terse:8b5c888db59abae6e446ec1752cca73277b871a953d6760c6e2072ca8eaf7462) and [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).

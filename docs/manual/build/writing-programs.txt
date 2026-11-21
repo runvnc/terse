@@ -164,7 +164,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 
 ## The state hash
 
-`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:ed00005604369478b19df4d24e82dda768ea97a1c5530334f52a18a341cfd8a7).
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:7de54a70882155b9506d234481d01a43094bcc81129dae6c04fa5cff8a87283f).
 
 ## Running it in a window
 
@@ -172,7 +172,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 cargo run -p terse-host -- prog.terse
 ```
 
-runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:0da6ed0a172a16ae16c2c99f1349ccc57da60b5b2e87cbffe163580d5f645a02) shows the shell, where programs run side by side.
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell and the reader](terse:2d55c04f7505cc5ecedb4a3c7ee49ea5668000752e1285b193adb9458c977c3d) shows the shell, where programs run side by side.
 
 ## Costs to keep in mind
 

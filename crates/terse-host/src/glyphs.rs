@@ -185,9 +185,13 @@ impl GlyphSource for TermGlyphs {
     }
 
     fn rasterize(&mut self, ch: char, cells: u32, out: &mut [u8]) {
+        // A control code is its background only (SPEC §terminal.text).
+        if ch.is_control() {
+            return;
+        }
         let mut faces = self.faces.lock().unwrap();
         let Some(which) = faces.which(ch) else {
-            if !ch.is_control() && !ch.is_whitespace() {
+            if !ch.is_whitespace() {
                 placeholders(self.cell.0, self.cell.1, cells, out);
             }
             return;

@@ -160,7 +160,7 @@ fn python_vector() -> Option<Vec<String>> {
 fn hello_matches_the_state_vectors() {
     // STATE.md 3: hello after 30 frames with no input.
     let img = image(&programs().join("hello/hello.terse"));
-    let want = "30 cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d";
+    let want = "30 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2";
     for socket in [false, true] {
         let got = bus_hashes(&img, &Script::default(), 30, 30, &Run { socket, ..Default::default() }, &ContentOptions::default());
         assert_eq!(got, [want], "socket {socket}");
@@ -566,7 +566,7 @@ fn driver_failures() {
     let cmd = format!("env TERSE_CRASH=slow TERSE_CRASH_THEN={} {exe}", env!("CARGO_BIN_EXE_terse-dev-terminal"));
     let out = bus_output([&hello, "--frames", "30", "--hash", "--driver", &format!("2={cmd}")]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2");
     // ... and too slow for a one-second limit.
     let out = bus_output([&hello, "--frames", "30", "--driver", &format!("2={cmd}"), "--start-timeout", "1"]);
     assert!(!out.status.success());

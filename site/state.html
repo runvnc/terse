@@ -95,9 +95,9 @@
 <h2 id="the-hash">The hash</h2>
 <p>The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as 64 lowercase hex digits. Test vectors from the reference implementation, with no input:</p>
 <p><code>programs/hello/hello.terse</code> at reset (serialization 18,812 bytes), after 1 frame and after 30 frames:</p>
-<pre>2eb8158b7d3ea45b4c7c598a4d506b8865cabd054046bc2a720d621104c6db18
-8de47f0a7bdfdaaf9c804e35927611384962a308e3044ed82269785947bc6b42
-cb3d8c6473a9b608c48e77db48c7f19724fbe2c354094c837f8b79fb8b923c9d</pre>
+<pre>f82b7079daea85863f079eaba67e0ad2816b905e9a1a494e7dab587889a4c058
+2c8994cf8408449f927b16377cf44750419682c7fcc744d84748459c7ec8f9cf
+819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p>&quot;No input&quot; means no events, Unix time 0, no random bytes (so <code>random</code> gives zeros), controllers disconnected and no completions. That is what <code>terse run</code> supplies, apart from its <code>--events</code> script.</p>
 <ul>
 <li><code>terse run &lt;image&gt; --hash</code> prints the hash after the last frame.</li>

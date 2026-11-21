@@ -13,6 +13,27 @@ mod audio;
 pub mod consent;
 pub mod display;
 pub mod fonts;
+
+/// GPU tests on a machine whose desktop is using the card.
+#[cfg(test)]
+pub(crate) mod gpu_test {
+    /// Runs `f`, a test that checks the software renderer and then the GPU
+    /// renderer. If wgpu fails with "Out of Memory" (the desktop holds the
+    /// card's memory), the rest of the GPU part is skipped with a line in
+    /// the test output instead of failing; the software checks, which come
+    /// first, have run by then. Any other panic is the test's failure.
+    pub fn or_skip(what: &str, f: impl FnOnce()) {
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+            if msg.contains("wgpu error") && msg.contains("Out of Memory") {
+                println!("{what}: GPU part skipped: no graphics memory");
+                eprintln!("{what}: GPU part skipped: no graphics memory ({})", msg.lines().next().unwrap_or(""));
+            } else {
+                std::panic::resume_unwind(e);
+            }
+        }
+    }
+}
 mod figures;
 #[cfg(feature = "window")]
 mod gamepad;

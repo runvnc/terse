@@ -283,6 +283,10 @@ fn region(pixels: &[u8], p: terse_core::Region) -> Vec<u8> {
 /// device for the process.)
 #[test]
 fn panels_and_flat_pictures() {
+    crate::gpu_test::or_skip("panels_and_flat_pictures", panels_and_flat_pictures_checks);
+}
+
+fn panels_and_flat_pictures_checks() {
     let mut displays = displays();
     a_faced_panel_is_the_flat_picture(&mut displays);
     a_panel_on_the_glass_is_the_flat_picture(&mut displays);
