@@ -162,6 +162,35 @@ func (s *Server) serve(c *conn) {
 	}
 }
 
+// withRecords ends a reply with `count` (2) and the records (or feed
+// records) in parts: as many as fit in a message (LOCAL.md 4.3, a reply's
+// size), the first ones, or with latest the last ones (still in order).
+func withRecords(m *local.B, parts [][]byte, latest bool) []byte {
+	size := len(m.Bytes()) + 2
+	n := 0
+	for n < len(parts) && n < 65535 {
+		p := parts[n]
+		if latest {
+			p = parts[len(parts)-1-n]
+		}
+		if size+len(p) > local.MaxMessage {
+			break
+		}
+		size += len(p)
+		n++
+	}
+	if latest {
+		parts = parts[len(parts)-n:]
+	} else {
+		parts = parts[:n]
+	}
+	m.U16(uint16(n))
+	for _, p := range parts {
+		m.Raw(p)
+	}
+	return m.Bytes()
+}
+
 func refused(t byte, req uint32, why string) []byte {
 	return local.New(t, req).U8(local.Refused).Short(why).Bytes()
 }
@@ -218,23 +247,22 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 					recs = append(recs, e)
 				}
 			}
-			m := local.New(rt, req).U8(local.Done).U16(uint16(len(recs)))
+			var parts [][]byte
 			for _, e := range recs {
-				m.PutRecord(e)
+				parts = append(parts, (&local.B{}).PutRecord(e).Bytes())
 			}
-			return m.Bytes()
+			return withRecords(local.New(rt, req).U8(local.Done), parts, false)
 		}, false, true
 	case local.Subscriptions:
 		if !in.Done() {
 			return nil, false, false
 		}
 		return func() []byte {
-			fs := n.Subscriptions()
-			m := local.New(rt, req).U8(local.Done).U16(uint16(len(fs)))
-			for _, f := range fs {
-				m.PutFeed(f)
+			var parts [][]byte
+			for _, f := range n.Subscriptions() {
+				parts = append(parts, (&local.B{}).PutFeed(f).Bytes())
 			}
-			return m.Bytes()
+			return withRecords(local.New(rt, req).U8(local.Done), parts, false)
 		}, false, true
 	case local.Feed:
 		flags := in.U8()
@@ -248,13 +276,14 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 				return refused(rt, req, err.Error())
 			}
 			m := local.New(rt, req).U8(local.Done).PutFeed(f)
-			if flags&1 != 0 {
-				m.U16(uint16(len(f.Entries)))
-				for _, e := range f.Entries {
-					m.PutRecord(e)
-				}
+			if flags&1 == 0 {
+				return m.Bytes()
 			}
-			return m.Bytes()
+			var parts [][]byte
+			for _, e := range f.Entries {
+				parts = append(parts, (&local.B{}).PutRecord(e).Bytes())
+			}
+			return withRecords(m, parts, true)
 		}, false, true
 	case local.Subscribe:
 		addr := in.Short()
@@ -278,11 +307,14 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 			return nil, false, false
 		}
 		return func() []byte {
-			// Unsubscribing from a feed not subscribed succeeds.
-			if f, err := n.Feed(key); err == nil && !f.Subscribed {
-				return status(nil, local.Done)
+			// Unsubscribing from a feed not subscribed succeeds, whatever
+			// the key (LOCAL.md 4.3).
+			for _, f := range n.Subscriptions() {
+				if f.Key == key {
+					return status(n.Unsubscribe(key), local.Done)
+				}
 			}
-			return status(n.Unsubscribe(key), local.Done)
+			return status(nil, local.Done)
 		}, true, true
 	case local.Nickname:
 		key := hex.EncodeToString(in.N(32))
@@ -304,6 +336,9 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 			conns := n.Relays()
 			flagsOf := func(r nodeapi.Relay) byte {
 				var f byte
+				if r.Own {
+					f |= local.RelayConfigured
+				}
 				if r.Hint {
 					f |= local.RelayHint
 				}
@@ -316,8 +351,8 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 			for _, u := range n.ConfiguredRelays() {
 				f := byte(local.RelayConfigured)
 				for _, r := range conns {
-					if r.URL == u {
-						f |= flagsOf(r)
+					if r.URL == u && r.Own && r.Connected {
+						f |= local.RelayConnected
 					}
 				}
 				list = append(list, rel{u, f})
@@ -369,8 +404,8 @@ func (s *Server) answer(msg []byte) (reply func() []byte, changed bool, ok bool)
 			return nil, false, false
 		}
 		return func() []byte {
-			t := n.ArticleTitle(id, int(size))
-			if t == "" {
+			t, ok := n.ArticleTitle(id, int(size))
+			if !ok {
 				return status(nil, local.NotFound)
 			}
 			return local.New(rt, req).U8(local.Done).Short(t).Bytes()

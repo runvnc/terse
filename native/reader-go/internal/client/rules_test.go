@@ -31,8 +31,11 @@ type testRelay struct {
 	highest   map[[32]byte]uint32   // highest reported, by feed (default: of entries)
 	refuse    map[[32]byte]bool     // subscribe refused (status 3)
 	blobs     map[[32]byte][]byte
-	silentGet bool // never answers a get
+	silentGet bool          // never answers a get
+	getDelay  time.Duration // answers each get after this, without holding up the next request
 	gets      int
+	inFlight  int // gets received and not answered yet
+	maxFlight int // the most at once
 	subs      map[[32]byte]int
 	unsubs    map[[32]byte]int
 	conns     map[*ws.Conn]bool
@@ -143,15 +146,30 @@ func (f *testRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case terse.MsgGet:
 			f.mu.Lock()
 			f.gets++
+			f.inFlight++
+			f.maxFlight = max(f.maxFlight, f.inFlight)
 			b, ok := f.blobs[key]
-			silent := f.silentGet
+			silent, delay := f.silentGet, f.getDelay
 			f.mu.Unlock()
-			switch {
-			case silent:
-			case ok:
-				c.WriteMessage(append(append(append([]byte{terse.MsgGetReply}, req...), terse.StatusDone), b...))
-			default:
-				c.WriteMessage(append(append([]byte{terse.MsgGetReply}, req...), terse.StatusNotFound))
+			answer := func() {
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+				f.mu.Lock()
+				f.inFlight--
+				f.mu.Unlock()
+				switch {
+				case silent:
+				case ok:
+					c.WriteMessage(append(append(append([]byte{terse.MsgGetReply}, req...), terse.StatusDone), b...))
+				default:
+					c.WriteMessage(append(append([]byte{terse.MsgGetReply}, req...), terse.StatusNotFound))
+				}
+			}
+			if delay > 0 {
+				go answer()
+			} else {
+				answer()
 			}
 		}
 	}
@@ -640,4 +658,107 @@ func TestGetWithoutRelays(t *testing.T) {
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("took %v", d)
 	}
+}
+
+// --- sync ---
+
+// A sync's downloads go out together, pipelined on one connection
+// (NETWORK.md 3: replies may come in any order), so a relay 50 ms away
+// costs about 50 ms per downloaders blobs, not 50 ms per blob; and the
+// sync ends soon after the last one.
+func TestSyncFetchesConcurrently(t *testing.T) {
+	r := newTestRelay(t)
+	r.getDelay = 50 * time.Millisecond
+	f := newFeed(t)
+	const n = 40
+	for i := 1; i <= n; i++ {
+		blob := []byte(fmt.Sprintf("article %d", i))
+		r.blobs[blake3.Sum256(blob)] = blob
+		r.addEntry(f.key, f.entryFor(uint32(i), terse.KindArticle, blob, fmt.Sprint("t", i)))
+	}
+	st := openStore(t)
+	if _, err := st.Subscribe(f.addr(t)); err != nil {
+		t.Fatal(err)
+	}
+	opt := testOptions(r)
+	opt.AutoLimit = 16384
+	cl := New(st, opt)
+	start := time.Now()
+	cl.Start()
+	defer cl.Stop()
+	if !cl.WaitIdle(10 * time.Second) {
+		t.Fatal("sync did not finish")
+	}
+	took := time.Since(start)
+	for _, e := range st.Timeline() {
+		if _, ok := st.BlobForEntry(e); !ok {
+			t.Errorf("seq %d: blob not held after sync", e.Seq)
+		}
+	}
+	r.mu.Lock()
+	most, gets := r.maxFlight, r.gets
+	r.mu.Unlock()
+	t.Logf("%d blobs, 50 ms each: %v, at most %d gets at once", gets, took, most)
+	if most < downloaders/2 || most > downloaders {
+		t.Errorf("at most %d gets at once, want about %d", most, downloaders)
+	}
+	if one := time.Duration(n) * r.getDelay; took > one/2 {
+		t.Errorf("sync took %v; one at a time takes %v", took, one)
+	}
+}
+
+// With nothing to fetch a sync ends at once, not after a polling period.
+func TestSyncWithNothingNewIsQuick(t *testing.T) {
+	r := newTestRelay(t)
+	f := newFeed(t)
+	st := openStore(t)
+	if _, err := st.Subscribe(f.addr(t)); err != nil {
+		t.Fatal(err)
+	}
+	cl := New(st, testOptions(r))
+	start := time.Now()
+	cl.Start()
+	defer cl.Stop()
+	if !cl.WaitIdle(10 * time.Second) {
+		t.Fatal("not idle")
+	}
+	if d := time.Since(start); d > 150*time.Millisecond {
+		t.Errorf("an empty sync took %v", d)
+	}
+}
+
+// SetOwnRelays takes effect at once (LOCAL.md 4.3, Set relays): a relay
+// dropped is disconnected, a new one connected and subscribed to.
+func TestSetOwnRelaysAtOnce(t *testing.T) {
+	a, b := newTestRelay(t), newTestRelay(t)
+	f := newFeed(t)
+	st := openStore(t)
+	if _, err := st.Subscribe(f.addr(t)); err != nil {
+		t.Fatal(err)
+	}
+	cl := New(st, testOptions(a))
+	cl.Start()
+	defer cl.Stop()
+	connected := func(want ...string) func() bool {
+		return func() bool {
+			var got []string
+			for _, r := range cl.Relays() {
+				if r.Connected && r.Own {
+					got = append(got, r.URL)
+				}
+			}
+			return fmt.Sprint(got) == fmt.Sprint(want)
+		}
+	}
+	waitFor(t, "a connected", connected(a.url))
+	cl.SetOwnRelays([]string{b.url})
+	waitFor(t, "b connected and a dropped", connected(b.url))
+	waitFor(t, "a's connection closed", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.conns) == 0
+	})
+	waitFor(t, "the feed subscribed on b", func() bool { return b.count(b.subs, f.key) == 1 })
+	cl.SetOwnRelays(nil)
+	waitFor(t, "no relay", func() bool { return len(cl.Relays()) == 0 })
 }

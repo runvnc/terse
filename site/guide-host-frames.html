@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a host, step 2: frames and the budget - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-host-step-2-frames-and-the-budget">Make a host, step 2: frames and the budget</h1>
+<p>A Terse32 program runs at the same speed on every host. Time comes in frames, 60 a second, and in each frame a program can do a fixed amount of work: 125,000 units. In this step the loop of step 1 becomes a frame loop.</p>
+<h2 id="the-frame-loop">The frame loop</h2>
+<p>Keep a budget, a signed number, and a frame counter, both 0 at reset. Then, for each frame:</p>
+<p>1. Add 125,000 to the budget. 2. Run instructions while the budget is above zero. Each costs 1 unit if it was fetched from ROM, 4 if from RAM. 3. End the frame: if the budget is above zero, set it to 0; add 1 to the frame counter.</p>
+<p>An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: this is the carry rule. What is left above zero is dropped. When the budget runs out the program is simply paused; the next frame goes on with its next instruction.</p>
+<p>A host with a screen starts a frame every sixtieth of a second. If it falls behind, it lets the program&#39;s time fall behind too: it never runs extra frames to catch up. A test runs the frames as fast as it can.</p>
+<h2 id="calls-cost-too">Calls cost too</h2>
+<p>An <code>ecall</code> costs its own 1 unit (or 4 from RAM) plus the call&#39;s charge. Every call on this page is charged 4, as is a call you do not have and a call that fails.</p>
+<h2 id="three-calls">Three calls</h2>
+<ul>
+<li><code>100h</code>, <code>wait_frame</code>: the program has finished this frame&#39;s work. End the frame now (the budget left above zero is dropped, as at any frame&#39;s end), and return the frame counter plus 1: the number of the frame in which the program goes on.</li>
+<li><code>102h</code>, <code>frame_count</code>: the frame counter. It is N all through frame N.</li>
+<li><code>101h</code>, <code>next_event</code>: the next input event. Inputs come with step 4, so for now the queue is always empty: check that <code>a0</code> and the 3 bytes after it are in RAM (else return <code>FFFF_FFFEh</code>) and return 0. <code>hello</code>, in the next step, calls it every frame.</li>
+</ul>
+<p><code>exit</code> now also ends its frame: the frame still counts, and nothing runs after it.</p>
+<h2 id="check-yourself">Check yourself</h2>
+<p>This program calls <code>frame_count</code> 100,000 times, then waits for the next frame and exits with what <code>wait_frame</code> returned:</p>
+<pre>_start: li   t0, 100000
+        li   a7, 0x102      # frame_count
+1:      ecall
+        addi t0, t0, -1
+        bnez t0, 1b
+        li   a7, 0x100      # wait_frame
+        ecall
+        li   a7, 0x106      # exit with its result
+        ecall</pre>
+<p>As a file:</p>
+<pre>xxd -r -p &gt; frames.terse &lt;&lt;EOF
+544552530001240000010000000000006672616d657300
+000000000000000000e1629382026a9308201073000000
+fd12e39d02fe93080010730000009308601073000000
+EOF
+terse run frames.terse --frames 10
+echo $?</pre>
+<p>prints <code>6</code>. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. If your host says 3, it does not charge calls; 5, <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all.</p>
+<h2 id="how-much-code">How much code</h2>
+<p>In <code>tcore</code> the frame loop is about 25 lines of C (<code>main.c</code>), and the whole System device, all ten of its calls, about 60 (<code>machine.c</code>).</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A machine that runs programs at exactly the reference&#39;s speed. Next, give it a screen: <a href="guide-host-driver.html">Make a host, step 3: a driver shows hello</a>.</p>
+<p>The detail is in <a href="machine.html">The Terse32 machine</a>, section &quot;Frames and the budget&quot; (SPEC §frames); <a href="device-system.html">The system device</a>, sections &quot;wait_frame&quot;, &quot;next_event&quot;, &quot;frame_count and unix_time&quot; and &quot;exit&quot; (SPEC §system); and <a href="charges.html">Charges and limits</a>, section &quot;Charges&quot; (SPEC §charges).</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-host.html">← Make a host, step 1: run a program to its end</a><a rel="next" href="guide-host-driver.html">Make a host, step 3: a driver shows hello →</a></nav></footer>
+</body>
+</html>

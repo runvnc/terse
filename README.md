@@ -522,6 +522,18 @@ Commands:
   program entry as `[program: <name>]`, a document entry as `[document: <name>]`.
 - `feed read <key> <seq>` prints the article, fetching it from `--relay` if it
   is not in the store. Control characters are replaced on output.
+- `node [--socket <path>]` (Unix only) runs a node for readers (LOCAL.md): it follows
+  your subscriptions on your relays as `feed sync --watch` does, with the same store,
+  config and options (`--relay`, `--auto-download`, `--no-prefetch`,
+  `--no-program-download`, `--no-feed-relays`), and serves a program that only shows
+  articles on a local socket: `--socket`, else `$TERSE_NODE_SOCKET`, else
+  `$XDG_RUNTIME_DIR/terse/node.sock` (else `/tmp/terse-<uid>/node.sock`), in a
+  directory only you can use. It refuses to start if a node already answers there,
+  replaces a stale socket file, and removes its socket when stopped (Ctrl-C or
+  SIGTERM). Subscriptions, nicknames and relays a reader changes through it are saved
+  in `--config`, as the other commands save them. `tersereader node`
+  (`native/reader-go`) is another node; the Go reader's thin build is a client of
+  either.
 
 Two users on one machine (each with their own store and config), with a relay
 running as in [Trying the relay locally](#trying-the-relay-locally):
@@ -1645,6 +1657,30 @@ glyph is rasterised once, the first time it is shown. The device-bus drivers
 (`terse-dev-terminal`, `terse-dev-page`) take `--config <dir>` for the same file
 (`terse-bus` passes its own); without it they use the built-in fonts.
 
+## Drivers
+
+`terse-bus` runs each device as a driver process (`DEVICES.md`; it is built from
+the sources and not in the downloads) and uses the drivers built beside it, unless
+you install another one for a device. `terse drivers` keeps the installed drivers in
+`<config>/drivers` (`DEVICES.md` 2.2); `terse-bus` reads it when it starts:
+
+    cc -std=c11 -O2 -o terminal native/driver-example/terminal.c
+    terse drivers add terminal           # runs its handshake once, shows what it is, copies it
+    terse drivers list                   # which driver each device gets, and why
+    terse drivers use 2 default          # back to the shipped terminal driver
+    terse drivers use 2 terminal-example # and to the installed one again
+    terse drivers remove terminal-example
+
+`add` needs `terse-bus` beside `terse` (it makes the handshake); it shows the
+driver's name, version, build identifier and slots. A driver is a native program
+that runs with your full rights, so install only ones you trust; nothing but this
+command installs or chooses one (no program, feed or relay can). A `--driver` on
+`terse-bus`'s command line comes before the installed driver. One that is missing,
+does not start or fails its handshake gives way to the shipped driver, with a
+message saying how to stop using it; one that fails during a run stops the run, as
+any driver does. The performance record names the installed driver's own build.
+`terse-host` has its devices built in and does not load drivers.
+
 ## Sparks
 
 `programs/sparks` is a small game for the vector display, in C. Steer a small
@@ -2019,7 +2055,7 @@ with `--strict`): a held blob reaches a program in 1 frame, with or without rela
 including one that never answers; a blob on a local relay in 1 Get (6 ms); a program
 the shell starts runs in the next frame; the reader opens a held article 1 frame after
 Enter; `terse get` of a held article takes 7 ms as a whole process and `tersereader
---dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 304 ms (`tersereader`),
+--dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 25 ms (`tersereader`),
 with one Subscribe; `terse-host` draws its first frame 19 ms after it starts (63 ms
 cold, on a first run with the program not in the page cache; 293 ms on the GPU
 renderer, which starts the graphics driver); every device's worst legal frame takes

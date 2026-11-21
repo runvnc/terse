@@ -447,7 +447,7 @@ type loaded struct {
 func prepare(n nodeapi.Node, id string, b []byte) *loaded {
 	l := &loaded{id: id, doc: article.Parse(b), raw: b}
 	if n != nil {
-		l.title = n.ArticleTitle(id, len(b))
+		l.title, _ = n.ArticleTitle(id, len(b))
 	}
 	if l.title == "" && len(l.doc.Blocks) > 0 && l.doc.Blocks[0].Kind == article.Heading {
 		var t strings.Builder

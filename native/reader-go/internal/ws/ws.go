@@ -5,6 +5,7 @@ package ws
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/tls"
@@ -56,6 +57,22 @@ func acceptKey(key string) string {
 // is the address (host:port) to connect to, already checked by the
 // caller, instead of resolving the URL's host again.
 func Dial(rawurl, addr string, timeout time.Duration) (*Conn, error) {
+	return DialStop(rawurl, addr, timeout, nil)
+}
+
+// DialStop is Dial that gives up as soon as stop is closed.
+func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) (*Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if stop != nil {
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	u, err := url.Parse(rawurl)
 	if err != nil {
 		return nil, err
@@ -74,10 +91,12 @@ func Dial(rawurl, addr string, timeout time.Duration) (*Conn, error) {
 	if addr == "" {
 		addr = host
 	}
-	c, err := net.DialTimeout("tcp", addr, timeout)
+	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	// Stopped or out of time during the handshake: the connection closes.
+	keep := context.AfterFunc(ctx, func() { c.Close() })
 	if u.Scheme == "wss" {
 		tc := tls.Client(c, &tls.Config{ServerName: u.Hostname()})
 		tc.SetDeadline(time.Now().Add(timeout))
@@ -112,6 +131,9 @@ func Dial(rawurl, addr string, timeout time.Duration) (*Conn, error) {
 		resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
 		c.Close()
 		return nil, fmt.Errorf("ws: handshake refused (%s)", resp.Status)
+	}
+	if !keep() {
+		return nil, ctx.Err()
 	}
 	c.SetDeadline(time.Time{})
 	return &Conn{c: c, r: r, client: true}, nil

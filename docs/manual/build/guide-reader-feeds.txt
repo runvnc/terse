@@ -31,7 +31,7 @@ Verify each entry's Ed25519 signature before you keep it, and drop the entries t
 
 Then fetch the article each entry names (step 2) and list the titles, newest first: that is your timeline. Show each feed's key, or its first and last six hexadecimal digits, beside anything you show for it, since names are not unique.
 
-With a node (step 2), all of this is two messages: Subscribe (`25h`, with the feed's key as text) and Timeline (`22h`), whose entries the node has already checked.
+With a node (step 2), all of this is two messages: Subscribe (`25h`, with the feed's key as text) and Timeline (`22h`), whose entries the node has already checked. `terse node` keeps what you subscribe to with your other settings, so `terse feed subscriptions` lists it too.
 
 ## Compare with the reference
 
@@ -48,4 +48,4 @@ tersereader list
 
 A Tersenet reader: it follows feeds, checks what it receives, keeps it, and shows articles with their links. NETWORK.md section 6 lists what a complete reader must do; most of it is above. The rest, such as display names, feed addresses with relay hints and the speed requirements, is in [Writing a reader without the machine](terse:74123e20f1739d0921abc649e0c394339b7ddd66d68b584ad60f1a09b721678d).
 
-Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. [Write a program](terse:bc912a4c1145e5846532f3ec47d1ab5cce7390da50351e2c44fa0236fbc45c47).
+Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. [Write a program](terse:a5c2e4ae233a2c949f51b3bc7424c9b047acca63007916974bb5a0980bce8cda).

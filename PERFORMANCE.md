@@ -121,7 +121,7 @@ ceiling passed there too.
 | Limit | Rows | Ceiling | Target | Reference | Floor |
 |---|---|---|---|---|---|
 | A held article or the timeline, shown by a whole process | C2–C5, G2–G5 | 250 ms | 25 ms | 2.0–11.6 ms | 4.7–27.2 ms |
-| A feed of 50 entries synced from a local relay | C1, G1 | 2 s | 400 ms | 49 / 304 ms | 70 / 305 ms |
+| A feed of 50 entries synced from a local relay | C1, G1 | 2 s | 200 ms | 49 / 25 ms | 70 ms / not re-measured |
 | A key to what it shows, held, real-time loop | M7–M9 | 15 frames | 3 frames | 1–2 frames | 1–2 frames |
 | Host start to its first frame, software renderer | H1, H5 | 1.5 s | 50 ms | 19 / 19 ms | 48 / 57 ms |
 | The same, cold: a first run, terse-host not cached | H7 | 1.5 s | 100 ms | 63 ms (warm 20) | 62 ms (warm 55) |
@@ -145,9 +145,9 @@ reference now measures: a held article or the timeline from a whole
 process 50 → 25 ms (it measures 4 to 12 ms); host start-up 500 → 50 ms
 (18 ms since the fonts are built in; the owner's ceiling of 1.5 s is
 kept); fetch's slowest frame 50 ms → 1 frame (0.7 ms); a key to what it
-shows 6 → 3 frames (1 to 2). Feed sync 500 → 400 ms (55 ms; the Go
-reader's 300 ms, which asks for its 50 articles one at a time, sets
-it). **Targets loosened**: 1,200 CJK glyphs never drawn before from a
+shows 6 → 3 frames (1 to 2). Feed sync 500 → 400 → 200 ms (55 ms; the Go
+reader's 300 ms had set 400. That was its wait for idleness, polled
+every 100 ms, not the fetching, and is fixed: it measures 25 ms). **Targets loosened**: 1,200 CJK glyphs never drawn before from a
 listed font, each frame (H6), 1 → 2 frames: the reference takes 21 ms,
 so `--strict` would fail on the reference itself, for a cost that is
 known and not bounded yet (§4, "Text in another script"). The system rows' target was
@@ -248,11 +248,11 @@ highest run. Every requirement, ceiling and target passed, also with
 | M7 | Enter on fetch to its message on the screen | 2 frames (33 ms) | ≤ 3 frames |
 | M8, M9 | reader: M to the manual's index; Enter on a link to the article | 1 frame each | ≤ 3 frames |
 | M10 | conform-perf in the real-time loop | every line PASS: 1 frame, 1 frame, 60 60 60 60 frames a second | — |
-| C1 | `terse feed sync`: 50 entries and their articles | 49 ms (47–54); 1 Subscribe, 50 Get | ≤ 400 ms |
+| C1 | `terse feed sync`: 50 entries and their articles | 49 ms (47–54); 1 Subscribe, 50 Get | ≤ 200 ms |
 | C2, C3 | `terse get` of a held article (the whole process); relay connected / never answering | 7.0 ms (6.9–8.1) / 6.0 ms (5.9–6.0) | ≤ 25 ms |
 | C4 | `terse feed list`, relay never answering | 4.1 ms (4.0–4.4) | ≤ 25 ms |
 | C5 | `terse get` of an article on a local relay | 7.4 ms (6.9–8.0); 1 Get | ≤ 25 ms |
-| G1 | `tersereader sync`: 50 entries and their articles | 304 ms (304–306); 1 Subscribe, 50 Get | ≤ 400 ms |
+| G1 | `tersereader sync`: 50 entries and their articles | 25 ms (24–32); 1 Subscribe, 50 Get | ≤ 200 ms |
 | G2, G3 | `tersereader --dump` of a held article; relay connected / never answering | 11.6 ms (11.0–16.6) / 10.2 ms | ≤ 25 ms |
 | G4 | `tersereader list`, relay never answering | 10.7 ms | ≤ 25 ms |
 | G5 | the same through the Go node on the local socket: `--dump`, `list` | 2.0 ms (1.7–2.1), 2.3 ms | ≤ 25 ms |

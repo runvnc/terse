@@ -194,6 +194,8 @@ pub struct Bus {
     pub grace: Vec<u32>,
     /// The host is taking the snapshots the rule asks for (R15).
     pub saving: bool,
+    /// Installed drivers not used, and why (DEVICES.md 2.2), for the user.
+    pub notes: Vec<Unused>,
 }
 
 /// A machine's memory as its memory file (DEVICES.md 4.1): the guest's
@@ -245,17 +247,61 @@ pub fn split_command(cmd: &str) -> Vec<String> {
 pub struct Wanted {
     pub slots: Vec<u8>,
     pub command: Vec<String>,
+    /// An installed driver (DEVICES.md 2.2): what to do if it does not
+    /// start or fails its handshake.
+    pub installed: Option<Installed>,
+}
+
+/// An installed driver that was not used (DEVICES.md 2.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unused {
+    pub name: String,
+    /// Its group's lowest slot.
+    pub slot: u8,
+    pub why: String,
+}
+
+impl Unused {
+    /// The message for standard error.
+    pub fn message(&self) -> String {
+        format!("the installed driver {} for slot {} was not used: {}; using the shipped driver (terse drivers use {} default)", self.name, self.slot, self.why, self.slot)
+    }
+}
+
+/// An installed driver's fallback (DEVICES.md 2.2).
+#[derive(Clone, Debug)]
+pub struct Installed {
+    /// Its name in the drivers folder.
+    pub name: String,
+    /// The slots and device versions of its manifest: it must answer with
+    /// these versions.
+    pub versions: Vec<(u8, u8)>,
+    /// The shipped driver's command line, if there is one.
+    pub shipped: Option<Vec<String>>,
 }
 
 impl Bus {
     /// Starts and connects every driver, in order (the order of their
     /// lowest slots).
     pub fn start(config: &BusConfig, drivers: &[Wanted]) -> Result<Bus, String> {
-        let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0, grace: Vec::new(), saving: false };
+        let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0, grace: Vec::new(), saving: false, notes: Vec::new() };
         let mut drivers = drivers.to_vec();
         drivers.sort_by_key(|w| w.slots.iter().copied().min());
         for (i, want) in drivers.iter().enumerate() {
-            let p = bus.start_one(i, want)?;
+            let p = match (bus.start_one(i, want), &want.installed) {
+                (Ok(p), _) => p,
+                (Err(e), None) => return Err(e),
+                // DEVICES.md 2.2: an installed driver that does not start or
+                // fails its handshake gives way to the shipped one.
+                (Err(e), Some(inst)) => {
+                    let g = want.slots.iter().min().copied().unwrap_or(0);
+                    let Some(shipped) = &inst.shipped else {
+                        return Err(format!("{e} (the installed driver {}; there is no shipped driver for slot {g})", inst.name));
+                    };
+                    bus.notes.push(Unused { name: inst.name.clone(), slot: g, why: e });
+                    bus.start_one(i, &Wanted { slots: want.slots.clone(), command: shipped.clone(), installed: None })?
+                }
+            };
             for &s in &p.slots {
                 if bus.by_slot[s as usize].is_some() {
                     return Err(format!("two drivers for slot {s}"));
@@ -271,6 +317,10 @@ impl Bus {
         let config = &self.config;
         let name = format!("driver{i}");
         let sock = config.session.join(format!("{name}.sock"));
+        // A driver that failed in its place (an installed one, DEVICES.md
+        // 2.2) may have left its socket and bus file.
+        let _ = std::fs::remove_file(&sock);
+        let _ = std::fs::remove_file(config.session.join(format!("{name}.bus")));
         let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
         let (program, args) = want.command.split_first().ok_or(format!("slots {:?}: an empty command", want.slots))?;
         let what = format!("slots {:?} ({program})", want.slots);
@@ -336,6 +386,14 @@ impl Bus {
         let without_full_text: Vec<u8> = asked.iter().copied().filter(|&s| s != full_text).collect();
         if (slots != asked && slots != without_full_text) ||(transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
             return Err(fail(&mut child, format!("it answered for slots {slots:?}, transport {transport}")));
+        }
+        // An installed driver answers with the versions it was installed
+        // with (DEVICES.md 2.2).
+        if let Some(inst) = &want.installed
+            && let Some(s) = info.slots.iter().find(|s| !inst.versions.contains(&(s.slot, s.version)))
+        {
+            let was = inst.versions.iter().find(|v| v.0 == s.slot).map_or("not installed for it".to_string(), |v| format!("installed as version {}", v.1));
+            return Err(fail(&mut child, format!("it answered for device {} version {}, {was}", s.slot, s.version)));
         }
         let link = if transport == proto::TRANSPORT_SHM {
             let m = Mapping::open(&bus_path, true)?;

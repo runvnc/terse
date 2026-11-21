@@ -32,12 +32,15 @@ const USAGE: &str = "usage:
             [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
             [--without <slot>]... [--perf-log <dir>|off] [--perf-rule on|off]
             [--tube xy|p31|amber|vectrex] [--vignette] [--no-trails] [--force-phosphor] [--no-shed]
+  terse-bus --probe-driver <program> [--slot <n>]
   terse-bus --version
 
 Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
 (slots 3 and 9, one process), terse-dev-content (4, given --store, --config, --data, --relay,
 --consent, --profile), terse-dev-sound (6) and terse-dev-page (7), from this program's directory; --driver replaces the
-driver of the slots it names (the command line is split at spaces). --shell runs the image (default:
+driver of the slots it names (the command line is split at spaces). Between the two come the drivers the user installed
+(terse drivers; <config>/drivers, DEVICES.md 2.2): one that cannot be used gives way to the shipped driver, with a
+message. --probe-driver makes the handshake terse drivers add makes and prints what the program answered. --shell runs the image (default:
 the shell built into terse) as the shell (SPEC §machines): one driver process per device serves every
 machine. --transport socket offers drivers only the socket (default: shared memory is offered and
 the Rust drivers take it). --no-batch sends every call at once. --in-process runs a single machine
@@ -298,6 +301,9 @@ fn fault_exit() -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).is_some_and(|a| a == "--probe-driver") {
+        return probe(std::env::args().skip(2).collect());
+    }
     if std::env::args().skip(1).any(|a| a == "--version") {
         println!("{}", terse_perflog::Identity::this("terse-bus").line());
         return ExitCode::SUCCESS;
@@ -311,6 +317,63 @@ fn main() -> ExitCode {
             ExitCode::from(if e.starts_with("driver ") { 3 } else { 2 })
         }
     }
+}
+
+/// `--probe-driver <program> [--slot n]`: the handshake `terse drivers add`
+/// makes (DEVICES.md 2.2). Starts the program as this core would, with no
+/// options and on the socket, once for each group of slots (or the group of
+/// `--slot`), and prints, for each group it answers for, its identity and
+/// slots: lines `group`, `name`, `version`, `build` and `slot <s> <v>`, then
+/// a blank line. The groups it refuses go to standard error. Status 0 if it
+/// answered for one or more groups, else 2.
+fn probe(args: Vec<String>) -> ExitCode {
+    let (program, slot) = match args.as_slice() {
+        [p] => (p.clone(), None),
+        [p, f, s] if f == "--slot" => match s.parse::<u8>().ok().and_then(terse_net::driverlist::group_of) {
+            Some(g) => (p.clone(), Some(g)),
+            None => {
+                eprintln!("terse-bus: --slot {s}: not a slot a driver serves (2, 3, 4, 6, 7, 9 or 10)");
+                return ExitCode::from(2);
+            }
+        },
+        _ => {
+            eprintln!("usage: terse-bus --probe-driver <program> [--slot <n>]");
+            return ExitCode::from(2);
+        }
+    };
+    let groups: Vec<&[u8]> = match slot {
+        Some(g) => vec![g],
+        None => terse_net::driverlist::GROUPS.to_vec(),
+    };
+    let mut answered = 0;
+    for g in groups {
+        let session = match transport::session_dir() {
+            Ok(d) => host::SessionDir(d),
+            Err(e) => {
+                eprintln!("terse-bus: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let mut config = BusConfig::new(session.0.clone());
+        config.shm = false;
+        let want = terse_bus::bus::Wanted { slots: g.to_vec(), command: vec![program.clone()], installed: None };
+        match terse_bus::bus::Bus::start(&config, &[want]) {
+            Ok(bus) => {
+                let d = &bus.procs[0].info;
+                println!("group {}", g[0]);
+                println!("name {}", d.name.replace('\n', " "));
+                println!("version {}", if d.version.is_empty() { "-" } else { &d.version });
+                println!("build {}", if d.build.is_empty() { "-" } else { &d.build });
+                for s in &d.slots {
+                    println!("slot {} {}", s.slot, s.version);
+                }
+                println!();
+                answered += 1;
+            }
+            Err(e) => eprintln!("terse-bus: {e}"),
+        }
+    }
+    if answered > 0 { ExitCode::SUCCESS } else { ExitCode::from(2) }
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
@@ -389,8 +452,15 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     if opts.shell && !opts.without.is_empty() {
         return Err("--without is for a single machine, not --shell".into());
     }
-    let slots = host::installed_slots(&dir, &image, opts.shell, &opts.without, &overrides);
-    let drivers = host::drivers(&dir, &slots, &opts.content.args(), &overrides)?;
+    // The user's drivers folder (DEVICES.md 2.2), after --driver and before
+    // this program's directory.
+    let config_dir = opts.content.config.clone().or_else(terse_net::default_config_dir);
+    let (installed, mut unused, bad) = config_dir.as_deref().map(host::installed_drivers).unwrap_or_default();
+    for b in bad {
+        eprintln!("terse-bus: {b}");
+    }
+    let slots = host::installed_slots_with(&dir, &image, opts.shell, &opts.without, &overrides, &installed);
+    let drivers = host::drivers_with(&dir, &slots, &opts.content.args(), &overrides, &installed)?;
     let presents = opts.screenshot.is_some() || opts.present_every || opts.window;
     let mut config = BusConfig::new(PathBuf::new());
     config.shm = !opts.socket_only;
@@ -413,6 +483,22 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     let mut bs = start.start()?;
     let startup = started.elapsed();
+    // Installed drivers that were not used: said on standard error, and
+    // in a window as a notice (DEVICES.md 2.2).
+    unused.extend(bs.bus.borrow().notes.iter().cloned());
+    for u in &unused {
+        eprintln!("terse-bus: {}", u.message());
+    }
+    if let Some(u) = unused.first() {
+        bs.notice = Some((
+            host::Notice {
+                heading: "an installed driver was not used".into(),
+                what: format!("The installed driver {} (slot {}) could not be used.", u.name, u.slot),
+                then: format!("Using the shipped driver. To keep it: terse drivers use {} default", u.slot),
+            },
+            host::NOTICE_FRAMES,
+        ));
+    }
     // The watch (PERFORMANCE.md R14, R15; RECORD.md).
     let live = opts.window || opts.realtime;
     let (record, default_dir) = match &opts.perf_log {

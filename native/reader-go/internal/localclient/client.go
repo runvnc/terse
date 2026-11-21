@@ -317,16 +317,17 @@ func (cl *Client) Blob(id string) ([]byte, error) {
 	return b, err
 }
 
-func (cl *Client) ArticleTitle(id string, size int) string {
+func (cl *Client) ArticleTitle(id string, size int) (string, bool) {
 	k, err := hex.DecodeString(id)
 	if err != nil || len(k) != 32 || size < 0 {
-		return ""
+		return "", false
 	}
 	in, err := cl.simple(local.New(local.Title, 0).Raw(k).U32(uint32(size)), reqTimeout)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return in.Short()
+	t := in.Short()
+	return t, !in.Bad()
 }
 
 func (cl *Client) relays() ([]nodeapi.Relay, error) {
