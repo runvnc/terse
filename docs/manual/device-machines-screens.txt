@@ -26,6 +26,15 @@ With no Screen in effect, from the bottom: the shell's screen, then each flat pi
 
 A panel shows its machine's whole screen on its front, in perspective from the eye in use: the point a fraction u along its top edge from its top left corner and v down its left edge shows the point (640u, 480v) of the machine's screen. Seen from behind it is an opaque plate of a dark colour the host chooses. Panels are cut at the near plane (z = -800) and at the edges of the shell's screen. A host that cannot draw a picture in perspective may draw each panel's picture upright instead: scaled uniformly into the bounding rectangle of the panel's projection (its part in front of the near plane) and centred; the panel still hides what it would hide. (`terse-host --panels flat` makes its software renderer do this.) The resolution a panel's picture is drawn at, its filtering and the smoothing of its edges are presentation.
 
+## The system ink
+
+Each machine's lists are capped on their own (the ink caps of The 2D vector display and The 3D vector display). In a system the machines the shell shows also share one budget, the **system ink**: 691,200 square units of the shell's screen, what one machine shown over the whole screen may count (its picture, 640 × 480, and both its lists at their caps). After each of the shell's frames the host counts, in increasing handle order:
+
+1. the pictures: a flat one its area, pw × ph; a panel the area of the box its corners make on the glass, clipped to the screen. A picture that would take the total above the system ink is a **plate**: a flat one is a plain rectangle, a panel is not drawn, and nothing of its machine's screen is shown;
+2. the lists of each machine that is not a plate, each its ink times its picture's scale (pw/640 for a flat picture), the 2D list first. A list is cut where the ink runs out, exactly as at its own cap.
+
+The shell's own screen is not counted: it is drawn within its own caps whatever the machines ask, so no machine can take from what the user needs to regain control. A whole system therefore asks of a host about what two machines can. The bundled shell's layouts stay well within it (at most about 417,000 with every bundled program shown). The exact rules are in spec/machines.md §machines.ink.
+
 ## The view
 
 `face` gives the system a view: a handle, a direction (towards the glass, or back after `unface`), a rectangle, a start progress, a start frame and a duration. Its progress is a number from 0 (the scene as listed) to 4,096 (the panel flat on the glass). After the shell's frame with counter f, with start progress p0, start frame s and duration d, it is

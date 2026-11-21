@@ -690,7 +690,9 @@ any client can be tested against them on any network (a relay that
 counts the messages it receives, and one that accepts connections and
 never answers). Times in milliseconds depend on the machine and the
 network; `PERFORMANCE.md` gives the reference implementation's on a
-named machine, as information, and how to run the same tests.
+named machine as targets (information), ceilings far above them that a
+client on any reasonable computer must stay under, and how to run the
+same tests.
 
 ## 7. For machine hosts
 

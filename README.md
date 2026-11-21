@@ -1926,28 +1926,49 @@ implementation, and gives the reference's numbers.
 
 `terse perf` runs every scenario headless, in temporary directories, with relays
 it starts on ephemeral loopback ports (never 7878, never your own config, cache or
-data). Each line is a scenario, its measurement, and a requirement (`R1`–`R9`, in
-frames, round trips or "never waits for a relay": PASS or FAIL) or a target (`T`,
-milliseconds on the reference machine: `info`). It exits with 1 if a requirement
-failed; `--only machine|client|host` and `--runs n` narrow it. The machine scenarios
-run as the window does (a frame every 16.7 ms, each given only what finished before
-it began), not as `terse run` does. `programs/conform-perf` checks the same
-requirements from inside a program, in any host's own frame loop. The deterministic
-parts (relay message counts, held content not waiting for a relay that never
-answers, conform-perf's headless screen and hashes) are in `cargo test`; the timed
-ones are only in `terse perf`.
+data). Performance is specified in three tiers:
 
-On the reference machine (i7-10750H, 12 threads, 15 GB, RTX 2060; load average
-12): a held blob reaches a program in 1 frame, with or without relays, including one
-that never answers; a blob on a local relay in 1 Get (6 ms); a program the shell
-starts runs in the next frame; the reader opens a held article 1 frame after Enter;
-`terse get` of a held article takes 7 ms as a whole process and `tersereader
---dump` 12 ms; syncing 50 entries takes 59 ms (`terse`) and 303 ms (`tersereader`),
-with one Subscribe; `terse-host` draws its first frame 170 ms after it starts.
-Fetch's first frame of CJK text used to take about a second, then 90 ms with a font
-map built as the host started (PERFORMANCE.md 3); the host now draws only with the
-fonts it loads at start and never looks for one, and fetch's text keeps to the full
-repertoire of its built-in fonts.
+- **requirements** (`R1`–`R17`): in frames, round trips or "never waits for a
+  relay", the same on any machine; PASS or FAIL;
+- **ceilings** (`C`): milliseconds (or frames) far above what a correct
+  implementation takes on any reasonable computer (the floor assumed is a 2-core
+  2 GHz machine of the last ten years): start-up 1.5 s, a held article shown by a
+  whole process 250 ms, a worst legal frame 4 frames on one thread. They FAIL on
+  any machine;
+- **targets** (`T`): the reference machine's times with some room (start-up 50 ms,
+  a held article 25 ms, a worst legal frame 1 frame): information, and failures
+  only with `--strict`.
+
+Ceilings and targets judge the median of 5 runs (`--runs n`), so one slow run on a
+busy machine fails nothing; each line prints the median and the range, and a last
+line counts the requirements, ceilings and targets and the failures. It exits with
+1 on any failure. `--only machine|client|host` narrows it; `--host` and `--reader`
+run the host and reader rows through another implementation that takes the same
+options. H7 is a cold start: the built-in shell's first frame on a first run, with
+`terse-host`'s pages dropped from the page cache first (no root needed). The
+machine scenarios run as the window does (a frame every 16.7 ms, each given only
+what finished before it began), not as `terse run` does. `programs/conform-perf`
+checks the same requirements from inside a program, in any host's own frame loop.
+The deterministic parts (relay message counts, held content not waiting for a relay
+that never answers, conform-perf's headless screen and hashes, a host's first frame
+waiting on nothing but its image, settings and listed fonts) are in `cargo test`;
+the timed ones are only in `terse perf`.
+
+On the reference machine (i7-10750H, 12 threads, 15 GB, RTX 2060; load average 1.2
+to 2.6; `terse perf --runs 5`, every requirement, ceiling and target passing, also
+with `--strict`): a held blob reaches a program in 1 frame, with or without relays,
+including one that never answers; a blob on a local relay in 1 Get (6 ms); a program
+the shell starts runs in the next frame; the reader opens a held article 1 frame after
+Enter; `terse get` of a held article takes 7 ms as a whole process and `tersereader
+--dump` 12 ms; syncing 50 entries takes 49 ms (`terse`) and 304 ms (`tersereader`),
+with one Subscribe; `terse-host` draws its first frame 19 ms after it starts (63 ms
+cold, on a first run with the program not in the page cache; 293 ms on the GPU
+renderer, which starts the graphics driver); every device's worst legal frame takes
+at most 6.5 ms on one thread, all of them at once 15.6 ms. Slowed to the hardware
+floor (PERFORMANCE.md 1.1) every ceiling still passes, the closest the GPU start
+(1.2 s of 1.5). Fetch's first frame of CJK text used to take about a second, then 90
+ms with a font map built as the host started; the host now draws only with the fonts
+it loads at start and never looks for one.
 
 ## Measurements
 

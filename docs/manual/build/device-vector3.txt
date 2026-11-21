@@ -97,7 +97,7 @@ A Screen is a flat panel w/16 units wide and 3/4 of that high, centred on the tr
 
 so it is scaled, turned and moved with the transform. With the identity it lies like the glass: its top edge along x, its left edge down along y, its front towards the viewer. It does not change the current point. With a = top right - top left and b = bottom left - top left, the panel is seen from behind from an eye on the side of its plane that a x b points to (or in its plane); otherwise its front is seen.
 
-A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle's machine has a picture and the handle's rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell's `face` flies one flat onto the glass, is in [screens, panels and input](terse:0d8d273f4db882d67b9f1f66ea77816ff9f12d7e1235b07f0f7e3d2141cf1039).
+A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle's machine has a picture and the handle's rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell's `face` flies one flat onto the glass, is in [screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f).
 
 ## Clipping and caps
 
@@ -131,7 +131,7 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 
 ## Charges and state
 
-Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
+Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
 
 The device sends no events and takes no input from the host: the eye is the host's, so what faces hide from it is not state. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display's state section, which is present when the machine has device 3 or device 9.
 
