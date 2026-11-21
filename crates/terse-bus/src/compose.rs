@@ -26,6 +26,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use terse_core::devices::Devices;
 use terse_core::system_ink::Shares;
 use terse_core::{COLS, Machine, System, Terminal, Vector, Vector3};
 use terse_host::display::{
@@ -646,7 +647,7 @@ impl Compositor {
     /// How a machine is shown: its style, its lists (the 3D one only with
     /// `lines`), its caps, whether a plate; and its drivers told what they
     /// need to draw it (the eye, its status, light mode, the caps).
-    fn show(&self, serial: u32, d: &mut BusDevices, status: String, lines: Option<Vec<u8>>, share: Option<&terse_core::system_ink::Share>, excluded: Vec<[u16; 4]>) -> Result<Show, String> {
+    fn show(&self, serial: u32, d: &mut BusDevices, status: String, lines: bool, share: Option<&terse_core::system_ink::Share>, excluded: Vec<[u16; 4]>) -> Result<Show, String> {
         let plate = share.is_some_and(|s| s.plate);
         let caps = Caps::of(share);
         let vector = if plate { None } else { d.vector() };
@@ -659,7 +660,8 @@ impl Compositor {
             d.set_property(property::CAPS, &caps_bytes(caps))?;
         }
         let light_slots = if phosphor { d.light_slots() } else { Vec::new() };
-        Ok(Show { plate, phosphor, vector, list3: lines, caps, excluded, advance, light_slots })
+        let list3 = (phosphor && lines).then(|| d.list3().into_owned());
+        Ok(Show { plate, phosphor, vector, list3, caps, excluded, advance, light_slots })
     }
 
     /// Draws the picture of `system` for `viewport` after a frame, with the
@@ -690,7 +692,7 @@ impl Compositor {
         // light mode.
         let shell = system.shell_mut();
         let st = status(shell);
-        let lines = layers.is_none().then(|| shell.list3().into_owned());
+        let lines = layers.is_none();
         let excluded = layers.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
         let d = shell.devices_mut();
         d.set_property(property::VIEW, &view)?;
@@ -709,7 +711,7 @@ impl Compositor {
             let plate = share.is_some_and(|s| s.plate);
             let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3).filter(|_| !plate);
             let st = status(machine);
-            let lines = own.is_none().then(|| machine.list3().into_owned());
+            let lines = own.is_none();
             let excluded = own.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
             let d = machine.devices_mut();
             let show = self.show(serial, d, st, lines, share.as_ref(), excluded)?;
@@ -738,7 +740,7 @@ impl Compositor {
             let size = (cw * COLS as u32, cw * COLS as u32 * 3 / 4);
             let own = surface_layers(machine, eye, Caps::of(share.as_ref()).ink3);
             let st = status(machine);
-            let lines = own.is_none().then(|| machine.list3().into_owned());
+            let lines = own.is_none();
             let excluded = own.as_ref().map_or_else(Vec::new, |l| l.rects.clone());
             let d = machine.devices_mut();
             let show = self.show(serial, d, st, lines, share.as_ref(), excluded)?;

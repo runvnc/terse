@@ -153,13 +153,18 @@ fn assert_close(a: &Path, b: &Path) -> f64 {
     same as f64 / n
 }
 
-/// Whether the fonts the reference pictures assume are here.
-fn have_fonts() -> bool {
+/// Whether the fonts the reference pictures assume are here, and the
+/// terse-bus program is there (not when only this package's tests ran).
+fn can_draw() -> bool {
     let ok = terse_host::page::Typesetter::new(&Default::default()).is_ok();
     if !ok {
         eprintln!("skipped: no fonts for pictures");
     }
-    ok
+    let there = bin_dir().join("terse-bus").exists();
+    if !there {
+        eprintln!("skipped: no terse-bus program beside the drivers");
+    }
+    ok && there
 }
 
 /// A temporary directory for pictures, kept (and its path printed) if
@@ -208,7 +213,7 @@ pub fn host_and_bus(tmp: &Path, name: &str, args: &[String]) -> f64 {
 /// pictures) in the phosphor style.
 #[test]
 fn the_bus_draws_the_system_ink_as_the_host_does() {
-    if !have_fonts() {
+    if !can_draw() {
         return;
     }
     let tmp = tempdir();
@@ -233,7 +238,7 @@ fn the_bus_draws_the_system_ink_as_the_host_does() {
 /// with four machines as tiles and as panels, the tubes and the glass.
 #[test]
 fn the_bus_draws_the_phosphor_style_as_the_host_does() {
-    if !have_fonts() {
+    if !can_draw() {
         return;
     }
     let tmp = tempdir();
