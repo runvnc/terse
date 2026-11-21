@@ -27,7 +27,7 @@ use terse_core::{COLS, Primitive, ROWS, SCREEN_HEIGHT, SCREEN_WIDTH, Terminal, V
 
 use super::base::{Damage, IRect, Pixels, Pool, TILE, mix, over, pack, tile_rows};
 use super::page::{PageKey, PageQuads, SoftPage};
-use super::phosphor::{Light, Smear, Tube, linear_table};
+use super::phosphor::{Light, LightLayers, Smear, Text, Tube, linear_table};
 use crate::phosphor::Look;
 use super::shapes::{Geom, Mode, Shape, visit};
 use crate::display::{GlyphSource, SceneKey, VectorScene, grid_rect, outlined, screen_pos};
@@ -223,6 +223,9 @@ pub struct SoftScreen {
     /// The sources of the machine's Surfaces (screen units), which give no
     /// phosphor light (SPEC §vector3d.presentation).
     excluded: Vec<[u16; 4]>,
+    /// The grid size to place a screen of its own by, if not the glyphs'
+    /// (terse-bus: the terminal driver's native size).
+    grid_size: Option<(u32, u32)>,
 }
 
 impl SoftScreen {
@@ -264,7 +267,14 @@ impl SoftScreen {
             tube_overlay: 0,
             look: Look::default(),
             excluded: Vec::new(),
+            grid_size: None,
         }
+    }
+
+    /// Places a screen of its own (no rectangle) by this grid size instead
+    /// of its glyphs' (`None`: theirs).
+    pub fn set_grid_size(&mut self, size: Option<(u32, u32)>) {
+        self.grid_size = size;
     }
 
     /// The sources of the machine's Surfaces (SPEC §vector3d.presentation): in the phosphor
@@ -329,6 +339,9 @@ impl SoftScreen {
 
     /// The grid at the glyphs' native cell size, 4:3.
     pub fn grid_size(&self) -> (u32, u32) {
+        if let Some(s) = self.grid_size {
+            return s;
+        }
         let width = COLS as u32 * self.cell_px.0;
         (width, width * SCREEN_HEIGHT as u32 / SCREEN_WIDTH as u32)
     }
@@ -526,6 +539,19 @@ impl SoftScreen {
     /// (`advance`: the afterglow moves on; else only the beam is redrawn).
     /// Does nothing in the clean style.
     pub fn accumulate(&mut self, viewport: (u32, u32), advance: bool, pool: &Pool) {
+        self.accumulate_with(viewport, advance, pool, None);
+    }
+
+    /// Whether the phosphor picture must be drawn before it can be shown
+    /// (no tube yet, or its image was invalidated).
+    pub fn needs_light(&self) -> bool {
+        self.style.0 && (self.tube.is_none() || !self.drawn.valid)
+    }
+
+    /// [`accumulate`](Self::accumulate) with the text's light taken from
+    /// `layers` instead of the terminal and page this screen was given
+    /// (terse-bus: the drivers' layers in light mode).
+    pub fn accumulate_with(&mut self, viewport: (u32, u32), advance: bool, pool: &Pool, layers: Option<&LightLayers>) {
         if !self.style.0 {
             return;
         }
@@ -560,10 +586,13 @@ impl SoftScreen {
                 (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
             })
             .collect();
+        let text = match layers {
+            Some(l) => Text::Layers(l),
+            None => Text::Cells { grid: self.grid(true), page: &self.page.quads },
+        };
         let light = Light {
             excluded: &excluded,
-            grid: self.grid(true),
-            page: &self.page.quads,
+            text,
             shapes: &self.vectors.prepared,
             smears: &smears,
             lin: &self.lin,

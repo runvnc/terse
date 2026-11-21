@@ -150,12 +150,35 @@ pub struct Smear {
     pub slow: f32,
 }
 
+/// Layers of light drawn elsewhere (terse-bus's drivers in light mode,
+/// `DEVICES.md` 7.1): each pixel straight sRGB colour in its low 24 bits
+/// and its coverage in its alpha, giving `linear(colour) × alpha / 255 ×
+/// GLYPH` of light, as the terminal's glyphs give in [`Text::Cells`].
+pub struct LightLayers<'a> {
+    /// Each layer's pixels, rows of `width`.
+    pub layers: Vec<&'a [u32]>,
+    pub width: usize,
+    pub height: usize,
+    /// The layers' pixel that is the tube's (0, 0).
+    pub origin: (usize, usize),
+    /// Per layer, per row of the layer: the columns that may hold light
+    /// (x0..x1; none if x0 ≥ x1).
+    pub extents: Vec<&'a [(u32, u32)]>,
+}
+
+/// Where the text's light comes from.
+pub enum Text<'a> {
+    /// The terminal's cells and the page, prepared for the tube
+    /// (`SoftPage::prepare` with the screen at the origin and the tube's
+    /// size): the software renderer's own.
+    Cells { grid: Grid<'a>, page: &'a PageQuads },
+    /// Layers drawn as light by other processes.
+    Layers(&'a LightLayers<'a>),
+}
+
 /// What a machine frame of light is made of.
 pub struct Light<'a> {
-    pub grid: Grid<'a>,
-    /// The page, prepared for the tube (`SoftPage::prepare` with the screen
-    /// at the origin and the tube's size).
-    pub page: &'a PageQuads,
+    pub text: Text<'a>,
     pub shapes: &'a [Shape],
     pub smears: &'a [Smear],
     pub lin: &'a [f32; 256],
@@ -776,9 +799,12 @@ impl Tube {
     /// The text's light: each pixel's glyph (or cursor) coverage times its
     /// foreground colour, linear, and the page's light over it.
     fn text_light(&mut self, l: &Light, pool: &Pool) {
+        let (grid, page) = match &l.text {
+            Text::Cells { grid, page } => (grid, *page),
+            Text::Layers(layers) => return self.layer_light(layers, l.lin, pool),
+        };
         let (tw, _) = self.size;
         let stride = tw * 3;
-        let grid = &l.grid;
         let blocks = self.blocks;
         let shift = blocks.shift;
         let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
@@ -817,7 +843,61 @@ impl Tube {
                 masks[j] = m;
             }
             let run = IRect::new(0, y0 as i32, tw as i32, (y0 + masks.len()) as i32);
-            l.page.draw_light(rows, y0 as i32, tw, run, masks, shift, l.lin);
+            page.draw_light(rows, y0 as i32, tw, run, masks, shift, l.lin);
+        });
+    }
+
+    /// The text's light from layers of light ([`LightLayers`]): each
+    /// pixel's coverage times its colour, linear, added up.
+    fn layer_light(&mut self, src: &LightLayers, lin: &[f32; 256], pool: &Pool) {
+        let (tw, _) = self.size;
+        let stride = tw * 3;
+        let shift = self.blocks.shift;
+        let blocks = self.blocks;
+        let (ox, oy) = src.origin;
+        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
+            .text
+            .chunks_mut(BAND * stride)
+            .zip(self.text_m.chunks_mut(BAND))
+            .enumerate()
+            .map(|(i, (g, m))| (i * BAND, g, m))
+            .collect();
+        pool.each(bands, |(y0, rows, masks)| {
+            for j in 0..masks.len() {
+                for (x0, x1) in blocks.runs(masks[j]) {
+                    rows[j * stride + x0 * 3..j * stride + x1 * 3].fill(0.0);
+                }
+                masks[j] = 0;
+                let ly = y0 + j + oy;
+                if ly >= src.height {
+                    continue;
+                }
+                let out = &mut rows[j * stride..(j + 1) * stride];
+                let mut m = 0;
+                for (px, ext) in src.layers.iter().zip(&src.extents) {
+                    let (e0, e1) = ext[ly];
+                    let (x0, x1) = ((e0 as usize).max(ox), (e1 as usize).min(ox + tw).min(src.width));
+                    if x0 >= x1 {
+                        continue;
+                    }
+                    let row = &px[ly * src.width..(ly + 1) * src.width];
+                    for x in x0..x1 {
+                        let p = row[x];
+                        let a = p >> 24;
+                        if a == 0 {
+                            continue;
+                        }
+                        let k = a as f32 / 255.0 * GLYPH;
+                        let t = x - ox;
+                        let o = &mut out[t * 3..t * 3 + 3];
+                        o[0] += lin[(p >> 16 & 255) as usize] * k;
+                        o[1] += lin[(p >> 8 & 255) as usize] * k;
+                        o[2] += lin[(p & 255) as usize] * k;
+                        m |= 1 << (t as u32 >> shift);
+                    }
+                }
+                masks[j] = m;
+            }
         });
     }
 }

@@ -559,6 +559,21 @@ pub mod property {
     /// Published by the 3D display: its list (SPEC §vector3d), which the core
     /// needs for device 8 and the shell's scene (SPEC §machines.calls, §machines.screens and §machines.input).
     pub const LIST3: &str = "vector3.list";
+    /// Published by the 2D display: its state as `STATE.md`'s vector
+    /// section (style, persistence, fill mode, the list's length and the
+    /// list), which the core needs for the system ink (SPEC §machines.ink)
+    /// and to draw the phosphor style's beam (DEVICES.md 7.1).
+    pub const LIST2: &str = "vector.list";
+    /// Published by the core for the terminal, page and vector drivers: 1
+    /// when the machine is shown in the phosphor style and its layers are
+    /// light (DEVICES.md 7.1: no backgrounds, straight colour, the vector
+    /// displays' layers left empty), else 0 or empty.
+    pub const LIGHT: &str = "core.light";
+    /// Published by the core for the vector driver: the ink caps the
+    /// machine's lists are drawn within, its share of the system ink (SPEC
+    /// §machines.ink): the 2D cap (u64) and the 3D cap (f64); empty: the
+    /// devices' own.
+    pub const CAPS: &str = "core.caps";
     /// Published by the core: the eye (two f32, screen units from the
     /// reference eye, SPEC §vector3d.space).
     pub const EYE: &str = "core.eye";
