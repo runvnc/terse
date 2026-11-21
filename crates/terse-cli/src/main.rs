@@ -1,5 +1,6 @@
 //! `terse`: headless runner, image tools and feeds.
 
+mod build;
 mod feed;
 mod perf;
 mod perflog;
@@ -28,6 +29,11 @@ const USAGE: &str = "usage:
   terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse get <id> [-o <file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse hash <file>
+  terse build <source>... [-o <out.terse>] [--title <t>] [--ram-pages <n>] [--device <slot:version>]...
+              [--optional <slot:version>]... [--cflag <flag>]... [--clang <path>] [--lld <path>] [--rustc <path>]
+              [--show] [--run [the options of run]...]   (C, assembly or Rust to an image; `terse build` alone: details)
+  terse build --write-lib <dir>   (the C library, linker script and Rust runtime built into terse)
+  terse new <file.c|file.rs|file.S>   (a starter program)
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]...
              -o <out.terse>
   terse key new|show
@@ -191,6 +197,8 @@ fn main() -> ExitCode {
         Some("get") => get(&args[1..]),
         Some("hash") => hash(&args[1..]),
         Some("pack") => pack(&args[1..]),
+        Some("build") => build::build(&args[1..]),
+        Some("new") => build::new(&args[1..]),
         Some("key") => feed::key(&args[1..]),
         Some("feed") => feed::feed(&args[1..]),
         Some("relay") => feed::relay(&args[1..]),
