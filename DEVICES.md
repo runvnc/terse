@@ -420,6 +420,13 @@ A host service (section 9): `44h`, 1 reserved byte, the service's name, a
 request (blob). The reply `C4h` has `01h` and an empty string then the
 answer (blob), or `00h`, why not (a string) and an empty blob.
 
+The instance is the machine on whose behalf the core asks, which need not
+have been given to the driver (OPEN): a shell that lists none of the
+driver's devices still starts machines (`image.fetch`). A driver answers
+a service that needs nothing of the machine whatever the instance, and
+refuses (`00h`) one that needs what OPEN gives (a snapshot's owner is the
+machine's identity).
+
 ### 1.10 PRESENT
 
 Section 7.
@@ -817,8 +824,9 @@ The driver replies `D0h`:
 A **layer file** is the driver's: a file it creates in the session
 directory, picture width × height × 4 bytes, one u32 a pixel, rows from
 the top, **premultiplied** colour: alpha in bits 24–31, red 16–23, green
-8–15, blue 0–7 (sRGB values, as the reference renderer blends them). The
-core maps it read-only. A driver gives a new file when the picture size
+8–15, blue 0–7 (sRGB values, as the reference renderer blends them); in
+the phosphor style the same words hold light, not premultiplied (section
+7.1). The core maps it read-only. A driver gives a new file when the picture size
 changes, and its first damage then covers the whole picture. The damage is
 what changed in the file since the driver's last PRESENT for this
 instance; the core composes only there.
@@ -884,32 +892,60 @@ the keyboard while it is shown (Y allows, N or Esc refuses; no key or text
 reaches a machine, nor the release of a key pressed then) and gives the
 answer back as `core.answer`.
 
-Only the clean style is composed this way, and the reference core
-(`terse-bus`) draws nothing else: a machine in the phosphor style is shown
-with its shapes and the page's figures as outlines (the vector driver
-publishes `vector.outlines`, section 7.2), but composed as in the clean
-style, backgrounds drawn and layers covering one another, with no glow
-and no afterglow. The phosphor style's look (glow, afterglow, light
-that adds up) is the host's choice (SPEC §vector.phosphor), so drawing
-plain outlines without it conforms. One requirement of the style is not
-met: the screen must be black, and the terminal and page drivers still
-draw the cell backgrounds and the page's background, since nothing tells
-them the style. A property published by the vector driver (the style, as
-`vector.outlines` gives the outlines) would let them leave the backgrounds
-out.
+**The phosphor style** (SPEC §vector.phosphor) is the core's to draw, as
+terse-host draws it and with its code: terse-host's tube
+(`soft::phosphor`, `soft::screen`: the beam, the afterglow and its smear,
+the halo, the tone curve, the tubes and the glass, the shedding of the
+look), shared, not copied. A machine is shown in the phosphor style when
+its vector display's style says so (the core reads it in `vector.list`)
+or the core forces it (`terse-bus --force-phosphor`). Then:
 
-*Note, the reference host's look:* in terse-host
-(`crates/terse-host/src/phosphor.rs`) the shapes are beam light (a thin
-Gaussian line, with a dot of extra light where lines end), the terminal's
-and the page's text is light in its own antialiasing and colours, not a
-beam, and both add up on one tube with one afterglow and one wide, faint
-halo computed from all of that light. Since the text is not drawn as a
-beam, a text driver's layer could be used as it is, as light over black;
-what the core would need for that look is the drivers' light kept linear
-and additive (the shapes' beam, and every layer without its backgrounds)
-instead of covering layers, and the core to own the tube: the afterglow,
-its persistence and the halo (or one driver to own them and the others to
-give it their primitives). The reference core leaves that look out.
+- the core publishes **`core.light`** = 1 to the machine's drivers (0
+  otherwise), and sends PRESENT with the screen's top left on whole
+  pixels (x and y rounded towards zero), the tube's pixel grid;
+- the terminal and page drivers draw their layers as **light**: no cell
+  backgrounds and no page background (the screen is black, as the style
+  requires), the page's figures and filled shapes as outlines, and each
+  pixel **not premultiplied**: the colour (sRGB) in bits 0–23 and the
+  coverage in the alpha. A pixel gives linear(colour) × alpha / 255 of
+  light: a glyph's coverage times its colour, the reference host's text
+  light. Where a driver's own primitives overlap it adds their light
+  (linear; the alpha at most 255);
+- the vector driver leaves its layers transparent: the core draws the
+  beam itself, from device 3's state (`vector.list`) and device 9's list
+  (`vector3.list`), within the machine's caps (below);
+- the core adds up the light of the layers of the drivers that subscribe
+  to `core.light` (but the vector displays'), the beam over it, and
+  keeps the tube: the afterglow moves on once for each frame the machine
+  ran, and the picture is the tube's. A scene's 3D lines over its panels
+  (Screens, Surfaces) are drawn by the core from its own projection, as
+  terse-host's are.
+
+A driver that does not subscribe to `core.light` is not told, and its
+layers are left out of a machine in the phosphor style (the C terminal
+driver, which draws nothing, loses nothing). A core that composes less
+often than every frame builds the afterglow up over the frames before a
+picture (`terse-bus --screenshot` composes the last 600, as
+`terse-host --screenshot` does). With the reference drivers terse-bus's
+picture of a machine in the phosphor style is terse-host's software
+renderer's, pixel for pixel, in every case its tests compare (sparks'
+phosphor session, hello and holo forced into it, a shell with four
+machines as tiles and as panels, `crates/terse-devices/tests/pictures.rs`);
+only a page whose glyphs overlap can differ, by the rounding of their
+added light to 8 bits.
+
+**The system ink** (SPEC §machines.ink) is the core's: it counts what it
+shows with terse-core's count, the pictures' areas, then the machines'
+2D lists (device 3's state from `vector.list`) and 3D lists
+(`vector3.list`) at their scales, as a host with built-in devices does,
+frame by frame the same plates, caps and cuts. A picture that is a plate
+is drawn by the core alone, a plain rectangle (a blank terminal's
+background, black), without PRESENT to its drivers; a panel that is a
+plate is not drawn. Each machine's vector driver is given its caps as
+**`core.caps`** and draws its lists within them; in the phosphor style the
+core's beam is drawn within them. A vector driver that does not publish
+`vector.list` gives the core no 2D list: it counts nothing for it (so
+cannot cut it), and the core cannot draw its beam.
 
 ### 7.2 Properties
 
@@ -935,6 +971,9 @@ reference drivers and core:
 |---|---|---|---|
 | `vector.outlines` | vector display | page | 1 if figures and filled shapes are drawn as outlines (fill mode 1, or the phosphor style: SPEC §page.layout), else 0 |
 | `vector3.list` | vector display | core | device 9's list (SPEC §vector3d), which device 8 (`face`), the shell's scene and the pointer over panels (SPEC §machines.calls, §machines.screens and §machines.input) look at |
+| `vector.list` | vector display | core | device 3's state as `STATE.md` 1.7's section: style (u8), persistence (u8), fill mode (u8: 1 outlines), the list's length (u32) and the list; the core counts the system ink from it and draws the phosphor style's beam (section 7.1) |
+| `core.light` | core | terminal, page, vector display | 1: the machine is shown in the phosphor style and its layers are light (section 7.1); 0 or empty: the clean style |
+| `core.caps` | core | vector display | the ink caps the machine's lists are drawn within, its share of the system ink (SPEC §machines.ink): the 2D cap (u64) and the 3D cap (f64), each at most the device's own; empty: the devices' own |
 | `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |
 | `core.view` | core | vector display | the shell's scene: which Screens are in effect (u8) and the view (12 f64: the linear part by rows, then the translation); empty: none |
 | `core.status` | core | terminal | the line shown over the bottom row (UTF-8): a fault; empty: none |
@@ -1173,7 +1212,7 @@ What such a core may leave out, and when it would need it:
 | BATCH (section 6) | speed only: a deferred call sent as a CALL gets the same result and charge from the driver (`tcore --no-batch` checks this) |
 | Shared memory (section 4) | speed only: offer none, and every driver takes the socket |
 | PRESENT, layers, native size, section 7.1 | a picture |
-| GET and SET (section 7.2) | presenting (subscribers get their properties before PRESENT), device 8 (`vector3.list`: a shell), playing sound (`sound.frame`) |
+| GET and SET (section 7.2) | presenting (subscribers get their properties before PRESENT; the phosphor style and the system ink: `vector.list`, `core.light`, `core.caps`), device 8 (`vector3.list`: a shell), playing sound (`sound.frame`) |
 | SERVICE (section 9) | a shell (images to start, snapshots) |
 | RESET | nothing: the reference core never sends it |
 | CLOSE | a system (a machine the shell stops); at the end of a run SHUTDOWN is enough |
@@ -1244,11 +1283,17 @@ for a slot that is no device of v0 (section 2.1, rule 6).
 
 ## 14. Open questions
 
-- **The phosphor style** (section 7.1): `terse-bus` shows it as the clean
-  style with outlines, which conforms but for the black screen (the
-  terminal and page drivers draw their backgrounds in either style).
-  terse-host's look (thin beam, sharp text, wide halo, afterglow) is the
-  host's choice and is not composed on the bus.
+- **The phosphor style's light** (section 7.1): text drivers give their
+  light in 8-bit layers (straight colour and coverage), exact for the
+  terminal's glyphs and a page's single glyphs, rounded where a page's
+  glyphs overlap and added up. A float layer (linear light, 12 bytes a
+  pixel) would be exact everywhere at three times the memory and the
+  bandwidth; nothing measured so far needs it.
+- **Services for a machine the driver was not given** (section 1.9): a
+  shell that lists no content device can start machines, but its
+  snapshots, whose owner is the identity OPEN gives, cannot be stored by
+  the content driver. OPEN for the shell with no slots, to every driver
+  that gives services, would carry the identity; not done.
 - **Trust.** A driver on shared memory can write any of an instance's RAM
   at any time; the core trusts its drivers as it trusts its own code. A
   core that does not would offer only the socket, check every write, and

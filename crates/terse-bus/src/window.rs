@@ -38,6 +38,8 @@ pub struct Options {
     pub threads: usize,
     pub flat: bool,
     pub startup: Duration,
+    /// How the phosphor style is drawn.
+    pub looks: terse_bus::compose::Looks,
 }
 
 /// One frame's timings (ms).
@@ -75,6 +77,8 @@ struct App {
     first_frame: Option<Duration>,
     /// When the window side began (the drivers had started).
     created: Instant,
+    /// Sheds the phosphor look when frames run long.
+    governor: terse_host::phosphor::Governor,
 }
 
 impl App {
@@ -109,8 +113,9 @@ impl App {
         let bus_before = self.bus_ms();
         let start = Instant::now();
         self.bs.system.set_eye(self.eye);
-        self.bs.frame(&events, controllers)?;
+        let done = self.bs.frame(&events, controllers)?;
         let emulate = start.elapsed().as_secs_f64() * 1000.0;
+        self.comp.ran(&done, &self.bs.system);
         let bus = self.bus_ms() - bus_before;
         // Parallax: the eye moves towards where the pointer says, a quarter
         // of the way each frame, and rests exactly there.
@@ -144,6 +149,18 @@ impl App {
         }
         let present_took = start.elapsed();
         let present = present_took.as_secs_f64() * 1000.0;
+        // PERFORMANCE.md R15 step 1: the phosphor look is shed first when
+        // frames run long to draw and present (terse-host's governor).
+        if !self.comp.looks.look.no_shed
+            && let Some(floor) = self.governor.presented(Duration::from_secs_f64((compose + present) / 1000.0))
+        {
+            let why = if floor > self.comp.looks.look.floor { "late" } else { "recover" };
+            self.comp.looks.look.floor = floor;
+            if let Some(m) = &self.bs.monitor {
+                m.add(terse_perflog::record::Line::Shed { frame: m.frame, level: floor as u32, why: why.into() });
+            }
+            eprintln!("terse-bus: frames ran long or caught up: the phosphor look sheds from level {floor}");
+        }
         for line in self.bs.end_frame(present_took)? {
             eprintln!("{line}");
         }
@@ -372,6 +389,7 @@ impl ApplicationHandler for App {
 pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let mut comp = Compositor::new(bs.system.shell().devices(), native, opts.threads);
+    comp.looks = opts.looks;
     if opts.flat {
         comp.panel_mode = terse_host::soft::panel::PanelMode::Flat;
     }
@@ -402,6 +420,7 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         presents: Vec::new(),
         first_frame: None,
         created: Instant::now(),
+        governor: Default::default(),
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if app.opts.selftest.is_some() {

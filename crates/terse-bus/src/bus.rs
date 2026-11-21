@@ -654,6 +654,7 @@ impl Bus {
             slot_proc,
             layers: layers.into_iter().map(|(_, s, _, l)| (s, l)).collect(),
             list: RefCell::new(None),
+            vector: RefCell::new(None),
             dirty: Cell::new(u64::MAX),
             got: RefCell::new(HashMap::new()),
             sent: HashMap::new(),
@@ -828,6 +829,9 @@ pub struct BusDevices {
     pub layers: Vec<(u8, LayerDecl)>,
     /// Device 9's list as last read (`vector3.list`).
     list: RefCell<Option<Vec<u8>>>,
+    /// Device 3's state as last read (`vector.list`), kept as one `Vector`
+    /// whose generation moves when its list does.
+    vector: RefCell<Option<terse_core::Vector>>,
     /// Drivers (bit per index) that may have changed what they publish
     /// since the core last asked.
     dirty: Cell<u64>,
@@ -857,6 +861,43 @@ impl BusDevices {
     /// The drivers serving this instance.
     pub fn procs(&self) -> &[usize] {
         &self.procs
+    }
+
+    /// Device 3's state as the vector driver publishes it (`vector.list`):
+    /// the style, persistence, fill mode and 2D list, for the system ink
+    /// and the phosphor style's beam (DEVICES.md 7.1). `None` if no driver
+    /// of this machine publishes it.
+    pub fn vector(&self) -> Option<terse_core::Vector> {
+        let bytes = self.property(property::LIST2).ok().flatten()?;
+        let mut cache = self.vector.borrow_mut();
+        let v = cache.get_or_insert_with(terse_core::Vector::default);
+        let [style, persistence, outlines] = *bytes.first_chunk::<3>()?;
+        let n = u32::from_le_bytes(*bytes.get(3..)?.first_chunk::<4>()?) as usize;
+        let list = bytes.get(7..7 + n)?;
+        v.set_style(style as u32);
+        v.set_persistence(persistence as u32);
+        v.set_fill(outlines as u32);
+        if list.is_empty() {
+            v.clear();
+        } else {
+            v.submit(list);
+        }
+        Some(v.clone())
+    }
+
+    /// The slots of this machine's layers whose drivers draw light when
+    /// told to (they subscribe to `core.light`), but the vector displays'
+    /// (DEVICES.md 7.1).
+    pub fn light_slots(&self) -> Vec<u8> {
+        let bus = self.bus.borrow();
+        let mut out: Vec<u8> = Vec::new();
+        for (s, _) in &self.layers {
+            let Some(p) = self.slot_proc[*s as usize] else { continue };
+            if *s != 3 && *s != terse_core::vector3::SLOT && bus.procs[p].info.subscribes.iter().any(|n| n == property::LIGHT) && !out.contains(s) {
+                out.push(*s);
+            }
+        }
+        out
     }
 
     /// A property published by a driver of this instance, read again if the

@@ -5,8 +5,10 @@ version 0), as a device driver of the device bus (DEVICES.md, protocol
 version 1), in Python 3 with the standard library only. It draws nothing
 (no layers); it keeps each machine's device state (STATE.md 1.7, 1.11) and
 publishes the properties `vector.outlines` (figures and filled shapes drawn
-as outlines: fill mode 1 or the phosphor style) and `vector3.list` (device
-9's list) (DEVICES.md 7.2). Socket transport only.
+as outlines: fill mode 1 or the phosphor style), `vector3.list` (device
+9's list) and `vector.list` (device 3's state section, for the system ink
+and the phosphor style's beam, which the core draws) (DEVICES.md 7.2).
+Socket transport only.
 
 It answers for exactly the slots the core asks for in HELLO (3, or 3 and
 9), so start it for slot 3 alone (`terse-bus --driver 3=...`) or for both
@@ -28,7 +30,7 @@ MAX_LIST = 16384
 SLOT2D, SLOT3D = 3, 9
 VERSION = 1
 ERR_UNKNOWN = 0xFFFFFFFF
-OUTLINES, LIST3 = b"vector.outlines", b"vector3.list"
+OUTLINES, LIST3, LIST2 = b"vector.outlines", b"vector3.list", b"vector.list"
 PROGRAM_VERSION = "0.1.0"
 
 
@@ -128,6 +130,8 @@ class Instance:
             return bytes([1 if self.style == 1 or self.outlines else 0])
         if name == LIST3:
             return self.list3 or b""
+        if name == LIST2:
+            return self.state(SLOT2D)
         return None
 
 
@@ -221,7 +225,7 @@ def hello(bus, m):
     out = bytes([0x81, VERSION, 0, 0]) + string(name) + struct.pack("<HHB", 0, 0, len(asked))
     for slot in asked:  # each: version 0, no layers, the call table
         out += bytes([slot, 0, 0, len(TABLES[slot])]) + b"".join(TABLES[slot])
-    out += names([OUTLINES, LIST3]) + names([]) + names([])
+    out += names([OUTLINES, LIST3, LIST2]) + names([]) + names([])
     out += string(PROGRAM_VERSION.encode()) + string(BUILD.encode())  # the identity
     bus.send(0, 0, out)
     return asked

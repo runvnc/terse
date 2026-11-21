@@ -5,7 +5,10 @@
 //! with real fonts (terse-host's typesetter, shared by every machine, as
 //! `terse-host --screenshot` does); one layer (z 20) drawn by terse-host's
 //! software page renderer. It subscribes to the vector display's
-//! figures-as-outlines flag (SPEC §page.layout).
+//! figures-as-outlines flag (SPEC §page.layout) and to light mode (the
+//! phosphor style, DEVICES.md 7.1), in which the page is drawn as
+//! terse-host draws it as light: no background, figures as outlines, each
+//! pixel's colour straight and its coverage in the alpha.
 //!
 //! Options: `--fonts` or `--reference` force the layout; `--config <dir>`:
 //! the fonts `<dir>/fonts` names (README "Fonts"), else the built-in ones.
@@ -18,7 +21,7 @@ use terse_bus::proto::{CallEntry, DeviceInfo, EVENT_PAIR, LayerDecl, Open, PosEv
 use terse_core::machine::copy_charge;
 use terse_core::page::{MAX_DOCUMENT, Page, PageInput, ReferenceLayouter};
 use terse_core::{ERR_UNKNOWN, Event};
-use terse_devices::{clear, draw_page, rect, union};
+use terse_devices::{clear, draw_page, draw_page_light, rect, union};
 use terse_host::page::{HostLayout, PageFonts, SyncLayouter, Typesetter};
 use terse_host::soft::base::IRect;
 use terse_host::soft::page::{PageKey, SoftPage};
@@ -56,6 +59,8 @@ struct Inst {
     soft: SoftPage,
     drawn: Option<Drawn>,
     outlines: bool,
+    /// Light mode (`core.light`).
+    light: bool,
 }
 
 struct PageDriver {
@@ -86,7 +91,8 @@ fn decode(b: &[u8]) -> Vec<PosEvent> {
 
 impl Inst {
     fn draw(&mut self, instance: u32, p: &Present, session: &Session) -> Result<PresentOut, String> {
-        self.soft.set_outlines(self.outlines);
+        let light = self.light;
+        self.soft.set_outlines(self.outlines || light);
         let layout = self.latest.as_ref().and_then(|l| l.lock().unwrap().clone());
         self.soft.set(Some(&self.page), layout);
         let mut fresh = false;
@@ -96,21 +102,25 @@ impl Inst {
             fresh = true;
         }
         let d = self.drawn.as_mut().unwrap();
-        let key = self.soft.key(p.screen, false);
+        let key = self.soft.key(p.screen, light);
         if !fresh && d.key.as_ref() == Some(&key) {
             return Ok(PresentOut { layers: vec![LayerOut { slot: SLOT, id: LAYER, new_file: None, damage: Vec::new() }] });
         }
-        self.soft.prepare(p.screen, p.picture, false);
+        self.soft.prepare(p.screen, p.picture, light);
         let scissor = self.soft.quads.scissor;
         let damage = if fresh { IRect::of_size(p.picture) } else { union(d.scissor, scissor) };
         let w = p.picture.0 as usize;
         let px = d.layer.pixels();
         if !damage.is_empty() {
             clear(px, w, damage);
-            draw_page(&self.soft.quads, px, w, damage);
+            if light {
+                draw_page_light(&self.soft.quads, px, w, damage);
+            } else {
+                draw_page(&self.soft.quads, px, w, damage);
+            }
         }
         // The key after preparing (figures that arrived count).
-        d.key = Some(self.soft.key(p.screen, false));
+        d.key = Some(self.soft.key(p.screen, light));
         d.scissor = scissor;
         let damage = if damage.is_empty() { vec![] } else { vec![rect(damage)] };
         Ok(PresentOut { layers: vec![LayerOut { slot: SLOT, id: LAYER, new_file: fresh.then(|| d.layer.path.clone()), damage }] })
@@ -135,7 +145,7 @@ impl Device for PageDriver {
             native: (0, 0),
             slots: vec![SlotInfo { slot: SLOT, version: 0, layers, table: table() }],
             publishes: Vec::new(),
-            subscribes: vec![property::OUTLINES.into()],
+            subscribes: vec![property::OUTLINES.into(), property::LIGHT.into()],
             services: Vec::new(),
             ..Default::default()
         }
@@ -153,7 +163,7 @@ impl Device for PageDriver {
         let mut soft = SoftPage::default();
         // Pictures show the finished page: no scroll animation, figures at once.
         soft.set_animate(false);
-        self.inst.insert(instance, Inst { page: Page::default(), input, latest, soft, drawn: None, outlines: false });
+        self.inst.insert(instance, Inst { page: Page::default(), input, latest, soft, drawn: None, outlines: false, light: false });
         Ok(())
     }
 
@@ -253,10 +263,12 @@ impl Device for PageDriver {
     }
 
     fn set(&mut self, instance: u32, name: &str, value: &[u8]) {
-        if let Some(i) = self.inst.get_mut(&instance)
-            && name == property::OUTLINES
-        {
-            i.outlines = value.first().is_some_and(|&v| v != 0);
+        let Some(i) = self.inst.get_mut(&instance) else { return };
+        let on = value.first().is_some_and(|&v| v != 0);
+        match name {
+            property::OUTLINES => i.outlines = on,
+            property::LIGHT => i.light = on,
+            _ => {}
         }
     }
 
