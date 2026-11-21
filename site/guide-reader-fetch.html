@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader, step 2: fetch an article - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-step-2-fetch-an-article">Make a reader, step 2: fetch an article</h1>
+<p>Articles travel between computers through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob&#39;s name is its hash, so you can always check that you got what you asked for. In this step your reader asks a relay for one article and checks it.</p>
+<h2 id="start-a-relay-and-put-an-article-on-it">Start a relay and put an article on it</h2>
+<p>You need the <code>terse</code> and <code>terse-relay</code> programs, which come with every Tersenet download. In one terminal, start a relay of your own on your computer:</p>
+<pre>terse-relay --store try-relay</pre>
+<p>It listens on <code>ws&#58;//127.0.0.1:7878</code>, and the <code>terse</code> commands find it there. (If <code>terse-host</code> is running, it already runs one there: skip this.) In another terminal, put your article on it:</p>
+<pre>terse put hello.txt</pre>
+<p>It prints the article&#39;s ID, 64 hexadecimal digits: the BLAKE3-256 hash of the file. <code>terse hash hello.txt</code> prints the same without a relay.</p>
+<h2 id="ask-for-it">Ask for it</h2>
+<p>A relay is a WebSocket server: use any WebSocket library, open <code>ws&#58;//127.0.0.1:7878</code>, and send binary messages. To fetch a blob, send a Get:</p>
+<ul>
+<li>the byte <code>01h</code>;</li>
+<li>a request number you choose, 4 bytes, least significant first;</li>
+<li>the blob&#39;s ID, 32 bytes.</li>
+</ul>
+<p>The reply starts with <code>81h</code>, your request number and a status byte: 1 found, followed by the blob&#39;s bytes; 2 not found; 3 refused.</p>
+<h2 id="check-it">Check it</h2>
+<p>Hash the bytes with BLAKE3-256 (libraries exist for most languages) and compare with the ID you asked for. If they differ, throw the bytes away and treat the blob as not found: relays are not trusted, the hash is. Then show the article as in step 1.</p>
+<p>Keep what you fetched, a file per ID in a folder is enough, so that the article opens at once next time, with no network at all. Tersenet asks that of every reader: what you hold opens without waiting for a relay.</p>
+<p>To see what your reader should get:</p>
+<pre>tersereader --relay ws&#58;//127.0.0.1:7878 show &lt;id&gt;</pre>
+<h2 id="or-let-a-node-do-the-network">Or let a node do the network</h2>
+<p>If you would rather not write the WebSocket and hashing parts now, there is a shortcut. A node is a separate program that talks to relays, checks everything and keeps the store; your reader asks it over a local socket and trusts its answers. <code>tersereader node</code> is one:</p>
+<pre>tersereader relay add ws&#58;//127.0.0.1:7878
+tersereader node</pre>
+<p>The first command, needed once, tells it which relay to use. It listens on the Unix socket <code>$XDG_RUNTIME_DIR/terse/node.sock</code>. Each message there is its length (4 bytes, least significant first) and then its bytes. Send a Hello first (<code>20h</code>, a request number, a version byte 0 and a length byte 0), then the same Get as above. The node fetches from its relays, checks the blob and stores it; you only show it. A reader made this way needs no cryptography, no hash and no store; tersereader&#39;s own &quot;thin&quot; build is one. LOCAL.md has every message.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: <a href="guide-reader-feeds.html">Make a reader, step 3: links and feeds</a>.</p>
+<p>The relay&#39;s messages are in NETWORK.md section 3 and <a href="network.html">The network</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader.html">← Make a reader, step 1: show an article</a><a rel="next" href="guide-reader-feeds.html">Make a reader, step 3: links and feeds →</a></nav></footer>
+</body>
+</html>

@@ -44,7 +44,6 @@ th:last-child, td:last-child { padding-right: 0; }
 .ac { text-align: center; }
 .ae { text-align: right; }
 hr { border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }
-.toc ul { columns: 2 14em; column-gap: 2em; }
-.toc li { break-inside: avoid; }
+main.landing { padding-top: 3em; }
 footer .pn { display: flex; justify-content: space-between; gap: 1em; padding: 1em 0 2em; border-top: 1px solid var(--rule); font-size: .9375em; }
 footer a[rel=next] { margin-left: auto; text-align: right; }

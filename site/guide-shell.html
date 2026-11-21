@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a shell - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-shell">Make a shell</h1>
+<p>When <code>terse-host</code> opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own.</p>
+<h2 id="the-smallest-shell">The smallest shell</h2>
+<p>This one starts the built-in program <code>hello</code> and gives it the whole screen and the keyboard:</p>
+<pre>#include &quot;terse.h&quot;
+
+static const uint8_t builtin[32]; /* all zero */
+
+int main(void)
+{
+    uint32_t h = mach_start_named(builtin, &quot;hello&quot;, 5);
+    mach_place(h, 0, 0, 640, 480);
+    mach_focus(h);
+    for (;;)
+        terse_wait_frame();
+}</pre>
+<ul>
+<li><code>mach_start_named</code> starts a program by its publisher&#39;s key and its name; 32 zero bytes mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).</li>
+<li><code>mach_place</code> sets the rectangle of the shell&#39;s screen where that machine&#39;s screen is shown: here all of it, 640 by 480 units.</li>
+<li><code>mach_focus</code> sends the keyboard to that machine.</li>
+</ul>
+<p>Each machine is a whole separate Terse32 machine, with its own memory, devices and budget. The shell only decides what runs and where it is seen.</p>
+<h2 id="build-and-run-it">Build and run it</h2>
+<p>Save it as <code>myshell.c</code> and build it with <code>terse build</code>, listing device 8 besides the usual ones (the toolchain reference says how). Then:</p>
+<pre>terse run --shell myshell.terse --frames 30 --dump</pre>
+<p>runs it headless and prints the shell&#39;s screen, then each machine&#39;s: a line <code>-- machine 1 running 0 0 640 480 hello --</code> and hello&#39;s text. In a window:</p>
+<pre>terse-host --shell myshell.terse</pre>
+<h2 id="where-to-take-it">Where to take it</h2>
+<p>From here a shell is a matter of taste: a list of programs to choose from (<code>mach_builtin</code> lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, <code>programs/shell</code>, does all of these in about 1,700 lines of C.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A system of machines under your own shell. That is the end of the guide&#39;s part for implementers; the last page is for people who want to use Tersenet: <a href="guide-using.html">Using Tersenet</a>.</p>
+<p>Every call of device 8 is in <a href="device-machines.html">The Machines device</a>, and panels, the 3D view and input routing in <a href="device-machines-screens.html">Screens, panels and input</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-swap.html">← Swap in your own part</a><a rel="next" href="guide-using.html">Using Tersenet →</a></nav></footer>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader, step 3: links and feeds - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-step-3-links-and-feeds">Make a reader, step 3: links and feeds</h1>
+<p>Your reader can show an article and fetch one by its ID. Two things make it a real reader: following links, and following feeds, so that new articles come to you.</p>
+<h2 id="follow-a-link">Follow a link</h2>
+<p>A link to an article is <code>terse:</code> and the article&#39;s ID. When the person follows one, fetch that ID exactly as in step 2, then show the article. Keep a list of where they came from, so that a key takes them back.</p>
+<p>Two other kinds of link exist: <code>terse:feed/</code> and a feed&#39;s key (below), and <code>terse:program/</code> for a program, which a reader without the virtual machine shows as something it cannot open.</p>
+<h2 id="publish-a-feed">Publish a feed</h2>
+<p>A feed is one author&#39;s numbered series of entries. Each entry is small, at most 293 bytes, and signed with the author&#39;s key: it says &quot;number 1 of my feed is this blob, this size, with this title&quot;. Make a feed of your own to test with, with the relay from step 2 running:</p>
+<pre>terse key new
+terse feed publish hello.txt --title &quot;Hello&quot;</pre>
+<p>The first command makes your key, once, and prints it (<code>terse key show</code> prints it again); it is the feed&#39;s name. The second puts the article on the relay and publishes entry 1 of your feed.</p>
+<h2 id="subscribe">Subscribe</h2>
+<p>Send the relay a Subscribe: the byte <code>04h</code>, a request number (4 bytes), the feed&#39;s key (32 bytes) and the highest entry number you already hold (4 bytes, 0 the first time). The relay replies (<code>84h</code>), then sends every entry numbered above that, oldest first, each in a message that starts with <code>90h</code>, and then each new one as it is published, for as long as you stay connected.</p>
+<p>An entry holds, in order: the feed key (32 bytes), its number (4), a time (4), a kind (1: 1 for an article), the blob&#39;s size (3) and ID (32), a reply-to ID (32), the title&#39;s length (1) and the title, then a 64-byte signature.</p>
+<h2 id="check-the-signature">Check the signature</h2>
+<p>Verify each entry&#39;s Ed25519 signature before you keep it, and drop the entries that fail. Use a library, but note that an ordinary Ed25519 verify is not quite enough: Tersenet adds a few strict checks, listed in NETWORK.md section 4.2, and <code>vectors/entries.txt</code> holds a forged entry for each, which your reader must refuse.</p>
+<p>Then fetch the article each entry names (step 2) and list the titles, newest first: that is your timeline. Show each feed&#39;s key, or its first and last six hexadecimal digits, beside anything you show for it, since names are not unique.</p>
+<p>With a node (step 2), all of this is two messages: Subscribe (<code>25h</code>, with the feed&#39;s key as text) and Timeline (<code>22h</code>), whose entries the node has already checked.</p>
+<h2 id="compare-with-the-reference">Compare with the reference</h2>
+<p><code>tersereader</code> does the same, so you can check your timeline against it:</p>
+<pre>tersereader relay add ws&#58;//127.0.0.1:7878
+tersereader subscribe &lt;your feed key&gt;
+tersereader sync
+tersereader list</pre>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Tersenet reader: it follows feeds, checks what it receives, keeps it, and shows articles with their links. NETWORK.md section 6 lists what a complete reader must do; most of it is above. The rest, such as display names, feed addresses with relay hints and the speed requirements, is in <a href="native-reader.html">Writing a reader without the machine</a>.</p>
+<p>Next, if you want to go further, Tersenet can also carry small programs, run by the Terse32 virtual machine. Everything so far works without it. <a href="guide-program.html">Write a program</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-fetch.html">← Make a reader, step 2: fetch an article</a><a rel="next" href="guide-program.html">Write a program →</a></nav></footer>
+</body>
+</html>

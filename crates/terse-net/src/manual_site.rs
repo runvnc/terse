@@ -4,9 +4,13 @@
 //! inline SVG and one small stylesheet. No scripts, no external requests:
 //! every link is to another page of the site.
 //!
-//! Pages: the `overview` article is `index.html`, the landing page, with a
-//! list of every article under it; the manual's own `index` article is
-//! `contents.html`; every other article is `<name>.html`. A link to an
+//! Pages: the manual's `index` article is `index.html`, the landing page:
+//! the article alone, with no navigation and no list of articles (it
+//! links to the guide's first page and to the contents itself). The
+//! `contents` article, which lists every other article, is `contents.html`;
+//! every other article is `<name>.html`, with the navigation to the landing
+//! page and the contents above it and the previous and next articles of the
+//! manifest below it. A link to an
 //! article of the manual leads to its page; any other `terse:` link
 //! cannot be followed on the web and is shown as its text and address.
 //! The output depends only on the articles, so the same sources give the
@@ -19,7 +23,7 @@ use std::path::Path;
 use crate::BlobId;
 use crate::article_parse::{Parsed, Target, parse};
 use crate::manual::Built;
-use crate::site_render::{Ctx, article, esc, slug};
+use crate::site_render::{Ctx, article, esc};
 
 /// The stylesheet, `style.css`.
 pub const STYLE: &str = include_str!("manual_site.css");
@@ -27,8 +31,7 @@ pub const STYLE: &str = include_str!("manual_site.css");
 /// The file of an article's page.
 pub fn page_of(name: &str) -> String {
     match name {
-        "overview" => "index.html".into(),
-        "index" => "contents.html".into(),
+        "index" => "index.html".into(),
         n => format!("{n}.html"),
     }
 }
@@ -78,29 +81,31 @@ fn page(built: &[Built], pages: &HashMap<BlobId, usize>, i: usize) -> String {
         _ => Vec::new(),
     };
     let mut ids = HashSet::new();
-    let landing = b.name == "overview";
-    let title = if landing { format!("Tersenet: {}", b.title) } else { format!("{} - the Tersenet manual", b.title) };
+    let landing = b.name == "index";
+    let title = if landing { b.title.clone() } else { format!("{} - the Tersenet manual", b.title) };
     let mut out = String::new();
     let _ = write!(
         out,
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{}</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n\
-         <header><nav><a href=\"index.html\" class=\"home\">Tersenet</a> <a href=\"contents.html\">Manual</a></nav></header>\n\
-         <main>\n<article>\n",
+         <title>{}</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n",
         esc(&title)
     );
-    out.push_str(&article(&ctx, &blocks, &mut ids));
-    out.push_str("</article>\n");
     if landing {
-        let id = slug("The manual", &mut ids);
-        let _ = writeln!(out, "<hr>\n<section class=\"toc\">\n<h2 id=\"{id}\">The manual</h2>\n<ul>");
-        for a in built {
-            let _ = writeln!(out, "<li><a href=\"{}\">{}</a></li>", page_of(&a.name), esc(&a.title));
-        }
-        out.push_str("</ul>\n</section>\n");
+        out.push_str("<main class=\"landing\">\n<article>\n");
+    } else {
+        out.push_str(
+            "<header><nav><a href=\"index.html\" class=\"home\">Tersenet</a> <a href=\"contents.html\">Contents</a></nav></header>\n\
+             <main>\n<article>\n",
+        );
     }
-    out.push_str("</main>\n<footer><nav class=\"pn\">");
+    out.push_str(&article(&ctx, &blocks, &mut ids));
+    out.push_str("</article>\n</main>\n");
+    if landing {
+        out.push_str("</body>\n</html>\n");
+        return out;
+    }
+    out.push_str("<footer><nav class=\"pn\">");
     if i > 0 {
         let p = &built[i - 1];
         let _ = write!(out, "<a rel=\"prev\" href=\"{}\">← {}</a>", page_of(&p.name), esc(&p.title));
@@ -124,26 +129,33 @@ mod tests {
     #[test]
     fn pages_links_and_escaping() {
         let built = build(&src(&[
-            ("index", "# Contents\n\n- [What](terse:{overview})\n- [B](terse:{b})\n"),
-            ("overview", "# What <it> is\n\nSee terse:{b} & https://x.org.\n"),
+            ("index", "# What <it> is\n\nSee terse:{b} & https://x.org.\n\n[Contents](terse:{contents})\n"),
+            ("contents", "# Contents\n\n- [B](terse:{b})\n"),
             ("b", "# B\n\n[F](terse:feed/0000000000000000000000000000000000000000000000000000000000000000)\n\n| a | b |\n|---|--:|\n| `x\\|y` | 2 |\n\n```path 30 15\nfill #ff000080 stroke fg 1.5 M0 0 L30 15 Z\n```\n"),
         ]))
         .unwrap();
         let files = site(&built);
         let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["style.css", "contents.html", "index.html", "b.html"]);
-        let index = &files[2].1;
-        assert!(index.contains("<title>Tersenet: What &lt;it&gt; is</title>"), "{index}");
+        assert_eq!(names, ["style.css", "index.html", "contents.html", "b.html"]);
+        // The landing page is the index article alone: no navigation, no
+        // list of articles, no previous and next.
+        let index = &files[1].1;
+        assert!(index.contains("<title>What &lt;it&gt; is</title>"), "{index}");
         assert!(index.contains("<a href=\"b.html\" title=\"B\">terse:"), "{index}");
         assert!(index.contains("&amp; https&#58;//x.org."), "{index}");
-        assert!(index.contains("<li><a href=\"contents.html\">Contents</a></li>"), "{index}");
-        assert!(files[1].1.contains("<a href=\"index.html\">What</a>"));
+        assert!(index.contains("<a href=\"contents.html\">Contents</a>"), "{index}");
+        assert!(!index.contains("<header>") && !index.contains("<footer>") && !index.contains("<li>"), "{index}");
+        let contents = &files[2].1;
+        assert!(contents.contains("<title>Contents - the Tersenet manual</title>"), "{contents}");
+        assert!(contents.contains("<li><a href=\"b.html\">B</a></li>"), "{contents}");
+        assert!(contents.contains("<a href=\"index.html\" class=\"home\">Tersenet</a> <a href=\"contents.html\">Contents</a>"));
+        assert!(contents.contains("<a rel=\"prev\" href=\"index.html\">") && contents.contains("<a rel=\"next\" href=\"b.html\">"));
         let b = &files[3].1;
         assert!(b.contains("F (<code class=\"addr\">terse:feed/0000"), "{b}");
         assert!(b.contains("<th class=\"ae\">b</th>") && b.contains("<code>x|y</code>"), "{b}");
         assert!(b.contains("<path d=\"M0 0 L30 15 Z\" fill=\"#ff0000\" fill-opacity=\"0.502\" stroke=\"currentColor\" stroke-width=\"1.5\""), "{b}");
         assert!(b.contains("style=\"width:2em\""), "{b}");
-        assert!(b.contains("<a rel=\"prev\" href=\"index.html\">") && !b.contains("rel=\"next\""));
+        assert!(b.contains("<a rel=\"prev\" href=\"contents.html\">") && !b.contains("rel=\"next\""));
         assert_eq!(site(&built), files, "deterministic");
     }
 }

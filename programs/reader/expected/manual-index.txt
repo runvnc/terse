@@ -27,26 +27,18 @@
 
 
 
- 0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 1620, scroll 0 (stored 0), region 64 0 512 464 --
-   14  33     0   sans26b |The Tersenet manual
-   53  15     0   sans12 |terse:119f2a…60faa1  ·  not in your timeline  ·  5.1 KiB
+                         Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
+-- page: height 306, scroll 0 (stored 0), region 64 0 512 464 --
+   14  33     0   sans26b |Tersenet
+   53  15     0   sans12 |terse:64d675…8e0ab9  ·  not in your timeline  ·  688 bytes
    78   8     0  -- rule --
-   96  19     0   sans15 |This manual describes the whole Tersenet system: the Terse32
-  115  19     0   sans15 |machine, its devices, the network that carries articles and
-  134  19     0   sans15 |programs, and the programs that come with it. It is written as
-  153  19     0   sans15 |Tersenet articles, so you can read it in the reader, follow its
-  172  19     0   sans15 |links with Tab and Enter, and publish it to a feed. Each article
-  191  19     0   sans15 |below says what it covers.
-  224  22     0   sans17b |Start here
-  256  19    10   sans15 |• [What Tersenet is]{1}: what Tersenet is for, in one paragraph.
-  279  19    10   sans15 |• [How Tersenet works]{2}: the technical details in three pages:
-  298  19    10   sans15 |sharing articles and programs, the network, the machine and its
-  317  19    10   sans15 |frame budget, the devices, determinism and the shell.
-  340  19    10   sans15 |• [Writing a program]{3}: the toolchain, the C library, building,
-  359  19    10   sans15 |running a program headless and in the host, and publishing it in a
-  378  19    10   sans15 |feed.
-  401  19    10   sans15 |• [Using the shell and the reader]{4}: the keys of the shell and the
-  420  19    10   sans15 |reader, layouts, sessions and the consent prompts.
-  443  19    10   sans15 |• [Fonts]{5}: the fonts the host draws with, which characters they
-  462  19    10   sans15 |show, and adding a font for other scripts.
+   96  19     0   sans15 |First and foremost, Tersenet is a way to share information:
+  115  19     0   sans15 |formatted text, with diagrams where they help, without the bloat of
+  134  19     0   sans15 |web browsers (JavaScript, ads, tracking) and without the centralised
+  153  19     0   sans15 |control of websites like Reddit. Secondly, and completely
+  172  19     0   sans15 |optionally, it can be used to share very lightweight programs, at
+  191  19     0   sans15 |most 1 MiB of memory each, that run on tiny isolated virtual
+  210  19     0   sans15 |machines.
+  239  19     0   sans15 |[Write your own Tersenet reader: it starts with a text file and a few]{1}
+  258  19     0   sans15 |[rules]{1}
+  287  19     0   sans15 |[Contents: a step-by-step guide, and the complete reference]{2}
