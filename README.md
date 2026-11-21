@@ -1280,6 +1280,15 @@ brightness. `--vignette` darkens the glass towards the corners (by up to 30%). B
 renderers draw all of this the same way, within rounding. (`--bloom`, which chose the
 resolution of the earlier bloom, is gone: the halo is always computed on its pyramid.)
 
+The look is shed so that it is never why a frame is late (PERFORMANCE.md §4): a
+frame whose light draws more than a quarter of a screen of ink (as the ink cap counts
+it) has no smear, more than a third no halo, more than two fifths plain lines (flat
+strokes of their width, as the clean style draws them). That depends on the list
+alone, so screenshots stay the same on every run. In a window it also sheds one level
+more after 3 frames in a row that took longer than a frame to draw, and one less after
+120 that took under half a frame. Every bundled Terse32 program keeps the whole look.
+`--no-shed` keeps the whole look always.
+
 Measured by `cargo test -p terse-host soft::look` (both renderers, 1280 × 960 and
 2560 × 1920; a slanted white line of width 1 unit, and grey "8 corners, 12 edges"):
 the core is 1.1 pixels wide at half maximum at both sizes; the frequency at which a
