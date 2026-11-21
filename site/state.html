@@ -22,8 +22,8 @@
 <tr><td>45</td><td>4</td><td><code>pc</code> (after a fault, the faulting instruction)</td></tr>
 <tr><td>49</td><td>124</td><td><code>x1</code> to <code>x31</code>, u32 each</td></tr>
 <tr><td>173</td><td>4</td><td>Frame counter (what <code>frame_count</code> returns next frame)</td></tr>
-<tr><td>177</td><td>1</td><td>Stopped: 0 running, 1 exited, 2 faulted</td></tr>
-<tr><td>178</td><td>1</td><td>Exit code, else 0</td></tr>
+<tr><td>177</td><td>1</td><td>Stopped: 0 running, 1 exited, 2 faulted, 3 halted by the host</td></tr>
+<tr><td>178</td><td>1</td><td>Exit code; if halted, the slow device&#39;s slot; else 0</td></tr>
 <tr><td>179</td><td>1</td><td>Fault kind: 1 illegal instruction, 2 breakpoint, 3 fetch, 4 load, 5 store, 6 misaligned; else 0</td></tr>
 <tr><td>180</td><td>4</td><td>Illegal instruction&#39;s encoding (16-bit in the low half), else 0</td></tr>
 <tr><td>184</td><td>4</td><td>Fault <code>pc</code>, else 0</td></tr>

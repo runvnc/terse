@@ -8,6 +8,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +42,7 @@ usage:
   tersereader nickname <key> [<name>]    name a feed for yourself (no name: clear it)
   tersereader node                       run only the network node, serving the local
                                          socket (LOCAL.md) until interrupted
+  tersereader --version                  its name, version and build identifier
 
 options:
   --dir <dir>          the reader's store (default $XDG_DATA_HOME/tersereader,
@@ -80,6 +83,29 @@ type config struct {
 	args        []string
 	socket      string // the local node's socket (LOCAL.md)
 	nodeMode    string // auto, socket or in-process
+	version     bool   // --version
+}
+
+// The reader's version, and its build identifier: "s2:" and the first 8
+// bytes of the SHA-256 hash of its own executable, in hex ("unknown" if it
+// cannot be read). Self-reported, for accountability, not security.
+const programVersion = "0.1.0"
+
+func buildID() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	data, err := os.ReadFile(exe)
+	if err != nil {
+		return "unknown"
+	}
+	sum := sha256.Sum256(data)
+	return "s2:" + hex.EncodeToString(sum[:8])
+}
+
+func versionLine() string {
+	return "tersereader " + programVersion + " " + buildID()
 }
 
 func defaultDir() string {
@@ -112,6 +138,8 @@ func parseArgs(args []string) (*config, error) {
 		var err error
 		var v string
 		switch name {
+		case "--version":
+			c.version = true
 		case "-h", "--help", "help":
 			fmt.Print(usage)
 			os.Exit(0)
@@ -171,6 +199,10 @@ func main() {
 	cfg, err := parseArgs(os.Args[1:])
 	if err != nil {
 		fatal(err)
+	}
+	if cfg.version {
+		fmt.Println(versionLine())
+		return
 	}
 	if err := run(cfg); err != nil {
 		fatal(err)

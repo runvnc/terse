@@ -858,6 +858,23 @@ static void do_call(const uint8_t *m, size_t n, int batched, Buf *r) {
 
 /* ----------------------------------------------------------------- main */
 
+/* The identity a HELLO reply ends with (DEVICES.md 1.1): the version and
+ * a build identifier, `fnv:` and the FNV-1a 64-bit hash of this program's
+ * own executable, computed once at start. */
+#define PROGRAM_VERSION "0.1.0"
+static char build_id[32] = "unknown";
+static void compute_build_id(void) {
+    FILE *f = fopen("/proc/self/exe", "rb");
+    if (!f) return;
+    uint64_t h = 14695981039346656037ull;
+    uint8_t buf[65536];
+    size_t k;
+    while ((k = fread(buf, 1, sizeof buf, f)) > 0)
+        for (size_t i = 0; i < k; i++) { h ^= buf[i]; h *= 1099511628211ull; }
+    if (!ferror(f)) snprintf(build_id, sizeof build_id, "fnv:%016llx", (unsigned long long)h);
+    fclose(f);
+}
+
 /* HELLO (DEVICES.md 1.1): the core must ask for slot 2, and may ask for
  * slot 10 with it (full text, SPEC §terminal.text). */
 static void hello(const uint8_t *m, size_t n, Buf *r) {
@@ -886,11 +903,17 @@ static void hello(const uint8_t *m, size_t n, Buf *r) {
      * character. */
     if (full_text) { put8(r, 10); put8(r, 0); put8(r, 0); put8(r, 0); }
     put8(r, 0); put8(r, 0); put8(r, 0); /* no properties published or subscribed, no services */
+    putstr(r, PROGRAM_VERSION); putstr(r, build_id); /* the identity */
     send_msg(r); /* on the socket: shm is not chosen yet */
     shm = use_shm;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    compute_build_id();
+    if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+        printf("terse-dev-terminal-c " PROGRAM_VERSION " %s\n", build_id);
+        return 0;
+    }
     const char *path = getenv("TERSE_BUS_SOCKET"), *cpu = getenv("TERSE_BUS_CPU");
     const char *spin_us = getenv("TERSE_BUS_SPIN_US"), *spin = getenv("TERSE_BUS_SPIN");
     if (!path) { fputs("terse-dev-terminal-c: started without TERSE_BUS_SOCKET\n", stderr); return 1; }

@@ -61,6 +61,27 @@ cmp -s "$T/tc" "$P/conform-program/expected-hashes.txt" && ok "conform-program: 
 head -30 "$P/conform-program/expected-screen.txt" | cmp -s - "$T/screen" && ok "conform-program: its expected screen (every line PASS)" || no "conform-program screen"
 check "hostile (every call, full budget)" "$P/hostile/hostile.terse" --frames 480 --hash-every 60
 
+echo "== identity and the slow test mode"
+v=$(TERSE_BUS_SOCKET=/nonexistent "$X" --version); s=$?
+set -- $v
+[ $s -eq 0 ] && [ $# -eq 3 ] && [ "$1" = terminal ] && [ "$2" = 0.1.0 ] && echo "$3" | grep -Eq '^fnv:[0-9a-f]{16}$' \
+    && ok "--version: $v" || no "--version: status $s, '$v'"
+if "$TC" --help 2>&1 | grep -q -- --identities; then
+    "$TC" "$P/hello/hello.terse" --frames 1 --hash --identities --drivers "$D" --driver "2=$X" > /dev/null 2> "$T/ids"
+    grep -Eq "^driver 2 terminal \(example\) 0\.1\.0 fnv:[0-9a-f]{16}$" "$T/ids" \
+        && ok "tcore --identities: its HELLO identity" || { no "tcore --identities"; cat "$T/ids"; }
+fi
+ms() { echo $(( $(date +%s%N) / 1000000 )); }
+t0=$(ms); a=$("$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t1=$(ms)
+b=$(TERSE_EXAMPLE_SLOW=sleep:30:5:8 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t2=$(ms)
+extra=$(( (t2 - t1) - (t1 - t0) ))
+[ -n "$a" ] && [ "$a" = "$b" ] && [ $extra -ge 60 ] && ok "TERSE_EXAMPLE_SLOW=sleep:30:5:8: same hash, ${extra} ms later" \
+    || no "TERSE_EXAMPLE_SLOW: hashes '$a' '$b', ${extra} ms extra"
+for k in spin:1.5:0:3 cpu:0.5:2; do
+    b=$(TERSE_EXAMPLE_SLOW=$k TERSE_BUS_CPU=0 TERSE_EXAMPLE_IDLE=1 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X")
+    [ "$a" = "$b" ] && ok "TERSE_EXAMPLE_SLOW=$k (pinned, SCHED_IDLE): same hash" || no "TERSE_EXAMPLE_SLOW=$k: '$a' '$b'"
+done
+
 echo "== every driver started was reaped"
 left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
 [ "$left" -eq 0 ] && ok "no driver process left" || no "$left driver processes left"

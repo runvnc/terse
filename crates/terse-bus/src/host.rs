@@ -18,6 +18,7 @@ use terse_core::{Driver, Event, FrameInput, FrameResult, Grants, Image, Machine,
 use terse_net::Prompt;
 
 use crate::bus::{Bus, BusConfig, BusDevices, Wanted as Driven};
+use crate::monitor::{Monitor, WatchConfig};
 use crate::proto::{property, service};
 use crate::services;
 
@@ -110,7 +111,29 @@ pub struct BusSystem {
     session: Option<SessionDir>,
     /// Keys whose release is the host's.
     swallowed: Vec<u8>,
+    /// The watch over the drivers (PERFORMANCE.md R14, R15), if any.
+    pub monitor: Option<Monitor>,
+    /// The host's notices for the user (a slow device): text, and the
+    /// monitor frame after which it goes.
+    pub notice: Option<(Notice, u64)>,
+    /// The device whose slowness stopped the shell or the single machine
+    /// (the run then ends: `STATE.md` 6.4 status 4), and where its
+    /// snapshot went.
+    pub halted: Option<(u8, String)>,
 }
+
+/// A notice the host shows (R15): a heading and two lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub heading: String,
+    pub what: String,
+    pub then: String,
+}
+
+/// How long a notice stays (frames).
+const NOTICE_FRAMES: u64 = 300;
+/// How long a driver has to give its state for a snapshot before a stop.
+const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The default drivers, programs next to `dir` (this program's): the
 /// terminal (2), the vector displays (3 and 9, one process: SPEC §vector3d.calls),
@@ -294,7 +317,7 @@ impl BusSystem {
             system.set_snapshot_table(services::read_table(&t));
         }
         let driver = BusDriver { bus: bus.clone(), wanted: Vec::new(), images: Vec::new(), error: None };
-        BusSystem { system, driver, bus, title: String::new(), session: None, swallowed: Vec::new() }
+        BusSystem { system, driver, bus, title: String::new(), session: None, swallowed: Vec::new(), monitor: None, notice: None, halted: None }
     }
 
     /// Runs the system's next frame with the host's input `events` (in the
@@ -302,6 +325,9 @@ impl BusSystem {
     pub fn frame(&mut self, events: &[Event], controllers: [Controller; CONTROLLERS]) -> Result<SystemFrame, String> {
         for (serial, image) in self.driver.images.drain(..) {
             self.system.deliver_image(serial, image);
+        }
+        if let Some(m) = &mut self.monitor {
+            m.begin(&mut self.bus.borrow_mut());
         }
         let result = self.system.frame(events, controllers, &mut self.driver);
         if let Some(e) = self.driver.error.take() {
@@ -331,7 +357,185 @@ impl BusSystem {
         if let Some(e) = &bus.failed {
             return Err(e.clone());
         }
+        if let Some(m) = &mut self.monitor {
+            m.emulated(&bus);
+        }
         Ok(result)
+    }
+
+    /// Starts watching the drivers (R14, R15).
+    pub fn watch(&mut self, cfg: &WatchConfig) {
+        self.monitor = Some(Monitor::new(cfg, &self.bus.borrow()));
+    }
+
+    /// The frame's picture is presented (`present`: handing it to the
+    /// display): the monitor judges the frame, and the host carries out
+    /// what the rule asks. Returns lines for standard error.
+    pub fn end_frame(&mut self, present: std::time::Duration) -> Result<Vec<String>, String> {
+        let Some(m) = &mut self.monitor else { return Ok(Vec::new()) };
+        let images: Vec<(u32, [u8; 32])> = std::iter::once((0, *self.system.shell().image_id()))
+            .chain(self.system.children().filter_map(|(_, c)| c.machine.as_ref().map(|m| (m.devices().instance, *m.image_id()))))
+            .collect();
+        let actions = m.end(&self.bus.borrow(), present.as_nanos() as u64, |i| images.iter().find(|e| e.0 == i).map(|e| e.1));
+        let frame = m.frame;
+        if self.notice.as_ref().is_some_and(|(_, until)| *until < frame) {
+            self.notice = None;
+        }
+        let mut out = Vec::new();
+        for a in actions {
+            out.extend(self.act(a)?);
+        }
+        Ok(out)
+    }
+
+    /// The driver serving `component`'s slot, with its description.
+    fn driver_of(&self, c: terse_perflog::Component) -> Option<(usize, String)> {
+        let terse_perflog::Component::Device(slot) = c else { return None };
+        let bus = self.bus.borrow();
+        let p = bus.proc_for(slot)?;
+        let d = &bus.procs[p];
+        let id = terse_perflog::Identity { name: d.info.name.clone(), version: d.info.version.clone(), build: d.info.build.clone() };
+        Some((p, format!("device {slot} ({})", id.line())))
+    }
+
+    /// The machines that use driver `p`: handles (0: the shell or the
+    /// single machine), still running or paused.
+    fn users(&self, p: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        if self.system.shell().stopped().is_none() && self.system.shell().devices().procs().contains(&p) {
+            v.push(0);
+        }
+        for (h, c) in self.system.children() {
+            if let Some(m) = &c.machine
+                && m.stopped().is_none()
+                && m.devices().procs().contains(&p)
+            {
+                v.push(h);
+            }
+        }
+        v
+    }
+
+    /// Takes the snapshot of machine `h` (0: the single machine; the
+    /// shell is never snapshotted) within a short time limit, and keeps it:
+    /// in the machine's automatic slot (SPEC §machines.snapshots) when a
+    /// shell runs it, else in a file in the record's directory. Returns
+    /// where it went (`slot<n>`, `file`, `none`) and a description.
+    fn save(&mut self, h: u8) -> (String, String) {
+        if h == 0 && self.system.is_system() {
+            return ("none".into(), "the shell is never snapshotted".into());
+        }
+        let timeout = self.bus.borrow().config.reply_timeout;
+        self.bus.borrow_mut().set_reply_timeout(SNAPSHOT_TIMEOUT.min(timeout));
+        self.bus.borrow_mut().saving = true;
+        let snapshot = match h {
+            0 => terse_core::Snapshot::try_of(self.system.shell_mut()),
+            h => match self.system.child_mut(h).and_then(|c| c.machine.as_mut()) {
+                Some(m) => terse_core::Snapshot::try_of(m),
+                None => Err("no machine".into()),
+            },
+        };
+        self.bus.borrow_mut().set_reply_timeout(timeout);
+        self.bus.borrow_mut().saving = false;
+        let snapshot = match snapshot {
+            Ok(s) => s,
+            Err(e) => return ("none".into(), format!("no snapshot: {e}")),
+        };
+        if h == 0 {
+            let Some(dir) = self.monitor.as_ref().and_then(|m| m.dir.clone()) else { return ("none".into(), "no record directory to keep it in".into()) };
+            let name: String = snapshot.image_id()[..8].iter().map(|b| format!("{b:02x}")).collect();
+            let path = dir.join(format!("stopped-{name}.tsnp"));
+            let written = std::fs::create_dir_all(&dir).and_then(|_| {
+                let tmp = path.with_extension("tmp");
+                std::fs::write(&tmp, snapshot.encode())?;
+                std::fs::rename(&tmp, &path)
+            });
+            return match written {
+                Ok(()) => ("file".into(), path.display().to_string()),
+                Err(e) => ("none".into(), format!("{}: {e}", path.display())),
+            };
+        }
+        let slot = terse_core::snapshot::auto_slot(h);
+        let info = snapshot.info();
+        match self.driver.save_snapshot(self.system.shell(), slot, snapshot) {
+            Some(true) => {
+                self.system.set_snapshot_info(slot, Some(info));
+                (format!("slot{slot}"), format!("snapshot slot {slot}"))
+            }
+            _ => ("none".into(), format!("snapshot slot {slot} could not be stored")),
+        }
+    }
+
+    /// Carries out what the rule asks (R15).
+    fn act(&mut self, a: terse_perflog::Action) -> Result<Vec<String>, String> {
+        use terse_perflog::{Action, Line};
+        let mut out = Vec::new();
+        let frame = self.monitor.as_ref().map_or(0, |m| m.frame.saturating_sub(1));
+        let (c, stop, count) = match a {
+            Action::Warn { component, count } => (component, false, count),
+            Action::Stop { component, count } => (component, true, count),
+        };
+        let log = |s: &Self, l: Line| {
+            if let Some(m) = &s.monitor {
+                m.add(l);
+            }
+        };
+        let Some((p, what)) = self.driver_of(c) else {
+            // The host's own part: it cannot stop itself; it records and shows.
+            log(self, Line::Warn { frame, component: c, count });
+            out.push(format!("terse-bus: the host's own {c} made {count} frames late"));
+            return Ok(out);
+        };
+        let users = self.users(p);
+        if !stop {
+            log(self, Line::Warn { frame, component: c, count });
+            // Save at once (the owner's "save immediately"): the snapshot
+            // a stop would otherwise have to take from a slow device.
+            let mut saved = Vec::new();
+            for &h in &users {
+                let (_, d) = self.save(h);
+                saved.push(if h == 0 { d } else { format!("machine {h}: {d}") });
+            }
+            self.notice = Some((
+                Notice {
+                    heading: "a slow device".into(),
+                    what: format!("{what} is slow: {count} late frames."),
+                    then: "Your work is saved; if it goes on, the machines that use it are stopped.".into(),
+                },
+                frame + NOTICE_FRAMES,
+            ));
+            out.push(format!("terse-bus: {what} is slow ({count} late frames): your work is saved ({}); if it goes on, the machines that use it are stopped", saved.join("; ")));
+            return Ok(out);
+        }
+        let slot = match c {
+            terse_perflog::Component::Device(s) => s,
+            _ => 0,
+        };
+        for h in users {
+            let (saved, d) = self.save(h);
+            let image = match h {
+                0 => Some(*self.system.shell().image_id()),
+                h => self.system.child(h).and_then(|c| c.machine.as_ref()).map(|m| *m.image_id()),
+            };
+            log(self, Line::Stop { frame, component: c, machine: h as u32, image: terse_perflog::record::image_field(image.as_ref()), saved: saved.clone() });
+            match h {
+                0 => {
+                    self.system.shell_mut().halt(slot);
+                    self.halted = Some((slot, d.clone()));
+                }
+                h => {
+                    if let Some(m) = self.system.child_mut(h).and_then(|c| c.machine.as_mut()) {
+                        m.halt(slot);
+                    }
+                }
+            }
+            out.push(format!("terse-bus: {what} did not keep up ({count} late frames): machine {h} stopped; {d}"));
+        }
+        self.notice = Some((
+            Notice { heading: "a device did not keep up".into(), what: format!("{what} did not keep up: {count} late frames."), then: "The machines that use it were saved and stopped.".into() },
+            frame + NOTICE_FRAMES,
+        ));
+        Ok(out)
     }
 
     /// The consent question waiting (SPEC §content.feeds), how many wait, and the

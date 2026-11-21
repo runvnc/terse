@@ -1,0 +1,28 @@
+terse-perf 1
+run 2026-11-21 window
+host terse-bus 0.1.0 b3:5faccb21bc9113fb
+env Linux 7.3.1-1-cachyos x86_64 12 15 drivers Intel(R)%20Core(TM)%20i7-10750H%20CPU%20@%202.60GHz
+device dev2 2,10 terse-dev-terminal%20(Rust) 0.1.0 b3:3c1f0a9e77d2b410
+device dev3 3,9 terse-dev-vector%20(Rust) 0.1.0 b3:9a0b44c1e5f60d27
+device dev4 4 terse-dev-content%20(Rust) 0.1.0 b3:97f8a7cc7bf5e08c
+device dev6 6 terse-dev-sound%20(Rust) 0.1.0 b3:0d5e6f7a8b9c0d1e
+device dev7 7 terse-dev-page%20(Rust) 0.1.0 b3:f8f5a88bb33ad6eb
+start 131.4 boot
+mem 0 core 51200
+mem 0 dev7 20480
+block 3 812.0 dev4 service
+late 3 815.2 spread outside 2.1 2.1 0.0 0.0 -
+late 1200 52.3 blamed dev7 47.5 1.0 46.5 0.5 abababababababab
+late 1201 40.0 starved dev7 6.0 6.0 0.0 31.5 abababababababab
+late 1202 51.0 blamed dev7 47.0 46.0 1.0 0.3 abababababababab
+late 1203 49.9 blamed dev7 46.1 0.4 45.7 0.0 abababababababab
+warn 1203 dev7 3
+shed 1300 1 late
+mem 600 core 51420
+mem 600 dev7 81920
+late 1310 24.0 memory core 10.0 10.0 0.0 0.0 0011223344556677
+stop 1450 dev7 2 abababababababab slot17
+check dev3 6.5 ok
+drop 2
+future-type 1 2 3
+end 3600 6 60

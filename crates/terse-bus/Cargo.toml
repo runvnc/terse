@@ -18,6 +18,7 @@ window = ["dep:winit", "dep:softbuffer", "dep:arboard", "terse-host/input"]
 
 [dependencies]
 terse-core.workspace = true
+terse-perflog.workspace = true
 terse-net.workspace = true
 terse-host.workspace = true
 blake3 = { version = "1.8", default-features = false }

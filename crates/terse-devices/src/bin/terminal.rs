@@ -333,6 +333,7 @@ impl Device for TerminalDriver {
             publishes: Vec::new(),
             subscribes: vec![property::STATUS.into()],
             services: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -463,6 +464,9 @@ impl Device for TerminalDriver {
 }
 
 fn main() -> std::process::ExitCode {
+    if terse_bus::driver::version("terse-dev-terminal") {
+        return std::process::ExitCode::SUCCESS;
+    }
     // `--config <dir>`: the fonts `<dir>/fonts` names (README "Fonts"); else
     // the built-in font. Other arguments are ignored (DEVICES.md 2.1).
     let args: Vec<String> = std::env::args().collect();

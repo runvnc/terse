@@ -44,6 +44,7 @@ and is then in one of these states:
 | 4 | exited | stopped by `exit` (§stopping) |
 | 5 | faulted | stopped by a fault (§stopping) |
 | 6 | failed | the image could not be had, is not an image the host can run, the host has no room for another machine, or a snapshot could not be restored; `info` gives the reason |
+| 7 | halted | stopped by the host: a device it uses did not keep up (SPEC §stopping, `PERFORMANCE.md` R15); its snapshot from just before is in its automatic slot (§machines.snapshots) |
 
 Each handle also has a **run flag**, a **rectangle** (x, y, width,
 height in the shell's screen units) and possibly an **identity**. The
@@ -133,7 +134,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   | Offset | Size | Field |
   |---|---|---|
   | 0 | 1 | State |
-  | 1 | 1 | Exit code if exited, else 0 |
+  | 1 | 1 | Exit code if exited; the device's slot if halted; else 0 |
   | 2 | 1 | Fault kind if faulted, numbered as in `STATE.md` 1.3 (1 illegal instruction … 6 misaligned), else 0 |
   | 3 | 1 | Why the start failed, if failed: 1 not found, 2 not a valid image, 3 the image needs a device (slot, version) the host does not provide, 4 no room for another machine, 5 no snapshot in the slot, or one that cannot be read or does not fit its image (`restore`); else 0 |
   | 4 | 4 | Units the machine used in its last frame (§frames, delivered content included), 0 before its first |
@@ -180,7 +181,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   snapshot the shell deletes with `snapshot_delete` later in the same
   frame is stored and then deleted: its event says 1, and the slot is
   empty.
-- **`restore`** with a slot 0–15: if every handle is in use it returns 0.
+- **`restore`** with a slot 0–23 (16–23: the automatic slots, §machines.snapshots): if every handle is in use it returns 0.
   Otherwise the lowest handle not in use becomes loading, with the run
   flag set, the rectangle (0, 0, 0, 0), image ID zero and no identity,
   and the call returns it. The host reads the slot's snapshot and gets the
@@ -196,7 +197,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   machine restored where the host has an optional device the snapshot's
   machine was not granted runs without it. The host may take any number
   of frames. A slot out of range returns 0.
-- **`snapshot_info`** writes a 122-byte record of slot `a0`, as the host's
+- **`snapshot_info`** writes a 122-byte record of slot `a0` (0–23), as the host's
   snapshots are at the start of the frame with the changes the shell's
   own `snapshot_delete` calls made since, to the buffer, which must lie
   wholly in RAM (else `FFFF_FFFEh`), and returns 1 if the slot holds a
@@ -211,7 +212,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   | 114 | 4 | The machine's frame counter when it was taken |
   | 118 | 4 | When it was taken: the Unix time latched for the machine's last frame, as its state holds it (`STATE.md` 1.5: 0 if it never ran; for a restored machine that has not run since, the time of the snapshot it was restored from) |
 
-- **`snapshot_delete`** with a slot 0–15: the slot is empty from now on
+- **`snapshot_delete`** with a slot 0–23: the slot is empty from now on
   (for `snapshot_info` at once); the host removes its snapshot at the end
   of the frame, in order with the snapshots asked for in the same frame.
   Returns 1, or 0 for a slot out of range.
@@ -452,8 +453,9 @@ the calls.
 
 Machine changed is sent for every change of state the shell did not make
 with a call: loading to running, paused or failed; running to exited or
-faulted. When the machine with the focus becomes exited, faulted or failed,
-the focus becomes 0 (and no home event is sent).
+faulted; running or paused to halted. When the machine with the focus
+becomes exited, faulted, failed or halted, the focus becomes 0 (and no
+home event is sent).
 
 ## §machines.frames Frames
 
@@ -463,7 +465,8 @@ For each system frame the host does the following, in order:
    whose image the host now has, or has failed to get, becomes running
    (paused if the run flag is clear) or failed; a running handle whose
    machine stopped in an earlier frame becomes exited or faulted, with its
-   exit code or fault kind and `pc`. Each of these changes queues a machine
+   exit code or fault kind and `pc`; a running or paused handle whose
+   machine the host stopped becomes halted, with the device's slot. Each of these changes queues a machine
    changed event for the shell, ahead of the frame's input. Each record then
    takes the machine's units and frame counter (§machines.calls). Then, in
    increasing handle order, each machine that made an open request in its
@@ -495,7 +498,7 @@ For each system frame the host does the following, in order:
    machine as it is now (failed if it no longer exists), each delete
    removes a slot's snapshot.
 
-Paused, loading, exited, faulted and failed machines run no frames, and
+Paused, loading, exited, faulted, failed and halted machines run no frames, and
 their frame counters do not advance. When the shell stops (§stopping), the
 system stops: no machine runs any more frames.
 
@@ -526,7 +529,14 @@ machine would have. Its frame counter goes on from the snapshot's; the
 time, random bytes and every other input are what the host supplies after
 the restore.
 
-- The shell has 16 **slots**, 0 to 15. They are the host's local data,
+- The shell has 16 **slots**, 0 to 15, and the host has 8 **automatic
+  slots**, 16 to 23: slot 15 + h holds the snapshot the host took of
+  machine h when a device it used was slow (`PERFORMANCE.md` R15: at the
+  warning, and again just before it halted the machine). Only the host
+  writes them (`snapshot` with slot 16–23 is refused); `restore`,
+  `snapshot_info` and `snapshot_delete` take slots 0 to 23, so a shell
+  offers them like its own. A host that never halts a machine leaves them
+  empty. All 24 are the host's local data,
   kept per shell as named records are (by the shell's identity, else its
   image ID, §content.records), durably (written to a temporary file, synced,
   renamed into place), and never sent anywhere. `STATE.md` 4 gives a

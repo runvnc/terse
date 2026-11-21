@@ -204,6 +204,12 @@ draw; the rest of the look (fonts, smoothing, the phosphor style's
 glow and afterglow) is the host's, so a plain host and an elaborate
 one show the same picture.
 
+## When a part of the host is slow
+
+A program cannot make a frame late: its work is bounded by the budget and the caps. What can is the host's own: a device driver, the renderer. Every host and device states its name, version and build (`--version`), and the host keeps a record on your computer of which part made a frame late, never sent anywhere (`terse perf log` sums it up). A part that is only waiting because your computer is busy is not blamed.
+
+A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names.
+
 ## Determinism and replay
 
 A machine's state is a pure function of its image and its inputs: the

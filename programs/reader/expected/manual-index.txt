@@ -30,7 +30,7 @@
  0%                      Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 1578, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |The Tersenet manual
-   53  15     0   sans12 |terse:86cd89…46b2fc  ·  not in your timeline  ·  4.9 KiB
+   53  15     0   sans12 |terse:bac487…00229d  ·  not in your timeline  ·  4.9 KiB
    78   8     0  -- rule --
    96  19     0   sans15 |This manual describes the whole Tersenet system: the Terse32
   115  19     0   sans15 |machine, its devices, the network that carries articles and

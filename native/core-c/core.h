@@ -60,6 +60,7 @@ void bus_end(M *m);
 int bus_state(M *m, int slot, uint8_t **out, uint32_t *len);
 void bus_shutdown(void);
 void bus_stats(void);
+void bus_identities(void);
 extern int bus_nobatch;
 extern const char *bus_driver_dir;
 void bus_set_driver(const char *slots_eq_cmd);

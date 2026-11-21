@@ -225,7 +225,20 @@ class Core:
                 n, at = read_str(r, at)
                 names.append(n.decode())
             self.properties.append(names)
-        assert at == len(r), "HELLO reply length"
+        # The optional identity (DEVICES.md 1.1): version and build, both or
+        # neither (an older driver ends here); later bytes are ignored.
+        self.version = self.build = ""
+        if at < len(r):
+            fields = []
+            for _ in range(2):
+                assert at + 2 <= len(r), "HELLO reply cut short in its identity"
+                n = struct.unpack_from("<H", r, at)[0]
+                assert at + 2 + n <= len(r), "HELLO reply cut short in its identity"
+                v, at = read_str(r, at)
+                assert len(v) <= 32 and all(0x21 <= c <= 0x7E for c in v), "identity field %r" % v
+                fields.append(v.decode())
+            self.version, self.build = fields
+        assert at <= len(r), "HELLO reply length"
         self.on_shm = transport == 1
 
     # -- instances (DEVICES.md 1.2)
@@ -661,6 +674,8 @@ def main():
     if kind == "terminal":
         for batching in (True, False):
             core = Core(cmd, [2], rom=b"ROM text", shm=shm, batch=batching)
+            if batching:
+                print("terminal: driver %r, version %s, build %s" % (core.name, core.version or "-", core.build or "-"))
             terminal_tests(core)
             core.shutdown()
         instances_test(cmd, shm)
@@ -676,6 +691,8 @@ def main():
     elif kind == "vector":
         for batching in (True, False):
             core = Core(cmd, [3, 9], shm=shm, batch=batching)
+            if batching:
+                print("vector: driver %r, version %s, build %s" % (core.name, core.version or "-", core.build or "-"))
             vector_tests(core)
             core.shutdown()
     else:

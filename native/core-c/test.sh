@@ -151,6 +151,23 @@ if [ "$FUZZ" -gt 0 ]; then
     [ $bad -eq 0 ] && ok "fuzz: $FUZZ of $FUZZ images" || no "fuzz: $bad of $FUZZ images differ"
 fi
 
+echo "== identities (DEVICES.md 1.1: version and build at the end of HELLO)"
+v=$("$TC" --version); s=$?
+echo "$v" | grep -Eq '^tcore 0\.1\.0 b3:[0-9a-f]{16}$' && [ $s -eq 0 ] && ok "--version: $v" || no "--version: status $s, '$v'"
+${CC:-cc} -std=c11 -O2 -o "$T/example" "$root/native/driver-example/terminal.c" 2> /dev/null
+# a line per driver: its lowest slot, name, then version and build or -
+ID='^driver [0-9]+ .+ (-|[[:graph:]]{1,32}) (-|[a-z0-9]+:[0-9a-f]{16}|unknown)$'
+tc "$P/sketch/sketch.terse" --frames 1 --hash --identities --driver "2=$T/example" > /dev/null 2> "$T/ids"; s=$?
+n=$(grep -c '^driver ' "$T/ids")
+if [ $s -eq 0 ] && [ "$n" -ge 2 ] && [ "$(grep -Ec "$ID" "$T/ids")" -eq "$n" ] \
+    && grep -Eq '^driver 2 terminal \(example\) 0\.1\.0 fnv:[0-9a-f]{16}$' "$T/ids" \
+    && grep -Eq '^driver 4 .* (- -|0\.1\.0 b3:[0-9a-f]{16})$' "$T/ids"
+then ok "--identities: $n drivers (the example's fnv: build)"; else no "--identities: status $s"; cat "$T/ids"; fi
+tc "$P/holo/holo.terse" --frames 1 --hash --identities --driver "3,9=python3 -I $root/crates/terse-devices/python/vector.py" > /dev/null 2> "$T/ids"; s=$?
+[ $s -eq 0 ] && grep -Eq '^driver 3 .* 0\.1\.0 b2:[0-9a-f]{16}$' "$T/ids" && ok "--identities: vector.py's b2: build" || { no "--identities vector.py: status $s"; cat "$T/ids"; }
+printf 'driver 2 x - -\n' | grep -Eq "$ID" && printf 'driver 3 terse-dev-vector 0.1.0 b3:0123456789abcdef\n' | grep -Eq "$ID" \
+    && ok "--identities line pattern takes absent and b3: identities" || no "identity pattern"
+
 echo "== every driver started was reaped"
 left=$(grep -l "TERSE_BUS_SOCKET=$T" /proc/[0-9]*/environ 2>/dev/null | wc -l)
 [ "$left" -eq 0 ] && ok "no driver process left" || no "$left driver processes left"

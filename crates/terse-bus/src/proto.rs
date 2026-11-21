@@ -614,6 +614,11 @@ pub struct DeviceInfo {
     pub subscribes: Vec<String>,
     /// Host services it gives (section 9).
     pub services: Vec<String>,
+    /// Its identity (section 1.1, `PERFORMANCE.md` R13): the version and
+    /// build identifier after the name; empty if not given (an older
+    /// driver's reply ends after the services).
+    pub version: String,
+    pub build: String,
 }
 
 /// The HELLO a driver receives.
@@ -686,6 +691,7 @@ impl DeviceInfo {
         names(&mut w, &self.publishes);
         names(&mut w, &self.subscribes);
         names(&mut w, &self.services);
+        w.str(self.version.as_bytes()).str(self.build.as_bytes());
         w.finish();
     }
 
@@ -723,7 +729,13 @@ impl DeviceInfo {
         let publishes = read_names(&mut r)?;
         let subscribes = read_names(&mut r)?;
         let services = read_names(&mut r)?;
-        Ok((transport, DeviceInfo { name, native, slots, publishes, subscribes, services }))
+        // The identity, if given; anything after it is for later versions.
+        let (mut version, mut build) = (String::new(), String::new());
+        if !r.clone().rest().is_empty() {
+            version = terse_perflog::identity::clean_field(&r.string()?);
+            build = terse_perflog::identity::clean_field(&r.string()?);
+        }
+        Ok((transport, DeviceInfo { name, native, slots, publishes, subscribes, services, version, build }))
     }
 }
 
@@ -890,11 +902,31 @@ mod tests {
             publishes: vec![property::OUTLINES.into(), property::LIST3.into()],
             subscribes: vec![property::EYE.into()],
             services: vec![],
+            version: "0.1.0".into(),
+            build: "b3:0011223344556677".into(),
         };
         let mut out = Vec::new();
         info.encode(TRANSPORT_SHM, &mut out);
         let (transport, d) = DeviceInfo::decode(split(&out[4..]).unwrap().body).unwrap();
         assert_eq!((transport, d.native, d.slots.len(), d.slots[1].layers[0].z), (TRANSPORT_SHM, (640, 480), 2, 35));
-        assert_eq!((d.publishes, d.subscribes), (info.publishes, info.subscribes));
+        assert_eq!((d.publishes, d.subscribes), (info.publishes.clone(), info.subscribes.clone()));
+        assert_eq!((d.version.as_str(), d.build.as_str()), ("0.1.0", "b3:0011223344556677"));
+        // An older driver's reply ends after the services: no identity.
+        let n = out.len() - (2 + 5 + 2 + 19);
+        let mut old = out[..n].to_vec();
+        old[..4].copy_from_slice(&((n - 4) as u32).to_le_bytes());
+        let (_, d) = DeviceInfo::decode(split(&old[4..]).unwrap().body).unwrap();
+        assert_eq!((d.version.as_str(), d.build.as_str(), d.services.len()), ("", "", 0));
+        // A later one may say more after the build; a field with a space
+        // is not kept.
+        let mut later = DeviceInfo { build: "a b".into(), ..info.clone() };
+        later.version = "0.2".into();
+        let mut out = Vec::new();
+        later.encode(TRANSPORT_SOCKET, &mut out);
+        out.extend_from_slice(&[9, 9, 9]);
+        let n = out.len() - 4;
+        out[..4].copy_from_slice(&(n as u32).to_le_bytes());
+        let (_, d) = DeviceInfo::decode(split(&out[4..]).unwrap().body).unwrap();
+        assert_eq!((d.version.as_str(), d.build.as_str()), ("0.2", ""));
     }
 }

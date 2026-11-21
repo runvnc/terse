@@ -129,11 +129,14 @@ pub mod call {
     }
 }
 
-/// Why the machine stopped (SPEC §stopping): the program exited, or a fault.
+/// Why the machine stopped (SPEC §stopping): the program exited, a
+/// fault, or the host stopped it because a device it uses did not keep up
+/// (`Halted`, with the device's slot: `PERFORMANCE.md` R15).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stopped {
     Exit(u8),
     Fault(Fault),
+    Halted(u8),
 }
 
 impl fmt::Display for Stopped {
@@ -141,6 +144,7 @@ impl fmt::Display for Stopped {
         match self {
             Stopped::Exit(code) => write!(f, "exit {code}"),
             Stopped::Fault(fault) => write!(f, "fault: {fault}"),
+            Stopped::Halted(slot) => write!(f, "stopped by the host: device {slot} did not keep up"),
         }
     }
 }
@@ -744,6 +748,7 @@ impl<D: Devices> Machine<D> {
             None => (0u8, 0u8, None),
             Some(Stopped::Exit(c)) => (1, c, None),
             Some(Stopped::Fault(f)) => (2, 0, Some(f)),
+            Some(Stopped::Halted(slot)) => (3, slot, None),
         };
         out.extend_from_slice(&[kind, code]);
         let (fkind, detail, pc, addr) = match fault {
@@ -794,6 +799,15 @@ impl<D: Devices> Machine<D> {
         match self.stopped {
             Some(Stopped::Exit(code)) => Some(code),
             _ => None,
+        }
+    }
+
+    /// Stops the machine between frames because device `slot` did not keep
+    /// up (SPEC §stopping, `PERFORMANCE.md` R15): nothing runs in later
+    /// frames. Does nothing to a machine already stopped.
+    pub fn halt(&mut self, slot: u8) {
+        if self.stopped.is_none() {
+            self.stopped = Some(Stopped::Halted(slot));
         }
     }
 
@@ -928,6 +942,7 @@ impl<D: Devices> Machine<D> {
                 };
                 Some(Stopped::Fault(Fault { kind, pc, addr }))
             }
+            3 => Some(Stopped::Halted(code)),
             _ => return Err(bad("stopped")),
         };
         let budget = r.u32()? as i32;
