@@ -1,14 +1,14 @@
 # Make a host
 
-A host is the program that runs Terse32 machines: it reads a program file, runs its instructions, and gives it its devices. `terse-host` is one; you can write another, in any language, and check it against this one exactly. This page builds the smallest useful host, one that runs programs on the text grid, in four small steps. Each step ends with a program from the Tersenet sources that shows it works.
+A host is the program that runs Terse32 machines: it reads a program file, runs its instructions, and gives it its devices. `terse-host` is one; you can write another, in any language, and check it against this one exactly. This page builds the smallest useful host, one that runs programs on the text grid, in four small steps, checked along the way with programs from the Tersenet sources.
 
 ## Step 1: load and run
 
-A program file starts with a 32-byte header: `TERS`, two bytes that are 0 and 1, the program's length (3 bytes, least significant first), its memory in 8 KiB pages (1 byte), the number of devices (1 byte), 5 zero bytes, a 16-byte title, then two bytes per device. The program's bytes follow.
+A program file starts with a 32-byte header: `TERS`, two bytes that are 0 and 1, the program's length (3 bytes, least significant first), its memory in 8 KiB pages (1 byte), the number of devices (1 byte), 5 zero bytes and a 16-byte title. Two bytes per device follow, then the program's bytes.
 
 Put the program at address `0001_0000h` (that is its read-only memory) and zeroed RAM of the size asked at `0010_0000h`. Start at the program's first byte, with the stack pointer at the end of RAM and every other register 0.
 
-The processor is 32-bit RISC-V with the multiply and compressed instruction extensions (RV32IMC), in user mode only: no interrupts, no special registers. A misaligned load or store, an access outside both memories, or an instruction that is not RV32IMC stops the machine with a fault.
+The processor is 32-bit RISC-V with the multiply and compressed instruction extensions (RV32IMC), in user mode only: no interrupts, no special registers. A misaligned load or store, an access outside both memories, or an instruction the machine does not have (`ebreak` and the CSR instructions among them) stops it with a fault.
 
 ## Step 2: frames and calls
 

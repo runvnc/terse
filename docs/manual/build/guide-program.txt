@@ -49,6 +49,6 @@ publishes it in your feed, under its name (make your key first with `terse key n
 
 ## What you have now
 
-A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:636cb881acc0376988f8366d66ad63f8cf4df31433739d4a9b288821e5f2b05b).
+A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:61a141bf287783315445a5cc3206b8759bbc10bd6ffa461a9893b108619b71f7).
 
 How a program is built, the C library and every option are in [The toolchain and the C library](terse:8b9750895ffe720b591dedf6432c1eeef873c17c99716e18efbaf7511e14715b); running, testing and publishing in more detail in [Running and publishing a program](terse:aee0165da3420e71f4982848765a23b89b5c4fa1091a5dd08c0fc4bf2b1661f4).

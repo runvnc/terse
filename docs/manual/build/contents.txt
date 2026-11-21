@@ -4,12 +4,12 @@ The manual has two parts. The guide is a series of short steps, each one you can
 
 ## Guide
 
-- [Make a reader, step 1: show an article](terse:e42228affcb419d5f616671bc6c81e7cf53120b4764314265f9eda35633403ee): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:dfdde0c4119c4eea0cd1eeb7ebd3f366dcefc0ea18148e9973c3034178350434): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:1233b673c3ed3e90b42effb47143fd6e197d5bbf1f3e447464201e6c3fa97265): follow links, subscribe to a feed, check its signatures.
-- [Write a program](terse:9f3a56a46170b367f751068b164640977cab0577ecb3eb98ad4acc4262e7c1c4): a first Terse32 program, built and run in three commands.
-- [Draw a line and read a key](terse:636cb881acc0376988f8366d66ad63f8cf4df31433739d4a9b288821e5f2b05b): the 2D vector display and keyboard events.
-- [Make a host](terse:953b4f2288d0c2fe9958cc8a67231e339be9e0556a57a2916c8d545f9bb2bee8): your own Terse32 machine, step by step, checked against the reference.
+- [Make a reader, step 1: show an article](terse:765994b249a5603a3cb2f7853fa08107d6d53c2d2783ebce1b346be168f09041): the article format's first rules, and a test to check yourself.
+- [Make a reader, step 2: fetch an article](terse:df4955ab06c5e18b904e58387ecaef570b8b9a5c9c8250014a9e8a4a13b9e4f6): get an article from a relay and check that it is genuine.
+- [Make a reader, step 3: links and feeds](terse:071c36d1a7cdd83c637c4fa11906d7cf5b12e8a740097c6d2cade7a768ae25bd): follow links, subscribe to a feed, check its signatures.
+- [Write a program](terse:f54cc6bfb03b6f9a3b6050b1dbc3e947500f3f5364b0edb96d94be51a00b25ad): a first Terse32 program, built and run in three commands.
+- [Draw a line and read a key](terse:61a141bf287783315445a5cc3206b8759bbc10bd6ffa461a9893b108619b71f7): the 2D vector display and keyboard events.
+- [Make a host](terse:8f7e1cf5e1b3c59c2f1a008d30509c4657f8a2b258352b4b29beb8dd96e346ec): your own Terse32 machine, step by step, checked against the reference.
 - [Make a device](terse:b88eaad5ea82efe3884f1ff97dd40881cd4d714bb985a63249065c9bef2ac1d1): a device as a separate program on the device bus.
 - [Swap in your own part](terse:9f1f81b3f7ec63d85dff38e75eb8bd72829d0530bbd351cf21c012db4ec8535e): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:25f600a5015cce82e523cc46642522a3e07c89f41c713084899e26224b91528d): the program that starts other machines and lays out their screens.
