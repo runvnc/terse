@@ -97,7 +97,7 @@ A Screen is a flat panel w/16 units wide and 3/4 of that high, centred on the tr
 
 so it is scaled, turned and moved with the transform. With the identity it lies like the glass: its top edge along x, its left edge down along y, its front towards the viewer. It does not change the current point. With a = top right - top left and b = bottom left - top left, the panel is seen from behind from an eye on the side of its plane that a x b points to (or in its plane); otherwise its front is seen.
 
-A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle's machine has a picture and the handle's rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell's `face` flies one flat onto the glass, is in [screens, panels and input](terse:c5fc180d17f2cbb9c3271bc22fba65213fd9a75bc4238fee4850a4366e9084c3).
+A Screen is in effect only in the list of the shell of a system (the machine with device 8), only if it is the first Screen of its handle in the list, the handle's machine has a picture and the handle's rectangle shows none. Any other Screen is decoded and does nothing: it draws nothing, hides nothing and is not counted. A Screen in effect is shown as a panel and hides lines, points and circles exactly as a Face of its four corners does; one of width 0 has no area and hides nothing. How panels are drawn and take the pointer, and how the shell's `face` flies one flat onto the glass, is in [screens, panels and input](terse:456f315e901bc674e08ef9d8f95b5a199d8f289b7c12a8cd53dcbf5937e80258).
 
 ## Clipping and caps
 
@@ -114,14 +114,7 @@ The amount one list draws is limited. In list order each command counts:
 | Screen in effect | 0 | 0 | 1 |
 | Surface in effect | 0 | 0 | 1 |
 
-A line's counted length is its length on the glass, seen from the reference eye, of its part with z > -800 that lies on the screen (0 to 640 by 0 to 480). A command that would take the list's total length above 65,536, its segments above 16,384, its faces above 256, or its faces times its segments above 131,072 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye. The last cap trades faces against segments:
-
-| Faces | Segments at most |
-|---|---|
-| 0 to 8 | 16,384 |
-| 16 | 8,192 |
-| 64 | 2,048 |
-| 256 | 512 |
+A line's counted length is its length on the glass, seen from the reference eye, of its part with z > -800 that lies on the screen (0 to 640 by 0 to 480). Each line, point and chord also counts its ink as a 2D line does: on the glass, in units, (|dx| + |dy| + w) x (w + 3) with w its width, or its box grown by (w + 3) / 2 and clipped to the screen if smaller; a Surface in effect counts its box on the glass. A command that would take the list's total length above 65,536, its segments above 16,384, its faces above 256, its faces times its segments above 131,072 (256 faces leave 512 segments), or its ink above 153,600 is not drawn, and neither is any command after it; a face not drawn hides nothing. A command that is not drawn does not count. The caps are counted from the reference eye whatever eye the host draws from, and as if faces hid nothing, so the same commands are drawn from every eye.
 
 After the hidden parts are cut out, at most 16,384 pieces are drawn, in list order; pieces beyond that are not drawn. Only pieces within the 32-unit margin count. Which pieces those are depends on the eye.
 
@@ -138,7 +131,7 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 
 ## Charges and state
 
-Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).
+Every call costs 4; an accepted `submit` also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host's work. See [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
 
 The device sends no events and takes no input from the host: the eye is the host's, so what faces hide from it is not state. Which Screens are in effect depends on the shell's device 8 records, and only for what is shown; `face` reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display's state section, which is present when the machine has device 3 or device 9.
 

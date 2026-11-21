@@ -225,24 +225,39 @@ every side; what lies beyond that margin is not drawn, and the host clips
 what it draws to the screen.
 
 The amount one list draws is limited. In list order, each Line, Point and
-Circle counts a **length** and a number of **segments**:
+Circle counts a **length**, a number of **segments** and its **ink**, and
+each face, Screen and Surface in effect counts as a face:
 
-| Command | Length (screen units) | Segments | Faces |
-|---|---|---|---|
-| Line | its length on the glass, seen from the reference eye, of its part with z > −800 that lies on the screen (0 to 640 by 0 to 480) | 1 | 0 |
-| Point | 0 | 1 | 0 |
-| Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 | 0 |
-| Face | 0 | 0 | 1 |
-| Screen in effect | 0 | 0 | 1 |
-| Surface in effect | 0 | 0 | 1 |
+| Command | Length (screen units) | Segments | Faces | Ink (square screen units) |
+|---|---|---|---|---|
+| Line | its length on the glass, seen from the reference eye, of its part with z > −800 that lies on the screen (0 to 640 by 0 to 480) | 1 | 0 | a segment's (below) |
+| Point | 0 | 1 | 0 | a segment's, of length 0 |
+| Circle | the sum of its 64 chords' lengths, each measured as a line's | 64 | 0 | the sum of its 64 chords' |
+| Face | 0 | 0 | 1 | 0 |
+| Screen in effect | 0 | 0 | 1 | 0 |
+| Surface in effect | 0 | 0 | 1 | the area of the box its four corners make on the glass, seen from the reference eye, clipped to the screen; 640 × 480 if a corner is not in front of the near plane |
+
+A **segment's ink** is counted as a 2D line's is (§vector.ink-cap), in
+screen units: with its part in front of the near plane seen on the glass
+from the reference eye as (x0, y0)–(x1, y1) and w its width in screen
+units (the width in effect, 1 to 255 sixteenths, divided by 16), the
+smaller of (|x1 − x0| + |y1 − y0| + w) × (w + 3) and the area of the box
+of its two ends grown by (w + 3) / 2 on every side and clipped to the
+screen; 0 if no part is in front of the near plane.
 
 A command that would take the list's total length above 65,536, its
-number of segments above 16,384, its number of faces above 256, or its
-number of faces times its number of segments above 131,072 is not drawn,
-and neither is any command after it; a face not drawn hides nothing. A
-command that is not drawn does not count. The caps are counted from the
-reference eye whatever eye the host draws from, and as if faces hid
-nothing, so the same commands are drawn from every eye.
+number of segments above 16,384, its number of faces above 256, its
+number of faces times its number of segments above 131,072, or its ink
+above ½ × 640 × 480 = 153,600 is not drawn, and neither is any command
+after it; a face not drawn hides nothing. A command that is not drawn
+does not count. The caps are counted from the reference eye whatever eye
+the host draws from, and as if faces hid nothing, so the same commands
+are drawn from every eye. The ink cap bounds the pixels a host draws (a
+Surface's are those of its panel), the faces × segments cap the work of
+hiding; together, measured on the reference host, a list at its caps
+costs about a quarter of a frame to draw (`PERFORMANCE.md` R10). Screens
+are the shell's view of other machines, each of which has its own caps,
+and are not counted as ink (§machines.screens).
 
 | Faces | Segments at most |
 |---|---|
@@ -367,8 +382,9 @@ Every call is deferred, with the base charge of 4 (§charges), and:
 Provisional values (§provisional):
 
 - the 3D display's caps (§vector3d.caps): 65,536 units of length, 16,384
-  segments, 256 faces, 131,072 faces × segments and 16,384 pieces drawn
-  after hiding; its 64 chords to a circle, its transform stack of 8, its
+  segments, 256 faces, 131,072 faces × segments, 153,600 square units of
+  ink (a segment's width plus 3 units, a Surface's box) and 16,384 pieces
+  drawn after hiding; its 64 chords to a circle, its transform stack of 8, its
   widest line, 255 sixteenths, and its 4 Surfaces in effect in a list
   (§vector3d.list); a face hides only what lies
   more than 2 sixteenths beyond its plane, and a cut piece shorter than
@@ -386,5 +402,4 @@ Provisional values (§provisional):
   non-rectangular Surfaces and screens; panels that cross one another (they are drawn
   far to near by their centres, and one does not cut another); a stereo
   picture or another display of the same geometry (the eye
-  rule allows one; how a host shows it is not specified); a limit on the
-  area its lines cover (as for the 2D display's lines, §unspecified).
+  rule allows one; how a host shows it is not specified).

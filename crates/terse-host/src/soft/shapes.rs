@@ -126,6 +126,11 @@ impl Shape {
     }
 }
 
+/// How far inside the half-pixel edge (in pixels) a pixel centre must lie
+/// for `visit` to take it as fully covered without measuring it: far more
+/// than the rounding of the distances.
+const INTERIOR_MARGIN: f32 = 0.01;
+
 /// Coverage of a pixel whose centre is d pixels from the centre line of a
 /// stroke hw pixels wide on each side; strokes thinner than a pixel fade
 /// instead of thinning.
@@ -217,6 +222,11 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
         let x1 = (g.origin.0 + hi * g.scale.0 - 0.5).ceil() as i32 + 2;
         (x0.max(clip.x0), x1.min(clip.x1))
     };
+    // The pixels whose centres lie in [lo, hi] sixteenths (none for `None`).
+    let inside = |span: Option<(f32, f32)>| match span {
+        Some((lo, hi)) => ((g.origin.0 + lo * g.scale.0 - 0.5).ceil() as i32, (g.origin.0 + hi * g.scale.0 - 0.5).floor() as i32 + 1),
+        None => (0, 0),
+    };
     match *shape {
         Shape::Line { a, b, hw, dwell, fade, butt, .. } => {
             let beam = glow.then(|| Beam::new(a, b, hw, dwell, fade, px));
@@ -229,13 +239,32 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
             // a round cap (as the GPU's `segment`).
             let (b0, b1) = (butt & 1 != 0, butt & 2 != 0);
             let len_px = len2.sqrt() * inv_px;
+            // The interior: pixel centres within this distance of the
+            // segment are fully covered (`stroke` is 1 there, with a margin
+            // for rounding), so their coverage is the depth cue alone. Not
+            // for butt ends, whose coverage also depends on the position
+            // along the line.
+            let inner = (beam.is_none() && butt == 0 && hw_px >= 0.5).then(|| (hw_px - 0.5 - INTERIOR_MARGIN) * px).filter(|&r| r > 0.0);
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
                 let Some((lo, hi)) = capsule_row(a, b, reach, yq) else { continue };
                 let (x0, x1) = cols(lo, hi);
                 let pay = yq - a.1;
+                let (in0, in1) = inside(inner.and_then(|r| capsule_row(a, b, r, yq)));
                 for x in x0..x1 {
                     let q = (qx(x), yq);
+                    if x >= in0 && x < in1 {
+                        let w = if plain {
+                            1.0
+                        } else {
+                            let h = ((q.0 - a.0) * ba.0 + pay * ba.1) * inv_len2;
+                            fade.0 + (fade.1 - fade.0) * h.clamp(0.0, 1.0)
+                        };
+                        if w > 0.0 {
+                            f(x, y, w);
+                        }
+                        continue;
+                    }
                     if let Some(beam) = &beam {
                         let v = beam.at(q);
                         if v > 0.0 {
@@ -309,11 +338,18 @@ pub fn visit(shape: &Shape, g: &Geom, mode: Mode, clip: IRect, mut f: impl FnMut
             if mode == Mode::Light {
                 return;
             }
+            // The interior, fully covered (as for a line).
+            let inner = r - (0.5 + INTERIOR_MARGIN) * px;
             for y in clip.y0..clip.y1 {
                 let yq = qy(y);
                 let Some((lo, hi)) = disc_row(c, r + reach, yq) else { continue };
                 let (x0, x1) = cols(lo, hi);
+                let (in0, in1) = inside((inner > 0.0).then(|| disc_row(c, inner, yq)).flatten());
                 for x in x0..x1 {
+                    if x >= in0 && x < in1 {
+                        f(x, y, 1.0);
+                        continue;
+                    }
                     let q = (qx(x), yq);
                     let len = ((q.0 - c.0).powi(2) + (q.1 - c.1).powi(2)).sqrt();
                     let v = ((r - len) * inv_px + 0.5).clamp(0.0, 1.0);
@@ -564,6 +600,38 @@ mod tests {
         let mut n = 0;
         visit(&line((80.0, 70.0), (80.0, 70.0), 3, (1.0, 1.0)), &g, Mode::Cover, clip, |_, _, _| n += 1);
         assert_eq!(n, 0);
+    }
+
+    /// The interiors taken as covered without measuring are exactly what
+    /// measuring gives: a disc, and a faded line, against the formulas
+    /// pixel by pixel.
+    #[test]
+    fn interiors_are_exact() {
+        let clip = IRect::new(0, 0, 300, 300);
+        for g in [Geom { origin: (3.0, 5.0), scale: (0.137, 0.137) }, Geom { origin: (0.0, 0.0), scale: (0.0859, 0.0859) }] {
+            let px = g.px();
+            let disc = Shape::Disc { c: (1000.3, 1200.7), r: 640.0, rgba: [255; 4] };
+            let mut n = 0;
+            for (x, y, v) in covered(&disc, &g, Mode::Cover, clip) {
+                let q = ((x as f32 + 0.5 - g.origin.0) / g.scale.0, (y as f32 + 0.5 - g.origin.1) / g.scale.1);
+                let len = ((q.0 - 1000.3f32).powi(2) + (q.1 - 1200.7f32).powi(2)).sqrt();
+                let want = ((640.0 - len) / px + 0.5).clamp(0.0, 1.0);
+                assert!((v - want).abs() < 2e-4, "disc {x} {y}: {v} {want}");
+                n += (v == 1.0) as usize;
+            }
+            assert!(n > 1000);
+            for fade in [(1.0, 1.0), (0.9, 0.4)] {
+                let (a, b, hw) = ((150.0, 210.0), (1900.0, 1400.0), 120.0);
+                let line = Shape::Line { a, b, hw, rgba: [255; 4], dwell: 0, fade, butt: 0 };
+                for (x, y, v) in covered(&line, &g, Mode::Cover, clip) {
+                    let q = ((x as f32 + 0.5 - g.origin.0) / g.scale.0, (y as f32 + 0.5 - g.origin.1) / g.scale.1);
+                    let ba = (b.0 - a.0, b.1 - a.1);
+                    let h = (((q.0 - a.0) * ba.0 + (q.1 - a.1) * ba.1) / (ba.0 * ba.0 + ba.1 * ba.1)).clamp(0.0, 1.0);
+                    let want = stroke(hw / px, segment_distance(q, a, b) / px) * (fade.0 + (fade.1 - fade.0) * h);
+                    assert!((v - want).abs() < 2e-4, "line {x} {y}: {v} {want}");
+                }
+            }
+        }
     }
 
     /// The tables follow the functions they stand for.

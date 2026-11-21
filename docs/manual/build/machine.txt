@@ -10,7 +10,7 @@ The machine is the optional third layer of Terse: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:88e91c033d58ec059c54e2b830330fd9617906ebf6df1bd5bdfbe09d08564bdd).
+[the system device](terse:19c18c81512acbb16a3d199631359874142e34711e130eebd73b6f2a7594f44d).
 
 ## CPU
 
@@ -187,7 +187,7 @@ write; `pc` continues after the `ecall`.
 - A call checks its buffer before its other arguments: a bad buffer gives
   `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
-  see [charges](terse:cb9e8ce4a98471484c6433496b0b8120a53416940b3de3c963701c450286a100).
+  see [charges](terse:3b477cde5cf2c6fe3151ab0298733eefc99bef60737a636e768a2d4c1cbb73a5).
 
 In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
 and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
@@ -199,7 +199,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:88e91c033d58ec059c54e2b830330fd9617906ebf6df1bd5bdfbe09d08564bdd), slot 1, always present:
+[The system device](terse:19c18c81512acbb16a3d199631359874142e34711e130eebd73b6f2a7594f44d), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -214,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:88ba2dc4ae962345498aec0d604339daa4c66f2b5c54f6006af7c4e51e56425f), slot 2:
+[The terminal](terse:60c78031c8fa9bc04b090c912f7ab76911ea4f1e060c3463356c44d79b066ab2), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -229,7 +229,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:6b4321301d92acc1e56632d0b7896e76820bae48a1c8334f35e1597fef6623d9), slot 3:
+[The 2D vector display](terse:4aa2c60b2385a0c0aa391d9114206fc2fdb4f5e4ca4d21f499025b79f66e8df2), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -239,7 +239,7 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:254bc5cea2bed72326d852dbf7bc378513377f2a52238c9f7019e8648cf64d86), [feeds](terse:d2656bb6102597ea38d75acb90a70c759f18c55d96e6f059234be59578b6e2aa) and [named records](terse:61fe2fc23d19f6696982030a4fc87532578029e02b1d92cd7101a394412e6121)):
+The content device, slot 4 (see [blobs](terse:a76400c3aecc763086c94ecfb06332f5f533aabba0b71186721e626cd6a7a1eb), [feeds](terse:1bd2a6ccf94697b751f63f50a9e8fee3fbaea79b42df4c0d34ed0633644e342b) and [named records](terse:29e8494ade680ae80093110872cfc9eaf2e236b3e994cb341213d49ad47bcb81)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -256,7 +256,7 @@ The content device, slot 4 (see [blobs](terse:254bc5cea2bed72326d852dbf7bc378513
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
-[Machines](terse:f434b7fb1c90710d40e4664c25ed5f5faf3350768745a401c445750eb5ecc307), slot 8, the shell only:
+[Machines](terse:9736a689caf4ca7a56bd8e3fe809331d9340adc4af631d7fac4f7b85014a9450), slot 8, the shell only:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -278,7 +278,7 @@ The content device, slot 4 (see [blobs](terse:254bc5cea2bed72326d852dbf7bc378513
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 
-[The 3D vector display](terse:e9301f1ea0cbd8e71b089a9528f026fd4fd09b21c354031463e9cab26bd28b23), slot 9:
+[The 3D vector display](terse:8e8ff8d9caad1d25d52a6d4fd5fe4fe50896d5da0707d38a31c30ce339fafad7), slot 9:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

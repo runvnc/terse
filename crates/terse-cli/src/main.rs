@@ -18,7 +18,7 @@ const USAGE: &str = "usage:
   terse run <image|id> [--frames N] [--dump [--dump-vectors] [--dump-page]] [--events <file>] [--relay ws://...]
             [--store <dir>] [--config <dir>] [--data <dir>] [--consent allow|deny] [--hash] [--hash-every N] [--bench]
             [--save-state <file>] [--load-state <file>] [--record <file>] [--profile reading|program] [--with <slot>]...
-            [--without <slot>]... [--audio-out <file.wav>]
+            [--without <slot>]... [--audio-out <file.wav>] [--work]
   terse run <image> --replay <file> [--frames N] [--dump ...] [--hash] [--hash-every N] [--bench] [--save-state <file>]
             [--audio-out <file.wav>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
@@ -100,6 +100,8 @@ image:<image id>; without one, `records list` lists every owner.
 `<counter> <hash>` after every frame that leaves the frame counter at a multiple of N (from
 reset: after the first N frames, 2N frames, ...; a frame that stops the machine counts);
 --bench prints the emulation time per frame (p50, p99, max) and the multiple of real time.
+--work prints, for each machine, the most its displays asked of the host in any frame (PERFORMANCE.md R10):
+the 2D list's filled area and stroke ink, the 3D list's ink, length, segments and faces, before the caps.
 --save-state writes the machine's snapshot (STATE.md 4) to <file> after the last frame; --load-state
 starts the machine from the snapshot in <file> instead of from reset (its image: <image|id> if given, else
 the one the snapshot names, by ID); its hash is then the hash at the moment of the snapshot. Not with
@@ -391,7 +393,7 @@ fn parse_slot(s: &str) -> Result<u8, String> {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-all", "--bench", "--shell"])?;
+    let args = Args::parse(args, &["--dump", "--dump-vectors", "--dump-page", "--hash", "--hash-all", "--bench", "--shell", "--work"])?;
     if args.has("--replay") {
         return replay(&args);
     }
@@ -421,6 +423,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--with",
         "--without",
         "--audio-out",
+        "--work",
     ])?;
     if (args.has("--dump-vectors") || args.has("--dump-page")) && !args.has("--dump") {
         return Err("--dump-vectors and --dump-page need --dump".into());
@@ -563,10 +566,26 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     let mut stopped = None;
     let mut times = Vec::new();
     let mut audio = AudioOut::new(&args);
+    // --work: the most each machine's displays asked of the host in a frame.
+    let mut work: std::collections::BTreeMap<String, terse_core::worst::Work> = Default::default();
     for _ in 0..frames.unwrap_or(DEFAULT_FRAME_CAP) {
         let start = std::time::Instant::now();
         headless.frame(&mut system);
         audio.frame(&mut system);
+        if args.has("--work") {
+            let screens = system.scene((0.0, 0.0)).map_or(0, |s| s.view.screens);
+            let mut note = |name: String, m: &Machine, screens: u8| {
+                let w = terse_core::worst::Work::of(m, screens);
+                let e = work.entry(name).or_default();
+                *e = e.max(w);
+            };
+            note("0 shell".into(), system.shell(), screens);
+            for (h, c) in system.children() {
+                if let Some(m) = &c.machine {
+                    note(format!("{h} {}", c.title), m, 0);
+                }
+            }
+        }
         stopped = system.stopped();
         if args.has("--bench") {
             times.push(start.elapsed());
@@ -589,6 +608,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         eprintln!("terse: stopped after {DEFAULT_FRAME_CAP} frames without an exit");
     }
     audio.finish()?;
+    for (name, w) in &work {
+        eprintln!("terse: work: {name}: {w}");
+    }
     finish(&args, &system, stopped, &mut times)
 }
 

@@ -9,7 +9,8 @@
  * the state hash every 10 frames (expected-hashes.txt, STATE.md), which also
  * covers what the program cannot see (the palette, the display list, the
  * registers). After the checks comes a stress phase (full-budget frames that
- * rewrite every cell and submit a new 16,384-byte display list each frame),
+ * rewrite every cell and submit a new 16,384-byte display list each frame,
+ * at the ink cap: a worst legal case, SPEC §vector.ink-cap),
  * then the page device, then the results screen. Esc exits with the number
  * of failed sections.
  *
@@ -903,28 +904,27 @@ static const uint8_t showcase[] = {
     0x07, R16(64),                      /* a disc in the top left corner, partly off screen */
 };
 
-/* The fill cap (SPEC §vector.fill-cap), after the showcase's own fills (93,128 square
- * units): three full-screen rectangles fit (1,014,728 in all); the fourth
- * would pass 1,228,800 and is not drawn, nor is the small disc after it,
- * which would fit; the line and the circle after them are drawn. The two
- * shapes that must not be drawn are opaque red. */
+/* The ink cap (SPEC §vector.ink-cap), after the showcase's own ink (55,289
+ * square units): a full-screen rectangle (153,600) and a line across the
+ * screen one unit wide ((9,920 + 16) x 64 / 256 = 2,484) fit, 211,373 in
+ * all; a second full-screen rectangle would pass 230,400 and is not drawn,
+ * nor is anything after it: the small disc, which would fit, and the
+ * circle. The shapes that must not be drawn are opaque red. */
 static const uint8_t capdemo[] = {
     0x03, XY(0, 0),
     0x04, XY(0, 0),
     0x01, 0x30, 0x30, 0x60, 0x20,
     0x08, XY(10240, 7680),
-    0x08, XY(10240, 7680),
-    0x08, XY(10240, 7680),
-    0x01, 0xFF, 0x00, 0x00, 0xFF,
-    0x08, XY(10240, 7680),              /* dropped: over the cap */
-    0x04, XY(5120, 6400),
-    0x07, R16(256),                     /* dropped: the cap is shut */
     0x01, 0xFF, 0xFF, 0x00, 0xFF,
     0x02, 16,
     0x04, XY(160, 7520),
-    0x05, XY(10080, 7520),              /* drawn: lines are not capped */
+    0x05, XY(10080, 7520),              /* drawn: within the cap */
+    0x04, XY(0, 0),
+    0x01, 0xFF, 0x00, 0x00, 0xFF,
+    0x08, XY(10240, 7680),              /* dropped: over the cap */
     0x04, XY(5120, 6400),
-    0x06, R16(512),                     /* drawn: circles are not capped */
+    0x07, R16(256),                     /* dropped: the list is cut */
+    0x06, R16(512),                     /* dropped: the list is cut */
 };
 
 static const uint8_t list_end[] = {
@@ -942,7 +942,7 @@ static const uint8_t cutoff[] = {
 
 static uint8_t small_list[512];
 
-/* The results screen's list: showcase, fill cap, end. */
+/* The results screen's list: showcase, ink cap, end. */
 static uint32_t build_final(uint8_t *p)
 {
     uint8_t *s = p;
@@ -1687,7 +1687,7 @@ static void t_content(void)
 
 #define STRESS_START 48 /* the content checks end at about frame 45 */
 #define STRESS_A 30     /* frames of list A: mixed shapes */
-#define STRESS_B 30     /* frames of list B: the fill cap's worst legal case */
+#define STRESS_B 30     /* frames of list B: the ink cap's worst legal case */
 
 static uint32_t rnd_state = 0x2545F491;
 
@@ -1717,8 +1717,8 @@ static uint32_t rx(void) { return 1024 + (rnd() & 8191); }
 static uint32_t ry(void) { return 1792 + (rnd() & 4095); }
 
 /* List A: groups of colour, width, move, line, rectangle, triangle, move and
- * 30 concentric circles and discs, then End bytes to 16,384. The fill cap
- * stops the discs and rectangles after the first few groups. */
+ * 30 concentric circles and discs, then End bytes to 16,384. The ink cap
+ * (SPEC §vector.ink-cap) stops the list after the first few groups. */
 static void build_a(uint8_t *l)
 {
     uint8_t *p = l;
@@ -1759,13 +1759,15 @@ static void build_a(uint8_t *l)
     memset(p, 0, 16384 - (p - l));
 }
 
-/* List B, the worst legal fill: three discs that cover the screen and a
- * rectangle 639 x 480 units (1,228,320 square units of fill, just under the
- * cap of 1,228,800, all drawn), then the rest of the 16,384 bytes in lines
- * of the greatest width (255, 16 units) zig-zagging across the whole
- * screen: 3,267 lines, each about 640 x 16 units, about 108 screens of
- * area in all (lines are not capped). Translucent, so the host must blend
- * every one. */
+/* List B, the worst legal list (SPEC §vector.ink-cap): a disc whose square
+ * covers the screen (153,600 square units of ink) and a rectangle over
+ * the screen's top half (76,800), together the cap of 230,400 (a little less
+ * when the origin has moved the rectangle partly off the screen), all
+ * drawn; filled shapes are what costs the reference host most per unit of
+ * ink. Then the rest of the 16,384 bytes in lines of the greatest width
+ * (255, 16 units) zig-zagging across the whole screen: 3,264 lines, about
+ * 110 screens of strokes, none of which is drawn, as each is over the cap.
+ * Translucent, so the host must blend every pixel it draws. */
 static void build_b(uint8_t *l)
 {
     uint8_t *p = l;
@@ -1780,16 +1782,14 @@ static void build_b(uint8_t *l)
     p = put8(p, 0x04);
     p = put16(p, 5120);
     p = put16(p, 3840);
-    for (int k = 0; k < 3; k++) {
-        p = put8(p, 0x07);
-        p = put16(p, 0xFFFF);
-    }
+    p = put8(p, 0x07);
+    p = put16(p, 0xFFFF);
     p = put8(p, 0x04);
     p = put16(p, 0);
     p = put16(p, 0);
     p = put8(p, 0x08);
-    p = put16(p, 10224);
-    p = put16(p, 7680);
+    p = put16(p, 10240);
+    p = put16(p, 3840);
     p = put8(p, 0x01);
     p = put8(p, 0x40);
     p = put8(p, 0xA0);

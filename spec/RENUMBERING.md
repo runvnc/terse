@@ -46,7 +46,7 @@ sound in their documents.
 | 10.1 | §vector.coordinates | `SPEC.md` | Coordinates |
 | 10.2 | §vector.calls | `SPEC.md` | Calls |
 | 10.3 | §vector.list | `SPEC.md` | Display list |
-| 10.4 | §vector.fill-cap | `SPEC.md` | Fill cap |
+| 10.4 | §vector.ink-cap | `SPEC.md` | Ink cap (was Fill cap) |
 | 10.5 | §vector.layers | `SPEC.md` | Layers |
 | 10.6 | §vector.phosphor | `SPEC.md` | Phosphor style |
 | 10.7 | §vector.determinism | `SPEC.md` | Determinism |

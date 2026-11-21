@@ -24,6 +24,7 @@ pub mod text;
 pub mod vector;
 pub mod vector3;
 pub mod wide;
+pub mod worst;
 
 pub use content::{Completion, Outcome, Request, RequestKind};
 pub use cpu::{Cpu, Fault, FaultKind, RAM_BASE, RAM_INSTRUCTION_COST, ROM_BASE};

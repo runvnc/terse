@@ -59,21 +59,18 @@ Rules:
 
 ## Outlines
 
-In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. A rectangle's lines go from the current point (x0, y0) to (x1, y0), (x1, y1), (x0, y1) and back; a triangle's from the current point to the first point, the second, and back. The page's figures are outlined too. Outlines are not limited by the fill cap.
+In the phosphor style, and with fill mode 1, nothing is filled: a disc is drawn as a circle outline of the same radius, a rectangle as the four lines between its corners, and a triangle as the three lines between its points, each with the width in effect at that command. A rectangle's lines go from the current point (x0, y0) to (x1, y0), (x1, y1), (x0, y1) and back; a triangle's from the current point to the first point, the second, and back. The page's figures are outlined too. Outlines count against the ink cap like lines.
 
-## The fill cap
+## The ink cap
 
-When filled shapes are filled (the clean style with fill mode 0), the area they cover in one list is limited. Each disc, rectangle and triangle, in list order, counts the area of its bounding box:
+How much one list makes a host draw is limited, so that no list can make a frame slow. Each shape drawn counts its ink, in square screen units, in list order, with coordinates resolved as above (origin added) and w the width in sixteenths:
 
-- a disc: the square from (x - r, y - r) to (x + r, y + r), computed without wrapping to 16 bits;
-- a rectangle: the rectangle itself;
-- a triangle: the smallest axis-aligned box holding its three points;
+- a filled shape drawn filled (clean style, fill mode 0): half its bounding box. The box is a disc's square from (x - r, y - r) to (x + r, y + r) (computed without wrapping), a rectangle itself, or a triangle's smallest axis-aligned box, clipped to the screen (0 to 10240 by 0 to 7680); the ink is its width times its height in sixteenths, divided by 512, rounded up;
+- a line or circle outline, and each outline a filled shape becomes: the smaller of its stroke, (L + w) x (w + 48), and its box grown by (w + 48) / 2 (rounded down) on every side and clipped to the screen, in sixteenths, divided by 256, rounded up. L is |x1 - x0| + |y1 - y0| for a line, 8 x r for a circle; the box is a line's two ends, or a circle's square.
 
-with coordinates resolved as above (origin added). The box is clipped to the screen (0 to 10240 by 0 to 7680), and its area in square screen units is its width times its height in sixteenths, divided by 256 and rounded up.
+The total starts at 0 for each list. A shape whose ink would take it above 3/4 x 640 x 480 = 230,400 is not drawn, and neither is anything after it in the list. What is drawn depends only on the list, the style and the fill mode.
 
-The running total starts at 0 for each list. A filled shape whose area would take the total above 4 x 640 x 480 = 1,228,800 is not drawn, and neither is any filled shape after it in the list. Lines and circle outlines are still drawn. A shape that is not drawn does not count.
-
-Worked numbers: a rectangle covering the whole screen counts 10240 x 7680 / 256 = 307,200, so four of them fill the cap exactly and a fifth filled shape, however small, is not drawn. A disc of radius 160 (10 units) centred at (0, 0) has the box (-160, -160) to (160, 160), clipped to 0..160 by 0..160: 25,600 / 256 = 100. A rectangle 17 by 17 sixteenths counts 289 / 256, rounded up to 2.
+Worked numbers: a rectangle over the whole screen counts 10240 x 7680 / 512 = 153,600; one over the top half 76,800, so the two make the cap exactly. A line across the screen one unit wide counts (10240 + 16) x 64 / 256 = 2,564. A disc of radius 160 at (0, 0) has the box 0..160 by 0..160 on the screen: 25,600 / 512 = 50. The 3 units added to a stroke's width are the edge a host smooths, which costs as much as the stroke itself on a thin line; a list at the cap takes the reference host about a third of a frame to draw on one thread.
 
 ## Layers
 
@@ -88,14 +85,14 @@ So terminal text is always drawn over vector shapes, and a cell's background col
 
 ## What a host must draw
 
-In either style a host must draw each command the list draws, and nothing after its end, where the list puts it (coordinates with the origin added, the width in effect, round ends), in its colour and opacity; filled shapes filled within the fill cap in the clean style with fill mode 0, and as outlines otherwise; nothing outside the screen. In the clean style shapes are drawn in list order, each over the earlier ones, and the layers in the order above. In the phosphor style it must also do what the next section requires. The rest of how the display looks is the host's.
+In either style a host must draw each command the list draws, and nothing after its end, where the list puts it (coordinates with the origin added, the width in effect, round ends), in its colour and opacity; filled shapes filled in the clean style with fill mode 0, and as outlines otherwise, within the ink cap; nothing outside the screen. In the clean style shapes are drawn in list order, each over the earlier ones, and the layers in the order above. In the phosphor style it must also do what the next section requires. The rest of how the display looks is the host's.
 
 ## The phosphor style
 
 The phosphor style asks for the look of a vector monitor or oscilloscope tube: light on a black screen. Part of it changes what is visible, and every host must do it:
 
 - The screen is black: cell background colours and the page's background are not drawn. A program in this style may leave any background colours in its cells.
-- Nothing is filled: shapes and the page's figures are outlines, and the fill cap does not apply.
+- Nothing is filled: shapes and the page's figures are outlines, which count against the ink cap.
 - The terminal's characters and cursor are drawn in their foreground colour, and the page's text and figures in their colours, on the black screen with the shapes.
 - Nothing added for the look may hide or blur what is shown: text stays as legible as in the clean style.
 
@@ -110,7 +107,7 @@ Not a requirement, the reference host's look: `terse-host` draws a thin, sharp b
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the fill cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:{charges}).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the ink cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:{charges}).
 
 ## State
 

@@ -974,24 +974,43 @@ point (0, 0).
   from the current point to the first given point, to the second, and
   back. The page's figures are outlined too (§page.layout).
 
-### §vector.fill-cap Fill cap
+### §vector.ink-cap Ink cap
 
-When filled shapes are filled (the clean style with fill mode 0), the area
-they cover in one list is limited. Each disc, rectangle and triangle, in list
-order, counts the area of its bounding box: for a disc the square from
-(x − r, y − r) to (x + r, y + r), for a rectangle the rectangle itself, for a
-triangle the smallest axis-aligned box holding its three points, with
-coordinates as resolved in §vector.list. A disc's square is computed from
-its resolved centre without wrapping (x − r and x + r may lie beyond the
-16-bit range). The box is clipped to the screen
-(0 to 10240 by 0 to 7680), and its area in square screen units is its width
-times its height in sixteenths, divided by 256 and rounded up.
+How much one list makes a host draw is limited, so that no list can make a
+frame slow (§responsiveness). Each shape the list draws counts its **ink**,
+in square screen units, in the order it is drawn, with coordinates as
+resolved in §vector.list and w the width in effect in sixteenths:
 
-The running total starts at 0 for each list. A filled shape whose area would
-take the total above 4 × 640 × 480 = 1,228,800 is not drawn, and neither is
-any filled shape after it in the list; lines and circle outlines are still
-drawn. A shape that is not drawn does not count. Outlines (§vector.list) are
-not limited.
+- **A filled shape drawn filled** (the clean style with fill mode 0): half
+  the area of its bounding box, the box being for a disc the square from
+  (x − r, y − r) to (x + r, y + r), computed from its resolved centre
+  without wrapping (x − r and x + r may lie beyond the 16-bit range), for a
+  rectangle the rectangle itself, for a triangle the smallest axis-aligned
+  box holding its three points. The box is clipped to the screen (0 to
+  10240 by 0 to 7680); its ink is its width times its height in
+  sixteenths, divided by 512 and rounded up.
+- **A line or circle outline**, including each outline that a filled shape
+  becomes in the phosphor style or fill mode 1 (§vector.list): the smaller
+  of its stroke, (L + w) × (w + 48), and the area of its box grown by
+  ⌊(w + 48) / 2⌋ on every side and clipped to the screen, in sixteenths,
+  divided by 256 and rounded up. For a line from (x0, y0) to (x1, y1), L =
+  |x1 − x0| + |y1 − y0| and the box is the one its two ends make; for a
+  circle of radius r about (x, y), L = 8 × r and the box is from (x − r,
+  y − r) to (x + r, y + r). All of it is computed without wrapping, in
+  integers.
+
+The running total starts at 0 for each list. A shape whose ink would take
+the total above ¾ × 640 × 480 = 230,400 is not drawn, and neither is any
+shape after it in the list. A shape that is not drawn does not count. So
+what a list draws depends only on the list, the style and the fill mode,
+and is the same on every host.
+
+The count stands for a host's work, not for what is seen: a box stands for
+the pixels a filled shape may touch, and the 3 units added to a stroke's
+width for the edge a host smooths, which costs as much as the stroke on a
+thin line. Measured on the reference host (`PERFORMANCE.md` R10), a list
+at the cap costs about one third of a frame to draw, whatever it is made
+of.
 
 ### §vector.layers Layers
 
@@ -1027,9 +1046,9 @@ host's. In either style a host must draw:
   origin added (§vector.coordinates), lines and circle outlines of the
   width in effect with round ends, a circle outline centred on its radius;
 - each in the colour in effect at its command, with its opacity;
-- filled shapes filled, within the fill cap (§vector.fill-cap), in the
-  clean style with fill mode 0, and otherwise as the outlines of
-  §vector.list (the page's figures likewise, §page.layout);
+- filled shapes filled in the clean style with fill mode 0, and
+  otherwise as the outlines of §vector.list (the page's figures likewise,
+  §page.layout), each command within the ink cap (§vector.ink-cap);
 - nothing outside the screen;
 - in the clean style, shapes in list order, each over the earlier ones,
   and the layers in the order of §vector.layers: a later shape covers an
@@ -1056,7 +1075,8 @@ is the host's.
   background colours in its cells; drawn, they could put its text on a
   background it never meant to show.
 - Nothing is filled: the shapes are drawn as outlines (§vector.list), and
-  so are the page's figures (§page.layout). The fill cap does not apply.
+  so are the page's figures (§page.layout). The outlines count against
+  the ink cap (§vector.ink-cap).
 - The terminal's characters and cursor are drawn in their foreground
   colour, and the page's text and figures in their colours, on the black
   screen with the shapes.
@@ -1167,9 +1187,10 @@ host's, and two conforming hosts may differ in it.
 
 `programs/conform` is a test image with a recorded input script and the
 expected state hash every 10 frames. It checks itself where it can (one PASS
-or FAIL line per section) and its last phase is a deliberate worst case for a
-host (full-budget frames, every cell rewritten, maximum-size display lists at
-the fill cap), for measuring how a host holds its frame rate.
+or FAIL line per section) and its stress phase is a worst legal case for a
+host (full-budget frames, every cell rewritten, 16,384-byte display lists
+at the ink cap, §vector.ink-cap), for measuring how a host holds its frame
+rate: by construction it cannot ask more of a host than any legal program.
 
 A host that offers only the reading profile (§profiles) cannot run
 `programs/conform`, which requires devices 3 and 9. `programs/conform-reading`
@@ -1193,6 +1214,20 @@ definition): content that needs no network, and the frame rate.
 instruction (§charges), so a host that keeps up with a frame of
 instructions runs every program at 60 frames a second: no program can
 make a frame slow.
+
+**What the caps guarantee.** A device call hands work to the host that
+the budget does not see: drawing, hiding lines, laying out text, mixing.
+That work is bounded per frame by each device's limits, all in
+deterministic units: the terminal's 2,400 cells (§terminal); the 2D
+display's ink cap (§vector.ink-cap); the 3D display's caps, its ink cap
+among them (§vector3d.caps); the page's figure caps and its layout outside
+the frames (§page.layout); the sound device's 16 voices (§sound). They are
+set so that the most a machine can ask of the reference host in one frame,
+with every device at its cap at once, takes it no more than one frame's
+time on one thread (`PERFORMANCE.md` R10, with how it is measured). A
+host may draw more than a device requires (§vector.presentation's look,
+glow and afterglow, fonts), but should shed that extra work rather than
+let it make a frame slow.
 
 **What a host must also do**, stated in frames so that any host can be
 tested (at 60 frames a second a frame is 16.7 ms):
@@ -1235,7 +1270,9 @@ The budget and the charges:
 
 What one frame or one list may make a host draw:
 
-- the 2D display's fill cap, 4 × 640 × 480 square units (§vector.fill-cap).
+- the 2D display's ink cap, ¾ × 640 × 480 = 230,400 square units, and
+  how ink is counted: half a filled shape's box, a stroke's width plus 3
+  units (§vector.ink-cap).
 
 The sizes of what a program hands a device:
 
@@ -1255,11 +1292,10 @@ versions.
 - Font selection, combining marks and complex scripts in the terminal
   (with full text, §terminal.text).
 - Device 5.
-- A limit on the area covered by lines and circle outlines, including the
-  outlines that filled shapes become in the phosphor style and fill mode 1
-  (§vector.list). The fill cap does not apply to them, so a legal list of about 3,000 maximum-width lines
-  across the whole screen still costs a host far more fill than four
-  screens.
+- A bound on what a system of machines asks of a host together: each
+  machine's lists are capped on their own (§vector.ink-cap,
+  §vector3d.caps), so a shell and 8 machines whose pictures all cover the
+  screen can ask 9 times one machine's worst (`PERFORMANCE.md` R10).
 
 Each device document lists what is not yet specified for its device.
 

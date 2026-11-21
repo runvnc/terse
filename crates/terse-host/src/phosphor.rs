@@ -139,6 +139,11 @@ pub const EPSILON: f32 = 0.0015;
 pub const SUBSTEPS: u32 = 4;
 pub const MAX_SUBSTEPS: u32 = 16;
 pub const SMEAR_SPACING: i32 = 16;
+/// The most ink (SPEC §vector.ink-cap) the shapes of one frame may draw
+/// and still be smeared: a quarter of the screen, above what the bundled
+/// programs draw (holo's city, about 51,000), so that the look that
+/// multiplies the work of drawing is shed when a list is heavy.
+pub const SMEAR_INK_MAX: u64 = 640 * 480 / 4;
 /// Most deposit instances in one frame.
 pub const DEPOSIT_BUDGET: usize = crate::display::MAX_SHAPES * SUBSTEPS as usize;
 /// A shape that jumped further than this between frames (in sixteenths of
@@ -584,7 +589,9 @@ fn between(prev: &Primitive, cur: &Primitive, t: f32) -> Option<Primitive> {
 pub fn deposits(prev: &[Primitive], cur: &[Primitive], smear: bool, fast_decay: f32, slow_decay: f32, out: &mut Vec<Deposit>) {
     out.clear();
     let smear = smear && prev.len() == cur.len() && prev != cur;
-    if !smear {
+    // Shed under load: a frame that draws more ink than SMEAR_INK_MAX gets
+    // no smear (each smeared shape is drawn again 3 to 15 times).
+    if !smear || cur.iter().map(terse_core::vector::stroke_ink).sum::<u64>() > SMEAR_INK_MAX {
         return;
     }
     let (fast, slow) = (SMEAR * DEPOSIT * FAST_SHARE, SMEAR * DEPOSIT * (1.0 - FAST_SHARE));

@@ -13,7 +13,8 @@ with the method:
 - a reading client: `NETWORK.md` section 6.1 (and section 2);
 - a node and a reader on the local socket: `LOCAL.md` section 4.5;
 - a machine host: `SPEC.md` §responsiveness and `spec/content.md`
-  §content.submit.
+  §content.submit; what a frame may ask of a host's drawing: `SPEC.md`
+  §vector.ink-cap and `spec/vector3d.md` §vector3d.caps.
 
 **Requirements and targets.** A requirement is stated in units that any
 implementation can be tested against on any machine and network: frames
@@ -43,11 +44,22 @@ spread, from `terse perf` on a release build.
 | Machine host | R7 | An input event received before a frame begins is in that frame's input | frames | by construction in the reference's frame loop; scripted input (`--selftest`) |
 | Machine host | R8 | Frames run at 60 a second while the host keeps up, never faster to catch up; the frame loop never waits on the network, the user or storage | frames a second | `programs/conform-perf` (frames counted against the clock over four seconds; `terse perf` M10) |
 | Machine host | R9 | A held image a shell starts runs its first frame within 2 frames of the start call | frames | `terse perf` M6 |
+| Machine host | R10 | The host work a frame can demand is bounded: what a machine's displays make a host draw in a frame is within the caps, counted in square screen units of ink from the lists alone (the 2D list at most 230,400, `SPEC.md` §vector.ink-cap; the 3D list at most 153,600, with its segment, face and faces × segments caps, §vector3d.caps), the terminal's 2,400 cells and the page's lines in view (its layout outside the frames, §page.layout) | square screen units; cells | `terse perf` W rows: each device's worst legal list, built to ask far more than the cap, is drawn only up to it (PASS or FAIL), and its drawing time on one thread is a target; `cargo test -p terse-core` (`vector`, `vector3`: the counts and where the lists are cut) |
 
 What the machine already guarantees needs no row: a frame's work for a
 program is bounded by the budget (`SPEC.md` §frames, §charges), so no
 program can make a frame slow on a host that keeps up with a frame of
-instructions.
+instructions. R10 is the same for the work a call hands to the host,
+which the budget does not see.
+
+**R10's calibration** (information, not a requirement): the caps are set
+so that every device at its cap at once, the worst frame a legal machine
+can ask for, takes the reference software renderer (`terse-host
+--renderer software --threads 1`, in its default picture of 880 × 660
+pixels) on the reference machine below no more than one frame, 16.7 ms
+(§4). Each device alone takes at most about 7 ms, so a host 4 times
+slower than the reference falls at most a few frames behind in the very
+worst case, and keeps up with every bundled program.
 
 ## 2. Running the tests
 
@@ -61,7 +73,7 @@ its rows):
 `terse perf` runs every scenario headless, in temporary directories,
 with relays it starts on ephemeral loopback ports (never 7878, never your
 config, cache or data directories), and prints one line per scenario:
-its id, what it measures, the measurement, the requirement (R1–R9, §1)
+its id, what it measures, the measurement, the requirement (R1–R10, §1)
 or target (T), and PASS, FAIL, `info` (a target) or `skipped` (terse-host or the Go
 reader not found). It exits with 1 if a requirement failed. `--only
 machine|client|host` runs one group, `--runs n` changes the 5 runs of the
@@ -122,7 +134,8 @@ requirement passed.
 | G5 | the same through the Go node on the local socket: `--dump`, `list` | 1.9 ms (1.8–2.3), 2.6 ms | ≤ 50 ms |
 | H1 | `terse-host` start to hello's first frame drawn (software, offscreen) | 173 ms (168–1,556: the slow run read the fonts from disk) | ≤ 500 ms |
 | H2 | fetch's slowest frame (its CJK and Hangul line, 50 ms after start) | 93 ms (91–104) | ≤ 150 ms |
-| H3 | programs/conform's frames 60–660 on the software renderer, 1 / 12 threads | p99 1,678 / 361 ms (p50 0.01 ms) | none: a deliberate worst case |
+| H3 | programs/conform's stress frames 49–108 on the software renderer, 1 / 12 threads | p50 6.4 / 1.6 ms, max 8.7 / 2.3 ms (before the ink caps: p99 1,678 / 361 ms) | ≤ 16.7 ms |
+| W | each device's worst legal frame, and all of them at once (§4) | every cap held (PASS); 1 thread at most 6.5 ms a device, 15.8 ms all at once | ≤ 16.7 ms |
 
 The machine rows' milliseconds are those of the content service; the
 frames are what a program sees. Drawing times of the renderers for the
@@ -147,7 +160,106 @@ for a held blob, still within the frame). A poll used to wait 5 ms more
 after the last message it received, which added 5 ms to every reply
 (M2: 12 ms before, 6 ms now).
 
-## 4. Not yet specified
+## 4. What a frame can ask of a host (R10)
+
+Measured 2026-11-21 on the reference machine, release build, software
+renderer at 880 × 660 (the default picture of `--bench-render`), GPU
+renderer on the RTX 2060, load average 2 to 5 (other work running): the
+median of 3 runs of 30 frames (the slowest scenarios before the caps: 1
+run of 2 frames). `terse perf --only host` runs the W rows; `terse perf
+--write-worst <dir>` writes their images (`terse_core::worst`, made
+without a compiler) and `terse run --work` prints the most any machine's
+displays asked for in a frame.
+
+**Before the ink caps** (the fill cap of 4 screens of filled shapes, the
+3D length cap of 65,536 units; nothing on lines and outlines), the worst
+legal frames found, drawing time per frame:
+
+| Device | Worst legal list | 1 thread | 12 threads | GPU | What bounded it |
+|---|---|---|---|---|---|
+| 2D | 5,454 circle outlines 16 units wide (3 bytes each) | 1,854 ms | 294 ms | 43 ms | nothing (lines and outlines had no cap) |
+| 2D | 3,267 lines 16 units wide across the screen (conform's list B) | 1,217 ms | 204 ms | 3.5 ms | nothing |
+| 2D | fill mode 1: 3,275 screen-sized rectangles as 16-unit outlines | 3,112 ms | 788 ms | 9.0 ms | nothing (outlines were not under the fill cap) |
+| 2D | phosphor style: the circles; the lines | 57,513 ms; 21,901 ms | 7,215; 3,141 ms | 324; 113 ms | nothing |
+| 2D | screen-sized translucent discs; rectangles, at the fill cap | 32.6 ms; 16.9 ms | 7.1; 2.9 ms | 0.5 ms | fill cap, 4 screens |
+| 3D | lines 16 units wide up to the length cap | 39.6 ms | 7.3 ms | 0.5 ms | length, 65,536 units |
+| 3D | 16,384 points 16 units wide | 20.5 ms | 4.9 ms | 1.1 ms | segments, 16,384 |
+| 3D | phosphor: those lines; points | 699 ms; 1,291 ms | 121; 180 ms | 5.4; 9.2 ms | the same |
+| 3D | 4 Surfaces of the whole screen | 20.6 ms | 3.9 ms | 1.2 ms | 4 Surfaces |
+| 3D | hidden lines: 256 faces × 512 segments; 8 × 16,384 | 2.1; 5.0 ms | 1.4; 2.0 ms | 1.0; 0.5 ms | faces × segments, 131,072 |
+| Terminal | every cell rewritten each frame, basic text | 2.7 ms | 0.7 ms | 0.4 ms | 2,400 cells |
+| Terminal | full text: 1,200 CJK characters never shown before, each frame | 23 ms | 21 ms | 31 ms | 2,400 cells (not the font work) |
+| Page | 65,536 bytes of size-6 text, scrolled every frame | 3.6 ms | 1.8 ms | 1.8 ms | lines in view; layout outside the frames |
+
+Sound needs no row: its mixing is the machine's own, inside the frame's
+budget (16 voices, 800 pairs a frame, `spec/sound.md` §sound.render),
+not host work. The GPU renderer was never the problem (at most 0.3 s,
+for 2D phosphor circles); the software renderer took up to a minute.
+
+**The caps.** One unit for every display, square screen units of
+**ink**, computed from the list alone: a filled shape half its box, a
+stroke (L + w) × (w + 3 units) or its box on the screen if smaller (the
+3 units are the edge a host smooths: before they were added, hair lines
+cost the reference three times what wide ones did per unit counted), a
+Surface its box on the glass. Per unit of ink the reference costs about
+the same whatever the list is made of: 4.5 to 6.5 ms per 230,400 units
+on one thread. The caps: a 2D list ¾ of a screen (230,400), a 3D list ½
+(153,600), with the 3D display's earlier caps kept (the length cap can no
+longer be reached: a segment's ink is more than 3 times its length). A
+list is cut where it passes its cap, the convention the fill cap and the
+3D caps already had, so nothing is charged and the machine's state does
+not change. The software renderer also takes the inside of a wide line
+or disc as covered without measuring each pixel (the same picture:
+`soft::shapes` tests it pixel by pixel), which halved its cost per unit
+for wide strokes.
+
+**After**, the same worst cases, each asking 2 to 3,600 times its cap
+and drawn only up to it:
+
+| Device | Worst legal list | 1 thread | 12 threads | GPU |
+|---|---|---|---|---|
+| 2D | half-screen translucent rectangles to the cap | 6.5 ms | 1.5 ms | 0.3 ms |
+| 2D | discs to the cap | 5.4 ms | 1.1 ms | 0.3 ms |
+| 2D | lines 1/16, 2 and 16 units wide; circles; outlines | 4.5, 3.8, 3.4; 3.5; 4.5 ms | 1.0 to 2.1 ms | 0.3 ms |
+| 3D | points 16 units wide; behind 256 faces; lines | 3.9; 4.1; 2.8 ms | 1.3; 1.4; 0.8 ms | 0.4 to 0.5 ms |
+| 3D | hidden lines, 256 faces; Surfaces to the cap | 1.2; 3.4 ms | 1.1; 1.4 ms | 0.6 ms |
+| Terminal, page | as above | 2.6, 3.4 ms | 0.8, 1.7 ms | 0.3, 1.5 ms |
+| **All at once** | terminal rewritten, page scrolled, 2D rectangles and 3D points behind faces at their caps | **15.8 ms** (15.8 to 16.2; slowest frame 16.6 to 17.7) | 4.1 ms | 1.9 ms |
+
+The bundled programs, the most their displays ask for in any frame
+(`terse run --work`) against the caps: sparks 187,843 of 230,400 (its
+red flash over the arena, half a screen of fill, with its sparks; about 40,000
+without the flash); sketch with a drawing it calls full, 130,037 (a
+drawing of fast strokes 60 units long, 480,767: its last strokes are not
+drawn, the one bundled program the 2D cap cuts); holo's city 50,615 and
+cockpit 95,745 (its Surfaces) of 153,600, its other scenes under 31,000;
+the shell's own lists in its gallery of 5 machines 9,020 (2D) and 56,296 (3D: its ring and labels; its Screens are not
+counted, below); reader, fetch, hello and tune draw no vector list.
+
+**Not bounded yet, by design or for a decision:**
+
+- *The look.* The phosphor style's glow, afterglow and smear are the
+  host's choice (`SPEC.md` §vector.phosphor) and are not counted: at the
+  caps the reference draws them in 20 to 30 ms (2D) and up to 81 ms (3D
+  points, each a glowing disc 80 pixels wide) on one thread, 5 to 22 ms
+  on 12. It already sheds the smear (3 to 15 more copies of each moving
+  shape) when a frame's lines pass a quarter of a screen of ink
+  (`phosphor::SMEAR_INK_MAX`, above holo's 51,000). A host must draw only
+  plain lines in the phosphor style, which cost what the clean style
+  does.
+- *Text in another script.* The terminal's 2,400 cells are bounded, but
+  a frame of 1,200 CJK characters the host has not drawn before costs it
+  23 ms (fonts found, glyphs rasterised) on any renderer. The work
+  depends on the host's fonts; a rule that lets a host show a new glyph
+  a few frames late, as the page may show a figure late, would bound it.
+- *A system of machines.* The caps are per machine: a shell and 8
+  machines whose pictures each cover the screen can ask 9 times one
+  machine's worst. A machine's picture costs in proportion to its area,
+  so tiles that share the screen cost one screen in all; the shell's
+  Screens (panels, about 5 ms per screen of panel on one thread) are not
+  counted as ink.
+
+## 5. Not yet specified
 
 - Presenting: the time from the end of a frame to its picture on the
   screen, and the frame time budget for drawing. The reference host's

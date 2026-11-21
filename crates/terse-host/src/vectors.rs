@@ -650,7 +650,7 @@ impl VectorLayer {
     /// Uploads the display lists, unless their generations and the eye say
     /// they are unchanged: the 2D list with `outlines` as `decode_outlines`
     /// gives it (the phosphor style, or fill off), otherwise as `decode`
-    /// does (with the fill cap), the same primitives as `Vector::shapes`;
+    /// does (within the ink cap), the same primitives as `Vector::shapes`;
     /// then the 3D list's segments (`VectorScene::shapes`).
     pub fn update(&mut self, queue: &wgpu::Queue, scene: &VectorScene, outlines: bool) {
         let key = scene.key(outlines);
