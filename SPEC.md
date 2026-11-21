@@ -72,8 +72,13 @@ document. A **program-profile host** (§profiles) implements:
   a program-profile host may leave out: no shaping, bidirectional text or
   font fallback is needed.
 
-What a host draws (fonts, smoothing, the phosphor style's glow) is up to
-it and is never machine state.
+What a host draws beyond what each device requires (fonts, smoothing, the
+phosphor style's look) is up to it and is never machine state. The vector
+display's requirements are in §vector.presentation: a minimal host may
+draw the phosphor style exactly as the clean style but for what
+§vector.phosphor requires of it (filled shapes and the page's figures as
+outlines, and a black screen: no cell or page backgrounds), with no glow
+and no afterglow, and ignore `persistence` (it still keeps the value).
 
 **A core on the device bus** (`DEVICES.md`) keeps less. Devices 2 and 3
 (and every other device but 1 and 8) are then separate driver programs,
@@ -915,7 +920,9 @@ right is (10240, 7680). Anything outside the screen is not shown.
   any part of the range is outside RAM.
 - **`clear`** empties the list.
 - **`style`** sets the display style: 0 clean, 1 phosphor (§vector.phosphor).
-- **`persistence`** sets the persistence, 0–255 (§vector.phosphor).
+- **`persistence`** sets the persistence, 0–255: how long the program
+  would like the phosphor style's afterglow to last, a hint a host may
+  ignore (§vector.phosphor).
 - **`fill`** sets the fill mode: 0 filled shapes are filled, 1 they are
   drawn as outlines (§vector.list).
 
@@ -1010,42 +1017,87 @@ A machine whose 3D list has Surfaces in effect (§vector3d.list) is drawn as
 §vector3d.presentation says: these layers, less the Surfaces' sources, then the
 Surfaces, then its 3D lines.
 
+### §vector.presentation What a host must draw
+
+The list says what is on the screen; how it looks beyond that is the
+host's. In either style a host must draw:
+
+- each command that §vector.list draws, and nothing after the point
+  where the list ends, where the list puts it: the coordinates with the
+  origin added (§vector.coordinates), lines and circle outlines of the
+  width in effect with round ends, a circle outline centred on its radius;
+- each in the colour in effect at its command, with its opacity;
+- filled shapes filled, within the fill cap (§vector.fill-cap), in the
+  clean style with fill mode 0, and otherwise as the outlines of
+  §vector.list (the page's figures likewise, §page.layout);
+- nothing outside the screen;
+- in the clean style, shapes in list order, each over the earlier ones,
+  and the layers in the order of §vector.layers: a later shape covers an
+  earlier one where it is opaque, and the terminal's characters cover
+  every shape;
+- in the phosphor style, what §vector.phosphor requires.
+
+Smoothing of edges, the exact colour of blended pixels and the last pixel
+of every shape are up to the host. In the phosphor style its look (glow,
+afterglow and the rest that §vector.phosphor lists) is the host's choice
+as well. None of it is machine state, and the program cannot observe it.
+
 ### §vector.phosphor Phosphor style
 
-In the phosphor style the whole screen imitates a vector monitor or
-oscilloscope tube:
+The phosphor style asks for the look of a vector monitor or oscilloscope
+tube: light on a black screen. Some of it changes what is visible, and a
+program written for the style relies on it; the rest is the look, which
+is the host's.
 
-- The screen is black: cell background colours are not drawn.
-- Shapes are drawn as outlines (§vector.list) and add light to what is
-  beneath them instead of covering it; where lines cross, the crossing is
-  brighter. Opacity acts as brightness. Hosts should make overlapping and
-  repeated lines add up to visibly brighter light, so a program can brighten
-  a line by drawing it more than once.
-- The terminal's characters and cursor are light on the same tube, in their
-  foreground colour, and so are the page's text and figures (as outlines),
-  in their colours; the page's background is not drawn. Text is not beam
-  light: it is there to be read, so a host should draw it in its own
-  colours and antialiasing, as sharp as in the clean style, and let it add
-  at most a little to the wide glow.
-- The beam is a thin, sharp line on a faint, wide glow. A host should give
-  it a bright core whose width follows the stated width but is never
-  thinner than about a pixel, and a glow that is dim but spreads far (the
-  halation of the glass), faint enough that the gaps between close lines
-  and inside letters stay dark.
-- Light lingers. What the current list and text show is drawn at full
-  brightness each frame; in addition, an afterglow of what was shown before
-  fades away: quickly at first, then with a dim tail that is multiplied by
-  persistence ÷ 256 each frame, down to black. With persistence 0 there is
-  no tail. Something that stays put does not grow brighter than about its
-  own light, and when a shape keeps its structure from one frame to the next
-  and only moves, its afterglow is a continuous smear rather than separate
-  copies.
+**What a host must do in the phosphor style**, besides §vector.presentation:
 
-The exact brightness, core width, glow, how much text adds to it, decay of
-the fast part, tone curve, tint and where an outline sits on a shape's edge
-are up to the host. The afterglow is part of how the host presents the
-display, not machine state, and the program cannot observe it. A host
-should let the user turn the afterglow off. In the clean style the persistence value has no effect.
+- The screen is black: the terminal's cell background colours and the
+  page's background are not drawn. A program in this style may leave any
+  background colours in its cells; drawn, they could put its text on a
+  background it never meant to show.
+- Nothing is filled: the shapes are drawn as outlines (§vector.list), and
+  so are the page's figures (§page.layout). The fill cap does not apply.
+- The terminal's characters and cursor are drawn in their foreground
+  colour, and the page's text and figures in their colours, on the black
+  screen with the shapes.
+- Whatever a host adds for the look must not hide or blur what the list
+  and the text show: text stays as legible as in the clean style.
+
+Where light overlaps, a host may add it, as a tube does (opacity then
+acts as brightness, and a crossing or a line drawn twice is brighter), or
+blend it as the clean style does, in the order of §vector.layers without
+the backgrounds.
+
+**The host's choice.** Everything else about the look: whether and how
+overlapping light adds up; brightness, tone curve and tint (a tube's
+colour); the beam's profile across its width, and how thin a line may get;
+glow, halo and bloom; afterglow and trails, and how the persistence
+shapes them; extra light where lines end (dwell); flicker, curvature and
+vignette; where an outline sits on a shape's edge. A host that draws the
+phosphor style as plain lines in the given colours on black, with no glow
+and no afterglow, conforms. The persistence is a hint, the afterglow the
+program would like (0 none, 255 the longest), and a host may ignore it; it
+is kept in the machine's state all the same (§vector.determinism). In the
+clean style it has no meaning. None of the look is machine state, and the
+program cannot observe it. A host that draws an afterglow should let the
+user turn it off.
+
+*Note, not a requirement: the reference host's look.* `terse-host` draws
+the beam as a thin, sharp line on a faint, wide glow: a bright core whose
+width follows the stated width but is never thinner than about a pixel,
+and a dim glow that spreads far (the halation of the glass) but leaves the
+gaps between close lines and inside letters dark. It adds overlapping
+light, so a program can brighten a line by drawing it more than once on
+that host. Text is not beam light there: it is drawn in its own colours
+and antialiasing, as sharp as in the clean style, and adds a little to the
+glow. Light lingers: what the current list and text show is drawn at full
+brightness each frame, and an afterglow of what was shown before fades
+quickly at first, then with a dim tail multiplied by persistence ÷ 256
+each frame, down to black (with persistence 0, no tail). Something that
+stays put grows no brighter than about its own light, and a shape that
+keeps its structure and only moves leaves a continuous smear rather than
+separate copies. A program may be written with this look in mind, but its
+picture should not depend on it: on another host it may be plain lines.
 
 ### §vector.determinism Determinism
 
@@ -1106,6 +1158,12 @@ An implementation conforms to profile 1 if:
   frame equals that of the reference implementation. The state, and a hash
   of it for comparing implementations, are defined byte for byte in
   `STATE.md`.
+
+Conformance is of the machine's state, not of pixels. What a host must
+draw is stated device by device (§terminal.presentation,
+§vector.presentation, §vector.phosphor, §vector3d.presentation, and each
+further device's document); everything else about how it looks is the
+host's, and two conforming hosts may differ in it.
 
 `programs/conform` is a test image with a recorded input script and the
 expected state hash every 10 frames. It checks itself where it can (one PASS

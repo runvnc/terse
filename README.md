@@ -1215,15 +1215,17 @@ the rest.
 
 ### Phosphor style
 
-`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) turns the whole screen into a vector
-monitor tube: the background is black (cell backgrounds are not drawn), shapes
-are outlines that add light instead of covering, and the terminal's text is light
-on the same tube. What the program shows now is drawn at full brightness each
-frame; an afterglow of earlier frames fades behind it, fast at first and then
-with a dim tail multiplied by persistence / 256 each frame
-(`vec_persistence(n)`, 160 after reset). The style, persistence and fill mode are
-machine state (in the state hash, STATE.md 1.7); the afterglow is not, and the
-program cannot see it.
+`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) asks for the look of a vector
+monitor tube. Every host must draw the background black (cell and page backgrounds
+are not drawn), shapes and the page's figures as outlines, and the text in its
+colours, legible; the look beyond that (light that adds up, glow, afterglow) is the
+host's choice, and a host that draws plain lines conforms. In `terse-host` the shapes
+add light instead of covering, and the terminal's text is light on the same tube.
+What the program shows now is drawn at full brightness each frame; an afterglow of
+earlier frames fades behind it, fast at first and then with a dim tail multiplied by
+persistence / 256 each frame (`vec_persistence(n)`, 160 after reset, a hint other
+hosts may ignore). The style, persistence and fill mode are machine state (in the
+state hash, STATE.md 1.7); the afterglow is not, and the program cannot see it.
 
 How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`): the
 aim is a real vector monitor or oscilloscope, a thin, sharp, nearly white-hot line
@@ -1281,8 +1283,8 @@ more than 3 pixels from it; a line drawn twice gives 1.5 times the light within
 0.91–0.92 (the earlier, narrow bloom left 0.29–0.45), and the strokes' peak is the
 clean style's within 1/255.
 
-A program can therefore brighten a line by drawing it more than once (SPEC §vector.phosphor);
-Sparks does that with its arena border and craft.
+A program can therefore brighten a line on `terse-host` by drawing it more than once (another
+host need not add light up, SPEC §vector.phosphor); Sparks does that with its arena border and craft.
 
 `--no-trails` turns the afterglow off, for anyone who finds it distracting;
 `--force-phosphor` shows any program this way. In the clean style none of this
@@ -1580,7 +1582,7 @@ appears, up to six. Until you start, a demo plays itself with six sweepers.
   the session, and the game is otherwise the same.
 
 In the phosphor style Sparks draws the arena border and the craft twice, so they
-shine brighter than the sparks (overdraw adds light, SPEC §vector.phosphor); the list is
+shine brighter than the sparks (overdraw adds light on `terse-host`, SPEC §vector.phosphor); the list is
 otherwise the same in both styles.
 
 The HUD (row 0) and the title and game-over boxes are terminal text on coloured
