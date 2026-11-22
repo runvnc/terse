@@ -538,7 +538,16 @@ impl Relay {
             let mut h = h.lock().unwrap();
             let now = self.now_ms();
             let ids = h.expired(now, COLLECT_BATCH);
+            // A batch also ends after 2 ms under the lock, however slow
+            // the disk is at removing files; what is left stays expired
+            // and is taken by the next batch.
+            let started = std::time::Instant::now();
+            let mut done = 0;
             for id in &ids {
+                if done > 0 && started.elapsed() >= Duration::from_millis(2) {
+                    break;
+                }
+                done += 1;
                 // Unlinked under the lock: a put or an entry naming it
                 // waits, then finds it gone.
                 if let Some(w) = h.unwait(id) {
@@ -553,13 +562,13 @@ impl Relay {
                 }
             }
             drop(h);
-            total += ids.len();
-            if ids.len() < COLLECT_BATCH {
+            total += done;
+            if done == ids.len() && ids.len() < COLLECT_BATCH {
                 return total;
             }
             // The lock is not fair: give the connections waiting for it
             // their turn between batches.
-            thread::sleep(Duration::from_micros(200));
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
