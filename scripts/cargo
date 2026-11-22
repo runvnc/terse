@@ -11,6 +11,8 @@
 #     CPU time (4 jobs alone is not a limit: each compiler and each test
 #     binary runs many threads)
 #   - scripts/sweep-target.py afterwards, which keeps the last 3 builds
+# and, for `test`, the list of the tests that skipped themselves, at the
+# end (scripts/test-skips.py).
 #
 # TERSE_WRITE_CAP changes the write cap (default 60M per second).
 # TERSE_CPU_QUOTA changes the CPU limit (default 500%, that is 5 cores).
@@ -20,6 +22,11 @@ cap=${TERSE_WRITE_CAP:-60M}
 cpu=${TERSE_CPU_QUOTA:-500%}
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 
+# A test run lists, at its end, the tests that skipped themselves (no GPU,
+# no Go, ...; scripts/test-skips.py).
+testing=no
+[ "${1:-}" = test ] && testing=yes && "$root/scripts/test-skips.py" --clear
+
 if systemd-run --user --scope --quiet -p "CPUQuota=$cpu" -p "IOWriteBandwidthMax=$root $cap" true 2>/dev/null; then
     systemd-run --user --scope --quiet -p "CPUQuota=$cpu" -p "IOWriteBandwidthMax=$root $cap" nice -n 15 cargo "$@"
 else
@@ -28,5 +35,6 @@ else
 fi
 status=$?
 
+[ $testing = yes ] && "$root/scripts/test-skips.py"
 "$root/scripts/sweep-target.py" >&2
 exit $status

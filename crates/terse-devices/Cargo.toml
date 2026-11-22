@@ -39,6 +39,7 @@ terse-bus.workspace = true
 terse-host.workspace = true
 
 [dev-dependencies]
+terse-testkit.workspace = true
 tempfile = "3"
 terse-relay.workspace = true
 png = "0.18"
