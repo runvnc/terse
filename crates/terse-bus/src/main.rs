@@ -72,8 +72,9 @@ device only optional devices use whose driver is not installed is left out the s
 required device without a driver stops the run.
 An experimental device (slots 240-255, spec/experimental.md) is served by --driver <its name>=...
 (--driver example.dice=./dice), else by the installed driver for its name; without one it is not
-granted. A system (--shell) grants none. --probe-driver --experimental asks a program which
-experimental device it serves.
+granted. In a system (--shell) every such driver the run has is started, and the shell and each
+machine it starts is granted the devices its image names that one serves, in the version listed.
+--probe-driver --experimental asks a program which experimental device it serves.
 --perf-log: where the performance record goes (RECORD.md; default: none headless, and
 $XDG_DATA_HOME/terse/perf with --window or --realtime; it never leaves this computer). --perf-rule
 (default: on with --window or --realtime, off headless): the rule of PERFORMANCE.md R15: a driver
@@ -356,10 +357,12 @@ fn main() -> ExitCode {
 /// slots: lines `group`, `name`, `version`, `build` and `slot <s> <v>`, then
 /// a blank line. The groups it refuses go to standard error. Status 0 if it
 /// answered for one or more groups, else 2. With `--experimental` it asks
-/// once, for slot 240 with an empty name (DEVICES.md 15.1), and prints
-/// `experimental <name> <version>` instead of slot lines.
+/// once, for an experimental device with an empty name (DEVICES.md 15.1),
+/// and prints `group experimental` and `experimental <name> <version>`
+/// instead of slot lines.
 fn probe(args: Vec<String>) -> ExitCode {
-    const EXPERIMENTAL: &[u8] = &[240];
+    // A marker for the experimental handshake: no group has slot 0.
+    const EXPERIMENTAL: &[u8] = &[0];
     let (program, slot) = match args.as_slice() {
         [p] => (p.clone(), None),
         [p, f] if f == "--experimental" => (p.clone(), Some(EXPERIMENTAL)),
@@ -390,12 +393,17 @@ fn probe(args: Vec<String>) -> ExitCode {
         };
         let mut config = BusConfig::new(session.0.clone());
         config.shm = false;
-        let experimental = (g == EXPERIMENTAL).then(|| (String::new(), 0));
-        let want = terse_bus::bus::Wanted { slots: g.to_vec(), command: vec![program.clone()], installed: None, experimental };
+        let experimental = (g == EXPERIMENTAL).then(|| (String::new(), None));
+        let slots = if experimental.is_some() { Vec::new() } else { g.to_vec() };
+        let want = terse_bus::bus::Wanted { slots, command: vec![program.clone()], installed: None, experimental };
         match terse_bus::bus::Bus::start(&config, &[want]) {
             Ok(bus) => {
                 let d = &bus.procs[0].info;
-                println!("group {}", g[0]);
+                if g == EXPERIMENTAL {
+                    println!("group experimental");
+                } else {
+                    println!("group {}", g[0]);
+                }
                 println!("name {}", d.name.replace('\n', " "));
                 println!("version {}", if d.version.is_empty() { "-" } else { &d.version });
                 println!("build {}", if d.build.is_empty() { "-" } else { &d.build });
@@ -505,7 +513,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     // installed driver for the name; with neither it is not granted.
     let exp_overrides: Vec<(String, Vec<String>)> = opts.experimental_drivers.iter().map(|(n, c)| (n.clone(), terse_bus::bus::split_command(c))).collect();
     let exp_installed = config_dir.as_deref().map(terse_net::driverlist::experimental).unwrap_or_default();
-    let (exp, notes) = host::experimental_drivers(&image, opts.shell, &opts.without, &exp_overrides, &exp_installed);
+    let (exp, notes) = host::experimental_drivers(&image, opts.shell, &opts.without, &exp_overrides, &exp_installed)?;
     for n in notes {
         eprintln!("terse-bus: {n}");
     }
@@ -540,10 +548,17 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     }
     if let Some(u) = unused.first() {
         bs.notice = Some((
-            host::Notice {
-                heading: "an installed driver was not used".into(),
-                what: format!("The installed driver {} (slot {}) could not be used.", u.name, u.slot),
-                then: format!("Using the shipped driver. To keep it: terse drivers use {} default", u.slot),
+            match &u.device {
+                Some(d) => host::Notice {
+                    heading: "an installed driver was not used".into(),
+                    what: format!("The installed driver {} for the experimental device {d} could not be used.", u.name),
+                    then: "Programs that use the device run without it.".into(),
+                },
+                None => host::Notice {
+                    heading: "an installed driver was not used".into(),
+                    what: format!("The installed driver {} (slot {}) could not be used.", u.name, u.slot),
+                    then: format!("Using the shipped driver. To keep it: terse drivers use {} default", u.slot),
+                },
             },
             host::NOTICE_FRAMES,
         ));
