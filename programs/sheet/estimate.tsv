@@ -1,0 +1,11 @@
+Estimate
+Item	Qty	Price	Amount
+Fence panels	12	45.50	=B3*C3
+Posts	13	18.75	=B4*C4
+Concrete	13	6.20	=B5*C5
+Labour (h)	16	38	=B6*C6
+Delivery	1	40	=B7*C7
+		Subtotal	=SUM(D3:D7)
+	8.25%	Tax	=ROUND(D8*B9,2)
+		Total	=D8+D9
+chart bar D3:D7
