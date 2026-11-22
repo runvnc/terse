@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a small game in Rust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-small-game-in-rust">Make a small game in Rust</h1>
+<p>The game of &quot;Make a small game&quot;, in Rust: a dot steered with the arrow keys, a ring to reach, and a score.</p>
+<h2 id="the-program">The program</h2>
+<p><code>chase.rs</code>:</p>
+<pre>#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn near(a: i16, b: i16) -&gt; bool {
+    (a - b).abs() &lt; 12
+}
+
+fn show_score(score: u32) {
+    term_goto(0, 0);
+    term_puts(&quot;Score &quot;);
+    term_put_dec(score);
+}
+
+fn main() {
+    let mut buf = [0u8; 64];
+    let (mut x, mut y, mut dx, mut dy) = (320i16, 240i16, 0, 0);
+    let (mut goal_x, mut goal_y) = (160i16, 120i16);
+    let mut score = 0;
+    show_score(score);
+    loop {
+        while let Some(e) = next_event() {
+            if e.kind != EV_KEY_DOWN {
+                continue;
+            }
+            (dx, dy) = match e.key() {
+                KEY_LEFT =&gt; (-2, 0),
+                KEY_RIGHT =&gt; (2, 0),
+                KEY_UP =&gt; (0, -2),
+                KEY_DOWN =&gt; (0, 2),
+                KEY_ESCAPE =&gt; exit(0),
+                _ =&gt; (dx, dy),
+            };
+        }
+        x = (x + dx).rem_euclid(640);
+        y = (y + dy).rem_euclid(480);
+        if near(x, goal_x) &amp;&amp; near(y, goal_y) {
+            score += 1;
+            show_score(score);
+            goal_x = 40 + random_byte() as i16 * 2;
+            goal_y = 40 + random_byte() as i16 * 3 / 2;
+        }
+        let mut list = VecList::new(&amp;mut buf);
+        list.move_to(x * VEC_UNIT, y * VEC_UNIT);
+        list.disc(4 * VEC_UNIT as u16);
+        list.move_to(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
+        list.circle(10 * VEC_UNIT as u16);
+        list.submit();
+        wait_frame();
+    }
+}</pre>
+<p>Build it with <code>terse build chase.rs</code> and play it with <code>terse-host chase.terse</code>.</p>
+<h2 id="what-is-different-from-c">What is different from C</h2>
+<ul>
+<li>The arrow keys set <code>(dx, dy)</code> with one <code>match</code>; a key that is not an arrow keeps the direction as it was.</li>
+<li><code>rem_euclid</code> wraps the dot round the edges: unlike <code>%</code>, it never gives a negative result, so no <code>+ 640</code> is needed.</li>
+<li><code>term_put_dec</code> writes the score&#39;s digits; C has no such call, so the C program has its own <code>put_number</code>.</li>
+<li><code>disc</code> and <code>circle</code> take a radius as <code>u16</code>, hence <code>as u16</code>.</li>
+</ul>
+<h2 id="test-it-without-a-window">Test it without a window</h2>
+<p>With the <code>chase.txt</code> of the last page (left at frame 1, up at frame 81),</p>
+<pre>terse run chase.terse --frames 150 --events chase.txt \
+    --dump --dump-vectors</pre>
+<p>prints <code>Score 1</code> at the top of the grid and the same list as the C program:</p>
+<pre>-- vectors: 17 list bytes --
+disc 2560 1632 r 64 c ffffffff
+circle 640 640 r 160 w 16 c ffffffff</pre>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>The game in Rust, and with it the guide&#39;s part on programs. It is <code>examples/program/rust/chase.rs</code> in the Tersenet sources; the full games, <code>programs/sparks</code> and <code>programs/reef</code>, are in C. Next, a bigger step: <a href="guide-host.html">Make a host, step 1: run a program to its end</a>, your own Terse32 machine that runs these programs.</p>
+<p>Everything the runtime gives is in <a href="toolchain-rust.html">Rust programs</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-game.html">← Make a small game</a><a rel="next" href="guide-host.html">Make a host →</a></nav></footer>
+</body>
+</html>

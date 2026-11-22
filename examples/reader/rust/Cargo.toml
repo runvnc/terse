@@ -1,0 +1,12 @@
+[package]
+name = "reader"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+blake3 = "1.8"
+ed25519-dalek = "2.2"
+tungstenite = "0.30"
+
+[workspace]

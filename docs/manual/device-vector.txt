@@ -100,6 +100,15 @@ Where light overlaps, a host may add it up, as a tube does (opacity then acts as
 
 Not a requirement, the reference host's look: `terse-host` draws a thin, sharp beam (never thinner than about a pixel) on a faint, wide glow that leaves the gaps between close lines dark, and adds overlapping light, so drawing a line twice brightens it there. Text keeps its own colours and smoothing, as sharp as in the clean style, and adds only a little to the glow. Light lingers: an afterglow of what was shown before fades quickly at first, then with a dim tail multiplied by persistence / 256 each frame (none with persistence 0), and a shape that only moves leaves a continuous smear. A program may be written with this look in mind, but its picture should not depend on it.
 
+Another look, optional: `terse-dev-mame`, a driver in the Tersenet sources (`crates/terse-mame-crt`), draws the vector displays in the phosphor style with the sharp beam renderer of MAME's vector monitors, and the terminal's text as strokes of the beam, in a font chosen with `TERSE_MAME_FONT`: `arcade` (the default, a vector monitor's character generator), `hershey` (Hershey Roman Simplex) or `drafting`. It runs under `terse-bus`, not `terse-host`. Build it with `cargo build --release -p terse-mame-crt`, from the top folder of the sources, and install it for the vector displays and the terminal with
+
+```
+terse drivers add target/release/terse-dev-mame --slot 3
+terse drivers add target/release/terse-dev-mame --slot 2
+```
+
+and `terse drivers use 3 default` and `terse drivers use 2 default` go back. The machine is the same, hash for hash; only the picture differs.
+
 ## Charges
 
 | What | Charge |

@@ -1,69 +1,30 @@
-# Make a host, step 1: run a program to its end
+# Make a host
 
-A host runs Terse32 programs: it reads a program file, runs its instructions and gives the program its devices. You can write one in any language and check it against the reference exactly. The specifications cover every device; a host starts much smaller. This guide builds one in four tested steps: run a program until it stops (this page), keep time, show `hello` through the reference terminal, prove the host exact. Each says how much code it took in `tcore`, a core written in C from the specifications alone (`native/core-c`).
+A host runs Terse32 programs: it reads a program file, runs its instructions at a fixed speed and gives the program its devices. You can write one in any language and prove it exact against the reference. This guide does it in four steps, twice, once in Go and once in Rust:
 
-## The program file
+1. Run a program to its end: the program file, memory, the processor and `exit`.
+2. Frames and the budget: 125,000 units a frame, `wait_frame` and the carry rule.
+3. A driver shows hello: the terminal as a separate program on the device bus.
+4. Prove it exact: the state hash, equal to the reference's.
 
-A program file (`.terse`) starts with a 32-byte header:
+Each step is a small working program in the Tersenet sources, built and checked against the reference by the sources' tests.
 
-- bytes 0 to 3: `TERS`; byte 4: 0, the format; byte 5: 1, the machine profile;
-- bytes 6 to 8: the ROM's length, 1 to 131,072, least significant byte first;
-- byte 9: RAM in pages of 8 KiB, 1 to 128; byte 10: the number of device entries, 0 to 16;
-- bytes 11 to 15: zero; bytes 16 to 31: the title, padded with zero bytes.
+## Two tracks
 
-Two bytes per device entry follow, then the ROM. Refuse a file whose length is not exactly 32 + 2 × entries + the ROM's length. Until step 3, run only programs that list no devices.
+- In Go, in `examples/host/go`: [Make a host in Go, step 1: run a program to its end](terse:fe2150ee199267c777c694d475985c41902a8f9a3be4f74e07df8a0be8b28a50).
+- In Rust, in `examples/host/rust`: [Make a host in Rust, step 1: run a program to its end](terse:5462fcc93f2ea80ec45104195f1f33b1ebd0d433d4842de470db5e6e41980d05).
 
-## Memory and reset
+The two have the same design, so either explains the other. Each is a package that gains a file per step (the processor, then frames, the bus, the state) with a short program per step on top, `step1` to `step4`. The pages list every file in full or its important part, exactly as it is in the sources. Lines of code below are counted with blank lines.
 
-The ROM, the program's bytes, is at `0001_0000h`, to read and execute. The RAM, all zero, is at `0010_0000h`, to read, write and execute. Nothing else is there. Start at the first byte of ROM, with `sp` (`x2`) at the end of RAM, `0010_0000h` + 8,192 × pages, and every other register 0.
+## Libraries, and why the processor is written out
 
-## The processor
+The examples use their language's standard library and one package more: BLAKE3, which names a program by its hash from step 3 on (`lukechampine.com/blake3` in Go, the `blake3` crate in Rust). They use no RISC-V emulator package. Those emulate whole computers and hide what a Terse32 host must get exactly right: what each instruction costs, whether it was fetched from ROM or RAM, where the machine pauses when its budget runs out, and which encodings must fault. The processor is about 390 lines in either language, and it is most of the work.
 
-RV32IMC: RISC-V's 32-bit integer instructions with multiply and divide (M) and the 16-bit compressed forms (C), in user mode: no floating point, atomics, control registers or interrupts. `fence` does nothing; division by zero gives RISC-V's answers, not a trap.
+## What the examples leave out
 
-A fault stops the machine: an instruction it does not have (`ebreak`, the CSR instructions and every reserved encoding among them), a fetch or load outside ROM and RAM, a store outside RAM, or a load or store at an address that is not a multiple of its size. The faulting instruction is not carried out and `pc` stays on it. Show the user the fault, never an exit code.
+They run `programs/hello` exactly, prove it, and stop there: no input events, four of the ten System calls, one driver (the terminal), no snapshots. Step 4 says what the rest is. The full implementations:
 
-## Calls
+- `native/core-c`: `tcore`, an independent core in C, about 1,580 lines, which passes the conformance program with the reference drivers;
+- `crates/terse-core`: the reference machine in Rust, which `terse run` and `terse-host` use; `crates/terse-bus`, the reference core on the device bus.
 
-`ecall` calls a device: `a7` holds the device's slot × 256 + the function, `a0` to `a5` the arguments, and the result goes in `a0`. Two cases are enough now:
-
-- `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it then writes its result, 0, to `a0`, and `pc` moves past the `ecall`.
-- A call you do not have: put `FFFF_FFFFh` in `a0` and go on.
-
-## Check yourself
-
-STATE.md gives a 42-byte program that exits with code 7: `c.li a0, 7`, `addi a7, x0, 106h`, `ecall`. Make the file:
-
-```
-xxd -r -p > exit.terse <<EOF
-5445525300010a000001000000000000657869740000
-000000000000000000001d459308601073000000
-EOF
-```
-
-Your host should stop with exit code 7, `pc` = `0001_000Ah`, `a0` = 0 and `a7` = `106h`. The reference's exit status is the program's exit code, 7:
-
-```
-terse run exit.terse --frames 1
-echo $?
-```
-
-This one adds 100 + 99 + ... + 1 and exits with the sum's low byte, 186:
-
-```
-xxd -r -p > sum.terse <<EOF
-544552530001160000010000000000007375
-6d0000000000000000000000000001459302
-40061695fd12e39e02fe9308601073000000
-EOF
-```
-
-## How much code
-
-In `tcore` the processor is 262 lines of C (`cpu.c`); the file and the memory map about 50 more.
-
-## What you have now
-
-A Terse32 processor that runs a program to its end. Next, make it keep time: [Make a host, step 2: frames and the budget](terse:4fba2229b6caed4f9664037ae0140d45a7827da3501149a0e6f82a784e90b071).
-
-The detail is in [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls" (SPEC §cpu, §memory, §reset, §stopping, §image, §calls.convention), and `exit` in [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc).
+The specification is [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5) and the pages after it.

@@ -1,0 +1,166 @@
+# Make a reader in Go, step 2: fetch an article
+
+Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob's ID is its BLAKE3 hash, so whatever a relay sends, you can check that it is the blob you asked for. In this step your reader asks a relay for an article by its ID, checks it, and shows it with step 1's code.
+
+## The libraries
+
+`go.mod` names the module and the libraries steps 2 and 3 use:
+
+```
+module reader
+
+go 1.24.0
+
+require (
+    filippo.io/edwards25519 v1.2.0
+    github.com/gorilla/websocket v1.5.3
+    lukechampine.com/blake3 v1.5.1
+)
+
+require github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+```
+
+- `github.com/gorilla/websocket` is the most widely used WebSocket package for Go. It has no dependencies of its own and a plain blocking interface (dial, write a message, read a message), and it answers pings and joins fragmented messages by itself, as a Tersenet client must.
+- `lukechampine.com/blake3` is a widely used BLAKE3 for Go; `blake3.Sum256` gives the 32-byte hash that is a blob's ID. It brings one small package of its own, `klauspost/cpuid`, to find the processor's fast instructions.
+- `filippo.io/edwards25519` checks signatures in step 3.
+
+`go.sum`, beside it, pins their exact contents. Go downloads them the first time you build.
+
+## The code
+
+`relay/relay.go` gets a blob from a relay:
+
+```
+package relay
+
+import (
+    "errors"
+
+    "github.com/gorilla/websocket"
+    "lukechampine.com/blake3"
+)
+
+func Get(conn *websocket.Conn, id [32]byte) ([]byte, error) {
+    request := append([]byte{0x01, 1, 0, 0, 0}, id[:]...)
+    err := conn.WriteMessage(websocket.BinaryMessage, request)
+    if err != nil {
+        return nil, err
+    }
+    for {
+        _, reply, err := conn.ReadMessage()
+        switch {
+        case err != nil:
+            return nil, err
+        case len(reply) < 6 || reply[0] != 0x81:
+            continue
+        case reply[5] != 1:
+            return nil, errors.New("the relay does not have it")
+        case blake3.Sum256(reply[6:]) != id:
+            return nil, errors.New("hash check failed")
+        }
+        return reply[6:], nil
+    }
+}
+```
+
+`fetch/main.go` is the program:
+
+```
+// Step 2: fetch an article from a relay by its ID.
+package main
+
+import (
+    "bytes"
+    "encoding/hex"
+    "log"
+    "os"
+
+    "github.com/gorilla/websocket"
+
+    "reader/article"
+    "reader/relay"
+)
+
+func main() {
+    id, err := hex.DecodeString(os.Args[2])
+    if err != nil || len(id) != 32 {
+        log.Fatal("an ID is 64 hexadecimal digits")
+    }
+    url := os.Args[1]
+    conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    blob, err := relay.Get(conn, [32]byte(id))
+    if err != nil {
+        log.Fatal(err)
+    }
+    if bytes.HasPrefix(blob, []byte("TERS")) ||
+        bytes.HasPrefix(blob, []byte("TDOC")) {
+        log.Fatal("not an article")
+    }
+    article.Show(blob)
+}
+```
+
+They are 30 and 35 lines; the whole program, with step 1's `article` package, is 142.
+
+## How it works
+
+A relay is a WebSocket server, and every message is one binary WebSocket message. To ask for a blob, `Get` sends a Get message: the byte `01h`, a request number of 4 bytes, least significant first (here always 1), and the blob's ID, 32 bytes.
+
+It then reads messages until the reply comes: one that starts with `81h`. Other messages are skipped; in step 3 the relay sends feed entries over the same connection. After the type and the request number comes a status byte: 1 found, followed by the blob's bytes; 2 not found; 3 refused.
+
+The hash check is the important line. Relays are not trusted, the hash is: if the BLAKE3 hash of the bytes is not the ID asked for, `Get` returns an error and the bytes are never shown.
+
+`main` reads the relay's address and the ID, connects, and gets the blob. A blob that starts with `TERS` is a program and one that starts with `TDOC` a document: neither is an article, so neither is shown as text. Anything else it shows with `article.Show`.
+
+## Run it
+
+You need a relay. `terse-relay` comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:
+
+```
+terse-relay --listen 127.0.0.1:7979 --store try-relay
+```
+
+It prints `listening on ws://127.0.0.1:7979` and keeps what it is given in the folder `try-relay`. Put the article on it, from `examples/reader/go`:
+
+```
+terse put ../hello.txt --relay ws://127.0.0.1:7979
+```
+
+```
+terse: taken by 1 of 1 relays: ws://127.0.0.1:7979
+e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8
+```
+
+The last line is the article's ID. `terse hash` prints the same ID without asking a relay, which saves typing it:
+
+```
+go run ./fetch ws://127.0.0.1:7979 $(terse hash ../hello.txt)
+```
+
+It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as `go.mod`, and it says so:
+
+```
+go run ./fetch ws://127.0.0.1:7979 $(terse hash go.mod)
+```
+
+```
+2026/11/21 23:22:50 the relay does not have it
+exit status 1
+```
+
+`log.Fatal` puts the date and time before the message, and `go run` adds the exit status.
+
+## What it leaves out
+
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:b6d6ffd3f980f607910ffe613feb173cf094971854a6f66ad1a6a4373d0b59c4) says how.
+
+## What you have now
+
+A reader that fetches an article by its ID and knows it is genuine.
+
+- Next: [Make a reader in Go, step 3: follow a feed](terse:8ffac7f9cdf5bcfdfc0933a4aaac7e7ce334135fc8812bc7e2af325e6abea6e8).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:960d47e03407185464b6cf1b914e4c5501d71681902099fde222f387f54e86ab).
+- Every relay message: [The network](terse:1baef48333f2d077eacaf4f12ce8ba06bff2949710da16afec571d44b81738d7).

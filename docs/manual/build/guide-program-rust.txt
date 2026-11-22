@@ -1,0 +1,53 @@
+# Write a program in Rust
+
+The program of the last page, "Write a program in C", in Rust. It uses `terse`, the Rust runtime for Terse32, which `terse build` provides.
+
+## The program
+
+`hello.rs`:
+
+```rust examples/program/rust/hello.rs
+#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn main() {
+    term_color(15, 4);
+    term_puts(" Hello from hello! ");
+    term_color(7, 0);
+    term_puts("\n\nPress Esc to exit.\n");
+
+    loop {
+        wait_frame();
+        while let Some(e) = next_event() {
+            if e.kind == EV_KEY_DOWN && e.key() == KEY_ESCAPE {
+                exit(0);
+            }
+        }
+    }
+}
+```
+
+A Terse32 machine has no operating system under it, so a program is `#![no_std]` (the `core` library only, no `std`) and `#![no_main]`; `entry!(main)` names the function the machine starts. `use terse::*` brings in the runtime: the C library's calls, without their `terse_` prefix. `next_event` gives `Some(event)` until the queue is empty, and `e.key()` is a key event's key. `exit(0)` ends the program, as returning from `main` does.
+
+## Build it and run it
+
+```
+terse new hello.rs
+terse build hello.rs
+terse run hello.terse --frames 60 --dump
+terse-host hello.terse
+```
+
+`terse new hello.rs` writes this program with comments. `terse build` needs rustc from rustup with the target for this machine; if the target is missing it says what to run, `rustup target add riscv32imc-unknown-none-elf`. rustc links with its own linker, so clang is not needed.
+
+The screen is the C program's, word for word, and the `esc.txt` of the last page stops it after frame 6 too. The image is 268 bytes; the C one is 386.
+
+## What you have now
+
+The same program in Rust, built, run and tested the same way. It is `examples/program/rust/hello.rs` in the Tersenet sources. Next, draw and react to keys: [Draw a line and read a key](terse:13fbb40fd9b49a4ce1e9480efab36137d269091fddae9e9be6ce39d536730878), in C, then in Rust.
+
+What the runtime gives, what things cost and how to build a larger program with cargo is in [Rust programs](terse:697299ec36d1e2ced432d7be8757d8ef201882954a7bd21fdd59fbd449a7b685).

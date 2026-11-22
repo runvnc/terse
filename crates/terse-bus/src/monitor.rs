@@ -93,7 +93,7 @@ impl Monitor {
             r.add(Line::Env(Environment::detect(cfg.renderer)));
             for d in &bus.procs {
                 r.add(Line::Device {
-                    component: Component::Device(d.slots[0]),
+                    component: Component::Device(d.component),
                     slots: d.slots.clone(),
                     identity: Identity { name: d.info.name.clone(), version: d.info.version.clone(), build: d.info.build.clone() },
                 });
@@ -103,7 +103,7 @@ impl Monitor {
                 let probe = d.pid.map(ProcProbe::process);
                 let p = probe.as_ref();
                 let readings = Readings { cpu: p.is_some_and(ProcProbe::has_cpu), wait: p.is_some_and(ProcProbe::has_wait), stall: false };
-                Watched { component: Component::Device(d.slots[0]), probe, before: None, readings }
+                Watched { component: Component::Device(d.component), probe, before: None, readings }
             }).collect();
         let core = ProcProbe::this_thread();
         let psi = Pressure::default();

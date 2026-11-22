@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invent a device: the program in Rust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="invent-a-device-the-program-in-rust">Invent a device: the program in Rust</h1>
+<p>The program of &quot;Invent a device&quot;, in Rust: it rolls a die of the experimental device <code>example.dice</code> every half second, or says that the host has no driver for it.</p>
+<h2 id="the-program">The program</h2>
+<p><code>roll.rs</code>:</p>
+<pre>#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+const DICE: u32 = 240;
+const DICE_SEED: u32 = DICE &lt;&lt; 8;
+const DICE_ROLL: u32 = DICE &lt;&lt; 8 | 1;
+
+fn main() {
+    if device(DICE).is_none() {
+        term_puts(&quot;No dice here: run me with example.dice.\n&quot;);
+        loop {
+            wait_frame();
+        }
+    }
+    let mut seed = [0u8; 4];
+    random(&amp;mut seed);
+    unsafe { call(DICE_SEED, u32::from_le_bytes(seed), 0, 0) };
+    loop {
+        for _ in 0..30 {
+            wait_frame();
+        }
+        term_puts(&quot;You rolled &quot;);
+        term_put_dec(unsafe { call(DICE_ROLL, 6, 0, 0) });
+        term_puts(&quot;.\n&quot;);
+    }
+}</pre>
+<p>The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with <code>call</code>, the runtime&#39;s raw device call, which takes the call&#39;s number, <code>(240 &lt;&lt; 8) | function</code> here, and three arguments. It is <code>unsafe</code> because a call may read or write the memory its arguments point to; <code>seed</code> and <code>roll</code> take only numbers. <code>device(DICE)</code> is <code>None</code> when the host did not grant the device.</p>
+<h2 id="build-it-and-run-it">Build it and run it</h2>
+<p>With the driver built as on the last page:</p>
+<pre>terse build roll.rs --optional 240:0=example.dice
+terse-bus roll.terse --driver example.dice=$PWD/dice \
+    --frames 100 --dump</pre>
+<p>prints the C program&#39;s rolls, <code>You rolled 1.</code>, <code>2.</code> and <code>5.</code>, since the same seed gives the same dice whatever the language. <code>terse run roll.terse --frames 30 --dump</code>, with no driver, prints <code>No dice here: run me with example.dice.</code></p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>The program in Rust; and the end of the implementation guide. It is <code>examples/program/rust/roll.rs</code> in the Tersenet sources. What remains is the reference, which starts with <a href="how-it-works.html">How Tersenet works</a>.</p>
+<p>The rules of experimental devices are in <a href="experimental.html">Experimental devices</a>, and every call of the runtime in <a href="toolchain-rust.html">Rust programs</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-invent.html">← Invent a device</a><a rel="next" href="how-it-works.html">How Tersenet works →</a></nav></footer>
+</body>
+</html>

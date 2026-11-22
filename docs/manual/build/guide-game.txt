@@ -1,0 +1,117 @@
+# Make a small game
+
+A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on [the next page](terse:602dbed30379dd5311dd5d73341674beb770be42da2a4ccfedc20b07ef7dcd2a).
+
+## The program
+
+`chase.c`:
+
+```c examples/program/c/chase.c
+#include "terse.h"
+
+static uint8_t list[64];
+
+static int near(int a, int b)
+{
+    return a - b < 12 && b - a < 12;
+}
+
+static void put_number(int n)
+{
+    if (n > 9)
+        put_number(n / 10);
+    term_putc('0' + n % 10);
+}
+
+static void show_score(int score)
+{
+    term_goto(0, 0);
+    term_puts("Score ");
+    put_number(score);
+}
+
+int main(void)
+{
+    int x = 320, y = 240, dx = 0, dy = 0;
+    int goal_x = 160, goal_y = 120, score = 0;
+    terse_event e;
+    show_score(score);
+    for (;;) {
+        while (terse_event_pop(&e)) {
+            if (e.type != EV_KEY_DOWN)
+                continue;
+            if (e.a == KEY_LEFT)
+                dx = -2, dy = 0;
+            if (e.a == KEY_RIGHT)
+                dx = 2, dy = 0;
+            if (e.a == KEY_UP)
+                dx = 0, dy = -2;
+            if (e.a == KEY_DOWN)
+                dx = 0, dy = 2;
+            if (e.a == KEY_ESCAPE)
+                return 0;
+        }
+        x = (x + dx + 640) % 640;
+        y = (y + dy + 480) % 480;
+        if (near(x, goal_x) && near(y, goal_y)) {
+            show_score(++score);
+            goal_x = 40 + terse_random_byte() * 2;
+            goal_y = 40 + terse_random_byte() * 3 / 2;
+        }
+        vec_begin(list, sizeof list);
+        vec_move(x * 16, y * 16);
+        vec_disc(4 * 16);
+        vec_move(goal_x * 16, goal_y * 16);
+        vec_circle(10 * 16);
+        vec_end();
+        vec_submit_list(list);
+        terse_wait_frame();
+    }
+}
+```
+
+Build it with `terse build chase.c` and play it with `terse-host chase.terse`.
+
+## How it works
+
+Every frame does the same three things: read the keys, move, draw.
+
+- An arrow key sets the direction, `dx` and `dy`, 2 units a frame; the dot keeps going until another arrow turns it. The `% 640` and `% 480` wrap it round the screen's edges.
+- When the dot is within 12 units of the ring, the score goes up and the ring jumps to a new place, from `terse_random_byte`. The machine's random bytes come from the host, which records them, so a game can be replayed exactly.
+- The score is text on the grid, at its top left, written only when it changes; `term_goto` moves the cursor there. The dot and the ring are a new display list each frame: `vec_disc` is a filled circle and `vec_circle` an outline, each around the pen.
+
+## Test it without a window
+
+Without a window there are no random bytes (they are all 0), so a test run is the same every time. Save as `chase.txt` a turn left at frame 1 and up at frame 81, which takes the dot from the middle, (320, 240), to the ring at (160, 120):
+
+```
+1 press left
+81 press up
+```
+
+then run
+
+```
+terse run chase.terse --frames 150 --events chase.txt \
+    --dump --dump-vectors
+```
+
+The grid's first row is `Score 1`, and the list:
+
+```
+-- vectors: 17 list bytes --
+disc 2560 1632 r 64 c ffffffff
+circle 640 640 r 160 w 16 c ffffffff
+```
+
+The dot, a disc of radius 4 units, has gone on up to (160, 102); the ring has moved to (40, 40), where a zero random byte puts it.
+
+## The full games
+
+Two games come with Tersenet, both in C, and both are this loop grown up. `programs/sparks/sparks.c` adds turning and thrust, sparks to collect and sweepers to avoid, a controller, and a high score kept on the computer. `programs/reef/reef.c`, Lumen Reef, is a shooter in 3D wireframe on the 3D vector display, with its readouts in a stroke font on the 2D one. The user guide's page "Find and play a game" says how to play them.
+
+## What you have now
+
+A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:602dbed30379dd5311dd5d73341674beb770be42da2a4ccfedc20b07ef7dcd2a), or the next part of the guide, a host of your own: [Make a host, step 1: run a program to its end](terse:5a322b5d74beeb133a987aa439eec39677182805d9fd91173167c5927e75e914).
+
+Random bytes, controllers and the clock are in [The system device](terse:9931faaf61b8c8f94759720fc438753e2761179730bbb7b27e43cf508c9db6ea).
