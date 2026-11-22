@@ -29,11 +29,12 @@ of its own, which says which sections of this one it builds on:
 | `spec/page.md` | 7 Page: typeset prose and figures |
 | `spec/machines.md` | 8 Machines: a system of machines, the shell, snapshots |
 | `spec/vector3d.md` | 9 3D vector display |
+| `spec/experimental.md` | 240–255: experimental devices, which a driver declares instead of a document |
 
 `STATE.md` defines the state serialization and its hash, which
 conformance compares (§conformance). Sections are named by stable ids,
 written with a section sign and the id (§terminal.put): an id that starts with `content.`, `sound.`, `page.`,
-`machines.` or `vector3d.` (or is one of those names) is in that
+`machines.`, `vector3d.` or `experimental.` (or is one of those names) is in that
 document of `spec/`, every other id is in this one. The rest of the
 repository cites them the same way (`SPEC §terminal.put`).
 `spec/RENUMBERING.md` maps the section numbers of earlier drafts to the
@@ -397,7 +398,14 @@ by the ROM contents.
 | 9 | 3D vector display | 0 | specified (§vector3d, `spec/vector3d.md`) |
 | 10 | Full text | 0 | specified (§terminal.text): a capability, no calls; **reading profile** |
 
-Other slots are free; 0 and 11–255 are not devices in v0.
+Other slots are free; 0 and 11–239 are not devices in v0. Slots 240–255
+are **experimental** (`spec/experimental.md`): a device nobody has
+specified yet, identified by a name the image states at the end of its
+ROM (§experimental.image) and declared by its driver on a device bus. It
+may only be listed as optional; a host refuses an image that requires
+one, and one without its driver runs the image with the device absent,
+as for any optional device. No profile includes one, and §conformance
+does not cover a machine that was granted one.
 
 ### §profiles Machine hosts and profiles
 
@@ -447,6 +455,9 @@ provides the machine's **reading profile**:
   rejected with `04h`, a valid one accepted); a program cannot tell that
   from a user or host that refuses;
 - within Page, everything;
+- no profile includes an experimental device (slots 240–255,
+  `spec/experimental.md`); a host of either profile runs an image that
+  lists one, optional as it must be, without it unless it has its driver;
 - devices 3, 6, 8 and 9 are optional: a reading-profile host need not
   provide them; it refuses an image that requires one and runs one that
   lists them as optional without them (the reader lists none of them).
@@ -604,11 +615,14 @@ machine's own and cost 4.
   in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
   shell gave none, it runs on its own, or it is the shell) gets 0 and
   nothing is written. The argument never changes and is part of the
-  machine's state (`STATE.md` 1.13).
+  machine's state (`STATE.md` 1.14).
 - **`device`** returns the version of device `a0` if the machine has it:
   device 1, every device its image requires, and every optional device
-  it was granted (§image); 8 only for a shell (§machines.shell). For any
-  other `a0`, also one above 255, it returns `FFFF_FFFFh`. The answer is
+  it was granted (§image); 8 only for a shell (§machines.shell). The
+  version is the one the image lists (every numbered device of profile 1
+  is version 0; an experimental device's is its entry's,
+  §experimental.grants). For any other `a0`, also one above 255, it
+  returns `FFFF_FFFFh`. The answer is
   fixed at reset, so a program asks once at start and branches on it.
 
 Events, the latched time, the random bytes and controller state are the
@@ -1252,6 +1266,13 @@ on exactly the reading profile. Likewise `programs/conform-program`, for
 the program profile, requires only devices 2 and 3, leaves out the
 sections of content, the page and the 3D display, and checks `device`;
 `terse run --profile program` runs it on exactly that profile.
+
+**Experimental devices are not covered.** A machine granted an
+experimental device (`spec/experimental.md`) has a state section only
+its driver defines, so its hashes are comparable only between runs with
+the same driver; its snapshots and recordings say so in their version
+byte (§experimental.conformance). A machine whose image lists one that
+was not granted is an ordinary machine, covered as above.
 
 `programs/conform-perf` checks what a program can see of
 §responsiveness in a host's real frame loop (a window or a self-test,
