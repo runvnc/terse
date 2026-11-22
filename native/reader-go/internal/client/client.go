@@ -38,17 +38,23 @@ func DefaultOptions() Options {
 }
 
 const (
-	maxConns     = 16
-	downloaders  = 8 // blobs fetched at once (requests are pipelined, NETWORK.md 3)
-	maxOwn       = 8
-	prefetchMax  = 8
-	getTimeout   = 10 * time.Second       // a relay that has not answered a get by then has failed
-	getGrace     = 200 * time.Millisecond // how long a request waits for more relays once one is up
+	maxConns    = 16
+	downloaders = 8 // blobs fetched at once (requests are pipelined, NETWORK.md 3)
+	maxOwn      = 8
+	prefetchMax = 8
+	getGrace    = 200 * time.Millisecond // how long a request waits for more relays once one is up
+	maxBackoff  = 30 * time.Second
+	idlePoll    = 2 * time.Millisecond  // how often WaitIdle looks
+	idleSettle  = 10 * time.Millisecond // how long Idle must hold for WaitIdle
+)
+
+// The timers a test lengthens, to show that something finished without
+// waiting for one of them (set before a client starts; never changed
+// otherwise).
+var (
+	getTimeout   = 10 * time.Second // a relay that has not answered a get by then has failed
 	dialTimeout  = 10 * time.Second
 	firstBackoff = time.Second
-	maxBackoff   = 30 * time.Second
-	idlePoll     = 2 * time.Millisecond  // how often WaitIdle looks
-	idleSettle   = 10 * time.Millisecond // how long Idle must hold for WaitIdle
 )
 
 // ErrNotFound is returned by Get when no relay has the blob.

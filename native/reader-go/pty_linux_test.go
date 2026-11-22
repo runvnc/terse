@@ -92,8 +92,9 @@ func TestInteractive(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
+	// Each wait is for something the reader shows; a minute bounds a hang.
 	waitFor := func(s string) {
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(time.Minute)
 		for time.Now().Before(deadline) {
 			mu.Lock()
 			ok := strings.Contains(screen.String(), s)
@@ -115,8 +116,13 @@ func TestInteractive(t *testing.T) {
 	mu.Unlock()
 	master.Write([]byte("\r"))
 	waitFor("Hello, Terse!")
+	// The first q closes the article (the timeline is shown again), the
+	// second quits.
+	mu.Lock()
+	screen.Reset()
+	mu.Unlock()
 	master.Write([]byte("q"))
-	time.Sleep(200 * time.Millisecond)
+	waitFor("Tersenet — timeline")
 	master.Write([]byte("q"))
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -125,7 +131,7 @@ func TestInteractive(t *testing.T) {
 		if err != nil {
 			t.Errorf("exit: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Minute):
 		cmd.Process.Kill()
 		t.Fatal("the reader did not quit")
 	}

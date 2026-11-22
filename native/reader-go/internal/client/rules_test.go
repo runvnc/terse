@@ -31,14 +31,18 @@ type testRelay struct {
 	highest   map[[32]byte]uint32   // highest reported, by feed (default: of entries)
 	refuse    map[[32]byte]bool     // subscribe refused (status 3)
 	blobs     map[[32]byte][]byte
-	silentGet bool          // never answers a get
-	getDelay  time.Duration // answers each get after this, without holding up the next request
-	gets      int
-	inFlight  int // gets received and not answered yet
-	maxFlight int // the most at once
-	subs      map[[32]byte]int
-	unsubs    map[[32]byte]int
-	conns     map[*ws.Conn]bool
+	silentGet bool // never answers a get
+	// With holdGets > 0, gets are answered only once holdGets are waiting,
+	// or every one of the expectGets not yet answered.
+	holdGets, expectGets int
+	held                 []func()
+	answered             int
+	gets                 int
+	inFlight             int // gets received and not answered yet
+	maxFlight            int // the most at once
+	subs                 map[[32]byte]int
+	unsubs               map[[32]byte]int
+	conns                map[*ws.Conn]bool
 }
 
 func newTestRelay(t *testing.T) *testRelay {
@@ -80,6 +84,22 @@ func (f *testRelay) push(e []byte) {
 	f.mu.Unlock()
 	for _, c := range cs {
 		c.WriteMessage(append([]byte{terse.MsgEntry}, e...))
+	}
+}
+
+// hold keeps a get's answer until holdGets answers are kept, or all the
+// gets still expected; then sends them all.
+func (f *testRelay) hold(answer func()) {
+	f.mu.Lock()
+	f.held = append(f.held, answer)
+	var release []func()
+	if len(f.held) >= f.holdGets || f.answered+len(f.held) >= f.expectGets {
+		release, f.held = f.held, nil
+		f.answered += len(release)
+	}
+	f.mu.Unlock()
+	for _, a := range release {
+		a()
 	}
 }
 
@@ -149,12 +169,10 @@ func (f *testRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.inFlight++
 			f.maxFlight = max(f.maxFlight, f.inFlight)
 			b, ok := f.blobs[key]
-			silent, delay := f.silentGet, f.getDelay
+			silent := f.silentGet
+			hold := f.holdGets > 0
 			f.mu.Unlock()
 			answer := func() {
-				if delay > 0 {
-					time.Sleep(delay)
-				}
 				f.mu.Lock()
 				f.inFlight--
 				f.mu.Unlock()
@@ -166,8 +184,8 @@ func (f *testRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					c.WriteMessage(append(append([]byte{terse.MsgGetReply}, req...), terse.StatusNotFound))
 				}
 			}
-			if delay > 0 {
-				go answer()
+			if hold {
+				f.hold(answer)
 			} else {
 				answer()
 			}
@@ -262,6 +280,31 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// patient lengthens the client's timers to an hour for one test: then
+// what finishes within a minute (a bound on a hang only) cannot have
+// waited for one of them, however busy the computer is.
+func patient(t *testing.T) {
+	get, dial, backoff := getTimeout, dialTimeout, firstBackoff
+	getTimeout, dialTimeout, firstBackoff = time.Hour, time.Hour, time.Hour
+	t.Cleanup(func() { getTimeout, dialTimeout, firstBackoff = get, dial, backoff })
+}
+
+// within runs f and fails the test if it has not returned within a minute
+// (a hang).
+func within(t *testing.T, what string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Minute):
+		t.Fatalf("%s: still waiting after a minute", what)
+	}
 }
 
 func mustAdd(t *testing.T, st *store.Store, raw []byte) *terse.Entry {
@@ -589,8 +632,11 @@ func TestGetConstants(t *testing.T) {
 }
 
 // With at most two requests outstanding, a relay that never answers does
-// not hold the others up: each "not found" lets the next one be asked.
+// not hold the others up: each "not found" lets the next one be asked, and
+// the blob comes while the silent relay's request is still outstanding
+// (it would end only at the get timeout, an hour here).
 func TestGetSlidingWindow(t *testing.T) {
+	patient(t)
 	silent, nf1, nf2, has := newTestRelay(t), newTestRelay(t), newTestRelay(t), newTestRelay(t)
 	silent.silentGet = true
 	blob := []byte("the blob")
@@ -609,14 +655,19 @@ func TestGetSlidingWindow(t *testing.T) {
 		}
 		return n == 4
 	})
-	start := time.Now()
-	b, err := cl.Get(id)
+	var b []byte
+	var err error
+	within(t, "get", func() { b, err = cl.Get(id) })
 	if err != nil || string(b) != string(blob) {
 		t.Fatalf("get: %q, %v", b, err)
 	}
-	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("get took %v: held up by the silent relay", d)
+	cl.mu.Lock()
+	for _, cn := range cl.conns {
+		if cn.url == silent.url && len(cn.pending) != 1 {
+			t.Errorf("the silent relay's request is no longer outstanding (%d pending)", len(cn.pending))
+		}
 	}
+	cl.mu.Unlock()
 	for _, r := range []*testRelay{silent, nf1, nf2, has} {
 		r.mu.Lock()
 		g := r.gets
@@ -628,16 +679,20 @@ func TestGetSlidingWindow(t *testing.T) {
 }
 
 // With no relay connected and none connecting, a get fails at once; with
-// relays connecting it waits only until none is still connecting.
+// relays connecting it waits only until none is still connecting. The
+// client's timers are an hour: the get ends on the connect failing, not on
+// a timer.
 func TestGetWithoutRelays(t *testing.T) {
+	patient(t)
 	st := openStore(t)
 	var id [32]byte
 	cl := New(st, testOptions())
 	cl.Start()
-	start := time.Now()
-	if _, err := cl.Get(id); !errors.Is(err, ErrNotFound) {
-		t.Errorf("no relays: %v, want not found", err)
-	}
+	within(t, "get with no relays", func() {
+		if _, err := cl.Get(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("no relays: %v, want not found", err)
+		}
+	})
 	cl.Stop()
 
 	// A port nobody listens on: the attempt fails fast.
@@ -652,23 +707,23 @@ func TestGetWithoutRelays(t *testing.T) {
 	cl = New(st, opt)
 	cl.Start()
 	defer cl.Stop()
-	if _, err := cl.Get(id); !errors.Is(err, ErrNotFound) {
-		t.Errorf("unreachable relay: %v, want not found", err)
-	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Errorf("took %v", d)
-	}
+	within(t, "get with an unreachable relay", func() {
+		if _, err := cl.Get(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("unreachable relay: %v, want not found", err)
+		}
+	})
 }
 
 // --- sync ---
 
 // A sync's downloads go out together, pipelined on one connection
-// (NETWORK.md 3: replies may come in any order), so a relay 50 ms away
-// costs about 50 ms per downloaders blobs, not 50 ms per blob; and the
-// sync ends soon after the last one.
+// (NETWORK.md 3: replies may come in any order), so a relay far away costs
+// one round trip per downloaders blobs, not one per blob. The relay holds
+// its answers until downloaders gets are waiting (or all that are left):
+// a client that asked one at a time would never be answered.
 func TestSyncFetchesConcurrently(t *testing.T) {
+	patient(t)
 	r := newTestRelay(t)
-	r.getDelay = 50 * time.Millisecond
 	f := newFeed(t)
 	const n = 40
 	for i := 1; i <= n; i++ {
@@ -676,6 +731,7 @@ func TestSyncFetchesConcurrently(t *testing.T) {
 		r.blobs[blake3.Sum256(blob)] = blob
 		r.addEntry(f.key, f.entryFor(uint32(i), terse.KindArticle, blob, fmt.Sprint("t", i)))
 	}
+	r.holdGets, r.expectGets = downloaders, n
 	st := openStore(t)
 	if _, err := st.Subscribe(f.addr(t)); err != nil {
 		t.Fatal(err)
@@ -686,8 +742,8 @@ func TestSyncFetchesConcurrently(t *testing.T) {
 	start := time.Now()
 	cl.Start()
 	defer cl.Stop()
-	if !cl.WaitIdle(10 * time.Second) {
-		t.Fatal("sync did not finish")
+	if !cl.WaitIdle(time.Minute) {
+		t.Fatal("sync did not finish: the gets were not asked together")
 	}
 	took := time.Since(start)
 	for _, e := range st.Timeline() {
@@ -698,17 +754,16 @@ func TestSyncFetchesConcurrently(t *testing.T) {
 	r.mu.Lock()
 	most, gets := r.maxFlight, r.gets
 	r.mu.Unlock()
-	t.Logf("%d blobs, 50 ms each: %v, at most %d gets at once", gets, took, most)
-	if most < downloaders/2 || most > downloaders {
-		t.Errorf("at most %d gets at once, want about %d", most, downloaders)
-	}
-	if one := time.Duration(n) * r.getDelay; took > one/2 {
-		t.Errorf("sync took %v; one at a time takes %v", took, one)
+	t.Logf("%d blobs: %v, at most %d gets at once", gets, took, most)
+	if gets != n || most != downloaders {
+		t.Errorf("%d gets, at most %d at once; want %d, %d at once", gets, most, n, downloaders)
 	}
 }
 
-// With nothing to fetch a sync ends at once, not after a polling period.
+// With nothing to fetch a sync ends at once, not after a polling period:
+// on the subscribe reply, with every timer of the client an hour.
 func TestSyncWithNothingNewIsQuick(t *testing.T) {
+	patient(t)
 	r := newTestRelay(t)
 	f := newFeed(t)
 	st := openStore(t)
@@ -719,11 +774,14 @@ func TestSyncWithNothingNewIsQuick(t *testing.T) {
 	start := time.Now()
 	cl.Start()
 	defer cl.Stop()
-	if !cl.WaitIdle(10 * time.Second) {
+	if !cl.WaitIdle(time.Minute) {
 		t.Fatal("not idle")
 	}
-	if d := time.Since(start); d > 150*time.Millisecond {
-		t.Errorf("an empty sync took %v", d)
+	t.Logf("an empty sync took %v", time.Since(start))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.subs[f.key] != 1 {
+		t.Errorf("%d subscribes, want 1", r.subs[f.key])
 	}
 }
 
