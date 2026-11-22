@@ -16,6 +16,9 @@
 //!             zero groups; no dotted IPv4 part, no zone
 //! port      = 1 to 65535, decimal, no leading zero; 7878 if left out
 //! ```
+//!
+//! A hint names `ws://host:port`, except that port 443 names
+//! `wss://host` (WebSocket over TLS, NETWORK.md 4.9).
 
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -28,6 +31,8 @@ pub const MAX_HINTS: usize = 2;
 pub const MAX_HINT_LIST: usize = MAX_HINTS * MAX_HINT + 1;
 /// The port of a hint that names none.
 pub const DEFAULT_PORT: u16 = 7878;
+/// The port of a hint that names a relay over TLS (`wss://`).
+pub const TLS_PORT: u16 = 443;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Host {
@@ -45,9 +50,9 @@ pub struct Hint {
 }
 
 impl Hint {
-    /// The relay's URL (plain WebSocket in this revision).
+    /// The relay's URL: `ws://host:port`, or `wss://host` for port 443.
     pub fn url(&self) -> String {
-        format!("ws://{}:{}", self.host_text(), self.port)
+        if self.port == TLS_PORT { format!("wss://{}", self.host_text()) } else { format!("ws://{}:{}", self.host_text(), self.port) }
     }
 
     /// The host as a URL writes it (an IPv6 address in brackets).
@@ -267,6 +272,10 @@ mod tests {
         assert_eq!(ok("relay.example.org"), [Hint { host: Host::Name("relay.example.org".into()), port: 7878 }]);
         assert_eq!(ok("Relay.Example:443")[0].port, 443);
         assert_eq!(ok("a")[0].url(), "ws://a:7878");
+        // Port 443: over TLS.
+        assert_eq!(ok("Relay.Example:443")[0].url(), "wss://Relay.Example");
+        assert_eq!(ok("[2001:db8::1]:443")[0].url(), "wss://[2001:db8::1]");
+        assert_eq!(ok("a:80")[0].url(), "ws://a:80");
         assert_eq!(ok("203.0.113.5:65535")[0], Hint { host: Host::V4(Ipv4Addr::new(203, 0, 113, 5)), port: 65535 });
         assert_eq!(ok("0.0.0.0")[0].host, Host::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(ok("[2001:db8::1]:8080")[0].url(), "ws://[2001:db8::1]:8080");

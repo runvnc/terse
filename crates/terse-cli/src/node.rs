@@ -1010,9 +1010,10 @@ mod imp {
                         self.dirty = true;
                         self.log(&format!("connected to {url}"));
                     }
-                    FeedEvent::Disconnected { url, retry_in } => {
+                    FeedEvent::Disconnected { url, retry_in, why } => {
                         self.dirty = true;
-                        self.log(&format!("{url}: not connected; trying again in {} s", retry_in.as_secs()));
+                        let why = why.map(|w| format!(" ({w})")).unwrap_or_default();
+                        self.log(&format!("{url}: not connected{why}; trying again in {} s", retry_in.as_secs()));
                     }
                     FeedEvent::SubscribeRefused(key) => self.log(&format!("a relay refused the subscription to {}", to_hex(&key))),
                     FeedEvent::Unreachable => self.log("none of your relays can be reached"),
