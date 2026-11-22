@@ -490,7 +490,9 @@ drivers in the repository take no options:
 socket only), `terse-dev-mame` (`crates/terse-mame-crt`: slots 3 and 9,
 or slot 2, whichever group it is asked for; section 7.1),
 `native/driver-example/terminal.c` (slots 2 and 10, socket
-only, section 13) and `terse-dev-crash`, a terminal that fails on purpose
+only, section 13), `native/driver-experimental/dice.c` (the
+experimental device `example.dice`, section 15; socket only) and
+`terse-dev-crash`, a terminal that fails on purpose
 for tests (`TERSE_CRASH`, `TERSE_CRASH_AT`, `TERSE_CRASH_THEN`).
 
 How a core finds its drivers (`terse-bus` does this, and `tcore`):

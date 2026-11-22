@@ -492,7 +492,8 @@ buffers it is said to write. `pc` continues after the `ecall`.
   §image), returns `FFFF_FFFFh` and does nothing else. That includes
   every call to slot 8 on a machine that is not a shell (§image), to slot
   10 (a device with no calls, §terminal.text), to a slot that is no device
-  (0, 5, 11–255) and with `a7` above `FFFFh`. Its charge is 4 (§charges).
+  (0, 5, 11–239), to an experimental slot (240–255) whose device was not granted
+  (`spec/experimental.md`), and with `a7` above `FFFFh`. Its charge is 4 (§charges).
 - A **buffer** is a pointer and a length in bytes. A buffer the device
   reads must lie wholly in ROM or wholly in RAM; one it writes must lie
   wholly in RAM. A buffer of length 0 is valid at any address, for every

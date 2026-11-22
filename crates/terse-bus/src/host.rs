@@ -336,7 +336,7 @@ pub fn needed_slots(image: &Image, shell: bool) -> Vec<u8> {
     if shell {
         return vec![2, 3, 4, terse_core::sound::SLOT, 7, terse_core::vector3::SLOT, FULL_TEXT];
     }
-    // Only slots that are devices (SPEC §image: 0, 5 and 11-255 are not, and
+    // Only slots that are devices (SPEC §image: 0, 5 and 11-239 are not; 240-255 are experimental, served by experimental_drivers, and
     // an optional one is never granted, whatever driver a --driver names).
     let device = |s: u8| terse_core::image::SUPPORTED_DEVICES.iter().any(|d| d.slot == s);
     let mut v: Vec<u8> = image.devices.iter().map(|d| d.slot).filter(|&s| s != 1 && s != terse_core::machines::SLOT && device(s)).collect();
