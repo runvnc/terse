@@ -78,7 +78,7 @@
 <h2 id="replay">Replay</h2>
 <p>Record requests are inputs like every completion: what a load delivers and the status of a save are recorded with the run, so a run replays exactly without the records directory. The records themselves are not part of the machine&#39;s state; only the pending requests are.</p>
 <h2 id="where-hosts-keep-them">Where hosts keep them</h2>
-<p>Hosts keep records under <code>&lt;data&gt;/records</code>, where <code>&lt;data&gt;</code> is the <code>--data</code> option of <code>terse run</code> and <code>terse-host</code>, by default <code>$XDG_DATA_HOME/terse</code>, else <code>~/.local/share/terse</code>. Inside, each owner has a directory, <code>program/&lt;feed key hex&gt;/&lt;name hex&gt;/</code> (built-ins have the all-zero key) or <code>image/&lt;image ID hex&gt;/</code>, and each record is a file named by the hex of its name. The <code>terse</code> tool inspects them:</p>
+<p>Hosts keep records under <code>&lt;data&gt;/records</code>, where <code>&lt;data&gt;</code> is the <code>--data</code> option of <code>terse run</code> and <code>terse-host</code>, by default <code>$XDG_DATA_HOME/terse</code>, else <code>~/.local/share/terse</code> (also on macOS; <code>%LOCALAPPDATA%\terse</code> on Windows). Inside, each owner has a directory, <code>program/&lt;feed key hex&gt;/&lt;name hex&gt;/</code> (built-ins have the all-zero key) or <code>image/&lt;image ID hex&gt;/</code>, and each record is a file named by the hex of its name. The <code>terse</code> tool inspects them:</p>
 <div class="table"><table>
 <thead><tr><th>Command</th><th>Effect</th></tr></thead>
 <tbody>

@@ -53,7 +53,7 @@
 <li>**Tersenet&#39;s own drawing.** It first draws the phosphor look more simply. If that is not enough, it says once that it does not keep up on this computer, and records it; it stops no machine. A smaller window may help.</li>
 <li>**Resizing the window.** While the size changes, Tersenet holds the machines, at most a second at a time, and the few frames just after a resize count against no one, within a bound.</li>
 </ul>
-<p>A machine is stopped only when the operating system says how long Tersenet waited for a processor (Linux with schedstats, and macOS); elsewhere, Windows for one, it is warned about and saved, never stopped.</p>
+<p>A machine is stopped only when Tersenet can tell how long it waited for a processor: Linux with schedstats and macOS say so, and on Windows Tersenet works it out from how long the machine ran and how long the processors stood idle. Where it cannot tell, the machine is warned about and saved, never stopped.</p>
 <p>Every state saved this way is listed in the launcher under SAVED BY TERSENET: Enter restores one, D deletes it. There is one place per machine, so a new warning replaces the last save. How slowness is measured and reported is in <a href="performance-reports.html">Performance reports</a>.</p>
 <h2 id="open-requests">Open requests</h2>
 <p>A machine may ask the shell to open a program (by its identity) or a blob (by its ID); the reader does this when you follow a link to a program, an image or a document. The shell takes these requests only from the machine with the keyboard, one at a time, at most one a second from each machine, and ignores a machine&#39;s requests for ten seconds after you say no.</p>

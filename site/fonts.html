@@ -28,7 +28,7 @@
     terse fonts set mono default</pre>
 <p>A replacement must have every character of printable ASCII, and the monospace one must be monospaced, so that it fits the terminal&#39;s cells; <code>terse fonts</code> checks this when you set it, and <code>terse-host</code> again when it starts (it says why on its error output and uses the built-in font if a file is missing or unsuitable). Characters the replacement lacks still come from the built-in font behind it, so the full repertoire is always drawn.</p>
 <h2 id="where-the-settings-live">Where the settings live</h2>
-<p><code>terse fonts</code> writes <code>fonts</code> in the configuration directory (<code>~/.config/terse</code>, or <code>$XDG_CONFIG_HOME/terse</code>), one line per font: <code>mono</code>, <code>sans</code>, <code>bold</code> or <code>extra</code>, then the file. `terse-host --version` lists the fonts it would use. Every font is opened when <code>terse-host</code> starts and never again: it never waits for a font while a program runs.</p>
+<p><code>terse fonts</code> writes <code>fonts</code> in the configuration directory (<code>~/.config/terse</code>, or <code>$XDG_CONFIG_HOME/terse</code>; <code>%APPDATA%\terse</code> on Windows), one line per font: <code>mono</code>, <code>sans</code>, <code>bold</code> or <code>extra</code>, then the file. `terse-host --version` lists the fonts it would use. Every font is opened when <code>terse-host</code> starts and never again: it never waits for a font while a program runs.</p>
 </article>
 </main>
 <footer><nav class="pn"><a rel="prev" href="using-reader.html">← Using the reader</a><a rel="next" href="writing-articles.html">Writing an article →</a></nav></footer>

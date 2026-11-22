@@ -1,6 +1,6 @@
 # Using the shell
 
-`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:82cd9ff43f26d84879092b8dfe51d9f9b521b1cbd96e3e0b47c64729d5a1d367) does the same for the reader.
+`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:58f2fd46491fcf57b0c3ac4c547aad267510c258594bb86b665fb1fb336dabca) does the same for the reader.
 
 ## Starting
 
@@ -47,7 +47,7 @@ reef is Lumen Reef, a game on the 3D vector display: the user guide's page "Find
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:c4eed4b40525bda762bac9d8c7b875933c8e43120305edb8ff5aaa6e46da2612).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:48c369990884c65690f807bdf4d72d6b4be9f3acb16e1cd70b584585e659d991).
 
 ## Halted machines
 
@@ -57,7 +57,7 @@ Tersenet watches every frame for the part that made it late, in `terse-host`, wh
 - **Tersenet's own drawing.** It first draws the phosphor look more simply. If that is not enough, it says once that it does not keep up on this computer, and records it; it stops no machine. A smaller window may help.
 - **Resizing the window.** While the size changes, Tersenet holds the machines, at most a second at a time, and the few frames just after a resize count against no one, within a bound.
 
-A machine is stopped only when the operating system says how long Tersenet waited for a processor (Linux with schedstats, and macOS); elsewhere, Windows for one, it is warned about and saved, never stopped.
+A machine is stopped only when Tersenet can tell how long it waited for a processor: Linux with schedstats and macOS say so, and on Windows Tersenet works it out from how long the machine ran and how long the processors stood idle. Where it cannot tell, the machine is warned about and saved, never stopped.
 
 Every state saved this way is listed in the launcher under SAVED BY TERSENET: Enter restores one, D deletes it. There is one place per machine, so a new warning replaces the last save. How slowness is measured and reported is in [Performance reports](terse:b47a54142603b1deb6e3eee12c680ebb0fda294aa6cc5fa79aa6c2cc8ca5060e).
 
@@ -86,4 +86,4 @@ Every prompt names the title of the program that asks. Y allows; N or Esc refuse
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). How the shell's devices work: [The machines device](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b). Feeds and consent from a program's side: [Feeds](terse:54355e9a715bbd1278f9633e0b468e2ada603ecc9ec91ecdfd62579797e75be7).
+How articles are written: [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). How the shell's devices work: [The machines device](terse:092e0613635a0699c65a6788507306549896fec426a6e7c0289f89126c2e78ad). Feeds and consent from a program's side: [Feeds](terse:54355e9a715bbd1278f9633e0b468e2ada603ecc9ec91ecdfd62579797e75be7).

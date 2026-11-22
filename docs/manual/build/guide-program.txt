@@ -2,7 +2,7 @@
 
 Besides articles, Tersenet can carry small programs. Each runs on its own Terse32 machine, a tiny virtual computer: at most 1 MiB of memory, a fixed amount of work per frame at 60 frames a second, and a few devices to talk to, such as an 80 by 30 grid of text and a display for lines. A program cannot see your files. Programs are optional: nothing in the reader depends on them.
 
-The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine's 32-bit RISC-V processor. This one is in C; [the same in Rust](terse:17aaa9f76dd78682e3cae8ec8f21351a7da2d368e5b41fc3dde1af3f253119aa) comes next.
+The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine's 32-bit RISC-V processor. This one is in C; [the same in Rust](terse:cf1684330f75b78bd3c8ba6526239c8a2cc5af95c9727cdedd408c2a7f9ba33a) comes next.
 
 ## The program
 
@@ -68,6 +68,6 @@ It prints one line per frame, the frame's number and the machine's state hash, a
 
 ## What you have now
 
-A program that you build, run in a window and test without one. It is `examples/program/c/hello.c` in the Tersenet sources; `programs/hello/hello.c` is a fuller one, the built-in hello, with typed text and Unicode. Next: [the same in Rust](terse:17aaa9f76dd78682e3cae8ec8f21351a7da2d368e5b41fc3dde1af3f253119aa), or, staying with C, [Draw a line and read a key](terse:15b0a65ec81abda01a64f509f058e047640ccb56035f98d54a7f6d64a6cec967).
+A program that you build, run in a window and test without one. It is `examples/program/c/hello.c` in the Tersenet sources; `programs/hello/hello.c` is a fuller one, the built-in hello, with typed text and Unicode. Next: [the same in Rust](terse:cf1684330f75b78bd3c8ba6526239c8a2cc5af95c9727cdedd408c2a7f9ba33a), or, staying with C, [Draw a line and read a key](terse:cfa8fd0dedb44f59ec75fe930e11a9a31358423c9366159e6f63db5bdf80fa59).
 
-Every option of `terse build` is in [Building a program](terse:c9d0abede30d65b3757e5ccb979c89d0fa62ddd7de787ca75b41430925350253), the library in [The C library](terse:8fadc28cfd4371a1acf5e4c9a04a842ce98168f0a80d12b36e65784cec8409bb), and running, testing and publishing a program in [Running and publishing a program](terse:36b4b75fbf1e302b6f4ef685ac3f491684a580aa7d782cea189eda3e7c90365c).
+Every option of `terse build` is in [Building a program](terse:a03a0d7e5e574b9f464bed3f1a4c03029bea1045a4526017d7bb06ef9465a073), the library in [The C library](terse:79fc79a83b19ad9f0f9dc76bd650feda0d64687e3a4fd8acf98f48ff6717280d), and running, testing and publishing a program in [Running and publishing a program](terse:a178a4f889cc6196fd70fadf181919af07c2287092945673af53141c26b1c96e).

@@ -377,11 +377,17 @@ pub fn session_dir() -> Result<std::path::PathBuf, String> {
 mod tests {
     use super::*;
 
+    /// Whether the system says, for one thread, both its time on a CPU and
+    /// its time waiting for one (Linux with schedstats). macOS gives the
+    /// wait of the whole process only, and Windows' is inferred.
+    fn thread_wait_is_read(probe: &terse_perflog::probe::ProcProbe) -> bool {
+        cfg!(target_os = "linux") && probe.has_wait()
+    }
+
     /// A thread's time on a CPU plus its time waiting for one, in ns, where
-    /// the system says both (Linux with schedstats): the time it was not
-    /// blocked.
+    /// the system says both: the time it was not blocked.
     fn unblocked_ns(probe: &mut terse_perflog::probe::ProcProbe) -> Option<u64> {
-        probe.has_wait().then(|| probe.sample()).flatten().map(|s| s.run_ns + s.wait_ns)
+        thread_wait_is_read(probe).then(|| probe.sample()).flatten().map(|s| s.run_ns + s.wait_ns)
     }
 
     /// Packets go both ways through a bus file, sleeping and spinning,
@@ -426,7 +432,7 @@ mod tests {
                 assert!(d.recv().is_err());
             });
             let mut probe = terse_perflog::probe::ProcProbe::this_thread();
-            let readings = probe.has_wait();
+            let readings = thread_wait_is_read(&probe);
             let mut driver_before: Option<u64> = None;
             let (mut napped, mut slow) = (0, 0);
             for i in 0..1000u32 {
@@ -446,7 +452,7 @@ mod tests {
                 // reading of the driver's to start from, and is not judged).
                 let both_blocked = match (core_before, unblocked_ns(&mut probe), driver_before) {
                     (Some(a), Some(b), Some(d)) if driver_now != u64::MAX => {
-                        let unblocked = (b - a) + driver_now.saturating_sub(d);
+                        let unblocked = b.saturating_sub(a) + driver_now.saturating_sub(d);
                         Some(Duration::from_nanos((took.as_nanos() as u64).saturating_sub(unblocked)))
                     }
                     _ if readings => None,

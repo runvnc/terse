@@ -81,7 +81,7 @@ Record requests are inputs like every completion: what a load delivers and the s
 
 ## Where hosts keep them
 
-Hosts keep records under `<data>/records`, where `<data>` is the `--data` option of `terse run` and `terse-host`, by default `$XDG_DATA_HOME/terse`, else `~/.local/share/terse`. Inside, each owner has a directory, `program/<feed key hex>/<name hex>/` (built-ins have the all-zero key) or `image/<image ID hex>/`, and each record is a file named by the hex of its name. The `terse` tool inspects them:
+Hosts keep records under `<data>/records`, where `<data>` is the `--data` option of `terse run` and `terse-host`, by default `$XDG_DATA_HOME/terse`, else `~/.local/share/terse` (also on macOS; `%LOCALAPPDATA%\terse` on Windows). Inside, each owner has a directory, `program/<feed key hex>/<name hex>/` (built-ins have the all-zero key) or `image/<image ID hex>/`, and each record is a file named by the hex of its name. The `terse` tool inspects them:
 
 | Command | Effect |
 |---|---|

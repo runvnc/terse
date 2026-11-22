@@ -50,7 +50,7 @@ In the reader you can do the same without a terminal: F opens your feeds, P asks
 terse feed address
 ```
 
-prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:b4daffa6561b5e4203d3a670013c8713d8e9034d7f0893ea7973414d55ff72af) says how to share a relay. The reader's help page (?) shows the address too.
+prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:92d243e6b833921fea75060002a5bee1e6ca83cc7e8efca815cd5b8ee2f6d79e) says how to share a relay. The reader's help page (?) shows the address too.
 
 ## What is kept where
 
@@ -60,10 +60,10 @@ prints the address to give to people: your key, and after an `@` the relays wher
 | `~/.local/share/terse` | what programs keep, the relay's store |
 | `~/.cache/terse` | articles and programs you downloaded |
 
-On Windows the first is `%APPDATA%\terse` and the others are in `%LOCALAPPDATA%\terse`.
+On macOS they are the same folders. On Windows the first is `%APPDATA%\terse` and the others are both `%LOCALAPPDATA%\terse`. Wherever you are, setting `XDG_CONFIG_HOME`, `XDG_DATA_HOME` or `XDG_CACHE_HOME` to a folder puts the `terse` folder there instead.
 
 ## What you have now
 
-A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:a43bc0fdf5879595d07ad179ed88f3a0fda4ec3df565a0f65844114b5e005600).
+A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:89d6da3b17fb7a65c86e8d398abf9eb443af38526f1fdf80824b784cd5638f43).
 
 Profiles, names and addresses in full are in [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).
