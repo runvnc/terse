@@ -1475,6 +1475,19 @@ impl ApplicationHandler for App {
                     }
                     _ => Duration::ZERO,
                 };
+                // The window's size as the window system has it now: a size
+                // whose Resized never came (or came while the surface was
+                // being reconfigured) is taken here, so the picture is never
+                // left at an old size.
+                if let Some(gfx) = &mut self.gfx {
+                    let s = gfx.window.inner_size();
+                    if s.width > 0 && s.height > 0 && gfx.viewport() != (s.width, s.height) {
+                        self.hold.resized(self.ticks);
+                        self.watch.resized();
+                        self.watch.add(terse_perflog::Line::Resize { frame: self.watch.frame, width: s.width, height: s.height });
+                        gfx.resize(s);
+                    }
+                }
                 let capture = self.drive.as_ref().is_some_and(crate::drive::Drive::wants_picture);
                 let holding = self.hold.holding();
                 if !self.occluded

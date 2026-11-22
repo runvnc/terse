@@ -547,6 +547,16 @@ impl ApplicationHandler for App {
                 // fullscreen one shows a smaller buffer centred).
                 self.resize(PhysicalSize::new(w, h));
             }
+            // The window's size as the window system has it now (a size
+            // whose Resized never came is taken here), as terse-host does.
+            if self.opts.selftest.is_none()
+                && let Some(w) = self.window.clone()
+            {
+                let s = w.inner_size();
+                if s.width > 0 && s.height > 0 && (s.width, s.height) != self.viewport {
+                    self.resize(s);
+                }
+            }
             self.coalesced_input();
             self.ticks += 1;
             // R15, resizing: while the size changes the machines are held

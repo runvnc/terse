@@ -205,6 +205,30 @@ fn within(iv: (f32, f32), k: f32, m: f32, lo: f32, hi: f32, dy: f32) -> (f32, f3
     (iv.0.max(a), iv.1.min(b))
 }
 
+/// Bloom below this (any channel) is taken as none: it adds at most
+/// 10⁻⁵ × strength × exposure to the light, far below what shows. Keeping
+/// it out of the masks keeps the blur passes from spreading the work a
+/// block further each.
+const BLOOM_FLOOR: f32 = 1e-5;
+
+/// The blocks of `row` (three floats a pixel) in `m` that hold a value
+/// above `floor`; the others are set to zero.
+fn tighten(row: &mut [f32], mut m: Mask, b: Blocks, floor: f32) -> Mask {
+    let mut keep = 0;
+    while m != 0 {
+        let i = m.trailing_zeros();
+        m &= m - 1;
+        let (x0, x1) = ((i as usize) << b.shift, (((i + 1) as usize) << b.shift).min(b.width));
+        let part = &mut row[x0 * 3..x1 * 3];
+        if part.iter().fold(false, |a, &v| a | (v > floor)) {
+            keep |= 1 << i;
+        } else {
+            part.fill(0.0);
+        }
+    }
+    keep
+}
+
 /// What the beam shader needs of the frame (`u_vector_params`).
 #[derive(Clone, Copy)]
 struct Frame {
@@ -630,6 +654,7 @@ impl Tube {
                             out[x * 3..x * 3 + 3].copy_from_slice(&acc);
                         }
                     }
+                    *m = tighten(out, new, hb, BLOOM_FLOOR);
                 }
             });
         }
@@ -670,6 +695,7 @@ impl Tube {
                                 out[x * 3..x * 3 + 3].copy_from_slice(&acc);
                             }
                         }
+                        *m = tighten(out, new, hb, BLOOM_FLOOR);
                     }
                 });
             }
@@ -711,6 +737,7 @@ impl Tube {
                                 }
                             }
                         }
+                        *m = tighten(out, new, hb, BLOOM_FLOOR);
                     }
                 });
             }
@@ -756,6 +783,11 @@ impl Tube {
         let bands: Vec<(usize, &mut [u32], &mut [Mask])> =
             image.chunks_mut(BAND * stride).zip(shown.chunks_mut(BAND)).enumerate().map(|(i, (img, sh))| (rows.start + i * BAND, img, sh)).collect();
         pool.each(bands, |(y0, img, shown)| {
+            // A row of the phosphor and of the bloom mixed between the two
+            // rows this row samples (the columns needed), then sampled
+            // across: bilinear in two steps.
+            let mut arow = vec![0.0f32; astride];
+            let mut brow = vec![0.0f32; hstride];
             for j in 0..shown.len() {
                 let y = y0 + j;
                 let (a0, a1, ay) = if same { (y as u32, y as u32, 0.0) } else { acc_rows[y] };
@@ -776,25 +808,34 @@ impl Tube {
                 let trow = &text[y * tstride..(y + 1) * tstride];
                 let gy = 2.0 * (y as f32 + 0.5) / oh as f32 - 1.0;
                 for (x0, x1) in ob.runs(now) {
+                    let sampled = !same && am != 0;
+                    if sampled {
+                        let (ca, cb) = (acc_cols[x0].0 as usize * 3, (acc_cols[x1 - 1].1 as usize + 1) * 3);
+                        for ((o, &p), &q) in arow[ca..cb].iter_mut().zip(&ar0[ca..cb]).zip(&ar1[ca..cb]) {
+                            *o = p + (q - p) * ay;
+                        }
+                    }
+                    if bm != 0 {
+                        let (ca, cb) = (bloom_cols[x0].0 as usize * 3, (bloom_cols[x1 - 1].1 as usize + 1) * 3);
+                        for ((o, &p), &q) in brow[ca..cb].iter_mut().zip(&br0[ca..cb]).zip(&br1[ca..cb]) {
+                            *o = (p + (q - p) * by) * strength;
+                        }
+                    }
                     for x in x0..x1 {
                         let mut c = if same {
                             [ar0[x * 3], ar0[x * 3 + 1], ar0[x * 3 + 2]]
-                        } else {
+                        } else if sampled {
                             let (c0, c1, t) = acc_cols[x];
                             let (c0, c1) = (c0 as usize * 3, c1 as usize * 3);
-                            std::array::from_fn(|k| {
-                                let top = ar0[c0 + k] + (ar0[c1 + k] - ar0[c0 + k]) * t;
-                                let bottom = ar1[c0 + k] + (ar1[c1 + k] - ar1[c0 + k]) * t;
-                                top + (bottom - top) * ay
-                            })
+                            std::array::from_fn(|k| arow[c0 + k] + (arow[c1 + k] - arow[c0 + k]) * t)
+                        } else {
+                            [0.0; 3]
                         };
                         if bm != 0 {
                             let (c0, c1, t) = bloom_cols[x];
                             let (c0, c1) = (c0 as usize * 3, c1 as usize * 3);
                             for k in 0..3 {
-                                let top = br0[c0 + k] + (br0[c1 + k] - br0[c0 + k]) * t;
-                                let bottom = br1[c0 + k] + (br1[c1 + k] - br1[c0 + k]) * t;
-                                c[k] += (top + (bottom - top) * by) * strength;
+                                c[k] += brow[c0 + k] + (brow[c1 + k] - brow[c0 + k]) * t;
                             }
                         }
                         let t = &trow[x * 3..x * 3 + 3];
@@ -900,6 +941,23 @@ mod tests {
         let light = Light { beams: &i, text: &grid, text_key: Some(0), lin: &lin, dt: 1.0 / 60.0, excluded: &[] };
         let drawn: Vec<bool> = (0..5).map(|_| t.frame(&light, &pool)).collect();
         assert_eq!(drawn, [true, true, false, false, false]);
+    }
+
+    /// The look sheds in steps (PERFORMANCE.md R15): the phosphor drawn at
+    /// most 960, 720, 480 lines high, then without the bloom; a screen of
+    /// 1900 × 1000 pixels (a 1333 × 1000 screen) at each.
+    #[test]
+    fn shedding_steps() {
+        let sizes: Vec<((usize, usize), bool)> = (0..=3)
+            .map(|level| {
+                let (lines, bloom) = lines_at(level);
+                let t = Tube::new((1333, 1000), Settings { max_lines: lines, bloom, ..Settings::default() });
+                (t.size, t.settings.bloom)
+            })
+            .collect();
+        assert_eq!(sizes, [((1280, 960), true), ((960, 720), true), ((640, 480), true), ((640, 480), false)]);
+        // A screen that fits is drawn at its own size at level 0.
+        assert_eq!(Tube::new((640, 480), Settings::default()).size, (640, 480));
     }
 
     /// A segment that fades: its light follows its intensity along it; a

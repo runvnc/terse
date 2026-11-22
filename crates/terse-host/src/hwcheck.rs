@@ -78,14 +78,15 @@ impl Check {
     }
 }
 
-/// The computer and the renderer asked for, as the cache keys them.
+/// The computer, the renderer asked for and the look's model (whose costs
+/// differ), as the cache keys them.
 fn env_key(looks: &Looks) -> String {
     let renderer = match looks.renderer {
         crate::display::RendererChoice::Software => "software",
         crate::display::RendererChoice::Gpu => "gpu",
         crate::display::RendererChoice::Auto => "auto",
     };
-    Line::Env(Environment::detect(renderer)).encode()
+    format!("{} look={}", Line::Env(Environment::detect(renderer)).encode(), looks.look.model.name())
 }
 
 /// Draws the scenarios with `looks`'s renderer; returns the check.
