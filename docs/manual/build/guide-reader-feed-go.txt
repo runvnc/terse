@@ -138,11 +138,11 @@ It prints the list again, an empty line, and the article as step 1 shows it.
 
 ## What it leaves out
 
-A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. tersereader, written from the specification alone, checks entries without the SDK, in `internal/terse/entry.go` and `internal/terse/key.go`, and does the rest in `internal/client/client.go`; a test checks that it and the SDK agree on thousands of altered entries. [Writing a reader without the machine](terse:366289c7f2990017cb8e6c71ee66b36db468efe9a4dfc4ba790fb60a7cfb32f9) lists all a complete reader must do.
+A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. tersereader, written from the specification alone, checks entries without the SDK, in `internal/terse/entry.go` and `internal/terse/key.go`, and does the rest in `internal/client/client.go`; a test checks that it and the SDK agree on thousands of altered entries. [Writing a reader without the machine](terse:5cdd927e19e87387bc3736f1e2b5d379313d392c37e04248dcc275e1516c8274) lists all a complete reader must do.
 
 ## What you have now
 
 A Tersenet reader in Go: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
 
-- The same step in Rust: [Make a reader in Rust, step 3: follow a feed](terse:ef439222a8bcab0b18be03e7cbaaf3cb3afdb0e9b820b9371601d717274cc79f).
-- Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:fb40f7fbc157b567b238db60f7c3bd8330f68aeb0450cba936052f9058cba52d).
+- The same step in Rust: [Make a reader in Rust, step 3: follow a feed](terse:b0aee955e7331df559935fb39d44594af5a1b9223d5397872f13c623b2282218).
+- Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:0ba1e2b8b51e7f6ef0ba1e013e75198ec7f336f9d51f823639a713a2e1a14d19).

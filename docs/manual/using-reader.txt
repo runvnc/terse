@@ -4,7 +4,7 @@ The reader is the program of the shell's launcher where you follow feeds and rea
 
 ## The views
 
-The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed address. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then `@` and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.
+The reader shows every view on the page in the sans face. The terminal's bottom row is its status row: key hints, a position such as `2/3`, or the outcome of the last action. Row 28 is used while you type a feed address or a link. The help page (? or F1) lists the keys of every view and shows your own feed address: your key in full, in groups of eight hex digits, then `@` and your public relays, or, if none of your relays is public, a note that only people on the same relay will find your feed.
 
 Timeline: the articles of the feeds you follow, newest first, each with its title and a dimmer line with the feed (name and short key), the date and time (UTC), the size, and `↳ reply` or `not downloaded` where they apply. New entries appear without a key press. With no entries, a page says so and which keys to press.
 
@@ -13,6 +13,7 @@ Timeline: the articles of the feeds you follow, newest first, each with its titl
 | Up, Down, PgUp, PgDn, Home, End, wheel | move the selection (the wheel 3 entries a step) |
 | Enter, click | open the article; a document (marked `◆`) is passed to the shell |
 | / | search |
+| O | open a link: type or paste a `terse:` link to an article, a feed or a program on row 28 (spaces and line breaks are ignored), Enter opens it as following it would, Esc cancels |
 | F | feeds |
 | M | this manual's index |
 | ? or F1 | help |
@@ -31,7 +32,7 @@ Feeds (F): the feeds you follow, each with its name and short key (`you` marks y
 | U | unsubscribe from the selected feed |
 | N | a nickname for the selected feed, which only you see; empty removes it |
 | P | your public name, then Y or N: whether search may find it |
-| /, T, ? or F1 | as in the timeline |
+| /, O, T, ? or F1 | as in the timeline |
 | Esc, Backspace, Left | back to the timeline |
 
 Names are checked before they are sent (1 to 48 bytes, no control characters, no space at either end), and the host asks you before either is set. Names are chosen by the feeds themselves and are not unique, so the reader shows the short key beside every name.

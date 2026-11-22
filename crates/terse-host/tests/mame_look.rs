@@ -204,7 +204,7 @@ fn the_built_in_programs_keep_up_in_the_mame_look() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    for name in ["reader", "sparks", "fetch", "hello", "sketch", "holo", "reports", "reef"] {
+    for name in ["reader", "sparks", "fetch", "hello", "sketch", "holo", "reports", "reef", "sheet"] {
         let image = program(name).display().to_string();
         for size in ["640x480", "1900x1000"] {
             let o = drive(dir.path(), &[&image, "--force-phosphor"], "wait 600\nquit\n", "software", size);

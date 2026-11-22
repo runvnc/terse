@@ -96,7 +96,7 @@ const PHOSPHOR_FRAMES: u64 = 600;
 const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "usage:
-  terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
+  terse-host [<image|id|link> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
              [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--size <W>x<H>]
              [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto] [--volume <0-100>] [--mute]
@@ -131,7 +131,9 @@ const USAGE: &str = "usage:
   no program receives. --volume and --mute set it for this run.
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
-  --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
+  over a machine whose image lists device 9 (alone, or its tile or panel) it rests instead, so the
+  pointer is over what that program drew (spec/vector3d.md §vector3d.space); --parallax off keeps it
+  still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
   puts the eye there for --screenshot and --bench-render (and keeps it there with --parallax off).
   --panels: how the software renderer draws the machines the shell shows as panels in its 3D
   scene (SPEC §vector3d.list Screen): in perspective (perspective, auto: the default) or flat, upright in
@@ -151,11 +153,14 @@ const USAGE: &str = "usage:
   allows), and in a window also after 3 frames in a row that took longer than a frame to draw (one
   level more each time; one less after 120 quick frames); --no-shed keeps the whole look always.
   With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
-  built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef, and each --builtin image) as machines of their
+  built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef, sheet, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
   launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
   --screenshot and --selftest, --shell alone is the built-in shell. <image> alone runs that image
-  as a single machine, as before.
+  as a single machine, as before. A terse: link instead of <image> (README, Links on the command
+  line): terse:<id> runs an image alone and gives any other blob (an article, a document) to the
+  built-in shell to open; terse:program/<key>/<name> runs that program alone (a built-in, or the
+  current version of a feed held here); a terse:feed/ link says how to subscribe.
   --demo: before the window opens, make sure you have a feed key, subscribe to your own feed and,
   if it has no articles yet, publish four sample articles to it; then run the shell.
   Relays (windowed runs): the --relay options if given (several may be; none: no network); else
@@ -421,7 +426,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let rule = perf_rule.unwrap_or(windowed || driving);
     // No image: the built-in shell. --shell: the image named (if any) is
     // the shell.
-    let shell = shell_flag || image_path.is_none();
+    let mut shell = shell_flag || image_path.is_none();
     if (selftest && image_path.is_none() && !shell_flag)
         || (demo && (selftest || (image_path.is_some() && !shell_flag)))
         || (!shell && !extra_builtins.is_empty())
@@ -479,6 +484,60 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         Ok::<Node, String>(node)
     };
     let mut node = None;
+    // A terse: link (README "Links on the command line"): an image runs as
+    // an image given by its ID; any other blob is given to the built-in
+    // shell to open (an article in the reader, a document in its format's
+    // program); a program link runs that program; a feed link says how to
+    // follow it.
+    let (mut link_bytes, mut shell_argument) = (None, None);
+    if let Some(arg) = image_path.clone()
+        && let Some(link) = terse_net::link::parse(&arg)
+    {
+        if shell_flag {
+            return Err(format!("{arg}: --shell takes an image, not a link"));
+        }
+        let n = match &mut node {
+            Some(n) => n,
+            None => node.insert(open_node()?),
+        };
+        match link.map_err(|e| format!("{arg}: {e}"))? {
+            terse_net::link::Link::Blob(id) => {
+                let bytes = n.fetch_bytes(id).map_err(|e| format!("{arg}: could not be fetched: {e}"))?;
+                if Image::parse(&bytes).is_ok() {
+                    link_bytes = Some(bytes);
+                } else {
+                    image_path = None;
+                    shell = true;
+                    shell_argument = Some(id);
+                }
+            }
+            terse_net::link::Link::Program { publisher, name } => {
+                let title = |b: &&&[u8]| Image::parse(b).is_ok_and(|i| i.title == name);
+                let bytes = if publisher == [0; 32] {
+                    builtin::PROGRAMS.iter().find(title).map(|b| b.to_vec())
+                } else {
+                    n.current_program(&publisher, &name).map(|e| n.fetch_bytes(e.blob)).transpose()?
+                };
+                link_bytes = Some(bytes.ok_or_else(|| {
+                    let name = String::from_utf8_lossy(&name);
+                    match publisher == [0; 32] {
+                        true => format!("{arg}: no program {name} is built into this host"),
+                        false => format!(
+                            "{arg}: this host holds no program {name} of that feed: subscribe to it (terse feed subscribe {}), \
+                             let it sync, and try again",
+                            terse_net::to_hex(&publisher)
+                        ),
+                    }
+                })?);
+            }
+            terse_net::link::Link::Feed(address) => {
+                return Err(format!(
+                    "{arg}: a feed: subscribe with `terse feed subscribe {address}`, or open the reader \
+                     (terse-host), press O and paste the link: the feed's page lets you subscribe"
+                ));
+            }
+        }
+    }
     let path = image_path.clone().unwrap_or_else(|| "shell".into());
     // NETWORK 7: an image may be started by its ID.
     let image_bytes = |arg: &str, node: &mut Option<Node>| -> Result<Vec<u8>, String> {
@@ -492,9 +551,10 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         Image::parse(&bytes).map_err(|e| format!("{arg}: {e}"))?;
         Ok(bytes)
     };
-    let bytes = match &image_path {
-        None => builtin::SHELL.to_vec(),
-        Some(p) => image_bytes(p, &mut node)?,
+    let bytes = match (&image_path, link_bytes) {
+        (_, Some(bytes)) => bytes,
+        (None, None) => builtin::SHELL.to_vec(),
+        (Some(p), None) => image_bytes(p, &mut node)?,
     };
     let image = Image::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
     // SPEC §machines.calls: the built-in programs, in the store for the shell.
@@ -530,7 +590,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     // The built-in shell has the identity of a built-in (SPEC §machines.calls).
     let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
-    let program = Program { image, shell, builtins, identity, data };
+    let program = Program { image, shell, builtins, identity, data, argument: shell_argument };
 
     if selftest {
         if screenshot.is_some() {
@@ -626,6 +686,9 @@ pub struct Program {
     pub identity: Option<terse_core::ProgramId>,
     /// The data directory: the shell's snapshots (SPEC §machines.snapshots).
     pub data: PathBuf,
+    /// The shell's argument (SPEC §system `argument`): a blob a link on the
+    /// command line named, which the built-in shell opens.
+    pub argument: Option<[u8; 32]>,
 }
 
 #[cfg(feature = "window")]
@@ -845,6 +908,7 @@ fn run_headless(
     let image = &program.image;
     let mut system = System::new(image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    system.shell_mut().set_argument(program.argument);
     system.set_eye(looks.eye);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let mut headless = HeadlessSystem::new(content, script);

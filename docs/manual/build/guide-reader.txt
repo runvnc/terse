@@ -10,7 +10,7 @@ This guide builds a small reader in three steps, each a complete program you can
 
 The programs are in the Tersenet sources, in `examples/reader`, in Go and in Rust. Each step is a page or two of code, with a well-known library for each of WebSocket, BLAKE3 and Ed25519. Pick a language:
 
-- [Make a reader in Go, step 1: show an article](terse:bdafcba495929eb8e95db90d81f4e281d4b6a36468296f6615508b3aadb7c617)
-- [Make a reader in Rust, step 1: show an article](terse:f13273367ba6e7fff4330d454822c11a1e82a8aae47780c62e32567f3df5b060)
+- [Make a reader in Go, step 1: show an article](terse:a590b04917ba7df026c2e9f254ca4a95a48a1e0ca8685b38df199de9b3c6d326)
+- [Make a reader in Rust, step 1: show an article](terse:c297792339cbf95aa22d6f2a652725e5d544039b9d62706a51964b2ff91c32d8)
 
 These programs are a start, not a whole reader: each page says what its program leaves out and where the complete readers do it.

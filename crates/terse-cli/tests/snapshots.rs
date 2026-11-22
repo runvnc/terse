@@ -418,6 +418,7 @@ pub const SESSION: &str = "\
 51 press up
 51 press up
 51 press up
+51 press up
 52 press up
 53 press up
 54 press up
@@ -426,6 +427,7 @@ pub const SESSION: &str = "\
 70 down up
 90 up up
 100 home
+101 press up
 101 press up
 101 press up
 101 press up
@@ -583,7 +585,7 @@ fn a_session_with_a_missing_image_or_a_bad_snapshot() {
 fn a_session_in_the_gallery() {
     let (store, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     // Reader, then hello; the home key, L twice (grid, gallery), S.
-    let script = "2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press l\n22 press l\n30 press s\n";
+    let script = "2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press l\n22 press l\n30 press s\n";
     let mut s = Sys::new(store.path(), data.path(), script);
     s.run_until(40);
     assert!(s.bar().contains("Session saved"), "{}", s.bar());

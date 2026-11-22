@@ -311,8 +311,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.go` (271 lines), `decode.go` (122), `image.go` (31) and `step1/main.go` (34). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:9c94156e2d7ee9f55a74a2cfbd8244e40e66c0fd5f2a85933b7a5fe79ec16d37).
+A Terse32 processor that runs a program to its end: `cpu.go` (271 lines), `decode.go` (122), `image.go` (31) and `step1/main.go` (34). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:7f55ac705302f1bf9c862567a326af95bfb8d611954a297e28aecf81298c0c10).
 
-- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:adba2b201e8526f70f0937c00948c0b6ba2ae7c0516475153db5d5f2aba833de).
+- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:4a5683638c5f63ef2d691aeb87ec12cdb4bfa74cb10430f8763648cfd4db6f1c).
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:eb64aea2a88e86cad22fb5d28d01c1467797823e7bc869011f19db61c3d143b4), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:9be743eb3c9471e1a4d9a9b9bd1e65d1498a86dfc9aef351e17a506f0ee72c83), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

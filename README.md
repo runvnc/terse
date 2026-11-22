@@ -102,7 +102,7 @@ feed got the first three samples from an earlier `--demo`, publish the fourth
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 **The shell.** The window opens on the launcher: the programs built into
-`terse-host` (reader, sparks, fetch, hello, sketch, holo, reports). Up and Down choose one, Enter
+`terse-host` (reader, sparks, fetch, hello, sketch, holo, reports, reef, sheet). Up and Down choose one, Enter
 starts it as a machine of its own, and it gets the keyboard. Start more the
 same way: **F12 is the home key**, which always brings you back to the
 launcher (no program ever sees F12). The bar at the top shows each machine:
@@ -263,7 +263,7 @@ images were built with clang and LLD 23.1.4.
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
   below runs a system (SPEC §machines): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
-  sparks, fetch, hello, sketch, holo, reports, then each `--builtin` image) are put into the store
+  sparks, fetch, hello, sketch, holo, reports, reef, sheet, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
   script's events are the host's input and the system routes them: `home` is the
   home key, pointer positions are in units of the whole screen, keys and text go to
@@ -389,13 +389,23 @@ the bytes are verified against the ID. `--store` defaults to
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
+`terse-host [<image|id|link> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
-which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo and reports, also built in, and
+which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef and sheet, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
-machine, with every key (F12 included) going to it. With `--demo` it first sets up the
+machine, with every key (F12 included) going to it. Links on the command line: a
+`terse:` link may be given instead of an image (ARTICLE.md's forms, blanks at either
+end ignored). `terse:` and a blob ID is fetched (store, else relays): an image runs
+alone, as its ID would; any other blob (an article, a document) is given to the
+built-in shell as its argument (SPEC §system `argument`), which opens it as it opens
+a blob a machine asks for: an article in the reader, a document in its format's
+program. `terse:program/<key>/<name>` runs that program alone: a built-in (the zero
+key) by its title, another the current version of a feed this host holds. A
+`terse:feed/` link, a malformed link and a blob that cannot be fetched end with a
+message saying why (a feed: `terse feed subscribe`, or the reader's O); the reader's O
+opens all three forms in the window. With `--demo` it first sets up the
 sample articles ([Getting started](#getting-started)). `--size` is the window's size
 in pixels.
 The relays are found or started as Getting started says. `--no-prefetch` turns off
@@ -434,7 +444,8 @@ and the process then ends by SIGTERM like `terse run`. `--no-trails` shows the
 phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 The 3D vector display is seen from an eye that follows the pointer (parallax; see
-[3D vector display](#3d-vector-display)); `--parallax off` keeps it still, at `--eye`.
+[3D vector display](#3d-vector-display)), except over a machine that lists the 3D
+display (spec/vector3d.md §vector3d.space); `--parallax off` keeps it still, at `--eye`.
 Text is drawn with the built-in fonts and those `terse fonts` lists (see
 [Fonts](#fonts)); `--version` prints them.
 Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
@@ -515,7 +526,16 @@ with these defaults (each can be given on its own, and changed):
 | Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
 | Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
 | Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| Feeds one connection may subscribe to | 1024 | `--subscriptions-per-connection` |
 | A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
+
+What the relay keeps in memory and on disk grows with what it keeps, never with the
+traffic it has seen (NETWORK.md section 5.3, "The reference relay's bounds"): the log
+of when entries arrived is compacted to the entries still kept, the table of addresses
+has 8192 places, and so on. The status file (`--status-file`) has a line for each such
+table or log, with where it stands and its bound. Memory also grows with connections:
+each may hold a message of up to 1 MiB while it arrives, so on a small server give
+`--max-connections` a number that fits (200 for 1 GB of memory, say).
 
 An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
 a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`
@@ -656,8 +676,18 @@ Commands:
 
 - `key new` creates your identity (refuses to replace one) and prints its feed key;
   `key show` prints it again.
-- `feed publish <file> --title <t> [--reply-to <blob id>]` puts the article and
-  publishes the next entry of your feed; prints `seq N blob <id>`.
+- `feed publish <file> --title <t> [--reply-to <blob id>] [--dry-run] [--force]` puts the
+  article and publishes the next entry of your feed; prints `seq N blob <id>`. First it
+  lists each `terse:` link of the article (`link terse:<id>: held here, uploaded now ...;
+  kept: ...`): whether this host holds what it leads to, whether it was uploaded with the
+  article (blobs an entry of your feed names, and blobs held here that no entry names), and
+  whether relays keep it (an entry of your feed names it) or it is link-only (another feed's,
+  kept where that feed is kept, or unknown here). An entry names one blob (NETWORK.md 4.2),
+  so a relay that drops blobs no entry names (NETWORK.md 5.3) keeps a linked article only
+  while an entry names it: a link to a blob held here that no entry names is uploaded with
+  a warning (publish that blob as an article of its own to keep it). An article linking to
+  a blob of your feed that this host does not hold is refused, unless `--force`.
+  `--dry-run` lists the links and publishes nothing.
 - `feed publish --program <image.terse> [--name <n>]` checks the image and publishes
   it as a program (NETWORK.md 4.2) named `<n>` (default: the image's title; the rules of
   a display name); prints `seq N program <name> image <id>`. Publishing another image
@@ -1672,7 +1702,10 @@ x′ = ex + (x − ex)·960 / (960 + z) (y′ likewise), so a point on the glass
 the 2D layers put it, from any eye. The host moves the eye up to 160 units each way
 (parallax): in a window it follows the pointer (the picture's centre is the
 reference eye, an edge the full 160 units, smoothed over a few frames; in the shell
-every tile has the same eye); `--parallax off` keeps it still, and `--eye <dx>,<dy>`
+every tile has the same eye), except while the pointer is over a machine whose image
+lists the 3D display (alone, or its tile or panel in the shell): there the eye rests,
+so that the pointer is over what the program drew, which it cannot map itself since it
+is not told the eye; `--parallax off` keeps it still, and `--eye <dx>,<dy>`
 places it for `--screenshot` and `--bench-render`. The program never learns where the
 eye is.
 

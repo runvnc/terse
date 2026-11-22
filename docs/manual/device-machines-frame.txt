@@ -1,0 +1,32 @@
+# The system frame, snapshots and state (device 8)
+
+How a system of machines runs (device 8): the order of each system frame, snapshots, determinism and state, and what the calls cost. The device and its calls are in the article on the Machines device.
+
+## The system frame
+
+1. Latch. In handle order: loading handles whose image arrived or failed become running, paused or failed (a new machine is reset with its argument, or is the restored one); running handles whose machine stopped become exited or faulted; each change queues machine changed; records take units and frame counters. Then open requested for each open request of the last frame, in handle order, then snapshot done events, all before the frame's input.
+2. Route the input.
+3. The shell runs its frame. If the view's machine is no longer shown as a panel, the view becomes none.
+4. Its starts and stops are carried out in call order. A machine started now runs first in the next system frame.
+5. Each running machine, in handle order, runs one frame with a full budget and its own carry. So `run`, `stop` and `place` take effect this frame; `focus` takes effect at the next frame's routing, for keys, text, the pointer and the controllers alike.
+6. Snapshots and deletes, in call order.
+
+Other machines run no frames. When the shell stops, the system stops.
+
+## Snapshots
+
+A snapshot is a machine's state serialization (holding its image ID and argument) plus its identity. A restored machine has the state hash it had when taken and, given the same later inputs, runs as it would have; its frame counter continues.
+
+- Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. `terse` keeps them in `<data>/snapshots`. A snapshot may exceed 1 MiB.
+- A snapshot restores only its exact image, fetched by ID.
+- Named records are not in it.
+- Pending content requests fail in the restored machine's first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.
+- The shell itself cannot be snapshotted or restored.
+
+## Determinism and state
+
+Each machine is deterministic given its own inputs. The shell's include its device 8 events and what the device reports that the shell did not set (latched records, identities of restored or by-name programs, requests, built-ins, `snapshot_info`). For a started machine, what `open` returns is an input. The view is the shell's own state; the eye the host routes the pointer by is an input. Device 8's state is part of the shell's; a started machine's state holds nothing of the system.
+
+## Charges
+
+Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read), `snapshot_info` 31 and `experimental` 8, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:{charges}).

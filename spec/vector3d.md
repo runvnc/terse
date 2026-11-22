@@ -42,6 +42,19 @@ to 160 units on each axis from the reference eye, at its own discretion
 from the glass, and the glass, stay fixed. The program is not told where
 the eye is.
 
+**The eye and the pointer.** Since the program is not told the eye, it
+cannot tell what it drew under the pointer once the eye has moved, and an
+eye that follows the pointer moves the very thing the user aims at. So a
+host that moves the eye with the pointer keeps it at rest (where it is when
+the pointer is away: the reference eye, unless the user chose another)
+while the pointer is over the picture of a machine whose image lists this
+device, which may read the pointer (§events) like any machine: a single
+machine's whole screen, or in a shell that machine's picture or panel
+(§machines.input). Elsewhere (over the shell's own scene, whose panels are
+hit as seen from the eye in use, or over a machine that does not list this
+device and so draws nothing the eye moves) it may follow the pointer. The
+pointer a program reads is then always over what it drew there.
+
 ## §vector3d.calls Calls
 
 | `a7` | Call | Arguments | Result | Class |

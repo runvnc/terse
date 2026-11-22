@@ -158,12 +158,12 @@ exit status 1
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:366289c7f2990017cb8e6c71ee66b36db468efe9a4dfc4ba790fb60a7cfb32f9) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:5cdd927e19e87387bc3736f1e2b5d379313d392c37e04248dcc275e1516c8274) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:709d686ba4599a5fef2d3adf46a9831ea181516398d1ebc349d0f96e09651255).
-- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:6835507acd7564f0342cff3701c8afcdfe7a0867afd316e24c5049aff1e11538).
-- Every relay message: [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:3cd463988b9538a9a994942ad7c2f96d27ad9b2dea131afddc10ec731a31835a).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:f1ebf7ddb2a0c83f0b76a9f41588808b6ee587d2ac6c65bdbef50e75a8362b33).
+- Every relay message: [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).

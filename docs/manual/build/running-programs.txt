@@ -37,7 +37,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 
 ## The state hash
 
-`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:48c369990884c65690f807bdf4d72d6b4be9f3acb16e1cd70b584585e659d991).
+`--hash` prints the machine's state hash after the last frame, 64 hex digits; `--hash-every N` prints `<frame> <hash>` after every frame whose counter is a multiple of N. The hash covers the machine's whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; `--save-state` and `--load-state` save and resume a run. See [The state hash](terse:264b281c0e19a5a142c22b9a51b0be3d93fc4f3d42e0675dbda25993875d7ad2).
 
 ## Running it in a window
 
@@ -45,7 +45,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 cargo run -p terse-host -- prog.terse
 ```
 
-runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell](terse:5d49618acdfe73b4c22450dfe24e3766de624c158532fee5241199bb7335e32d) shows the shell, where programs run side by side.
+runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. `--screenshot out.png --frames 30` (with `--events` if wanted) runs headless and writes a picture instead. [Using the shell](terse:35fd0e86faead6c9d371e52396fde9695b11eb278e52f22f0c8afbdcefc51cb7) shows the shell, where programs run side by side.
 
 ## Costs to keep in mind
 
@@ -61,6 +61,6 @@ terse feed publish --program prog.terse --name "Tiny tool"
 
 checks the image and publishes it as a program entry; it prints `seq N program <name> image <id>`. The name defaults to the image's title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest `seq`). Named records belong to the identity, so a new version keeps the old one's records (see [Named records](terse:c1e60acd8b8245fd6ee11e1a498d14eadf337c1551f144cabe64c218b65af78c)). `terse key new` creates your feed key if you have none.
 
-Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:54355e9a715bbd1278f9633e0b468e2ada603ecc9ec91ecdfd62579797e75be7) and [The machines device](terse:092e0613635a0699c65a6788507306549896fec426a6e7c0289f89126c2e78ad).
+Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 131,136 bytes), and the shell's launcher lists it under "From your feeds" with your name and short key, marked `↓` until the image is there. Enter starts it in a tile of its own. An article may also link to it as `terse:program/<feed key>/<name>`; following such a link asks the shell to open it, and the shell asks the user first. See [Feeds](terse:18456270781246b942d8ff3bf063d270e2763a92eb75d8d6f22aab647ca67bca) and [The machines device](terse:43568fe56838bc2d0314bf1cd0a2e5aab3742be25a3a80ce41c586bf29a66fec).
 
-Next: [The machine](terse:eb64aea2a88e86cad22fb5d28d01c1467797823e7bc869011f19db61c3d143b4), then the devices, from [The system device](terse:3ccf6fa24fe34ae91faa310601607fbc27c6bc1ec0d2ef65e341f704c5d3e70f) and [The terminal](terse:d909b3f58a7a4f441a340ba421cc7241ea5e73e55e79b96b84b79317940a8218) to [Events](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).
+Next: [The machine](terse:9be743eb3c9471e1a4d9a9b9bd1e65d1498a86dfc9aef351e17a506f0ee72c83), then the devices, from [The system device](terse:3250192d7bd8b6022808c00a8fbc5c81bdc67d2bef438fd25b877c4b94237273) and [The terminal](terse:4ddd01f533803b2b9bb5d03337003433f1eb4291714c4026067cb5b1eca5d28b) to [Events](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).

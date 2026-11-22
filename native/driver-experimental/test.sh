@@ -101,8 +101,8 @@ for x in "dice240 240 example.dice" "dice241 241 example.dice" "other242 242 som
     "$D/terse" build "$here/demo.c" --title $1 --cflag -DDICE=$2 --optional $2:0=$3 -o "$T/$1.terse" 2> /dev/null || no "terse build $1"
 done
 B="--builtin $T/dice240.terse --builtin $T/dice241.terse --builtin $T/other242.terse"
-# The first built-in after the shipped eight, then the two after it.
-printf '2 press down\n2 press down\n2 press down\n2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n8 press enter\n20 home\n21 press up\n22 press up\n24 press enter\n40 home\n41 press up\n42 press up\n44 press enter\n' > "$T/three"
+# The first built-in after the shipped nine, then the two after it.
+printf '2 press down\n2 press down\n2 press down\n2 press down\n2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n8 press enter\n20 home\n21 press up\n22 press up\n24 press enter\n40 home\n41 press up\n42 press up\n44 press enter\n' > "$T/three"
 bus "$P" --driver "example.dice=$X" --frames 520 --dump > "$T/alone" 2>&1
 grep "^turn " "$T/alone" > "$T/alone.turns"
 # Each machine's screen of a --dump, to a file of its own.

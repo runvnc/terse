@@ -58,7 +58,7 @@
 
 
 
- ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
+ ↑↓ move  Enter open  / search  O link  F feeds  ? help  Esc quit
 -- machine 2 running 0 0 0 0 hello --
  Tersenet · hello
 

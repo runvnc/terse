@@ -124,22 +124,8 @@
 <p><code>c</code> is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted <code>snapshot</code>, in call order; failed means the machine was stopped in the same frame or the host could not store it. See <a href="events.html">events</a>.</p>
 <h2 id="screens-and-input">Screens and input</h2>
 <p>A machine&#39;s picture is its screen scaled into its rectangle. In the shell&#39;s 3D list a Screen shows a machine as a panel in space instead, and <code>face</code> flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in <a href="device-machines-screens.html">screens, panels and input</a>.</p>
-<h2 id="the-system-frame">The system frame</h2>
-<p>1. Latch. In handle order: loading handles whose image arrived or failed become running, paused or failed (a new machine is reset with its argument, or is the restored one); running handles whose machine stopped become exited or faulted; each change queues machine changed; records take units and frame counters. Then open requested for each open request of the last frame, in handle order, then snapshot done events, all before the frame&#39;s input. 2. Route the input. 3. The shell runs its frame. If the view&#39;s machine is no longer shown as a panel, the view becomes none. 4. Its starts and stops are carried out in call order. A machine started now runs first in the next system frame. 5. Each running machine, in handle order, runs one frame with a full budget and its own carry. So <code>run</code>, <code>stop</code> and <code>place</code> take effect this frame; <code>focus</code> takes effect at the next frame&#39;s routing, for keys, text, the pointer and the controllers alike. 6. Snapshots and deletes, in call order.</p>
-<p>Other machines run no frames. When the shell stops, the system stops.</p>
-<h2 id="snapshots">Snapshots</h2>
-<p>A snapshot is a machine&#39;s state serialization (holding its image ID and argument) plus its identity. A restored machine has the state hash it had when taken and, given the same later inputs, runs as it would have; its frame counter continues.</p>
-<ul>
-<li>Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. <code>terse</code> keeps them in <code>&lt;data&gt;/snapshots</code>. A snapshot may exceed 1 MiB.</li>
-<li>A snapshot restores only its exact image, fetched by ID.</li>
-<li>Named records are not in it.</li>
-<li>Pending content requests fail in the restored machine&#39;s first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.</li>
-<li>The shell itself cannot be snapshotted or restored.</li>
-</ul>
-<h2 id="determinism-and-state">Determinism and state</h2>
-<p>Each machine is deterministic given its own inputs. The shell&#39;s include its device 8 events and what the device reports that the shell did not set (latched records, identities of restored or by-name programs, requests, built-ins, <code>snapshot_info</code>). For a started machine, what <code>open</code> returns is an input. The view is the shell&#39;s own state; the eye the host routes the pointer by is an input. Device 8&#39;s state is part of the shell&#39;s; a started machine&#39;s state holds nothing of the system.</p>
-<h2 id="charges">Charges</h2>
-<p>Each call costs 4 (plus the <code>ecall</code> instruction), and copies cost 1 per 4 bytes, rounded up: <code>start</code> 8 (when the ID is read), <code>start_program</code> (33 + n) / 4 up, <code>info</code> 12, <code>builtin</code> 8, <code>identity</code> 21, <code>request</code> 21, <code>argument</code> 8 (when the ID is read), <code>snapshot_info</code> 31 and <code>experimental</code> 8, each when written. <code>face</code> and <code>unface</code> copy nothing; drawing the scene is the host&#39;s work. See <a href="charges.html">charges</a>.</p>
+<h2 id="the-system-frame-snapshots-and-state">The system frame, snapshots and state</h2>
+<p>The order in which a system runs its machines each frame, what a snapshot holds and how it is restored, what each machine&#39;s determinism rests on and what device 8&#39;s calls cost are in <a href="device-machines-frame.html">the system frame, snapshots and state</a>.</p>
 <h2 id="example-a-minimal-shell">Example: a minimal shell</h2>
 <pre>#include &quot;terse.h&quot;
 
@@ -171,6 +157,6 @@ int main(void)
 <p>It starts the first built-in full screen with the keyboard, stops machines that end and opens requested blobs as new machines.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="device-page-figures.html">← Figures on the page</a><a rel="next" href="device-machines-screens.html">Screens, panels and input (device 8) →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="device-page-figures.html">← Figures on the page</a><a rel="next" href="device-machines-frame.html">The system frame, snapshots and state (device 8) →</a></nav></footer>
 </body>
 </html>

@@ -1005,7 +1005,7 @@ mod imp {
         fn events(&mut self) {
             for e in self.node.take_feed_events() {
                 match e {
-                    FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. } => self.dirty = true,
+                    FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. } | FeedEvent::SubscriptionsChanged => self.dirty = true,
                     FeedEvent::Connected(url) => {
                         self.dirty = true;
                         self.log(&format!("connected to {url}"));

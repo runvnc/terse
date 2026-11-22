@@ -23,6 +23,8 @@ use crate::records::{Owner, Saved};
 /// How long the worker sleeps between reconnection checks while following
 /// feeds without a connection.
 const IDLE_WAIT: Duration = Duration::from_millis(20);
+/// The wait for work with no relays but a subscription file to look at.
+const SUBSCRIPTIONS_WAIT: Duration = Duration::from_millis(250);
 
 /// Feed operations for the worker's node.
 #[derive(Clone, Debug)]
@@ -280,7 +282,9 @@ impl ContentService {
     /// feeds-updated event, SPEC §content.events); never blocks. Consumes the feed
     /// events so far, like `take_feed_events`.
     pub fn feeds_updated(&mut self) -> bool {
-        self.take_feed_events().iter().any(|e| matches!(e, FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. }))
+        self.take_feed_events()
+            .iter()
+            .any(|e| matches!(e, FeedEvent::Entry { .. } | FeedEvent::ProgramDownloaded { .. } | FeedEvent::SubscriptionsChanged))
     }
 
     /// Waits until every feed is caught up (NETWORK 4.3) and its automatic
@@ -965,6 +969,9 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
             Some(Duration::ZERO)
         } else if node.has_relays() {
             Some(IDLE_WAIT)
+        } else if node.subscriptions_in_file() {
+            // Another program may change the subscriptions.
+            Some(SUBSCRIPTIONS_WAIT)
         } else {
             None
         };

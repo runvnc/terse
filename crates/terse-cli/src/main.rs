@@ -3,6 +3,7 @@
 mod build;
 mod drivers;
 mod feed;
+mod links;
 mod node;
 mod perf;
 mod perflog;
@@ -14,7 +15,7 @@ use std::process::ExitCode;
 
 use terse_core::{DeviceReq, Image, Machine, Script, Stopped, System};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::{Consent, ContentService, Delivery, Done, HeadlessSystem, Node, blob_id, builtin, local, parse_hex, to_hex};
+use terse_net::{Consent, ContentService, Delivery, Done, HeadlessSystem, Node, blob_id, builtin, local, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -39,7 +40,7 @@ const USAGE: &str = "usage:
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>[=<name>]]...
              -o <out.terse>
   terse key new|show
-  terse feed publish <file> --title <t> [--reply-to <id>]
+  terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run] [--force]
   terse feed publish --program <image.terse> [--name <n>]
   terse feed programs [<key>]
   terse feed subscribe|unsubscribe <address>
@@ -93,7 +94,7 @@ built in; for a private CA, name its PEM file in TERSE_RELAY_CA. Puts and publis
 whose profile names relays are also followed there, unless --no-feed-relays. `run` uses
 relays only with --relay.
 
-<id> is a 64-hex-digit blob ID, looked up in the store, then the relay.
+<id> is a 64-hex-digit blob ID, looked up in the store, then the relay; the link terse:<id> is taken too.
 <key> is a feed key (64 hex digits). An <address> is a feed key, optionally followed by `@` and
 one or two relay hints separated by `,` (host or host:port, port 7878 if left out; NETWORK 4.9),
 also written as the link terse:feed/<address>: if your relays do not hold the feed, sync looks
@@ -127,6 +128,14 @@ an index newest first, the stylesheet, a page of the feed's programs, and with -
 site's address) an Atom feed, feed.xml. It fetches the feed's entries first, and on later runs
 writes only what changed (a state file, .terse-site, remembers what was written; --force rewrites
 everything).
+feed publish lists each terse: link of the article first: whether this host holds what it leads
+to, whether it was uploaded with the article (what an entry of your feed names, and what no entry
+names), and whether relays keep it (an entry of your feed names it) or it is link-only (another
+feed's, or unknown here). An entry names one blob, so a relay that drops blobs no entry names
+(NETWORK 5.3) keeps a linked article only while some entry names it: a link to a blob held here
+that no entry names is warned about (publish that blob as an article of its own to keep it). An
+article that links to a blob of your feed this host does not hold is refused unless --force.
+--dry-run lists the links and publishes nothing.
 feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
 image's title); feed programs lists the current version of each program held (of one feed, or of
 all the feeds held), find --programs searches programs by name.
@@ -162,7 +171,7 @@ A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapsh
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
 --shell runs a system (SPEC §machines): the image (default: the built-in shell, programs/shell) is the shell,
-with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef), and each --builtin image after
+with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef, sheet), and each --builtin image after
 them, are put into the store and offered to it. Scripted events are the host's input: `home` is the
 home key, pointer positions are in the whole screen's units, and the system routes them. --dump
 prints the shell's screen, then for each machine whose rectangle is not empty a line
@@ -445,7 +454,7 @@ impl Net<'_> {
 
 /// Loads an image from a file, or by image ID (NETWORK 2, 7).
 fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
-    let bytes = match parse_hex(arg) {
+    let bytes = match terse_net::link::blob_arg(arg) {
         Some(id) if !Path::new(arg).exists() => net.fetch(id)?,
         _ => read(arg)?,
     };
@@ -888,7 +897,7 @@ fn finish(args: &Args, system: &System, stopped: Option<Stopped>, times: &mut [s
 
 /// An image's bytes from a file, or by ID from the node (NETWORK 2, 7).
 fn image_bytes(arg: &str, node: &mut Node) -> Result<Vec<u8>, String> {
-    let bytes = match parse_hex(arg) {
+    let bytes = match terse_net::link::blob_arg(arg) {
         Some(id) if !Path::new(arg).exists() => node.fetch_bytes(id)?,
         _ => read(arg)?,
     };
@@ -1036,7 +1045,7 @@ fn get(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     args.check_known(&["-o", "--relay", "--store", "--config", "--no-feed-relays"])?;
     let arg = args.one_positional()?;
-    let id = parse_hex(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits)"))?;
+    let id = terse_net::link::blob_arg(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits, or terse: and them)"))?;
     let bytes = Net { args: &args, node: None, find: true }.fetch(id)?;
     match args.get("-o") {
         Some(out) => write(out, &bytes)?,

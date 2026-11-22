@@ -232,11 +232,12 @@ fn demos(h: &Home) -> Option<[String; 3]> {
     out.try_into().ok()
 }
 
-/// The launcher's script: the first built-in after the eight shipped ones
+/// The launcher's script: the first built-in after the nine shipped ones
 /// (dice240), then from the home key the two after it (the cursor is then
 /// on the focused machine's line, below the programs: dice241 is two up,
 /// other242 two up again past the new machine's line).
 const THREE: &str = "\
+2 press down
 2 press down
 2 press down
 2 press down
@@ -467,8 +468,8 @@ fn the_shell_marks_a_granted_program() {
     let opener = h.path("opener.terse");
     let o = Command::new(bin("terse")).args(["build", &src, "--title", "opener", "--device", "2:0", "-o", &opener]).output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    // The opener is the 12th built-in: 11 down from the first.
-    let mut script: String = (0..11).map(|i| format!("{} press down\n", 2 + i)).collect();
+    // The opener is the 13th built-in: 12 down from the first.
+    let mut script: String = (0..12).map(|i| format!("{} press down\n", 2 + i)).collect();
     script += "14 press enter\n30 press space\n";
     let run = |script: &str, frames: u32| {
         let events = h.path("events");

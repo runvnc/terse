@@ -169,7 +169,10 @@ impl App {
         // of the way each frame, and rests exactly there.
         if self.opts.parallax && self.opts.selftest.is_none() {
             let max = terse_core::vector3::MAX_EYE_OFFSET;
+            // Over a machine that lists the 3D display the eye rests
+            // (spec/vector3d.md §vector3d.space).
             let target = match self.pointer_px {
+                Some((x, y)) if !self.bs.system.eye_may_follow(screen_pos(self.comp.shell_rect(self.viewport), x, y)) => self.opts.eye,
                 Some((x, y)) => {
                     let (ux, uy) = screen_pos(self.comp.shell_rect(self.viewport), x, y);
                     let (w, h) = (terse_core::SCREEN_WIDTH as f32 / 2.0, terse_core::SCREEN_HEIGHT as f32 / 2.0);

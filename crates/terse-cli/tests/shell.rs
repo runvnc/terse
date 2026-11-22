@@ -209,10 +209,11 @@ fn golden(name: &str, got: &str) {
 
 /// From the launcher at start: reader (handle 1), then sparks, fetch and
 /// hello, each started from the launcher after the home key (the cursor is
-/// then on the focused machine's line, below the eight programs).
+/// then on the focused machine's line, below the nine programs).
 const FOUR: &str = "\
 2 press enter
 10 home
+11 press up
 11 press up
 11 press up
 11 press up
@@ -226,11 +227,13 @@ const FOUR: &str = "\
 21 press up
 21 press up
 21 press up
+21 press up
 22 press up
 23 press up
 24 press up
 25 press enter
 30 home
+31 press up
 31 press up
 31 press up
 31 press up
@@ -274,6 +277,23 @@ fn reports_is_a_built_in() {
     assert_eq!(s.machine(1).image_id(), &terse_net::blob_id(builtin::PROGRAMS[6]));
     assert_eq!(s.system.focus(), 1);
     assert!(s.bar().contains("1 reports"), "{}", s.bar());
+    assert!(s.machine(1).stopped().is_none());
+}
+
+/// The sheet (programs/sheet) is a built-in: the last in the launcher,
+/// started by its identity like the others, and it runs.
+#[test]
+fn sheet_is_a_built_in() {
+    let sheet = Image::parse(builtin::PROGRAMS[8]).unwrap();
+    assert_eq!(sheet.title, b"sheet");
+    let script: String = (2..10).map(|f| format!("{f} press down\n")).collect::<String>() + "10 press enter\n";
+    let mut s = Sys::new(&script, Setup::default());
+    s.run(40);
+    assert_eq!((s.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "sheet"));
+    let child = s.system.child(1).unwrap();
+    assert_eq!(child.identity, Some(ProgramId { publisher: [0; 32], name: b"sheet".to_vec() }));
+    assert_eq!(s.machine(1).image_id(), &terse_net::blob_id(builtin::PROGRAMS[8]));
+    assert_eq!(s.system.focus(), 1);
     assert!(s.machine(1).stopped().is_none());
 }
 
@@ -332,7 +352,7 @@ fn one_machine_fills_the_area() {
 
 #[test]
 fn two_machines_master_and_stack() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n", Setup::default());
     s.run(40);
     assert_eq!((s.state(1), s.state(2)), (state::RUNNING, state::RUNNING));
     assert_eq!(s.system.child(2).unwrap().title, "hello");
@@ -399,6 +419,7 @@ fn typed_text_reaches_only_the_focused_machine() {
 21 press up
 21 press up
 21 press up
+21 press up
 22 press up
 23 press enter
 30 text two
@@ -456,7 +477,7 @@ fn a_click_in_a_tile_reaches_the_reader_mapped() {
 fn a_click_focuses_a_tile_and_the_bar() {
     // Two machines (reader, hello: hello focused); a click in the
     // reader's tile focuses it; one on hello's bar segment focuses hello.
-    let script = "2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n30 click 100 100\n40 click 330 8\n";
+    let script = "2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n30 click 100 100\n40 click 330 8\n";
     let mut s = Sys::new(script, Setup::default());
     s.run(31);
     assert_eq!(s.system.focus(), 1);
@@ -482,7 +503,7 @@ fn pause_and_resume() {
 
 #[test]
 fn stop() {
-    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press x\n", Setup::default());
+    let mut s = Sys::new("2 press enter\n10 home\n11 press up\n11 press up\n11 press up\n11 press up\n11 press up\n12 press up\n13 press enter\n20 home\n21 press x\n", Setup::default());
     s.run(25);
     assert_eq!(s.state(2), state::NONE);
     assert!(s.system.child(2).is_none());
@@ -523,10 +544,10 @@ fn exit_and_fault_are_reported() {
 fn a_start_that_fails() {
     // An extra program's ID is in no store: its title is unknown, and
     // starting it fails.
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n";
     let mut s = Sys::new(script, Setup { unknown: true, ..Setup::default() });
     s.run(5);
-    assert!(s.launcher().contains("[?]{108}"), "{}", s.launcher());
+    assert!(s.launcher().contains("[?]{109}"), "{}", s.launcher());
     s.run(10);
     assert_eq!(s.state(1), state::FAILED);
     assert!(s.system.child(1).unwrap().machine.is_none());
@@ -654,6 +675,7 @@ fn programs_from_feeds() {
 7 press down
 7 press down
 7 press down
+7 press down
 8 press enter
 15 home
 16 press up
@@ -720,7 +742,7 @@ fn dicer() -> Vec<u8> {
 /// colour) and says so in its launcher line.
 #[test]
 fn a_program_that_lists_an_experimental_device() {
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n8 press enter\n20 home\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n6 press down\n8 press enter\n20 home\n";
     let mut s = Sys::new(script, Setup { programs: vec![("Dicer".into(), dicer(), true)], ..Default::default() });
     s.run(19);
     assert_eq!((s.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "dicer"));
@@ -980,9 +1002,9 @@ fn gallery_click_on_a_side_panel() {
 #[test]
 fn gallery_start_a_program() {
     let (script, at) = gallery_script(2);
-    // The cursor is on machine 2's line (10): up 6 is hello.
+    // The cursor is on machine 2's line (11): up 7 is hello.
     let st = at + 5;
-    let mut s = Sys::new(&format!("{script}{}{st} press enter\n", format!("{} press up\n", st - 1).repeat(6)), Setup::default());
+    let mut s = Sys::new(&format!("{script}{}{st} press enter\n", format!("{} press up\n", st - 1).repeat(7)), Setup::default());
     s.run_until(st + 1);
     assert_eq!(s.state(3), state::LOADING);
     assert_eq!(s.system.focus(), 3);
