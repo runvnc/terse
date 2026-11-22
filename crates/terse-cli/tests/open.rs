@@ -46,6 +46,12 @@ fn drawing() -> Vec<u8> {
     [&b"TDOC\0"[..], &[0; 32], &[6], b"sketch", &data].concat()
 }
 
+/// A sheet document (programs/sheet/sheet.c's format: the built-in
+/// format "sheet", then the rows, cells separated by tabs).
+fn sheet_document() -> Vec<u8> {
+    [&b"TDOC\0"[..], &[0; 32], &[5], b"sheet", b"Lunch money\t12\nBus\t3\nTotal\t=SUM(B1:B2)\n"].concat()
+}
+
 const SECOND: &[u8] = b"# The second article\n\nOpened in a tile of its own.\n";
 
 fn serve(relay: Arc<terse_relay::Relay>) -> String {
@@ -120,6 +126,7 @@ impl Sys {
         if setup.content {
             node.store().put(SECOND).unwrap();
             node.store().put(&greeter()).unwrap();
+            node.store().put(&sheet_document()).unwrap();
             node.start_publish_document(1, &drawing(), "A drawing", 1_800_000_000);
             let draft = Draft { data: links_article().into_bytes(), title: "Links".into(), reply_to: None, time: 1_800_000_100 };
             assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { seq: 2, .. }));
@@ -302,6 +309,28 @@ fn document_link_opens_sketch() {
     golden("document-link", &s.dump());
 }
 
+/// A sheet document: the built-in sheet starts at once with the document
+/// as its argument (the format's program, by the zero key and its name)
+/// and shows it.
+#[test]
+fn sheet_document_opens_the_sheet() {
+    if !common::have_tools() {
+        return;
+    }
+    // The opener is the first built-in after the nine shipped ones.
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n";
+    let mut s = Sys::new(script, Setup { extra: vec![opener(&blob_id(&sheet_document()))], ..Default::default() });
+    s.run(80);
+    assert_eq!(s.title(1), "opener");
+    assert_eq!((s.state(2), s.title(2)), (state::RUNNING, "sheet".to_string()), "{}", s.dump());
+    let child = s.system.child(2).unwrap();
+    assert_eq!(child.argument, Some(blob_id(&sheet_document())));
+    assert_eq!(child.identity, Some(ProgramId { publisher: [0; 32], name: b"sheet".to_vec() }));
+    assert_eq!(s.system.focus(), 2);
+    let page = s.machine(2).page().unwrap().document().map(|d| String::from_utf8_lossy(d).into_owned()).unwrap_or_default();
+    assert!(page.contains("Lunch money") && page.contains("15"), "the document's cells, the total worked out: {page}");
+}
+
 /// The timeline's document entry (the second): Enter opens it in Sketch.
 #[test]
 fn timeline_document_opens_sketch() {
@@ -337,7 +366,7 @@ fn article_opens_a_reader() {
     if !common::have_tools() {
         return;
     }
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n";
     let mut s = Sys::new(script, Setup { extra: vec![opener(&blob_id(SECOND))], ..Default::default() });
     s.run(50);
     assert_eq!(s.title(1), "opener");
@@ -368,7 +397,7 @@ fn experimental_device_in_the_question() {
     if !common::have_tools() {
         return;
     }
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n40 press y\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n40 press y\n";
     let mut s = Sys::new(script, Setup { extra: vec![opener(&blob_id(&dicer())), dicer()], ..Default::default() });
     s.run(35);
     assert_eq!(s.title(1), "opener");
@@ -394,7 +423,7 @@ fn no_free_handle() {
     for i in 0..7u32 {
         script += &format!("{f} home\n");
         f += 1;
-        let ups = if i < 6 { 5 + i } else { 8 + i };
+        let ups = if i < 6 { 6 + i } else { 9 + i };
         for _ in 0..ups {
             script += &format!("{f} press up\n");
             f += 1;

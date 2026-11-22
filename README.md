@@ -102,7 +102,7 @@ feed got the first three samples from an earlier `--demo`, publish the fourth
     cargo run --release -p terse-cli --bin terse -- feed publish crates/terse-host/demo/pictures.txt --title "Pictures in articles"
 
 **The shell.** The window opens on the launcher: the programs built into
-`terse-host` (reader, sparks, fetch, hello, sketch, holo, reports). Up and Down choose one, Enter
+`terse-host` (reader, sparks, fetch, hello, sketch, holo, reports, reef, sheet). Up and Down choose one, Enter
 starts it as a machine of its own, and it gets the keyboard. Start more the
 same way: **F12 is the home key**, which always brings you back to the
 launcher (no program ever sees F12). The bar at the top shows each machine:
@@ -263,7 +263,7 @@ images were built with clang and LLD 23.1.4.
 - `run --shell [<image|id>] [--builtin <image|id>]... [--hash-all]` with the options
   below runs a system (SPEC §machines): the image (default: the built-in shell,
   `programs/shell`) is the shell, with device 8. The built-in programs (reader,
-  sparks, fetch, hello, sketch, holo, reports, then each `--builtin` image) are put into the store
+  sparks, fetch, hello, sketch, holo, reports, reef, sheet, then each `--builtin` image) are put into the store
   (`--store`; use a temporary one for tests) and offered to the shell. The
   script's events are the host's input and the system routes them: `home` is the
   home key, pointer positions are in units of the whole screen, keys and text go to
@@ -392,7 +392,7 @@ also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC 
 `terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
-which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo and reports, also built in, and
+which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef and sheet, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
 machine, with every key (F12 included) going to it. With `--demo` it first sets up the
