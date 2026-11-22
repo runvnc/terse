@@ -11,7 +11,10 @@ use terse_relay::{GIB, KIB, MIB, MIN_FEED_CAP, Policy, Relay};
 
 const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [options]
   --listen <addr:port>      default 127.0.0.1:7878 (loopback only)
-  --peer <ws://host:port>   another relay to mirror (NETWORK.md section 5); repeatable
+  --peer <ws(s)://host:port>  another relay to mirror (NETWORK.md section 5); repeatable
+  --tls-cert <pem> --tls-key <pem>
+                            serve wss:// (TLS) with this certificate chain and key;
+                            read again on SIGHUP (renewals). Without them: plain ws://
   --max-store-bytes <size>  all blobs together, at most (sizes: 1048576, 512K, 16M, 20G)
   --feed-entries <n>        entries kept per feed, at least 256 (default 1024)
   Feed entries are kept in <dir>/feeds.
@@ -98,6 +101,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let default_listen = terse_net::local::local_addr(terse_net::local::DEFAULT_PORT).to_string();
     let (mut listen, mut store, mut limit) = (default_listen, None, None);
     let mut peers = Vec::new();
+    let (mut tls_cert, mut tls_key) = (None, None);
     // Options are applied in order over the base policy, so `--public`
     // comes first whatever its place.
     let public = args.iter().any(|a| a == "--public");
@@ -119,10 +123,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--peer" => {
                 let url = value()?;
                 if !terse_net::local::valid_url(&url) {
-                    return Err(format!("--peer {url}: not a ws:// URL"));
+                    return Err(format!("--peer {url}: not a ws:// or wss:// URL"));
                 }
                 peers.push(url);
             }
+            "--tls-cert" => tls_cert = Some(std::path::PathBuf::from(value()?)),
+            "--tls-key" => tls_key = Some(std::path::PathBuf::from(value()?)),
             "--max-store-bytes" => {
                 let n = value()?;
                 limit = Some(parse_size(&n).ok_or(format!("bad byte count {n}"))?);
@@ -220,6 +226,13 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
     }
     let dir = store.ok_or(USAGE)?;
+    let tls = match (tls_cert, tls_key) {
+        (Some(cert), Some(key)) => Some((cert, key)),
+        (None, None) => None,
+        _ => return Err("--tls-cert and --tls-key go together".into()),
+    };
+    let load_tls = |(cert, key): &(std::path::PathBuf, std::path::PathBuf)| terse_net::tls::server_config(cert, key).map_err(|e| e.to_string());
+    let tls_config = tls.as_ref().map(load_tls).transpose()?;
     let store = BlobStore::open(&dir, limit).map_err(|e| format!("{dir}: {e}"))?;
     let listener = TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
@@ -228,8 +241,10 @@ fn run(args: Vec<String>) -> Result<(), String> {
     }
     let started = Instant::now();
     let relay = Arc::new(Relay::with_policy(store, policy)?);
+    let scheme = if tls_config.is_some() { "wss" } else { "ws" };
+    relay.set_tls(tls_config);
     // Printed on stdout so scripts and tests can find an ephemeral port.
-    println!("listening on ws://{addr}");
+    println!("listening on {scheme}://{addr}");
     eprintln!("terse-relay: store {dir}: {} (ready in {} ms)", relay.status(), started.elapsed().as_millis());
     signals::install();
     terse_relay::connect_peers(relay.clone(), peers);
@@ -242,6 +257,17 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         if signals::take_reload() {
             relay.reload_writers(true);
+            // A renewed certificate: a file that cannot be read now
+            // leaves the one in use.
+            if let Some(files) = &tls {
+                match load_tls(files) {
+                    Ok(config) => {
+                        relay.set_tls(Some(config));
+                        eprintln!("terse-relay: certificate read again from {}", files.0.display());
+                    }
+                    Err(e) => eprintln!("terse-relay: certificate not read again, the old one stays: {e}"),
+                }
+            }
         }
         if signals::stopping() {
             break;
@@ -277,7 +303,7 @@ mod signals {
     }
 
     /// SIGTERM and SIGINT stop the relay gracefully; SIGHUP reads the
-    /// write list again.
+    /// write list and the certificate again.
     pub fn install() {
         // SAFETY: the handlers only store to atomics, which is
         // async-signal-safe.

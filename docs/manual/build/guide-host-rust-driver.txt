@@ -313,11 +313,11 @@ prints `hello`'s screen after 30 frames, 30 lines, which begins
 
 and is the reference's exactly: from the top folder, `terse run programs/hello/hello.terse --frames 30 --dump` prints the same 30 lines.
 
-The driver can be any program that speaks the bus. [Make a device in Rust](terse:c39bcaca882a5b8c7b6b6deb5a1baa094d3bdca9f282f5a866b2348ca2ee1c18) writes a terminal of 347 lines that is enough for `hello`; give its path instead of the reference's. So can a driver in another language: the Go one of "Make a device in Go" works here too.
+The driver can be any program that speaks the bus. [Make a device in Rust](terse:4e10bfbb84d4803e2abb422952a8eded0a8646a2468d177958c9a3308dda4a38) writes a terminal of 347 lines that is enough for `hello`; give its path instead of the reference's. So can a driver in another language: the Go one of "Make a device in Go" works here too.
 
 ## What you have now
 
-A core that shows `hello` through a driver: `bus.rs`, 223 lines, and `bin/step3.rs`, 54. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Rust, step 4: prove it exact](terse:933087768d4ed43c576ab5ff1e9f71fe15fdfd8fbdc1d03a49e3addbde8569de).
+A core that shows `hello` through a driver: `bus.rs`, 223 lines, and `bin/step3.rs`, 54. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Rust, step 4: prove it exact](terse:0954aa3b550e112f289eeb91fee809b5adb1753d1c00a0099804398ba17861a9).
 
 - The same step in Go: "Make a host in Go, step 3: a driver shows hello", the page before this one.
 - Full implementations: `native/core-c/bus.c` (every reference driver, batching, 663 lines of C) and `crates/terse-bus`.

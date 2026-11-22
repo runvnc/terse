@@ -10,6 +10,12 @@ license.workspace = true
 terse-core.workspace = true
 blake3 = { version = "1.8", default-features = false }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# TLS for wss:// relays (and a relay's --tls-cert): rustls on ring, whose
+# build needs only the C compiler blake3 already uses (no cmake, no NASM),
+# with Mozilla's roots compiled in (webpki-roots), so a static binary trusts
+# the same certificates on every system. RELEASING.md: refresh the roots.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 ed25519-dalek = "2"
 # The entry check with strict Ed25519 verification (NETWORK 4.2): the SDK.
 tersenet = { path = "../../sdk/rust" }

@@ -38,7 +38,7 @@ usage:
   tersereader show <blob-id>             an article, fetched if needed, as text
   tersereader show <key> <seq>           the article of a feed's entry
   tersereader --dump <blob-id|file>      an article as text (from the store, the relays or a file)
-  tersereader relay add|remove <ws://host:port> | relay list
+  tersereader relay add|remove <wss://host | ws://host:port | host> | relay list
   tersereader nickname <key> [<name>]    name a feed for yourself (no name: clear it)
   tersereader node                       run only the network node, serving the local
                                          socket (LOCAL.md) until interrupted
@@ -368,18 +368,39 @@ func cmdRelay(n nodeapi.Node, args []string) error {
 		return nil
 	}
 	if len(args) != 2 || (args[0] != "add" && args[0] != "remove") {
-		return errors.New("usage: tersereader relay add|remove <ws://host:port>")
+		return errors.New("usage: tersereader relay add|remove <wss://host | ws://host:port | host>")
+	}
+	url := typedRelay(args[1])
+	if url == "" {
+		return fmt.Errorf("not a relay: %s (a ws:// or wss:// URL, or a host name)", args[1])
+	}
+	if url != args[1] {
+		fmt.Fprintf(os.Stderr, "tersereader: taken as %s (over TLS; for a plain relay give ws://%s)\n", url, args[1])
 	}
 	var out []string
 	for _, x := range n.ConfiguredRelays() {
-		if x != args[1] {
+		if x != url {
 			out = append(out, x)
 		}
 	}
 	if args[0] == "add" {
-		out = append(out, args[1])
+		out = append(out, url)
 	}
 	return n.SetRelays(out)
+}
+
+// typedRelay is a relay as a person types it: a ws:// or wss:// URL as
+// it is, or a host and maybe a port without a scheme, taken as wss://
+// (over TLS, as public relays are reached). Empty if it is neither.
+func typedRelay(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "ws://") || strings.HasPrefix(s, "wss://") {
+		return s
+	}
+	if s == "" || strings.Contains(s, "://") || strings.ContainsAny(s, "/ \t") {
+		return ""
+	}
+	return "wss://" + s
 }
 
 func when(t uint32) string { return time.Unix(int64(t), 0).UTC().Format("2006-01-02 15:04") }

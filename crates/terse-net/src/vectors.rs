@@ -1120,6 +1120,9 @@ fn addresses_file() -> String {
         ("name", k("@relay.example")),
         ("name-and-port", k("@relay.example:7000")),
         ("two-hints", k("@relay.example,203.0.113.7:9000")),
+        ("tls-port-443", k("@relay.example:443")),
+        ("tls-and-plain", k("@relay.example:443,[2001:db8::1]")),
+        ("port-80", k("@relay.example:80")),
         ("ipv4", k("@203.0.113.7")),
         ("ipv6", k("@[2001:db8::1]:7878")),
         ("ipv6-every-group", k("@[2001:DB8:0:0:0:0:0:1]")),
@@ -1311,7 +1314,7 @@ written, a key and maybe `@` and hints) and `valid`. A valid one gives
 its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
 shortest form), the port (7878 if the hint names none) and the relay's
-URL. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+URL: `ws://host:port`, or `wss://host` for port 443. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
 digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
 `key-not-canonical` is a point of large order written as y = p + 3, and
 `key-mixed-order`, which is valid, the test key plus a point of order 8),

@@ -10,7 +10,7 @@ use std::fmt;
 use crate::blob::to_hex;
 use crate::identity::{FeedKey, valid_feed_key};
 use crate::profile;
-pub use terse_core::hints::{DEFAULT_PORT, Hint, Host, MAX_HINT, MAX_HINT_LIST, MAX_HINTS, Malformed, parse_hint, parse_hints};
+pub use terse_core::hints::{DEFAULT_PORT, Hint, Host, MAX_HINT, MAX_HINT_LIST, MAX_HINTS, Malformed, TLS_PORT, parse_hint, parse_hints};
 
 /// A feed key and the hints of its address.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,15 +106,27 @@ pub fn parse_address(text: &str) -> Result<FeedAddress, AddressError> {
     Ok(a)
 }
 
-/// The hint for a relay URL, if it can be written as one: `ws://`, a host
-/// a hint can name, an optional port, and no path but `/`.
+/// The hint for a relay URL, if it can be written as one (NETWORK 4.9): a
+/// host a hint can name and no path but `/`, with `ws://` and a port that
+/// is not 443 (7878 when none is given), or `wss://` and port 443 (given or
+/// not).
 pub fn hint_of_url(url: &str) -> Option<Hint> {
-    let rest = url.strip_prefix("ws://")?;
+    let (tls, rest) = match (url.strip_prefix("ws://"), url.strip_prefix("wss://")) {
+        (Some(r), _) => (false, r),
+        (_, Some(r)) => (true, r),
+        _ => return None,
+    };
     let rest = rest.strip_suffix('/').unwrap_or(rest);
     if rest.is_empty() || rest.contains('/') {
         return None;
     }
-    parse_hint(rest.as_bytes()).ok()
+    let mut hint = parse_hint(rest.as_bytes()).ok()?;
+    // A URL without a port means 80 or 443 (NETWORK 3), not the hint's 7878.
+    let port_given = rest.rsplit_once(']').map_or(rest, |(_, p)| p).contains(':');
+    if !port_given {
+        hint.port = if tls { TLS_PORT } else { 80 };
+    }
+    (tls == (hint.port == TLS_PORT)).then_some(hint)
 }
 
 /// The hints a host gives for its own address (NETWORK 4.9): from the
@@ -186,17 +198,26 @@ mod tests {
     #[test]
     fn urls_and_own_hints() {
         assert_eq!(hint_of_url("ws://relay.example:7878/").unwrap().to_string(), "relay.example");
-        assert_eq!(hint_of_url("ws://relay.example").unwrap().url(), "ws://relay.example:7878");
+        // A URL without a port is port 80 (NETWORK 3), not the hint default.
+        assert_eq!(hint_of_url("ws://relay.example").unwrap().to_string(), "relay.example:80");
         assert_eq!(hint_of_url("ws://[2001:db8::1]:9").unwrap().to_string(), "[2001:db8::1]:9");
-        for url in ["wss://relay.example", "ws://relay.example/x", "ws://", "http://relay.example", "ws://a_b"] {
+        // Over TLS: port 443, given or not.
+        assert_eq!(hint_of_url("wss://relay.example").unwrap().to_string(), "relay.example:443");
+        assert_eq!(hint_of_url("wss://relay.example:443/").unwrap().url(), "wss://relay.example");
+        assert_eq!(hint_of_url("wss://[2001:db8::1]").unwrap().to_string(), "[2001:db8::1]:443");
+        let urls = ["wss://relay.example:8443", "ws://relay.example:443", "ws://relay.example/x", "wss://a/x", "ws://", "wss://"];
+        for url in urls.into_iter().chain(["http://relay.example", "ws://a_b"]) {
             assert!(hint_of_url(url).is_none(), "{url}");
         }
         let s = |v: &[&str]| v.iter().map(|u| u.to_string()).collect::<Vec<_>>();
         let own = own_hints(
-            &s(&["ws://127.0.0.1:7878", "wss://secure.example", "ws://A.example:7878"]),
-            &s(&["ws://a.example", "ws://192.168.1.2:7878", "ws://b.example:9000", "ws://c.example"]),
+            &s(&["ws://127.0.0.1:7878", "wss://secure.example:8443", "ws://A.example:7878"]),
+            &s(&["ws://a.example:7878", "ws://192.168.1.2:7878", "ws://b.example:9000", "ws://c.example"]),
         );
         assert_eq!(hint_text(&own), "A.example,b.example:9000");
+        let own = own_hints(&s(&["wss://relay.tersenet.org"]), &s(&["ws://b.example:9000"]));
+        assert_eq!(hint_text(&own), "relay.tersenet.org:443,b.example:9000");
+        assert!(url_is_hint("wss://relay.tersenet.org", &parse_hint(b"relay.tersenet.org:443").unwrap()));
         assert!(own_hints(&[], &s(&["ws://127.0.0.1:7878", "ws://10.0.0.1"])).is_empty());
         assert!(url_is_hint("ws://relay.example:7878", &parse_hint(b"RELAY.example").unwrap()));
     }

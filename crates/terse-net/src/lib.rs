@@ -15,7 +15,8 @@
 //!   matching (NETWORK 4.6, 4.7).
 //! - [`protocol`]: relay message encoding (NETWORK 3, 4.3).
 //! - [`relay`]: a poll-driven relay client over a [`relay::Transport`], with a
-//!   blocking WebSocket transport.
+//!   blocking WebSocket transport (`ws://` and `wss://`).
+//! - [`tls`]: TLS for `wss://` relays and for a relay given a certificate.
 //! - [`node`]: host behaviour (NETWORK 2, 4.4): store first, then the relay,
 //!   with verification; following and publishing feeds.
 //! - [`records`]: named records, the data programs keep on this host (SPEC §content.records).
@@ -47,6 +48,7 @@ pub mod service;
 pub mod snapshots;
 pub mod store;
 pub mod timeline;
+pub mod tls;
 pub mod vectors;
 
 pub use blob::{BlobId, blob_id, parse_hex, to_hex};

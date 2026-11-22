@@ -17,7 +17,7 @@
 <pre>terse-relay --listen 0.0.0.0:7878 --store terse-relay-store</pre>
 <p>The other adds it once, with the first one&#39;s computer name or address on your network, and starts <code>terse-host</code> again:</p>
 <pre>terse relay add ws&#58;//their-computer:7878</pre>
-<p>A relay has no accounts and no encryption: anyone who can reach it can read what is on it, but nobody can publish in your name. Tersenet has no public relay yet; once there is one, adding it is the same command.</p>
+<p>A relay has no accounts: anyone who can reach it can read what is on it, but nobody can publish in your name. A relay reached with <code>wss&#58;//</code> (over TLS) also hides from the network what you read; a name alone, as in <code>terse relay add relay.example.org</code>, means <code>wss&#58;//relay.example.org</code>. Tersenet has no public relay yet; once there is one, adding it is the same command.</p>
 <h2 id="from-an-address">From an address</h2>
 <p>Ask for their address: what <code>terse feed address</code> prints, or what the reader&#39;s help page (?) shows. It is a key of 64 hexadecimal digits, sometimes followed by <code>@</code> and a relay. In the reader press F for your feeds, then S, and type or paste it (Ctrl+V pastes). Enter subscribes, and the window asks you first:</p>
 <pre>Tersenet · permission

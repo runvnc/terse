@@ -29,3 +29,22 @@ crates/terse-mame-crt)
 
 Used under the Hershey distribution's terms, quoted in
 third_party/hershey/README.md.
+
+------------------------------------------------------------------------
+TLS for wss:// relays, built into terse, terse-host and terse-relay
+(crates/terse-net/src/tls.rs). The licence texts are in third_party/tls/
+and, in each download, in TLS-LICENSES.txt.
+
+- rustls: Copyright (c) 2016, Joseph Birr-Pixton. Used under the ISC
+  licence (third_party/tls/rustls-LICENSE-ISC; it is also offered under
+  the Apache License 2.0 and the MIT licence).
+- rustls-webpki: Copyright 2015 Brian Smith, and its other authors. ISC
+  licence (third_party/tls/rustls-webpki-LICENSE).
+- ring: Copyright 2015-2025 Brian Smith, ISC licence; with code from
+  BoringSSL under the Apache License 2.0 and the ISC licence, as each
+  file says (third_party/tls/ring-LICENSE, ring-LICENSE-other-bits,
+  ring-LICENSE-BoringSSL).
+- webpki-roots: Mozilla's list of root certificates, under the Community
+  Data License Agreement - Permissive, Version 2.0
+  (third_party/tls/webpki-roots-LICENSE).
+- untrusted (ISC) and rustls-pki-types (MIT or Apache-2.0).

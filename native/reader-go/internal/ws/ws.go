@@ -1,6 +1,11 @@
 // Package ws is a minimal RFC 6455 WebSocket implementation: a client
-// (ws:// only) and, for tests, a server side. It carries binary messages,
-// answers pings and closes cleanly.
+// (ws:// and wss://) and, for tests, a server side. It carries binary
+// messages, answers pings and closes cleanly.
+//
+// A wss:// relay's certificate is checked by crypto/tls against the
+// system's trusted roots and the URL's host; TERSE_RELAY_CA may name a
+// PEM file of further CA certificates to trust (a self-hosted relay with a
+// private CA), as for the reference clients.
 package ws
 
 import (
@@ -9,6 +14,7 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -17,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +45,60 @@ const (
 
 // ErrText is returned when the peer sends a text message.
 var ErrText = errors.New("ws: text message")
+
+// ErrRequiresTLS: a plain (ws://) request was answered with TLS, or
+// redirected to https://.
+var ErrRequiresTLS = errors.New("this relay requires TLS (try wss://)")
+
+// CAEnv names a PEM file of CA certificates trusted for wss:// relays
+// besides the system's.
+const CAEnv = "TERSE_RELAY_CA"
+
+// clientTLS is the TLS configuration for a wss:// relay named host: the
+// system's roots, and those of CAEnv if it is set.
+func clientTLS(host string) (*tls.Config, error) {
+	cfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	path := os.Getenv(CAEnv)
+	if path == "" {
+		return cfg, nil
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", CAEnv, err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s: %s: no PEM certificate in it", CAEnv, path)
+	}
+	cfg.RootCAs = pool
+	return cfg, nil
+}
+
+// tlsFailure says in words why a TLS handshake with a relay failed.
+func tlsFailure(err error) error {
+	var hostErr x509.HostnameError
+	var authErr x509.UnknownAuthorityError
+	var certErr x509.CertificateInvalidError
+	var recErr tls.RecordHeaderError
+	switch {
+	case errors.As(err, &hostErr):
+		return fmt.Errorf("the relay's certificate is for another name (%w)", err)
+	case errors.As(err, &authErr):
+		return fmt.Errorf("the relay's certificate is not trusted (not from a known authority; for a private CA, see %s): %w", CAEnv, err)
+	case errors.As(err, &certErr) && certErr.Reason == x509.Expired:
+		return fmt.Errorf("the relay's certificate has expired or is not valid yet: %w", err)
+	case errors.As(err, &certErr):
+		return fmt.Errorf("the relay's certificate is not trusted: %w", err)
+	case errors.As(err, &recErr):
+		return errors.New("this relay does not speak TLS (try ws://)")
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
+		return errors.New("the relay closed the connection at the TLS handshake: it may not speak TLS (try ws://)")
+	}
+	return err
+}
 
 // Conn is a WebSocket connection.
 type Conn struct {
@@ -98,11 +159,16 @@ func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) 
 	// Stopped or out of time during the handshake: the connection closes.
 	keep := context.AfterFunc(ctx, func() { c.Close() })
 	if u.Scheme == "wss" {
-		tc := tls.Client(c, &tls.Config{ServerName: u.Hostname()})
+		cfg, err := clientTLS(u.Hostname())
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
+		tc := tls.Client(c, cfg)
 		tc.SetDeadline(time.Now().Add(timeout))
 		if err := tc.Handshake(); err != nil {
 			c.Close()
-			return nil, err
+			return nil, tlsFailure(err)
 		}
 		c = tc
 	}
@@ -121,10 +187,32 @@ func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) 
 		return nil, err
 	}
 	r := bufio.NewReader(c)
+	// A TLS record in answer to a plain request: the relay wants wss://.
+	if first, err := r.Peek(1); err == nil && u.Scheme == "ws" && (first[0] == 0x15 || first[0] == 0x16) {
+		c.Close()
+		return nil, ErrRequiresTLS
+	}
 	resp, err := http.ReadResponse(r, nil)
 	if err != nil {
 		c.Close()
 		return nil, err
+	}
+	if u.Scheme == "ws" && resp.StatusCode/100 == 3 {
+		if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "https://") || strings.HasPrefix(loc, "wss://") {
+			c.Close()
+			return nil, ErrRequiresTLS
+		}
+	}
+	// A TLS server's refusal of plain HTTP (nginx's and Cloudflare's "The
+	// plain HTTP request was sent to HTTPS port", Go's "Client sent an HTTP
+	// request to an HTTPS server").
+	if u.Scheme == "ws" && resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		b := strings.ToLower(string(body))
+		if strings.Contains(b, "https") || strings.Contains(b, "tls") || strings.Contains(b, "ssl") {
+			c.Close()
+			return nil, ErrRequiresTLS
+		}
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols ||
 		!strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||
