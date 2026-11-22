@@ -972,6 +972,7 @@ without a frame number run one after another, `wait <frames>` and `type
     wheel 3               wheel steps
     resize 1900 1000      the window's size
     wait 30               frames; sleep <ms> waits real time
+    time 1800000000       hold the Unix time the machines see (the shell's clock) at this value
     settle [max N]        until 10 presented pictures in a row are the same
     shot out.png          the picture last presented, as presented
     dump page             page (this host's layout), terminal, vectors or state; `> file` to a file

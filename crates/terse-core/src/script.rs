@@ -56,9 +56,9 @@ pub const INPUT_COMMANDS: [&str; 10] = ["down", "up", "press", "text", "pointer"
 
 /// The commands of `terse-host --drive` that are not input (STATE.md 6.5):
 /// a headless `terse run` skips them.
-pub const HOST_COMMANDS: [&str; 18] = [
+pub const HOST_COMMANDS: [&str; 19] = [
     "shot", "dump", "settle", "watch", "expect", "resize", "pointer-px", "click-px", "drag", "drag-px", "perf", "budget", "quit", "say",
-    "sleep", "renderer", "repeat", "hold",
+    "sleep", "renderer", "repeat", "hold", "time",
 ];
 
 /// The frame a line belongs to (STATE.md 6.2 and its extension): numbered

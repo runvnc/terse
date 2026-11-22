@@ -126,9 +126,16 @@ fn no_gpu(renderer: &str, o: &Output) -> bool {
     none
 }
 
+/// The Unix time a script holds (`time`, STATE.md 6.5): the shell's clock
+/// shows it, whatever the time, so a picture of the shell taken now and one
+/// taken in a minute are the same.
+const HELD: &str = "time 1800000000\n";
+
 /// In the phosphor style, with the MAME look, a screen whose program shows
 /// nothing new is still once the phosphor has settled: fetch, the reader
-/// and the shell, with both renderers.
+/// and the shell, with both renderers. The time is held: the shell's clock
+/// (the bar's right end) turns a minute while the test looks, which is not
+/// a picture that fails to settle.
 #[test]
 fn the_phosphor_style_is_still_when_idle() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -145,7 +152,7 @@ fn the_phosphor_style_is_still_when_idle() {
         [("fetch", vec![&fetch, "--force-phosphor"], ""), ("reader", vec![&reader, "--force-phosphor"], ""), ("shell", vec!["--shell", "--force-phosphor"], "")];
     for renderer in ["software", "gpu"] {
         for (name, args, tolerance) in &cases {
-            let script = format!("settle max 300\nexpect idle 120{tolerance}\nquit\n");
+            let script = format!("{HELD}settle max 300\nexpect idle 120{tolerance}\nquit\n");
             // In the headless compositor the GPU is a software one
             // (llvmpipe), slow enough to shed the look, which changes the
             // picture or warns: what is tested here is that the phosphor
@@ -161,6 +168,29 @@ fn the_phosphor_style_is_still_when_idle() {
             assert!(o.status.success() && String::from_utf8_lossy(&o.stdout).contains("ok: expect idle 120"), "{name} {renderer}: {}", text(&o));
         }
     }
+}
+
+/// A held time is the time the shell shows: two runs holding the same time
+/// present the same picture, and one holding a time an hour later another
+/// (the clock in the bar), so the held time is what the stillness and
+/// resize tests compare with.
+#[test]
+fn the_shells_clock_shows_the_held_time() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    if !have_weston() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shot = |name: &str, time: u32| {
+        let png = dir.path().join(format!("{name}.png"));
+        let script = format!("time {time}\nsettle max 300\nshot {}\nquit\n", png.display());
+        let o = drive(dir.path(), &["--shell", "--no-shed", "--perf-rule", "off"], &script, "software", "640x480");
+        assert!(o.status.success(), "{name}: {}", text(&o));
+        read_png(&png)
+    };
+    let (a, b, later) = (shot("a", 1_800_000_000), shot("b", 1_800_000_000), shot("later", 1_800_003_600));
+    assert_eq!(a, b, "the same held time, the same picture");
+    assert_ne!(a.0, later.0, "an hour later, another clock");
 }
 
 /// Every built-in program, in the phosphor style with the MAME look, keeps
@@ -203,7 +233,7 @@ fn a_resized_window_shows_the_picture_of_its_final_size() {
         for (name, start, steps, end) in [("rapid", "640x480", rapid, "1900x1000"), ("back", "640x480", aba, "700x500"), ("slow", "1900x1000", slow, "900x650")] {
             let resized = dir.path().join(format!("{name}-{renderer}.png"));
             let fresh = dir.path().join(format!("{name}-{renderer}-fresh.png"));
-            let script = format!("settle max 200\n{steps}settle max 300\nshot {}\nquit\n", resized.display());
+            let script = format!("{HELD}settle max 200\n{steps}settle max 300\nshot {}\nquit\n", resized.display());
             // --no-shed: the look shed (a slow adapter, a debug build) would
             // differ from a fresh window's, which is not what is tested.
             let o = drive(dir.path(), &["--shell", "--force-phosphor", "--no-shed", "--perf-rule", "off"], &script, renderer, start);
@@ -211,7 +241,7 @@ fn a_resized_window_shows_the_picture_of_its_final_size() {
                 break;
             }
             assert!(o.status.success(), "{name} {renderer}: {}", text(&o));
-            let o = drive(dir.path(), &["--shell", "--force-phosphor", "--no-shed", "--perf-rule", "off"], &format!("settle max 300\nshot {}\nquit\n", fresh.display()), renderer, end);
+            let o = drive(dir.path(), &["--shell", "--force-phosphor", "--no-shed", "--perf-rule", "off"], &format!("{HELD}settle max 300\nshot {}\nquit\n", fresh.display()), renderer, end);
             assert!(o.status.success(), "{name} {renderer}: {}", text(&o));
             let (a, sa) = read_png(&resized);
             let (b, sb) = read_png(&fresh);

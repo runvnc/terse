@@ -658,7 +658,7 @@ files of this repository do not.
   moves on by the number of characters.
 - The commands of 6.5 (`shot`, `dump`, `settle`, `watch`, `expect`,
   `resize`, `pointer-px`, `click-px`, `drag`, `drag-px`, `hold`, `perf`,
-  `budget`, `say`, `sleep`, `quit`) are for a window: a headless run reads
+  `budget`, `say`, `sleep`, `time`, `quit`) are for a window: a headless run reads
   them and does nothing (`terse run` says how many it passed over).
 
 So one script serves a headless run and a window: in each, the events of
@@ -732,6 +732,7 @@ The commands of a window:
 | `hold` | key, frames, then any modifiers | the key held down (with the modifier keys) for that many frames, repeating as a keyboard does (after 30 frames, every 2) |
 | `resize` | width, height | asks for the window's inner size in pixels; the next line waits 3 frames |
 | `sleep` | milliseconds | the next line waits that long in real time |
+| `time` | Unix time (seconds, 0 to 4,294,967,295) | the Unix time the machines latch (SPEC §system) is held at this value from this frame on, instead of the clock's: a picture that shows the time (the shell's clock) is the same from one run, or one minute, to the next |
 | `shot` | file | writes the picture presented, as PNG |
 | `dump` | `terminal`, `page`, `vectors` or `state`, optionally a machine handle, optionally `> file` | the terminal grid (6.3), the page as this host laid it out (each line in view: its top, height and x in screen units and its text), the vector lists (as `--dump-vectors`), or the frame, window and machines |
 | `watch` | frames, optionally `every <n>`, `save <dir>` | reports, after that many pictures, how many changed, where (a box of pixels) and by how much, and blinks: 32 × 32 pixel tiles that changed and came back to what they were 2 or 3 pictures before (a part that vanished or changed for one or two pictures; input given less than 3 frames apart can look like one) |
