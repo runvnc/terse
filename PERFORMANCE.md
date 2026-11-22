@@ -604,8 +604,15 @@ one over it.
   come from the operating system where it says: Linux
   (`clock_getcpuclockid`, schedstat, and PSI for the memory stall);
   macOS (`proc_pid_rusage`: CPU time and run-queue wait, no memory
-  stall; the frame loop's own wait is its process's); Windows
-  (`GetProcessTimes`: CPU time only). What a host could read is in the
+  stall; the frame loop's own wait is its process's); Windows (CPU time
+  and the processors' idle time as exact cycle counts,
+  `QueryProcessCycleTime`, `QueryThreadCycleTime`,
+  `QueryIdleProcessorCycleTimeEx`, from which the wait is **inferred**:
+  a suspect on a CPU for at least half the interval it was waited for was
+  running; one that was not, while the processors had at least one
+  processor's worth of idle time, was blocked; otherwise it was starved,
+  for no longer than it was off a CPU nor than no processor need have
+  been idle, `RECORD.md` 4; no memory stall). What a host could read is in the
   record (`readings`, `RECORD.md` 2), and what it may conclude without a
   reading is `RECORD.md` 4's.
 - *A host with built-in devices* (`terse-host`) runs every machine and
@@ -626,7 +633,9 @@ one over it.
 
   The frame loop thread's CPU time and run-queue wait are read before and
   after each machine and each stage (Linux: schedstat; macOS: the
-  process's wait, which is at least the thread's), and the whole
+  process's wait, which is at least the thread's; Windows: the thread's
+  cycles and the processors' idle cycles, the wait inferred as for a
+  driver, `RECORD.md` 4), and the whole
   process's wait (every thread) around the drawing. A machine's part is
   recorded as `core` with its program as the `late` line's image: every
   component is the host's own build. What this cannot tell apart: a
@@ -681,8 +690,10 @@ ms p50). The record's writer is a thread of its own.
    stopped too: the system stops, its machines saved first. **A host
    stops only for certain blame**: late frames in which the operating
    system said how long the driver's threads and the frame loop waited
-   for a CPU (condition 2 of R14 could be checked). Where it cannot say
-   (Windows; Linux without schedstats; a driver of another user), a
+   for a CPU, or (Windows) it could be inferred from their CPU time and
+   the processors' idle time (`RECORD.md` 4): condition 2 of R14 could
+   be checked. Where it cannot say (Linux without schedstats; Windows
+   where the cycle counts cannot be read; a driver of another user), a
    device is blamed by its waits alone, which on a busy computer may be
    the computer's doing: the host warns and saves (step 2) as usual,
    records every late frame, and never stops a machine for it
@@ -720,8 +731,10 @@ level of the look for each frame whose `compose` is blamed, before any
 is counted (step 1), then warned about, then failed as above. A blame is
 certain, and counts towards a stop, when the operating system said how
 long the frame loop thread waited for a CPU (and, for `compose`, the
-whole process): Linux with schedstats and macOS; on Windows a machine and
-the drawing are warned about, never stopped or failed. The rule acts in a
+whole process): Linux with schedstats and macOS; on Windows when the
+wait could be inferred from the cycle counts (`RECORD.md` 4); where it
+could not, a machine and the drawing are warned about, never stopped or
+failed. The rule acts in a
 window (`--perf-rule on|off`; off for a self-test unless asked), and
 `TERSE_HOST_SLOW=machine<h>:<ms>:<frame>[:spin]` or
 `compose:<ms>:<frame>[:spin]` makes one machine's frames or the drawing
@@ -820,7 +833,8 @@ covers.
 **R16, the hardware check.** A host draws each device's worst legal frame
 (the generators behind the W rows, `terse_core::worst`) with the renderer
 it will use, when it first starts on a computer, and keeps the result
-(the reference: `$XDG_CACHE_HOME/terse/hwcheck-<size>-<mtime>.txt`, keyed
+(the reference: `$XDG_CACHE_HOME/terse/hwcheck-<size>-<mtime>.txt`, else
+`~/.cache/terse/...`, `%LOCALAPPDATA%\terse\...` on Windows, keyed
 by the program file and checked against the computer's `env` line), so
 it runs once per build and computer, not at every start. Where the look's
 worst frame takes more than its allowance (half a frame), the look is

@@ -19,7 +19,8 @@ was late, and it carries dates (days, UTC) and times since a run began.
 ## 1. Where it lives
 
 In the host's data directory: `$XDG_DATA_HOME/terse/perf/` (else
-`~/.local/share/terse/perf/`; the platform's equivalent elsewhere). One
+`~/.local/share/terse/perf/`, on macOS too; `%LOCALAPPDATA%\terse\perf\` on
+Windows). One
 file per **host identity**: `<name>-<build hex>.log` (the host's name and
 the hex digits of its build identifier, R13; characters other than
 letters, digits, `-` and `.` as `_`). A host may write elsewhere when told
@@ -151,16 +152,44 @@ and the `readings` lines say which were there:
 | A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0; a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
-(no memory stall) never `memory`; on Windows (CPU time only) only
-`blamed` and `spread`. In a host with built-in devices every part is on
+(no memory stall) and on Windows (below) never `memory`. In a host with
+built-in devices every part is on
 the frame loop thread but the drawing: a part's starvation is that
 thread's run-queue wait while it ran, the drawing's the whole process's
 while it drew (macOS gives the process's wait for both, which is at least
 the thread's: it can only excuse more).
 
+**Windows: the wait inferred.** Windows does not say how long a thread
+waited for a CPU, but it does say, exactly, how many cycles a thread or
+a process ran (`QueryThreadCycleTime`, `QueryProcessCycleTime`) and how
+many each processor spent idle (`QueryIdleProcessorCycleTimeEx`), in the
+same counter, whose rate the host measures once at start (the clock-tick
+readings, `GetThreadTimes` and `GetSystemTimes`, move 15.6 ms at a time:
+a frame). Over the interval in which a suspect should have been running
+(the time the frame loop waited for a driver; a stage or a machine's
+frame of the frame loop; the frame loop's own time less its waits for
+drivers, in terse-bus), with `C` its CPU time, `I` the idle time of all
+`N` processors and `T` the interval:
+
+1. `C` ≥ `T` / 2: it was **running**, not waiting. Nothing is excused.
+2. Else, `I` ≥ `T` (at least one processor's worth of idle time): a
+   thread that is ready to run is given an idle processor, so it was
+   **blocked** on something of its own (a sleep, a disk, a lock).
+   Nothing is excused: blamed as blocked, as on Linux.
+3. Else it was **starved**: the computer was busy. Its starvation is
+   taken as `T` − `C`, and no more than `T` − `I` / `N` (some processor
+   was idle for at least `I` / `N` of the interval, in which it could
+   have run): an excuse no longer than it could have lasted.
+
+The `readings` line says `wait` (the frame loop's and each driver's) and
+`idle` (inferred so). Where the cycle counts cannot be read or their
+rate not measured, there is no `wait` and Windows gives only `blamed`
+and `spread`, as the table says.
+
 A `blamed` verdict is **certain** when the blamed device's `wait` and
-the frame loop's were both read: the time a busy computer took is then
-known not to be in its own time. In a host with built-in devices: when
+the frame loop's were both read, or inferred as above: the time a busy
+computer took is then known not to be in its own time. In a host with
+built-in devices: when
 the frame loop thread's `wait` was read (and, for `compose`, the
 process's), for a machine or the host's own part alike. Only certain
 blame counts towards stopping a machine (`PERFORMANCE.md` R15 step 3);

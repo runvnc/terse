@@ -37,6 +37,7 @@ window = ["input", "dep:softbuffer", "dep:gilrs"]
 audio = ["dep:libloading", "dep:cpal"]
 
 [dependencies]
+terse-dirs.workspace = true
 terse-core.workspace = true
 terse-perflog.workspace = true
 terse-net.workspace = true

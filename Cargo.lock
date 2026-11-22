@@ -2957,6 +2957,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "terse-dirs"
+version = "0.1.0"
+
+[[package]]
 name = "terse-host"
 version = "0.1.0"
 dependencies = [
@@ -2975,6 +2979,7 @@ dependencies = [
  "swash",
  "tempfile",
  "terse-core",
+ "terse-dirs",
  "terse-net",
  "terse-perflog",
  "terse-relay",
@@ -3013,6 +3018,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "terse-core",
+ "terse-dirs",
  "tersenet",
  "ttf-parser",
  "tungstenite",
@@ -3026,6 +3032,8 @@ dependencies = [
  "blake3",
  "libc",
  "tempfile",
+ "terse-dirs",
+ "terse-testkit",
  "windows-sys 0.61.2",
 ]
 

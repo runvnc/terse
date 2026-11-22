@@ -162,21 +162,23 @@ const USAGE: &str = "usage:
   the list in <config>/relays (`terse relay add <url>` writes it; an older <config>/relay is read
   if there is no list); else a relay already running on ws://127.0.0.1:7878; else one started
   inside terse-host on that port, with its store in $XDG_DATA_HOME/terse/relay (else
-  ~/.local/share/terse/relay). One line on stderr says which. The host connects to all of them
+  ~/.local/share/terse/relay; %LOCALAPPDATA%\\terse\\relay on Windows). One line on stderr says
+  which. The host connects to all of them
   (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
   --no-feed-relays. --screenshot and --selftest use relays only with --relay.
   --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
   terse: links in it (NETWORK 4.4). --no-program-download: do not download the current version of
   each program of the subscribed feeds as it arrives (NETWORK 4.4).
   --data: where programs' named records are kept, in records/ (SPEC §content.records; default
-  $XDG_DATA_HOME/terse, else ~/.local/share/terse). They never leave this machine.
+  $XDG_DATA_HOME/terse, else ~/.local/share/terse; %LOCALAPPDATA%\\terse on Windows). They never leave this machine.
   --consent: how requests by a program to subscribe, unsubscribe, publish, set the profile or set a nickname (SPEC §content.feeds) are
   answered: ask shows the host's prompt at the bottom of the window, naming the program (Y allows,
   N or Esc refuses); default ask in the window, deny for --screenshot and --selftest (where nobody
   can answer; a --screenshot with ask shows the prompt, unanswered).
-  --store: the blob store (default $XDG_CACHE_HOME/terse/blobs, else ~/.cache/terse/blobs); the
+  --store: the blob store (default $XDG_CACHE_HOME/terse/blobs, else ~/.cache/terse/blobs; %LOCALAPPDATA%\\terse\\blobs
+  on Windows); the
   built-in programs are put into it at start. --config holds your feed key and subscriptions
-  (default $XDG_CONFIG_HOME/terse, else ~/.config/terse). --events is scripted input, as for
+  (default $XDG_CONFIG_HOME/terse, else ~/.config/terse; %APPDATA%\\terse on Windows). --events is scripted input, as for
   `terse run` (`home` is the home key). --size: the picture's size in pixels for --screenshot
   (default: the grid at the font's size), the window's for the other forms; the screen is
   letterboxed in it at 4:3.

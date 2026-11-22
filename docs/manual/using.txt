@@ -57,7 +57,7 @@ Tersenet watches every frame for the part that made it late, in `terse-host`, wh
 - **Tersenet's own drawing.** It first draws the phosphor look more simply. If that is not enough, it says once that it does not keep up on this computer, and records it; it stops no machine. A smaller window may help.
 - **Resizing the window.** While the size changes, Tersenet holds the machines, at most a second at a time, and the few frames just after a resize count against no one, within a bound.
 
-A machine is stopped only when the operating system says how long Tersenet waited for a processor (Linux with schedstats, and macOS); elsewhere, Windows for one, it is warned about and saved, never stopped.
+A machine is stopped only when Tersenet can tell how long it waited for a processor: Linux with schedstats and macOS say so, and on Windows Tersenet works it out from how long the machine ran and how long the processors stood idle. Where it cannot tell, the machine is warned about and saved, never stopped.
 
 Every state saved this way is listed in the launcher under SAVED BY TERSENET: Enter restores one, D deletes it. There is one place per machine, so a new warning replaces the last save. How slowness is measured and reported is in [Performance reports](terse:{performance-reports}).
 

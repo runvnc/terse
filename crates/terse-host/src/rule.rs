@@ -40,9 +40,11 @@
 //! only if the operating system said how long the blamed part waited for a
 //! CPU: the frame loop thread's run-queue wait for a machine, `core`,
 //! `present` and `outside` (Linux with schedstats; macOS, as the process's
-//! wait, which is at least the thread's), and for `compose` also the
-//! process's (its drawing threads'). Windows gives neither: there a blame
-//! warns, never stops.
+//! wait, which is at least the thread's; Windows, inferred from the
+//! thread's CPU time and the system's idle time, `terse_perflog::probe::infer`),
+//! and for `compose` also the process's (its drawing threads'). Where the
+//! system gives neither (readings turned off, Windows without its cycle
+//! counts) a blame warns, never stops.
 //!
 //! **Excused frames.** As in terse-bus (`terse_perflog::Resizes`): a frame
 //! that would be blamed within `Rule::resize_frames` (3) frames of a size
@@ -297,7 +299,8 @@ mod tests {
 
     #[test]
     fn without_wait_readings_a_machine_is_warned_about_never_stopped() {
-        // Windows, TERSE_PERF_PROBE=none: blamed by its time alone.
+        // TERSE_PERF_PROBE=none, Windows without its cycle counts: blamed
+        // by its time alone.
         let mut e = Enforcer::default();
         let acts = run(&mut e, (0..600).map(|n| frame(n, 30 * MS, 3 * MS, 0, false)), true);
         assert_eq!(acts, vec![(2, Act::Warn { culprit: Culprit::Machine(5), count: 3 })]);

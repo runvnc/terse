@@ -94,7 +94,7 @@ impl Probe {
         };
         let (run_ns, main_wait) = self.main.as_ref().and_then(schedstat).unwrap_or((0, 0));
         let wait_ns = if self.thread || self.tasks.is_empty() { main_wait } else { self.tasks.iter().filter_map(schedstat).map(|(_, w)| w).sum() };
-        Some(ProcSample { cpu_ns, run_ns, wait_ns })
+        Some(ProcSample { cpu_ns, run_ns, wait_ns, ..Default::default() })
     }
 
     pub fn rss_kib(&self) -> Option<u64> {

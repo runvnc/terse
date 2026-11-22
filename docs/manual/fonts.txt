@@ -55,7 +55,8 @@ full repertoire is always drawn.
 ## Where the settings live
 
 `terse fonts` writes `fonts` in the configuration directory
-(`~/.config/terse`, or `$XDG_CONFIG_HOME/terse`), one line per font:
+(`~/.config/terse`, or `$XDG_CONFIG_HOME/terse`; `%APPDATA%\terse` on
+Windows), one line per font:
 `mono`, `sans`, `bold` or `extra`, then the file. `terse-host
 --version` lists the fonts it would use. Every font is opened when
 `terse-host` starts and never again: it never waits for a font while a

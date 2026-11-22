@@ -96,11 +96,11 @@ impl Probe {
             }
             let ns = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
             let wait_ns = rusage(self.pid).map_or(0, |ri| self.cpu_and_wait(&ri).1);
-            return Some(ProcSample { cpu_ns: ns, run_ns: ns, wait_ns });
+            return Some(ProcSample { cpu_ns: ns, run_ns: ns, wait_ns, ..Default::default() });
         }
         let ri = rusage(self.pid)?;
         let (cpu_ns, wait_ns) = self.cpu_and_wait(&ri);
-        Some(ProcSample { cpu_ns, run_ns: cpu_ns, wait_ns })
+        Some(ProcSample { cpu_ns, run_ns: cpu_ns, wait_ns, ..Default::default() })
     }
 
     pub fn rss_kib(&self) -> Option<u64> {
