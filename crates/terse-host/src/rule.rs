@@ -17,7 +17,7 @@
 //! work besides the machines: completions delivered, sound sent to the
 //! output), `compose` (taking the screens and drawing the picture, the
 //! renderer's threads included), `present` (handing it to the display) and
-//! `outside` (how late the frame began after its tick: the event loop held
+//! `outside` (how late the frame began after its tick or the last picture: the event loop held
 //! elsewhere). A part is blamed as `RECORD.md` 4 says: the frame overran,
 //! not because anybody waited for a CPU, not in a memory stall, and the
 //! part's own time is over half a frame and the most of any.

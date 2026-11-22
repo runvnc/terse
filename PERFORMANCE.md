@@ -545,7 +545,9 @@ one over it.
   - `compose`: taking the machines' screens and drawing the picture, the
     renderer's threads included;
   - `present`: acquiring the surface and presenting;
-  - `outside`: how late the frame began after its tick.
+  - `outside`: how late the frame began after its tick, or after the last
+    picture was presented if that was later (a frame that ran long makes
+    the next begin late by its own doing, already counted).
 
   The frame loop thread's CPU time and run-queue wait are read before and
   after each machine and each stage (Linux: schedstat; macOS: the

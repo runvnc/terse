@@ -4,7 +4,7 @@
 //! (its emulation, its devices' calls within it and their host-side work
 //! for it), the rest of the emulation stage (`core`), taking the machines'
 //! screens and drawing (`compose`), acquiring and presenting the picture
-//! (`present`), and how late the frame began after its tick (`outside`).
+//! (`present`), and how late the frame began after its tick or the last picture (`outside`).
 //! The frame loop thread's CPU time and run-queue wait are read around
 //! each part, and the whole process's while it draws (the renderer's
 //! threads). `rule.rs` judges the frame; the host carries out what it asks.
@@ -351,5 +351,29 @@ mod tests {
         let lines = record::parse(&std::fs::read_to_string(path).unwrap());
         assert_eq!(lines.iter().filter(|l| l.as_excused().is_some_and(|(_, why)| why == "start")).count(), 5, "{lines:?}");
         assert!(!lines.iter().any(|l| matches!(l, Line::Late { .. })));
+    }
+
+    /// The cost of watching a frame of a shell and 8 machines: the
+    /// readings around each machine and part, and the judging (printed;
+    /// bounded loosely, for an unoptimised build on a busy computer).
+    #[test]
+    fn the_cost_of_watching() {
+        let mut w = HostWatch::new(None, false, "software", "window", Instant::now());
+        let n = 600;
+        let t = Instant::now();
+        for _ in 0..n {
+            w.begin();
+            for serial in 0..9 {
+                w.machine_begin();
+                w.machine_end(serial, [serial as u8; 32], [Duration::from_micros(100), Duration::ZERO, Duration::ZERO]);
+            }
+            w.emulated();
+            w.stepped(Duration::from_millis(1), Duration::from_millis(1), Duration::ZERO);
+            w.drawing();
+            w.presented(Duration::ZERO, Duration::from_millis(2), true).unwrap();
+        }
+        let per = t.elapsed() / n;
+        println!("watching a frame of 9 machines: {per:?}");
+        assert!(per < Duration::from_millis(2), "{per:?}");
     }
 }

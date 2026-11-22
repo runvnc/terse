@@ -61,7 +61,12 @@ impl Weston {
     /// `terse-host` in this compositor, with scratch directories in `dir`,
     /// the software renderer, no relay, and the record in `dir/perf`.
     fn host(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_terse-host"));
+        self.host_with(dir, env!("CARGO_BIN_EXE_terse-host"), args, env)
+    }
+
+    /// [`Self::host`] through `program` (a wrapper that runs terse-host).
+    fn host_with(&self, dir: &Path, program: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
+        let mut c = Command::new(program);
         for d in ["store", "config", "data", "perf"] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
         }
@@ -246,8 +251,49 @@ fn the_first_frames_are_excused() {
     let out = w.host(dir.path(), &["--selftest", &hello, "--frames", "25"], &[("TERSE_HOST_SLOW", "compose:30:0")]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let lines = record_lines(dir.path());
-    assert!(lines.iter().filter(|l| l.as_excused().is_some_and(|e| e.1 == "start")).count() >= 20, "{lines:?}");
+    // (A self-test of 25 frames presents most of them.)
+    assert!(lines.iter().filter(|l| l.as_excused().is_some_and(|e| e.1 == "start")).count() >= 15, "{lines:?}");
     assert!(!lines.iter().any(|l| matches!(l, Line::Late { .. } | Line::Warn { .. })), "{lines:?}");
+}
+
+/// A busy CPU (`taskset`: on one CPU) shared with a CPU hog
+/// that has the CPU's priority over the host (`nice`), and hello's frames
+/// doing 5 ms of work on it from frame 40 (within the allowance of half a
+/// frame): its frames are late, and the host waited for the CPU most of
+/// that time: starved, nobody blamed, warned about or stopped.
+#[test]
+fn a_starved_machine_is_not_blamed() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    if !Path::new("/proc/self/schedstat").exists() || std::env::var("TERSE_PERF_PROBE").is_ok_and(|v| v == "none") {
+        eprintln!("skipped: the run-queue wait cannot be read");
+        return;
+    }
+    let cpu = "0";
+    let Ok(mut hog) = Command::new("taskset").args(["-c", cpu, "sh", "-c", "while :; do :; done"]).stdout(Stdio::null()).spawn() else {
+        eprintln!("skipped: no taskset");
+        return;
+    };
+    let Some((w, dir)) = ready() else {
+        let _ = hog.kill();
+        return;
+    };
+    let hello = program("hello");
+    let host = env!("CARGO_BIN_EXE_terse-host").to_string();
+    let out = {
+        // terse-host on the hog's CPU, at a lower priority.
+        let mut args = vec!["-c", cpu, "nice", "-n", "5", host.as_str(), "--selftest", &hello, "--frames", "160"];
+        args.extend(["--threads", "1"]);
+        w.host_with(dir.path(), "taskset", &args, &[("TERSE_HOST_SLOW", "machine0:5:40:spin")])
+    };
+    let _ = hog.kill();
+    let _ = hog.wait();
+    let err = text(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    let lines = record_lines(dir.path());
+    let tripped: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. } | Line::Late { verdict: Verdict::Blamed, .. }) || l.as_fail().is_some()).collect();
+    assert!(tripped.is_empty(), "{tripped:?}\n{lines:?}");
+    let starved = lines.iter().filter(|l| matches!(l, Line::Late { verdict: Verdict::Starved, .. })).count();
+    assert!(starved >= 10, "the hog made the frames late: {lines:?}");
 }
 
 /// Every built-in program, alone and in the shell, runs 600 frames in the

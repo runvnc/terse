@@ -49,7 +49,8 @@ fn host_part(c: terse_perflog::Component) -> &'static str {
 /// What `TERSE_HOST_SLOW` slows, for tests of the rule (PERFORMANCE.md
 /// R15): `machine<h>:<ms>:<frame>`, machine h's frames (0: the shell or the
 /// machine alone) each sleep ms milliseconds from the host's frame on;
-/// `compose:<ms>:<frame>`, the drawing.
+/// `compose:<ms>:<frame>`, the drawing; `:spin` after either, busy on a CPU
+/// for that much CPU time instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlowPart {
     Machine(u8),
@@ -61,6 +62,8 @@ struct Slow {
     what: SlowPart,
     ms: u64,
     from: u64,
+    /// Busy on a CPU instead of asleep (`:spin` at the end).
+    spin: bool,
 }
 
 impl Slow {
@@ -70,14 +73,46 @@ impl Slow {
             "compose" => SlowPart::Compose,
             m => SlowPart::Machine(m.strip_prefix("machine")?.parse().ok()?),
         };
-        Some(Slow { what, ms: f.next()?.parse().ok()?, from: f.next().map_or(Some(0), |v| v.parse().ok())? })
+        let ms = f.next()?.parse().ok()?;
+        let from = f.next().map_or(Some(0), |v| v.parse().ok())?;
+        let spin = match f.next() {
+            None => false,
+            Some("spin") => true,
+            Some(_) => return None,
+        };
+        Some(Slow { what, ms, from, spin })
+    }
+
+    /// Takes its time: asleep, or busy on a CPU for that much CPU time
+    /// (as near as the frame loop thread's clock says).
+    fn take(&self) {
+        let d = Duration::from_millis(self.ms);
+        if !self.spin {
+            return std::thread::sleep(d);
+        }
+        let mut probe = terse_perflog::probe::ProcProbe::this_thread();
+        let start = probe.sample();
+        let t = Instant::now();
+        let mut x = 0u64;
+        loop {
+            x = std::hint::black_box(x.wrapping_add(1));
+            if x % 4096 == 0 {
+                let busy = match (probe.sample(), start) {
+                    (Some(now), Some(s)) => Duration::from_nanos(now.since(&s).cpu_ns),
+                    _ => t.elapsed(),
+                };
+                if busy >= d {
+                    break;
+                }
+            }
+        }
     }
 
     fn from_env() -> Option<Slow> {
         let v = std::env::var("TERSE_HOST_SLOW").ok()?;
         let s = Slow::parse(&v);
         if s.is_none() {
-            eprintln!("terse-host: TERSE_HOST_SLOW={v} not understood (machine<h>:<ms>:<frame> or compose:<ms>:<frame>)");
+            eprintln!("terse-host: TERSE_HOST_SLOW={v} not understood (machine<h>:<ms>:<frame>[:spin] or compose:<ms>:<frame>[:spin])");
         }
         s
     }
@@ -150,6 +185,7 @@ pub fn run(
         wheel: (0.0, 0.0),
         gamepads: Gamepads::new(),
         next_frame: Instant::now(),
+        presented_at: None,
         occluded: false,
         selftest,
         refresh_hz: None,
@@ -554,11 +590,11 @@ impl Driver for FrameDriver<'_> {
             FrameInput { events: &input, unix_time: self.unix_time, random: &io.random, completions: &completions, controllers };
         let result = machine.run_frame(&frame);
         // The test hook (TERSE_HOST_SLOW): this machine's frames take longer.
-        if let Some(Slow { what: SlowPart::Machine(h), ms, from }) = self.slow
+        if let Some(s @ Slow { what: SlowPart::Machine(h), from, .. }) = self.slow
             && h == who.handle
             && self.watch.frame >= from
         {
-            std::thread::sleep(Duration::from_millis(ms));
+            s.take();
         }
         let t = Instant::now();
         if let Some(worker) = &mut io.page
@@ -664,6 +700,10 @@ struct App {
     wheel: (f64, f64),
     gamepads: Gamepads,
     next_frame: Instant,
+    /// When the last picture was presented: a frame that begins after its
+    /// tick because the last one ran long is late by that one's doing,
+    /// already counted there; only the rest is `outside` (R14).
+    presented_at: Option<Instant>,
     /// The window is hidden (another workspace, minimised): nothing is drawn.
     occluded: bool,
     selftest: Option<SelfTest>,
@@ -727,7 +767,7 @@ impl App {
             controllers = t.script.controllers(frame);
         }
         let start = Instant::now();
-        let late_start = start.saturating_duration_since(self.next_frame);
+        let late_start = start.saturating_duration_since(self.presented_at.map_or(self.next_frame, |p| p.max(self.next_frame)));
         self.watch.begin();
         // SPEC §content.submit: whatever finished since the last frame completes now;
         // images the shell started arrive (SPEC §machines.frames).
@@ -1138,9 +1178,9 @@ impl ApplicationHandler for App {
                 self.watch.drawing();
                 // The test hook (TERSE_HOST_SLOW): the drawing takes longer.
                 let slept = match self.slow {
-                    Some(Slow { what: SlowPart::Compose, ms, from }) if self.watch.frame >= from && !self.occluded => {
+                    Some(s @ Slow { what: SlowPart::Compose, from, .. }) if self.watch.frame >= from && !self.occluded => {
                         let t = Instant::now();
-                        std::thread::sleep(Duration::from_millis(ms));
+                        s.take();
                         t.elapsed()
                     }
                     _ => Duration::ZERO,
@@ -1150,6 +1190,7 @@ impl ApplicationHandler for App {
                     && let Some((acquire, render)) = gfx.draw()
                 {
                     let render = render + slept;
+                    self.presented_at = Some(Instant::now());
                     if self.trace {
                         for line in gfx.display_mut().take_page_figure_log() {
                             eprintln!("page: frame {}: {line}", self.system.shell().frame());
