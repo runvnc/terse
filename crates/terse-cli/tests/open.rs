@@ -327,7 +327,11 @@ fn sheet_document_opens_the_sheet() {
     assert_eq!(child.argument, Some(blob_id(&sheet_document())));
     assert_eq!(child.identity, Some(ProgramId { publisher: [0; 32], name: b"sheet".to_vec() }));
     assert_eq!(s.system.focus(), 2);
-    let page = s.machine(2).page().unwrap().document().map(|d| String::from_utf8_lossy(d).into_owned()).unwrap_or_default();
+    // The page's text as laid out (the sheet makes each character of the
+    // content line an anchor, so the document's bytes have it in pieces).
+    let p = s.machine(2).page().unwrap();
+    let layout = p.document().map(|d| terse_core::page::reference_layout(d, p.region().w)).unwrap_or_default();
+    let page: String = layout.lines.iter().map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>() + "\n").collect();
     assert!(page.contains("Lunch money") && page.contains("15"), "the document's cells, the total worked out: {page}");
 }
 
