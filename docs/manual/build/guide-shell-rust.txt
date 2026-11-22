@@ -24,7 +24,7 @@ fn main() {
 }
 ```
 
-The runtime has three calls of device 8, the ones a first shell needs, with the C library's names: `mach_start_named` (the key, 32 zero bytes for a built-in program, and the name), `mach_place` and `mach_focus`. The other calls of the device (listing the built-in programs, a machine's state, snapshots) are not wrapped; a program reaches them with the runtime's `call`, which takes the call's number, `(8 << 8) | function`, and its arguments, as [The Machines device](terse:092e0613635a0699c65a6788507306549896fec426a6e7c0289f89126c2e78ad) lists them.
+The runtime has three calls of device 8, the ones a first shell needs, with the C library's names: `mach_start_named` (the key, 32 zero bytes for a built-in program, and the name), `mach_place` and `mach_focus`. The other calls of the device (listing the built-in programs, a machine's state, snapshots) are not wrapped; a program reaches them with the runtime's `call`, which takes the call's number, `(8 << 8) | function`, and its arguments, as [The Machines device](terse:43568fe56838bc2d0314bf1cd0a2e5aab3742be25a3a80ce41c586bf29a66fec) lists them.
 
 ## Build it and run it
 
@@ -38,6 +38,6 @@ The headless run prints what the C shell's does: `-- machine 1 running 0 0 640 4
 
 ## What you have now
 
-A shell in Rust. It is `examples/program/rust/myshell.rs` in the Tersenet sources; the full shell, `programs/shell/shell.c`, is in C. Next, a device of your own: [Invent a device](terse:ab6cc422186ac8e5b913e4cdf9cb37ef161080bf2b82b5b05a8fcfa4410c1f35).
+A shell in Rust. It is `examples/program/rust/myshell.rs` in the Tersenet sources; the full shell, `programs/shell/shell.c`, is in C. Next, a device of your own: [Invent a device](terse:d790544ac8994840a64f6549d0f99e89f56bc0b8eaafa945f5fb4622b0029ea8).
 
 Panels, the 3D view and input routing are in [Screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f).

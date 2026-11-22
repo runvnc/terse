@@ -103,38 +103,9 @@ A key says which feed, not where it is: a client that asks only its own relays f
 
 A client keeps the hints with the subscription. If none of its own relays holds an entry of the feed (each answers `highest` 0), it follows the feed on the hinted relays too, as feed relays (below: same address checks, same switch, same cap), until the feed's profile has `relay` lines. Its user's own address takes its hints from their profile's `relay` lines, then the client's relays, public ones only; with none, only people on the same relays find the feed.
 
-## Profiles, display names and nicknames
+## Profiles, names and search
 
-A profile is a kind 2 entry. Its title is the feed's display name; its blob is the profile document. The profile in force is the feed's valid profile entry with the highest `seq`.
-
-A display name is 1 to 48 bytes of UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F) and no character of the Unicode White_Space property (U+0020, U+00A0, U+3000 and others) first or last.
-
-The profile document is UTF-8 text of at most 4,096 bytes, lines ending with `0Ah`: header lines `field: value`, then optionally an empty line and a free-text description to the end. A header line without `: ` makes the document invalid. Unknown fields are ignored.
-
-| Field | Value |
-|---|---|
-| `listed` | `yes`: search may find the name; anything else, or no line, means not listed |
-| `relay` | a `ws://` or `wss://` URL of a relay where the author publishes; 0 to 4 lines; readers take the first four that are URLs |
-
-A client writing its user's profile adds a `relay` line for each of its non-loopback relays. Names are self-declared and not unique, so a feed's name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the client's configuration, never sent anywhere, and shown in preference to the declared name.
-
-## Search
-
-A find's scope is 1 (feeds by display name), 2 (article and document titles) or 3 (program names); the query is 1 to 48 bytes of UTF-8. Another scope or a bad query is refused (status 3, `count` 0). The query matches if it occurs as a contiguous run of bytes in the name or title after A to Z are changed to a to z on both sides; nothing else is folded.
-
-| Scope | Relay returns | Order |
-|---|---|---|
-| 1 | the profile in force of each feed whose document says `listed: yes` and whose name matches | names starting with the query first, then the rest; each group by increasing feed key |
-| 2 | article and document entries of feeds with a listed profile in force | newest first by the order the relay stored them |
-| 3 | program entries, current versions only, of feeds with a listed profile | newest first by store order |
-
-A relay returns at most 16 results from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.
-
-Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. NETWORK.md 4.7 has the rest.
-
-## Lookup
-
-A lookup's kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed's program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest `seq` (stored, not subscribed), then gets the image (a machine host, when a shell starts a program it holds no entry for).
+A feed's profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed's program by its name. All of it is in [profiles, names and search](terse:1c32e6fd33ba4eef65ec3df7142c057bc64fdec4849226c28d61f713f145ed6f).
 
 ## Several relays
 

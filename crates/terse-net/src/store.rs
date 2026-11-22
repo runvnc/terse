@@ -61,6 +61,11 @@ impl BlobStore {
         &self.dir
     }
 
+    /// The total bytes of blobs allowed, if limited.
+    pub fn limit(&self) -> Option<u64> {
+        self.limit
+    }
+
     pub fn used_bytes(&self) -> u64 {
         *self.used.lock().unwrap()
     }

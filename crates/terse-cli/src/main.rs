@@ -3,6 +3,7 @@
 mod build;
 mod drivers;
 mod feed;
+mod links;
 mod node;
 mod perf;
 mod perflog;
@@ -39,7 +40,7 @@ const USAGE: &str = "usage:
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>[=<name>]]...
              -o <out.terse>
   terse key new|show
-  terse feed publish <file> --title <t> [--reply-to <id>]
+  terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run] [--force]
   terse feed publish --program <image.terse> [--name <n>]
   terse feed programs [<key>]
   terse feed subscribe|unsubscribe <address>
@@ -127,6 +128,14 @@ an index newest first, the stylesheet, a page of the feed's programs, and with -
 site's address) an Atom feed, feed.xml. It fetches the feed's entries first, and on later runs
 writes only what changed (a state file, .terse-site, remembers what was written; --force rewrites
 everything).
+feed publish lists each terse: link of the article first: whether this host holds what it leads
+to, whether it was uploaded with the article (what an entry of your feed names, and what no entry
+names), and whether relays keep it (an entry of your feed names it) or it is link-only (another
+feed's, or unknown here). An entry names one blob, so a relay that drops blobs no entry names
+(NETWORK 5.3) keeps a linked article only while some entry names it: a link to a blob held here
+that no entry names is warned about (publish that blob as an article of its own to keep it). An
+article that links to a blob of your feed this host does not hold is refused unless --force.
+--dry-run lists the links and publishes nothing.
 feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
 image's title); feed programs lists the current version of each program held (of one feed, or of
 all the feeds held), find --programs searches programs by name.

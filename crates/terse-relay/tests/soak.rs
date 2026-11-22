@@ -1,7 +1,10 @@
 //! A soak of the relay's limits (NETWORK 5.3): thousands of puts and
 //! entries from several connections against small limits, with the
-//! relay's clock moved on so that blobs no entry names expire. The store
-//! stays within its bound, memory stays bounded, and another connection's
+//! relay's clock moved on so that blobs no entry names expire. Many times
+//! the entries a feed may keep are published, so most are dropped. The
+//! store stays within its bound, the arrival log within its bound (twice
+//! the entries kept, plus `ARRIVALS_SLACK`, once compacted), memory stays
+//! bounded, and another connection's
 //! gets go on being answered while the soak runs. The numbers, the slowest
 //! of those gets among them, are printed (`--nocapture`); how long a get
 //! may take is not judged here, on a computer that may be busy: what
@@ -16,13 +19,15 @@ use std::time::{Duration, Instant};
 use terse_net::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use terse_net::{BlobStore, Entry, Identity, blob_id};
 use terse_relay::limits::{Rate, Rates};
-use terse_relay::{COLLECT_BATCH, KIB, MIB, Policy, Relay};
+use terse_relay::{ARRIVALS_SLACK, COLLECT_BATCH, KIB, MIB, Policy, Relay};
 
 const WORKERS: usize = 4;
 const ROUNDS: usize = 1000;
 const FEEDS: usize = 40;
 const FEED_BYTES: u64 = 64 * KIB;
 const ROOM: u64 = 2 * MIB;
+/// Entries naming small blobs (never put) published each round besides.
+const EXTRA_ENTRIES: usize = 3;
 
 fn rss_kib() -> Option<u64> {
     let s = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -126,11 +131,19 @@ fn soak() {
                         RelayReply::Refused(_) => refused += 1,
                         r => panic!("{r:?}"),
                     }
-                    // Two blobs in three are named by an entry.
-                    if round % 3 != 0 {
-                        let f = round % ids.len();
+                    // Two blobs in three are named by an entry; and a few
+                    // entries name blobs never put, so that the feeds see
+                    // many times what they may keep.
+                    let named = if round % 3 != 0 { Some(blob.clone()) } else { None };
+                    let extra = (0..EXTRA_ENTRIES).map(|n| {
+                        let mut small = vec![0u8; 1024 + n * 512];
+                        small[..8].copy_from_slice(&next(&mut state).to_le_bytes());
+                        small
+                    });
+                    for data in named.into_iter().chain(extra.collect::<Vec<_>>()) {
+                        let f = (round + seqs.iter().sum::<u32>() as usize) % ids.len();
                         seqs[f] += 1;
-                        let e = Entry::article(ids[f].feed_key(), seqs[f], 1, &blob, None, "soak").sign(&ids[f]).unwrap();
+                        let e = Entry::article(ids[f].feed_key(), seqs[f], 1, &data, None, "soak").sign(&ids[f]).unwrap();
                         let req = c.publish(&e.bytes);
                         match wait(&mut c, req) {
                             RelayReply::Done => done += 1,
@@ -145,7 +158,7 @@ fn soak() {
         .collect();
     // An hour of the relay's clock passes every 2 s: blobs no entry names
     // expire as the soak runs. The store is checked as it goes.
-    let mut worst_store = 0;
+    let (mut worst_store, mut worst_log) = (0, 0);
     let ticker = {
         let (relay, stop) = (relay.clone(), stop.clone());
         std::thread::spawn(move || {
@@ -159,6 +172,7 @@ fn soak() {
     for w in workers {
         while !w.is_finished() {
             worst_store = worst_store.max(relay.blobs().used_bytes());
+            worst_log = worst_log.max(relay.arrivals().0);
             std::thread::sleep(Duration::from_millis(20));
         }
         results.push(w.join().unwrap());
@@ -167,14 +181,24 @@ fn soak() {
     let took = started.elapsed();
     relay.advance_clock(Duration::from_secs(7200));
     relay.collect();
+    // What the maintenance thread has not compacted yet is compacted now.
+    relay.compact();
     stop.store(true, Ordering::Relaxed);
     ticker.join().unwrap();
     let (worst_get, gets, during) = observer.join().unwrap();
     let rss_after = rss_kib();
     let (requests, refused): (usize, usize) = results.iter().fold((0, 0), |(a, b), (d, r)| (a + d + r, b + r));
+    let published: usize = relay.feeds().feeds().unwrap().iter().map(|f| relay.feeds().highest(f).unwrap() as usize).sum();
+    let kept = relay.kept_entries();
+    let (log_records, log_bytes) = relay.arrivals();
     // Every feed holds at most FEED_BYTES; nothing waits once the time is
     // up.
     let bound = FEEDS as u64 * FEED_BYTES + watched.len() as u64;
+    eprintln!(
+        "soak: {published} entries published, {kept} kept; arrival log {log_records} records ({log_bytes} bytes) after, at most {worst_log} during, {} compactions",
+        relay.compactions()
+    );
+    eprintln!("{}", relay.bounds());
     eprintln!(
         "soak: {requests} requests ({refused} refused) from {WORKERS} connections in {:.1} s; store at most {} bytes during, {} after (bound {} + room {}); {} feeds, {} entries; observer: {gets} gets ({during} while the workers ran), worst {} ms; RSS {:?} KiB before, {:?} after; {}",
         took.as_secs_f64(),
@@ -194,6 +218,12 @@ fn soak() {
     // 4 KiB in the room, so its bytes are at most the room).
     assert!(worst_store <= bound + ROOM, "{worst_store}");
     assert_eq!(relay.waiting(), (0, 0));
+    // Many times what is kept went through; the log holds what is kept.
+    assert!(published >= 10 * kept, "{published} published, {kept} kept");
+    assert_eq!(kept, relay.feeds().feeds().unwrap().iter().map(|f| relay.feeds().seqs(f).unwrap().len()).sum::<usize>());
+    assert!(relay.compactions() >= 1);
+    assert!(log_records <= 2 * kept + ARRIVALS_SLACK, "{log_records} records for {kept} entries kept");
+    assert_eq!(log_bytes, log_records as u64 * 36);
     for f in relay.feeds().feeds().unwrap() {
         assert!(relay.feed_bytes(&f).unwrap() <= FEED_BYTES);
     }
