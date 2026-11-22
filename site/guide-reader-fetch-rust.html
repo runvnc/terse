@@ -27,7 +27,7 @@ tungstenite = &quot;0.30&quot;
 
 [workspace]</pre>
 <ul>
-<li><code>tungstenite</code> is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must.</li>
+<li><code>tungstenite</code> is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must. As listed it speaks plain <code>ws&#58;//</code>, which the local relay of these steps uses; for a <code>wss&#58;//</code> relay (over TLS, as public relays are), write <code>tungstenite = { version = &quot;0.30&quot;, features = [&quot;rustls-tls-webpki-roots&quot;] }</code> and add <code>rustls = { version = &quot;0.23&quot;, default-features = false, features = [&quot;ring&quot;, &quot;std&quot;, &quot;tls12&quot;] }</code>, which picks the crypto that builds with nothing but a C compiler.</li>
 <li><code>blake3</code> is BLAKE3 by its authors; <code>blake3::hash</code> gives the 32-byte hash that is a blob&#39;s ID.</li>
 <li><code>tersenet</code> is the Tersenet SDK for Rust: step 3 checks entries with it. It brings <code>curve25519-dalek</code>, the curve arithmetic under the widely used <code>ed25519-dalek</code>, and <code>sha2</code>.</li>
 </ul>
