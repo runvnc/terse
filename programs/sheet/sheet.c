@@ -93,7 +93,17 @@
  * sheet. Content (device 4) is optional: without it nothing is loaded or
  * kept, and Ctrl+S and Ctrl+P say so. The 2D display (device 3) is
  * optional too: without it there are no grid lines and the selected cell
- * is shown by its colour (and that of its row number and column letter). */
+ * is shown by its colour (and that of its row number and column letter).
+ * The terminal (device 2) is optional and unused; where it is there, its
+ * cursor is hidden, since terminal characters are drawn over the page.
+ *
+ * Budget. Recalculation counts its steps in work units of roughly 40
+ * budget units (WORK_PER_FRAME a frame), reading a saved sheet likewise
+ * (PARSE_WORK), and copies, fills and clears do JOB_CELLS cells a frame;
+ * input that arrives meanwhile waits, in order. The busiest frames
+ * measured are about 70,000 of the 125,000 units (a key that commits an
+ * entry: the entry, about 40,000 of recalculation and the page
+ * document). */
 
 #include <stdint.h>
 #include "terse.h"
