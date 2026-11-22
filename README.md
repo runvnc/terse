@@ -11,8 +11,8 @@ that run on tiny isolated virtual machines. That machine is called Terse32.
 it starts with a text file and a few rules. Everything else is in the
 manual's [contents](docs/manual/contents.txt): a step-by-step guide (a reader,
 a program, a host, a device, a shell, and using Tersenet), then the complete
-reference. The same pages are the website in `site/` and, once installed, the
-reader's manual (press M).
+reference. The same pages are the website, <https://tersenet.org>, and, once
+installed, the reader's manual (press M).
 
 Tersenet names the whole system and its reading side (the network, articles,
 feeds, relays and readers); Terse32 names the machine and its programs. The
@@ -841,8 +841,8 @@ content operation and status of the machine specification (SPEC.md and spec/), a
 
 ### The website
 
-`site/` is the manual as a static website, so that it can be read before
-installing Tersenet: one HTML page per article (the manual's first page, the
+`site/` is the manual as a static website, published at <https://tersenet.org>,
+so that it can be read before installing Tersenet: one HTML page per article (the manual's first page, the
 paragraph at the top of this README with a link to the guide and one to the
 contents, is `index.html`,
 with no navigation or list of articles; the contents, guide then reference, is
