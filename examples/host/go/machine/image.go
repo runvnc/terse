@@ -14,8 +14,8 @@ func Load(file []byte) (*CPU, []Device, error) {
 	romLen := int(file[6]) | int(file[7])<<8 | int(file[8])<<16
 	pages, count := int(file[9]), int(file[10])
 	size := 32 + 2*count + romLen
-	if romLen < 1 || romLen > 131072 || pages < 1 ||
-		pages > 128 || count > 16 || len(file) != size {
+	if romLen < 1 || romLen > 262144 || pages < 1 ||
+		pages > 112 || count > 16 || len(file) != size {
 		return nil, nil, errors.New("a malformed program file")
 	}
 	var devices []Device

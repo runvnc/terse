@@ -26,8 +26,8 @@ int image_load(M *m, uint8_t *f, size_t len, char *err, size_t el)
     if (len < 32 || memcmp(f, "TERS", 4)) BAD("not a Terse image");
     if (f[4] != 0 || f[5] != 1) BAD("format %d, profile %d: not implemented", f[4], f[5]);
     uint32_t rom_len = f[6] | f[7] << 8 | f[8] << 16, pages = f[9], n = f[10];
-    if (rom_len < 1 || rom_len > 131072) BAD("rom_len %u out of range", rom_len);
-    if (pages < 1 || pages > 128) BAD("ram_pages %u out of range", pages);
+    if (rom_len < 1 || rom_len > 262144) BAD("rom_len %u out of range", rom_len);
+    if (pages < 1 || pages > 112) BAD("ram_pages %u out of range", pages);
     if (n > 16) BAD("%u device entries", n);
     for (int i = 11; i < 16; i++) if (f[i]) BAD("reserved header bytes are not zero");
     if (len != 32 + 2 * n + rom_len) BAD("file length %zu, header says %u", len, 32 + 2 * n + rom_len);

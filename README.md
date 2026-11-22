@@ -177,7 +177,7 @@ nobody can publish in your name.
 ## How Tersenet is built
 
 The Terse32 machine is a 32-bit RISC-V CPU (RV32IMC) with a fixed budget
-of 125,000 units of work per frame, up to 128 KiB of ROM and 1 MiB of RAM,
+of 125,000 units of work per frame, up to 256 KiB of ROM and 896 KiB of RAM,
 and host devices reached through system calls (`ecall`): a text terminal, a
 2D vector display, a page of typeset proportional text, and a content device
 that fetches and publishes blobs and reads feeds. Several machines can run

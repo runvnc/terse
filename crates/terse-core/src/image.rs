@@ -6,9 +6,11 @@ pub const MAGIC: [u8; 4] = *b"TERS";
 pub const FORMAT_VERSION: u8 = 0;
 pub const PROFILE: u8 = 1;
 pub const HEADER_LEN: usize = 32;
-pub const ROM_MAX: usize = 131_072;
+/// ROM's largest size (SPEC §profile): it ends by 0005_0000h.
+pub const ROM_MAX: usize = 262_144;
 pub const RAM_PAGES_MIN: u8 = 1;
-pub const RAM_PAGES_MAX: u8 = 128;
+/// RAM's largest size in 8 KiB pages (896 KiB): it ends by 001E_0000h.
+pub const RAM_PAGES_MAX: u8 = 112;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 /// The top bit of a device entry's version byte: the device is optional
@@ -428,9 +430,10 @@ mod tests {
         check(&|f| f[4] = 1, ImageError::UnsupportedFormatVersion(1));
         check(&|f| f[5] = 2, ImageError::UnsupportedProfile(2));
         check(&|f| f[6] = 0, ImageError::RomLength(0));
-        check(&|f| f[8] = 2, ImageError::RomLength(0x20001));
+        check(&|f| f[8] = 4, ImageError::RomLength(0x40001));
         check(&|f| f[9] = 0, ImageError::RamPages(0));
-        check(&|f| f[9] = 129, ImageError::RamPages(129));
+        check(&|f| f[9] = 113, ImageError::RamPages(113));
+        check(&|f| f[9] = 128, ImageError::RamPages(128));
         check(&|f| f[10] = 17, ImageError::DeviceCount(17));
         check(&|f| f[15] = 1, ImageError::ReservedNotZero);
         check(&|f| f.push(0), ImageError::LengthMismatch { expected: 35, actual: 36 });
@@ -469,8 +472,20 @@ mod tests {
 
     #[test]
     fn max_rom_accepted() {
-        let file = Image::build("", 128, &[], &vec![0; ROM_MAX]);
-        assert_eq!(Image::parse(&file).unwrap().rom.len(), ROM_MAX);
+        assert_eq!((ROM_MAX, RAM_PAGES_MAX), (262_144, 112), "SPEC §profile");
+        let file = Image::build("", RAM_PAGES_MAX, &[], &vec![0; ROM_MAX]);
+        let image = Image::parse(&file).unwrap();
+        assert_eq!((image.rom.len(), image.ram_pages), (ROM_MAX, 112));
+    }
+
+    /// SPEC §image: an image of 262,145 bytes of ROM is refused, also when
+    /// the file is as long as its header says.
+    #[test]
+    fn one_byte_over_max_rom_refused() {
+        let mut file = Image::build("", 1, &[], &vec![0; ROM_MAX]);
+        file.push(0);
+        file[6..9].copy_from_slice(&(ROM_MAX as u32 + 1).to_le_bytes()[..3]);
+        assert_eq!(Image::parse(&file), Err(ImageError::RomLength(ROM_MAX + 1)));
     }
 
     /// SPEC §image: the top bit of the version byte marks an optional device;

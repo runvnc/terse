@@ -700,7 +700,7 @@ calls too.
 
 One file per instance (machine), shared by every driver of it that chose
 shared memory: the ROM at offset 0 (its `R` bytes; the rest of the first
-131,072 bytes is zero) and the RAM at offset 131,072 (`L` bytes). The
+262,144 bytes is zero) and the RAM at offset 262,144 (`L` bytes). The
 core's CPU runs on this mapping, so it is the guest's memory itself, not a
 copy. A driver maps it shared, for reading and writing, at OPEN, and
 unmaps it at CLOSE. It reads a call's buffers here, writes its write

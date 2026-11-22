@@ -481,14 +481,20 @@ A host keeps a snapshot (SPEC §machines.snapshots) in a file:
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
-N is below 200 or above 1,685,299 (the longest serialization: 1 MiB of
+N is below 200 or above 1,554,227 (the longest serialization: 896 KiB of
 RAM, 16 grants, a full queue, every device at its largest, 16
-experimental sections of 16,384 bytes and an argument; 1,423,091 without
+experimental sections of 16,384 bytes and an argument; 1,292,019 without
 the experimental sections), whose L
-is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
+is 0, not a multiple of 8,192, above 917,504 (112 pages) or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥
 L / 8,192): a writer leaves those bits clear. A file that does not end right after the hash, or
 whose hash is not S's, is refused like a malformed S.
+
+The page map keeps its 16 bytes (128 bits) although RAM has at most 112
+pages (SPEC §memory); bits 112 to 127 are always clear. A file written
+when RAM could have 128 pages is read as any other: one of 112 pages or
+fewer is unchanged, and one with more is refused by the check on L (its
+image is refused anyway). The format's version is unchanged.
 
 `terse run <image> --save-state <file>` writes such a file after the last
 frame, and `--load-state <file>` starts from one: with `--hash` the hash

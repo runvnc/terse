@@ -49,8 +49,9 @@ pub use terse_core::devices::{EVENT_PAIR, PosEvent, position};
 pub const TRANSPORT_SOCKET: u8 = 0;
 pub const TRANSPORT_SHM: u8 = 1;
 
-/// Where the RAM starts in a memory file (DEVICES.md 4.1).
-pub const MEMORY_RAM_OFFSET: usize = 131_072;
+/// Where the RAM starts in a memory file (DEVICES.md 4.1): after the
+/// largest ROM.
+pub const MEMORY_RAM_OFFSET: usize = terse_core::image::ROM_MAX;
 
 /// Whom a message is for: a machine instance and one of the driver's
 /// slots (0: the instance as a whole; HELLO, BATCH and SHUTDOWN are the

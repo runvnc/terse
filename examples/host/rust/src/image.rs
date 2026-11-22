@@ -14,8 +14,8 @@ pub fn load(file: &[u8]) -> Result<(Cpu, Vec<Device>), String> {
         u32::from_le_bytes([file[6], file[7], file[8], 0]);
     let (pages, count) = (file[9] as usize, file[10] as usize);
     let size = 32 + 2 * count + rom_len as usize;
-    if !(1..=131072).contains(&rom_len)
-        || !(1..=128).contains(&pages)
+    if !(1..=262144).contains(&rom_len)
+        || !(1..=112).contains(&pages)
         || count > 16
         || file.len() != size
     {

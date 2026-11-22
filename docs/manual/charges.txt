@@ -63,17 +63,17 @@ In a system the machines the shell shows also share one budget, the system ink: 
 
 | Limit | Value | Note |
 |---|---|---|
-| ROM | 1 to 131,072 bytes, at `0001_0000h` | |
-| RAM | 1 to 128 pages of 8,192 bytes, at `0010_0000h` | 8 KiB to 1 MiB |
+| ROM | 1 to 262,144 bytes, at `0001_0000h` | |
+| RAM | 1 to 112 pages of 8,192 bytes, at `0010_0000h` | 8 KiB to 896 KiB |
 | Exit code | 0 to 255 | |
 | Image header | 32 bytes, then 2 per device requirement | |
 | Format version, profile | 0, 1 | |
-| `rom_len` field | 3 bytes, 1 to 131,072 | |
-| `ram_pages` field | 1 to 128 | |
+| `rom_len` field | 3 bytes, 1 to 262,144 | |
+| `ram_pages` field | 1 to 112 | |
 | Device requirements | 0 to 16, each slot at most once | |
 | Reserved header bytes | 5, all zero | |
 | Title | 16 bytes of UTF-8, padded with `00h`; not checked by hosts | |
-| Largest image | 131,136 bytes | |
+| Largest image | 262,208 bytes | |
 
 ## Frames
 
@@ -207,7 +207,7 @@ All but the request block's 52 bytes are provisional.
 |---|---|
 | Feed entry | at most 293 bytes; title 0 to 120 bytes |
 | Automatic download | blobs up to 16,384 bytes (the user may change it) |
-| Program images downloaded | up to 131,136 bytes |
+| Program images downloaded | up to 262,208 bytes |
 | Prefetch | the first 8 article links of an article |
 | Configured relays | at most 8 |
 | Relays from a feed's profile | at most 2 a feed |
