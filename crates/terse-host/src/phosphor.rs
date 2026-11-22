@@ -318,9 +318,45 @@ impl Preset {
     }
 }
 
-/// How the host draws the phosphor style: the preset and the glass.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+/// Which model draws the phosphor style (`--look`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Model {
+    /// MAME's vector CRT renderer (`crate::mame`): a sharp beam about a
+    /// pixel wide, crossings and joints adding, MAME's bloom and tone map,
+    /// its short decay. The default.
+    #[default]
+    Mame,
+    /// The model of this file: a soft core, vertex dwell, a wide faint
+    /// halo, a two-part afterglow with the smear of moving shapes.
+    Classic,
+}
+
+impl Model {
+    pub fn parse(s: &str) -> Option<Model> {
+        match s {
+            "mame" => Some(Model::Mame),
+            "classic" => Some(Model::Classic),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Model::Mame => "mame",
+            Model::Classic => "classic",
+        }
+    }
+}
+
+/// How the host draws the phosphor style: the model, the preset and the
+/// glass, and the terminal's text.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
+    pub model: Model,
+    /// With the MAME model, the terminal's characters that the stroke font
+    /// draws are drawn by the beam in it (`--font-strokes`); `None`: as
+    /// light, as the other characters and the page always are.
+    pub strokes: Option<crate::mame::stroke::Font>,
     pub preset: Preset,
     /// Darken towards the corners ([`VIGNETTE`]).
     pub vignette: bool,
@@ -333,7 +369,102 @@ pub struct Look {
     // over the light before the glass) would go here; none is implemented.
 }
 
+impl Default for Look {
+    fn default() -> Self {
+        Look { model: Model::Mame, strokes: Some(crate::mame::stroke::Font::Arcade), preset: Preset::Xy, vignette: false, no_shed: false, floor: 0 }
+    }
+}
+
+/// The options that set the look, as `--<name> [value]` on the command
+/// line and as `<name> [value]` lines in the look's settings file: `look`,
+/// `font-strokes`, `tube`, `vignette`.
+pub const LOOK_OPTIONS: [(&str, bool); 4] = [("look", true), ("font-strokes", true), ("tube", true), ("vignette", false)];
+
 impl Look {
+    /// Applies one of [`LOOK_OPTIONS`].
+    pub fn set_option(&mut self, name: &str, value: Option<&str>) -> Result<(), String> {
+        let v = value.unwrap_or("");
+        match name {
+            "look" => self.model = Model::parse(v).ok_or(format!("bad --look {v} (mame or classic)"))?,
+            "font-strokes" => {
+                self.strokes = match v {
+                    "off" => None,
+                    _ => Some(crate::mame::stroke::Font::parse(v).ok_or(format!("bad --font-strokes {v} (arcade, hershey, drafting or off)"))?),
+                }
+            }
+            "tube" => self.preset = Preset::parse(v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?,
+            "vignette" => self.vignette = true,
+            _ => return Err(format!("unknown look option {name}")),
+        }
+        Ok(())
+    }
+
+    /// Applies the settings file `path` (`<config>/look`): one option of
+    /// [`LOOK_OPTIONS`] a line, `#` comments; a file that is not there
+    /// changes nothing. What is wrong in it is returned, line by line, and
+    /// the line is skipped.
+    pub fn read_settings(&mut self, path: &std::path::Path) -> Vec<String> {
+        let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+        let mut notes = Vec::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            let (name, value) = match line.split_once(char::is_whitespace) {
+                Some((a, b)) => (a.trim_start_matches("--"), Some(b.trim())),
+                None => (line.trim_start_matches("--"), None),
+            };
+            if let Err(e) = self.set_option(name, value) {
+                notes.push(format!("{}:{}: {e}", path.display(), n + 1));
+            }
+        }
+        notes
+    }
+}
+
+/// The MAME model's vignette strength for `--vignette` (MAME's default is
+/// none).
+pub const MAME_VIGNETTE: f32 = 0.5;
+
+impl Look {
+    /// The classic model's look (`--look classic`).
+    pub fn classic() -> Look {
+        Look { model: Model::Classic, ..Look::default() }
+    }
+
+    /// Whether the terminal's text is drawn by the beam.
+    pub fn stroke_font(&self) -> Option<crate::mame::stroke::Font> {
+        if self.model == Model::Mame { self.strokes } else { None }
+    }
+
+    /// MAME's sliders for this look: its defaults (and `TERSE_MAME_*`),
+    /// the persistence a monochrome preset's (P31 3 ms, amber 50, the
+    /// Vectrex 15; the colour tube MAME's 2), none with `no_trails` (the
+    /// phosphor starts afresh each frame).
+    pub fn mame_params(&self, no_trails: bool) -> crate::mame::Params {
+        let mut p = crate::mame::Params::from_env();
+        if std::env::var_os("TERSE_MAME_PERSISTENCE").is_none() && self.preset != Preset::Xy {
+            p.persistence = self.preset.fast_tau();
+        }
+        if no_trails {
+            p.persistence = 0.0;
+        }
+        p
+    }
+
+    /// A colour (bytes) as the tube shows it: a monochrome tube's tint.
+    pub fn tint_bytes(&self, rgba: [u8; 4]) -> [u8; 4] {
+        match self.preset.tint() {
+            None => rgba,
+            Some(t) => {
+                let c = [rgba[0] as f32 / 255.0, rgba[1] as f32 / 255.0, rgba[2] as f32 / 255.0];
+                let v = tinted(c, t);
+                let b = |x: f32| (x.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                [b(v[0]), b(v[1]), b(v[2]), rgba[3]]
+            }
+        }
+    }
     /// The uniform the composites take: the tint (r, g, b; all 0 for
     /// colour) and the vignette's strength.
     pub fn uniform(&self) -> [f32; 4] {

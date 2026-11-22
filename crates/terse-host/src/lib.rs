@@ -227,6 +227,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let (mut renderer, mut threads, mut bench, mut warmup, mut sweep) = (RendererChoice::Auto, 0usize, false, None, false);
     let mut look = phosphor::Look::default();
+    let mut look_args: Vec<(String, Option<String>)> = Vec::new();
     let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
     let mut panels = soft::panel::PanelMode::Perspective;
     let mut it = args.into_iter();
@@ -245,11 +246,11 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 let v = it.next().ok_or(USAGE)?;
                 threads = v.parse().map_err(|_| format!("bad --threads {v}"))?;
             }
-            "--tube" => {
+            "--tube" | "--look" | "--font-strokes" => {
                 let v = it.next().ok_or(USAGE)?;
-                look.preset = phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
+                look_args.push((a[2..].to_string(), Some(v)));
             }
-            "--vignette" => look.vignette = true,
+            "--vignette" => look_args.push(("vignette".into(), None)),
             "--no-shed" => look.no_shed = true,
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
@@ -325,6 +326,15 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ if image_path.is_none() && !a.starts_with('-') => image_path = Some(a),
             _ => return Err(USAGE.into()),
         }
+    }
+    // The look: <config>/look, then the options given (README, "The phosphor look").
+    if let Some(dir) = config.clone().or_else(default_config_dir) {
+        for note in look.read_settings(&dir.join("look")) {
+            eprintln!("terse-host: {note}");
+        }
+    }
+    for (name, value) in &look_args {
+        look.set_option(name, value.as_deref())?;
     }
     if version {
         // The fonts this host would draw with (README "Fonts").

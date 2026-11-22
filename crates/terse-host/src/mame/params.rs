@@ -11,6 +11,12 @@
 //! shaders' sources, shared by the GPU pipeline ([`super::gpu`]) and the CPU
 //! one ([`super::cpu`]).
 
+/// Tersenet: the text's light (glyphs and the page drawn as light in their
+/// colours, linear) is added to the phosphor's in the composite times this,
+/// before the exposure, in both renderers: a white glyph shows about as
+/// bright as a beam's core.
+pub const TEXT_GAIN: f32 = 1.6;
+
 /// `BLOOM_PASSES`: horizontal and vertical blur iterations.
 pub const BLOOM_PASSES: u32 = 2;
 

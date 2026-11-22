@@ -37,11 +37,7 @@ use super::phosphor::{BAND, Blocks, Mask, Text, text_light};
 use crate::mame::beams::BeamInstance;
 use crate::mame::params::{BLOOM_PASSES, Params};
 
-/// Tersenet: the text's light (the glyphs and the page, drawn as light in
-/// their colours, linear) is added to the phosphor's in the composite,
-/// times this, before the exposure: a white glyph's core shows about as
-/// bright as a beam's.
-pub const TEXT_GAIN: f32 = 1.6;
+pub use crate::mame::params::TEXT_GAIN;
 
 /// Light (any channel of the phosphor) below this after the decay is
 /// taken as none, so that masks shrink when light goes: it is far below

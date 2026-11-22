@@ -226,6 +226,16 @@ pub struct SoftScreen {
     /// The grid size to place a screen of its own by, if not the glyphs'
     /// (terse-bus: the terminal driver's native size).
     grid_size: Option<(u32, u32)>,
+    /// The MAME model's tube (`soft::mame`), in the phosphor style with it.
+    mame: Option<super::mame::Tube>,
+    /// The MAME model's text drawn by the beam: the strokes, which cells
+    /// they draw, what they were made from; the cells left to be drawn as
+    /// light (the stroked ones blank) and the rows that have any.
+    strokes: Vec<crate::mame::text::Lit>,
+    stroked: Vec<bool>,
+    stroke_key: u64,
+    light_cells: Vec<CellDraw>,
+    light_rows: [bool; ROWS],
 }
 
 impl SoftScreen {
@@ -268,6 +278,12 @@ impl SoftScreen {
             look: Look::default(),
             excluded: Vec::new(),
             grid_size: None,
+            mame: None,
+            strokes: Vec::new(),
+            stroked: Vec::new(),
+            stroke_key: 0,
+            light_cells: vec![CellDraw::default(); COLS * ROWS],
+            light_rows: [false; ROWS],
         }
     }
 
@@ -289,6 +305,13 @@ impl SoftScreen {
     /// How the phosphor style is drawn: the tube's preset and its glass.
     pub fn set_look(&mut self, look: Look) {
         if look != self.look {
+            if look.model != self.look.model {
+                self.tube = None;
+                self.mame = None;
+            }
+            if look.stroke_font() != self.look.stroke_font() {
+                self.stroke_key = 0;
+            }
             self.look = look;
             self.drawn.valid = false;
         }
@@ -387,7 +410,18 @@ impl SoftScreen {
             }
         }
         let bytes = terminal.cell_bytes();
+        let font = self.look.stroke_font();
+        if let Some(font) = font {
+            self.update_strokes(terminal, &bytes, font);
+        } else if !self.strokes.is_empty() || self.stroke_key != 0 {
+            self.strokes.clear();
+            self.stroked.clear();
+            self.stroke_key = 0;
+        }
         if bytes == self.terminal_bytes && terminal.full_text() == self.full_text {
+            if font.is_some() {
+                self.light_cells_from_strokes();
+            }
             return;
         }
         self.terminal_bytes = bytes;
@@ -406,6 +440,37 @@ impl SoftScreen {
         }
         for (row, any) in self.glyph_rows.iter_mut().enumerate() {
             *any = cells[row * COLS..(row + 1) * COLS].iter().any(|c| c.0 != 0);
+        }
+        self.light_cells_from_strokes();
+    }
+
+    /// The MAME model's text by the beam (`mame::text::screen_covered`),
+    /// made again when the terminal shows something else.
+    fn update_strokes(&mut self, terminal: &Terminal, bytes: &[u8], font: crate::mame::stroke::Font) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut h);
+        terminal.palette().hash(&mut h);
+        (terminal.cursor_visible(), terminal.cursor()).hash(&mut h);
+        terminal.full_text().hash(&mut h);
+        font.name().hash(&mut h);
+        let key = h.finish() | 1;
+        if key == self.stroke_key {
+            return;
+        }
+        self.stroke_key = key;
+        self.strokes = crate::mame::text::screen_covered(terminal, font, &mut self.stroked);
+    }
+
+    /// The cells drawn as light beside the strokes: those the strokes do
+    /// not draw.
+    fn light_cells_from_strokes(&mut self) {
+        for (i, c) in self.cells.iter().enumerate() {
+            let stroked = self.stroked.get(i).copied().unwrap_or(false);
+            self.light_cells[i] = if stroked { CellDraw { slot: 0, ..*c } } else { *c };
+        }
+        for (row, any) in self.light_rows.iter_mut().enumerate() {
+            *any = self.light_cells[row * COLS..(row + 1) * COLS].iter().any(|c| c.slot != 0);
         }
     }
 
@@ -545,7 +610,15 @@ impl SoftScreen {
     /// Whether the phosphor picture must be drawn before it can be shown
     /// (no tube yet, or its image was invalidated).
     pub fn needs_light(&self) -> bool {
-        self.style.0 && (self.tube.is_none() || !self.drawn.valid)
+        self.style.0 && (!self.has_tube() || !self.drawn.valid)
+    }
+
+    /// Whether the look's tube exists.
+    fn has_tube(&self) -> bool {
+        match self.look.model {
+            crate::phosphor::Model::Mame => self.mame.is_some(),
+            crate::phosphor::Model::Classic => self.tube.is_some(),
+        }
     }
 
     /// [`accumulate`](Self::accumulate) with the text's light taken from
@@ -554,6 +627,9 @@ impl SoftScreen {
     pub fn accumulate_with(&mut self, viewport: (u32, u32), advance: bool, pool: &Pool, layers: Option<&LightLayers>) {
         if !self.style.0 {
             return;
+        }
+        if self.look.model == crate::phosphor::Model::Mame {
+            return self.accumulate_mame(viewport, advance, pool, layers);
         }
         self.place(viewport);
         let rect = self.screen_rect(viewport);
@@ -629,13 +705,125 @@ impl SoftScreen {
         self.damage.add(area);
     }
 
+    /// The MAME model (`soft::mame`): the frame's beams (the shapes, then
+    /// the terminal's strokes, each timed as MAME times one display list)
+    /// and the text's light into the tube, the picture composited where it
+    /// changed. A frame that would draw what the frames before drew is not
+    /// drawn again.
+    fn accumulate_mame(&mut self, viewport: (u32, u32), _advance: bool, pool: &Pool, layers: Option<&LightLayers>) {
+        use crate::mame::beams::{Line, Screen, instances};
+        self.place(viewport);
+        let rect = self.screen_rect(viewport);
+        let size = ((rect.2.ceil() as usize).max(1), (rect.3.ceil() as usize).max(1));
+        let level = crate::phosphor::shed_level(&self.look, &self.vectors.shapes);
+        let (max_lines, bloom) = super::mame::lines_at(level);
+        let settings = super::mame::Settings {
+            params: self.look.mame_params(self.no_trails),
+            max_lines,
+            bloom,
+            vignette: if self.look.vignette { crate::phosphor::MAME_VIGNETTE } else { 0.0 },
+            tint: self.look.preset.tint(),
+        };
+        if self.phosphor_stale || self.mame.as_ref().is_none_or(|t| t.out != size || t.settings != settings) {
+            self.mame = Some(super::mame::Tube::new(size, settings));
+            self.phosphor_stale = false;
+        }
+        self.page.prepare((0.0, 0.0, rect.2, rect.3), (size.0 as u32, size.1 as u32), true);
+        let mut tube = self.mame.take().expect("made above");
+        let internal = (tube.size.0 as u32, tube.size.1 as u32);
+        let screen = Screen { size: internal };
+        let look = self.look;
+        let tinted: Vec<Primitive>;
+        let shapes: &[Primitive] = if look.preset.tint().is_some() {
+            tinted = self.vectors.shapes.iter().map(|p| tint_primitive(p, &look)).collect();
+            &tinted
+        } else {
+            &self.vectors.shapes
+        };
+        let mut lines = Vec::new();
+        screen.lines(shapes, &mut lines);
+        let beam_width = settings.params.beam_width;
+        let mut beams = instances(&lines, beam_width);
+        if layers.is_none() && !self.strokes.is_empty() {
+            let text: Vec<Line> = self
+                .strokes
+                .iter()
+                .map(|l| {
+                    let st = l.s;
+                    let rgba = look.tint_bytes([l.rgb[0], l.rgb[1], l.rgb[2], (st.level * 255.0).round() as u8]);
+                    screen.line(st.x0 * 16.0, st.y0 * 16.0, st.x1 * 16.0, st.y1 * 16.0, st.width * 16.0, rgba, 1.0)
+                })
+                .collect();
+            beams.extend(instances(&text, beam_width));
+        }
+        let excluded: Vec<(usize, usize, usize, usize)> = self
+            .excluded
+            .iter()
+            .filter_map(|&r| {
+                let (x0, y0, x1, y1) = crate::display::source_pixels((0.0, 0.0, rect.2, rect.3), r);
+                let c = |v: i32, n: usize| v.clamp(0, n as i32) as usize;
+                let (x0, y0, x1, y1) = (c(x0, size.0), c(y0, size.1), c(x1, size.0), c(y1, size.1));
+                (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+            })
+            .collect();
+        let strokes_on = !self.strokes.is_empty() || self.look.stroke_font().is_some();
+        let text_key = layers.is_none().then(|| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let cells = if strokes_on { &self.light_cells } else { &self.cells };
+            for c in cells {
+                (c.slot, c.fg).hash(&mut h);
+            }
+            self.palette.hash(&mut h);
+            if !strokes_on {
+                self.cursor.hash(&mut h);
+            }
+            format!("{:?}", self.page.key((0.0, 0.0, rect.2, rect.3), true)).hash(&mut h);
+            self.page.quads.quads.len().hash(&mut h);
+            h.finish()
+        });
+        let grid = if strokes_on {
+            Grid { cells: &self.light_cells, glyph_rows: &self.light_rows, cursor: None, ..self.grid(true) }
+        } else {
+            self.grid(true)
+        };
+        let text = match layers {
+            Some(l) => Text::Layers(l),
+            None => Text::Cells { grid, page: &self.page.quads },
+        };
+        let light = super::mame::Light { beams: &beams, text: &text, text_key, lin: &self.lin, dt: crate::phosphor::FRAME_SECONDS as f64, excluded: &excluded };
+        let changed = tube.frame(&light, pool);
+        // The picture: the tube's top left is the rectangle's.
+        let area = self.image.area;
+        let (ox, oy) = (rect.0 as i32 - area.x0, rect.1 as i32 - area.y0);
+        let stride = self.image.stride();
+        let fresh = !self.drawn.valid || ox < 0 || oy < 0;
+        if fresh {
+            // All black first (the letterbox stays so).
+            self.image.data.fill(0);
+            self.drawn.valid = true;
+            tube.forget_shown(0..size.1);
+        }
+        if changed || fresh {
+            let rows = 0..size.1.min(area.height().saturating_sub(oy.max(0) as usize));
+            let cols_fit = (ox.max(0) as usize + size.0) <= stride;
+            if cols_fit && ox >= 0 && oy >= 0 {
+                tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, rows, pool);
+            }
+            self.tube_overlay = u32::MAX;
+            self.damage.add(area);
+        }
+        self.mame = Some(tube);
+        self.draw_overlay();
+    }
+
     /// The overlay rows over the phosphor picture.
     fn draw_overlay(&mut self) {
         if self.overlay == self.tube_overlay {
             return;
         }
         let area = self.image.area;
-        if self.tube_overlay != u32::MAX && self.tube_overlay != 0 && self.tube.is_some() {
+        if self.tube_overlay != u32::MAX && self.tube_overlay != 0 && (self.tube.is_some() || self.mame.is_some()) {
             // The overlay went or moved: the light where it was.
             let first = self.tube_overlay.min(if self.overlay == 0 { u32::MAX } else { self.overlay });
             let y0 = self.row_px[first as usize].0;
@@ -650,6 +838,11 @@ impl SoftScreen {
                 tube.forget_shown(start..end);
                 tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, start..end, self.look, &Pool::new(1));
                 self.tube = Some(tube);
+            } else if let Some(mut tube) = self.mame.take() {
+                let end = tube.out.1;
+                tube.forget_shown(start..end);
+                tube.composite(&mut self.image.data, stride, ox as usize, oy as usize, start..end, &Pool::new(1));
+                self.mame = Some(tube);
             }
         }
         self.tube_overlay = self.overlay;
@@ -681,7 +874,7 @@ impl SoftScreen {
     pub fn render(&mut self, viewport: (u32, u32), pool: &Pool) {
         self.place(viewport);
         if self.style.0 {
-            if self.tube.is_none() || !self.drawn.valid {
+            if !self.has_tube() || !self.drawn.valid {
                 self.accumulate(viewport, true, pool);
             }
             self.draw_overlay();
@@ -928,4 +1121,18 @@ impl Clean<'_> {
             }
         }
     }
+}
+
+/// A shape in a monochrome tube's colour (`Look::tint_bytes`).
+pub(crate) fn tint_primitive(p: &Primitive, look: &Look) -> Primitive {
+    let mut p = *p;
+    match &mut p {
+        Primitive::Line { rgba, .. }
+        | Primitive::Beam { rgba, .. }
+        | Primitive::Circle { rgba, .. }
+        | Primitive::Disc { rgba, .. }
+        | Primitive::Rect { rgba, .. }
+        | Primitive::Triangle { rgba, .. } => *rgba = look.tint_bytes(*rgba),
+    }
+    p
 }
