@@ -1,0 +1,61 @@
+package main
+
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	"host/machine"
+)
+
+func main() {
+	file, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	frames, _ := strconv.Atoi(os.Args[2])
+	cpu, devices, err := machine.Load(file)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	m := &machine.Machine{CPU: cpu}
+	bus := machine.Start(os.Args[3], m, file, devices)
+	m.Devices = bus.Call
+	for m.Stopped == machine.Running && int(m.Frame) < frames {
+		m.Budget -= bus.Begin(m.Frame)
+		m.RunFrame()
+		bus.End()
+	}
+	fmt.Print(screen(bus.State(2)))
+	bus.Close()
+	if m.Fault != nil {
+		fmt.Fprintln(os.Stderr, m.Fault)
+		os.Exit(1)
+	}
+	os.Exit(int(m.ExitCode))
+}
+
+func screen(grid []byte) string {
+	code := func(cell int) rune {
+		return rune(binary.LittleEndian.Uint16(grid[4*cell:]))
+	}
+	var text strings.Builder
+	for row := range 30 {
+		var line []rune
+		for cell := row * 80; cell < row*80+80; cell++ {
+			switch {
+			case code(cell) != 0xffff:
+				line = append(line, code(cell))
+			case cell%80 == 0 || code(cell-1) == 0xffff:
+				line = append(line, ' ')
+			}
+		}
+		trimmed := strings.TrimRight(string(line), " ")
+		text.WriteString(trimmed + "\n")
+	}
+	return text.String()
+}
