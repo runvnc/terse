@@ -59,7 +59,8 @@ Articles and the network:
 
 - [Writing an article](terse:{writing-articles}): the article format, every construct shown as source and as shown.
 - [Writing a reader without the machine](terse:{native-reader}): what a native reader must do to be a complete Tersenet client.
-- [The network](terse:{network}): blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.
+- [The network](terse:{network}): blobs and relays, feeds and entries, feed addresses, several relays, mirroring relays.
+- [Profiles, names and search](terse:{network-names}): profiles and display names, nicknames, search and lookup.
 - [Signatures and valid entries](terse:{signatures}): the entry's bytes, every rule and its reason, strict Ed25519 verification, what libraries do, the test vectors and the SDK.
 
 Programs:
@@ -72,7 +73,8 @@ Programs:
 
 The Terse32 machine:
 
-- [The Terse32 machine](terse:{machine}): the CPU, the memory map, frames and the budget, faults, the image format, the call table.
+- [The Terse32 machine](terse:{machine}): the CPU, the memory map, frames and the budget, faults, the image format, calls.
+- [The call table](terse:{machine-calls}): every call of every device, its number, arguments, result and class.
 - [Events and input](terse:{events}): every event, the queue, keys, text, the pointer, the wheel and controllers.
 - [Charges and limits](terse:{charges}): every charge and every numeric limit on one page.
 - [State, replay and conformance](terse:{state}): the machine's state, its hash, snapshots and the conformance image.
@@ -89,7 +91,9 @@ The devices:
 - [The page (device 7)](terse:{device-page}): typeset proportional text and tables in a rectangle of the screen.
 - [Figures on the page](terse:{device-page-figures}): drawings within the page's text.
 - [The Machines device (device 8)](terse:{device-machines}): the shell's device, which starts other machines.
+- [The system frame, snapshots and state (device 8)](terse:{device-machines-frame}): the order of a system's frame, snapshots, determinism and charges.
 - [Screens, panels and input (device 8)](terse:{device-machines-screens}): where machines' screens go, flat or as panels in 3D.
 - [The 3D vector display (device 9)](terse:{device-vector3}): lines, points and circles in a box, seen from the host's eye.
+- [Caps, presentation and state (device 9)](terse:{device-vector3-caps}): clipping, how much a list may draw, how it is shown, charges and state.
 - [Surfaces](terse:{device-vector3-surfaces}): a program's own screen placed in its 3D scene.
 - [Experimental devices](terse:{experimental}): slots 240 to 255, a name, optional only: a device tried out before it is specified.

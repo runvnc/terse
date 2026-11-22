@@ -142,4 +142,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:b8036cb712412df5d6bb1bad9c8fb0cb804128928ed38976eb33b5d21faf3007), shares this display's style and layers.

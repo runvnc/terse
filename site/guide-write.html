@@ -40,6 +40,10 @@ are joined into one paragraph.
 <pre>terse feed publish hello.txt --title &quot;Hello, Tersenet&quot;</pre>
 <pre>seq 2 blob 5d86159d495906bb…ad537da380d</pre>
 <p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, <code>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</code>, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
+<h2 id="links-to-your-other-articles">Links to your other articles</h2>
+<p>An article can link to another by its blob ID, <code>terse:</code> and 64 hex digits (the <code>blob</code> that <code>terse feed publish</code> printed). Before publishing, <code>terse feed publish</code> lists each link of the article and what becomes of it:</p>
+<pre>link terse:5d86159d…ad537da380d: held here, uploaded now (taken by 1 of 1 relays); kept: your feed&#39;s entry #2 names it, and relays keep it while they keep that entry</pre>
+<p>An entry names one article, and a public relay drops an article no entry names after a while, so publish each part of yours as an article of its own before the article that links to it. A link to an article held here that no entry names is refused, unless you add <code>--force</code> (for someone else&#39;s article you were given). A link to another feed&#39;s article is *link-only*: that feed&#39;s relays keep it. <code>--dry-run</code> shows the list and publishes nothing.</p>
 <h2 id="see-it">See it</h2>
 <p>The timeline shows the feeds you follow, so follow your own:</p>
 <pre>terse feed subscribe $(terse key show)</pre>
