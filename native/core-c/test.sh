@@ -95,8 +95,10 @@ echo "== a required device with no driver, or a --driver that cannot start, refu
 "$TC" "$P/hello/hello.terse" --frames 1 --drivers "$T/none" > /dev/null 2> "$T/e"
 s=$?; [ $s -eq 2 ] && grep -q "needs a device" "$T/e" && ok "hello without a terminal driver: refused (status 2)" || no "missing terminal driver: status $s"
 for img in hello/hello sketch/sketch; do
-    "$TC" "$P/$img.terse" --frames 1 --driver "$(case $img in hello*) echo 2;; *) echo 4;; esac)=/nonexistent" > /dev/null 2>&1; sa=$?
-    "$D/terse-bus" "$P/$img.terse" --frames 1 --driver "$(case $img in hello*) echo 2;; *) echo 4;; esac)=/nonexistent" > /dev/null 2>&1; sb=$?
+    # (Not a case inside $(...): macOS's /bin/sh, bash 3.2, cannot parse it.)
+    case $img in hello*) slot=2;; *) slot=4;; esac
+    "$TC" "$P/$img.terse" --frames 1 --driver "$slot=/nonexistent" > /dev/null 2>&1; sa=$?
+    "$D/terse-bus" "$P/$img.terse" --frames 1 --driver "$slot=/nonexistent" > /dev/null 2>&1; sb=$?
     [ $sa -eq 2 ] && [ $sb -eq 2 ] && ok "$img with a --driver that cannot start: refused (status 2, as terse-bus)" || no "$img --driver /nonexistent: status $sa vs $sb"
 done
 "$TC" "$P/hello/hello.terse" --frames 1 --driver "2=$D/terse-dev-vector" > /dev/null 2>&1; sa=$?

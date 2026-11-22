@@ -80,7 +80,8 @@ fn two_relays_one_stopped_and_restarted() {
     // Puts and publishes reach both.
     let draft = Draft { data: b"to both".to_vec(), title: "Both".into(), reply_to: None, time: 1 };
     assert!(matches!(node.publish_article(&draft), Done::Published { seq: 1, .. }));
-    assert!(std::fs::metadata(da.path().join(terse_net::to_hex(&blob_id(b"to both")))).is_ok());
+    let at_a = da.path().join(terse_net::to_hex(&blob_id(b"to both")));
+    poll_until(&mut node, "A to take the article", |_| std::fs::metadata(&at_a).is_ok());
     assert!(b.blobs().read(&blob_id(b"to both")).unwrap().is_some());
 
     // A stops: publishing and getting still work, through B.
@@ -98,7 +99,10 @@ fn two_relays_one_stopped_and_restarted() {
     assert_eq!(again, url_a);
     poll_until(&mut node, "A to be reconnected", |n| n.connected_relays().len() == 2);
     assert_eq!(node.publish(b"after restart"), Done::Put(blob_id(b"after restart")));
-    assert!(std::fs::metadata(da.path().join(terse_net::to_hex(&blob_id(b"after restart")))).is_ok());
+    // A put is done when the first relay takes it (B, in this process,
+    // is usually first): A's copy follows.
+    let at_a = da.path().join(terse_net::to_hex(&blob_id(b"after restart")));
+    poll_until(&mut node, "A to take the put", |_| std::fs::metadata(&at_a).is_ok());
     child.stop();
 }
 

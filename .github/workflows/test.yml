@@ -40,6 +40,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout as stored
+        # .gitattributes turns off line-ending conversion: no file may be
+        # checked out with CRLF where the repository has LF.
+        run: |
+          git config --show-origin --get-all core.autocrlf || true
+          if git ls-files --eol | grep -E "i/lf +w/crlf"; then exit 1; fi
+
       - name: Rust
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -86,34 +93,35 @@ jobs:
         run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, every end sleeping on the socket, no process timing
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TERSE_BUS_WAKE: socket
           TERSE_PERF_PROBE: none
         run: cargo test --locked -p terse-bus -p terse-devices -p terse-perflog --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, the socket transport only
+        if: ${{ !cancelled() }}
         env:
           TERSE_BUS_TRANSPORT: socket
         run: cargo test --locked -p terse-devices --no-fail-fast -- --test-threads 4
 
       - name: Release programs for the native tests
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: cargo build --locked --release --workspace --bins
 
       - name: C core (native/core-c)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: |
           cd native/core-c
           make
           ./test.sh
 
       - name: Example driver (native/driver-example)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: native/driver-example/test.sh
 
       - name: Go reader (native/reader-go)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TERSE_BIN_DIR: ${{ github.workspace }}/target/release
           TERSE_TEST_NO_SKIP: ${{ runner.os == 'Linux' && '1' || '' }}
