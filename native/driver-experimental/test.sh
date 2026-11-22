@@ -11,7 +11,7 @@
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-D=${TERSE_DRIVERS:-$root/target/release}
+D=$(cd "${TERSE_DRIVERS:-$root/target/release}" && pwd) || exit 1
 # Programs older than their sources would test something else: refuse them.
 python3 "$root/scripts/check-built.py" "$D" terse terse-bus terse-dev-terminal terse-dev-vector terse-dev-content terse-dev-page terse-dev-sound || exit 1
 T=$(mktemp -d "${TMPDIR:-/tmp}/driver-experimental.XXXXXX")
