@@ -59,7 +59,10 @@ def drive_in(host, d, name, scratch):
         (scratch / s).mkdir(parents=True, exist_ok=True)
     image = ROOT / "programs" / name / f"{name}.terse"
     script = SCRIPTS / f"{name}.txt"
+    # The rule only records here: on a slow machine its notice would lie
+    # over the pictures (the record is kept beside them all the same).
     args = [str(host), str(image), "--drive", str(script), "--renderer", "software", "--size", SIZE, "--consent", "deny",
+            "--perf-rule", "off",
             "--store", str(scratch / "store"), "--config", str(scratch / "config"), "--data", str(scratch / "data")]
     env = dict(os.environ)
     env.update({"TERSE_AUDIO": "off", "XDG_CACHE_HOME": str(scratch / "cache"), "XDG_CONFIG_HOME": str(scratch / "xdg-config"),
