@@ -608,11 +608,12 @@ one over it.
   and the processors' idle time as exact cycle counts,
   `QueryProcessCycleTime`, `QueryThreadCycleTime`,
   `QueryIdleProcessorCycleTimeEx`, from which the wait is **inferred**:
-  a suspect on a CPU for at least half the interval it was waited for was
-  running; one that was not, while the processors had at least one
-  processor's worth of idle time, was blocked; otherwise it was starved,
-  for no longer than it was off a CPU nor than no processor need have
-  been idle, `RECORD.md` 4; no memory stall). The bus's own parts have
+  while the processors had at least one processor's worth of idle time
+  over the interval it was waited for, its time off a CPU was its own
+  blocking, nothing excused; otherwise it may have waited for a CPU
+  whenever it was off one, however long it ran, and is excused for no
+  longer than it was off a CPU nor than no processor need have been
+  idle, its time on a CPU never, `RECORD.md` 4; no memory stall). The bus's own parts have
   their time on a CPU too, so that a memory stall excuses no more of it
   than it lasted (condition 3): `core` and `present` the frame loop
   thread's CPU time over them, `compose` the whole process's (it composes

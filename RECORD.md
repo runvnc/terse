@@ -181,15 +181,21 @@ frame of the frame loop; the frame loop's own time less its waits for
 drivers, in terse-bus), with `C` its CPU time, `I` the idle time of all
 `N` processors and `T` the interval:
 
-1. `C` ≥ `T` / 2: it was **running**, not waiting. Nothing is excused.
-2. Else, `I` ≥ `T` (at least one processor's worth of idle time): a
-   thread that is ready to run is given an idle processor, so it was
-   **blocked** on something of its own (a sleep, a disk, a lock).
-   Nothing is excused: blamed as blocked, as on Linux.
-3. Else it was **starved**: the computer was busy. Its starvation is
-   taken as `T` − `C`, and no more than `T` − `I` / `N` (some processor
-   was idle for at least `I` / `N` of the interval, in which it could
-   have run): an excuse no longer than it could have lasted.
+1. `I` ≥ `T` (at least one processor's worth of idle time): a thread
+   that is ready to run is given an idle processor, so its time off a
+   CPU was **blocked** on something of its own (a sleep, a disk, a
+   lock). Nothing is excused: blamed as blocked, as on Linux.
+2. Else the computer was busy, and the suspect may have waited for a CPU
+   whenever it was off one, however long it ran: its starvation is taken
+   as `T` − `C`, and no more than `T` − `I` / `N` (some processor was
+   idle for at least `I` / `N` of the interval, in which it could have
+   run): an excuse no longer than it could have lasted. Its time on a
+   CPU, `C`, is never excused: a driver that spins is blamed for it on
+   the busiest computer, as on Linux, whose read wait this stands for.
+
+The excuse depends on the processors' idle time alone, not on how much
+of the interval the suspect ran (a suspect on a CPU for at least half
+of it is said to be **running**, with any wait as above).
 
 The `readings` line says `wait` (the frame loop's and each driver's) and
 `idle` (inferred so). Where the cycle counts cannot be read or their

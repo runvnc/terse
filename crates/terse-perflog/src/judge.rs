@@ -643,8 +643,15 @@ mod tests {
             (verdicts[0], stopped)
         };
         // Spinning (40 ms of CPU in 45), even on a computer with no
-        // processor idle: running, blamed, certain: stopped at the 10th.
+        // processor idle: its 5 ms off a CPU may have been a wait for one
+        // (as Linux would read it), its 40 ms on one are its own: blamed,
+        // certain, stopped at the 10th. So with 20 ms on a CPU: 25 ms
+        // excused, 20 its own.
         assert_eq!(stops(40 * MS, 0), (Verdict::Blamed, Some(9)));
+        assert_eq!(stops(20 * MS, 0), (Verdict::Blamed, Some(9)));
+        assert_eq!(infer(45 * MS, 40 * MS, 0, 8).starved_ns, 5 * MS);
+        // With a processor to spare, its time off a CPU is its own.
+        assert_eq!(infer(45 * MS, 40 * MS, 45 * MS, 8).starved_ns, 0);
         // Sleeping (1 ms of CPU) with processors to spare: blocked on
         // something of its own, blamed, certain: stopped.
         assert_eq!(stops(MS, 200 * MS), (Verdict::Blamed, Some(9)));
