@@ -139,6 +139,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--unreferenced-time" => {
                 let v = value()?;
                 policy.unreferenced_ttl = optional(&v, &["forever", "0"], parse_time).ok_or(bad(&v))?;
+                // NETWORK 5.3: at least 10 minutes, for a publisher to
+                // put a blob and then publish its entry.
+                if policy.unreferenced_ttl.is_some_and(|t| t < Duration::from_secs(600)) {
+                    return Err(format!("{a}: at least 10m"));
+                }
             }
             "--unreferenced-bytes" => {
                 let v = value()?;

@@ -50,7 +50,7 @@ pub mod status {
         let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
         match secs {
             0..=120 => RETRY_FIRST + secs.max(1) as u8 - 1,
-            _ => RETRY_MINUTES + (secs.div_ceil(60).min(74) as u8) - 3,
+            _ => RETRY_MINUTES + (secs.div_ceil(60).min(74) as u8 - 3),
         }
     }
 

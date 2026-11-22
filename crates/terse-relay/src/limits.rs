@@ -182,54 +182,60 @@ pub enum Kind {
 
 #[derive(Clone, Debug)]
 struct Slot {
-    uploads: Bucket,
-    upload_bytes: Bucket,
-    new_feeds: Bucket,
-    finds: Bucket,
+    /// Uploads, upload bytes, new feeds, finds: with rates only.
+    buckets: Option<[Bucket; 4]>,
     connections: usize,
     /// Until when the address counts as a writer's (it published an
     /// entry the write list allows), in ms.
     writer_until: u64,
 }
 
-impl Slot {
-    fn new(now: u64, r: &Rates) -> Self {
-        Slot {
-            uploads: Bucket::full(now, &r.uploads),
-            upload_bytes: Bucket::full(now, &r.upload_bytes),
-            new_feeds: Bucket::full(now, &r.new_feeds),
-            finds: Bucket::full(now, &r.finds),
-            connections: 0,
-            writer_until: 0,
+impl Rates {
+    fn of(&self, kind: Kind) -> &Rate {
+        match kind {
+            Kind::Upload => &self.uploads,
+            Kind::UploadBytes => &self.upload_bytes,
+            Kind::NewFeed => &self.new_feeds,
+            Kind::Find => &self.finds,
         }
     }
+}
 
-    fn idle(&self, now: u64, r: &Rates) -> bool {
+const KINDS: [Kind; 4] = [Kind::Upload, Kind::UploadBytes, Kind::NewFeed, Kind::Find];
+
+impl Slot {
+    fn new(now: u64, r: Option<&Rates>) -> Self {
+        Slot { buckets: r.map(|r| KINDS.map(|k| Bucket::full(now, r.of(k)))), connections: 0, writer_until: 0 }
+    }
+
+    /// Nothing would be lost by forgetting it: no connection, not a
+    /// writer's, every bucket full again.
+    fn idle(&self, now: u64, r: Option<&Rates>) -> bool {
         self.connections == 0
             && self.writer_until <= now
-            && self.uploads.is_full(now, &r.uploads)
-            && self.upload_bytes.is_full(now, &r.upload_bytes)
-            && self.new_feeds.is_full(now, &r.new_feeds)
-            && self.finds.is_full(now, &r.finds)
+            && match (&self.buckets, r) {
+                (Some(b), Some(r)) => KINDS.iter().zip(b).all(|(k, b)| b.is_full(now, r.of(*k))),
+                _ => true,
+            }
     }
 }
 
 /// The buckets of each address, in a table of at most `capacity` slots.
-/// When it is full, slots whose buckets are full again and that have no
-/// connection are forgotten (that loses nothing: a new slot starts full);
-/// if none can be, a new address shares the one overflow slot, whose
-/// limits are as strict as any address's.
+/// When it is full, idle slots are forgotten (no connection, not a
+/// writer's, buckets full again: a new slot starts the same); if none can
+/// be, a new address shares the one overflow slot, whose limits are as
+/// strict as any address's.
 pub struct RateTable {
     rates: Option<Rates>,
     capacity: usize,
     slots: HashMap<Group, Slot>,
     /// When the table was last swept for idle slots (ms).
-    swept: u64,
+    swept: Option<u64>,
 }
 
 impl RateTable {
     pub fn new(rates: Option<Rates>, capacity: usize) -> Self {
-        RateTable { rates, capacity: capacity.max(1), slots: HashMap::new(), swept: 0 }
+        RateTable { rates, capacity: capacity.max(1), slots: HashMap::new(), swept: None }
     }
 
     pub fn rates(&self) -> Option<&Rates> {
@@ -244,58 +250,39 @@ impl RateTable {
         self.slots.is_empty()
     }
 
-    /// The slot of `group`, made if need be; `None` without rates.
-    fn slot(&mut self, group: Group, now: u64) -> Option<(&mut Slot, &Rates)> {
-        let rates = self.rates.as_ref()?;
+    /// The slot of `group`, made if need be (or the overflow slot).
+    fn slot(&mut self, group: Group, now: u64) -> &mut Slot {
+        let rates = self.rates.as_ref();
         let mut group = group;
         if !self.slots.contains_key(&group) && self.slots.len() >= self.capacity {
             // At most one sweep a second: a full table of busy addresses
             // does not cost a scan per request.
-            if now.saturating_sub(self.swept) >= 1000 || self.swept == 0 {
-                self.swept = now.max(1);
+            if self.swept.is_none_or(|t| now.saturating_sub(t) >= 1000) {
+                self.swept = Some(now);
                 self.slots.retain(|g, s| *g == Group::Overflow || !s.idle(now, rates));
             }
             if self.slots.len() >= self.capacity {
                 group = Group::Overflow;
             }
         }
-        let slot = self.slots.entry(group).or_insert_with(|| Slot::new(now, rates));
-        Some((slot, rates))
+        self.slots.entry(group).or_insert_with(|| Slot::new(now, rates))
     }
 
     /// Takes `cost` from `group`'s bucket for `kind`; the wait if it is
     /// empty. Without rates everything is allowed.
     pub fn take(&mut self, group: Group, kind: Kind, cost: f64, now: u64) -> Result<(), Duration> {
-        let Some((slot, r)) = self.slot(group, now) else { return Ok(()) };
-        match kind {
-            Kind::Upload => slot.uploads.take(cost, now, &r.uploads),
-            Kind::UploadBytes => slot.upload_bytes.take(cost, now, &r.upload_bytes),
-            Kind::NewFeed => slot.new_feeds.take(cost, now, &r.new_feeds),
-            Kind::Find => slot.finds.take(cost, now, &r.finds),
-        }
+        let Some(rates) = self.rates.clone() else { return Ok(()) };
+        let i = KINDS.iter().position(|k| *k == kind).unwrap();
+        let slot = self.slot(group, now);
+        let buckets = slot.buckets.get_or_insert_with(|| KINDS.map(|k| Bucket::full(now, rates.of(k))));
+        buckets[i].take(cost, now, rates.of(kind))
     }
 
     /// Counts a connection of `group` if it has fewer than `max`; false
-    /// if not. Counted even without rates, when `max` is given.
+    /// if not.
     pub fn connect(&mut self, group: Group, max: Option<usize>, now: u64) -> bool {
         let Some(max) = max else { return true };
-        if self.rates.is_none() {
-            // Connections only: the table holds just the counts.
-            let slot = self.slots.entry(group).or_insert_with(|| Slot {
-                uploads: Bucket { tokens: 0.0, at: 0 },
-                upload_bytes: Bucket { tokens: 0.0, at: 0 },
-                new_feeds: Bucket { tokens: 0.0, at: 0 },
-                finds: Bucket { tokens: 0.0, at: 0 },
-                connections: 0,
-                writer_until: 0,
-            });
-            if slot.connections >= max {
-                return false;
-            }
-            slot.connections += 1;
-            return true;
-        }
-        let Some((slot, _)) = self.slot(group, now) else { return true };
+        let slot = self.slot(group, now);
         if slot.connections >= max {
             return false;
         }
@@ -303,28 +290,26 @@ impl RateTable {
         true
     }
 
+    /// Uncounts a connection counted by [`Self::connect`] (in the
+    /// address's slot, or the overflow slot it was put in).
     pub fn disconnect(&mut self, group: Group) {
-        // The connection may have been counted in the overflow slot.
         let g = if self.slots.contains_key(&group) { group } else { Group::Overflow };
         if let Some(s) = self.slots.get_mut(&g) {
             s.connections = s.connections.saturating_sub(1);
-            if self.rates.is_none() && s.connections == 0 {
-                self.slots.remove(&g);
-            }
         }
     }
 
     /// Marks `group` as a writer's until `until` (ms).
     pub fn mark_writer(&mut self, group: Group, until: u64, now: u64) {
-        if let Some((slot, _)) = self.slot(group, now) {
-            slot.writer_until = slot.writer_until.max(until);
-        }
+        let slot = self.slot(group, now);
+        slot.writer_until = slot.writer_until.max(until);
     }
 
     pub fn is_writer(&self, group: Group, now: u64) -> bool {
         self.slots.get(&group).is_some_and(|s| s.writer_until > now)
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -437,12 +422,14 @@ mod tests {
         assert!(t.slots.contains_key(&g(1)), "a connected address is not forgotten");
         t.disconnect(g(1));
         assert!(t.connect(g(1), Some(2), 50_000));
-        // Without rates, only connections are counted, and forgotten at 0.
-        let mut t = RateTable::new(None, 10);
+        // Without rates, connections and writers are counted.
+        let mut t = RateTable::new(None, 1);
         assert!(t.take(g(1), Kind::Upload, 1e9, 0).is_ok());
         assert!(t.connect(g(1), Some(1), 0));
         assert!(!t.connect(g(1), Some(1), 0));
         t.disconnect(g(1));
-        assert!(t.is_empty());
+        t.mark_writer(g(2), 5000, 2000);
+        assert!(t.is_writer(g(2), 4999) && !t.is_writer(g(2), 5000));
+        assert!(!t.is_writer(g(1), 0));
     }
 }
