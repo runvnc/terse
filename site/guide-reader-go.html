@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader in Go, step 1: show an article - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-in-go-step-1-show-an-article">Make a reader in Go, step 1: show an article</h1>
+<p>In this step you write the smallest Tersenet reader that is still correct: a Go program that reads an article from a file and shows its headings and paragraphs on a terminal. It uses only Go&#39;s standard library and no network yet.</p>
+<p>The program is in the Tersenet sources, in <code>examples/reader/go</code>, so you can run it before you read it. You need Go 1.24 or later.</p>
+<h2 id="an-article">An article</h2>
+<p>This is <code>examples/reader/hello.txt</code>:</p>
+<pre># Hello
+
+My first article. It has a heading, and this paragraph,
+which is written on two lines.
+
+## A subheading
+
+A reader joins the lines of a paragraph into one,
+then wraps it again to the width of its own column,
+so the lines you see may not be the lines written.</pre>
+<p>A line that starts with <code># </code> is a heading, and one that starts with <code>## </code> a subheading. The other lines are paragraphs: blank lines separate them, and the lines of one paragraph are joined with spaces, then wrapped to the reader&#39;s width. That is all this step shows.</p>
+<h2 id="the-code">The code</h2>
+<p><code>article/article.go</code> shows an article:</p>
+<pre>package article
+
+import (
+    &quot;fmt&quot;
+    &quot;strings&quot;
+    &quot;unicode&quot;
+    &quot;unicode/utf8&quot;
+)
+
+const width = 68
+
+func Show(text []byte) {
+    s := strings.ToValidUTF8(string(text), &quot;\uFFFD&quot;)
+    s = strings.TrimPrefix(s, &quot;\uFEFF&quot;)
+    var paragraph []string
+    end := func() {
+        if paragraph != nil {
+            block(strings.Join(paragraph, &quot; &quot;), &quot;&quot;)
+            paragraph = nil
+        }
+    }
+    for _, line := range strings.Split(s, &quot;\n&quot;) {
+        switch {
+        case strings.Trim(line, &quot; \t\r&quot;) == &quot;&quot;:
+            end()
+        case strings.HasPrefix(line, &quot;# &quot;):
+            end()
+            block(line[2:], &quot;=&quot;)
+        case strings.HasPrefix(line, &quot;## &quot;):
+            end()
+            block(line[3:], &quot;-&quot;)
+        default:
+            paragraph = append(paragraph, line)
+        }
+    }
+    end()
+}
+
+func block(text, rule string) {
+    lines := wrap(text)
+    if rule != &quot;&quot; {
+        n := utf8.RuneCountInString(strings.Join(lines, &quot; &quot;))
+        underline := strings.Repeat(rule, min(n, width))
+        lines = append(lines, underline)
+    }
+    fmt.Printf(&quot;%s\n\n&quot;, strings.Join(lines, &quot;\n&quot;))
+}
+
+func wrap(text string) []string {
+    var lines []string
+    line := &quot;&quot;
+    for _, word := range strings.Split(Visible(text), &quot; &quot;) {
+        switch {
+        case word == &quot;&quot;:
+        case line == &quot;&quot;:
+            line = word
+        case utf8.RuneCountInString(line+&quot; &quot;+word) &gt; width:
+            lines = append(lines, line)
+            line = word
+        default:
+            line += &quot; &quot; + word
+        }
+    }
+    return append(lines, line)
+}
+
+func Visible(text string) string {
+    return strings.Map(func(r rune) rune {
+        switch {
+        case r == &#39;\t&#39; || r == &#39;\r&#39;:
+            return &#39; &#39;
+        case unicode.IsControl(r):
+            return -1
+        }
+        return r
+    }, text)
+}</pre>
+<p><code>show/main.go</code> is the program:</p>
+<pre>// Step 1: show an article from a file.
+package main
+
+import (
+    &quot;log&quot;
+    &quot;os&quot;
+
+    &quot;reader/article&quot;
+)
+
+func main() {
+    text, err := os.ReadFile(os.Args[1])
+    if err != nil {
+        log.Fatal(err)
+    }
+    article.Show(text)
+}</pre>
+<p>That is 94 lines in all. The module&#39;s <code>go.mod</code> names it <code>reader</code>, so the program imports the package as <code>reader/article</code>; step 2 shows the file.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><code>Show</code> first makes the text safe to show: each run of malformed UTF-8 becomes the replacement character, and a byte order mark at the very start is dropped, so that a <code>#</code> on the first line still counts.</p>
+<p>Then it reads the article a line at a time. A blank line, one of only spaces, tabs and carriage returns, ends a paragraph. A line that starts with <code># </code> or <code>## </code> ends one too, and is shown at once as a heading. Any other line belongs to the current paragraph, which <code>end</code> shows, its lines joined with spaces, when it ends.</p>
+<p><code>block</code> wraps a block&#39;s text and, for a heading, underlines it: <code>=</code> under a heading and <code>-</code> under a subheading, so that a heading stands out more than a subheading, as the format asks. An empty line follows every block.</p>
+<p><code>wrap</code> cuts the text into words at spaces and fills lines of up to 68 characters, the column the format recommends for a monospaced reader. A run of spaces becomes one, which the format allows.</p>
+<p><code>Visible</code> is how text is shown: a tab or a carriage return as a space, other control characters not at all.</p>
+<p>Run it:</p>
+<pre>cd examples/reader/go
+go run ./show ../hello.txt</pre>
+<p>It prints:</p>
+<pre>Hello
+=====
+
+My first article. It has a heading, and this paragraph, which is
+written on two lines.
+
+A subheading
+------------
+
+A reader joins the lines of a paragraph into one, then wraps it
+again to the width of its own column, so the lines you see may not
+be the lines written.</pre>
+<h2 id="what-it-leaves-out">What it leaves out</h2>
+<p>Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.</p>
+<p>For an article of headings and paragraphs it is correct: the test <code>crates/terse-cli/tests/reader_examples.rs</code> runs it on every article of <code>vectors/articles</code> made only of those, and compares with what the reference reader finds in each. The rest of the format is in <a href="writing-articles.html">Writing an article</a>. tersereader, the complete Go reader in <code>native/reader-go</code>, does all of it: <code>internal/article/parse.go</code> and <code>inline.go</code> read every construct, and <code>internal/render/render.go</code> lays them out for a terminal.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Go program of 94 lines that shows the headings and paragraphs of any Tersenet article file.</p>
+<ul>
+<li>Next: <a href="guide-reader-fetch-go.html">Make a reader in Go, step 2: fetch an article</a>.</li>
+<li>The same step in Rust: <a href="guide-reader-rust.html">Make a reader in Rust, step 1: show an article</a>.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader.html">← Make a reader</a><a rel="next" href="guide-reader-rust.html">Make a reader in Rust, step 1: show an article →</a></nav></footer>
+</body>
+</html>

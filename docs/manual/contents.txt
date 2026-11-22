@@ -14,9 +14,13 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## Implementation guide
 
-- [Make a reader, step 1: show an article](terse:{guide-reader}): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:{guide-reader-fetch}): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:{guide-reader-feeds}): follow links, subscribe to a feed, check its signatures.
+- [Make a reader](terse:{guide-reader}): what a reader does, and a small one built in three steps, in Go or in Rust.
+- [Make a reader in Go, step 1: show an article](terse:{guide-reader-go}): an article file's headings and paragraphs, with the standard library alone.
+- [Make a reader in Rust, step 1: show an article](terse:{guide-reader-rust}): the same program in Rust.
+- [Make a reader in Go, step 2: fetch an article](terse:{guide-reader-fetch-go}): get an article from a relay by its ID and check its BLAKE3 hash.
+- [Make a reader in Rust, step 2: fetch an article](terse:{guide-reader-fetch-rust}): the same in Rust.
+- [Make a reader in Go, step 3: follow a feed](terse:{guide-reader-feed-go}): subscribe to a feed, check its entries' signatures strictly, open an article.
+- [Make a reader in Rust, step 3: follow a feed](terse:{guide-reader-feed-rust}): the same in Rust.
 - [Write a program](terse:{guide-program}): a first Terse32 program, built and run in three commands.
 - [Draw a line and read a key](terse:{guide-drawing}): the 2D vector display and keyboard events.
 - [Make a host, step 1: run a program to its end](terse:{guide-host}): the program file, memory and the processor, until `exit`.

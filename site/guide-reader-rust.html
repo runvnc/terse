@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader in Rust, step 1: show an article - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-in-rust-step-1-show-an-article">Make a reader in Rust, step 1: show an article</h1>
+<p>In this step you write the smallest Tersenet reader that is still correct: a Rust program that reads an article from a file and shows its headings and paragraphs on a terminal. It uses only Rust&#39;s standard library and no network yet.</p>
+<p>The program is in the Tersenet sources, in <code>examples/reader/rust</code>, so you can run it before you read it. It is one Cargo package, <code>reader</code>: a library with a module per step, and a program per step in <code>src/bin</code>. You need Rust 1.85 or later. (Make a reader in Go, step 1, is the same program in Go.)</p>
+<h2 id="an-article">An article</h2>
+<p>This is <code>examples/reader/hello.txt</code>:</p>
+<pre># Hello
+
+My first article. It has a heading, and this paragraph,
+which is written on two lines.
+
+## A subheading
+
+A reader joins the lines of a paragraph into one,
+then wraps it again to the width of its own column,
+so the lines you see may not be the lines written.</pre>
+<p>A line that starts with <code># </code> is a heading, and one that starts with <code>## </code> a subheading. The other lines are paragraphs: blank lines separate them, and the lines of one paragraph are joined with spaces, then wrapped to the reader&#39;s width. That is all this step shows.</p>
+<h2 id="the-code">The code</h2>
+<p><code>src/lib.rs</code> lists the library&#39;s modules, this step&#39;s and the next:</p>
+<pre>pub mod article;
+pub mod relay;</pre>
+<p><code>src/article.rs</code> shows an article:</p>
+<pre>const WIDTH: usize = 68;
+
+pub fn show(text: &amp;[u8]) {
+    let text = String::from_utf8_lossy(text);
+    let text = text.strip_prefix(&#39;\u{feff}&#39;).unwrap_or(&amp;text);
+    let mut paragraph = Vec::new();
+    for line in text.split(&#39;\n&#39;).chain([&quot;&quot;]) {
+        let heading = match line.strip_prefix(&quot;# &quot;) {
+            Some(text) =&gt; Some((text, &#39;=&#39;)),
+            None =&gt; line.strip_prefix(&quot;## &quot;).map(|t| (t, &#39;-&#39;)),
+        };
+        let blank = line.chars().all(|c| &quot; \t\r&quot;.contains(c));
+        if heading.is_none() &amp;&amp; !blank {
+            paragraph.push(line);
+            continue;
+        }
+        if !paragraph.is_empty() {
+            block(&amp;paragraph.join(&quot; &quot;), None);
+            paragraph.clear();
+        }
+        if let Some((text, rule)) = heading {
+            block(text, Some(rule));
+        }
+    }
+}
+
+fn block(text: &amp;str, rule: Option&lt;char&gt;) {
+    let mut lines = wrap(text);
+    if let Some(rule) = rule {
+        let n = lines.join(&quot; &quot;).chars().count().min(WIDTH);
+        lines.push(rule.to_string().repeat(n));
+    }
+    println!(&quot;{}\n&quot;, lines.join(&quot;\n&quot;));
+}
+
+fn wrap(text: &amp;str) -&gt; Vec&lt;String&gt; {
+    let mut lines = vec![String::new()];
+    let text = visible(text);
+    for word in text.split(&#39; &#39;).filter(|w| !w.is_empty()) {
+        let line = lines.last_mut().unwrap();
+        let n = line.chars().count() + 1 + word.chars().count();
+        if line.is_empty() {
+            line.push_str(word);
+        } else if n &gt; WIDTH {
+            lines.push(word.to_string());
+        } else {
+            line.push(&#39; &#39;);
+            line.push_str(word);
+        }
+    }
+    lines
+}
+
+pub fn visible(text: &amp;str) -&gt; String {
+    text.chars()
+        .filter_map(|c| match c {
+            &#39;\t&#39; | &#39;\r&#39; =&gt; Some(&#39; &#39;),
+            c if c.is_control() =&gt; None,
+            c =&gt; Some(c),
+        })
+        .collect()
+}</pre>
+<p><code>src/bin/show.rs</code> is the program:</p>
+<pre>// Step 1: show an article from a file.
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let args: Vec&lt;String&gt; = std::env::args().collect();
+    reader::article::show(&amp;std::fs::read(&amp;args[1])?);
+    Ok(())
+}</pre>
+<p>That is 70 lines in all.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><code>show</code> first makes the text safe to show: <code>from_utf8_lossy</code> turns malformed UTF-8 into the replacement character, and a byte order mark at the very start is dropped, so that a <code>#</code> on the first line still counts.</p>
+<p>Then it reads the article a line at a time, with an empty line added at the end so that the last paragraph ends too. A line that starts with <code># </code> or <code>## </code> is a heading. A blank line, one of only spaces, tabs and carriage returns, and a heading both end the current paragraph, which is shown, its lines joined with spaces; then the heading is shown. Any other line belongs to the paragraph.</p>
+<p><code>block</code> wraps a block&#39;s text and, for a heading, underlines it: <code>=</code> under a heading and <code>-</code> under a subheading, so that a heading stands out more than a subheading, as the format asks. An empty line follows every block.</p>
+<p><code>wrap</code> cuts the text into words at spaces and fills lines of up to 68 characters, the column the format recommends for a monospaced reader. A run of spaces becomes one, which the format allows.</p>
+<p><code>visible</code> is how text is shown: a tab or a carriage return as a space, other control characters not at all.</p>
+<p>Run it:</p>
+<pre>cd examples/reader/rust
+cargo run -q --bin show ../hello.txt</pre>
+<p>The first time, Cargo also downloads and builds the libraries that steps 2 and 3 use. It prints:</p>
+<pre>Hello
+=====
+
+My first article. It has a heading, and this paragraph, which is
+written on two lines.
+
+A subheading
+------------
+
+A reader joins the lines of a paragraph into one, then wraps it
+again to the width of its own column, so the lines you see may not
+be the lines written.</pre>
+<h2 id="what-it-leaves-out">What it leaves out</h2>
+<p>Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.</p>
+<p>For an article of headings and paragraphs it is correct: the test <code>crates/terse-cli/tests/reader_examples.rs</code> runs it on every article of <code>vectors/articles</code> made only of those, and compares with what the reference reader finds in each. The rest of the format is in <a href="writing-articles.html">Writing an article</a>. In the reference implementation, <code>crates/terse-net/src/article_parse.rs</code> reads every construct, and the reference reader, <code>programs/reader</code>, shows them all.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Rust program of 70 lines that shows the headings and paragraphs of any Tersenet article file.</p>
+<p>Next: <a href="guide-reader-fetch-rust.html">Make a reader in Rust, step 2: fetch an article</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-go.html">← Make a reader in Go, step 1: show an article</a><a rel="next" href="guide-reader-fetch-go.html">Make a reader in Go, step 2: fetch an article →</a></nav></footer>
+</body>
+</html>
