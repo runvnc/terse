@@ -85,6 +85,9 @@ const WORST_FRAME: Limit = Limit { target: FRAME_MS, ceiling: 4.0 * FRAME_MS, un
 const NEW_GLYPHS: Limit = Limit { target: 2.0 * FRAME_MS, ceiling: 6.0 * FRAME_MS, unit: Unit::FrameTimes };
 /// A shell and 8 machines, every device at its worst, one thread (W sys-*).
 const SYSTEM: Limit = Limit { target: 4.0 * FRAME_MS, ceiling: 12.0 * FRAME_MS, unit: Unit::FrameTimes };
+/// A frame's sound, from the frame's end to the audio interface having
+/// its first pair, 99 frames in 100 (S1, R19).
+const SOUND: Limit = Limit { target: 2.0 * FRAME_MS, ceiling: 6.0 * FRAME_MS, unit: Unit::FrameTimes };
 
 impl Limit {
     fn show(&self, v: f64) -> String {
@@ -1131,6 +1134,42 @@ fn host_rows(rows: &mut Vec<Row>, runs: usize, host: Option<PathBuf>, programs: 
     );
     r.measures = shed;
     rows.push(r);
+    sound_rows(rows, runs, &host, &home, &image("tune.terse", include_bytes!("../../../programs/tune/tune.terse"))?, &store)
+}
+
+/// R19: programs/tune's sound, each frame handed by terse-host's own queue
+/// and output thread to the system's audio interface: here the null output
+/// (`--sound-check`), a device's buffer with no device behind it, so
+/// nothing is opened and nothing is heard.
+fn sound_rows(rows: &mut Vec<Row>, runs: usize, host: &Path, home: &Tmp, tune: &Path, store: &Path) -> Result<(), String> {
+    let (mut p50s, mut p99s, mut maxes) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut buffer, mut dropped) = (0f64, 0u64);
+    for _ in 0..runs {
+        let mut c = isolated(host, home);
+        c.arg(tune).args(["--sound-check", "--frames", "240", "--store"]).arg(store);
+        c.arg("--config").arg(home.path("cfg")).arg("--data").arg(home.path("dat"));
+        // --sound-check never opens a device; none, should it ever try.
+        c.env("TERSE_AUDIO", "none");
+        let (_, out) = timed(&mut c)?;
+        let (p50, p99, max) = bench_numbers(&out).ok_or_else(|| format!("no --sound-check line: {out}"))?;
+        let after = |key: &str| -> Option<f64> { out.split(key).nth(1)?.split_whitespace().next()?.trim_end_matches([';', ',']).parse().ok() };
+        buffer = buffer.max(after("output buffer ").ok_or("no output buffer in --sound-check's line")?);
+        dropped += after("pairs dropped ").ok_or("no pairs dropped in --sound-check's line")? as u64;
+        p50s.push(p50);
+        p99s.push(p99);
+        maxes.push(max);
+    }
+    let ok = buffer <= 3.0 * FRAME_MS + 0.05 && dropped == 0;
+    rows.push(
+        row(
+            "S1",
+            "programs/tune's sound: each frame's hand-over to the audio interface (null output, 240 frames)",
+            format!("p50 {:.1} ms, max {:.1} ms; output buffer {buffer:.1} ms; pairs dropped {dropped}", median(p50s), median(maxes)),
+            "R19: buffer ≤ 3 frames, nothing dropped",
+            if ok { Verdict::Pass } else { Verdict::Fail },
+        )
+        .with(Measure::new("p99", p99s, SOUND)),
+    );
     Ok(())
 }
 
@@ -1422,7 +1461,7 @@ mod tests {
     /// (PERFORMANCE.md §1, the hardware floor).
     #[test]
     fn ceilings_are_far_above_targets() {
-        for l in [HELD_PROCESS, SYNC, SHOWN, START, COLD_START, GPU_START, WORST_FRAME, NEW_GLYPHS, SYSTEM] {
+        for l in [HELD_PROCESS, SYNC, SHOWN, START, COLD_START, GPU_START, WORST_FRAME, NEW_GLYPHS, SYSTEM, SOUND] {
             assert!(l.ceiling >= 3.0 * l.target, "{}", l.rule());
         }
         assert_eq!(START.ceiling, 1500.0, "the owner's start-up ceiling");

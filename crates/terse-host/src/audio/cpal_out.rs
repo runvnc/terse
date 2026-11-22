@@ -20,9 +20,15 @@ pub fn open(shared: Arc<Shared>) -> Result<(Stream, String), String> {
             &config,
             move |out: &mut [f32], _| {
                 let mut q = data.q.lock().unwrap();
-                for d in out.iter_mut() {
-                    *d = q.samples.pop_front().map_or(0.0, |s| s as f32 / 32768.0);
+                let n = out.len().min(q.samples.len()) & !1;
+                for (d, s) in out.iter_mut().zip(q.samples.drain(..n)) {
+                    *d = s as f32 / 32768.0;
                 }
+                out[n..].fill(0.0);
+                // The frames whose first pair this copied are handed over (R19).
+                let mut marks = Vec::new();
+                q.take(n as u64 / 2, &mut marks);
+                q.handed(&mut marks, std::time::Instant::now());
             },
             move |e| match e {
                 cpal::StreamError::DeviceNotAvailable => errors.q.lock().unwrap().dead = Some(e.to_string()),

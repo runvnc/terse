@@ -336,7 +336,7 @@ impl App {
             if pressed {
                 self.bs.swallow(usage);
                 let what = self.audio.change(k);
-                let then = "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes; it is kept.".to_string();
+                let then = "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes, for this run.".to_string();
                 self.sound_notice = Some((("sound".into(), what, then), self.frames + 90));
             }
             return;
