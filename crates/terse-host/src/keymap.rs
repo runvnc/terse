@@ -161,6 +161,24 @@ pub fn prompt_answer(event: &KeyEvent) -> Option<bool> {
 mod tests {
     use super::*;
 
+    /// The volume keys need Control and Alt together; a program keeps
+    /// minus, equals and M with any other modifiers.
+    #[test]
+    fn volume_keys() {
+        use crate::audio::VolumeKey::*;
+        let ca = ModifiersState::CONTROL | ModifiersState::ALT;
+        assert_eq!(volume_key(KeyCode::Minus, ca), Some(Down));
+        assert_eq!(volume_key(KeyCode::Equal, ca | ModifiersState::SHIFT), Some(Up));
+        assert_eq!(volume_key(KeyCode::KeyM, ca), Some(Mute));
+        assert_eq!(volume_key(KeyCode::AudioVolumeMute, ModifiersState::empty()), Some(Mute));
+        for m in [ModifiersState::empty(), ModifiersState::CONTROL, ModifiersState::ALT, ca | ModifiersState::SUPER] {
+            for k in [KeyCode::Minus, KeyCode::Equal, KeyCode::KeyM] {
+                assert_eq!(volume_key(k, m), None, "{k:?} {m:?}");
+            }
+        }
+        assert_eq!(volume_key(KeyCode::KeyA, ca), None);
+    }
+
     #[test]
     fn spec_examples() {
         assert_eq!(hid_usage(KeyCode::KeyA), Some(0x04));

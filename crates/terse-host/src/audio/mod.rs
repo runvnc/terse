@@ -38,12 +38,21 @@ mod pulse;
 pub const RATE: u32 = terse_core::sound::RATE;
 /// Sample pairs a frame.
 const FRAME: usize = terse_core::sound::FRAME_SAMPLES;
-/// The output's own buffer, in pairs: three frames (50 ms)...
+/// The output's own buffer, in pairs: three frames (50 ms), or
+/// `TERSE_AUDIO_BUFFER_MS` (for measuring)...
 #[cfg_attr(not(feature = "audio"), allow(dead_code))]
-pub(crate) const BUFFER: usize = 3 * FRAME;
-/// ...which starts playing once it holds two (33 ms).
+pub(crate) fn buffer() -> usize {
+    std::env::var("TERSE_AUDIO_BUFFER_MS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(3 * FRAME, |ms| (ms * RATE as usize / 1000).clamp(FRAME / 4, 20 * FRAME))
+}
+
+/// ...which starts playing once it holds two thirds of that.
 #[cfg_attr(not(feature = "audio"), allow(dead_code))]
-pub(crate) const START: usize = 2 * FRAME;
+pub(crate) fn start() -> usize {
+    buffer() * 2 / 3
+}
 /// At most this many pairs wait in front of the output (two frames):
 /// more is latency, and the oldest go.
 const MAX_QUEUED: usize = 2 * FRAME;
@@ -194,6 +203,8 @@ pub(crate) trait Writer: Send {
     fn delay_us(&mut self) -> Option<u64>;
     /// Times the output ran dry, if it can tell.
     fn underruns(&self) -> Option<u64>;
+    /// Waits until what was written has been played (when closing).
+    fn drain(&mut self) {}
 }
 
 /// What an output measured (`TERSE_AUDIO_STATS`).
@@ -304,6 +315,13 @@ fn feed(shared: &Shared, mut w: Box<dyn Writer>) -> Stats {
                 q = shared.cv.wait_timeout(q, Duration::from_millis(100)).unwrap().0;
             }
             if q.stop {
+                // Closing: what is left (two frames at most) is still
+                // played, so that a program's last sound is not cut.
+                let rest: Vec<i16> = q.samples.drain(..).collect();
+                drop(q);
+                if rest.is_empty() || w.write(&rest).is_ok() {
+                    w.drain();
+                }
                 break;
             }
             let n = q.samples.len().min(2 * FRAME);

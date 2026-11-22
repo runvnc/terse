@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use libloading::Library;
 
-use super::{BUFFER, RATE, START, Writer};
+use super::{RATE, Writer, buffer, start};
 
 #[repr(C)]
 struct SampleSpec {
@@ -45,6 +45,7 @@ type New = unsafe extern "C" fn(
 type Write = unsafe extern "C" fn(*mut c_void, *const c_void, usize, *mut c_int) -> c_int;
 type Latency = unsafe extern "C" fn(*mut c_void, *mut c_int) -> u64;
 type Free = unsafe extern "C" fn(*mut c_void);
+type Drain = unsafe extern "C" fn(*mut c_void, *mut c_int) -> c_int;
 type StrError = unsafe extern "C" fn(c_int) -> *const c_char;
 
 struct Lib {
@@ -52,6 +53,7 @@ struct Lib {
     write: Write,
     latency: Latency,
     free: Free,
+    drain: Drain,
     strerror: Option<StrError>,
 }
 
@@ -67,6 +69,7 @@ fn lib() -> Result<&'static Lib, String> {
             write: *simple.get::<Write>(b"pa_simple_write\0").map_err(|e| e.to_string())?,
             latency: *simple.get::<Latency>(b"pa_simple_get_latency\0").map_err(|e| e.to_string())?,
             free: *simple.get::<Free>(b"pa_simple_free\0").map_err(|e| e.to_string())?,
+            drain: *simple.get::<Drain>(b"pa_simple_drain\0").map_err(|e| e.to_string())?,
             strerror: pulse.as_ref().and_then(|p| p.get::<StrError>(b"pa_strerror\0").ok().map(|s| *s)),
         };
         std::mem::forget(simple);
@@ -106,9 +109,9 @@ pub fn open(server: Option<&str>) -> Result<(Pulse, String), String> {
     let spec = SampleSpec { format: S16NE, rate: RATE, channels: 2 };
     let attr = BufferAttr {
         maxlength: u32::MAX,
-        tlength: (BUFFER * 4) as u32,
-        prebuf: (START * 4) as u32,
-        minreq: (BUFFER * 4 / 12) as u32,
+        tlength: (buffer() * 4) as u32,
+        prebuf: (start() * 4) as u32,
+        minreq: (buffer() * 4 / 12) as u32,
         fragsize: u32::MAX,
     };
     let mut err: c_int = 0;
@@ -149,6 +152,11 @@ impl Writer for Pulse {
     }
 
     /// The simple API does not say (a recording of the sink does).
+    fn drain(&mut self) {
+        let mut err: c_int = 0;
+        unsafe { (self.lib.drain)(self.s, &mut err) };
+    }
+
     fn underruns(&self) -> Option<u64> {
         None
     }

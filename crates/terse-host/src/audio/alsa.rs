@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use libloading::Library;
 
-use super::{BUFFER, RATE, Writer};
+use super::{RATE, Writer, buffer};
 
 const PLAYBACK: c_int = 0;
 #[cfg(target_endian = "little")]
@@ -36,6 +36,8 @@ struct Lib {
     recover: Recover,
     delay: Delay,
     close: Close,
+    /// snd_pcm_drain, of the same type.
+    drain: Close,
     strerror: StrError,
 }
 
@@ -54,6 +56,7 @@ fn lib() -> Result<&'static Lib, String> {
             recover: *l.get::<Recover>(b"snd_pcm_recover\0").map_err(|e| e.to_string())?,
             delay: *l.get::<Delay>(b"snd_pcm_delay\0").map_err(|e| e.to_string())?,
             close: *l.get::<Close>(b"snd_pcm_close\0").map_err(|e| e.to_string())?,
+            drain: *l.get::<Close>(b"snd_pcm_drain\0").map_err(|e| e.to_string())?,
             strerror: *l.get::<StrError>(b"snd_strerror\0").map_err(|e| e.to_string())?,
         };
         // ALSA's own messages (a missing device, a plugin with no server)
@@ -98,7 +101,7 @@ pub fn open(name: &str) -> Result<(Alsa, String), String> {
         return Err(format!("\"{name}\": {}", error(lib, r)));
     }
     let a = Alsa { lib, pcm, underruns: 0 };
-    let latency_us = (BUFFER as u64 * 1_000_000 / RATE as u64) as c_uint;
+    let latency_us = (buffer() as u64 * 1_000_000 / RATE as u64) as c_uint;
     let r = unsafe { (lib.set_params)(pcm, S16, RW_INTERLEAVED, 2, RATE, 1, latency_us) };
     if r < 0 {
         return Err(format!("\"{name}\": {}", error(lib, r)));
@@ -133,6 +136,10 @@ impl Writer for Alsa {
         let mut d: c_long = 0;
         let r = unsafe { (self.lib.delay)(self.pcm, &mut d) };
         (r >= 0).then(|| d.max(0) as u64 * 1_000_000 / RATE as u64)
+    }
+
+    fn drain(&mut self) {
+        unsafe { (self.lib.drain)(self.pcm) };
     }
 
     fn underruns(&self) -> Option<u64> {
