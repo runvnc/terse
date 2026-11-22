@@ -1,8 +1,10 @@
 # Hello
 
-My first article. It has a heading,
-and this paragraph, written on two lines.
+My first article. It has a heading, and this paragraph,
+which is written on two lines.
 
 ## A subheading
 
-A second paragraph, long enough to show how a reader wraps a line that is wider than its column.
+A reader joins the lines of a paragraph into one,
+then wraps it again to the width of its own column,
+so the lines you see may not be the lines written.
