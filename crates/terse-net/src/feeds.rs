@@ -184,6 +184,14 @@ impl FeedStore {
         Ok(())
     }
 
+    /// Deletes one entry; deleting one that is not stored succeeds.
+    pub fn remove(&self, feed: &FeedKey, seq: u32) -> io::Result<()> {
+        match fs::remove_file(self.feed_dir(feed).join(seq_name(seq))) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+
     /// The profile in force for a feed (NETWORK 4.6): its valid kind-2
     /// entry with the highest `seq`.
     pub fn latest_profile(&self, feed: &FeedKey) -> io::Result<Option<SignedEntry>> {

@@ -2977,6 +2977,7 @@ dependencies = [
 name = "terse-relay"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tempfile",
  "terse-core",
  "terse-net",

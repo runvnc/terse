@@ -54,7 +54,7 @@ use crate::entry::{self, Entry, KIND_ARTICLE, KIND_DOCUMENT, KIND_PROFILE, KIND_
 use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
 use crate::profile::{self, Document, Nicknames};
-use crate::protocol::{MAX_FIND_RESULTS, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
+use crate::protocol::{MAX_FIND_RESULTS, Refusal, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use crate::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use crate::store::{BlobStore, default_store_dir};
 use crate::timeline::{self, Arrivals};
@@ -103,7 +103,11 @@ pub enum Done {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
     Accepted,
-    Refused,
+    /// The relay refused, and why (NETWORK 3.1).
+    Refused(Refusal),
+    /// The relay took the entry but refused its blob (an article's,
+    /// profile's, program's or document's), and why.
+    BlobRefused(Refusal),
     /// No answer, a connection error or an unexpected reply.
     Failed,
     /// Not connected when it was sent, so not sent there.
@@ -114,7 +118,7 @@ impl Delivery {
     fn of(accepted: bool, reply: &RelayReply) -> Self {
         match reply {
             _ if accepted => Delivery::Accepted,
-            RelayReply::Refused => Delivery::Refused,
+            RelayReply::Refused(why) => Delivery::Refused(*why),
             _ => Delivery::Failed,
         }
     }
@@ -205,7 +209,10 @@ enum Op {
     Put { token: Token, id: BlobId, in_flight: usize, reported: bool, outcomes: Vec<(u64, Delivery)> },
     /// An article's (or profile's) blob on its way; its entry (`seq` not yet
     /// assigned) is published once a relay has it.
-    PublishBlob { token: Token, entry: Entry, in_flight: usize },
+    /// `published`: a relay has taken the blob and the entry is on its
+    /// way; the op is kept until every relay has answered, so that a
+    /// relay's refusal of the blob can be told ([`Node::take_delivery`]).
+    PublishBlob { token: Token, entry: Entry, in_flight: usize, published: bool, outcomes: Vec<(u64, Delivery)> },
     /// Done at the first relay that accepts, kept like `Put`.
     Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool, reported: bool, outcomes: Vec<(u64, Delivery)> },
     /// The verified results of each relay that answered, by link.
@@ -305,6 +312,9 @@ pub struct Node {
     /// What each relay did with the last put or entry every relay has
     /// answered.
     delivery: Vec<(String, Delivery)>,
+    /// The relays that refused the blob of a publish in progress, by its
+    /// token, and why.
+    blob_refusals: HashMap<Token, Vec<(u64, Refusal)>>,
     /// See [`Node::set_deliver_to_all`].
     deliver_to_all: bool,
     /// Operations waiting for a relay to be connected, and since when.
@@ -358,6 +368,7 @@ impl Node {
             waiting: HashMap::new(),
             ops: HashMap::new(),
             delivery: Vec::new(),
+            blob_refusals: HashMap::new(),
             deliver_to_all: false,
             next_op: 0,
             ready: Vec::new(),
@@ -839,7 +850,7 @@ impl Node {
         if self.defer(move |n| n.start_publish(token, &copy, later)) {
             return;
         }
-        let op = self.new_op(Op::PublishBlob { token, entry, in_flight: 0 });
+        let op = self.new_op(Op::PublishBlob { token, entry, in_flight: 0, published: false, outcomes: Vec::new() });
         self.send_put(op, data);
     }
 
@@ -1562,7 +1573,7 @@ impl Node {
                 self.events.push(FeedEvent::Subscribed(feed));
                 self.program_downloads(&feed);
             }
-            (Waiting::Subscribe(feed, _), RelayReply::Refused) => {
+            (Waiting::Subscribe(feed, _), RelayReply::Refused(_)) => {
                 // NETWORK 4.9: an own relay that refuses the feed holds none
                 // of it for this client.
                 if self.subscriptions.contains(&feed)
@@ -1642,21 +1653,33 @@ impl Node {
                     self.delivered(outcomes);
                 }
             }
-            Op::PublishBlob { entry, in_flight, .. } => {
+            Op::PublishBlob { token, entry, in_flight, published, outcomes } => {
                 *in_flight -= 1;
                 let accepted = reply == RelayReply::Put(entry.blob);
-                if accepted || *in_flight == 0 {
-                    let Some(Op::PublishBlob { token, entry, .. }) = self.ops.remove(&op_id) else { unreachable!() };
-                    if accepted {
-                        self.publish_entry(token, entry);
-                    } else {
+                outcomes.push((lid, Delivery::of(accepted, &reply)));
+                if let RelayReply::Refused(why) = reply {
+                    self.blob_refusals.entry(*token).or_default().push((lid, why));
+                }
+                let (token, publish) = (*token, accepted && !*published);
+                let entry = publish.then(|| entry.clone());
+                *published |= publish;
+                if let Some(Op::PublishBlob { in_flight: 0, .. }) = self.ops.get(&op_id) {
+                    let Some(Op::PublishBlob { published, outcomes, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    if !published {
+                        // No relay took the blob: what each said is the
+                        // delivery of this publish.
+                        self.blob_refusals.remove(&token);
                         self.ready.push((token, Done::Failed));
+                        self.delivered(outcomes);
                     }
+                }
+                if let Some(entry) = entry {
+                    self.publish_entry(token, entry);
                 }
             }
             Op::Entry { token, signed, in_flight, refused, reported, outcomes } => {
                 *in_flight -= 1;
-                *refused |= reply == RelayReply::Refused;
+                *refused |= matches!(reply, RelayReply::Refused(_));
                 let accepted = reply == RelayReply::Done;
                 outcomes.push((lid, Delivery::of(accepted, &reply)));
                 if accepted && !*reported {
@@ -1665,9 +1688,19 @@ impl Node {
                     self.store_own_entry(token, &signed);
                 }
                 if let Some(Op::Entry { in_flight: 0, .. }) = self.ops.get(&op_id) {
-                    let Some(Op::Entry { token, refused, reported, outcomes, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    let Some(Op::Entry { token, refused, reported, mut outcomes, .. }) = self.ops.remove(&op_id) else {
+                        unreachable!()
+                    };
                     if !reported {
                         self.ready.push((token, if refused { Done::Refused } else { Done::Failed }));
+                    }
+                    // A relay that took the entry but not its blob.
+                    for (lid, why) in self.blob_refusals.remove(&token).unwrap_or_default() {
+                        if let Some(d) = outcomes.iter_mut().find(|(l, _)| *l == lid).map(|(_, d)| d)
+                            && *d == Delivery::Accepted
+                        {
+                            *d = Delivery::BlobRefused(why);
+                        }
                     }
                     self.delivered(outcomes);
                 }
@@ -1685,7 +1718,7 @@ impl Node {
                         _ => {}
                     },
                     RelayReply::NotFound => *not_found = true,
-                    RelayReply::Refused => *refused = true,
+                    RelayReply::Refused(_) => *refused = true,
                     _ => {}
                 }
                 if *in_flight == 0 {
@@ -1712,7 +1745,7 @@ impl Node {
             }
             Op::Find { scope, query, in_flight, refused, found, .. } => {
                 *in_flight -= 1;
-                *refused |= reply == RelayReply::Refused;
+                *refused |= matches!(reply, RelayReply::Refused(_));
                 if let RelayReply::Found(entries) = reply {
                     let kinds: &[u8] = match *scope {
                         SCOPE_FEEDS => &[KIND_PROFILE],

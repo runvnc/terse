@@ -295,7 +295,7 @@ fn publish(args: &Args, r: &Report, doc: &[u8]) -> Result<ExitCode, String> {
             println!("Published: seq {seq} blob {}", terse_net::to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        terse_net::Done::Refused => Err("the relays refused the entry".into()),
+        terse_net::Done::Refused => Err("every relay refused the entry".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }

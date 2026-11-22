@@ -168,11 +168,14 @@ fn find_rate_limit() {
     let got = ask(&mut client, 6);
     assert!(start.elapsed() < std::time::Duration::from_millis(900));
     let found = RelayReply::Found(Vec::new());
-    assert_eq!(got, [found.clone(), found.clone(), found.clone(), found.clone(), RelayReply::Refused, RelayReply::Refused]);
+    assert_eq!(got[..4], [found.clone(), found.clone(), found.clone(), found.clone()]);
+    // NETWORK 3.1: refused with a wait of at most a second.
+    let later = RelayReply::Refused(terse_net::protocol::Refusal::TryLater(std::time::Duration::from_secs(1)));
+    assert_eq!(got[4..], [later.clone(), later]);
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert_eq!(ask(&mut client, 1), [found]);
     // Another connection has its own allowance.
     let mut other = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
     other.connect().unwrap();
-    assert_eq!(ask(&mut other, 4).iter().filter(|r| **r == RelayReply::Refused).count(), 0);
+    assert_eq!(ask(&mut other, 4).iter().filter(|r| matches!(r, RelayReply::Refused(_))).count(), 0);
 }

@@ -76,8 +76,8 @@ order.
 | client → relay | Put | `02h`, `req` (4), blob bytes |
 | relay → client | Put reply | `82h`, `req` (4), `status` (1), `id` (32) if `status` is 1 |
 
-Status: `1` done, `2` not found, `3` refused (too large, empty, store full,
-or malformed request).
+Status: `1` done, `2` not found, `3` and above refused (section 3.1 says
+why).
 
 Message types `01h`–`08h` are requests, `81h`–`86h` and `88h` replies and
 `90h` a pushed entry (sections 4.3, 4.7, 4.8, 5).
@@ -108,9 +108,42 @@ receipt.
   into fragments and reassemble it. Each side must accept messages of up
   to 1,048,582 bytes (the largest in this protocol: a get reply with the
   largest blob) and may close the connection on a larger one.
-- Each side answers pings as RFC 6455 says; neither needs to send any.
+- Each side answers pings as RFC 6455 says. A relay may ping a
+  connection that has been silent for a while (one reached through a
+  proxy that closes idle connections should, every 30 s or more often);
+  a client need not send any.
+- A relay may refuse a connection at the handshake with HTTP status 429
+  (too many connections from the client's address) or 503 (too many
+  connections in all): the client treats it as a failed connection and
+  tries again as section 5.1 says.
 - A client may support only `ws://`: a `wss://` relay it cannot reach is
   then a relay that cannot be reached (section 5.1).
+
+### 3.1 Refusals
+
+A relay that refuses a request says why by the status of its reply, in
+every reply that has a status. The layout of a refused reply is the same
+whatever the status: nothing follows the status (no blob, ID, `highest`
+or entry; a find reply has `count` 0).
+
+| Status | The relay refused because | A client tells its user, for example |
+|---|---|---|
+| `3` | of a reason it does not give: too large, empty, malformed, an invalid entry, a different entry with that `seq` (section 4.3), or any other | "refused it" |
+| `4` | the feed has reached this relay's limit and the entry would be dropped at once (section 5.3) | "this feed is over the relay's limit" |
+| `5` | the relay is full | "the relay is full" |
+| `6` | the feed is not on this relay's list of writers (section 5.3) | "this feed is not on the relay's list of writers" |
+| `7` to `63` | not defined by this revision: a reason the client cannot name | "refused it" |
+| `64` to `183` | too many requests from this address: try again in *s* − 63 seconds (1 to 120) | "too many requests from this address; try again in 30 s" |
+| `184` to `255` | the same, in *s* − 181 minutes (3 to 74) | "... try again in 10 min" |
+
+- A relay rounds a wait up to what the status can say (a wait of 121 s
+  is status `184`, three minutes; a longer one than 74 minutes is
+  `255`). A client does not repeat the request before the wait has
+  passed; it need not repeat it at all.
+- Relays before this revision sent only `3`, and clients before it read
+  every status but `1` and `2` as a refusal: a client reads a status it
+  does not know as `3`. Gets and subscribes are not refused for the
+  reasons of statuses `4` to `255`.
 
 ## 4. Feeds
 
@@ -250,12 +283,13 @@ received first is kept.
   feed when it has received an entry whose `seq` is `highest` or greater
   (whether or not that entry is valid), or immediately if `highest` is not
   greater than `after`.
-- Publish, subscribe and unsubscribe replies use status `1` (done) or `3`
-  (refused). Unsubscribing from a feed that was not subscribed succeeds.
+- Publish, subscribe and unsubscribe replies use status `1` (done) or a
+  refusal (`3` or another of section 3.1). Unsubscribing from a feed that was not subscribed succeeds.
 - `seq` values need not be consecutive, and the time is not checked.
-- A relay may keep only the most recent entries of a feed (at least 256),
-  but always keeps the feed's latest profile entry (the one with the highest
-  `seq`, section 4.6), however old.
+- A relay may keep only the most recent entries of a feed (at least 256,
+  or fewer to keep within a limit in bytes, section 5.3), but always keeps
+  the feed's latest profile entry (the one with the highest `seq`, section
+  4.6), however old.
 
 ### 4.4 Client behaviour
 
@@ -402,8 +436,9 @@ declared name.
 - At most 16 results. A relay answers from what it holds; it needs the
   profile document to know `listed`, so a profile whose document it does
   not hold, or cannot parse, counts as not listed.
-- A relay may refuse a find (status `3`, `count` 0) from a connection that
-  searches too often.
+- A relay may refuse a find (status `3`, or a "try again" status of
+  section 3.1; `count` 0) from a connection or an address that searches
+  too often.
 - **Clients** ask all their relays and merge the replies: they verify every
   returned entry and drop invalid ones, ones of the wrong kind and ones that
   do not match the query, and keep one entry per feed and `seq`. Scope 1:
@@ -427,8 +462,9 @@ declared name.
   that name that it holds (its program entry of that name with the highest
   `seq`, section 4.2), status `1`, or status `2` if it holds none. It
   answers whether or not the feed has a listed profile, or any profile.
-- A relay may refuse a lookup (status `3`) from a connection that asks
-  too often; lookups and finds may share one allowance.
+- A relay may refuse a lookup (status `3`, or a "try again" status of
+  section 3.1) from a connection or an address that asks too often;
+  lookups and finds may share one allowance.
 - **Clients** ask all their connected relays, verify every entry returned
   and drop one that is invalid or not of the feed, kind and name asked
   for, and take the one with the highest `seq`. The entry is stored like
@@ -556,7 +592,10 @@ not hold (yet) names no relays.
 
 - **Put and publish** go to every connected relay. They succeed when at
   least one relay accepts. When publishing an article, the entry is
-  published once a relay has accepted the blob.
+  published once a relay has accepted the blob. A client that tells its
+  user which relays took a put or an entry tells, for each that refused,
+  the reason (section 3.1), and for a relay that took the entry but
+  refused its blob, that.
 - **Subscribe** goes to every connected relay that serves the feed (all of
   the client's own relays, and the feed relays named in the feed's
   profile or by its address's hints), each with `after` set to the
@@ -606,6 +645,62 @@ ordinary messages.
 
 Because a relay passes on only what it newly stores, an entry crosses each
 peer link at most once in each direction.
+
+Each relay keeps to its own limits (section 5.3) for what a peer sends it
+as for what a client sends: a relay with a list of writers refuses a
+peer's entries of other feeds, and one with a limit per feed drops a
+feed's oldest entries whatever its peers hold. Nothing tells a relay that
+a peer dropped an entry or a blob: a relay keeps what it holds until its
+own limits remove it. A relay may exempt the peers it connected to itself
+from its limits per address; a connection that announced itself with Peer
+is a client's for those limits (anyone can send Peer).
+
+### 5.3 What a relay may limit
+
+A relay's limits are its operator's choice. This section says what a
+relay may do, so that clients can rely on everything else and tell their
+users what happened (section 3.1).
+
+- **A feed's bytes.** A relay may limit the bytes of the blobs a feed's
+  entries name: each entry counts its size (section 4.2), so a blob
+  named by entries of two feeds counts for each. When a new entry would
+  put a feed over the limit, the relay drops the feed's oldest entries
+  until it fits, never the latest profile (section 4.3). It refuses the
+  entry (status `4`) if the entry would itself be dropped: it is larger
+  than the limit, or it does not fit beside the latest profile, or it is
+  older than every entry kept. The entry limit of section 4.3 is applied
+  the same way.
+- **Blobs no entry names.** A blob is *named* when an entry the relay
+  holds points at it with the blob's length as its size (section 4.4).
+  A relay may keep a blob that is not named for a limited time only, at
+  least 10 minutes after it was put (a publisher puts the blob, then
+  publishes the entry, section 4.4); a put of the same blob again starts
+  the time again. A relay that removes such blobs answers "not found"
+  (status `2`) to a get of one while it is not named, so that what it
+  serves does not depend on when it collects them. A blob whose last
+  entry is dropped is no longer named and is treated the same way. It
+  may refuse a put (with a "try again" status) when the blobs waiting to
+  be named, in all or from the client's address, take up its allowance.
+  So on such a relay, an article that is reached only by a link from
+  another article (no entry names it) is not kept: a publisher who wants
+  it kept publishes an entry for it too.
+- **Rates per address.** A relay may limit, per client address, the
+  puts and publishes, the bytes put, the entries of feeds it holds
+  nothing of, the finds and lookups, and the connections (statuses `64`
+  to `255`, or HTTP 429 at the handshake). An IPv6 client is counted per
+  /64 or a larger prefix, not per address. A relay behind a proxy takes
+  the client's address from the proxy's header (such as
+  `CF-Connecting-IP` or `X-Forwarded-For`) only for connections from a
+  proxy it was told to trust; from anyone else, the header is ignored.
+- **A list of writers.** A relay may take entries only of the feeds on
+  its list (status `6` for others). Reading is not limited by the list:
+  gets of named blobs, subscribes, finds and lookups are answered for
+  every feed it holds. Since a put carries no key, such a relay takes
+  puts from anyone under the rules for blobs no entry names, and may give
+  an address that none of its listed feeds has published from lately a
+  smaller allowance.
+- **The whole store** (status `5`), as section 3 says.
+
 
 ## 6. What a reading client must and may do
 
@@ -741,5 +836,5 @@ This section concerns only clients that run the Terse machine
   hint with a byte that is not a hint character (such as `+`); readers of
   this one then see the key alone (`ARTICLE.md` section 4.1).
 - Direct connections between clients.
-- Abuse limits beyond blob size and the search rate: on publishing, on
-  peers.
+- Abuse limits beyond those of section 5.3; a list of writers that its
+  writers extend (vouching) instead of the relay's operator.
