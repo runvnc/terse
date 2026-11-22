@@ -138,7 +138,11 @@ const USAGE: &str = "usage:
   the rectangle the panel covers; the GPU renderer always draws them in perspective.
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
-  threads; default one per core), --tube xy|p31|amber|vectrex and --vignette: how the phosphor
+  threads; default one per core), --look mame|classic (default mame: MAME's vector CRT renderer,
+  a sharp beam, MAME's bloom and tone map, its 2 ms persistence; classic: the earlier look with its
+  halo and afterglow), --font-strokes arcade|hershey|drafting|off (the terminal's characters drawn by
+  the beam in that stroke font, default arcade; off: as light), both also read from <config>/look,
+  --tube xy|p31|amber|vectrex and --vignette: how the phosphor
   display style (SPEC §vector.phosphor) is drawn: a colour XY monitor with each line in its colour
   (xy, the default), a green P31 oscilloscope tube, an amber tube or the Vectrex's white tube (the
   monochrome ones show colours as brightness), and with --vignette a glass darker towards the corners.

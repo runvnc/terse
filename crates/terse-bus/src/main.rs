@@ -53,7 +53,7 @@ run` (snapshot files are the same). --screenshot composes the picture after the 
 default the terminal's native size; --eye, the eye for 3D lists); --present-every-frame composes
 every frame (as a window does) and --bench then times it too. --window shows the picture in a window
 (F12 is the home key, Ctrl+V or Shift+Insert pastes; with --parallax pointer the eye follows the
-pointer). A machine in the phosphor style is drawn as terse-host draws it: --tube, --vignette,
+pointer). A machine in the phosphor style is drawn as terse-host draws it: --look, --font-strokes, --tube, --vignette,
 --no-trails, --force-phosphor and --no-shed as terse-host's (in a window the look is shed when frames
 run long, unless --no-shed); a --screenshot draws the last 600 frames to build up the afterglow; --selftest runs --frames frames (default 300) in the window with the scripted input only and
 prints the emulation, bus, composition and present-interval timings; --resize gives the window's surface each size before
