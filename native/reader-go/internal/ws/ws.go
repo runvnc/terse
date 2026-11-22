@@ -83,6 +83,7 @@ func tlsFailure(err error) error {
 	var authErr x509.UnknownAuthorityError
 	var certErr x509.CertificateInvalidError
 	var recErr tls.RecordHeaderError
+	var verErr *tls.CertificateVerificationError
 	switch {
 	case errors.As(err, &hostErr):
 		return fmt.Errorf("the relay's certificate is for another name (%w)", err)
@@ -91,6 +92,10 @@ func tlsFailure(err error) error {
 	case errors.As(err, &certErr) && certErr.Reason == x509.Expired:
 		return fmt.Errorf("the relay's certificate has expired or is not valid yet: %w", err)
 	case errors.As(err, &certErr):
+		return fmt.Errorf("the relay's certificate is not trusted: %w", err)
+	case errors.As(err, &verErr):
+		// A system's own verifier (macOS, Windows) refuses in its own
+		// words, with none of the types above.
 		return fmt.Errorf("the relay's certificate is not trusted: %w", err)
 	case errors.As(err, &recErr):
 		return errors.New("this relay does not speak TLS (try ws://)")
