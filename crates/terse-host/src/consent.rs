@@ -155,6 +155,14 @@ pub fn with_prompt(shown: &Terminal, program: &str, prompt: &Prompt, waiting: us
     t
 }
 
+/// A notice of the host's (`PERFORMANCE.md` R15): a heading and two lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub heading: String,
+    pub what: String,
+    pub then: String,
+}
+
 /// `shown` with the host's notice in its bottom rows (`PERFORMANCE.md`
 /// R15: a device that does not keep up): a heading and two lines. Like
 /// the prompt it is the host's own drawing, over everything a program

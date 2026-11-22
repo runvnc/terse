@@ -59,6 +59,8 @@ pub mod soft;
 #[cfg(feature = "gpu")]
 mod vectors;
 pub mod hwcheck;
+pub mod halt;
+pub mod rule;
 pub mod watch;
 
 use std::collections::HashMap;
@@ -105,7 +107,11 @@ const USAGE: &str = "usage:
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
   terse-host --version
   Every form takes --perf-log <dir>|off: where the performance record goes (RECORD.md; default: <data>/perf
-  for a window, none otherwise; it never leaves this computer). --version prints the host's name, version
+  for a window, none otherwise; it never leaves this computer), and --perf-rule on|off: whether the rule
+  acts (PERFORMANCE.md R15; default on in a window, off for --selftest): the look is shed first; a machine
+  that keeps making frames late is saved at 3 late frames within 60 and saved and stopped (halted) at 10
+  within 300 (a machine alone: exit status 4); the host's own drawing is warned about and, with nothing
+  left to shed, recorded as not keeping up. --version prints the host's name, version
   and build identifier, then its fonts.
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
@@ -191,6 +197,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let mut hardware_check = false;
     let started = std::time::Instant::now();
     let mut perf_log: Option<Option<PathBuf>> = None;
+    let mut perf_rule: Option<bool> = None;
     let (mut relays, mut store, mut config, mut events) = (Vec::new(), None, None, None);
     let (mut feed_relays, mut prefetch, mut program_download, mut data) = (true, true, true, None);
     let (mut consent, mut demo) = (None, false);
@@ -253,6 +260,13 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 let v = it.next().ok_or(USAGE)?;
                 perf_log = Some(if v == "off" { None } else { Some(PathBuf::from(v)) });
             }
+            "--perf-rule" => {
+                perf_rule = Some(match it.next().ok_or(USAGE)?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("bad --perf-rule {v} (on or off)")),
+                });
+            }
             "--shell" => shell_flag = true,
             "--builtin" => extra_builtins.push(it.next().ok_or(USAGE)?),
             "--consent" => {
@@ -308,6 +322,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             perf: None,
             started,
             check: None,
+            rule: false,
         };
         let t = std::time::Instant::now();
         let c = hwcheck::run(&looks)?;
@@ -321,6 +336,8 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         return Err(USAGE.into());
     }
     let windowed = !selftest && !bench && screenshot.is_none();
+    // The rule acts in a window; a self-test only records unless told.
+    let rule = perf_rule.unwrap_or(windowed);
     // No image: the built-in shell. --shell: the image named (if any) is
     // the shell.
     let shell = shell_flag || image_path.is_none();
@@ -456,7 +473,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             let _ = (script, frames, csv);
             SelfTestStub
         };
-        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
         return run_window(program, content, Some(test), looks);
     }
     if csv.is_some() {
@@ -472,14 +489,14 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
     };
     if bench {
-        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None };
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
         let mode = Headless::Bench { warmup: warmup.unwrap_or(60), frames: frames.unwrap_or(0), sweep };
         run_headless(program, content, script()?, mode, size, looks)?;
         return Ok(ExitCode::SUCCESS);
     }
     match (screenshot, frames) {
         (Some(out), Some(frames)) => {
-            let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None };
+            let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: None, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
             let mode = Headless::Screenshot { frames };
             let (pixels, (width, height), frame) = run_headless(program, content, script()?, mode, size, looks)?.expect("a picture");
             write_png(Path::new(&out), &pixels, (width, height))?;
@@ -487,7 +504,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         (None, None) if events.is_none() => {
-            let mut looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None };
+            let mut looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
             // R16: the worst legal frames, drawn once per build and computer.
             if let Some((check, cached)) = hwcheck::cached(&looks, hwcheck::default_cache()) {
                 if !cached {
@@ -564,6 +581,9 @@ pub struct Looks {
     pub started: std::time::Instant,
     /// The start-up hardware check (R16), if one was made.
     pub check: Option<hwcheck::Check>,
+    /// Whether the rule acts (`--perf-rule`, PERFORMANCE.md R15): sheds,
+    /// warns and saves, stops; otherwise it only records.
+    pub rule: bool,
 }
 
 /// The terminal to draw: an image without device 2 shows a blank grid.

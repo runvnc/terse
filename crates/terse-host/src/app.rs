@@ -32,6 +32,57 @@ use crate::{FONT_PX, Looks, Program, fault_exit};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
+/// How long a notice of the host's stays (frames).
+const NOTICE_FRAMES: u64 = 300;
+
+/// The host's own part, for the user.
+fn host_part(c: terse_perflog::Component) -> &'static str {
+    use terse_perflog::Component;
+    match c {
+        Component::Compose => "Drawing the picture",
+        Component::Present => "Presenting the picture",
+        Component::Outside => "Something outside Tersenet (the window system)",
+        _ => "Tersenet's own frame work",
+    }
+}
+
+/// What `TERSE_HOST_SLOW` slows, for tests of the rule (PERFORMANCE.md
+/// R15): `machine<h>:<ms>:<frame>`, machine h's frames (0: the shell or the
+/// machine alone) each sleep ms milliseconds from the host's frame on;
+/// `compose:<ms>:<frame>`, the drawing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlowPart {
+    Machine(u8),
+    Compose,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slow {
+    what: SlowPart,
+    ms: u64,
+    from: u64,
+}
+
+impl Slow {
+    fn parse(s: &str) -> Option<Slow> {
+        let mut f = s.split(':');
+        let what = match f.next()? {
+            "compose" => SlowPart::Compose,
+            m => SlowPart::Machine(m.strip_prefix("machine")?.parse().ok()?),
+        };
+        Some(Slow { what, ms: f.next()?.parse().ok()?, from: f.next().map_or(Some(0), |v| v.parse().ok())? })
+    }
+
+    fn from_env() -> Option<Slow> {
+        let v = std::env::var("TERSE_HOST_SLOW").ok()?;
+        let s = Slow::parse(&v);
+        if s.is_none() {
+            eprintln!("terse-host: TERSE_HOST_SLOW={v} not understood (machine<h>:<ms>:<frame> or compose:<ms>:<frame>)");
+        }
+        s
+    }
+}
+
 
 /// Runs `program` in a window. With `selftest`, input comes only from its
 /// script and the host measures itself (see `selftest.rs`).
@@ -80,8 +131,8 @@ pub fn run(
         content,
         fetching: Vec::new(),
         page_thread: None,
+        governor: crate::phosphor::Governor::at(looks.look.floor),
         looks,
-        governor: Default::default(),
         title,
         shell_title: program.image.title_lossy(),
         paste: VecDeque::new(),
@@ -105,6 +156,11 @@ pub fn run(
         trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
         fault_shown: false,
         watch,
+        data: program.data.clone(),
+        slow: Slow::from_env(),
+        notice: None,
+        halted: None,
+        monitor: None,
         #[cfg(feature = "audio")]
         audio,
     };
@@ -114,6 +170,13 @@ pub fn run(
     }
     if let Some(t) = &app.selftest {
         t.report(app.refresh_hz);
+    }
+    // Stopped by the host (PERFORMANCE.md R15): exit status 4 (STATE.md 6.4).
+    if let Some((slot, saved)) = &app.halted {
+        eprintln!("terse-host: stopped by the host: device {slot} did not keep up; its state before the stop: {saved}");
+        return Ok(ExitCode::from(4));
+    }
+    if app.selftest.is_some() {
         return Ok(ExitCode::SUCCESS);
     }
     let shell = app.system.shell();
@@ -433,10 +496,16 @@ struct FrameDriver<'a> {
     /// The machines that ran a frame (serials).
     ran: Vec<u32>,
     trace: bool,
+    /// Times each machine's frame (PERFORMANCE.md R14).
+    watch: &'a mut crate::watch::HostWatch,
+    slow: Option<Slow>,
 }
 
 impl Driver for FrameDriver<'_> {
     fn frame(&mut self, who: Who, machine: &mut Machine, events: Vec<Event>, controllers: [Controller; CONTROLLERS]) -> FrameResult {
+        self.watch.machine_begin();
+        let t0 = Instant::now();
+        let mut page_time = Duration::ZERO;
         let (page_thread, looks) = (&mut *self.page_thread, self.looks);
         let io = self.io.entry(who.serial).or_insert_with(|| MachineIo {
             // SPEC §page.layout: pages are laid out on a thread of their own.
@@ -452,6 +521,7 @@ impl Driver for FrameDriver<'_> {
         });
         let mut input = std::mem::take(&mut io.carry);
         // SPEC §page.events: a layout of the current page finished: its height first.
+        let t = Instant::now();
         if let Some(worker) = &mut io.page
             && let Ok(page_events) = worker.poll(machine.page())
             && !page_events.is_empty()
@@ -461,6 +531,7 @@ impl Driver for FrameDriver<'_> {
             }
             input.splice(0..0, page_events);
         }
+        page_time += t.elapsed();
         for e in events {
             input.push(e);
             // A press over anchored text, as the page is shown now.
@@ -482,18 +553,31 @@ impl Driver for FrameDriver<'_> {
         let frame =
             FrameInput { events: &input, unix_time: self.unix_time, random: &io.random, completions: &completions, controllers };
         let result = machine.run_frame(&frame);
+        // The test hook (TERSE_HOST_SLOW): this machine's frames take longer.
+        if let Some(Slow { what: SlowPart::Machine(h), ms, from }) = self.slow
+            && h == who.handle
+            && self.watch.frame >= from
+        {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
+        let t = Instant::now();
         if let Some(worker) = &mut io.page
             && let Some(e) = worker.after_frame(machine.page())
         {
             io.carry.push(e);
         }
+        page_time += t.elapsed();
         if getrandom::fill(&mut io.random[..result.random_used]).is_err() {
             io.random[..result.random_used].fill(0);
         }
+        let t = Instant::now();
         if let Some(content) = self.content.as_mut() {
             content.submit_machine(who.serial, machine);
         }
+        let content_time = t.elapsed();
         self.ran.push(who.serial);
+        let all = t0.elapsed();
+        self.watch.machine_end(who.serial, *machine.image_id(), [all.saturating_sub(page_time + content_time), page_time, content_time]);
         result
     }
 
@@ -587,8 +671,19 @@ struct App {
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
     trace: bool,
     fault_shown: bool,
-    /// The watch over the host's own stages (PERFORMANCE.md R14).
+    /// The watch over the host's frames (PERFORMANCE.md R14, R15).
     watch: crate::watch::HostWatch,
+    /// The data directory: the shell's snapshots, the automatic slots.
+    data: std::path::PathBuf,
+    /// `TERSE_HOST_SLOW`, for tests.
+    slow: Option<Slow>,
+    /// The host's notice (R15) and the host frame after which it goes.
+    notice: Option<(crate::consent::Notice, u64)>,
+    /// The device whose slowness stopped the shell or the machine alone,
+    /// and where its snapshot went: the run ends with status 4.
+    halted: Option<(u8, String)>,
+    /// The monitor the window was last on (a change excuses frames).
+    monitor: Option<winit::monitor::MonitorHandle>,
     /// The sound device's output (SPEC §sound.presentation), opened when a machine
     /// first gives samples.
     #[cfg(feature = "audio")]
@@ -679,6 +774,8 @@ impl App {
             unix_time,
             ran: Vec::new(),
             trace: self.trace,
+            watch: &mut self.watch,
+            slow: self.slow,
         };
         // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
@@ -687,6 +784,7 @@ impl App {
         #[cfg(feature = "audio")]
         self.audio.frame(&mut self.system);
         self.pending.clear();
+        self.watch.emulated();
         let emulate = start.elapsed();
         let start = Instant::now();
         if let Some(gfx) = &mut self.gfx {
@@ -740,6 +838,103 @@ impl App {
             }
         } else if shell.stopped().is_some() {
             event_loop.exit();
+        }
+    }
+
+    /// The window moved to another monitor, or its scale changed: the
+    /// next frames are excused (PERFORMANCE.md R15).
+    fn monitor_changed(&mut self) {
+        self.watch.excuse(crate::rule::Excuse::Monitor);
+        let size = self.gfx.as_ref().map_or((0, 0), |g| g.viewport());
+        self.watch.add(terse_perflog::Line::resize(self.watch.frame, size, "monitor"));
+    }
+
+    /// Machine `h`'s name for the user.
+    fn machine_name(&self, h: u8) -> String {
+        match h {
+            0 if self.is_system() => "the shell".to_string(),
+            0 => format!("“{}”", self.shell_title),
+            h => format!("machine {h} (“{}”)", self.system.child(h).map_or("", |c| c.title.as_str())),
+        }
+    }
+
+    fn show_notice(&mut self, heading: &str, what: String, then: &str) {
+        let n = crate::consent::Notice { heading: heading.into(), what, then: then.into() };
+        if let Some(gfx) = &mut self.gfx {
+            gfx.display_mut().set_notice(Some(n.clone()));
+        }
+        self.notice = Some((n, self.watch.frame + NOTICE_FRAMES));
+    }
+
+    fn expire_notice(&mut self) {
+        if self.notice.as_ref().is_some_and(|(_, until)| *until < self.watch.frame) {
+            self.notice = None;
+            if let Some(gfx) = &mut self.gfx {
+                gfx.display_mut().set_notice(None);
+            }
+        }
+    }
+
+    /// Carries out what the rule asks (PERFORMANCE.md R15), as terse-bus
+    /// does: shed the look; warn and save the machine at once; save and
+    /// stop it. The host's own parts are warned about and, with nothing
+    /// left to shed and nobody to stop, recorded as not keeping up.
+    fn act(&mut self, event_loop: &ActiveEventLoop, acts: Vec<crate::rule::Act>) {
+        use crate::rule::{Act, Culprit};
+        use terse_perflog::{Component, Line};
+        let frame = self.watch.frame.saturating_sub(1);
+        for a in acts {
+            match a {
+                Act::Shed => {
+                    if let Some(floor) = self.governor.shed() {
+                        self.looks.look.floor = floor;
+                        self.watch.shed(floor, "late");
+                        if let Some(gfx) = &mut self.gfx {
+                            gfx.display_mut().set_look(self.looks.look);
+                        }
+                        eprintln!("terse-host: the drawing made a frame late: the phosphor look sheds from level {floor}");
+                    }
+                }
+                Act::Warn { culprit: Culprit::Machine(serial), count } => {
+                    let Some(h) = crate::halt::handle(&self.system, serial) else { continue };
+                    let what = self.machine_name(h);
+                    self.watch.add(Line::Warn { frame, component: Component::Core, count });
+                    // Save at once, while it still runs.
+                    let (_, saved) = crate::halt::save(&mut self.system, &self.data, self.watch.dir.as_deref(), h);
+                    eprintln!("terse-host: {what} is slow ({count} late frames): your work is saved ({saved}); if it goes on, it is stopped");
+                    self.show_notice("a slow machine", format!("{what} is slow: {count} late frames."), "Its work is saved; if it goes on, it is stopped.");
+                }
+                Act::Stop { culprit: Culprit::Machine(serial), count } => {
+                    self.watch.rule.forget(Culprit::Machine(serial));
+                    let Some(h) = crate::halt::handle(&self.system, serial) else { continue };
+                    let what = self.machine_name(h);
+                    let slot = self.watch.slot_of(serial);
+                    let (saved, d) = crate::halt::save(&mut self.system, &self.data, self.watch.dir.as_deref(), h);
+                    let image = self.system.machine_by_serial(serial).map(|(_, m)| *m.image_id());
+                    self.watch.add(Line::Stop { frame, component: Component::Core, machine: h as u32, image: terse_perflog::record::image_field(image.as_ref()), saved });
+                    crate::halt::halt(&mut self.system, h, slot);
+                    eprintln!("terse-host: {what} did not keep up ({count} late frames): machine {h} stopped; {d}");
+                    self.show_notice("a machine did not keep up", format!("{what} did not keep up: {count} late frames."), "It was saved and stopped.");
+                    if h == 0 {
+                        self.halted = Some((slot, d));
+                        event_loop.exit();
+                    }
+                }
+                Act::Warn { culprit: Culprit::Host(c), count } => {
+                    self.watch.add(Line::Warn { frame, component: c, count });
+                    let what = host_part(c);
+                    eprintln!("terse-host: {what} made {count} frames late (`terse perf log` shows the record)");
+                    self.show_notice("this computer is slow", format!("{what} made {count} frames late."), "A smaller window may help; the record shows it (terse perf log).");
+                }
+                Act::Stop { culprit: Culprit::Host(c), count } => {
+                    // Nothing left to shed and nobody else to stop: said
+                    // plainly, recorded, and counted against this host.
+                    self.watch.add(Line::fail(frame, c, count));
+                    let what = host_part(c);
+                    eprintln!("terse-host: {what} does not keep up on this computer ({count} late frames, nothing left to shed): this terse-host fails PERFORMANCE.md R15 here; `terse-host --hardware-check` and `terse perf` show why");
+                    self.show_notice("Tersenet does not keep up here", format!("{what} does not keep up on this computer: {count} late frames."), "Recorded as this host's failure. A smaller window may help.");
+                }
+            }
         }
     }
 
@@ -901,6 +1096,7 @@ impl ApplicationHandler for App {
                     .current_monitor()
                     .and_then(|m| m.refresh_rate_millihertz())
                     .map(|mhz| mhz as f64 / 1000.0);
+                self.monitor = gfx.window.current_monitor();
                 self.gfx = Some(gfx);
             }
             Err(e) => {
@@ -918,15 +1114,42 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = &mut self.gfx {
+                    // A real change of the surface's size: the next frames
+                    // are excused (PERFORMANCE.md R15).
+                    if size.width > 0 && size.height > 0 && gfx.viewport() != (size.width, size.height) {
+                        self.watch.excuse(crate::rule::Excuse::Size);
+                        self.watch.add(terse_perflog::Line::resize(self.watch.frame, (size.width, size.height), "size"));
+                    }
                     gfx.resize(size);
                     gfx.window.request_redraw();
                 }
             }
+            WindowEvent::ScaleFactorChanged { .. } => self.monitor_changed(),
+            WindowEvent::Moved(_) => {
+                let now = self.gfx.as_ref().and_then(|g| g.window.current_monitor());
+                if now.is_some() && self.monitor.is_some() && now != self.monitor {
+                    self.monitor_changed();
+                }
+                if now.is_some() {
+                    self.monitor = now;
+                }
+            }
             WindowEvent::RedrawRequested => {
+                self.watch.drawing();
+                // The test hook (TERSE_HOST_SLOW): the drawing takes longer.
+                let slept = match self.slow {
+                    Some(Slow { what: SlowPart::Compose, ms, from }) if self.watch.frame >= from && !self.occluded => {
+                        let t = Instant::now();
+                        std::thread::sleep(Duration::from_millis(ms));
+                        t.elapsed()
+                    }
+                    _ => Duration::ZERO,
+                };
                 if !self.occluded
                     && let Some(gfx) = &mut self.gfx
                     && let Some((acquire, render)) = gfx.draw()
                 {
+                    let render = render + slept;
                     if self.trace {
                         for line in gfx.display_mut().take_page_figure_log() {
                             eprintln!("page: frame {}: {line}", self.system.shell().frame());
@@ -934,9 +1157,6 @@ impl ApplicationHandler for App {
                     }
                     if let Some(t) = &mut self.selftest {
                         t.presented(acquire, render, Instant::now());
-                    }
-                    for line in self.watch.presented(acquire, render) {
-                        eprintln!("{line}");
                     }
                     // A frame that took longer than a frame to draw sheds
                     // more of the look (presentation only).
@@ -949,6 +1169,13 @@ impl ApplicationHandler for App {
                         gfx.display_mut().set_look(self.looks.look);
                         eprintln!("terse-host: frames ran long or caught up: the phosphor look sheds from level {floor}");
                     }
+                    let can_shed = !self.looks.look.no_shed && self.governor.can_shed();
+                    if let Some(judged) = self.watch.presented(acquire, render, can_shed)
+                        && self.looks.rule
+                    {
+                        self.act(event_loop, judged.acts);
+                    }
+                    self.expire_notice();
                 }
             }
             WindowEvent::Occluded(hidden) => {

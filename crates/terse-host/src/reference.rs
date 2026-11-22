@@ -44,6 +44,7 @@ fn looks() -> Option<Looks> {
         perf: None,
         started: std::time::Instant::now(),
         check: None,
+        rule: false,
         panels: crate::soft::panel::PanelMode::Perspective,
     })
 }

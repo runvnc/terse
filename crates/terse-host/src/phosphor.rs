@@ -179,6 +179,28 @@ pub const LATE_FRAMES: u32 = 3;
 pub const GOOD_FRAMES: u32 = 120;
 
 impl Governor {
+    /// A governor whose least level is `floor` (the hardware check's, R16).
+    pub fn at(floor: u8) -> Governor {
+        Governor { floor: floor.min(SHED_PLAIN), late: 0, good: 0 }
+    }
+
+    /// Whether a level is left to shed.
+    pub fn can_shed(&self) -> bool {
+        self.floor < SHED_PLAIN
+    }
+
+    /// One level more at once: the rule's first step for a frame whose
+    /// drawing was blamed (`PERFORMANCE.md` R15). Returns the new floor.
+    pub fn shed(&mut self) -> Option<u8> {
+        if !self.can_shed() {
+            return None;
+        }
+        self.late = 0;
+        self.good = 0;
+        self.floor += 1;
+        Some(self.floor)
+    }
+
     /// Takes how long a frame took to draw and present; returns the new
     /// floor if it changed.
     pub fn presented(&mut self, took: std::time::Duration) -> Option<u8> {
