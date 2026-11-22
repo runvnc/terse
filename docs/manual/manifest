@@ -29,6 +29,7 @@ guide-drawing
 guide-drawing-rust
 guide-game
 guide-game-rust
+guide-test
 guide-host
 guide-host-go
 guide-host-rust
@@ -52,6 +53,7 @@ toolchain-c
 toolchain-rust
 toolchain-other
 running-programs
+testing
 using
 using-reader
 fonts

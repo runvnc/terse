@@ -112,6 +112,6 @@ Two games come with Tersenet, both in C, and both are this loop grown up. `progr
 
 ## What you have now
 
-A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:{guide-game-rust}), or the next part of the guide, a host of your own: [Make a host, step 1: run a program to its end](terse:{guide-host}).
+A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:{guide-game-rust}), or test a program in its real window: [Test your program in its window](terse:{guide-test}).
 
 Random bytes, controllers and the clock are in [The system device](terse:{device-system}).

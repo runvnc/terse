@@ -1,0 +1,9 @@
+settle
+expect vectors contains line 5120 6400 5120 1280
+shot start.png
+press left
+press left
+settle
+expect vectors contains line 5120 6400 4800 1280
+expect idle 30
+shot left.png
