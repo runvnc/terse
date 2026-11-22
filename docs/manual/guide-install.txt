@@ -51,12 +51,12 @@ With Rust (rustup.rs) and git, on Linux, macOS or Windows:
 ```
 git clone https://github.com/runvnc/terse
 cd terse
-cargo install --locked --path crates/terse-host --features audio
+cargo install --locked --path crates/terse-host
 cargo install --locked --path crates/terse-cli
 cargo install --locked --path crates/terse-relay
 ```
 
-That puts the three programs in `~/.cargo/bin`. On Linux the window needs the ALSA (sound) and udev (game controllers) headers to build: `libasound2-dev libudev-dev pkg-config` on Debian and Ubuntu. Leave out `--features audio` for a window without sound.
+That puts the three programs in `~/.cargo/bin`. On Linux the window needs the udev headers (game controllers) to build: `libudev-dev pkg-config` on Debian and Ubuntu. Sound needs nothing to build: it is loaded when a program first plays.
 
 ## What you have now
 

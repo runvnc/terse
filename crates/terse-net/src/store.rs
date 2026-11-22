@@ -143,16 +143,16 @@ impl BlobStore {
     }
 }
 
-/// `$<xdg>/terse`, else `~/<home_sub>/terse` (`%<windows>%\terse` on Windows).
+/// `$<xdg>/terse`, else `~/<home_sub>/terse` (`%<windows>%\terse` on
+/// Windows). The XDG variable, when set to an absolute path, is used on
+/// every system, Windows included: it is how a test or a second profile
+/// keeps away from the user's own folders.
 fn user_dir(windows: &str, xdg: &str, home_sub: &str) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
-    let base = if cfg!(windows) {
-        std::env::var_os(windows).and_then(absolute)?
-    } else {
-        match std::env::var_os(xdg).and_then(absolute) {
-            Some(p) => p,
-            None => std::env::var_os("HOME").and_then(absolute)?.join(home_sub),
-        }
+    let base = match std::env::var_os(xdg).and_then(absolute) {
+        Some(p) => p,
+        None if cfg!(windows) => std::env::var_os(windows).and_then(absolute)?,
+        None => std::env::var_os("HOME").and_then(absolute)?.join(home_sub),
     };
     Some(base.join("terse"))
 }

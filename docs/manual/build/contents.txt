@@ -4,13 +4,13 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## User guide
 
-- [Install Tersenet](terse:e7865503eaf22981292b1eb7e76ebb2a53e1487cf2a45684937adc4117fb451d): one command on Linux and macOS, a zip on Windows, or from the source.
-- [Run Tersenet](terse:883b42cd4e1382253bc3368bf972169c7127b99302c8fdb3af510b222ae5b5a5): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:7b10fe64f3f9f8bb6004c0f363621260ec9fecdedba860649e25921dbcf576c6): your key, your name and your address; no account needed.
-- [Write and publish an article](terse:e511808f1510e3fb32dc3953e1693ab9890e3d554e10debf32ff90208f58841d): a plain text file, how it compares with Markdown, and your feed.
-- [Read articles and follow links](terse:5fd9aa739297f73ba6e3c7ad0cd49c630937ef9a0f7650a1845ba5a6120c2d2d): the timeline, links and search.
-- [Subscribe to someone's feed](terse:53b3c4643d0b05902f7bc0e5851dce86c0941b494dc535afbb20ddf65d7266af): a shared relay, by address or by name, nicknames.
-- [Find and play a game](terse:60ea52b6fffad00d5a88d920eccfc22c55a9636376af154aadac7e99c1b77adb): the built-in game, programs from feeds and links, saving your place.
+- [Install Tersenet](terse:6e944fd086d758fc88ae41e56c252cf699c720a99f09d1733a0773be09b89c75): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:612dbb8e28a3fcec038eaccdd90071e75ebfa1a61977844589c818da5d76ddf4): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:1a0b0b613f5f5349dc792f2aa0722f61719b951e564e4b901438ba509e3b7c39): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:0718bd9d1514a70048372c43c31689ba7b01264101658ed06a79418800e36521): a plain text file, how it compares with Markdown, and your feed.
+- [Read articles and follow links](terse:3064f6acb0474839f5e1c75ffc182abad962ca4120275d5cf777f2259bb1a473): the timeline, links and search.
+- [Subscribe to someone's feed](terse:e7ab0fe4a79fd32c968adf69d3c03a5549a010aecefea8be64848d012a9548bf): a shared relay, by address or by name, nicknames.
+- [Find and play a game](terse:ad3ac2f372a7a135dc5d3f1baf54545edb88c33898bf333ab874ee03a124a7ef): the built-in game, programs from feeds and links, saving your place.
 
 ## Implementation guide
 
