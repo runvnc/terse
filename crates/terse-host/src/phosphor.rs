@@ -443,8 +443,10 @@ impl Look {
     /// Vectrex 15; the colour tube MAME's 2), none with `no_trails` (the
     /// phosphor starts afresh each frame).
     pub fn mame_params(&self, no_trails: bool) -> crate::mame::Params {
-        let mut p = crate::mame::Params::from_env();
-        if std::env::var_os("TERSE_MAME_PERSISTENCE").is_none() && self.preset != Preset::Xy {
+        // The environment is read once (the look is asked for every frame).
+        static ENV: std::sync::OnceLock<(crate::mame::Params, bool)> = std::sync::OnceLock::new();
+        let &(mut p, persistence_set) = ENV.get_or_init(|| (crate::mame::Params::from_env(), std::env::var_os("TERSE_MAME_PERSISTENCE").is_some()));
+        if !persistence_set && self.preset != Preset::Xy {
             p.persistence = self.preset.fast_tau();
         }
         if no_trails {
