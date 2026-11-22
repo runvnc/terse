@@ -826,7 +826,7 @@ in the record's directory, `stopped-<image>.tsnp`, whose path the host
 prints. Since the warning already saved one, the user loses at most what
 the machine did between the warning and the stop (at most 300 frames,
 five seconds) if the stop's snapshot cannot be taken; otherwise nothing.
-A periodic snapshot was the other way: about 1.4 MB copied per machine
+A periodic snapshot was the other way: up to 1.3 MB copied per machine
 each time, for every run, to cover a case the warning's snapshot already
 covers.
 
