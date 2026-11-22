@@ -36,6 +36,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout as stored
+        # .gitattributes turns off line-ending conversion: no file may be
+        # checked out with CRLF where the repository has LF.
+        run: |
+          git config --show-origin --get-all core.autocrlf || true
+          if git ls-files --eol | grep -E "i/lf +w/crlf"; then exit 1; fi
+
       - name: Rust
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -49,6 +56,42 @@ jobs:
           # udev (game controllers) and ALSA for the host's window and sound.
           sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
 
+      - name: What macOS says of a spinning process (diagnostic)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          d=$(mktemp -d)
+          cat > "$d/spin.c" <<'C'
+          #include <libproc.h>
+          #include <mach/mach_time.h>
+          #include <signal.h>
+          #include <stdio.h>
+          #include <sys/resource.h>
+          #include <sys/sysctl.h>
+          #include <time.h>
+          #include <unistd.h>
+          static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
+          int main(void) {
+              mach_timebase_info_data_t tb; mach_timebase_info(&tb);
+              int ncpu = 0; size_t n = sizeof ncpu; sysctlbyname("hw.ncpu", &ncpu, &n, NULL, 0);
+              printf("timebase %u/%u, %d CPUs\n", tb.numer, tb.denom, ncpu);
+              pid_t c = fork();
+              if (!c) for (;;) { double u = now() + 0.040; while (now() < u) {} usleep(10000); }
+              double k = (double)tb.numer / tb.denom / 1e6;
+              for (int i = 0; i < 12; i++) {
+                  struct rusage_info_v4 a, b;
+                  proc_pid_rusage(c, RUSAGE_INFO_V4, (rusage_info_t *)&a);
+                  double t0 = now(); usleep(100000); double t1 = now();
+                  proc_pid_rusage(c, RUSAGE_INFO_V4, (rusage_info_t *)&b);
+                  unsigned long long cpu = b.ri_user_time + b.ri_system_time - a.ri_user_time - a.ri_system_time, run = b.ri_runnable_time - a.ri_runnable_time;
+                  printf("wall %6.1f ms  cpu %6.1f ms  runnable %6.1f ms  (raw %llu, %llu)\n", (t1 - t0) * 1e3, cpu * k, run * k, cpu, run);
+              }
+              kill(c, SIGKILL);
+              return 0;
+          }
+          C
+          cc -O2 -o "$d/spin" "$d/spin.c" && "$d/spin"
+
       - name: Build
         run: cargo build --locked --workspace --all-targets
 
@@ -56,40 +99,41 @@ jobs:
         run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, every end sleeping on the socket, no process timing
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TERSE_BUS_WAKE: socket
           TERSE_PERF_PROBE: none
         run: cargo test --locked -p terse-bus -p terse-devices -p terse-perflog --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, the socket transport only
+        if: ${{ !cancelled() }}
         env:
           TERSE_BUS_TRANSPORT: socket
         run: cargo test --locked -p terse-devices --no-fail-fast -- --test-threads 4
 
       - name: Release programs for the native tests
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: cargo build --locked --release -p terse-bus -p terse-devices -p terse-cli -p terse-relay --bins
 
       - name: C core (native/core-c)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: |
           cd native/core-c
           make
           ./test.sh
 
       - name: Example driver (native/driver-example)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: native/driver-example/test.sh
 
       - uses: actions/setup-go@v5
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         with:
           go-version-file: native/reader-go/go.mod
           cache: false
 
       - name: Go reader (native/reader-go)
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TERSE_BIN_DIR: ${{ github.workspace }}/target/release
         run: |
