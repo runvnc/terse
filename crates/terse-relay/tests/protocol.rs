@@ -73,7 +73,7 @@ fn refuses_empty_oversize_and_over_limit_blobs() {
     assert_eq!(ask(&mut ws, protocol::encode_put(2, &vec![1; MAX_BLOB + 1])), refused(2));
     let full = vec![2; MAX_BLOB];
     assert_eq!(ask(&mut ws, protocol::encode_put(3, &full)), protocol::encode_put_reply(3, status::DONE, &blob_id(&full)));
-    assert_eq!(ask(&mut ws, protocol::encode_put(4, &[3; 11])), refused(4), "store limit");
+    assert_eq!(ask(&mut ws, protocol::encode_put(4, &[3; 11])), vec![PUT_REPLY, 4, 0, 0, 0, status::RELAY_FULL], "store limit (NETWORK 3.1)");
     assert_eq!(ask(&mut ws, protocol::encode_put(5, &[3; 10]))[5], status::DONE, "exactly at the limit");
     assert_eq!(ask(&mut ws, protocol::encode_put(6, &full))[5], status::DONE, "already stored");
 }
