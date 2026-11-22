@@ -35,5 +35,5 @@ pub mod report;
 pub mod summary;
 
 pub use identity::Identity;
-pub use judge::{Action, Component, FrameSample, Judge, Late, Part, Rule, Verdict};
+pub use judge::{Action, Component, FrameSample, Judge, Late, Part, Rule, Step, Tally, Verdict};
 pub use record::{Line, Recorder};

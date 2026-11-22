@@ -226,36 +226,18 @@ impl Default for Rule {
 #[derive(Clone, Debug, Default)]
 pub struct Judge {
     pub rule: Rule,
-    /// Frames each component was blamed in, oldest first, within the
-    /// longest window, and whether the blame is certain ([`Late::certain`]).
-    blamed: HashMap<Component, VecDeque<(u64, bool)>>,
-    /// Components warned about and not yet back to good behaviour.
-    warned: HashMap<Component, u64>,
+    /// The blames of each component, counted by the rule.
+    tally: Tally<Component>,
 }
 
 impl Judge {
     pub fn new(rule: Rule) -> Judge {
-        Judge { rule, ..Default::default() }
+        Judge { rule, tally: Tally::new(rule) }
     }
 
     /// The verdict on one frame: `None` if it was on time.
     pub fn verdict(&self, s: &FrameSample) -> Option<Late> {
-        let r = &self.rule;
-        if s.wall_ns <= r.deadline_ns {
-            return None;
-        }
-        let top = s.parts.iter().copied().max_by_key(|p| (p.own(), std::cmp::Reverse(p.component)))?;
-        let starved: u64 = s.parts.iter().map(Part::starved).sum::<u64>() + s.host_starved_ns.unwrap_or(0);
-        let verdict = if s.wall_ns.saturating_sub(starved) <= r.deadline_ns {
-            Verdict::Starved
-        } else if s.memory_stall_ns.is_some_and(|m| m >= r.memory_ns) {
-            Verdict::Memory
-        } else if top.own() > r.allowance_ns {
-            Verdict::Blamed
-        } else {
-            Verdict::Spread
-        };
-        Some(Late { frame: s.frame, wall_ns: s.wall_ns, verdict, top })
+        verdict(&self.rule, s)
     }
 
     /// Judges one frame: its verdict, and the actions the rule now asks
@@ -263,34 +245,15 @@ impl Judge {
     /// stop window without blame; after a stop its count starts again.
     pub fn judge(&mut self, s: &FrameSample) -> (Option<Late>, Vec<Action>) {
         let late = self.verdict(s);
-        let r = self.rule;
-        let horizon = r.warn_within.max(r.stop_within);
-        for q in self.blamed.values_mut() {
-            while q.front().is_some_and(|&(f, _)| f + horizon <= s.frame) {
-                q.pop_front();
-            }
-        }
-        self.warned.retain(|_, &mut last| last + r.stop_within > s.frame);
+        self.tally.rule = self.rule;
+        self.tally.tick(s.frame);
         let mut actions = Vec::new();
         if let Some(l) = late.filter(|l| l.verdict == Verdict::Blamed) {
             let c = l.top.component;
-            let q = self.blamed.entry(c).or_default();
-            q.push_back((s.frame, certain(s, &l.top)));
-            // Every blame counts towards a warning; only certain ones
-            // towards a stop.
-            let within = |w: u64, only_certain: bool| q.iter().filter(|&&(f, sure)| f + w > s.frame && (sure || !only_certain)).count() as u32;
-            let (warn, stop) = (within(r.warn_within, false), within(r.stop_within, true));
-            if stop >= r.stop_after {
-                actions.push(Action::Stop { component: c, count: stop });
-                q.clear();
-                self.warned.remove(&c);
-            } else if warn >= r.warn_after && !self.warned.contains_key(&c) {
-                actions.push(Action::Warn { component: c, count: warn });
-            }
-            if let Some(w) = self.warned.get_mut(&c) {
-                *w = s.frame;
-            } else if matches!(actions.last(), Some(Action::Warn { .. })) {
-                self.warned.insert(c, s.frame);
+            match self.tally.blame(s.frame, c, certain(s, &l.top)) {
+                Some(Step::Warn(count)) => actions.push(Action::Warn { component: c, count }),
+                Some(Step::Stop(count)) => actions.push(Action::Stop { component: c, count }),
+                None => {}
             }
         }
         (late, actions)
@@ -299,7 +262,108 @@ impl Judge {
     /// How many frames `c` was blamed in within the last `window` frames
     /// before `frame` (inclusive).
     pub fn count(&self, c: Component, frame: u64, window: u64) -> u32 {
-        self.blamed.get(&c).map_or(0, |q| q.iter().filter(|&&(f, _)| f + window > frame).count() as u32)
+        self.tally.count(c, frame, window)
+    }
+}
+
+/// The verdict on one frame under `r`: `None` if it was on time.
+pub fn verdict(r: &Rule, s: &FrameSample) -> Option<Late> {
+    if s.wall_ns <= r.deadline_ns {
+        return None;
+    }
+    let top = s.parts.iter().copied().max_by_key(|p| (p.own(), std::cmp::Reverse(p.component)))?;
+    let starved: u64 = s.parts.iter().map(Part::starved).sum::<u64>() + s.host_starved_ns.unwrap_or(0);
+    let verdict = if s.wall_ns.saturating_sub(starved) <= r.deadline_ns {
+        Verdict::Starved
+    } else if s.memory_stall_ns.is_some_and(|m| m >= r.memory_ns) {
+        Verdict::Memory
+    } else if top.own() > r.allowance_ns {
+        Verdict::Blamed
+    } else {
+        Verdict::Spread
+    };
+    Some(Late { frame: s.frame, wall_ns: s.wall_ns, verdict, top })
+}
+
+/// What the rule asks for after a blame ([`Tally::blame`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Warn: this many blames within the warning window.
+    Warn(u32),
+    /// Stop: this many certain blames within the stop window.
+    Stop(u32),
+}
+
+/// The rule's counting (`PERFORMANCE.md` R15), for any key: a component
+/// (a driver, the host's own parts), or what a host with built-in devices
+/// blames, a machine. Every blame counts towards a warning, only certain
+/// ones towards a stop; a key is warned about once until it has gone a
+/// whole stop window without blame; after a stop its count starts again.
+#[derive(Clone, Debug)]
+pub struct Tally<K> {
+    pub rule: Rule,
+    /// Frames each key was blamed in, oldest first, within the longest
+    /// window, and whether the blame was certain.
+    blamed: HashMap<K, VecDeque<(u64, bool)>>,
+    /// Keys warned about and not yet back to good behaviour: the frame of
+    /// their last blame.
+    warned: HashMap<K, u64>,
+}
+
+impl<K> Default for Tally<K> {
+    fn default() -> Self {
+        Tally { rule: Rule::default(), blamed: HashMap::new(), warned: HashMap::new() }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> Tally<K> {
+    pub fn new(rule: Rule) -> Tally<K> {
+        Tally { rule, ..Default::default() }
+    }
+
+    /// Frame `frame` begins: blames older than every window are forgotten,
+    /// and so are warnings about keys a whole stop window without blame.
+    pub fn tick(&mut self, frame: u64) {
+        let r = self.rule;
+        let horizon = r.warn_within.max(r.stop_within);
+        for q in self.blamed.values_mut() {
+            while q.front().is_some_and(|&(f, _)| f + horizon <= frame) {
+                q.pop_front();
+            }
+        }
+        self.blamed.retain(|_, q| !q.is_empty());
+        self.warned.retain(|_, &mut last| last + r.stop_within > frame);
+    }
+
+    /// `key` was blamed in `frame` (after [`Self::tick`] for that frame).
+    pub fn blame(&mut self, frame: u64, key: K, certain: bool) -> Option<Step> {
+        let r = self.rule;
+        let q = self.blamed.entry(key).or_default();
+        q.push_back((frame, certain));
+        let within = |w: u64, only_certain: bool| q.iter().filter(|&&(f, sure)| f + w > frame && (sure || !only_certain)).count() as u32;
+        let (warn, stop) = (within(r.warn_within, false), within(r.stop_within, true));
+        if stop >= r.stop_after {
+            q.clear();
+            self.warned.remove(&key);
+            return Some(Step::Stop(stop));
+        }
+        let step = (warn >= r.warn_after && !self.warned.contains_key(&key)).then_some(Step::Warn(warn));
+        if step.is_some() || self.warned.contains_key(&key) {
+            self.warned.insert(key, frame);
+        }
+        step
+    }
+
+    /// Forgets `key` (a machine that was stopped, or has gone).
+    pub fn forget(&mut self, key: K) {
+        self.blamed.remove(&key);
+        self.warned.remove(&key);
+    }
+
+    /// How many frames `key` was blamed in within the last `window` frames
+    /// before `frame` (inclusive).
+    pub fn count(&self, key: K, frame: u64, window: u64) -> u32 {
+        self.blamed.get(&key).map_or(0, |q| q.iter().filter(|&&(f, _)| f + window > frame).count() as u32)
     }
 }
 

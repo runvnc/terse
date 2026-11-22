@@ -29,6 +29,10 @@ pub struct Summary {
     pub sheds: u64,
     pub warnings: Vec<String>,
     pub stops: Vec<String>,
+    /// The host's own components that did not keep up (`fail` lines).
+    pub fails: Vec<String>,
+    /// Late frames the rule did not count, by reason (`excused` lines).
+    pub excused: BTreeMap<String, u64>,
     pub checks: Vec<String>,
     pub dropped: u64,
     /// Devices whose CPU wait the system did not say (`readings`).
@@ -94,7 +98,14 @@ impl Summary {
                     self.late_total += late;
                 }
                 Line::Drop(n) => self.dropped += n,
-                Line::Format(_) | Line::Other(_) => {}
+                Line::Other(_) => {
+                    if let Some((frame, component, count)) = l.as_fail() {
+                        self.fails.push(format!("frame {frame}: the host's own {component}, {count} late frames with nothing left to shed"));
+                    } else if let Some((_, why)) = l.as_excused() {
+                        *self.excused.entry(why.to_string()).or_default() += 1;
+                    }
+                }
+                Line::Format(_) => {}
             }
         }
     }
@@ -182,6 +193,13 @@ impl Summary {
         }
         for s in &self.stops {
             let _ = writeln!(o, "  stopped: {s}");
+        }
+        for s in &self.fails {
+            let _ = writeln!(o, "  did not keep up: {s}");
+        }
+        if !self.excused.is_empty() {
+            let e: Vec<String> = self.excused.iter().map(|(why, n)| format!("{why} {n}")).collect();
+            let _ = writeln!(o, "  late frames not counted (excused): {}", e.join(", "));
         }
         if self.dropped > 0 {
             let _ = writeln!(o, "  lines lost (the writer fell behind): {}", self.dropped);
