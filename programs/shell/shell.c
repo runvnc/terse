@@ -1600,10 +1600,11 @@ static void halted_msg(uint8_t h)
 {
     const uint8_t *t = title_of(h);
     uint8_t d = info[h].exit_code;
-    uint8_t num[3] = { (uint8_t)('0' + d / 10), (uint8_t)('0' + d % 10), 0 };
+    uint8_t num[3] = { (uint8_t)('0' + d / 100), (uint8_t)('0' + d / 10 % 10), (uint8_t)('0' + d % 10) };
+    uint8_t skip = d >= 100 ? 0 : d >= 10 ? 1 : 2;
     bar_msg("Tersenet stopped ", t, title_len(t));
     bmsg_add((const uint8_t *)": device ", 9);
-    bmsg_add(d >= 10 ? num : num + 1, d >= 10 ? 2 : 1);
+    bmsg_add(num + skip, (uint8_t)(3 - skip));
     if (auto_of(h))
         bmsg_add((const uint8_t *)" was too slow (state saved)", 27);
     else

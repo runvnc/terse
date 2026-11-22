@@ -430,8 +430,6 @@ fn a_slow_driver_stops_every_machine_that_uses_it() {
     let m = machines(&dump);
     assert!(m.len() == 1 && m[0].0.contains("running") && m[0].0.ends_with("other242 --"), "only the machine that does not use it is shown running: {dump}");
     assert!(dump.contains("halted: stopped by Tersenet"), "{dump}");
-    // Machine 2 was halted with its own slot for the device, 241: the
-    // shell's bar shows the last stop's slot with two digits, so 241 as
-    // "H1" (programs/shell's halted_msg; 240 would be "H0").
-    assert!(dump.contains("dice241: device H1 was too slow"), "{dump}");
+    // Machine 2 was halted with its own slot for the device, 241.
+    assert!(dump.contains("dice241: device 241 was too slow"), "{dump}");
 }
