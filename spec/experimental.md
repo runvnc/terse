@@ -141,8 +141,10 @@ machine's results are the same as if it ran alone (§experimental.determinism).
 
 **Limits in a system.** At most 16 experimental drivers per run. A driver
 serves at most as many machines at once as a system has (the shell and 8,
-§machines); a ninth is refused by the Machines device as always ("no
-room"), never because of an experimental device.
+§machines); a ninth machine the shell starts is refused by the Machines
+device as always ("no room"), never because of an experimental device.
+A restored machine is granted what its snapshot's grants say, not by
+this rule (§experimental.conformance).
 
 ## §experimental.calls Calls and charges
 
