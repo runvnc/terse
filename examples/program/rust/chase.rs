@@ -18,7 +18,8 @@ fn show_score(score: u32) {
 fn main() {
     let mut buf = [0u8; 64];
     let (mut x, mut y, mut dx, mut dy) = (320i16, 240i16, 0, 0);
-    let (mut goal_x, mut goal_y, mut score) = (160i16, 120i16, 0);
+    let (mut goal_x, mut goal_y) = (160i16, 120i16);
+    let mut score = 0;
     show_score(score);
     loop {
         while let Some(e) = next_event() {
