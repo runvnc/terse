@@ -1,0 +1,170 @@
+# Make a host in Go, step 2: frames and the budget
+
+A Terse32 program runs at the same speed on every host. Time comes in frames, 60 a second, and in each frame a program can do a fixed amount of work: 125,000 units. This step adds the file `frames.go` to the package of step 1: the frame loop and the System device's first calls.
+
+## The frame loop
+
+```go from examples/host/go/machine/frames.go
+const FrameBudget = 125000
+
+const (
+    Running = iota
+    Exited
+    Faulted
+)
+
+type Machine struct {
+    *CPU
+    Budget   int64
+    Frame    uint32
+    Stopped  byte
+    ExitCode byte
+    Fault    *Fault
+    Devices  func(slot, fn uint32) (result uint32, charge int64)
+}
+```
+
+`Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and how the machine stopped. `Devices` is for calls to other devices; it stays empty until step 3.
+
+```go from examples/host/go/machine/frames.go
+func (m *Machine) RunFrame() {
+    m.Budget += FrameBudget
+    for m.Budget > 0 && m.Stopped == Running {
+        cost, ecall, fault := m.Step()
+        if fault != nil {
+            m.Stopped, m.Fault = Faulted, fault
+            break
+        }
+        m.Budget -= cost
+        if !ecall {
+            continue
+        }
+        slot, fn := m.X[17]>>8, m.X[17]&0xff
+        result, charge := uint32(0xffffffff), int64(4)
+        if slot == 1 {
+            result = m.system(fn)
+        } else if m.Devices != nil {
+            result, charge = m.Devices(slot, fn)
+        }
+        m.X[10] = result
+        m.Budget -= charge
+        if slot == 1 && fn == 0 {
+            break
+        }
+    }
+    m.Budget = min(m.Budget, 0)
+    m.Frame++
+}
+```
+
+In order:
+
+- The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what `Step` said: 1 if fetched from ROM, 4 from RAM.
+- An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (`min(m.Budget, 0)`). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.
+- An `ecall` costs its own 1 (or 4) plus the call's charge: 4 for a call of the System device (slot 1), and for a call the machine does not have.
+- `wait_frame` ends the frame early: the program has finished this frame's work.
+- A fault or `exit` stops the machine. The frame still counts.
+
+## Four calls
+
+```go from examples/host/go/machine/frames.go
+func (m *Machine) system(fn uint32) uint32 {
+    switch fn {
+    case 0:
+        return m.Frame + 1
+    case 1:
+        if m.Memory(m.X[10], 4, true) == nil {
+            return 0xfffffffe
+        }
+        return 0
+    case 2:
+        return m.Frame
+    case 6:
+        m.Stopped, m.ExitCode = Exited, byte(m.X[10])
+        return 0
+    }
+    return 0xffffffff
+}
+```
+
+- `100h`, `wait_frame`: returns the number of the frame in which the program goes on, one more than the counter.
+- `101h`, `next_event`: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at `a0` are in RAM (else `FFFF_FFFEh`) and return 0. `hello`, in the next step, calls it every frame and never waits for the next frame without it.
+- `102h`, `frame_count`: the frame counter, N all through frame N.
+- `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it writes its result, 0, to `a0`.
+
+## The program
+
+```go from examples/host/go/step2/main.go
+package main
+
+import (
+    "fmt"
+    "os"
+    "strconv"
+
+    "host/machine"
+)
+
+func main() {
+    file, err := os.ReadFile(os.Args[1])
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    frames, _ := strconv.Atoi(os.Args[2])
+    cpu, _, err := machine.Load(file)
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    m := &machine.Machine{CPU: cpu}
+    for m.Stopped == machine.Running && int(m.Frame) < frames {
+        m.RunFrame()
+    }
+    if m.Fault != nil {
+        fmt.Fprintln(os.Stderr, m.Fault)
+        os.Exit(1)
+    }
+    os.Exit(int(m.ExitCode))
+}
+```
+
+It takes the program and the most frames to run.
+
+## Run it
+
+This program calls `frame_count` 100,000 times, then waits for the next frame and exits with what `wait_frame` returned:
+
+```
+_start: li   t0, 100000
+        li   a7, 0x102      # frame_count
+1:      ecall
+        addi t0, t0, -1
+        bnez t0, 1b
+        li   a7, 0x100      # wait_frame
+        ecall
+        li   a7, 0x106      # exit with its result
+        ecall
+```
+
+From `examples/host/go`, after `go build -o bin/ ./...`:
+
+```
+xxd -r -p > frames.terse <<EOF
+544552530001240000010000000000006672616d657300
+000000000000000000e1629382026a9308201073000000
+fd12e39d02fe93080010730000009308601073000000
+EOF
+bin/step2 frames.terse 10
+echo $?
+```
+
+prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop costs 7 units: the `ecall` 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), `wait_frame` returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its `wait_frame` returns the counter instead of one more; 1, it has no budget at all. Step 1's program says 255: it has no `frame_count`, so the last call returns `FFFF_FFFFh`.
+
+## What you have now
+
+A machine that runs programs at exactly the reference's speed: `frames.go`, 66 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:b551899458b4dc9ee1ac843347f52cd8f4db441d470b17e743020a286a1f4c53).
+
+- The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:f67fe104596e13d625c73cc0b59c5765794c5bddd5942f29c64231dacd2ecbc0).
+- Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
+- The rules: [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5), section "Frames and the budget"; [The system device (device 1)](terse:9931faaf61b8c8f94759720fc438753e2761179730bbb7b27e43cf508c9db6ea); [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).

@@ -11,33 +11,45 @@
 <main>
 <article>
 <h1 id="swap-in-your-own-part">Swap in your own part</h1>
-<p>Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference&#39;s. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after <code>cargo build --release</code>, with <code>target/release</code> on your PATH; <code>tersereader</code> is built in <code>native/reader-go</code> as its README says.</p>
+<p>Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference&#39;s. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after <code>cargo build --release</code>, which puts the reference programs in <code>target/release</code>; <code>tersereader</code> is built in <code>native/reader-go</code> as its README says.</p>
 <h2 id="your-reader-the-reference-network">Your reader, the reference network</h2>
 <p>Run a relay, <code>terse-relay --store try-relay</code>, and point your reader at <code>ws&#58;//127.0.0.1:7878</code>. Publish to it with <code>terse feed publish</code> (step 3 of the reader guide). Or let the reference node do the network and talk to it over its socket:</p>
 <pre>terse node</pre>
 <p><code>tersereader node</code> answers the same messages, so you can try your reader on both.</p>
 <h2 id="your-core-the-reference-devices">Your core, the reference devices</h2>
-<p>A core that speaks the device bus (DEVICES.md section 12 lists what it must do) starts the reference drivers, <code>terse-dev-terminal</code>, <code>terse-dev-vector</code> and the others, from one folder. <code>tcore</code> is such a core; it takes the folder with <code>--drivers</code>:</p>
-<pre>native/core-c/tcore programs/hello/hello.terse \
-    --frames 30 --hash --drivers target/release
-terse run programs/hello/hello.terse --frames 30 --hash</pre>
-<p>Both print the same hash. Do the same with your core.</p>
+<p>A core that speaks the device bus starts the reference drivers: <code>terse-dev-terminal</code>, <code>terse-dev-vector</code> and the others. The hosts of &quot;Make a host&quot; do, from step 3 on, the Go one here (built in <code>examples/host/go</code> with <code>go build -o bin/ ./...</code>):</p>
+<pre>examples/host/go/bin/step4 programs/hello/hello.terse 30 \
+    target/release/terse-dev-terminal
+target/release/terse run programs/hello/hello.terse \
+    --frames 30 --hash</pre>
+<p>Both print the same hash. So does <code>tcore</code>, an independent core in C, which starts every reference driver from one folder:</p>
+<pre>make -C native/core-c
+native/core-c/tcore programs/hello/hello.terse \
+    --frames 30 --hash --drivers target/release</pre>
 <h2 id="your-device-the-reference-core">Your device, the reference core</h2>
-<pre>terse-bus programs/hello/hello.terse --frames 30 --hash \
-    --driver 2=$PWD/terminal</pre>
-<p>as on the previous page. <code>--driver</code> takes any slot of a device of the specification: <code>3,9=</code> for the vector displays, <code>4=</code> for content, <code>6=</code> sound, <code>7=</code> the page.</p>
-<h2 id="install-your-device">Install your device</h2>
-<p>To have <code>terse-bus</code> use your driver every time, with no <code>--driver</code>, install it:</p>
-<pre>terse drivers add terminal
-terse-bus programs/hello/hello.terse --frames 30 --hash</pre>
-<p><code>add</code> starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. <code>terse drivers list</code> shows which driver each device gets. <code>terse drivers use 2 default</code> goes back to the reference terminal, and <code>terse drivers remove terminal-example</code> removes yours. If your driver cannot start, <code>terse-bus</code> says so and uses the reference one. The rules are in DEVICES.md section 2.2.</p>
+<p><code>terse-bus</code> is the reference core on the bus. <code>--driver 2=...</code> makes your program the driver of device 2, here the Go terminal of &quot;Make a device in Go&quot;:</p>
+<pre>target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash \
+    --driver 2=$PWD/examples/device/go/terminal</pre>
+<p><code>--driver</code> takes any slot of a device of the specification: <code>3,9=</code> for the vector displays, <code>4=</code> for content, <code>6=</code> sound, <code>7=</code> the page. With <code>--hash-every 1</code> it prints the hash after every frame; compare them with a run without <code>--driver</code>, and the first that differs is where to look.</p>
 <h2 id="your-device-under-your-core">Your device under your core</h2>
-<p><code>tcore</code> takes <code>--driver</code> too, so the example driver runs under a core that is not the reference&#39;s either:</p>
-<pre>native/core-c/tcore programs/hello/hello.terse --frames 30 \
+<p>Neither part need be the reference&#39;s. The Go host with the Rust driver:</p>
+<pre>examples/host/go/bin/step4 programs/hello/hello.terse 30 \
+    examples/device/rust/target/release/terminal</pre>
+<p>and <code>tcore</code> with the C example driver, <code>native/driver-example/terminal.c</code>:</p>
+<pre>cc -std=c11 -O2 -o terminal native/driver-example/terminal.c
+native/core-c/tcore programs/hello/hello.terse --frames 30 \
     --hash --drivers target/release --driver 2=$PWD/terminal</pre>
+<p>The sources&#39; tests run every pairing of the two example hosts and the two example drivers, and compare each hash with the reference&#39;s.</p>
+<h2 id="install-your-device">Install your device</h2>
+<p>To have <code>terse-bus</code> use a driver every time, with no <code>--driver</code>, install it. Only a complete driver may be installed, one that implements the whole device; the Go and Rust examples are not, the C one is:</p>
+<pre>terse drivers add terminal
+target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash</pre>
+<p><code>add</code> starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. <code>terse drivers list</code> shows which driver each device gets. <code>terse drivers use 2 default</code> goes back to the reference terminal, and <code>terse drivers remove terminal-example</code> removes yours. If your driver cannot start, <code>terse-bus</code> says so and uses the reference one. The rules are in DEVICES.md section 2.2.</p>
 <h2 id="what-does-not-work-yet">What does not work yet</h2>
 <ul>
-<li><code>terse-bus</code> and the reference drivers run on Linux, macOS and Windows, and are in the downloads&#39; <code>bus</code> folder; their tests pass on all three in the project&#39;s cross-platform test workflow. The C drivers, <code>tcore</code> and <code>terse node</code> need Unix sockets: Linux and macOS only.</li>
+<li><code>terse-bus</code> and the reference drivers run on Linux, macOS and Windows and are in the downloads&#39; <code>bus</code> folder; the C drivers, <code>tcore</code> and <code>terse node</code> are for Linux and macOS only.</li>
 <li><code>terse-host</code>, the windowed host of the downloads, has its devices built in and does not load drivers, installed or not. To see a driver&#39;s machine in a window, use <code>terse-bus --window</code>.</li>
 <li><code>tcore</code> does not read the drivers folder: give it <code>--driver</code>.</li>
 <li>The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host&#39;s content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.</li>
@@ -46,6 +58,6 @@ terse-bus programs/hello/hello.terse --frames 30 --hash</pre>
 <p>The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: <a href="guide-shell.html">Make a shell</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="guide-device.html">← Make a device</a><a rel="next" href="guide-shell.html">Make a shell →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="guide-device-rust.html">← Make a device in Rust</a><a rel="next" href="guide-shell.html">Make a shell →</a></nav></footer>
 </body>
 </html>

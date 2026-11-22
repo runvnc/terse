@@ -1,0 +1,163 @@
+# Make a host in Rust, step 2: frames and the budget
+
+A Terse32 program runs at the same speed on every host. Time comes in frames, 60 a second, and in each frame a program can do a fixed amount of work: 125,000 units. This step adds the module `frames` to the crate of step 1: the frame loop and the System device's first calls.
+
+## The frame loop
+
+```rust from examples/host/rust/src/frames.rs
+pub const FRAME_BUDGET: i64 = 125_000;
+
+pub enum Status {
+    Running,
+    Exited(u8),
+    Faulted(Fault),
+}
+
+pub struct Machine {
+    pub cpu: Cpu,
+    pub budget: i64,
+    pub frame: u32,
+    pub status: Status,
+}
+```
+
+`Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and whether and how the machine stopped.
+
+```rust from examples/host/rust/src/frames.rs
+    pub fn run_frame<D>(&mut self, mut devices: D)
+    where
+        D: FnMut(&mut Cpu, i64, u32, u32) -> (u32, i64),
+    {
+        self.budget += FRAME_BUDGET;
+        while self.budget > 0 && self.running() {
+            let (cost, ecall) = match self.cpu.step() {
+                Ok(step) => step,
+                Err(fault) => {
+                    self.status = Status::Faulted(fault);
+                    break;
+                }
+            };
+            self.budget -= cost;
+            if !ecall {
+                continue;
+            }
+            let a7 = self.cpu.x[17];
+            let (slot, function) = (a7 >> 8, a7 & 0xff);
+            let budget = self.budget;
+            let (result, charge) = if slot == 1 {
+                (self.system(function), 4)
+            } else {
+                devices(&mut self.cpu, budget, slot, function)
+            };
+            self.cpu.x[10] = result;
+            self.budget -= charge;
+            if slot == 1 && function == 0 {
+                break;
+            }
+        }
+        self.budget = self.budget.min(0);
+        self.frame += 1;
+    }
+```
+
+In order:
+
+- The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what `step` said: 1 if fetched from ROM, 4 from RAM.
+- An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (`min(0)`). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.
+- An `ecall` costs its own 1 (or 4) plus the call's charge: 4 for a call of the System device (slot 1). A call to any other slot goes to `devices`, which gives the result and the charge; here it is a closure that answers every call as one the machine does not have.
+- `wait_frame` ends the frame early: the program has finished this frame's work.
+- A fault or `exit` stops the machine. The frame still counts.
+
+## Four calls
+
+```rust from examples/host/rust/src/frames.rs
+    fn system(&mut self, function: u32) -> u32 {
+        let a0 = self.cpu.x[10];
+        match function {
+            0 => self.frame + 1,
+            1 if self.cpu.memory(a0, 4, true).is_none() => {
+                0xffff_fffe
+            }
+            1 => 0,
+            2 => self.frame,
+            6 => {
+                self.status = Status::Exited(a0 as u8);
+                0
+            }
+            _ => u32::MAX,
+        }
+    }
+```
+
+- `100h`, `wait_frame`: returns the number of the frame in which the program goes on, one more than the counter.
+- `101h`, `next_event`: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at `a0` are in RAM (else `FFFF_FFFEh`) and return 0. `hello`, in the next step, calls it every frame and never waits for the next frame without it.
+- `102h`, `frame_count`: the frame counter, N all through frame N.
+- `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it writes its result, 0, to `a0`.
+
+## The program
+
+```rust from examples/host/rust/src/bin/step2.rs
+use host::frames::{Machine, Status};
+use host::image::load;
+use std::error::Error;
+use std::process::exit;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let file = std::fs::read(&args[1])?;
+    let frames: u32 = args[2].parse()?;
+    let (cpu, _) = load(&file)?;
+    let mut m = Machine::new(cpu);
+    while m.running() && m.frame < frames {
+        m.run_frame(|_, _, _, _| (u32::MAX, 4));
+    }
+    match m.status {
+        Status::Faulted(fault) => {
+            eprintln!("{fault}");
+            exit(1)
+        }
+        Status::Exited(code) => exit(code as i32),
+        Status::Running => Ok(()),
+    }
+}
+```
+
+It takes the program and the most frames to run; `|_, _, _, _| (u32::MAX, 4)` answers a call to any device but the System device: `FFFF_FFFFh`, charge 4.
+
+## Run it
+
+This program calls `frame_count` 100,000 times, then waits for the next frame and exits with what `wait_frame` returned:
+
+```
+_start: li   t0, 100000
+        li   a7, 0x102      # frame_count
+1:      ecall
+        addi t0, t0, -1
+        bnez t0, 1b
+        li   a7, 0x100      # wait_frame
+        ecall
+        li   a7, 0x106      # exit with its result
+        ecall
+```
+
+From `examples/host/rust`, after `cargo build --release`:
+
+```
+xxd -r -p > frames.terse <<EOF
+544552530001240000010000000000006672616d657300
+000000000000000000e1629382026a9308201073000000
+fd12e39d02fe93080010730000009308601073000000
+EOF
+target/release/step2 frames.terse 10
+echo $?
+```
+
+prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop costs 7 units: the `ecall` 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), `wait_frame` returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its `wait_frame` returns the counter instead of one more; 1, it has no budget at all.
+
+## What you have now
+
+A machine that runs programs at exactly the reference's speed: `frames.rs`, 83 lines, and `bin/step2.rs`, 23. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:{guide-host-rust-driver}).
+
+- The same step in Go: "Make a host in Go, step 2: frames and the budget", the page before this one.
+- Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
+- The rules: [The Terse32 machine](terse:{machine}), section "Frames and the budget"; [The system device (device 1)](terse:{device-system}); [Charges and limits](terse:{charges}).

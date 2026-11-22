@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a host in Rust, step 4: prove it exact - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-host-in-rust-step-4-prove-it-exact">Make a host in Rust, step 4: prove it exact</h1>
+<p>Your host shows what the reference shows. This step proves that it agrees to the last bit, with a yes-or-no test: the state hash. It adds the module <code>state</code> to the crate.</p>
+<h2 id="the-state-serialization">The state serialization</h2>
+<p>Between frames, a machine&#39;s whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.</p>
+<pre>use crate::frames::{Machine, Status};
+
+impl Machine {
+    pub fn state(
+        &amp;self,
+        id: &amp;[u8; 32],
+        grants: &amp;[u8],
+        terminal: Option&lt;&amp;[u8]&gt;,
+    ) -&gt; Vec&lt;u8&gt; {
+        let mut state = b&quot;terse-state-1&quot;.to_vec();
+        state.extend(id);
+        state.extend(self.cpu.pc.to_le_bytes());
+        for x in &amp;self.cpu.x[1..] {
+            state.extend(x.to_le_bytes());
+        }
+        state.extend(self.frame.to_le_bytes());
+        let (stopped, code, fault) = match self.status {
+            Status::Running =&gt; (0, 0, None),
+            Status::Exited(code) =&gt; (1, code, None),
+            Status::Faulted(fault) =&gt; (2, 0, Some(fault)),
+        };
+        let kind = fault.map_or(0, |f| f.kind as u8);
+        state.extend([stopped, code, kind]);
+        for value in [
+            fault.map_or(0, |f| f.encoding),
+            fault.map_or(0, |_| self.cpu.pc),
+            fault.map_or(0, |f| f.address),
+            self.budget as u32,
+            self.cpu.ram.len() as u32,
+        ] {
+            state.extend(value.to_le_bytes());
+        }
+        state.extend(&amp;self.cpu.ram);
+        state.extend(grants);
+        state.extend([0; 37]);
+        match terminal {
+            Some(section) =&gt; {
+                state.push(1);
+                state.extend(section);
+            }
+            None =&gt; state.push(0),
+        }
+        state.extend([0, 0, 0]);
+        state
+    }
+}</pre>
+<p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device: 37 zero bytes here (the time, 0 in a test; an empty event queue; four controllers, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s with a byte 1 before it, or a 0 for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
+<h2 id="the-program">The program</h2>
+<pre>use host::bus::Bus;
+use host::frames::{Machine, Status};
+use host::image::load;
+use std::error::Error;
+use std::process::exit;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+    let args: Vec&lt;String&gt; = std::env::args().collect();
+    let file = std::fs::read(&amp;args[1])?;
+    let frames: u32 = args[2].parse()?;
+    let (cpu, devices) = load(&amp;file)?;
+    let mut bus = (!devices.is_empty())
+        .then(|| Bus::start(&amp;args[3], &amp;cpu, &amp;file, &amp;devices));
+    let mut m = Machine::new(cpu);
+    while m.running() &amp;&amp; m.frame &lt; frames {
+        if let Some(bus) = &amp;mut bus {
+            m.budget -= bus.begin(m.frame);
+        }
+        m.run_frame(|cpu, budget, slot, function| {
+            let Some(bus) = &amp;mut bus else {
+                return (u32::MAX, 4);
+            };
+            bus.call(cpu, budget, slot, function)
+        });
+        if let Some(bus) = &amp;mut bus {
+            bus.end(m.frame, !m.running());
+        }
+    }
+    let (grants, terminal) = match bus {
+        Some(mut bus) =&gt; {
+            let terminal = bus.state(2);
+            let grants = std::mem::take(&amp;mut bus.grants);
+            bus.close();
+            (grants, Some(terminal))
+        }
+        None =&gt; (Vec::new(), None),
+    };
+    let id = blake3::hash(&amp;file);
+    let terminal = terminal.as_deref();
+    let state = m.state(id.as_bytes(), &amp;grants, terminal);
+    println!(&quot;{}&quot;, blake3::hash(&amp;state));
+    match m.status {
+        Status::Faulted(fault) =&gt; {
+            eprintln!(&quot;{fault}&quot;);
+            exit(1)
+        }
+        Status::Exited(code) =&gt; exit(code as i32),
+        Status::Running =&gt; Ok(()),
+    }
+}</pre>
+<p>It starts the driver only for a program that lists devices, and prints the hash after the last frame.</p>
+<h2 id="check-it">Check it</h2>
+<p>From <code>examples/host/rust</code>, after <code>cargo build --release</code>, with step 1&#39;s <code>exit.terse</code>:</p>
+<pre>target/release/step4 exit.terse 0
+target/release/step4 exit.terse 1</pre>
+<p>prints the hash at reset, then after the frame in which it exits:</p>
+<pre>9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a
+3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b</pre>
+<p>the two STATE.md section 3 gives. And <code>hello</code> after 30 frames:</p>
+<pre>target/release/step4 ../../../programs/hello/hello.terse 30 \
+    ../../../target/release/terse-dev-terminal</pre>
+<pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
+<p>which is what <code>terse run programs/hello/hello.terse --frames 30 --hash</code> prints. A program that faults must agree too: <code>native/core-c/tests</code> has one for each kind of fault, and the sources&#39; tests compare their hashes with the reference&#39;s.</p>
+<p>Random programs find what the tests do not. <code>native/core-c/tests/fuzz.py</code> writes them: random 16-bit and 32-bit encodings, many of them faulting. This prints the name of any whose hash after 3 frames is not the reference&#39;s, and with this host prints nothing:</p>
+<pre>python3 ../../../native/core-c/tests/fuzz.py fuzz 200
+for f in fuzz/*.terse; do
+    a=$(target/release/step4 $f 3 2&gt;/dev/null)
+    b=$(terse run $f --frames 3 --hash 2&gt;/dev/null)
+    [ &quot;$a&quot; = &quot;$b&quot; ] || echo $f
+done</pre>
+<h2 id="what-is-left-out">What is left out</h2>
+<p>This host runs <code>hello</code> and proves it, nothing more. The rest of a complete host, in the order to add it:</p>
+<ul>
+<li>Input: the event queue and the events file of a test (STATE.md section 6.2), so that <code>hello</code> echoes typed text: <code>programs/hello/hello.events</code> must give <code>programs/hello/expected-30-frames.txt</code>.</li>
+<li>The other System calls: <code>unix_time</code>, <code>random</code>, <code>controller</code>, <code>open</code>, <code>argument</code> and <code>device</code>.</li>
+<li>More drivers: the 2D vector display, <code>terse-dev-vector</code>, asked for slots 3 and 9 together. Then <code>programs/conform-program</code> with its events must show its <code>expected-screen.txt</code>, 22 PASS lines, and give the 20 hashes of <code>expected-hashes.txt</code>.</li>
+<li>Snapshots: the same string, read back section by section (RESTORE gives each driver its section).</li>
+</ul>
+<p><code>tcore</code> (<code>native/core-c</code>) has all of it but snapshots in about 1,580 lines of C; <code>crates/terse-core</code> is the reference.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A host that runs Terse32 programs exactly as the reference does, and proves it: <code>state.rs</code>, 46 lines, <code>bin/step4.rs</code>, 50; 940 lines in all. Next, write a device as a separate program: <a href="guide-device.html">Make a device</a>.</p>
+<ul>
+<li>The same step in Go: &quot;Make a host in Go, step 4: prove it exact&quot;, the page before this one.</li>
+<li>The rules: <a href="state.html">State, replay and conformance</a>, sections &quot;The state serialization&quot;, &quot;The hash&quot;, &quot;Snapshots&quot; and &quot;The conformance image&quot;; the input in <a href="events.html">Events and input</a>.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-host-go-state.html">← Make a host in Go, step 4: prove it exact</a><a rel="next" href="guide-device.html">Make a device →</a></nav></footer>
+</body>
+</html>

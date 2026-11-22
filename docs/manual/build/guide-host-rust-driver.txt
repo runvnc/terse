@@ -1,0 +1,324 @@
+# Make a host in Rust, step 3: a driver shows hello
+
+Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds the module `bus`: start one driver, the terminal's, pass it the terminal's calls, and ask it for the grid to print.
+
+The reference drivers are in the downloads' `bus` folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:
+
+```
+cargo build --release -p terse-devices
+```
+
+## Messages
+
+Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. `send` writes one; `request` writes one and reads the reply, which must be of the type asked for. Anything else, an `ERROR` from the driver included, ends the run with status 3 (`fail`):
+
+```rust from examples/host/rust/src/bus.rs
+    fn send(&mut self, slot: u8, body: &[u8]) {
+        let length = 8 + body.len() as u32;
+        let mut message = length.to_le_bytes().to_vec();
+        message.extend([0, 0, 0, 0, slot, 0, 0, 0]);
+        message.extend(body);
+        check(self.stream.write_all(&message));
+    }
+
+    fn request(&mut self, slot: u8, want: u8, body: &[u8])
+    -> Vec<u8> {
+        self.send(slot, body);
+        let mut length = [0; 4];
+        check(self.stream.read_exact(&mut length));
+        let mut reply = vec![0; word(&length, 0) as usize];
+        check(self.stream.read_exact(&mut reply));
+        if reply.len() < 9 || reply[8] != want {
+            let text = String::from_utf8_lossy(&reply[8..]);
+            fail(format!("the driver said {text:?}"));
+        }
+        reply.split_off(8)
+    }
+```
+
+## Starting the driver
+
+```rust from examples/host/rust/src/bus.rs
+    pub fn start(
+        command: &str,
+        cpu: &Cpu,
+        file: &[u8],
+        devices: &[Device],
+    ) -> Bus {
+        let name = format!("terse-bus-{}", std::process::id());
+        let dir = env::temp_dir().join(name);
+        check(fs::create_dir_all(&dir));
+        let path = dir.join("bus.sock");
+        let listener = check(UnixListener::bind(&path));
+        let driver = check(
+            Command::new(command)
+                .env("TERSE_BUS_SOCKET", &path)
+                .stdout(stderr())
+                .spawn(),
+        );
+        let (stream, _) = check(listener.accept());
+        let session = dir.to_string_lossy().into_owned();
+        let (tables, grants) = (HashMap::new(), Vec::new());
+        let mut bus =
+            Bus { stream, driver, dir, tables, grants };
+
+        let ask: Vec<u8> = devices
+            .iter()
+            .map(|d| d.slot)
+            .filter(|&slot| slot == 2 || slot == 10)
+            .collect();
+        let mut hello = vec![0x01, 1, 0, 0, 0, 0, 0, 0];
+        hello.push(ask.len() as u8);
+        hello.extend(&ask);
+        hello.extend((session.len() as u16).to_le_bytes());
+        hello.extend(session.as_bytes());
+        hello.extend([0, 0]);
+        let reply = bus.request(0, 0x81, &hello);
+        let name_len = u16::from_le_bytes([reply[4], reply[5]]);
+        let mut at = 10 + name_len as usize;
+        let mut versions = HashMap::new();
+        for _ in 0..reply[at] {
+            let slot = reply[at + 1];
+            versions.insert(slot, reply[at + 2]);
+            at += 4 + 2 * reply[at + 3] as usize;
+            for _ in 0..reply[at] {
+                let entry = reply[at + 1..at + 65].to_vec();
+                let key = (slot as u32, entry[0] as u32);
+                bus.tables.insert(key, entry);
+                at += 64;
+            }
+        }
+
+        let mut has = Vec::new();
+        for d in devices {
+            let (slot, version) = (d.slot, d.version);
+            let granted = versions.get(&slot) == Some(&version);
+            if !granted && !d.optional {
+                fail(format!("no driver for device {slot}"));
+            }
+            if d.optional {
+                bus.grants.push(granted as u8);
+            }
+            if granted {
+                has.extend([d.slot, d.version]);
+            }
+        }
+        let mut open = vec![0x03, 0, 0, 0];
+        open.extend(blake3::hash(file).as_bytes());
+        open.extend((cpu.rom.len() as u32).to_le_bytes());
+        open.extend((cpu.ram.len() as u32).to_le_bytes());
+        open.extend([0, 0, has.len() as u8 / 2]);
+        open.extend(&has);
+        open.push(0);
+        open.extend(&cpu.rom);
+        if bus.request(0, 0x83, &open)[1] != 1 {
+            fail("the driver will not run the program");
+        }
+        bus
+    }
+```
+
+In order:
+
+- Listen on a socket in a new directory, start the driver with the socket's path in `TERSE_BUS_SOCKET`, and accept its connection.
+- HELLO (`01h`) asks for the slots the program lists among 2 (the terminal) and 10 (full text, which goes with it), and names the directory. The reply gives a name, then for each slot its version and a call table: 64 bytes per function, which says where the call's buffer is and what the call costs. `tables` keeps each entry by slot and function.
+- Grants: a device the program requires and the driver does not serve stops the run; an optional one is granted if the driver serves it, in the version the program lists. `hello` requires 2 and lists 10 as optional.
+- OPEN (`03h`) gives the driver the machine: its image ID, the BLAKE3 hash of the program file; the ROM and RAM lengths; the slots it has; the ROM. The reply says if the driver took it.
+
+## Calls through the table
+
+```rust from examples/host/rust/src/bus.rs
+    pub fn call(
+        &mut self,
+        cpu: &mut Cpu,
+        budget: i64,
+        slot: u32,
+        function: u32,
+    ) -> (u32, i64) {
+        let key = (slot, function);
+        let Some(entry) = self.tables.get(&key).cloned() else {
+            return (u32::MAX, 4);
+        };
+        let charge = if entry[1] & 2 != 0 { 4 } else { 64 };
+        let args = cpu.x[10..16].to_vec();
+        let addr = args[entry[2] as usize];
+        let access = entry[16];
+        let mut size = 0;
+        if entry[1] & 4 != 0 {
+            size = word(&entry, 4) as u64;
+            if entry[3] != 0xff {
+                size *= args[entry[3] as usize] as u64;
+            }
+            let least = word(&entry, 8) as u64;
+            if size < least || size > word(&entry, 12) as u64 {
+                return (word(&entry, 24), charge);
+            }
+            let ram_only = access & 4 == 0 || access & 2 != 0;
+            let place = cpu.memory(addr, size as u32, ram_only);
+            if place.is_none() && size > 0 {
+                return (word(&entry, 28), charge);
+            }
+        }
+        let checked = entry[17] as usize;
+        if checked != 0xff && args[checked] > word(&entry, 20) {
+            return (word(&entry, 28), charge);
+        }
+
+        let mut call = vec![0x10, function as u8, 0, 0];
+        for a in &args {
+            call.extend(a.to_le_bytes());
+        }
+        call.extend((budget - 4).to_le_bytes());
+        let reads = if access & 1 == 0 { 0 } else { size };
+        call.extend((reads as u32).to_le_bytes());
+        if reads > 0 {
+            let buffer = cpu.memory(addr, reads as u32, false);
+            call.extend(&*buffer.unwrap());
+        }
+        let reply = self.request(slot as u8, 0x90, &call);
+        if reply[1] & 1 != 0 {
+            cpu.x[11] = word(&reply, 8);
+        }
+        let mut at = 20;
+        for _ in 0..word(&reply, 16) {
+            let to = word(&reply, at);
+            let length = word(&reply, at + 4);
+            let offset = to.wrapping_sub(addr) as u64;
+            let outside = offset + length as u64 > size;
+            if access & 2 == 0 || outside {
+                fail("a write outside the buffer");
+            }
+            let bytes = &reply[at + 8..][..length as usize];
+            let target = cpu.memory(to, length, true).unwrap();
+            target.copy_from_slice(bytes);
+            at += 8 + length as usize;
+        }
+        (word(&reply, 4), charge + word(&reply, 12) as i64)
+    }
+```
+
+A function the table does not have is a call the machine does not have: `FFFF_FFFFh`, charge 4. Otherwise the charge starts at 4 for a deferred call (flag 2: its result and charge follow from its arguments) or 64 for one the driver must answer. Before anything is sent, the table's checks: the buffer's length within its range, the buffer wholly in RAM (or in ROM, for one the device only reads), and a checked argument no larger than its limit; a call that fails gets the table's failure result and goes no further. Then CALL (`10h`) carries `a0` to `a5`, the budget, and the bytes of a buffer the device reads, and RESULT (`90h`) gives `a0`, maybe `a1`, the charge on top, and bytes to write into the call's buffer.
+
+## Frames
+
+BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:
+
+```rust from examples/host/rust/src/bus.rs
+    pub fn begin(&mut self, frame: u32) -> i64 {
+        let mut begin = vec![0x30, 0, 0, 0];
+        begin.extend(frame.to_le_bytes());
+        begin.extend([0; 12]);
+        word(&self.request(0, 0xb0, &begin), 4) as i64
+    }
+```
+
+END (`31h`) ends the frame, with no reply. STATE (`40h`, `state`) asks for a slot's part of the machine's state; the terminal's starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (`60h`, `close`) stops the driver:
+
+```rust from examples/host/rust/src/bus.rs
+    pub fn end(&mut self, frame: u32, stopped: bool) {
+        let mut end = vec![0x31, stopped as u8, 0, 0];
+        end.extend(frame.to_le_bytes());
+        self.send(0, &end);
+    }
+
+    pub fn state(&mut self, slot: u8) -> Vec<u8> {
+        self.request(slot, 0xc0, &[0x40]).split_off(8)
+    }
+
+    pub fn close(mut self) {
+        self.send(0, &[0x60]);
+        check(self.driver.wait());
+        check(fs::remove_dir_all(&self.dir));
+    }
+```
+
+## The program
+
+```rust from examples/host/rust/src/bin/step3.rs
+use host::bus::Bus;
+use host::frames::{Machine, Status};
+use host::image::load;
+use std::error::Error;
+use std::process::exit;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let file = std::fs::read(&args[1])?;
+    let frames: u32 = args[2].parse()?;
+    let (cpu, devices) = load(&file)?;
+    let mut bus = Bus::start(&args[3], &cpu, &file, &devices);
+    let mut m = Machine::new(cpu);
+    while m.running() && m.frame < frames {
+        m.budget -= bus.begin(m.frame);
+        m.run_frame(|cpu, budget, slot, function| {
+            bus.call(cpu, budget, slot, function)
+        });
+        bus.end(m.frame, !m.running());
+    }
+    print!("{}", screen(&bus.state(2)));
+    bus.close();
+    match m.status {
+        Status::Faulted(fault) => {
+            eprintln!("{fault}");
+            exit(1)
+        }
+        Status::Exited(code) => exit(code as i32),
+        Status::Running => Ok(()),
+    }
+}
+
+fn screen(grid: &[u8]) -> String {
+    let code = |cell: usize| {
+        u16::from_le_bytes([grid[4 * cell], grid[4 * cell + 1]])
+    };
+    let mut text = String::new();
+    for row in 0..30 {
+        let mut line = String::new();
+        for col in 0..80 {
+            let cell = row * 80 + col;
+            let right_half =
+                col > 0 && code(cell - 1) != 0xffff;
+            match code(cell) {
+                0xffff if right_half => {}
+                0xffff => line.push(' '),
+                c => line += &String::from_utf16_lossy(&[c]),
+            }
+        }
+        text += line.trim_end_matches(' ');
+        text += "\n";
+    }
+    text
+}
+```
+
+`screen` prints the grid as `terse run --dump` does: a row's 80 cells, stripped of spaces at the end. `FFFFh` in a cell is the right half of a wide character, skipped after the character, else a space.
+
+## Run it
+
+From `examples/host/rust`, after `cargo build --release`:
+
+```
+target/release/step3 ../../../programs/hello/hello.terse 30 \
+    ../../../target/release/terse-dev-terminal
+```
+
+prints `hello`'s screen after 30 frames, 30 lines, which begins
+
+```
+ Tersenet · hello
+
+  héllo, wörld — привет, мир
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+```
+
+and is the reference's exactly: from the top folder, `terse run programs/hello/hello.terse --frames 30 --dump` prints the same 30 lines.
+
+The driver can be any program that speaks the bus. [Make a device in Rust](terse:03c7bf440c24301f39a7d115e8cb477be2873393638e0462fb031e9cfe52a28e) writes a terminal of 347 lines that is enough for `hello`; give its path instead of the reference's. So can a driver in another language: the Go one of "Make a device in Go" works here too.
+
+## What you have now
+
+A core that shows `hello` through a driver: `bus.rs`, 223 lines, and `bin/step3.rs`, 54. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Rust, step 4: prove it exact](terse:f26a67ea1aa69cc5afeb0e1aee3b29c5c14558ffb96a8963027ea90c2b48b4f6).
+
+- The same step in Go: "Make a host in Go, step 3: a driver shows hello", the page before this one.
+- Full implementations: `native/core-c/bus.c` (every reference driver, batching, 663 lines of C) and `crates/terse-bus`.
+- The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); [The terminal (device 2)](terse:1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804).

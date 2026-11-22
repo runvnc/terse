@@ -1,6 +1,6 @@
 # Swap in your own part
 
-Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference's. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after `cargo build --release`, with `target/release` on your PATH; `tersereader` is built in `native/reader-go` as its README says.
+Every part of Tersenet has a reference version in the sources, and each can be replaced on its own: you can test your part with all the others still the reference's. This page gives the command for each case. The commands run from the top folder of the Tersenet sources, after `cargo build --release`, which puts the reference programs in `target/release`; `tersereader` is built in `native/reader-go` as its README says.
 
 ## Your reader, the reference network
 
@@ -14,48 +14,69 @@ terse node
 
 ## Your core, the reference devices
 
-A core that speaks the device bus (DEVICES.md section 12 lists what it must do) starts the reference drivers, `terse-dev-terminal`, `terse-dev-vector` and the others, from one folder. `tcore` is such a core; it takes the folder with `--drivers`:
+A core that speaks the device bus starts the reference drivers: `terse-dev-terminal`, `terse-dev-vector` and the others. The hosts of "Make a host" do, from step 3 on, the Go one here (built in `examples/host/go` with `go build -o bin/ ./...`):
 
 ```
+examples/host/go/bin/step4 programs/hello/hello.terse 30 \
+    target/release/terse-dev-terminal
+target/release/terse run programs/hello/hello.terse \
+    --frames 30 --hash
+```
+
+Both print the same hash. So does `tcore`, an independent core in C, which starts every reference driver from one folder:
+
+```
+make -C native/core-c
 native/core-c/tcore programs/hello/hello.terse \
     --frames 30 --hash --drivers target/release
-terse run programs/hello/hello.terse --frames 30 --hash
 ```
-
-Both print the same hash. Do the same with your core.
 
 ## Your device, the reference core
 
-```
-terse-bus programs/hello/hello.terse --frames 30 --hash \
-    --driver 2=$PWD/terminal
-```
-
-as on the previous page. `--driver` takes any slot of a device of the specification: `3,9=` for the vector displays, `4=` for content, `6=` sound, `7=` the page.
-
-## Install your device
-
-To have `terse-bus` use your driver every time, with no `--driver`, install it:
+`terse-bus` is the reference core on the bus. `--driver 2=...` makes your program the driver of device 2, here the Go terminal of "Make a device in Go":
 
 ```
-terse drivers add terminal
-terse-bus programs/hello/hello.terse --frames 30 --hash
+target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash \
+    --driver 2=$PWD/examples/device/go/terminal
 ```
 
-`add` starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. `terse drivers list` shows which driver each device gets. `terse drivers use 2 default` goes back to the reference terminal, and `terse drivers remove terminal-example` removes yours. If your driver cannot start, `terse-bus` says so and uses the reference one. The rules are in DEVICES.md section 2.2.
+`--driver` takes any slot of a device of the specification: `3,9=` for the vector displays, `4=` for content, `6=` sound, `7=` the page. With `--hash-every 1` it prints the hash after every frame; compare them with a run without `--driver`, and the first that differs is where to look.
 
 ## Your device under your core
 
-`tcore` takes `--driver` too, so the example driver runs under a core that is not the reference's either:
+Neither part need be the reference's. The Go host with the Rust driver:
 
 ```
+examples/host/go/bin/step4 programs/hello/hello.terse 30 \
+    examples/device/rust/target/release/terminal
+```
+
+and `tcore` with the C example driver, `native/driver-example/terminal.c`:
+
+```
+cc -std=c11 -O2 -o terminal native/driver-example/terminal.c
 native/core-c/tcore programs/hello/hello.terse --frames 30 \
     --hash --drivers target/release --driver 2=$PWD/terminal
 ```
 
+The sources' tests run every pairing of the two example hosts and the two example drivers, and compare each hash with the reference's.
+
+## Install your device
+
+To have `terse-bus` use a driver every time, with no `--driver`, install it. Only a complete driver may be installed, one that implements the whole device; the Go and Rust examples are not, the C one is:
+
+```
+terse drivers add terminal
+target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash
+```
+
+`add` starts the driver once to ask what it is, shows its name, version, build and slots, and copies it into your configuration folder. A driver runs with your full rights, so install only ones you trust; nothing but this command installs one. `terse drivers list` shows which driver each device gets. `terse drivers use 2 default` goes back to the reference terminal, and `terse drivers remove terminal-example` removes yours. If your driver cannot start, `terse-bus` says so and uses the reference one. The rules are in DEVICES.md section 2.2.
+
 ## What does not work yet
 
-- `terse-bus` and the reference drivers run on Linux, macOS and Windows, and are in the downloads' `bus` folder; their tests pass on all three in the project's cross-platform test workflow. The C drivers, `tcore` and `terse node` need Unix sockets: Linux and macOS only.
+- `terse-bus` and the reference drivers run on Linux, macOS and Windows and are in the downloads' `bus` folder; the C drivers, `tcore` and `terse node` are for Linux and macOS only.
 - `terse-host`, the windowed host of the downloads, has its devices built in and does not load drivers, installed or not. To see a driver's machine in a window, use `terse-bus --window`.
 - `tcore` does not read the drivers folder: give it `--driver`.
 - The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host's content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.

@@ -44,7 +44,10 @@ space:
   `compose` (putting the picture together), `present` (handing it to the
   display), `outside` (the frame loop's time in none of these: an event
   loop held elsewhere, a host service waited on), or `dev<n>`: the device
-  driver serving slot n (its lowest slot). A host with built-in devices
+  driver serving slot n (its lowest slot); an experimental driver, which
+  has no slot of its own, is `dev240` to `dev255` by its place among the
+  run's experimental drivers, and its `device` line gives its slots as
+  `-` (`DEVICES.md` 15.3). A host with built-in devices
   (`terse-host`) times each machine's frame apart (`PERFORMANCE.md` R14)
   and writes it as `core`, the machine named by the line's image and, in
   a `stop` line, its handle;

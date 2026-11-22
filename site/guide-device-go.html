@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a device in Go - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-device-in-go">Make a device in Go</h1>
+<p>This driver is the terminal, device 2, in one file of Go with no dependencies: <code>examples/device/go/main.go</code>, 257 lines. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more. <code>gofmt</code> indents with tabs; here they are shown as four spaces.</p>
+<h2 id="the-call-table">The call table</h2>
+<p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function. With that the core checks a call before sending it, and for a deferred call, one whose result and charge follow from its arguments, it can work them out itself and send the call later in a batch.</p>
+<pre>const (
+    columns  = 80
+    rows     = 30
+    none     = 0xff
+    deferred = 2
+    buffered = 4
+    reads    = 1
+    inROM    = 4
+)
+
+type entry struct {
+    fn, flags, buffer, length byte
+    scale, most               uint32
+    access, checked           byte
+    checkedMost               uint32
+    rule, ruleArg             byte
+    perFour, chargeArg        byte
+    perByte                   uint16
+    low, high, add            uint32
+}
+
+var table = []entry{
+    {fn: 0, flags: deferred | buffered, length: 1, scale: 1,
+        most: 4096, access: reads | inROM, checked: none,
+        rule: 2, ruleArg: 1, chargeArg: none, perByte: 2},
+    {fn: 1, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: 0, low: 1, high: 3, add: 150},
+    {fn: 2, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: none},
+    {fn: 4, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: none},
+    {fn: 7, flags: deferred | buffered, buffer: 1, length: 2,
+        scale: 4, most: 9600, access: reads | inROM, checked: 0,
+        checkedMost: 2399, rule: 2, ruleArg: 2, perFour: 1,
+        chargeArg: none},
+}</pre>
+<p>The five calls <code>hello</code> makes: <code>write</code> (0; a buffer at <code>a0</code> of <code>a1</code> bytes, at most 4,096, read, may be in ROM; returns <code>a1</code>; 2 units a byte), <code>command</code> (1; 150 units for commands 1 to 3), <code>set_cursor</code> (2), <code>set_colours</code> (4) and <code>cells_write</code> (7; a buffer at <code>a1</code> of <code>a2</code> cells of 4 bytes; <code>a0</code>, the first cell, at most 2,399; returns <code>a2</code>; a unit per 4 bytes). All five are deferred. <code>encode</code> writes an entry in DEVICES.md section 5&#39;s layout:</p>
+<pre>func words(b []byte, values ...uint32) []byte {
+    for _, v := range values {
+        b = le.AppendUint32(b, v)
+    }
+    return b
+}
+
+func (e entry) encode() []byte {
+    b := []byte{e.fn, e.flags, e.buffer, e.length}
+    b = words(b, e.scale, 0, e.most)
+    b = append(b, e.access, e.checked, 0, 0)
+    b = words(b, e.checkedMost, 0xfffffffe, 0xfffffffe)
+    b = append(b, e.rule, e.ruleArg, 0, 0)
+    b = words(b, 0, 0, 0)
+    b = append(b, e.perFour, e.chargeArg)
+    b = le.AppendUint16(b, e.perByte)
+    return words(b, e.low, e.high, e.add)
+}</pre>
+<h2 id="the-terminal">The terminal</h2>
+<pre>var xterm = []byte{
+    0, 0, 0, 205, 0, 0, 0, 205, 0, 205, 205, 0,
+    0, 0, 238, 205, 0, 205, 0, 205, 205, 229, 229, 229,
+    127, 127, 127, 255, 0, 0, 0, 255, 0, 255, 255, 0,
+    92, 92, 255, 255, 0, 255, 0, 255, 255, 255, 255, 255,
+}
+
+type terminal struct {
+    grid                          [columns * rows * 4]byte
+    col, row, fg, bg, shown, wrap byte
+    palette                       [768]byte
+}
+
+func newTerminal() *terminal {
+    t := &amp;terminal{fg: 7, shown: 1}
+    for cell := range columns * rows {
+        t.put(cell, &#39; &#39;)
+    }
+    copy(t.palette[:], xterm)
+    levels := []byte{0, 95, 135, 175, 215, 255}
+    for i := range 216 {
+        r, g, b := levels[i/36], levels[i/6%6], levels[i%6]
+        copy(t.palette[48+3*i:], []byte{r, g, b})
+    }
+    for i := range 24 {
+        gray := byte(8 + 10*i)
+        copy(t.palette[696+3*i:], []byte{gray, gray, gray})
+    }
+    return t
+}</pre>
+<p>At reset every cell is a space in colour 7 on 0, and the palette is xterm&#39;s 256 colours.</p>
+<pre>func (t *terminal) put(cell int, code uint16) {
+    le.PutUint16(t.grid[4*cell:], code)
+    t.grid[4*cell+2], t.grid[4*cell+3] = t.fg, t.bg
+}
+
+func (t *terminal) newline() {
+    t.col, t.wrap = 0, 0
+    if t.row &lt; rows-1 {
+        t.row++
+        return
+    }
+    copy(t.grid[:], t.grid[columns*4:])
+    for col := range columns {
+        t.put((rows-1)*columns+col, &#39; &#39;)
+    }
+}
+
+func (t *terminal) write(text []byte) {
+    for _, r := range string(text) {
+        if r == &#39;\n&#39; {
+            t.newline()
+        }
+        if r &lt; &#39; &#39; || r == 0x7f {
+            continue
+        }
+        if t.wrap == 1 {
+            t.newline()
+        }
+        code := uint16(r)
+        if r &gt;= 0xffff {
+            code = 0xfffd
+        }
+        t.put(int(t.row)*columns+int(t.col), code)
+        if t.col == columns-1 {
+            t.wrap = 1
+        } else {
+            t.col++
+        }
+    }
+}</pre>
+<p><code>write</code> decodes its bytes as UTF-8 with Go&#39;s own decoder (<code>range</code> over a string), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom.</p>
+<pre>func (t *terminal) call(body []byte) (result, charge uint32) {
+    a := func(i int) uint32 { return le.Uint32(body[4+4*i:]) }
+    data := body[40 : 40+le.Uint32(body[36:])]
+    switch body[1] {
+    case 0:
+        t.write(data)
+        return a(1), 2 * a(1)
+    case 1:
+        if a(0) == 4 {
+            for col := int(t.col); col &lt; columns; col++ {
+                t.put(int(t.row)*columns+col, &#39; &#39;)
+            }
+        }
+        if a(0) &gt;= 1 &amp;&amp; a(0) &lt;= 3 {
+            return 0, 150
+        }
+    case 2:
+        t.col = byte(min(a(0), columns-1))
+        t.row = byte(min(a(1), rows-1))
+        t.wrap = 0
+    case 4:
+        if a(0) &lt; 256 {
+            t.fg = byte(a(0))
+        }
+        if a(1) &lt; 256 {
+            t.bg = byte(a(1))
+        }
+    case 7:
+        for i, b := range data {
+            t.grid[(4*int(a(0))+i)%len(t.grid)] = b
+        }
+        return a(2), uint32(len(data)+3) / 4
+    }
+    return 0, 0
+}
+
+func (t *terminal) state() []byte {
+    state := append(t.grid[:], t.col, t.row, t.fg, t.bg)
+    state = append(state, t.shown, t.wrap)
+    state = append(state, t.palette[:]...)
+    return append(state, 0, 0, 0, 0)
+}</pre>
+<p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and 4 bytes for a UTF-8 character cut between two writes (none here).</p>
+<h2 id="the-messages">The messages</h2>
+<pre>func hello(body []byte) []byte {
+    name := &quot;terminal (Go example)&quot;
+    reply := []byte{0x81, 1, 0, 0, byte(len(name)), 0}
+    reply = append(append(reply, name...), 0, 0, 0, 0, body[8])
+    for _, slot := range body[9 : 9+body[8]] {
+        if slot != 2 {
+            reply = append(reply, slot, 0, 0, 0)
+            continue
+        }
+        reply = append(reply, 2, 0, 0, byte(len(table)))
+        for _, e := range table {
+            reply = append(reply, e.encode()...)
+        }
+    }
+    return append(reply, 0, 0, 0)
+}
+
+func main() {
+    conn, err := net.Dial(&quot;unix&quot;, os.Getenv(&quot;TERSE_BUS_SOCKET&quot;))
+    if err != nil {
+        panic(err)
+    }
+    send := func(address, body []byte) {
+        message := words(nil, uint32(8+len(body)))
+        conn.Write(append(append(message, address...), body...))
+    }
+    machines := map[uint32]*terminal{}
+    for {
+        var length [4]byte
+        if _, err := io.ReadFull(conn, length[:]); err != nil {
+            return
+        }
+        message := make([]byte, le.Uint32(length[:]))
+        if _, err := io.ReadFull(conn, message); err != nil {
+            return
+        }
+        address, body := message[:8], message[8:]
+        t := machines[le.Uint32(address)]
+        switch body[0] {
+        case 0x01:
+            send(address, hello(body))
+        case 0x03:
+            machines[le.Uint32(address)] = newTerminal()
+            send(address, []byte{0x83, 1, 0, 0, 0, 0})
+        case 0x04:
+            delete(machines, le.Uint32(address))
+        case 0x10:
+            result, charge := t.call(body)
+            reply := []byte{0x90, 0, 0, 0}
+            send(address, words(reply, result, 0, charge, 0))
+        case 0x11:
+            at := 8
+            for range le.Uint32(body[4:]) {
+                size := int(le.Uint32(body[at:]))
+                call := body[at+4 : at+4+size]
+                machines[le.Uint32(call)].call(call[8:])
+                at += 4 + size
+            }
+        case 0x30:
+            inputs := [20]byte{0xb0}
+            send(address, inputs[:])
+        case 0x31:
+        case 0x40:
+            state := t.state()
+            size := uint32(len(state))
+            reply := words([]byte{0xc0, 0, 0, 0}, size)
+            send(address, append(reply, state...))
+        case 0x60:
+            return
+        default:
+            send(address, []byte(&quot;\x7fnot handled&quot;))
+            return
+        }
+    }
+}</pre>
+<p>The core starts the driver with the socket&#39;s path in <code>TERSE_BUS_SOCKET</code>. Each message is a length, an address (which machine, which slot) and a body whose first byte is its type; a reply carries the address of its request. HELLO: answer for the slots asked, 2 with its table and 10 (full text) with none. OPEN: a new machine, its terminal at reset; CLOSE drops it. CALL: carry it out and reply RESULT. BATCH: deferred calls, carried out in order, with no replies. BEGIN: no input, no charge. END: nothing to do. STATE: the state. SHUTDOWN, or the socket closed: exit. Anything else gets an ERROR, and the driver exits.</p>
+<h2 id="run-it">Run it</h2>
+<p>Build it, then run <code>hello</code> under the reference core with it, from the top folder of the sources (<code>cargo build --release -p terse-bus -p terse-devices</code> builds the core and the reference drivers):</p>
+<pre>go build -C examples/device/go
+target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash \
+    --driver 2=$PWD/examples/device/go/terminal</pre>
+<pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
+<p><code>--driver 2=</code> makes the program the driver of slot 2. Without it the reference terminal serves, and the hash is the same; with <code>--hash-every 1</code> instead of <code>--hash</code>, so are all 30. <code>--dump</code> prints the screen.</p>
+<p>The hosts of &quot;Make a host&quot; take it too, the Rust one as well as the Go one: this is a Rust core with a Go driver, from <code>examples/host/rust</code> after <code>cargo build --release</code>:</p>
+<pre>target/release/step4 ../../../programs/hello/hello.terse 30 \
+    ../../device/go/terminal</pre>
+<pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
+<h2 id="what-is-missing">What is missing</h2>
+<p>Enough for <code>hello</code>, not yet a terminal. A complete one also has: the other five calls (<code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, <code>palette_set</code>, <code>size</code>); commands 1 to 3, 5 and 6 (clear, scroll up and down, show and hide the cursor); in <code>write</code>, the control characters backspace, tab, carriage return and form feed, wide characters (two cells), and a UTF-8 character cut between two writes, kept in the state; replacement characters exactly as the WHATWG decoder gives them (Go&#39;s decoder gives one per bad byte). It does not answer <code>--version</code> or RESTORE, so it cannot be installed or restore a snapshot.</p>
+<p>All of that is in <code>native/driver-example/terminal.c</code>, 583 lines of C. The reference terminal is <code>crates/terse-core/src/terminal.rs</code>, served by <code>crates/terse-devices/src/bin/terminal.rs</code>.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A device of your own, running under the reference core with the reference&#39;s hashes. Next, the same driver in Rust: <a href="guide-device-rust.html">Make a device in Rust</a>. Or mix your parts with the reference&#39;s: <a href="guide-swap.html">Swap in your own part</a>.</p>
+<p>The rules: <a href="device-terminal.html">The terminal (device 2)</a>; DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-device.html">← Make a device</a><a rel="next" href="guide-device-rust.html">Make a device in Rust →</a></nav></footer>
+</body>
+</html>
