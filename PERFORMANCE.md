@@ -401,10 +401,11 @@ counted, below); reader, fetch, hello and tune draw no vector list.
 
 **Not bounded yet, by design or for a decision:**
 
-- *The look.* The phosphor style's glow, afterglow and smear are the
-  host's choice (`SPEC.md` §vector.phosphor) and are not counted; a host
-  must draw only plain lines, which cost what the clean style does. The
-  reference sheds the look by the ink a frame's light draws (as the caps
+- *The look.* How the phosphor style looks is the host's choice
+  (`SPEC.md` §vector.phosphor) and is not counted; a host need draw only
+  plain lines, which cost what the clean style does. What follows is the
+  reference host's own look (README "Phosphor style"), measured, not a
+  requirement. The reference sheds the look by the ink a frame's light draws (as the caps
   count it, so the same picture on every run): above a quarter of a
   screen no smear (3 to 15 more copies of each moving shape), above a
   third no halo, above two fifths plain lines, flat strokes of their
@@ -426,8 +427,8 @@ counted, below); reader, fetch, hello and tune draw no vector list.
   thread. The GPU sheds the smear and the halo; its beam costs it
   little, so it draws the plain level as the halo one.
 
-  That table is the classic look (`--look classic`). **The default look
-  since 2026-11-22 is MAME's vector CRT** (README "Phosphor style"): a
+  That table is the classic look (`--look classic`). **The reference
+  host's default look since 2026-11-22 is MAME's vector CRT** (README "Phosphor style"): a
   beam about a pixel wide, a 2 ms phosphor, a half-resolution bloom and a
   tone map; it sheds in steps too (1: the phosphor at most 720 lines high,
   2: 480, 3: also no bloom; by the same ink thresholds and the same

@@ -1166,11 +1166,13 @@ the keyboard while it is shown (Y allows, N or Esc refuses; no key or text
 reaches a machine, nor the release of a key pressed then) and gives the
 answer back as `core.answer`.
 
-**The phosphor style** (SPEC §vector.phosphor) is the core's to draw, as
-terse-host draws it and with its code: terse-host's tube
-(`soft::phosphor`, `soft::screen`: the beam, the afterglow and its smear,
-the halo, the tone curve, the tubes and the glass, the shedding of the
-look), shared, not copied. A machine is shown in the phosphor style when
+**The phosphor style** (SPEC §vector.phosphor) is the core's to draw. The
+specification requires only what is visible (a black screen, outlines,
+legible text); how the style looks is the host's, and a core may draw it
+as plain lines. The reference core draws it as terse-host does and with
+its code, shared, not copied: terse-host's simulated vector display
+(`soft::phosphor`, `soft::screen`), whose look is described with
+terse-host (README "Phosphor style"), not here. A machine is shown in the phosphor style when
 its vector display's style says so (the core reads it in `vector.list`)
 or the core forces it (`terse-bus --force-phosphor`). Then:
 
@@ -1190,18 +1192,23 @@ or the core forces it (`terse-bus --force-phosphor`). Then:
   (`vector3.list`), within the machine's caps (below);
 - the core adds up the light of the layers of the drivers that subscribe
   to `core.light` (but the vector displays'), the beam over it, and
-  keeps the tube (terse-host's, in the look it is given: MAME's vector
-  CRT by default, `--look`): the phosphor moves on once for each frame
-  the machine ran, and the picture is the tube's;
-- the terminal's text by the beam: when the look draws the terminal's
-  characters as strokes (`--font-strokes`), the core publishes
+  draws the result as its simulated display does (the reference core's
+  is terse-host's): whatever of it lingers moves on once for each frame
+  the machine ran;
+- the terminal's text by the beam (optional; the reference core's, when
+  terse-host's look draws the terminal's characters as strokes,
+  `--font-strokes`): the core publishes
   **`core.strokes`** (the font's name) to the terminal driver and reads
   its state from **`terminal.state`**; it draws by the beam the
   characters that font draws and the cursor, and the terminal driver
   leaves those out of its light layer (the rest, wide characters and the
   full-text repertoire beyond the font, stay light). A terminal driver
   that does not publish `terminal.state` draws all its text as light, as
-  before; an empty `core.strokes` means it draws them all. A scene's 3D lines over its panels
+  before; an empty `core.strokes` means it draws them all. Both
+  properties are optional: a core need not publish `core.strokes`, and a
+  terminal driver may ignore it, provided it then does not publish
+  `terminal.state` (the core draws by the beam only from that state).
+  Either way the driver conforms. A scene's 3D lines over its panels
   (Screens, Surfaces) are drawn by the core from its own projection, as
   terse-host's are.
 
@@ -1220,7 +1227,9 @@ added light to 8 bits.
 
 **A vector driver that draws its own tube.** The look of the phosphor
 style is the host's (SPEC §vector.phosphor), and a driver may carry
-another one: a vector driver that publishes **`vector.tube`** = 1 draws
+another one. This is optional: a driver that never publishes
+`vector.tube` conforms, and the core draws the style for it. A vector
+driver that publishes **`vector.tube`** = 1 draws
 the beam, its glow and its afterglow itself. For a machine in the
 phosphor style it then draws its layers as light, as the terminal and
 the page do (straight colour and coverage), from its own lists, and the
@@ -1240,7 +1249,9 @@ renderer, and the terminal's text as strokes.
 
 **Shedding a driver's own look.** When the host's frames run long to draw
 and present, it sheds its own look first (`PERFORMANCE.md` R15 step 1:
-the reference's phosphor look, levels 0 to 3). A driver that draws a look
+the reference's phosphor look, levels 0 to 3). `core.shed` is optional:
+a driver that does not subscribe to it, or ignores it, conforms, and a
+core need not publish it. A driver that draws a look
 of its own subscribes to **`core.shed`**: the core gives it the same level
 (u8, 0 none to 3 the most; it publishes it with the machine's other
 presentation facts, and only to subscribers, so a driver that does not
@@ -1292,10 +1303,10 @@ reference drivers and core:
 | `vector3.list` | vector display | core | device 9's list (SPEC §vector3d), which device 8 (`face`), the shell's scene and the pointer over panels (SPEC §machines.calls, §machines.screens and §machines.input) look at |
 | `vector.list` | vector display | core | device 3's state as `STATE.md` 1.7's section: style (u8), persistence (u8), fill mode (u8: 1 outlines), the list's length (u32) and the list; the core counts the system ink from it and draws the phosphor style's beam (section 7.1) |
 | `core.light` | core | terminal, page, vector display | 1: the machine is shown in the phosphor style and its layers are light (section 7.1); 0 or empty: the clean style |
-| `vector.tube` | a vector display that draws its own tube (not the reference's) | core | 1: in the phosphor style its layers are light and the core adds the layers' light as it is, without its own tube (section 7.1); 0 or empty: the core draws the tube |
-| `terminal.state` | terminal | core | the terminal's state as `STATE.md`'s terminal section, then a byte, 1 with full text (SPEC §terminal.text); the core draws the terminal's text by the beam from it (section 7.1) |
-| `core.strokes` | core | terminal | in the phosphor style, the stroke font (`arcade`, `hershey`, `drafting`) in which the core draws the characters it draws and the cursor by the beam; the terminal leaves them out of its light layer (section 7.1); empty: none |
-| `core.shed` | core | a driver with a look of its own (not the reference's) | how much of its optional look to shed because the host's frames run long (section 7.1): a level (u8), 0 none to 3 the most; empty: 0 |
+| `vector.tube` | a vector display that draws its own tube (not the reference's) | core | optional (section 7.1). 1: in the phosphor style its layers are light and the core adds the layers' light as it is, without its own tube; 0 or empty: the core draws the tube |
+| `terminal.state` | terminal | core | optional (section 7.1): the terminal's state as `STATE.md`'s terminal section, then a byte, 1 with full text (SPEC §terminal.text); the core draws the terminal's text by the beam from it |
+| `core.strokes` | core | terminal | optional, for the reference look (section 7.1): in the phosphor style, the stroke font (the reference's: `arcade`, `hershey`, `drafting`) in which the core draws the characters it draws and the cursor by the beam; the terminal leaves them out of its light layer; empty: none |
+| `core.shed` | core | a driver with a look of its own (not the reference's) | optional (section 7.1): how much of its optional look to shed because the host's frames run long: a level (u8), 0 none to 3 the most; empty: 0 |
 | `core.caps` | core | vector display | the ink caps the machine's lists are drawn within, its share of the system ink (SPEC §machines.ink): the 2D cap (u64) and the 3D cap (f64), each at most the device's own; empty: the devices' own |
 | `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |
 | `core.view` | core | vector display | the shell's scene: which Screens are in effect (u8) and the view (12 f64: the linear part by rows, then the translation); empty: none |
@@ -1303,6 +1314,13 @@ reference drivers and core:
 | `content.prompt` | content | core | the consent question waiting: the asking machine (u32), the request's handle (u8), how many wait (u32), what is asked (kind and fields); empty: none |
 | `core.answer` | core | content | the answer: the question's machine (u32) and handle (u8), then 1 allow or 0 refuse |
 | `sound.frame` | sound | core | the frame counter after the frame the driver rendered last (u32), then its 800 sample pairs (i16, left and right interleaved; SPEC §sound.presentation); empty before the first |
+
+`vector.tube`, `terminal.state`, `core.strokes` and `core.shed` exist
+only for how the phosphor style looks (the reference's look, or a
+driver's own). They are optional: a driver that neither publishes nor
+subscribes to them conforms, and a core that ignores them conforms (a
+terminal driver that ignores `core.strokes` does not publish
+`terminal.state`, section 7.1).
 
 `vector3.list` is read in the middle of a frame when device 8's `face`
 needs it: the core sends GET, after the batch, as it would a call.

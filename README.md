@@ -1543,11 +1543,12 @@ the rest.
 
 ### Phosphor style
 
-`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) asks for the look of a vector
-monitor tube. Every host must draw the background black (cell and page backgrounds
+`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) asks for a vector display,
+real or simulated. Every host must draw the background black (cell and page backgrounds
 are not drawn), shapes and the page's figures as outlines, and the text in its
-colours, legible; the look beyond that (light that adds up, glow, afterglow) is the
-host's choice, and a host that draws plain lines conforms. In `terse-host` the shapes
+colours, legible; how it looks beyond that is the host's choice, and a host that
+draws plain lines conforms. The rest of this section is the reference host's own
+look, not a requirement. In `terse-host` the shapes
 add light instead of covering, and the terminal's text is light on the same tube.
 What the program shows now is drawn at full brightness each frame; an afterglow of
 earlier frames fades behind it, fast at first and then with a dim tail multiplied by

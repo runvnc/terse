@@ -262,8 +262,8 @@ answer.
 
 *Why not layers.* A layer has a place in the stack fixed by SPEC
 (§vector.layers), a share of the host's drawing bounded by each device's
-caps (R10's ink, cells and lines), and a look in the phosphor style
-(`DEVICES.md` 7.1); none of these can be declared by a table the core
+caps (R10's ink, cells and lines), and what it becomes in the phosphor
+style (light on black, `DEVICES.md` 7.1); none of these can be declared by a table the core
 checks. A device that needs its own picture is a device to specify
 (§experimental.graduation), not to try out.
 

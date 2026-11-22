@@ -92,4 +92,5 @@ The devices:
 - [Screens, panels and input (device 8)](terse:{device-machines-screens}): where machines' screens go, flat or as panels in 3D.
 - [The 3D vector display (device 9)](terse:{device-vector3}): lines, points and circles in a box, seen from the host's eye.
 - [Surfaces](terse:{device-vector3-surfaces}): a program's own screen placed in its 3D scene.
+- [The reference host's look](terse:{reference-look}): how terse-host draws the phosphor style, the 3D eye and the shell; a description of one host, not a requirement.
 - [Experimental devices](terse:{experimental}): slots 240 to 255, a name, optional only: a device tried out before it is specified.

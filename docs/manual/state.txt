@@ -117,7 +117,7 @@ A machine's only inputs are, per frame: its events (in order), the latched Unix 
 
 A snapshot is the serialization plus the program's identity. A machine is restored from a serialization S and the image whose ID S names: it has the devices S's grants say (an optional device the host has and S lacks stays absent; one S has that the host cannot give fails the restore), and S is read section by section, with the sections those devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image's RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).
 
-The restored machine has S's hash and is between frames; its next frame is numbered by S's counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, the afterglow is empty. Time and random bytes are what the host supplies from then on.
+The restored machine has S's hash and is between frames; its next frame is numbered by S's counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, any afterglow is empty. Time and random bytes are what the host supplies from then on.
 
 The snapshot file:
 
