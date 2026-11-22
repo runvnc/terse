@@ -151,7 +151,7 @@ This host runs `hello` and proves it, nothing more. The rest of a complete host,
 
 ## What you have now
 
-A host that runs Terse32 programs exactly as the reference does, and proves it: `state.go`, 28 lines, `step4/main.go`, 52; 900 lines in all. Next, write a device as a separate program: [Make a device](terse:70c072c3dfad465727eb0ddb8089d6e90df0f78da9ca5f45043f23135d1e4692).
+A host that runs Terse32 programs exactly as the reference does, and proves it: `state.go`, 28 lines, `step4/main.go`, 52; 900 lines in all. Next, write a device as a separate program: [Make a device](terse:ecd297233d1238beebab29e0b2de7ceee19becc169b6cf895b8164b536eef088).
 
-- The same step in Rust: [Make a host in Rust, step 4: prove it exact](terse:1bc7c806d046da670da165aadfab65db1a64cb737245691c75d424bf3071783c).
+- The same step in Rust: [Make a host in Rust, step 4: prove it exact](terse:f26a67ea1aa69cc5afeb0e1aee3b29c5c14558ffb96a8963027ea90c2b48b4f6).
 - The rules: [State, replay and conformance](terse:e831bfb3baad8c5aa556bd85f3f8fc53abccaa526b43dcf0d7b3e28d9c8f591f), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).

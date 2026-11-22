@@ -156,7 +156,7 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.rs`, 83 lines, and `bin/step2.rs`, 23. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:8c891dfb165d1ebcc1ccba04eb923ca300ca4cbb5e29b91529c2143e1ac7b40e).
+A machine that runs programs at exactly the reference's speed: `frames.rs`, 83 lines, and `bin/step2.rs`, 23. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:9988cb3a5c46052f105b408645a62cb7dcb73087ecaf5d2315024c45b77e259e).
 
 - The same step in Go: "Make a host in Go, step 2: frames and the budget", the page before this one.
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.

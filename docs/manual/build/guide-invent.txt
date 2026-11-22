@@ -1,6 +1,6 @@
 # Invent a device
 
-The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; [the next page](terse:e6394bccb8d3e12b4e661acf3ff263cb01e1f2b21a77b8ce366588cb7b5c8035) has the program in Rust.
+The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; [the next page](terse:742f1e5381fc3559dc5232dd6b1651046988795416c7cba31038fff3de5a8e55) has the program in Rust.
 
 ## The device
 
@@ -43,9 +43,10 @@ static void history(const Dice *d, uint32_t n, uint8_t *out)
 }
 ```
 
-The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Three things differ from a driver of a numbered device, each marked `EXPERIMENTAL` in the file:
+The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Four things differ from a driver of a numbered device, each marked `EXPERIMENTAL` in the file:
 
-- **HELLO.** The core names the device it wants, `example.dice`, and one slot; the driver answers with its name and the most bytes its state can have.
+- **HELLO.** The core names the device it wants, `example.dice`, and no slot; the driver answers with one slot entry, slot 0, holding its version and call table, then with its name and the most bytes its state can have.
+- **OPEN.** Each machine's OPEN gives the slot that machine calls the device on (240 to 255), and that machine's calls carry it. One process serves every machine, so the driver keeps one state per machine.
 - **Charges.** Every call's cost is declared in the driver's call table, and the core charges by the table, never by what the driver says afterwards.
 - **State.** The 24 bytes of `Dice` are the driver's own layout. The core keeps them in the machine's state, so the state hash, snapshots and replays work as for any device.
 
@@ -109,6 +110,6 @@ You rolled 5.
 
 ## What you have now
 
-A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is `examples/program/c/roll.c`; the driver, a fuller program, `demo.c`, and a test of every rule are in `native/driver-experimental`. Next, [the program in Rust](terse:e6394bccb8d3e12b4e661acf3ff263cb01e1f2b21a77b8ce366588cb7b5c8035).
+A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is `examples/program/c/roll.c`; the driver, a fuller program, `demo.c`, and a test of every rule are in `native/driver-experimental`. Next, [the program in Rust](terse:742f1e5381fc3559dc5232dd6b1651046988795416c7cba31038fff3de5a8e55).
 
-The rules (slots 240 to 255, names, optional only, charges, state) are in [Experimental devices](terse:a5f805723b65d920eed87ff2ead9f9970c6c9d3b9b5f585ac84cf10eb2cd2faa).
+The rules (slots 240 to 255, names, optional only, charges, state) are in [Experimental devices](terse:56f7cf8bc1c03d7fb37ef333522cecda02923cb56670a2f440b328f6e391771d).

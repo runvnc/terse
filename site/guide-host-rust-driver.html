@@ -12,7 +12,7 @@
 <article>
 <h1 id="make-a-host-in-rust-step-3-a-driver-shows-hello">Make a host in Rust, step 3: a driver shows hello</h1>
 <p>Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds the module <code>bus</code>: start one driver, the terminal&#39;s, pass it the terminal&#39;s calls, and ask it for the grid to print.</p>
-<p>The reference drivers run on Linux and are not in the downloads. Build them from the top folder of the sources:</p>
+<p>The reference drivers are in the downloads&#39; <code>bus</code> folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:</p>
 <pre>cargo build --release -p terse-devices</pre>
 <h2 id="messages">Messages</h2>
 <p>Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. <code>send</code> writes one; <code>request</code> writes one and reads the reply, which must be of the type asked for. Anything else, an <code>ERROR</code> from the driver included, ends the run with status 3 (<code>fail</code>):</p>

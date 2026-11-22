@@ -7,8 +7,8 @@ websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
 that run on tiny isolated virtual machines.
 
-[Install and try Tersenet](terse:18a71ee5e2da0ae4b47ce4480a07ca5c7b2aea544e0942ea7a41a14d167898ad)
+[Install and try Tersenet](terse:e7865503eaf22981292b1eb7e76ebb2a53e1487cf2a45684937adc4117fb451d)
 
-[Write your own Tersenet reader](terse:9dea1babca7a57699729f97329b0f2efbbbe7d9d465fe0be8358274a62f4f2f6)
+[Write your own Tersenet reader](terse:c59e37e9b05fe26e1daa4c7852f2bdf6d8c58ec0014ffd4b48231e50c5c04b0c)
 
-[Contents](terse:4c10862b8b56ca265b47300c20fbce9b1a6842177c3565ae7812fbc34f439b87)
+[Contents](terse:33c48a1f8d776d3a53b1eb2dd30e3d0605d3124860f03e51043fc23be6626d16)

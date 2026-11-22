@@ -2,7 +2,7 @@
 
 Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds the module `bus`: start one driver, the terminal's, pass it the terminal's calls, and ask it for the grid to print.
 
-The reference drivers run on Linux and are not in the downloads. Build them from the top folder of the sources:
+The reference drivers are in the downloads' `bus` folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:
 
 ```
 cargo build --release -p terse-devices
