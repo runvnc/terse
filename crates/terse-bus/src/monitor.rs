@@ -73,6 +73,14 @@ pub struct Monitor {
     pub late: u64,
     /// The monitor's own cost per frame.
     pub overhead: Histogram,
+    /// The window's surface size last composed, and whether this frame is
+    /// the first composed at it (R15: the frames after a resize).
+    surface: Option<(u32, u32)>,
+    size_changed: bool,
+    /// This frame's wait for the window system's buffer.
+    display_wait_ns: u64,
+    /// Late frames blamed on the host's own components (by component).
+    pub own_late: std::collections::BTreeMap<Component, u64>,
 }
 
 impl Monitor {
@@ -128,6 +136,10 @@ impl Monitor {
             run_start: Instant::now(),
             late: 0,
             overhead: Histogram::default(),
+            surface: None,
+            size_changed: false,
+            display_wait_ns: 0,
+            own_late: Default::default(),
         }
     }
 
@@ -153,6 +165,23 @@ impl Monitor {
         self.t0 = Instant::now();
     }
 
+    /// The frame is composed for a window's surface of `size` (called each
+    /// frame in a window, before [`Monitor::end`]): a new size is recorded
+    /// and the rule excuses the frames just after it (R15).
+    pub fn surface(&mut self, size: (u32, u32)) {
+        if self.surface != Some(size) {
+            self.surface = Some(size);
+            self.size_changed = true;
+            self.add(Line::Resize { frame: self.frame, width: size.0, height: size.1 });
+        }
+    }
+
+    /// The frame's present waited this long for the window system to give
+    /// a buffer back: left out of the frame's time (R14).
+    pub fn display_wait(&mut self, ns: u64) {
+        self.display_wait_ns += ns;
+    }
+
     /// The machines' frames have run (composing follows).
     pub fn emulated(&mut self, bus: &Bus) {
         let waits = bus.procs.iter().map(|d| d.acct.frame_ns + d.acct.other_ns).sum();
@@ -165,7 +194,9 @@ impl Monitor {
     /// program of an instance.
     pub fn end(&mut self, bus: &Bus, present_ns: u64, image: impl Fn(u32) -> Option<[u8; 32]>) -> Vec<Action> {
         let end = Instant::now();
-        let wall = end.duration_since(self.t0).as_nanos() as u64;
+        // The wait for the window system to give a buffer back is its
+        // pacing (like a vertical blank), not the frame's work (R14).
+        let wall = (end.duration_since(self.t0).as_nanos() as u64).saturating_sub(std::mem::take(&mut self.display_wait_ns));
         let t = Instant::now();
         let (emul_end, waits_then) = self.emulated.unwrap_or((end, 0));
         let emul = emul_end.duration_since(self.t0).as_nanos() as u64;
@@ -210,11 +241,15 @@ impl Monitor {
             (Some(a), Some(b)) => Some(a.saturating_sub(b)),
             _ => None,
         };
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory };
+        let size_changed = std::mem::take(&mut self.size_changed);
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory, size_changed };
         let (late, actions) = self.judge.judge(&sample);
         if let Some(l) = &late {
             self.late += 1;
             self.add(Line::late(l));
+            if l.verdict == terse_perflog::Verdict::Blamed && !l.top.component.is_device() {
+                *self.own_late.entry(l.top.component).or_default() += 1;
+            }
         }
         if !self.start_written {
             self.start_written = true;

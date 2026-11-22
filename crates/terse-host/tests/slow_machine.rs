@@ -241,8 +241,9 @@ fn slow_drawing_is_shed_then_warned_about_then_failed_and_no_machine_stopped() {
     }
 }
 
-/// The run's first frames are excused: a drawing slow from the first frame
-/// on is recorded as `excused` (start) for them, never counted.
+/// The run's first frame is the first at its size: a drawing slow from the
+/// first frame on is not blamed in it and the two after it (`resize`), and
+/// counted from then on.
 #[test]
 fn the_first_frames_are_excused() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -251,9 +252,8 @@ fn the_first_frames_are_excused() {
     let out = w.host(dir.path(), &["--selftest", &hello, "--frames", "25"], &[("TERSE_HOST_SLOW", "compose:30:0")]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let lines = record_lines(dir.path());
-    // (A self-test of 25 frames presents most of them.)
-    assert!(lines.iter().filter(|l| l.as_excused().is_some_and(|e| e.1 == "start")).count() >= 15, "{lines:?}");
-    assert!(!lines.iter().any(|l| matches!(l, Line::Late { .. } | Line::Warn { .. })), "{lines:?}");
+    assert!(!lines.iter().any(|l| matches!(l, Line::Late { frame: 0..3, verdict: Verdict::Blamed, .. })), "{lines:?}");
+    assert!(lines.iter().any(|l| matches!(l, Line::Late { frame: 0..3, verdict: Verdict::Resize, .. })), "{lines:?}");
 }
 
 /// A busy CPU (`taskset`: on one CPU) shared with a CPU hog

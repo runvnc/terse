@@ -9,15 +9,24 @@ publish`.
 Its shape:
 
 - `index`, the first page (the reader's M, the website's `index.html`):
-  the project's paragraph, unchanged, then exactly two links, to the
-  guide's first page and to `contents`. Nothing else goes there.
-- `contents`: one line per article, the guide first, then the reference.
-- The **guide** (`guide-*.txt`): short pages, each a step someone can
+  the project's paragraph, unchanged, then three short links: to the user
+  guide's first page, the implementation guide's first page and
+  `contents`. Nothing else goes there.
+- `contents`: one line per article, in three parts: the user guide, the
+  implementation guide, then the reference.
+- The two **guides** (`guide-*.txt`): short pages, each a step someone can
   finish in a sitting, showing the smallest thing that works with real
   commands, ending with "What you have now" and a link to the next page,
   and pointing into the reference for detail (no long tables, full call
-  lists or compiler flags).
+  lists or compiler flags). The **user guide** (install, run, profile,
+  write, read, subscribe, games) needs no programming; its commands and
+  screens are real output (`terse run --shell --dump --dump-page` with
+  scripted keys gives the screens). The **implementation guide** builds a
+  reader, a program, a host, a device and a shell.
 - The **reference**: every other article, complete and exact.
+- `site-files/`: files copied as they are to the website by `terse manual
+  site`, next to the pages: `install.sh`, the install script the user
+  guide names (`https://tersenet.org/install.sh`). Text files only.
 
 - `manifest` lists the articles in reading order, the index first; each is
   `<name>.txt`, whose first line is `# <title>` (the reader shows it as the

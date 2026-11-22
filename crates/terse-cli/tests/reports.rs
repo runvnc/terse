@@ -64,7 +64,7 @@ fn make(s: &Spec) -> Report {
     r.start = Some(Start { count: 12, median_ms: s.start, worst_ms: s.start + 100.0, cold: 1, cold_worst_ms: Some(s.start + 100.0) });
     for (c, halted) in [(Component::Device(3), s.vec_halted), (Component::Device(7), s.page_halted)] {
         if halted {
-            r.late.push((c, [30, 2, 0, 0]));
+            r.late.push((c, [30, 2, 0, 0, 0]));
             r.warn.push((c, 3));
             r.halt.push((c, 1));
         }

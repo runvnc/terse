@@ -27,8 +27,8 @@ says otherwise, so the layout has fixed offsets up to the RAM.
 
 ## 1. Layout
 
-Sections 1.1–1.5 and 1.13 are the core machine's (SPEC.md); 1.6–1.12
-belong to devices, in a fixed order, each with its own rule for when it
+Sections 1.1–1.5 and 1.14 are the core machine's (SPEC.md); 1.6–1.12
+belong to devices, and 1.13 to experimental devices, in a fixed order, each with its own rule for when it
 is there. A host whose devices are separate drivers (`DEVICES.md`) asks
 each driver for its section and must still know that order and those
 rules: `DEVICES.md` 1.7 gives them as one table.
@@ -291,19 +291,40 @@ s is the sum of the four lengths. Each voice is 38 bytes (SPEC §sound.voices):
 The samples a frame rendered are presentation (SPEC §sound.presentation) and are not
 included; everything they are computed from is.
 
-### 1.13 Argument (0 or 32 bytes)
+### 1.13 Experimental devices (0, or 4 + e bytes for each)
+
+This section is there only if the machine has an experimental device
+(slots 240–255, `spec/experimental.md`): its image lists one as
+optional and it was granted. For any other machine, including one whose
+image lists an experimental device that was not granted, it is empty, so
+those hashes are as they were before experimental devices existed. `X`
+is the offset after section 1.12.
+
+For each experimental device the machine has, in the order of the
+image's header:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | e (u32): the section's length, 0 to 16,384 |
+| 4 | e | The device's section, as its driver gives it (`DEVICES.md` 15.3) |
+
+Only the driver knows what the bytes mean; this document fixes only
+where they go and their length. §conformance does not cover them
+(`spec/experimental.md` §experimental.conformance).
+
+### 1.14 Argument (0 or 32 bytes)
 
 | Offset | Size | Field |
 |---|---|---|
 | A | 32 | The machine's argument (SPEC §system `argument`); there only if the shell gave it one |
 
-`A` is the offset after section 1.12. A machine with no argument (every
+`A` is the offset after section 1.13. A machine with no argument (every
 machine run on its own, and every shell) has nothing here, so its hash is
 as it was before arguments existed.
 
 The section has no flag (a flag would change the hash of every machine
 without an argument). Its presence is inferred: a reader that has read
-sections 1.1 to 1.12 finds the argument there exactly when 32 bytes
+sections 1.1 to 1.13 finds the argument there exactly when 32 bytes
 remain, none when 0 remain, and refuses any other remainder. The writer
 is the machine's own serialization: it writes the section exactly when
 the machine was given an argument (by its shell's `argument` before its
@@ -312,8 +333,9 @@ first frame, SPEC §machines.calls, or by the snapshot it was restored from).
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + k + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
 (vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
-83r (machines), 0 or 4 + m (3D vector), 0 or 2,688 + s (sound) and 0
-or 32 (argument).
+83r (machines), 0 or 4 + m (3D vector), 0 or 2,688 + s (sound), 4 + e
+for each experimental device (none for most machines) and 0 or 32
+(argument).
 
 ## 2. What is left out, and why
 
@@ -425,7 +447,8 @@ an empty 2D list, every sound voice's source, wavetable, sample slot,
 stage, level, modulator, ring and noise register are in range and no
 sample is longer than 65,536 bytes, the page rectangle is clamped, a document is at most
 65,536 bytes, every pending request has a known `op`, its block in RAM and
-its fields as a submit leaves them). The restored machine's state hash is
+its fields as a submit leaves them, every experimental section at most
+16,384 bytes and taken by its driver). The restored machine's state hash is
 S's hash, and it is between frames: its next frame is the one whose number
 is S's frame counter.
 
@@ -439,7 +462,7 @@ A host keeps a snapshot (SPEC §machines.snapshots) in a file:
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | Magic: `54h 53h 4Eh 50h` (`TSNP`) |
-| 4 | 1 | Version: `0` |
+| 4 | 1 | Version: `0`; `1` for a machine that has an experimental device (section 1.13), which is otherwise the same |
 | 5 | 81 | The identity, as SPEC §machines.calls `identity` writes it; all zero for none |
 | 86 | 4 | The Unix time latched for the machine's last frame (u32) |
 | 90 | 4 | N (u32): the length of S |
@@ -451,8 +474,10 @@ A host keeps a snapshot (SPEC §machines.snapshots) in a file:
 
 A writer sets a page's bit exactly when the page is not all zero; a reader
 accepts any page stored. Before it reads S, a reader refuses a file whose
-N is below 200 or above 1,423,091 (the longest serialization: 1 MiB of
-RAM, 16 grants, a full queue, every device at its largest and an argument), whose L
+N is below 200 or above 1,685,299 (the longest serialization: 1 MiB of
+RAM, 16 grants, a full queue, every device at its largest, 16
+experimental sections of 16,384 bytes and an argument; 1,423,091 without
+the experimental sections), whose L
 is 0, not a multiple of 8,192, above 1,048,576 or more than N − 200, or
 whose page map has a bit set for a page past the last (bit k for k ≥
 L / 8,192): a writer leaves those bits clear. A file that does not end right after the hash, or
@@ -530,11 +555,15 @@ A single machine's run in a host that records it never halts it in
 `terse run` (its headless frames are not timed); the bus's recordings
 (`DEVICES.md` 8) carry a stop when the host made one.
 
+`terse run` never grants an experimental device (`spec/experimental.md`
+§experimental.grants), so its recordings never have one; the bus's
+recordings of such a machine have version 2 (`DEVICES.md` 8).
+
 A replay makes the machine with the recorded grants (or the snapshot's),
 on a host that can provide them, or refuses. Nothing else is an input of
 a single machine: `open` always returns 0
 (or `FFFF_FFFEh`) for a machine no shell started (SPEC §system), its argument is
-in the snapshot (section 1.13; none from reset), and the page's layout
+in the snapshot (section 1.14; none from reset), and the page's layout
 reaches it only as events. A recording is read to its end; a file that ends
 inside a header or record, has a kind or controller bytes out of range, or a
 frame counter other than the machine's, is refused, and a replay stops with

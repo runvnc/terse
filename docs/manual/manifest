@@ -2,11 +2,20 @@
 # article being docs/manual/<name>.txt. An article may link only to
 # articles below it in this list, so the links can form no cycle.
 #
-# index is the first page: the paragraph and two links, to the guide's
-# first page and to contents. contents lists every other article: the
-# guide (short steps, each linking to the next), then the reference.
+# index is the first page: the paragraph and three links, to the user
+# guide's first page, the implementation guide's first page and contents.
+# contents lists every other article: the user guide, then the
+# implementation guide (short steps, each linking to the next), then the
+# reference.
 index
 contents
+guide-install
+guide-run
+guide-profile
+guide-write
+guide-read
+guide-subscribe
+guide-games
 guide-reader
 guide-reader-fetch
 guide-reader-feeds
@@ -19,7 +28,6 @@ guide-host-state
 guide-device
 guide-swap
 guide-shell
-guide-using
 how-it-works
 toolchain
 toolchain-c

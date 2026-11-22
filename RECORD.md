@@ -48,7 +48,8 @@ space:
   (`terse-host`) times each machine's frame apart (`PERFORMANCE.md` R14)
   and writes it as `core`, the machine named by the line's image and, in
   a `stop` line, its handle;
-- a **verdict** is `blamed`, `starved`, `memory` or `spread` (section 4).
+- a **verdict** is `blamed`, `starved`, `memory`, `spread` or `resize`
+  (section 4).
 
 A reader skips blank lines, lines whose first word starts with `#`, and
 lines of a known type it cannot parse; it keeps lines of an unknown type
@@ -67,18 +68,20 @@ of a line). The first line of every file is `terse-perf 1`.
 | `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked, its starvation, and the program it worked for most |
 | `block` | frame, ms, component, what | One wait of 100 ms or more on a component: `frame` work, `start` (a machine's first frames), `open` (starting a machine), `service` (a host service, an image fetched), `state` (a snapshot the rule took) |
 | `shed` | frame, level, why | The host shed optional work (the phosphor look, `SPEC.md` §vector.phosphor) to `level` (0 none … 3 plain lines): `late` (frames ran long), `recover`, `check` (the hardware check, R16) |
+| `resize` | frame, width, height | The window's surface changed size: the frame is the first composed at this size (pixels). The frames just after it may be excused (section 4, `resize`) |
 | `warn` | frame, component, count | The host warned the user (R15): `count` late frames within the warning window |
 | `stop` | frame, component, machine, image, saved | The host stopped a machine (R15): its handle (0: the shell or a machine alone), its program, where its snapshot went: `slot<n>` (an automatic slot, `spec/machines.md` §machines.snapshots), `file`, `none` |
 | `fail` | frame, component, count | One of the host's own components (`core`, `compose`, `present`) made `count` certain late frames within the stop window with nothing left to shed and no machine to blame: the host does not keep up on this computer as it runs (R15 step 4). A report counts it as a halt of that component |
-| `excused` | frame, ms, why, component, own-ms, image | A late frame the rule did not count (`PERFORMANCE.md` R15, window events): `start` (the window's first frames), `open` (a machine's first frames), `size` (the surface's size changed), `monitor` (another monitor, or its scale); the part with the most own time and its program, as in `late`. At most 60 within any 300 frames; later late frames are `late` lines |
-| `resize` | frame, width, height, why | The picture's surface changed before this frame: `size` (its new size in pixels), `monitor` |
+| `excused` | frame, ms, why, component, own-ms, image | A late frame that would have been `blamed` and that the rule did not count for another reason than a resize: `open` (in a host with built-in devices, the blamed machine was in its first two frames, `PERFORMANCE.md` R15); the part with the most own time and its program, as in `late`. At most 60 within any 300 frames |
 | `mem` | seconds, component, rss-kib | A component's resident memory, every 600 frames (10 s) from the run's start: the host's process is `core` |
 | `check` | component, ms, result | The start-up hardware check (R16): a device's worst legal frame took this long; `ok`, `shed` (the look is not offered), `slow` (the device's worst frame takes more than a frame), `absent` (not provided) |
 | `end` | frames, late, seconds | The run ended cleanly: its frames, how many were late (also those past the late lines' cap), how long it ran |
 | `drop` | lines | Lines the writer lost (its queue was full) |
 
-`vectors/perf-record.txt` is an example of every type; `cargo test -p
-terse-perflog` parses it, writes it back byte for byte and summarises it.
+`vectors/perf-record.txt` is an example of every type but `resize` and
+the `resize` verdict (added later; the record module's own test writes
+and reads both back); `cargo test -p terse-perflog` parses it, writes it
+back byte for byte and summarises it.
 
 ## 3. Bounds
 
@@ -115,6 +118,11 @@ starvation (time its threads were runnable but not running: Linux
    starvation: on a CPU, or blocked on a disk, a lock, a sleep) had more
    than its allowance, half a frame. Its doing.
 4. `spread`: no component's own time was over its allowance.
+5. `resize`: it would have been `blamed`, but the frame is the first
+   composed at a new size of the window's surface (a `resize` line) or
+   one of the two after it, and fewer than 120 frames within the last 300
+   were excused so (`PERFORMANCE.md` R15, "Resizing"). Counted toward
+   nothing.
 
 Own time is split by the component's waited-on thread's time on a CPU
 (`cpu-ms`); the rest is `blocked-ms`. A driver stopped by a signal (a
@@ -220,7 +228,7 @@ The lines come in this order (no type may follow one later in the table).
 | `device` | 16 | component, slots, name, version, build | As the record's: `dev<n>` (or `core`), slots 1–255 comma-separated or `-`; components distinct |
 | `runs` | 1 | runs, ended, frames, late | Runs begun in the period; of them ended cleanly; their frames and late frames (ended ≤ runs, late ≤ frames) |
 | `start` | ? | count, median-ms, worst-ms, cold, cold-worst-ms | Start-ups: how many (≥ 1), median ≤ worst; how many were cold (`build`, `boot`) and the worst of those, `-` exactly when cold is 0 |
-| `late` | 20 | component, blamed, starved, memory, spread | Late frames recorded, by verdict (section 4) |
+| `late` | 20 | component, blamed, starved, memory, spread, [resize] | Late frames recorded, by verdict (section 4); the fifth count, `resize`, is written only when it is not 0 (a reader of an earlier version ignores it) |
 | `warn` | 20 | component, count | R15 warnings about it (≥ 1) |
 | `halt` | 20 | component, count | R15 stops: machines halted for it (≥ 1) |
 | `shed` | ? | late, check | Times the look was shed for late frames, by the hardware check |

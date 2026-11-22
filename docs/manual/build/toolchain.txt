@@ -1,6 +1,6 @@
 # Building a program
 
-A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec) describes the library and the hello program, [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700) the Rust runtime, and [Building by hand, and other languages](terse:748be8ce8017566cf74c5c89f73d1b85abb5f051ef3c8ceacbfeadf0cd400d92) the same build without `terse build` and what any other compiler must do.
+A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:32dc9412dd1cd49975aaead7f0bf2349c177876400adcdc97d76eeee388cd805) describes the library and the hello program, [Rust programs](terse:68d5858ed25d53d7df3ed434ef3a033b5e765c1194f09846fed83d069acd593b) the Rust runtime, and [Building by hand, and other languages](terse:1f50b429395fafb530c31bd7a695c595490ed1613b1c83f65fd0e14e104597c4) the same build without `terse build` and what any other compiler must do.
 
 ## What you need
 
@@ -119,4 +119,4 @@ A device the image does not list is absent: its calls return `FFFF_FFFFh`. A hos
 
 A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
-Next: [The C library](terse:784c220ed78d7d6300ef305604ba74d7ba6cab5b5b8407c573f94d5c433bceec).
+Next: [The C library](terse:32dc9412dd1cd49975aaead7f0bf2349c177876400adcdc97d76eeee388cd805).

@@ -119,8 +119,9 @@ pub struct Report {
     pub frames: u32,
     pub late_frames: u32,
     pub start: Option<Start>,
-    /// Late frames recorded, by component: blamed, starved, memory, spread.
-    pub late: Vec<(Component, [u32; 4])>,
+    /// Late frames recorded, by component: blamed, starved, memory,
+    /// spread, resize (the last written only when not 0).
+    pub late: Vec<(Component, [u32; 5])>,
     pub warn: Vec<(Component, u32)>,
     pub halt: Vec<(Component, u32)>,
     /// Shed events: for late frames, by the hardware check.
@@ -196,7 +197,8 @@ impl Report {
             lines.push(format!("start {} {} {} {} {cw}", s.count, ms(s.median_ms), ms(s.worst_ms), s.cold));
         }
         for (c, v) in &self.late {
-            lines.push(format!("late {c} {} {} {} {}", v[0], v[1], v[2], v[3]));
+            let resize = if v[4] > 0 { format!(" {}", v[4]) } else { String::new() };
+            lines.push(format!("late {c} {} {} {} {}{resize}", v[0], v[1], v[2], v[3]));
         }
         for (c, n) in &self.warn {
             lines.push(format!("warn {c} {n}"));
@@ -550,7 +552,12 @@ pub fn parse_text(text: &[u8]) -> Result<Report, Reject> {
                 let c = comp(f[0], &r)?;
                 dup(r.late.iter().map(|l| l.0).collect(), c)?;
                 let v: Vec<u32> = f[1..5].iter().map(|s| int(s)).collect::<Option<_>>().ok_or_else(bad)?;
-                r.late.push((c, [v[0], v[1], v[2], v[3]]));
+                // A fifth count (resize) is optional.
+                let resize = match f.get(5) {
+                    Some(s) => int(s).ok_or_else(bad)?,
+                    None => 0,
+                };
+                r.late.push((c, [v[0], v[1], v[2], v[3], resize]));
             }
             "warn" | "halt" => {
                 let list = if t == "warn" { &r.warn } else { &r.halt };
@@ -705,7 +712,7 @@ pub fn from_record(lines: &[Line], o: &Options) -> Option<Report> {
     let mut devices: BTreeMap<Component, (Vec<u8>, Identity)> = BTreeMap::new();
     let (mut runs, mut ended, mut frames, mut late_frames) = (0u64, 0u64, 0u64, 0u64);
     let mut starts: Vec<(f64, bool)> = Vec::new();
-    let mut late: BTreeMap<Component, [u64; 4]> = BTreeMap::new();
+    let mut late: BTreeMap<Component, [u64; 5]> = BTreeMap::new();
     let mut warn: BTreeMap<Component, u64> = BTreeMap::new();
     let mut halt: BTreeMap<Component, u64> = BTreeMap::new();
     let (mut shed_late, mut shed_check, mut shed_any) = (0u64, 0u64, false);
@@ -751,6 +758,7 @@ pub fn from_record(lines: &[Line], o: &Options) -> Option<Report> {
                     Verdict::Starved => 1,
                     Verdict::Memory => 2,
                     Verdict::Spread => 3,
+                    Verdict::Resize => 4,
                 };
                 late.entry(*component).or_default()[i] += 1;
                 if *verdict == Verdict::Blamed && !image.is_empty() {

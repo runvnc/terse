@@ -289,7 +289,8 @@ fn snapshot_file_fields_and_time() {
     };
     let malformed = |why| Some(RestoreError::Malformed(why));
     assert_eq!(with(90, 199), malformed("state length"));
-    assert_eq!(with(90, 1_423_092), malformed("state length"));
+    // 1,423,091 and the 16 experimental sections of STATE.md 1.13 at their largest.
+    assert_eq!(with(90, 1_685_300), malformed("state length"));
     assert_eq!(with(94 + 196, 0), malformed("RAM size"));
     assert_eq!(with(94 + 196, 8193), malformed("RAM size"));
     assert_eq!(with(94 + 196, 129 * 8192), malformed("RAM size"));

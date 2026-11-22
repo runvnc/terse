@@ -67,6 +67,6 @@ The second command shows the article laid out as text, with its links numbered: 
 
 ## What you have now
 
-A program that shows Tersenet articles from files. Next, get them from the network: [Make a reader, step 2: fetch an article](terse:c62da5b66106aa8192f04da3edf6f77bd39d0e60344171507ce4421245b211f4).
+A program that shows Tersenet articles from files. Next, get them from the network: [Make a reader, step 2: fetch an article](terse:3cb5e31f6381b016d1ce2583b3880400bd205455e3585fb07dafe8df684d2bf7).
 
-The complete rules, with every edge case, are in ARTICLE.md; [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8) shows each construct as source and as shown.
+The complete rules, with every edge case, are in ARTICLE.md; [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37) shows each construct as source and as shown.

@@ -126,11 +126,70 @@ fn linear_table() -> &'static [f32; 256] {
     T.get_or_init(|| std::array::from_fn(|i| terse_host::soft::phosphor::to_linear(i as f32 / 255.0)))
 }
 
-/// The 8-bit sRGB value of linear light (clipped to 0–1).
-fn srgb8(c: f32) -> u32 {
+/// The 8-bit sRGB value of linear light (clipped to 0–1), computed.
+fn srgb8_exact(c: f32) -> u32 {
     let c = c.clamp(0.0, 1.0);
     let s = if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
     (s * 255.0 + 0.5) as u32
+}
+
+/// Buckets of [`srgb8`]'s table over 0–1.
+const SRGB_BUCKETS: usize = 4096;
+
+/// [`srgb8_exact`]'s steps: the least linear value giving each 8-bit value
+/// (found by bisection on the function itself, so the table agrees with
+/// it exactly), and per bucket of the linear range the value at its start.
+fn srgb8_table() -> &'static ([f32; 257], [u8; SRGB_BUCKETS]) {
+    static T: std::sync::OnceLock<([f32; 257], [u8; SRGB_BUCKETS])> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut steps = [f32::INFINITY; 257];
+        steps[0] = f32::NEG_INFINITY;
+        for (k, step) in steps.iter_mut().enumerate().take(256).skip(1) {
+            // Positive floats are ordered as their bits.
+            let (mut lo, mut hi) = (0u32, 1.0f32.to_bits());
+            if srgb8_exact(1.0) < k as u32 {
+                continue;
+            }
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if srgb8_exact(f32::from_bits(mid)) >= k as u32 { hi = mid } else { lo = mid + 1 }
+            }
+            *step = f32::from_bits(lo);
+        }
+        let mut start = [0u8; SRGB_BUCKETS];
+        for (i, s) in start.iter_mut().enumerate() {
+            *s = srgb8_exact(i as f32 / SRGB_BUCKETS as f32) as u8;
+        }
+        (steps, start)
+    })
+}
+
+/// The 8-bit sRGB value of linear light (clipped to 0–1): [`srgb8_exact`]
+/// by table (no power function per pixel).
+#[inline]
+fn srgb8(c: f32) -> u32 {
+    let (steps, start) = srgb8_table();
+    let c = c.clamp(0.0, 1.0);
+    let mut k = start[((c * SRGB_BUCKETS as f32) as usize).min(SRGB_BUCKETS - 1)] as usize;
+    while c >= steps[k + 1] {
+        k += 1;
+    }
+    k as u32
+}
+
+/// `rects` with overlapping ones joined (their bounding rectangle), so
+/// that no pixel is in two; empty ones dropped.
+fn disjoint(rects: Vec<IRect>) -> Vec<IRect> {
+    let mut out: Vec<IRect> = Vec::with_capacity(rects.len());
+    for mut r in rects.into_iter().filter(|r| !r.is_empty()) {
+        // Join with every rectangle it overlaps, until it overlaps none.
+        while let Some(i) = out.iter().position(|o| !o.intersect(&r).is_empty()) {
+            let o = out.swap_remove(i);
+            r = IRect::new(r.x0.min(o.x0), r.y0.min(o.y0), r.x1.max(o.x1), r.y1.max(o.y1));
+        }
+        out.push(r);
+    }
+    out
 }
 
 /// How the phosphor style is drawn (`--tube`, `--vignette`, `--no-trails`,
@@ -210,6 +269,8 @@ pub struct Screen {
     extents: HashMap<(u8, u8), Vec<(u32, u32)>>,
     /// The area drawn as a plate, if it is one.
     plated: Option<IRect>,
+    /// The last render's PRESENT and composing times (ns).
+    spent: (u64, u64),
 }
 
 /// The layer of device 9 (SPEC §vector3d).
@@ -231,6 +292,7 @@ impl Screen {
             tube: None,
             extents: HashMap::new(),
             plated: None,
+            spent: (0, 0),
         }
     }
 
@@ -308,8 +370,33 @@ impl Screen {
         } else {
             (rect.0 - area.x0 as f32, rect.1 - area.y0 as f32, rect.2, rect.3)
         };
+        let t = std::time::Instant::now();
         let updates = devices.present(picture, local, self.cell)?;
-        let damage = self.take_updates(&updates, picture)?;
+        let presented = std::time::Instant::now();
+        self.spent = ((presented - t).as_nanos() as u64, 0);
+        let r = self.compose_layers(&updates, picture, area, rect, local, all, native, viewport, pool, eye, looks);
+        self.spent.1 = presented.elapsed().as_nanos() as u64;
+        r
+    }
+
+    /// The layers' news composed into the image (or the tube drawn).
+    #[allow(clippy::too_many_arguments)]
+    fn compose_layers(
+        &mut self,
+        updates: &[LayerUpdate],
+        picture: (u32, u32),
+        area: IRect,
+        _rect: (f32, f32, f32, f32),
+        local: (f32, f32, f32, f32),
+        all: bool,
+        native: (u32, u32),
+        viewport: (u32, u32),
+        pool: &Pool,
+        eye: Eye,
+        looks: &Looks,
+    ) -> Result<(), String> {
+        let light = self.show.phosphor;
+        let damage = self.take_updates(updates, picture)?;
         if light && self.show.own_tube && !self.scene {
             // DEVICES.md 7.1 with `vector.tube`: the drivers' light, the vector
             // driver's beam among it, added (linear) over black.
@@ -317,8 +404,11 @@ impl Screen {
             self.extents.clear();
             let mut slots = self.show.light_slots.clone();
             slots.extend([3, terse_core::vector3::SLOT]);
-            let mut dirty: Vec<IRect> = if all { vec![IRect::of_size(picture)] } else { damage.into_iter().filter(|(k, _)| slots.contains(&k.0)).map(|(_, r)| r).collect() };
-            dirty.retain(|r| !r.is_empty());
+            let dirty: Vec<IRect> = if all { vec![IRect::of_size(picture)] } else { damage.into_iter().filter(|(k, _)| slots.contains(&k.0)).map(|(_, r)| r).collect() };
+            // Each layer's damage, overlapping rectangles joined: two
+            // drivers that both changed the screen's rectangle compose it
+            // once.
+            let dirty = disjoint(dirty);
             let stack: Vec<&[u32]> = self.order.iter().filter(|k| slots.contains(&k.0)).filter_map(|k| self.layers.get(k)).map(|l| l.pixels()).collect();
             let lin = linear_table();
             let w = picture.0 as usize;
@@ -590,6 +680,19 @@ pub struct Compositor {
     refresh: bool,
     /// The shares of the system ink in the last draw.
     pub shares: Shares,
+    /// Where the last draw's time went (measurements, `--selftest`).
+    pub profile: Profile,
+}
+
+/// Where a draw's time went, in nanoseconds: the machines' properties and
+/// styles (`show`), the drivers' PRESENT, the screens' layers composed (or
+/// the tube drawn), and the frame put together.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Profile {
+    pub show_ns: u64,
+    pub present_ns: u64,
+    pub layers_ns: u64,
+    pub frame_ns: u64,
 }
 
 /// The eye as the `core.eye` property.
@@ -661,6 +764,7 @@ impl Compositor {
             ran: Vec::new(),
             refresh: false,
             shares: Shares::default(),
+            profile: Profile::default(),
         }
     }
 
@@ -727,6 +831,9 @@ impl Compositor {
             d.set_property(property::STATUS, status.as_bytes())?;
             d.set_property(property::LIGHT, &[phosphor as u8])?;
             d.set_property(property::CAPS, &caps_bytes(caps))?;
+            // How much a driver's own look sheds (DEVICES.md 7.2): the
+            // level the core's own look is shed to (R15 step 1).
+            d.set_property(property::SHED, &[self.looks.look.floor.min(3)])?;
         }
         let light_slots = if phosphor { d.light_slots() } else { Vec::new() };
         let list3 = (phosphor && lines).then(|| d.list3().into_owned());
@@ -739,6 +846,8 @@ impl Compositor {
     /// title) if one is asked: each machine's drivers draw what changed,
     /// then the frame is put together where anything did.
     pub fn draw(&mut self, system: &mut System<BusDevices>, viewport: (u32, u32), prompt: Option<(&Prompt, usize, String)>) -> Result<&Pixels, String> {
+        let began = std::time::Instant::now();
+        self.profile = Profile::default();
         let eye = self.eye;
         if system.is_system() {
             let r = system_rect(viewport);
@@ -836,6 +945,7 @@ impl Compositor {
         self.ran.clear();
         self.refresh = false;
         self.overlay_rect = self.prompt(prompt, shell_rect, viewport);
+        self.profile.show_ns = began.elapsed().as_nanos() as u64;
         self.render(system, viewport)
     }
 
@@ -881,6 +991,7 @@ impl Compositor {
         let (eye, mode, native, looks) = (self.eye, self.panel_mode, self.native, self.looks);
         let none = HashMap::new();
         self.shell.render(system.shell_mut().devices_mut(), native, viewport, &self.pool, eye, &looks)?;
+        let mut spent = self.shell.spent;
         let mut shell_damage = Damage::new(viewport);
         self.shell.take_damage(&mut shell_damage);
         // Each child's screen; panels in their own images, with a new
@@ -899,6 +1010,7 @@ impl Compositor {
             let s = &mut c.screen;
             let size = (s.rect.unwrap().2 as u32, s.rect.unwrap().3 as u32);
             s.render(m.devices_mut(), native, size, &self.pool, eye, &looks)?;
+            spent = (spent.0 + s.spent.0, spent.1 + s.spent.1);
             let mut d = Damage::new(size);
             s.take_damage(&mut d);
             let mut changed = !d.is_empty();
@@ -937,6 +1049,7 @@ impl Compositor {
             let Some(m) = by_serial.get_mut(&c.serial) else { continue };
             let s = &mut c.screen;
             s.render(m.devices_mut(), native, viewport, &self.pool, eye, &looks)?;
+            spent = (spent.0 + s.spent.0, spent.1 + s.spent.1);
             match &mut c.scene {
                 None => s.take_damage(&mut self.damage),
                 Some(scene) => {
@@ -952,6 +1065,9 @@ impl Compositor {
                 }
             }
         }
+        self.profile.present_ns = spent.0;
+        self.profile.layers_ns = spent.1;
+        let framed = std::time::Instant::now();
         // Pictures that came, went or moved, and the overlay.
         let areas: Vec<IRect> = order.iter().map(|c| c.screen.area()).collect();
         let overlay = self.overlay_rect;
@@ -968,6 +1084,7 @@ impl Compositor {
         }
         self.last_damage = self.damage.rects();
         if self.damage.is_empty() {
+            self.profile.frame_ns = framed.elapsed().as_nanos() as u64;
             return Ok(&self.frame);
         }
         // Put the frame together, a tile row per thread.
@@ -1007,6 +1124,7 @@ impl Compositor {
             }
         });
         self.damage.clear();
+        self.profile.frame_ns = framed.elapsed().as_nanos() as u64;
         Ok(&self.frame)
     }
 }
@@ -1025,4 +1143,39 @@ pub fn write_png(path: &Path, rgba: &[u8], (w, h): (u32, u32)) -> Result<(), Str
     let mut writer = enc.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(rgba).map_err(|e| e.to_string())?;
     writer.finish().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srgb8_by_table_is_the_function() {
+        let (steps, _) = srgb8_table();
+        // Every step and its neighbours, and a fine sweep.
+        for k in 1..256 {
+            let s = steps[k];
+            for c in [s, f32::from_bits(s.to_bits() - 1), f32::from_bits(s.to_bits() + 1)] {
+                assert_eq!(srgb8(c), srgb8_exact(c), "{c}");
+            }
+        }
+        for i in 0..=200_000 {
+            let c = i as f32 / 200_000.0;
+            assert_eq!(srgb8(c), srgb8_exact(c), "{c}");
+        }
+        for c in [-1.0, 0.0, 1.0, 2.0, f32::NAN.max(0.0)] {
+            assert_eq!(srgb8(c), srgb8_exact(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn overlapping_damage_is_joined() {
+        let r = |a, b, c, d| IRect::new(a, b, c, d);
+        assert_eq!(disjoint(vec![r(0, 0, 10, 10), r(0, 0, 10, 10)]), vec![r(0, 0, 10, 10)]);
+        assert_eq!(disjoint(vec![r(0, 0, 10, 10), r(20, 0, 30, 10)]).len(), 2);
+        let mut j = disjoint(vec![r(0, 0, 10, 10), r(20, 0, 30, 10), r(5, 5, 25, 6)]);
+        j.sort_by_key(|r| r.x0);
+        assert_eq!(j, vec![r(0, 0, 30, 10)]);
+        assert!(disjoint(vec![r(0, 0, 0, 10)]).is_empty());
+    }
 }

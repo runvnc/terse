@@ -67,4 +67,4 @@ int main(void)
 }
 ```
 
-Next: [Rust programs](terse:9348b295b3b3b7047af9def48f19d8ebb0282e873d1f7e30f36ccd9bf67ff700).
+Next: [Rust programs](terse:68d5858ed25d53d7df3ed434ef3a033b5e765c1194f09846fed83d069acd593b).

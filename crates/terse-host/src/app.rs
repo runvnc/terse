@@ -881,12 +881,12 @@ impl App {
         }
     }
 
-    /// The window moved to another monitor, or its scale changed: the
-    /// next frames are excused (PERFORMANCE.md R15).
+    /// The window moved to another monitor, or its scale changed: as a
+    /// size change, the next frames are excused (PERFORMANCE.md R15).
     fn monitor_changed(&mut self) {
-        self.watch.excuse(crate::rule::Excuse::Monitor);
-        let size = self.gfx.as_ref().map_or((0, 0), |g| g.viewport());
-        self.watch.add(terse_perflog::Line::resize(self.watch.frame, size, "monitor"));
+        self.watch.resized();
+        let (width, height) = self.gfx.as_ref().map_or((0, 0), |g| g.viewport());
+        self.watch.add(terse_perflog::Line::Resize { frame: self.watch.frame, width, height });
     }
 
     /// Machine `h`'s name for the user.
@@ -1157,8 +1157,8 @@ impl ApplicationHandler for App {
                     // A real change of the surface's size: the next frames
                     // are excused (PERFORMANCE.md R15).
                     if size.width > 0 && size.height > 0 && gfx.viewport() != (size.width, size.height) {
-                        self.watch.excuse(crate::rule::Excuse::Size);
-                        self.watch.add(terse_perflog::Line::resize(self.watch.frame, (size.width, size.height), "size"));
+                        self.watch.resized();
+                        self.watch.add(terse_perflog::Line::Resize { frame: self.watch.frame, width: size.width, height: size.height });
                     }
                     gfx.resize(size);
                     gfx.window.request_redraw();

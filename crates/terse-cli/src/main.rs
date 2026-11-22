@@ -36,7 +36,7 @@ const USAGE: &str = "usage:
               [--show] [--run [the options of run]...]   (C, assembly or Rust to an image; `terse build` alone: details)
   terse build --write-lib <dir>   (the C library, linker script and Rust runtime built into terse)
   terse new <file.c|file.rs|file.S>   (a starter program)
-  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]...
+  terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>[=<name>]]...
              -o <out.terse>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>]
@@ -154,7 +154,8 @@ status 05h (refused) without asking. --profile program provides only the program
 --without <slot> withholds one. An image that requires a device the run does not provide is
 refused; an optional device it does not provide is absent (SPEC §image).
 pack: --device lists a required device, --optional one the program can run without (--device 10:0
-or --optional 10:0: full text, SPEC §terminal.text); `info` shows both.
+or --optional 10:0: full text, SPEC §terminal.text); `info` shows both. An experimental device (slots
+240-255, spec/experimental.md) is only optional and named: --optional 240:0=example.dice.
 A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC §machines.snapshots).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
@@ -953,6 +954,14 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
     println!("ram_pages: {} ({} KB)", image.ram_pages, image.ram_pages as usize * 8);
     println!("devices:   {}", list(false));
     println!("optional:  {}", list(true));
+    // spec/experimental.md: their names, which only the table gives.
+    if image.devices.iter().any(|d| d.experimental()) {
+        let names = match image.experimental() {
+            Some(v) => v.iter().map(|(s, n)| format!("{s}={n}")).collect::<Vec<_>>().join(" "),
+            None => "(the table of names is not valid: none is granted)".into(),
+        };
+        println!("experimental: {names} (not covered by conformance)");
+    }
     // SPEC §terminal.text: the characters the terminal is drawn with.
     let text = match image.devices.iter().find(|d| d.slot == terse_core::text::FULL_TEXT) {
         Some(d) if !d.optional => "full (device 10 required)",
@@ -1014,12 +1023,63 @@ fn hash(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `slot:version`, a version 0 to 127 (SPEC §image).
+/// `slot:version`, a version 0 to 127 (SPEC §image); for an experimental
+/// slot (240-255, spec/experimental.md) `slot:version=name`, which only
+/// `--optional` takes ([`experimental_names`] reads the names).
 fn parse_device(s: &str, optional: bool) -> Result<DeviceReq, String> {
-    let bad = || format!("bad device {s} (want slot:version, a version 0 to 127)");
+    let bad = || format!("bad device {s} (want slot:version, a version 0 to 127; slot:version=name for an experimental device)");
+    let (s, name) = match s.split_once('=') {
+        Some((s, n)) => (s, Some(n)),
+        None => (s, None),
+    };
     let (slot, version) = s.split_once(':').ok_or_else(bad)?;
     let version: u8 = version.parse().ok().filter(|&v: &u8| v < terse_core::image::OPTIONAL).ok_or_else(bad)?;
-    Ok(DeviceReq { slot: slot.parse().map_err(|_| bad())?, version, optional })
+    let d = DeviceReq { slot: slot.parse().map_err(|_| bad())?, version, optional };
+    match (d.experimental(), name) {
+        (true, _) if !optional => Err(format!(
+            "device {}: slots 240-255 are experimental devices, which a program may only list as optional (--optional {}:{}=<name>; spec/experimental.md)",
+            d.slot, d.slot, d.version
+        )),
+        (true, None) => Err(format!("--optional {s}: an experimental device needs its name: --optional {s}=<name> (spec/experimental.md)")),
+        (true, Some(n)) if !terse_core::image::valid_experimental_name(n) => {
+            Err(format!("--optional {s}={n}: a name is 1 to 30 of a-z, 0-9, - and ., starting with a letter"))
+        }
+        (false, Some(_)) => Err(format!("--optional {s}=...: only an experimental device (slots 240-255) has a name")),
+        _ => Ok(d),
+    }
+}
+
+/// The names of the experimental devices given with `--optional
+/// <slot>:<version>=<name>` (spec/experimental.md), in the order given.
+pub(crate) fn experimental_names(args: &Args) -> Vec<(u8, String)> {
+    args.all("--optional")
+        .filter_map(|o| {
+            let (d, n) = o.split_once('=')?;
+            Some((d.split_once(':')?.0.parse().ok()?, n.to_string()))
+        })
+        .collect()
+}
+
+/// `rom` with the experimental device table at its end, if `devices`
+/// lists experimental devices (spec/experimental.md §experimental.image):
+/// refuses two with one name, and an image that a host would not read the
+/// table of.
+pub(crate) fn with_experimental_table(args: &Args, devices: &[DeviceReq], mut rom: Vec<u8>) -> Result<Vec<u8>, String> {
+    let names = experimental_names(args);
+    if names.is_empty() {
+        return Ok(rom);
+    }
+    for (i, (_, n)) in names.iter().enumerate() {
+        if names[..i].iter().any(|(_, m)| m == n) {
+            return Err(format!("the experimental device {n} is listed twice"));
+        }
+    }
+    rom.extend(terse_core::image::experimental_table(&names));
+    let image = Image::parse(&Image::build("", 1, devices, &rom)).map_err(|e| e.to_string())?;
+    if image.experimental().is_none_or(|v| v.len() != names.len()) {
+        return Err("the experimental device table does not match the devices listed".into());
+    }
+    Ok(rom)
 }
 
 fn pack(args: &[String]) -> Result<ExitCode, String> {
@@ -1044,6 +1104,7 @@ fn pack(args: &[String]) -> Result<ExitCode, String> {
     if devices.len() > terse_core::image::MAX_DEVICES {
         return Err("more than 16 devices".into());
     }
+    let rom = with_experimental_table(&args, &devices, rom)?;
     let file = Image::build(title, ram_pages, &devices, &rom);
     // Validate exactly as a host would.
     let image = Image::parse(&file).map_err(|e| e.to_string())?;

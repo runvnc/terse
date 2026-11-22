@@ -9,6 +9,9 @@ pub const MAGIC: &[u8; 4] = b"TBRC";
 /// Version 1 adds, per frame, the device the host stopped the machine for
 /// (PERFORMANCE.md R15); version 0 recordings are still read.
 pub const VERSION: u8 = 1;
+/// Version 1 of a machine that has an experimental device (DEVICES.md 8,
+/// 15), so that it is not taken for a conformance run.
+pub const VERSION_EXPERIMENTAL: u8 = 2;
 
 /// One frame's inputs.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -27,9 +30,9 @@ pub struct FrameRecord {
 
 /// The header: the image ID, then the machine's grants (SPEC §image), a flag
 /// per optional device the image lists (none for most images).
-pub fn header(image_id: &[u8; 32], grants: &terse_core::Grants) -> Vec<u8> {
+pub fn header(image_id: &[u8; 32], grants: &terse_core::Grants, experimental: bool) -> Vec<u8> {
     let mut v = MAGIC.to_vec();
-    v.push(VERSION);
+    v.push(if experimental { VERSION_EXPERIMENTAL } else { VERSION });
     v.extend_from_slice(image_id);
     v.extend(grants.0.iter().map(|&g| g as u8));
     v
@@ -76,7 +79,7 @@ pub fn parse(bytes: &[u8], image: &terse_core::Image) -> Result<([u8; 32], terse
         return Err("not a terse-bus recording".into());
     }
     let version = r.u8()?;
-    if version > VERSION {
+    if version > VERSION_EXPERIMENTAL {
         return Err(format!("a terse-bus recording of version {version}"));
     }
     let id: [u8; 32] = r.take(32)?.try_into().unwrap();
@@ -90,6 +93,9 @@ pub fn parse(bytes: &[u8], image: &terse_core::Image) -> Result<([u8; 32], terse
             1 => true,
             _ => return Err("a grant that is not 0 or 1".into()),
         });
+    }
+    if image.grants_experimental(&terse_core::Grants(grants.clone())) != (version == VERSION_EXPERIMENTAL) {
+        return Err("the version does not say whether the machine has an experimental device".into());
     }
     let mut frames = Vec::new();
     while !r.clone().rest().is_empty() {

@@ -44,18 +44,20 @@
 //! process's (its drawing threads'). Windows gives neither: there a blame
 //! warns, never stops.
 //!
-//! **Excused frames.** Frames right after the window appears, after its
-//! surface really changes size, after it moves to another monitor or its
-//! scale changes, and a machine's first two frames, are judged and
-//! recorded with their reason (`excused`) and not counted: they redo work
-//! a steady frame does not (a surface, glyphs at a new size, caches). At
-//! most [`EXCUSED_MAX`] late frames within any [`EXCUSE_WINDOW`] frames are
-//! excused, so continuous resizing cannot hide a slow host: beyond that its
-//! late frames count.
+//! **Excused frames.** As in terse-bus (`terse_perflog::Resizes`): a frame
+//! that would be blamed within `Rule::resize_frames` (3) frames of a size
+//! change of the window's surface (the frame first drawn at the new size,
+//! the first frame of all, or the first after a move to another monitor or
+//! a change of its scale) is `resize` instead and counts toward nothing, at
+//! most `Rule::resize_budget` (120) within the stop window, so a window
+//! resized without end cannot hide a slow part for long. And as terse-bus
+//! never blames a machine's start, a machine blamed in its first
+//! [`OPEN_FRAMES`] frames is recorded as `excused` (`open`), at most
+//! [`EXCUSED_MAX`] within [`EXCUSE_WINDOW`].
 
 use std::collections::{HashMap, VecDeque};
 
-use terse_perflog::{Component, FrameSample, Late, Rule, Step, Tally, Verdict};
+use terse_perflog::{Component, FrameSample, Late, Resizes, Rule, Step, Tally, Verdict};
 
 /// Who a part of a frame is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,42 +68,22 @@ pub enum Culprit {
     Host(Component),
 }
 
-/// Why frames are excused.
+/// Why a frame that would be blamed is not counted (besides `resize`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Excuse {
-    /// The run's first frames.
-    Start,
-    /// A machine's first frames.
+    /// The blamed machine is in its first frames.
     Open,
-    /// The picture's size changed.
-    Size,
-    /// Another monitor, or its scale.
-    Monitor,
 }
 
 impl Excuse {
     pub fn name(&self) -> &'static str {
         match self {
-            Excuse::Start => "start",
             Excuse::Open => "open",
-            Excuse::Size => "size",
-            Excuse::Monitor => "monitor",
-        }
-    }
-
-    /// Frames excused after it: the start a half second (the first
-    /// glyphs, pipelines, the first page layouts), a change of size or
-    /// monitor a sixth (a new surface, glyphs at the new size).
-    pub fn frames(&self) -> u64 {
-        match self {
-            Excuse::Start => 30,
-            Excuse::Open => 2,
-            Excuse::Size | Excuse::Monitor => 10,
         }
     }
 }
 
-/// At most this many late frames are excused within [`EXCUSE_WINDOW`].
+/// At most this many frames are excused (`open`) within [`EXCUSE_WINDOW`].
 pub const EXCUSED_MAX: usize = 60;
 /// The window of [`EXCUSED_MAX`]: the rule's stop window, five seconds.
 pub const EXCUSE_WINDOW: u64 = 300;
@@ -123,11 +105,11 @@ pub enum Act {
 /// One frame judged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Judged {
-    /// The verdict, if the frame was late.
+    /// The verdict, if the frame was late (`resize` if excused for that).
     pub late: Option<Late>,
     /// Who the frame's top part is.
     pub culprit: Option<Culprit>,
-    /// Why the frame was not counted, if it was excused.
+    /// Why the frame was not counted, if it was excused otherwise.
     pub excused: Option<Excuse>,
     pub acts: Vec<Act>,
 }
@@ -137,10 +119,13 @@ pub struct Judged {
 pub struct Enforcer {
     pub rule: Rule,
     tally: Tally<Culprit>,
-    /// Frames before this one are excused, and why.
-    until: Option<(u64, Excuse)>,
-    /// The frames whose lateness was excused, within the window.
+    resizes: Resizes,
+    /// The frames excused (`open`), within the window.
     excused: VecDeque<u64>,
+    /// The host's own parts that failed, and their last blame since: said
+    /// once, again only after a whole stop window without blame (as
+    /// terse-bus warns about its own parts once).
+    failed: HashMap<Culprit, u64>,
 }
 
 impl Default for Enforcer {
@@ -151,16 +136,7 @@ impl Default for Enforcer {
 
 impl Enforcer {
     pub fn new(rule: Rule) -> Enforcer {
-        Enforcer { rule, tally: Tally::new(rule), until: None, excused: VecDeque::new() }
-    }
-
-    /// Something happened before `frame` that excuses it and the frames
-    /// after it (`why.frames()` in all).
-    pub fn excuse(&mut self, frame: u64, why: Excuse) {
-        let end = frame + why.frames();
-        if self.until.is_none_or(|(u, _)| u <= end) {
-            self.until = Some((end, why));
-        }
+        Enforcer { rule, tally: Tally::new(rule), resizes: Resizes::default(), excused: VecDeque::new(), failed: HashMap::new() }
     }
 
     /// Forgets a machine's blames (it was stopped, or has gone).
@@ -177,36 +153,47 @@ impl Enforcer {
         while self.excused.front().is_some_and(|&f| f + EXCUSE_WINDOW <= s.frame) {
             self.excused.pop_front();
         }
-        let late = terse_perflog::judge::verdict(&r, s);
-        let mut out = Judged { late, culprit: None, excused: None, acts: Vec::new() };
-        let Some(l) = late else { return out };
-        let i = s.parts.iter().position(|p| *p == l.top);
+        self.failed.retain(|_, &mut f| f + r.stop_within > s.frame);
+        let mut late = terse_perflog::judge::verdict(&r, s);
+        let i = late.and_then(|l| s.parts.iter().position(|p| *p == l.top));
         let culprit = i.and_then(|i| who.get(i).copied());
-        out.culprit = culprit;
-        let reason = match self.until {
-            Some((u, why)) if s.frame < u => Some(why),
-            _ => i.and_then(|i| opened.get(i)).is_some_and(|&o| o).then_some(Excuse::Open),
-        };
-        if let Some(why) = reason
+        let open = i.and_then(|i| opened.get(i)).is_some_and(|&o| o);
+        let mut out = Judged { late, culprit, excused: None, acts: Vec::new() };
+        if let Some(l) = late
+            && l.verdict == Verdict::Blamed
+            && open
             && self.excused.len() < EXCUSED_MAX
         {
             self.excused.push_back(s.frame);
-            out.excused = Some(why);
+            out.excused = Some(Excuse::Open);
             return out;
         }
-        let Some(c) = culprit.filter(|_| l.verdict == Verdict::Blamed) else { return out };
+        self.resizes.excuse(&r, s.frame, s.size_changed, &mut late);
+        out.late = late;
+        let Some(l) = late.filter(|l| l.verdict == Verdict::Blamed) else { return out };
+        let Some(c) = culprit else { return out };
         // The first step: shed the optional look, instead of counting.
         if c == Culprit::Host(Component::Compose) && can_shed {
             out.acts.push(Act::Shed);
             return out;
         }
         let certain = l.top.starved_ns.is_some() && s.host_starved_ns.is_some();
-        match self.tally.blame(s.frame, c, certain) {
+        // The event loop held elsewhere is nobody the host can stop or
+        // fault: warned about once, as terse-bus does its own parts.
+        let can_stop = c != Culprit::Host(Component::Outside);
+        let step = self.tally.blame(s.frame, c, certain, can_stop);
+        if let Some(last) = self.failed.get_mut(&c) {
+            *last = s.frame;
+            return out;
+        }
+        match step {
             Some(Step::Warn(count)) => out.acts.push(Act::Warn { culprit: c, count }),
-            // The event loop held elsewhere is nobody the host can stop or
-            // fault: it warns again.
-            Some(Step::Stop(count)) if c == Culprit::Host(Component::Outside) => out.acts.push(Act::Warn { culprit: c, count }),
-            Some(Step::Stop(count)) => out.acts.push(Act::Stop { culprit: c, count }),
+            Some(Step::Stop(count)) => {
+                if matches!(c, Culprit::Host(_)) {
+                    self.failed.insert(c, s.frame);
+                }
+                out.acts.push(Act::Stop { culprit: c, count });
+            }
             None => {}
         }
         out
@@ -247,7 +234,7 @@ mod tests {
         let parts = vec![part(Component::Core, MS, 0), m, part(Component::Compose, compose, 0), part(Component::Present, MS / 2, 0)];
         let wall = parts.iter().map(|p| p.wall_ns).sum();
         let who = vec![Culprit::Machine(0), Culprit::Machine(5), Culprit::Host(Component::Compose), Culprit::Host(Component::Present)];
-        (FrameSample { frame: n, wall_ns: wall, parts, host_starved_ns: readings.then_some(0), memory_stall_ns: Some(0) }, who)
+        (FrameSample { frame: n, wall_ns: wall, parts, host_starved_ns: readings.then_some(0), memory_stall_ns: Some(0), size_changed: false }, who)
     }
 
     fn run(e: &mut Enforcer, frames: impl Iterator<Item = (FrameSample, Vec<Culprit>)>, can_shed: bool) -> Vec<(u64, Act)> {
@@ -275,7 +262,7 @@ mod tests {
         // Three levels to shed, then nothing: the frames stay slow.
         let mut floor = 0;
         let mut acts = Vec::new();
-        for n in 0..23 {
+        for n in 0..30 {
             let (s, who) = frame(n, 2 * MS, 25 * MS, 0, true);
             for a in e.judge(&s, &who, &[false; 4], floor < 3).acts {
                 if a == Act::Shed {
@@ -284,10 +271,15 @@ mod tests {
                 acts.push((n, a));
             }
         }
-        assert_eq!(
-            acts,
-            vec![(0, Act::Shed), (1, Act::Shed), (2, Act::Shed), (5, Act::Warn { culprit: c, count: 3 }), (12, Act::Stop { culprit: c, count: 10 }), (15, Act::Warn { culprit: c, count: 3 }), (22, Act::Stop { culprit: c, count: 10 })]
-        );
+        // Said once: after the failure nothing more while it goes on.
+        assert_eq!(acts, vec![(0, Act::Shed), (1, Act::Shed), (2, Act::Shed), (5, Act::Warn { culprit: c, count: 3 }), (12, Act::Stop { culprit: c, count: 10 })]);
+        // After a whole stop window without blame, again.
+        for n in 30..330 {
+            let (s, who) = frame(n, 2 * MS, 2 * MS, 0, true);
+            assert!(e.judge(&s, &who, &[false; 4], false).acts.is_empty());
+        }
+        let again: Vec<Act> = (330..340).flat_map(|n| e.judge(&frame(n, 2 * MS, 25 * MS, 0, true).0, &frame(n, 0, 0, 0, true).1, &[false; 4], false).acts).collect();
+        assert_eq!(again, vec![Act::Warn { culprit: c, count: 3 }, Act::Stop { culprit: c, count: 10 }]);
         assert!(acts.iter().all(|(_, a)| !matches!(a, Act::Warn { culprit: Culprit::Machine(_), .. } | Act::Stop { culprit: Culprit::Machine(_), .. })));
     }
 
@@ -317,38 +309,38 @@ mod tests {
 
     #[test]
     fn excused_frames_and_their_bound() {
-        // A resize before frame 100: frames 100 to 109 are excused.
+        // A size change at frame 100: frames 100 to 102 are `resize`.
         let mut e = Enforcer::default();
         let slow = |n| frame(n, 30 * MS, 3 * MS, 0, true);
-        e.excuse(100, Excuse::Size);
-        let mut excused = Vec::new();
+        let mut resized = Vec::new();
         let mut acts = Vec::new();
-        for n in 100..115 {
-            let (s, who) = slow(n);
+        for n in 100..110 {
+            let (mut s, who) = slow(n);
+            s.size_changed = n == 100;
             let j = e.judge(&s, &who, &[false; 4], true);
-            if let Some(w) = j.excused {
-                excused.push((n, w));
+            if j.late.unwrap().verdict == Verdict::Resize {
+                resized.push(n);
             }
             acts.extend(j.acts.into_iter().map(|a| (n, a)));
         }
-        assert_eq!(excused, (100..110).map(|n| (n, Excuse::Size)).collect::<Vec<_>>());
-        assert_eq!(acts, vec![(112, Act::Warn { culprit: Culprit::Machine(5), count: 3 })]);
-        // Resizing without end: a resize before every frame excuses at
-        // most 60 frames in 300; then the late frames count, and a slow
-        // machine is stopped all the same.
+        assert_eq!(resized, vec![100, 101, 102]);
+        assert_eq!(acts, vec![(105, Act::Warn { culprit: Culprit::Machine(5), count: 3 })]);
+        // Resizing without end: a size change before every frame excuses
+        // at most 120 frames in 300; then the late frames count, and a slow
+        // machine is stopped all the same (as terse-bus's device).
         let mut e = Enforcer::default();
         let mut excused = 0;
         let mut stop = None;
         for n in 0..300 {
-            e.excuse(n, Excuse::Size);
-            let (s, who) = slow(n);
+            let (mut s, who) = slow(n);
+            s.size_changed = true;
             let j = e.judge(&s, &who, &[false; 4], true);
-            excused += j.excused.is_some() as usize;
+            excused += (j.late.unwrap().verdict == Verdict::Resize) as usize;
             if stop.is_none() && j.acts.iter().any(|a| matches!(a, Act::Stop { .. })) {
                 stop = Some(n);
             }
         }
-        assert_eq!((excused, stop), (EXCUSED_MAX, Some(EXCUSED_MAX as u64 + 9)));
+        assert_eq!((excused, stop), (120, Some(129)));
         // A machine's first frames are excused for it alone.
         let mut e = Enforcer::default();
         let (s, who) = slow(5);
@@ -359,18 +351,17 @@ mod tests {
     }
 
     #[test]
-    fn outside_is_warned_about_never_failed() {
+    fn outside_is_warned_about_once_never_failed() {
         let mut e = Enforcer::default();
         let mut acts = Vec::new();
-        for n in 0..20 {
+        for n in 0..40 {
             let (mut s, mut who) = frame(n, 2 * MS, 3 * MS, 0, true);
             s.parts.push(Part { component: Component::Outside, wall_ns: 30 * MS, run_ns: None, starved_ns: Some(0), image: None });
             s.wall_ns += 30 * MS;
             who.push(Culprit::Host(Component::Outside));
             acts.extend(e.judge(&s, &who, &[false; 5], true).acts.into_iter().map(|a| (n, a)));
         }
-        let o = Culprit::Host(Component::Outside);
-        assert_eq!(acts, vec![(2, Act::Warn { culprit: o, count: 3 }), (9, Act::Warn { culprit: o, count: 10 }), (12, Act::Warn { culprit: o, count: 3 }), (19, Act::Warn { culprit: o, count: 10 })]);
+        assert_eq!(acts, vec![(2, Act::Warn { culprit: Culprit::Host(Component::Outside), count: 3 })]);
     }
 
     #[test]

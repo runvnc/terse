@@ -17,7 +17,7 @@ use terse_perflog::probe::{Pressure, ProcProbe, ProcSample};
 use terse_perflog::record::{self, Line, MEM_EVERY, Readings, Recorder};
 use terse_perflog::{Component, FrameSample, Part};
 
-use crate::rule::{Culprit, Enforcer, Excuse, Judged, Opened};
+use crate::rule::{Culprit, Enforcer, Judged, Opened};
 
 /// One machine's share of a frame.
 #[derive(Clone, Debug)]
@@ -65,6 +65,8 @@ pub struct HostWatch {
     judged: Vec<MachinePart>,
     step: Option<Stepped>,
     opened: Opened,
+    /// The next frame is the first at a new size (the first of all, too).
+    resized: bool,
     /// The host's frame number: one per frame presented.
     pub frame: u64,
     started: Instant,
@@ -94,10 +96,9 @@ impl HostWatch {
             r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: thread.has_cpu(), wait: thread.has_wait(), stall: psi.available() } });
             r.add(Line::Readings { component: Component::Compose, readings: Readings { cpu: process.has_cpu(), wait: process.has_wait(), stall: false } });
         }
-        let mut rule = Enforcer::default();
-        rule.excuse(0, Excuse::Start);
         HostWatch {
-            rule,
+            rule: Enforcer::default(),
+            resized: true,
             rec,
             dir,
             thread_wait: thread.has_wait(),
@@ -156,12 +157,6 @@ impl HostWatch {
         self.machines.push(MachinePart { serial, image, wall: parts.iter().sum(), sample, opened, slot });
     }
 
-    /// Machine `serial` starts afresh (restored): its first frames are
-    /// excused again.
-    pub fn reopened(&mut self, serial: u32) {
-        self.opened.reset(serial);
-    }
-
     /// The machines' frames have run.
     pub fn emulated(&mut self) {
         self.at_emulated = self.thread.sample();
@@ -188,9 +183,12 @@ impl HostWatch {
         self.add(Line::Shed { frame: self.frame, level: level as u32, why: why.into() });
     }
 
-    /// Something excuses the next frames (R15: they are not counted).
-    pub fn excuse(&mut self, why: Excuse) {
-        self.rule.excuse(self.frame, why);
+    /// The window's surface changed size, or the window moved to another
+    /// monitor or its scale changed: the next frame drawn is the first at
+    /// the new size, and its blame and the next two frames' are excused
+    /// as `resize` (R15, `terse_perflog::Resizes`).
+    pub fn resized(&mut self) {
+        self.resized = true;
     }
 
     /// The device to name when machine `serial` is stopped for the frame
@@ -245,7 +243,8 @@ impl HostWatch {
             (Some(a), Some(b)) => Some(a.saturating_sub(b)),
             _ => None,
         };
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: thread_ok.then_some(0), memory_stall_ns: memory };
+        let size_changed = std::mem::take(&mut self.resized);
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: thread_ok.then_some(0), memory_stall_ns: memory, size_changed };
         Some((sample, who, opened))
     }
 
@@ -286,6 +285,7 @@ impl Drop for HostWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use terse_perflog::Verdict;
 
     /// One step as the window runs it: machines 0 and 3, then the drawing.
     fn step(w: &mut HostWatch, machine3: Duration, render: Duration) -> Option<Judged> {
@@ -306,7 +306,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut w = HostWatch::new(Some(dir.path().to_path_buf()), false, "software", "window", Instant::now());
         let ms = Duration::from_millis;
-        // Past the start's excused frames: frames 30 to 33 draw for 30 ms,
+        // Past the first frames: frames 30 to 33 draw for 30 ms,
         // frames 40 to 43 machine 3 takes 30 ms.
         for n in 0..50 {
             let render = if (30..34).contains(&n) { ms(30) } else { ms(2) };
@@ -339,18 +339,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut w = HostWatch::new(Some(dir.path().to_path_buf()), false, "software", "window", Instant::now());
         let ms = Duration::from_millis;
-        let mut excused = 0;
-        for _ in 0..5 {
+        // The first frame of all is the first at its size: it and the two
+        // after it are excused as `resize` (unless the computer was busy).
+        for _ in 0..3 {
             let j = step(&mut w, ms(1), ms(40)).unwrap();
-            assert!(j.acts.is_empty(), "{j:?}");
-            excused += j.excused.is_some() as u32;
+            assert!(j.acts.is_empty() && j.late.unwrap().verdict != Verdict::Blamed, "{j:?}");
         }
-        assert_eq!(excused, 5);
+        // A size change later: the same.
+        for _ in 3..10 {
+            step(&mut w, ms(1), ms(2)).unwrap();
+        }
+        w.resized();
+        for _ in 10..13 {
+            let j = step(&mut w, ms(1), ms(40)).unwrap();
+            assert!(j.acts.is_empty() && j.late.unwrap().verdict != Verdict::Blamed, "{j:?}");
+        }
         let path = w.rec.as_ref().unwrap().path().unwrap();
         drop(w);
         let lines = record::parse(&std::fs::read_to_string(path).unwrap());
-        assert_eq!(lines.iter().filter(|l| l.as_excused().is_some_and(|(_, why)| why == "start")).count(), 5, "{lines:?}");
-        assert!(!lines.iter().any(|l| matches!(l, Line::Late { .. })));
+        assert!(lines.iter().any(|l| matches!(l, Line::Late { verdict: Verdict::Resize, .. })), "{lines:?}");
     }
 
     /// The cost of watching a frame of a shell and 8 machines: the

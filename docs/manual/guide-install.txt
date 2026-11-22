@@ -1,0 +1,63 @@
+# Install Tersenet
+
+Tersenet is three programs: `terse-host`, the window where you read; `terse`, a command for publishing and managing feeds; and `terse-relay`, for sharing with other people. They need nothing else installed, and nobody gives out accounts: you will make your own identity on the way.
+
+## Linux and macOS
+
+In a terminal:
+
+```
+curl -fsSL https://tersenet.org/install.sh | sh
+```
+
+The script finds the download for your system, checks it against the SHA-256 sums published with it, and copies the three programs into `~/.local/bin` (`TERSE_PREFIX=/some/folder` before `sh` puts them in its `bin` instead). It never asks for your password and changes nothing else. It is short, and you can read it first at the same address. It ends like this:
+
+```
+tersenet: checked its SHA-256
+tersenet: installed /home/me/.local/bin/terse-host
+tersenet: installed /home/me/.local/bin/terse
+tersenet: installed /home/me/.local/bin/terse-relay
+tersenet: terse 0.1.0 b3:0a38148f171f2b64
+tersenet: start it with: terse-host
+tersenet: to remove it: the same command, ending sh -s uninstall
+```
+
+If `~/.local/bin` is not on your `PATH`, it also prints the line to add for bash, zsh or fish; it does not edit your shell's files itself. Then check:
+
+```
+terse --version
+```
+
+If the script says it found no release, none has been published yet: build from the source, below.
+
+It runs on Linux on x86_64 or 64-bit ARM with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or newer), with Wayland or X11, and on macOS 11 or newer, Apple silicon or Intel.
+
+To remove the programs:
+
+```
+curl -fsSL https://tersenet.org/install.sh | sh -s uninstall
+```
+
+Your key and the feeds you follow stay in `~/.config/terse` until you delete that folder too.
+
+## Windows
+
+Download `terse-<version>-windows-x86_64.zip` from the releases page of the project on GitHub, github.com/runvnc/terse/releases. Right-click it, choose Extract All, and double-click `terse-host.exe` in the new folder. The files are not signed, so Windows may say "Windows protected your PC": click More info, then Run anyway. It needs Windows 10 or newer.
+
+## From the source
+
+With Rust (rustup.rs) and git, on Linux, macOS or Windows:
+
+```
+git clone https://github.com/runvnc/terse
+cd terse
+cargo install --locked --path crates/terse-host --features audio
+cargo install --locked --path crates/terse-cli
+cargo install --locked --path crates/terse-relay
+```
+
+That puts the three programs in `~/.cargo/bin`. On Linux the window needs the ALSA (sound) and udev (game controllers) headers to build: `libasound2-dev libudev-dev pkg-config` on Debian and Ubuntu. Leave out `--features audio` for a window without sound.
+
+## What you have now
+
+Tersenet installed. Next, start it: [Run Tersenet](terse:{guide-run}).

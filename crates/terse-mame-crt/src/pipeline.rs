@@ -18,7 +18,10 @@
 //! [`Params::default`] is `create_sliders`' defaults. Where this differs from
 //! MAME, a comment starting "Tersenet:" says how and why.
 
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::beams::BeamInstance;
 
@@ -319,23 +322,71 @@ fn begin_with<'a>(encoder: &'a mut wgpu::CommandEncoder, view: &wgpu::TextureVie
 /// What one frame cost.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameTime {
-    /// Encoding, submitting and waiting for the GPU, readback included.
-    pub total: std::time::Duration,
+    /// Encoding and submitting the frame's passes.
+    pub total: Duration,
+    /// Waiting for a picture to be mapped (its GPU work and its copy to the
+    /// readback buffer, as far as not done by then).
+    pub wait: Duration,
+    /// The mapped picture handed on (copied into the layer).
+    pub copy: Duration,
     /// The beams drawn.
     pub beams: usize,
 }
 
+/// Readback buffers per tube: one in flight while the one before is read.
+const RING: usize = 3;
+
+/// A readback buffer's state.
+const IDLE: u8 = 0;
+const PENDING: u8 = 1;
+const MAPPED: u8 = 2;
+const FAILED: u8 = 3;
+
+/// A readback buffer and its map request's state.
+struct Readback {
+    buffer: wgpu::Buffer,
+    state: Arc<AtomicU8>,
+    index: Option<wgpu::SubmissionIndex>,
+}
+
+/// Which picture is read back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// The newest picture, waiting for the GPU (no latency; the GPU's time
+    /// is the caller's).
+    Latest,
+    /// The picture of the frame before the newest, which the GPU finished
+    /// during the frame in between: one frame of latency, no wait.
+    Pipelined,
+    /// Whatever is pending, newest included (the machine did not run: the
+    /// picture catches up).
+    Flush,
+}
+
 /// One screen's phosphor: `bgfx_vector_renderer`'s targets and state.
+///
+/// Tersenet: the phosphor and bloom targets may be smaller than the
+/// picture (the internal resolution, [`Crt::new`]); the composite then
+/// samples them (bilinear) into the picture's size. The picture is read
+/// back through a ring of buffers (see [`Delivery`]).
 pub struct Crt {
+    /// The phosphor's (internal) size.
     width: u32,
     height: u32,
+    /// The picture's size.
+    out_width: u32,
+    out_height: u32,
     bloom_width: u32,
     bloom_height: u32,
     accumulation: [Target; 2],
     bloom: [Target; 2],
     output_texture: wgpu::Texture,
     output: Target,
-    readback: wgpu::Buffer,
+    ring: Vec<Readback>,
+    /// Ring slots in flight, oldest first.
+    flight: VecDeque<usize>,
+    /// A picture was delivered since the tube was made.
+    delivered: bool,
     padded_row: u32,
     current_accumulation: usize,
     reset_accumulation: bool,
@@ -350,7 +401,8 @@ pub struct Crt {
     blur_uniforms: [wgpu::Buffer; 2],
     blur_groups: [wgpu::BindGroup; 2],
     composite_groups: [wgpu::BindGroup; 2],
-    pixels: Vec<u8>,
+    /// The bloom is drawn (shed: off).
+    pub bloom_on: bool,
     pub params: Params,
     pub last: FrameTime,
 }
@@ -358,20 +410,30 @@ pub struct Crt {
 impl Crt {
     /// `create_targets`: two full-size and two half-size (rounded up)
     /// RGBA16F targets, and the accumulation to be cleared first.
-    pub fn new(gpu: &Gpu, width: u32, height: u32, params: Params) -> Crt {
-        let (width, height) = (width.max(1), height.max(1));
-        let bloom_width = ((width + 1) / 2).max(1);
-        let bloom_height = ((height + 1) / 2).max(1);
+    /// Tersenet: "full size" is `internal` (the phosphor's resolution),
+    /// and the picture read back is `out`; with `bloom` false the bloom is
+    /// not drawn (its strength 0).
+    pub fn new(gpu: &Gpu, out: (u32, u32), internal: (u32, u32), params: Params, bloom: bool) -> Crt {
+        let (out_width, out_height) = (out.0.max(1), out.1.max(1));
+        let (width, height) = (internal.0.max(1), internal.1.max(1));
+        let bloom_width = width.div_ceil(2).max(1);
+        let bloom_height = height.div_ceil(2).max(1);
         let accumulation = [target(gpu, "accumulation 0", width, height, HDR_FORMAT, false).1, target(gpu, "accumulation 1", width, height, HDR_FORMAT, false).1];
-        let bloom = [target(gpu, "bloom 0", bloom_width, bloom_height, HDR_FORMAT, false).1, target(gpu, "bloom 1", bloom_width, bloom_height, HDR_FORMAT, false).1];
-        let (output_texture, output) = target(gpu, "output", width, height, OUTPUT_FORMAT, true);
-        let padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: (padded_row * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let bloom_targets = [target(gpu, "bloom 0", bloom_width, bloom_height, HDR_FORMAT, false).1, target(gpu, "bloom 1", bloom_width, bloom_height, HDR_FORMAT, false).1];
+        let (output_texture, output) = target(gpu, "output", out_width, out_height, OUTPUT_FORMAT, true);
+        let padded_row = (out_width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let ring = (0..RING)
+            .map(|_| Readback {
+                buffer: gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("readback"),
+                    size: (padded_row * out_height) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                state: Arc::new(AtomicU8::new(IDLE)),
+                index: None,
+            })
+            .collect();
         let group = |pipeline: &wgpu::RenderPipeline, label: &str, textures: &[(u32, &wgpu::TextureView)], u: &wgpu::Buffer| {
             let layout = pipeline.get_bind_group_layout(0);
             let mut entries: Vec<wgpu::BindGroupEntry> = textures.iter().map(|(b, v)| wgpu::BindGroupEntry { binding: *b, resource: wgpu::BindingResource::TextureView(v) }).collect();
@@ -391,23 +453,28 @@ impl Crt {
         gpu.queue.write_buffer(&source_texel, 0, &vec4([1.0 / width as f32, 1.0 / height as f32, 0.0, 0.0]));
         let downsample_groups = [0, 1].map(|c| group(&gpu.downsample, "downsample", &[(0, &accumulation[c].view)], &source_texel));
         let blur_uniforms = [uniform(gpu, "u_blur horizontal", 16), uniform(gpu, "u_blur vertical", 16)];
-        let blur_groups = [group(&gpu.blur, "blur horizontal", &[(0, &bloom[0].view)], &blur_uniforms[0]), group(&gpu.blur, "blur vertical", &[(0, &bloom[1].view)], &blur_uniforms[1])];
+        let blur_groups =
+            [group(&gpu.blur, "blur horizontal", &[(0, &bloom_targets[0].view)], &blur_uniforms[0]), group(&gpu.blur, "blur vertical", &[(0, &bloom_targets[1].view)], &blur_uniforms[1])];
         let composite_uniforms = uniform(gpu, "u_composite", 16);
         // composite(): u_composite = (bloom strength, exposure, 2.2, 0): the
-        // vignette is off.
-        gpu.queue.write_buffer(&composite_uniforms, 0, &vec4([params.bloom_strength, params.exposure, 2.2, 0.0]));
+        // vignette is off. Tersenet: a bloom shed is a strength of 0.
+        gpu.queue.write_buffer(&composite_uniforms, 0, &vec4([if bloom { params.bloom_strength } else { 0.0 }, params.exposure, 2.2, 0.0]));
         let composite_groups =
-            [0, 1].map(|c| group(&gpu.composite, "composite", &[(0, &accumulation[c].view), (3, &bloom[0].view)], &composite_uniforms));
+            [0, 1].map(|c| group(&gpu.composite, "composite", &[(0, &accumulation[c].view), (3, &bloom_targets[0].view)], &composite_uniforms));
         Crt {
             width,
             height,
+            out_width,
+            out_height,
             bloom_width,
             bloom_height,
             accumulation,
-            bloom,
+            bloom: bloom_targets,
             output_texture,
             output,
-            readback,
+            ring,
+            flight: VecDeque::new(),
+            delivered: false,
             padded_row,
             current_accumulation: 0,
             reset_accumulation: true,
@@ -420,30 +487,39 @@ impl Crt {
             blur_uniforms,
             blur_groups,
             composite_groups,
-            pixels: vec![0; (width * height * 4) as usize],
+            bloom_on: bloom,
             params,
             last: FrameTime::default(),
         }
     }
 
+    /// The picture's size.
     pub fn size(&self) -> (u32, u32) {
+        (self.out_width, self.out_height)
+    }
+
+    /// The phosphor's (internal) size.
+    pub fn internal(&self) -> (u32, u32) {
         (self.width, self.height)
     }
 
-    /// `prepare` then `composite`, then the picture read back: BGRA (a
-    /// little-endian word 0xAARRGGBB, alpha 255), 8 bits a channel, rows
-    /// from the top, the 1/2.2 gamma applied.
+    /// `prepare` then `composite`, submitted: the picture is then read
+    /// back by [`Crt::deliver`].
     ///
     /// `frame_time` is the emulated time since the last frame
     /// (`emu_time - m_last_emu_time`): `None` when the machine has not run
     /// since (MAME: "Emulation is paused or this display list has already
-    /// been processed at the same emulated time. Do not excite it again."),
-    /// when the last picture is returned unchanged. It is capped at 0.100 s.
-    /// The first frame after [`Crt::new`] clears the phosphor (and uses
-    /// 1/60 s, as MAME's first frame does: the caller passes it).
-    pub fn frame(&mut self, gpu: &Gpu, beams: &[BeamInstance], frame_time: Option<f64>) -> &[u8] {
-        let Some(frame_time) = frame_time else { return &self.pixels };
+    /// been processed at the same emulated time. Do not excite it again."):
+    /// nothing is drawn. It is capped at 0.100 s. The first frame after
+    /// [`Crt::new`] clears the phosphor (and uses 1/60 s, as MAME's first
+    /// frame does: the caller passes it). Tersenet: 0 draws the picture
+    /// again from the phosphor as it is (no decay, no beam).
+    pub fn frame(&mut self, gpu: &Gpu, beams: &[BeamInstance], frame_time: Option<f64>) {
+        let Some(frame_time) = frame_time else { return };
         let start = Instant::now();
+        // Tersenet: a readback buffer of the ring that is not in flight
+        // (one always is: deliveries leave at most two in flight).
+        let Some(slot) = (0..RING).find(|i| !self.flight.contains(i)) else { return };
         // "Avoid an unusually large elapsed time causing undesirable behaviour."
         let frame_time = frame_time.clamp(0.0, 0.100);
         let p = self.params;
@@ -497,35 +573,38 @@ impl Crt {
             rp.set_vertex_buffer(1, instances.slice(..bytes.len() as u64));
             rp.draw(0..6, 0..beams.len() as u32);
         }
-        // Downsample the phosphor image into the first bloom target.
-        {
-            let mut rp = pass(&mut encoder, &self.bloom[0].view, false);
-            rp.set_pipeline(&gpu.downsample);
-            rp.set_bind_group(0, &self.downsample_groups[current], &[]);
-            rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
-            rp.draw(0..6, 0..1);
-        }
-        // "Scale the output-pixel bloom radius relative to a 1080-line reference."
-        let bloom_scale = (self.height as f32 / 1080.0).clamp(0.25, 2.0);
-        let bloom_radius = p.bloom_radius * bloom_scale;
-        let sigma_x = bloom_radius * self.bloom_width as f32 / self.width as f32;
-        let sigma_y = bloom_radius * self.bloom_height as f32 / self.height as f32;
-        // "Gaussian variances add over repeated passes. Divide sigma so the
-        // combined blur retains the radius requested by the slider."
-        let pass_scale = 1.0 / (BLOOM_PASSES as f32).sqrt();
-        gpu.queue.write_buffer(&self.blur_uniforms[0], 0, &vec4([1.0 / self.bloom_width as f32, 0.0, sigma_x * pass_scale, 0.0]));
-        gpu.queue.write_buffer(&self.blur_uniforms[1], 0, &vec4([0.0, 1.0 / self.bloom_height as f32, sigma_y * pass_scale, 0.0]));
-        for _ in 0..BLOOM_PASSES {
-            for (dst, g) in [(1, 0), (0, 1)] {
-                let mut rp = pass(&mut encoder, &self.bloom[dst].view, false);
-                rp.set_pipeline(&gpu.blur);
-                rp.set_bind_group(0, &self.blur_groups[g], &[]);
+        if self.bloom_on {
+            // Downsample the phosphor image into the first bloom target.
+            {
+                let mut rp = pass(&mut encoder, &self.bloom[0].view, false);
+                rp.set_pipeline(&gpu.downsample);
+                rp.set_bind_group(0, &self.downsample_groups[current], &[]);
                 rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
                 rp.draw(0..6, 0..1);
             }
+            // "Scale the output-pixel bloom radius relative to a 1080-line reference."
+            let bloom_scale = (self.height as f32 / 1080.0).clamp(0.25, 2.0);
+            let bloom_radius = p.bloom_radius * bloom_scale;
+            let sigma_x = bloom_radius * self.bloom_width as f32 / self.width as f32;
+            let sigma_y = bloom_radius * self.bloom_height as f32 / self.height as f32;
+            // "Gaussian variances add over repeated passes. Divide sigma so the
+            // combined blur retains the radius requested by the slider."
+            let pass_scale = 1.0 / (BLOOM_PASSES as f32).sqrt();
+            gpu.queue.write_buffer(&self.blur_uniforms[0], 0, &vec4([1.0 / self.bloom_width as f32, 0.0, sigma_x * pass_scale, 0.0]));
+            gpu.queue.write_buffer(&self.blur_uniforms[1], 0, &vec4([0.0, 1.0 / self.bloom_height as f32, sigma_y * pass_scale, 0.0]));
+            for _ in 0..BLOOM_PASSES {
+                for (dst, g) in [(1, 0), (0, 1)] {
+                    let mut rp = pass(&mut encoder, &self.bloom[dst].view, false);
+                    rp.set_pipeline(&gpu.blur);
+                    rp.set_bind_group(0, &self.blur_groups[g], &[]);
+                    rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
+                    rp.draw(0..6, 0..1);
+                }
+            }
         }
         // Composite persistent phosphor and bloom (added to the view, here
-        // a black one).
+        // a black one). Tersenet: into the picture's size, sampling the
+        // phosphor and the bloom.
         {
             let mut rp = begin_with(&mut encoder, &self.output.view, Some(wgpu::Color::BLACK));
             rp.set_pipeline(&gpu.composite);
@@ -536,29 +615,81 @@ impl Crt {
         encoder.copy_texture_to_buffer(
             self.output_texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
-                buffer: &self.readback,
+                buffer: &self.ring[slot].buffer,
                 layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.padded_row), rows_per_image: None },
             },
-            wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
+            wgpu::Extent3d { width: self.out_width, height: self.out_height, depth_or_array_layers: 1 },
         );
-        gpu.queue.submit([encoder.finish()]);
-        let slice = self.readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        if gpu.device.poll(wgpu::PollType::wait_indefinitely()).is_ok() {
-            if let Ok(mapped) = slice.get_mapped_range() {
-                let row = (self.width * 4) as usize;
-                for (y, src) in mapped.chunks(self.padded_row as usize).take(self.height as usize).enumerate() {
-                    self.pixels[y * row..(y + 1) * row].copy_from_slice(&src[..row]);
-                }
-            }
-        }
-        self.readback.unmap();
-        self.last = FrameTime { total: start.elapsed(), beams: beams.len() };
-        &self.pixels
+        let index = gpu.queue.submit([encoder.finish()]);
+        let rb = &mut self.ring[slot];
+        rb.state.store(PENDING, Ordering::Release);
+        let state = rb.state.clone();
+        rb.buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release));
+        rb.index = Some(index);
+        self.flight.push_back(slot);
+        self.last = FrameTime { total: start.elapsed(), wait: Duration::ZERO, copy: Duration::ZERO, beams: beams.len() };
     }
 
-    /// The last picture (BGRA, alpha 255, rows from the top).
-    pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+    /// Hands a submitted picture to `sink` (the mapped bytes, BGRA, a
+    /// little-endian word 0xAARRGGBB a pixel, alpha 255, rows from the top
+    /// `padded` bytes apart, the 1/2.2 gamma applied), as `how` says, and
+    /// returns whether one was. Pictures older than the one handed on are
+    /// dropped.
+    pub fn deliver(&mut self, gpu: &Gpu, how: Delivery, sink: impl FnOnce(&[u8], usize)) -> bool {
+        let n = self.flight.len();
+        let pick = match how {
+            _ if n == 0 => return false,
+            Delivery::Latest | Delivery::Flush => n - 1,
+            Delivery::Pipelined if n >= 2 => n - 2,
+            // The tube's first picture is not kept waiting.
+            Delivery::Pipelined if !self.delivered => n - 1,
+            Delivery::Pipelined => return false,
+        };
+        let start = Instant::now();
+        let slot = self.flight[pick];
+        self.settle(gpu, slot);
+        let waited = start.elapsed();
+        let rb = &self.ring[slot];
+        let mut handed = false;
+        if rb.state.load(Ordering::Acquire) == MAPPED
+            && let Ok(mapped) = rb.buffer.slice(..).get_mapped_range()
+        {
+            sink(&mapped, self.padded_row as usize);
+            handed = true;
+        }
+        // This one and the older ones go back to the ring.
+        for _ in 0..=pick {
+            let s = self.flight.pop_front().unwrap();
+            self.settle(gpu, s);
+            let rb = &mut self.ring[s];
+            if rb.state.load(Ordering::Acquire) == MAPPED {
+                rb.buffer.unmap();
+            }
+            rb.state.store(IDLE, Ordering::Release);
+            rb.index = None;
+        }
+        self.delivered |= handed;
+        self.last.wait = waited;
+        self.last.copy = start.elapsed() - waited;
+        handed
+    }
+
+    /// Waits until slot `s`'s map request is answered.
+    fn settle(&self, gpu: &Gpu, s: usize) {
+        let rb = &self.ring[s];
+        if rb.state.load(Ordering::Acquire) == PENDING {
+            let _ = gpu.device.poll(wgpu::PollType::Wait { submission_index: rb.index.clone(), timeout: None });
+        }
+    }
+}
+
+impl Drop for Crt {
+    fn drop(&mut self) {
+        // Nothing is left mapped on buffers that go.
+        for rb in &self.ring {
+            if rb.state.load(Ordering::Acquire) == MAPPED {
+                rb.buffer.unmap();
+            }
+        }
     }
 }
