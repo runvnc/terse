@@ -25,8 +25,11 @@ no() { fail=$((fail + 1)); echo "FAIL $*"; }
 X=$T/terminal
 ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o "$X" "$here/terminal.c" || { echo "FAIL build"; exit 1; }
 ok "built with no warnings ($(wc -l < "$here/terminal.c") lines)"
-(cd "$root/native/core-c" && nice -n 15 make -s -j4) || { echo "FAIL building tcore"; exit 1; }
-TC=$root/native/core-c/tcore
+# tcore built here, into this run's directory: not native/core-c's own,
+# which another test (or a make there) may be building at the same time.
+mkdir -p "$T/tcore"
+nice -n 15 make -s -j4 -C "$T/tcore" -f "$root/native/core-c/Makefile" VPATH="$root/native/core-c" || { echo "FAIL building tcore"; exit 1; }
+TC=$T/tcore/tcore
 
 # check <name> <args...>: the reference driver under terse-bus, then the
 # example under terse-bus, tcore and tcore --no-batch: the same output
@@ -73,12 +76,19 @@ if "$TC" --help 2>&1 | grep -q -- --identities; then
     grep -Eq "^driver 2 terminal \(example\) 0\.1\.0 fnv:[0-9a-f]{16}$" "$T/ids" \
         && ok "tcore --identities: its HELLO identity" || { no "tcore --identities"; cat "$T/ids"; }
 fi
-ms() { python3 -I -c 'import time; print(int(time.time() * 1000))'; } # date +%N is GNU's
-t0=$(ms); a=$("$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t1=$(ms)
-b=$(TERSE_EXAMPLE_SLOW=sleep:30:5:8 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X"); t2=$(ms)
-extra=$(( (t2 - t1) - (t1 - t0) ))
-[ -n "$a" ] && [ "$a" = "$b" ] && [ $extra -ge 60 ] && ok "TERSE_EXAMPLE_SLOW=sleep:30:5:8: same hash, ${extra} ms later" \
-    || no "TERSE_EXAMPLE_SLOW: hashes '$a' '$b', ${extra} ms extra"
+# The slow mode's sleeps, as terse-bus's record (RECORD.md) sees them: the
+# frames whose END was slow (counters 5 to 7) each show the driver blocked
+# (neither on a CPU nor waiting for one) for most of the 30 ms. Not the
+# run's wall time against a run without it: on a busy computer either run
+# may take any time. (Where the driver's CPU time is not read, its own
+# time stands for its blocked time.)
+a=$("$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X")
+b=$(TERSE_EXAMPLE_SLOW=sleep:30:5:8 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X" --perf-log "$T/perf")
+slow=$(cat "$T"/perf/*.log 2>/dev/null | awk '
+    $1 == "readings" && $2 == "dev2" { cpu = ($3 ~ /cpu/) }
+    $1 == "late" && $5 == "dev2" && (cpu ? $8 : $6) >= 25 { printf "%s%s", s, $2; s = "," }')
+[ -n "$a" ] && [ "$a" = "$b" ] && [ "$slow" = 5,6,7 ] && ok "TERSE_EXAMPLE_SLOW=sleep:30:5:8: same hash, the driver blocked 25 ms or more in frames $slow" \
+    || { no "TERSE_EXAMPLE_SLOW: hashes '$a' '$b', blocked 25 ms or more in frames '$slow' (not 5,6,7)"; grep -h '^late' "$T"/perf/*.log; }
 for k in spin:1.5:0:3 cpu:0.5:2; do
     b=$(TERSE_EXAMPLE_SLOW=$k TERSE_BUS_CPU=0 TERSE_EXAMPLE_IDLE=1 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X")
     [ "$a" = "$b" ] && ok "TERSE_EXAMPLE_SLOW=$k (pinned, SCHED_IDLE): same hash" || no "TERSE_EXAMPLE_SLOW=$k: '$a' '$b'"

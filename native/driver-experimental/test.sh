@@ -81,8 +81,11 @@ h=$("$D/terse" run "$P" --frames 30 --hash $dirs 2> /dev/null)
 a=$(bus "$P" --frames 30 --hash 2> "$T/e")
 b=$(bus "$P" --frames 30 --hash --driver "example.dice=$X" --without 240 2> /dev/null)
 [ -n "$h" ] && [ "$h" = "$a" ] && [ "$h" = "$b" ] && ok "terse run, terse-bus without a driver and --without 240: the same hash" || no "not granted: '$h' '$a' '$b'"
-if (cd "$root/native/core-c" && nice -n 15 make -s -j4 > /dev/null 2>&1); then
-    c=$("$root/native/core-c/tcore" "$P" --frames 30 --hash --drivers "$D" 2> /dev/null)
+# tcore built here, into this run's directory: not native/core-c's own,
+# which another test (or a make there) may be building at the same time.
+mkdir -p "$T/tcore"
+if nice -n 15 make -s -j4 -C "$T/tcore" -f "$root/native/core-c/Makefile" VPATH="$root/native/core-c" > /dev/null 2>&1; then
+    c=$("$T/tcore/tcore" "$P" --frames 30 --hash --drivers "$D" 2> /dev/null)
     [ "$c" = "$h" ] && ok "tcore (no experimental devices, DEVICES.md 12): the same hash" || no "tcore: '$c'"
 fi
 grep -q "no driver for the experimental device example.dice" "$T/e" && ok "terse-bus says why: $(head -1 "$T/e" | cut -c1-80)" || no "no message"
