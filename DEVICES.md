@@ -1189,8 +1189,18 @@ or the core forces it (`terse-bus --force-phosphor`). Then:
   (`vector3.list`), within the machine's caps (below);
 - the core adds up the light of the layers of the drivers that subscribe
   to `core.light` (but the vector displays'), the beam over it, and
-  keeps the tube: the afterglow moves on once for each frame the machine
-  ran, and the picture is the tube's. A scene's 3D lines over its panels
+  keeps the tube (terse-host's, in the look it is given: MAME's vector
+  CRT by default, `--look`): the phosphor moves on once for each frame
+  the machine ran, and the picture is the tube's;
+- the terminal's text by the beam: when the look draws the terminal's
+  characters as strokes (`--font-strokes`), the core publishes
+  **`core.strokes`** (the font's name) to the terminal driver and reads
+  its state from **`terminal.state`**; it draws by the beam the
+  characters that font draws and the cursor, and the terminal driver
+  leaves those out of its light layer (the rest, wide characters and the
+  full-text repertoire beyond the font, stay light). A terminal driver
+  that does not publish `terminal.state` draws all its text as light, as
+  before; an empty `core.strokes` means it draws them all. A scene's 3D lines over its panels
   (Screens, Surfaces) are drawn by the core from its own projection, as
   terse-host's are.
 
@@ -1282,6 +1292,8 @@ reference drivers and core:
 | `vector.list` | vector display | core | device 3's state as `STATE.md` 1.7's section: style (u8), persistence (u8), fill mode (u8: 1 outlines), the list's length (u32) and the list; the core counts the system ink from it and draws the phosphor style's beam (section 7.1) |
 | `core.light` | core | terminal, page, vector display | 1: the machine is shown in the phosphor style and its layers are light (section 7.1); 0 or empty: the clean style |
 | `vector.tube` | a vector display that draws its own tube (not the reference's) | core | 1: in the phosphor style its layers are light and the core adds the layers' light as it is, without its own tube (section 7.1); 0 or empty: the core draws the tube |
+| `terminal.state` | terminal | core | the terminal's state as `STATE.md`'s terminal section, then a byte, 1 with full text (SPEC §terminal.text); the core draws the terminal's text by the beam from it (section 7.1) |
+| `core.strokes` | core | terminal | in the phosphor style, the stroke font (`arcade`, `hershey`, `drafting`) in which the core draws the characters it draws and the cursor by the beam; the terminal leaves them out of its light layer (section 7.1); empty: none |
 | `core.shed` | core | a driver with a look of its own (not the reference's) | how much of its optional look to shed because the host's frames run long (section 7.1): a level (u8), 0 none to 3 the most; empty: 0 |
 | `core.caps` | core | vector display | the ink caps the machine's lists are drawn within, its share of the system ink (SPEC §machines.ink): the 2D cap (u64) and the 3D cap (f64), each at most the device's own; empty: the devices' own |
 | `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |

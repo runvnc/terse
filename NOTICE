@@ -5,7 +5,9 @@ This product includes third-party material under its own terms:
 
 ------------------------------------------------------------------------
 MAME BGFX vector CRT renderer (third_party/mame-vector-crt; translated in
-crates/terse-mame-crt)
+crates/terse-host: src/mame/gpu.rs, src/mame/params.rs, src/mame/beams.rs,
+shaders/mame/, and ported to the CPU in src/soft/mame.rs; used by
+terse-host, terse-bus and crates/terse-mame-crt)
 
 Copyright (c) Hans Andersson (vector CRT shaders and vectorrenderer.cpp)
 Copyright (c) Brad Oliver, Aaron Giles, Bernd Wiebelt, Allard van der Bas
@@ -19,7 +21,7 @@ at commit 6f9a2f023e1a951ba34f289d6a4d214a9578676b.
 
 ------------------------------------------------------------------------
 Hershey fonts (third_party/hershey/futural.jhf; drawn by
-crates/terse-mame-crt)
+crates/terse-host, src/mame/stroke.rs)
 
 - The Hershey Fonts were originally created by Dr. A. V. Hershey while
   working at the U. S. National Bureau of Standards.

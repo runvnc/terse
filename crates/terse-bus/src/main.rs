@@ -32,7 +32,7 @@ const USAGE: &str = "usage:
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
             [--profile reading] [--no-feed-relays] [--no-program-download] [--audio-out <file.wav>]
             [--without <slot>]... [--perf-log <dir>|off] [--perf-rule on|off]
-            [--tube xy|p31|amber|vectrex] [--vignette] [--no-trails] [--force-phosphor] [--no-shed]
+            [--look mame|classic] [--font-strokes arcade|hershey|drafting|off] [--tube xy|p31|amber|vectrex] [--vignette] [--no-trails] [--force-phosphor] [--no-shed]
   terse-bus --probe-driver <program> [--slot <n>]
   terse-bus --probe-driver <program> --experimental
   terse-bus --version
@@ -53,7 +53,7 @@ run` (snapshot files are the same). --screenshot composes the picture after the 
 default the terminal's native size; --eye, the eye for 3D lists); --present-every-frame composes
 every frame (as a window does) and --bench then times it too. --window shows the picture in a window
 (F12 is the home key, Ctrl+V or Shift+Insert pastes; with --parallax pointer the eye follows the
-pointer). A machine in the phosphor style is drawn as terse-host draws it: --tube, --vignette,
+pointer). A machine in the phosphor style is drawn as terse-host draws it: --look, --font-strokes, --tube, --vignette,
 --no-trails, --force-phosphor and --no-shed as terse-host's (in a window the look is shed when frames
 run long, unless --no-shed); a --screenshot draws the last 600 frames to build up the afterglow; --selftest runs --frames frames (default 300) in the window with the scripted input only and
 prints the emulation, bus, composition and present-interval timings; --resize gives the window's surface each size before
@@ -128,6 +128,8 @@ struct Opts {
     perf_rule: Option<bool>,
     /// How the phosphor style is drawn.
     looks: Looks,
+    /// `--look`, `--font-strokes`, `--tube`, `--vignette`, applied after `<config>/look`.
+    look_args: Vec<(String, Option<String>)>,
     /// `--resize`: window sizes asked for before frames (with --selftest).
     resizes: Vec<(u64, (u32, u32))>,
 }
@@ -175,6 +177,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         perf_log: None,
         perf_rule: None,
         looks: Looks::default(),
+        look_args: Vec::new(),
         resizes: Vec::new(),
     };
     let mut it = args.into_iter();
@@ -291,11 +294,11 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
                 })
             }
             "--replay" => o.replay = Some(value()?.into()),
-            "--tube" => {
+            "--tube" | "--look" | "--font-strokes" => {
                 let v = value()?;
-                o.looks.look.preset = terse_host::phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
+                o.look_args.push((a[2..].to_string(), Some(v)));
             }
-            "--vignette" => o.looks.look.vignette = true,
+            "--vignette" => o.look_args.push(("vignette".into(), None)),
             "--no-shed" => o.looks.look.no_shed = true,
             "--no-trails" => o.looks.no_trails = true,
             "--force-phosphor" => o.looks.force_phosphor = true,
@@ -437,7 +440,7 @@ pub struct Run {
 }
 
 fn run(args: Vec<String>) -> Result<ExitCode, String> {
-    let opts = parse(args)?;
+    let mut opts = parse(args)?;
     let started = Instant::now();
     let script = match &opts.events {
         Some(p) => Script::parse(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?,
@@ -503,6 +506,15 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     // The user's drivers folder (DEVICES.md 2.2), after --driver and before
     // this program's directory.
     let config_dir = opts.content.config.clone().or_else(terse_net::default_config_dir);
+    // The look: <config>/look, then the options given (as terse-host).
+    if let Some(dir) = &config_dir {
+        for note in opts.looks.look.read_settings(&dir.join("look")) {
+            eprintln!("terse-bus: {note}");
+        }
+    }
+    for (name, value) in &opts.look_args {
+        opts.looks.look.set_option(name, value.as_deref())?;
+    }
     let (installed, mut unused, bad) = config_dir.as_deref().map(host::installed_drivers).unwrap_or_default();
     for b in bad {
         eprintln!("terse-bus: {b}");

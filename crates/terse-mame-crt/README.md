@@ -1,5 +1,27 @@
 # terse-mame-crt: MAME's vector CRT renderer as a Tersenet driver
 
+**Built in now.** MAME's look is the phosphor style's default in both
+reference hosts, with no driver to install: `terse-host` (its GPU renderer
+runs MAME's passes on the GPU it draws with, no read-back; its software
+renderer computes the same passes on the CPU, `terse-host/src/soft/mame.rs`)
+and `terse-bus`'s core (the same CPU code, as terse-host's software
+renderer), the terminal's text drawn by the beam in the stroke fonts below
+(`--look mame|classic`, `--font-strokes arcade|hershey|drafting|off`, README
+"Phosphor style"). The pipeline (`terse-host/src/mame/gpu.rs`, its shaders in
+`terse-host/shaders/mame/`), the beams (`mame/beams.rs`) and the fonts
+(`mame/stroke.rs`, `arcade.rs`, `text.rs`) moved into terse-host; this crate
+re-exports them under their old names and keeps the driver, which is
+still useful to compare with, to run MAME's look in a bus whose core is
+someone else's, and as an example of a driver with a look of its own. The
+built-in look differs from the driver's in: one tube for the whole screen
+(text and vectors in one phosphor, tone-mapped once, where the driver adds
+two tone-mapped pictures); 3D segments that fade along their length and
+end flat at a butt end; scenes with Screens and Surfaces drawn in the
+look; characters the stroke font does not draw (wide ones, the full-text
+repertoire beyond the basic) drawn as light rather than as the replacement
+diamond; and no frame of latency (the GPU renderer samples the picture
+where it is, the CPU draws it where it is shown).
+
 `terse-dev-mame` is a device driver (DEVICES.md) for the vector group
 (slots 3 and 9) **or** the terminal (slot 2), whichever the core asks it
 for. The devices are terse-core's, exactly as in the reference drivers, so
@@ -75,22 +97,26 @@ terse-mame-crt --example specimen -- <out dir>`.
 
 ## How it is put together
 
-- `shaders/`: MAME's seven shaders (`vs_beam`, `fs_beam`, `vs_post`,
+- `terse-host/shaders/mame/`: MAME's seven shaders (`vs_beam`, `fs_beam`, `vs_post`,
   `fs_decay`, `fs_downsample`, `fs_blur`, `fs_composite`) translated line
   for line, each keeping MAME's licence and copyright lines, with a comment
   at each construct that had to change (`dFdx` → `dpdx`, `?:` → `select`,
   `texture2D` → `textureSample`, `vec3_splat`, `mul`). `beam_common.wgsl`
   and `post_common.wgsl` declare the interfaces (written for this; MAME's
   `varying.def.sc` has no licence header and was not copied).
-- `src/pipeline.rs`: `vectorrenderer.cpp`: two RGBA16F phosphor targets
+- `terse-host/src/mame/gpu.rs` (`pipeline` here): `vectorrenderer.cpp`: two RGBA16F phosphor targets
   ping-ponged and decayed by exp(−dt/τ), the beams added as instanced
   quads, a half-size box downsample, two horizontal and vertical blur
   iterations, the composite; the effects' blend states and the sliders'
   defaults.
-- `src/beams.rs`: `draw_beams`' instances (scan timing from accumulated
+- `terse-host/src/mame/beams.rs` (`beams`): `draw_beams`' instances (scan timing from accumulated
   length, σ = width × beam width × 0.085) and the width model of MAME's
-  `vector.cpp`; Tersenet's lists as MAME's line primitives.
-- `src/stroke.rs`, `src/arcade.rs`, `src/text.rs`: the stroke fonts and
+  `vector.cpp`; Tersenet's lists as MAME's line primitives. Tersenet adds to MAME's
+  instance an intensity at the segment's end (MAME's unused float) and its
+  butt ends (a fourth vec4); `fs_beam` mixes the intensity along the
+  segment and gives no light past a butt end. A MAME line has neither, so
+  the driver draws exactly as MAME does.
+- `terse-host/src/mame/stroke.rs`, `arcade.rs`, `text.rs`: the stroke fonts and
   the terminal's screen as strokes.
 - `src/bin/terse-dev-mame.rs`: the driver. `pattern/`: a test pattern and
   a full screen of text (`build.sh` builds the `.terse` images).
@@ -126,7 +152,8 @@ pictures the core adds.
 - **Shapes MAME does not have.** Filled shapes are outlines, as the
   phosphor style requires. Circles are polygons whose sides stray at most
   a quarter of a pixel from the circle. A 3D segment that fades from one
-  end to the other has one intensity, the mean.
+  end to the other (its depth cue) is drawn fading, and its butt ends (a
+  face cut it; a 3D circle's chords) end flat.
 - **Targets.** The phosphor targets are the screen's size (MAME's: the
   vector screen's item) up to **960 lines** (`TERSE_MAME_MAX_LINES`,
   480–4320): a larger screen (the 640 × 480 screen three or more times

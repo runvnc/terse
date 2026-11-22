@@ -29,6 +29,7 @@ pub mod page;
 pub mod panel;
 #[cfg(test)]
 mod look;
+pub mod mame;
 pub mod phosphor;
 pub mod scene;
 
@@ -199,6 +200,7 @@ impl SoftScreens {
             s.take_damage(&mut d);
             let mut changed = !d.is_empty();
             if let Some(scene) = &mut c.scene {
+                scene.set_beam(s.beam_settings());
                 changed = scene.refresh(&s.image, changed, &none, s.screen_rect(own), eye, mode, pool, None);
             }
             if changed || panel.pyramid.is_none() {
@@ -218,6 +220,7 @@ impl SoftScreens {
                 if panels_changed {
                     scene.stale = true;
                 }
+                scene.set_beam(self.shell.beam_settings());
                 if scene.refresh(&self.shell.image, !shell_damage.is_empty(), &pyramids, rect, eye, mode, pool, None) {
                     self.damage.add(scene.image.area);
                 }
@@ -233,6 +236,7 @@ impl SoftScreens {
                 Some(scene) => {
                     let mut d = Damage::new(viewport);
                     s.take_damage(&mut d);
+                    scene.set_beam(s.beam_settings());
                     if scene.refresh(&s.image, !d.is_empty(), &none, s.screen_rect(viewport), eye, mode, pool, None) {
                         self.damage.add(scene.image.area);
                     }

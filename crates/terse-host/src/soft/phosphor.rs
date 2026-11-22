@@ -46,7 +46,7 @@ const HALO_FLOOR: f32 = 1.2e-4;
 
 /// Rows handed to a thread at a time (even, so a band holds whole rows of
 /// the pyramid's first level).
-const BAND: usize = 16;
+pub(crate) const BAND: usize = 16;
 
 
 /// A row's blocks of columns that may hold light: bit i covers columns
@@ -62,7 +62,7 @@ pub struct Blocks {
 }
 
 impl Blocks {
-    fn new(width: usize) -> Self {
+    pub(crate) fn new(width: usize) -> Self {
         let mut shift = 4;
         while (128usize << shift) < width {
             shift += 1;
@@ -70,7 +70,7 @@ impl Blocks {
         Blocks { shift, width }
     }
 
-    fn all(&self) -> Mask {
+    pub(crate) fn all(&self) -> Mask {
         let n = self.width.div_ceil(1 << self.shift);
         if n >= 128 { Mask::MAX } else { (1 << n) - 1 }
     }
@@ -86,7 +86,7 @@ impl Blocks {
     }
 
     /// The column runs (x0, x1) of the set blocks.
-    fn runs(&self, mut m: Mask) -> impl Iterator<Item = (usize, usize)> + '_ {
+    pub(crate) fn runs(&self, mut m: Mask) -> impl Iterator<Item = (usize, usize)> + '_ {
         std::iter::from_fn(move || {
             if m == 0 {
                 return None;
@@ -99,7 +99,7 @@ impl Blocks {
     }
 
     /// `m` with each block's `k` neighbours on both sides.
-    fn dilate(&self, m: Mask, k: u32) -> Mask {
+    pub(crate) fn dilate(&self, m: Mask, k: u32) -> Mask {
         let mut r = m;
         for i in 1..=k.min(127) {
             r |= m << i | m >> i;
@@ -799,18 +799,26 @@ impl Tube {
     /// The text's light: each pixel's glyph (or cursor) coverage times its
     /// foreground colour, linear, and the page's light over it.
     fn text_light(&mut self, l: &Light, pool: &Pool) {
-        let (grid, page) = match &l.text {
-            Text::Cells { grid, page } => (grid, *page),
-            Text::Layers(layers) => return self.layer_light(layers, l.lin, pool),
-        };
-        let (tw, _) = self.size;
+        text_light(self.size, self.blocks, &mut self.text, &mut self.text_m, &l.text, l.lin, pool);
+    }
+}
+
+/// The text's light into `text` (three floats a pixel, rows of `size.0`)
+/// and the blocks where it may be non-zero into `text_m`: each pixel's
+/// glyph (or cursor) coverage times its foreground colour, linear, and the
+/// page's light over it, or the light of [`LightLayers`].
+pub(crate) fn text_light(size: (usize, usize), blocks: Blocks, text: &mut [f32], text_m: &mut [Mask], t: &Text, lin: &[f32; 256], pool: &Pool) {
+    let (grid, page) = match t {
+        Text::Cells { grid, page } => (grid, *page),
+        Text::Layers(layers) => return layer_light(size, blocks, text, text_m, layers, lin, pool),
+    };
+    {
+        let (tw, _) = size;
         let stride = tw * 3;
-        let blocks = self.blocks;
         let shift = blocks.shift;
-        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
-            .text
+        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = text
             .chunks_mut(BAND * stride)
-            .zip(self.text_m.chunks_mut(BAND))
+            .zip(text_m.chunks_mut(BAND))
             .enumerate()
             .map(|(i, (g, m))| (i * BAND, g, m))
             .collect();
@@ -843,22 +851,22 @@ impl Tube {
                 masks[j] = m;
             }
             let run = IRect::new(0, y0 as i32, tw as i32, (y0 + masks.len()) as i32);
-            page.draw_light(rows, y0 as i32, tw, run, masks, shift, l.lin);
+            page.draw_light(rows, y0 as i32, tw, run, masks, shift, lin);
         });
     }
+}
 
-    /// The text's light from layers of light ([`LightLayers`]): each
-    /// pixel's coverage times its colour, linear, added up.
-    fn layer_light(&mut self, src: &LightLayers, lin: &[f32; 256], pool: &Pool) {
-        let (tw, _) = self.size;
+/// The text's light from layers of light ([`LightLayers`]): each
+/// pixel's coverage times its colour, linear, added up.
+fn layer_light(size: (usize, usize), blocks: Blocks, text: &mut [f32], text_m: &mut [Mask], src: &LightLayers, lin: &[f32; 256], pool: &Pool) {
+    {
+        let (tw, _) = size;
         let stride = tw * 3;
-        let shift = self.blocks.shift;
-        let blocks = self.blocks;
+        let shift = blocks.shift;
         let (ox, oy) = src.origin;
-        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = self
-            .text
+        let bands: Vec<(usize, &mut [f32], &mut [Mask])> = text
             .chunks_mut(BAND * stride)
-            .zip(self.text_m.chunks_mut(BAND))
+            .zip(text_m.chunks_mut(BAND))
             .enumerate()
             .map(|(i, (g, m))| (i * BAND, g, m))
             .collect();

@@ -62,6 +62,8 @@ struct Surfaced {
     pipeline: Arc<PanelPipeline>,
     quads: PanelQuads,
     lines: VectorLayer,
+    /// The lines by the beam (the glass in the phosphor style's MAME model).
+    beam: crate::beamlines::BeamLines,
 }
 
 impl Surfaced {
@@ -77,23 +79,34 @@ impl Surfaced {
     /// Draws over the glass, a screen drawn into `rect` of a `viewport`
     /// target: the sources black, the Surfaces far to near, the lines.
     #[allow(clippy::too_many_arguments)]
+    /// `beam`: the glass's look when its lines are drawn by the beam.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &mut self,
+        shaders: &Shaders,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         rect: (f32, f32, f32, f32),
         viewport: (u32, u32),
         eye: Eye,
+        beam: Option<crate::mame::Params>,
     ) {
         let mut quads: Vec<Quad> = self.layers.rects.iter().map(|&r| Quad::black(r)).collect();
         quads.extend(self.layers.panels.iter().map(Quad::panel));
         self.pipeline.upload(queue, &mut self.quads, &quads, eye_point(eye), rect, viewport);
         let Some(scissor) = scissor(rect, viewport) else { return };
         let textures = vec![&self.texture; quads.len()];
-        let mut pass = load_pass(encoder, target, "surfaces and lines");
-        self.pipeline.draw(&mut pass, &self.quads, &textures, scissor);
-        self.lines.draw(queue, &mut pass, viewport, rect);
+        {
+            let mut pass = load_pass(encoder, target, "surfaces and lines");
+            self.pipeline.draw(&mut pass, &self.quads, &textures, scissor);
+            if beam.is_none() {
+                self.lines.draw(queue, &mut pass, viewport, rect);
+            }
+        }
+        if let Some(params) = beam {
+            self.beam.draw(shaders, queue, encoder, target, self.format, &self.layers.lines, rect, viewport, params);
+        }
     }
 }
 
@@ -197,6 +210,7 @@ fn update_surfaced(
             format,
             quads: pipeline.quads(make.device),
             lines: VectorLayer::for_target(make.shaders, format),
+            beam: crate::beamlines::BeamLines::new(),
             pipeline,
         }
     });
@@ -236,6 +250,8 @@ pub struct Screens {
     scene: Option<SceneLayers>,
     scene_quads: Option<PanelQuads>,
     lines: Option<VectorLayer>,
+    /// The shell's scene's lines by the beam (the phosphor style's MAME model).
+    beam_lines: crate::beamlines::BeamLines,
     /// The panel pipelines, by the format of their target.
     pipelines: Vec<(wgpu::TextureFormat, Arc<PanelPipeline>)>,
     format: wgpu::TextureFormat,
@@ -259,6 +275,7 @@ impl Screens {
             scene: None,
             scene_quads: None,
             lines: None,
+            beam_lines: crate::beamlines::BeamLines::new(),
             pipelines: Vec::new(),
             format,
             no_trails: false,
@@ -531,9 +548,11 @@ impl Screens {
                     && *dirty
                 {
                     c.renderer.render(device, queue, encoder, &t.level0, t.size);
+                    let beam = c.renderer.beam_params();
                     if let Some(s) = &mut c.surfaced {
                         s.prepare(device, queue, encoder);
-                        s.draw(queue, encoder, &t.level0, (0.0, 0.0, t.size.0 as f32, t.size.1 as f32), t.size, eye);
+                        let shaders = c.renderer.shaders().clone();
+                        s.draw(&shaders, queue, encoder, &t.level0, (0.0, 0.0, t.size.0 as f32, t.size.1 as f32), t.size, eye, beam);
                     }
                     if let Some(p) = self.pipelines.iter().find(|(f, _)| *f == self.format) {
                         p.1.mipmaps(encoder, t);
@@ -568,13 +587,20 @@ impl Screens {
             pipeline.upload(queue, scene_quads, &shapes, eye_point(eye), rect, viewport);
             let lines = self.lines.get_or_insert_with(|| VectorLayer::for_target(&shaders, self.format));
             lines.upload(queue, &layers.lines);
+            let beam = self.shell.beam_params();
             if let Some(scissor) = scissor(rect, viewport) {
                 let mut pass = load_pass(encoder, target, "panels and lines");
                 pipeline.draw(&mut pass, scene_quads, &textures, scissor);
-                lines.draw(queue, &mut pass, viewport, rect);
+                if beam.is_none() {
+                    lines.draw(queue, &mut pass, viewport, rect);
+                }
+            }
+            if let Some(params) = beam {
+                self.beam_lines.draw(&shaders, queue, encoder, target, self.format, &layers.lines, rect, viewport, params);
             }
         } else if let Some(s) = &mut self.shell_surfaced {
-            s.draw(queue, encoder, target, rect, viewport, eye);
+            let shaders = self.shell.shaders().clone();
+            s.draw(&shaders, queue, encoder, target, rect, viewport, eye, self.shell.beam_params());
         }
         let mut order: Vec<_> = self.children.values_mut().filter(|c| c.panel.is_none()).collect();
         order.sort_by_key(|c| c.handle);
@@ -583,7 +609,8 @@ impl Screens {
             if let Some(s) = &mut c.surfaced {
                 s.prepare(device, queue, encoder);
                 let rect = c.renderer.screen_rect(viewport);
-                s.draw(queue, encoder, target, rect, viewport, eye);
+                let shaders = c.renderer.shaders().clone();
+                s.draw(&shaders, queue, encoder, target, rect, viewport, eye, c.renderer.beam_params());
             }
         }
         self.shell.render_overlay(encoder, target, viewport);

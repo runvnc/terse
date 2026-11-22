@@ -2,7 +2,7 @@
 //! draws, as a vector monitor's character generator does, not as a bitmap.
 //! Three fonts ([`Font`], chosen by `TERSE_MAME_FONT`):
 //!
-//! - **arcade** (the default, [`crate::arcade`]): a vector monitor's
+//! - **arcade** (the default, [`crate::mame::arcade`]): a vector monitor's
 //!   character generator, a few long straight strokes per letter on a small
 //!   grid; original glyphs.
 //! - **hershey**: the Hershey Roman Simplex font, a plotter's curves.
@@ -97,7 +97,7 @@ const SX: f32 = 0.4;
 const MAX_INK: f32 = 6.8;
 const BASELINE: f32 = 12.5;
 
-const JHF: &str = include_str!("../../../third_party/hershey/futural.jhf");
+const JHF: &str = include_str!("../../../../third_party/hershey/futural.jhf");
 
 /// The Hershey glyphs of ASCII 32 to 126, centred on their advance's middle.
 fn ascii() -> &'static [Vec<Poly>] {
@@ -448,7 +448,7 @@ pub fn strokes_in(font: Font, code: u32, wide: bool, out: &mut Vec<Stroke>) {
         return placeholder(font, wide, out);
     }
     let drawn = match font {
-        Font::Arcade => crate::arcade::cell_strokes(c, CELL_W, out),
+        Font::Arcade => crate::mame::arcade::cell_strokes(c, CELL_W, out),
         Font::Hershey | Font::Drafting => match hershey(c) {
             Some(polys) => {
                 cell_strokes(&polys, CELL_W, font == Font::Drafting, out);
@@ -554,7 +554,7 @@ fn cell_strokes(polys: &[Poly], cell_w: f32, drafting: bool, out: &mut Vec<Strok
 fn placeholder(font: Font, wide: bool, out: &mut Vec<Stroke>) {
     let cell_w = if wide { 2.0 * CELL_W } else { CELL_W };
     if font == Font::Arcade {
-        crate::arcade::cell_strokes('\u{fffd}', cell_w, out);
+        crate::mame::arcade::cell_strokes('\u{fffd}', cell_w, out);
     } else {
         cell_strokes(&hershey('\u{fffd}').unwrap_or_default(), cell_w, font == Font::Drafting, out);
     }
@@ -727,7 +727,7 @@ pub fn covers(code: u32) -> bool {
 pub fn covers_in(font: Font, code: u32) -> bool {
     (0x2500..=0x259F).contains(&code)
         || char::from_u32(code).is_some_and(|c| match font {
-            Font::Arcade => crate::arcade::glyph(c).is_some(),
+            Font::Arcade => crate::mame::arcade::glyph(c).is_some(),
             Font::Hershey | Font::Drafting => hershey(c).is_some(),
         })
 }
@@ -738,7 +738,7 @@ mod tests {
 
     /// The basic repertoire, from `vectors/basic-text.txt`'s ranges.
     fn repertoire() -> Vec<u32> {
-        let v = include_str!("../../../vectors/basic-text.txt");
+        let v = include_str!("../../../../vectors/basic-text.txt");
         let mut codes = Vec::new();
         let mut inside = false;
         for line in v.lines() {
