@@ -23,7 +23,8 @@ User=terse-relay
 ExecStart=/usr/local/bin/terse-relay --public \
     --listen 0.0.0.0:8080 \
     --store /var/lib/terse-relay/store \
-    --max-store-bytes 20G \
+    --max-store-bytes 12G \
+    --max-connections 256 \
     --writers /etc/terse-relay/writers \
     --trust-proxy @/etc/terse-relay/proxies \
     --status-file /run/terse-relay/status
@@ -35,10 +36,11 @@ Restart=on-failure
 RestartSec=2
 RuntimeDirectory=terse-relay
 StateDirectory=terse-relay
-# One thread per connection; --max-connections (1000 with --public) bounds them.
+# One thread per connection (up to ~2 MiB each while a large put arrives);
+# --max-connections 256 keeps that under MemoryMax on a 1 GB server.
 LimitNOFILE=4096
-TasksMax=2048
-MemoryMax=700M
+TasksMax=512
+MemoryMax=600M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

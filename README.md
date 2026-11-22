@@ -536,20 +536,35 @@ on a port Cloudflare proxies without TLS (80, 8080, 8880, 2052, 2082, 2086 or 20
 (and the feed address hint `relay.example.org:8080`). The relay pings a silent
 connection every 30 s, inside Cloudflare's 100 s idle limit.
 
-For a 1-CPU, 1 GB, 25 GB-disk server behind Cloudflare, with a list of writers:
+For the first public relay, `relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of memory,
+16 GB of disk free, behind Cloudflare), with a list of writers:
 
     curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 > /etc/terse-relay/proxies
     terse-relay --public --listen 0.0.0.0:8080 --store /var/lib/terse-relay/store \
-        --max-store-bytes 20G --writers /etc/terse-relay/writers \
+        --max-store-bytes 12G --max-connections 256 --writers /etc/terse-relay/writers \
         --trust-proxy @/etc/terse-relay/proxies --status-file /run/terse-relay/status
+
+Why these numbers: 12 GB of blobs leaves the system, the logs, the entry files (one
+small file each) and a backup's staging room on a 16 GB disk. Memory is what bounds the
+connections: each is a thread, and while it receives a large put it holds up to about
+2 MiB, so 256 connections stay under 600 MB in the worst case (the unit's `MemoryMax`);
+idle ones cost far less. The relay's index of what it holds takes about 100 bytes per
+entry, and with a list of writers the entries are only the writers' (at most 1024 per
+feed), so it stays small; an open relay should watch the status line's entry count.
+Port 8080 is one Cloudflare proxies as plain HTTP (no TLS between client and
+Cloudflare), which the reference clients need.
 
 `packaging/linux/terse-relay.service` is a systemd unit for this, with the steps to
 install it. Then:
 
-- **Firewall**: only the proxy may reach the relay's port, so no one can go around
-  the limits (or forge the header) by connecting directly. With ufw:
-  `for r in $(cat /etc/terse-relay/proxies); do ufw allow proto tcp from $r to any port 8080; done`,
-  with SSH allowed and everything else denied.
+- **Firewall**: only Cloudflare may reach port 8080, so no one can go around the
+  limits (or forge the header) by connecting directly. With ufw (Ubuntu's; the server
+  denies everything but SSH already):
+  `for r in $(cat /etc/terse-relay/proxies); do ufw allow proto tcp from $r to any port 8080 comment cloudflare; done`.
+  Cloudflare's ranges change rarely; when they do, update the file and the rules (and
+  restart the relay, which reads the file at start). In Cloudflare: the DNS record for
+  `relay.tersenet.org` proxied (orange cloud), and "Always Use HTTPS" off for it (a
+  Configuration Rule), or `ws://` clients get a redirect instead of a WebSocket.
 - **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
   `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
   entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
