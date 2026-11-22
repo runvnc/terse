@@ -11,6 +11,10 @@
 @group(0) @binding(1) var s_accum_sampler: sampler;
 @group(0) @binding(2) var<uniform> u_composite: vec4<f32>;
 @group(0) @binding(3) var s_bloom: texture_2d<f32>;
+// Tersenet: the text's light (terse-host's glyphs and page, drawn as
+// light, linear, the picture's size) and its gain (u_text.x; 0 without).
+@group(0) @binding(4) var s_text: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> u_text: vec4<f32>;
 
 // void main()  ->  fs_composite; texture2D  ->  textureSample;
 // vec3_splat(v)  ->  vec3<f32>(v); vec2_splat(v)  ->  vec2<f32>(v)
@@ -25,8 +29,13 @@ fn fs_composite(in: PostVaryings) -> @location(0) vec4<f32>
 			textureSample(s_bloom, s_accum_sampler, in.v_texcoord0).rgb,
 			vec3<f32>(0.0));
 
+	// Tersenet: the text's light, added to the phosphor's.
+	let text = max(
+			textureSample(s_text, s_accum_sampler, in.v_texcoord0).rgb,
+			vec3<f32>(0.0)) * u_text.x;
+
 	let hdr =
-			(phosphor + bloom * u_composite.x) *
+			(phosphor + bloom * u_composite.x + text) *
 			u_composite.y;
 
 	// Tone-map luminance rather than each RGB channel separately.

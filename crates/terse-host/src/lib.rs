@@ -40,9 +40,12 @@ mod gamepad;
 pub mod glyphs;
 #[cfg(feature = "input")]
 pub mod keymap;
+pub mod mame;
 pub mod page;
 #[cfg(feature = "gpu")]
 mod halo;
+#[cfg(feature = "gpu")]
+mod beamlines;
 #[cfg(feature = "gpu")]
 mod panels;
 pub mod phosphor;
@@ -60,6 +63,7 @@ pub mod soft;
 mod vectors;
 pub mod hwcheck;
 pub mod halt;
+pub mod hold;
 pub mod rule;
 pub mod watch;
 
@@ -134,7 +138,11 @@ const USAGE: &str = "usage:
   the rectangle the panel covers; the GPU renderer always draws them in perspective.
   Every form also takes --renderer gpu|software|auto (default auto: the GPU if a hardware graphics
   adapter is found, else the software renderer) and --threads <n> (the software renderer's drawing
-  threads; default one per core), --tube xy|p31|amber|vectrex and --vignette: how the phosphor
+  threads; default one per core), --look mame|classic (default mame: MAME's vector CRT renderer,
+  a sharp beam, MAME's bloom and tone map, its 2 ms persistence; classic: the earlier look with its
+  halo and afterglow), --font-strokes arcade|hershey|drafting|off (the terminal's characters drawn by
+  the beam in that stroke font, default arcade; off: as light), both also read from <config>/look,
+  --tube xy|p31|amber|vectrex and --vignette: how the phosphor
   display style (SPEC §vector.phosphor) is drawn: a colour XY monitor with each line in its colour
   (xy, the default), a green P31 oscilloscope tube, an amber tube or the Vectrex's white tube (the
   monochrome ones show colours as brightness), and with --vignette a glass darker towards the corners.
@@ -226,6 +234,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut shell_flag, mut extra_builtins) = (false, Vec::new());
     let (mut renderer, mut threads, mut bench, mut warmup, mut sweep) = (RendererChoice::Auto, 0usize, false, None, false);
     let mut look = phosphor::Look::default();
+    let mut look_args: Vec<(String, Option<String>)> = Vec::new();
     let (mut eye, mut parallax) = ((0.0f32, 0.0f32), true);
     let mut panels = soft::panel::PanelMode::Perspective;
     let mut it = args.into_iter();
@@ -244,11 +253,11 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 let v = it.next().ok_or(USAGE)?;
                 threads = v.parse().map_err(|_| format!("bad --threads {v}"))?;
             }
-            "--tube" => {
+            "--tube" | "--look" | "--font-strokes" => {
                 let v = it.next().ok_or(USAGE)?;
-                look.preset = phosphor::Preset::parse(&v).ok_or(format!("bad --tube {v} (xy, p31, amber or vectrex)"))?;
+                look_args.push((a[2..].to_string(), Some(v)));
             }
-            "--vignette" => look.vignette = true,
+            "--vignette" => look_args.push(("vignette".into(), None)),
             "--no-shed" => look.no_shed = true,
             "--warmup" => {
                 let v = it.next().ok_or(USAGE)?;
@@ -324,6 +333,15 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             _ if image_path.is_none() && !a.starts_with('-') => image_path = Some(a),
             _ => return Err(USAGE.into()),
         }
+    }
+    // The look: <config>/look, then the options given (README, "The phosphor look").
+    if let Some(dir) = config.clone().or_else(default_config_dir) {
+        for note in look.read_settings(&dir.join("look")) {
+            eprintln!("terse-host: {note}");
+        }
+    }
+    for (name, value) in &look_args {
+        look.set_option(name, value.as_deref())?;
     }
     if version {
         // The fonts this host would draw with (README "Fonts").

@@ -22,6 +22,9 @@ struct BeamInput {
     @location(1) i_data0: vec4<f32>,
     @location(2) i_data1: vec4<f32>,
     @location(3) i_data2: vec4<f32>,
+    // Tersenet: i_data2.w is the intensity at the segment's end (MAME's
+    // unused); i_data3.xy are 1 where the start, the end, is a butt end.
+    @location(4) i_data3: vec4<f32>,
 }
 
 struct BeamVaryings {
@@ -29,4 +32,6 @@ struct BeamVaryings {
     @location(0) v_beam: vec4<f32>,
     @location(1) v_beam_color: vec4<f32>,
     @location(2) v_beam_timing: vec4<f32>,
+    // Tersenet: the end's intensity, the butt ends.
+    @location(3) v_beam_ends: vec4<f32>,
 }

@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::stroke::{CELL_W, Poly, Stroke};
+use crate::mame::stroke::{CELL_W, Poly, Stroke};
 
 /// Screen y of the grid's y = 0, and x of its x = 0 (in an 8-unit cell).
 const TOP: f32 = 2.5;

@@ -214,7 +214,7 @@ device's state). System and Machines calls cost 4.
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 
-[The terminal](terse:1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804), slot 2:
+[The terminal](terse:d909b3f58a7a4f441a340ba421cc7241ea5e73e55e79b96b84b79317940a8218), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -229,7 +229,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:6c6b812bc0498df9321e562dae3dee47c6e9b272436c051b51e0bb1fa09d152d), slot 3:
+[The 2D vector display](terse:f03644893420c10ddf145f9f8b7d806ba200932f0ed496af5777f3de017a6e5d), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

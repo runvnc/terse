@@ -37,3 +37,10 @@ debug = false
 
 [profile.dev.package.terse-core]
 opt-level = 3
+
+# terse-host's drawing is timed by its window tests (--drive: no frame late
+# in the phosphor style's look, the picture still when idle); unoptimised it
+# takes several times a frame, so those tests would measure the build, not
+# the look.
+[profile.dev.package.terse-host]
+opt-level = 2

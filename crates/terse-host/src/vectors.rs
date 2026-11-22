@@ -713,6 +713,17 @@ impl VectorLayer {
         phosphor::shed_level(look, &self.shapes)
     }
 
+    /// The primitives uploaded last.
+    pub fn shapes(&self) -> &[Primitive] {
+        &self.shapes
+    }
+
+    /// (The same as [`VectorLayer::shed_level`].)
+    #[allow(dead_code)]
+    fn shed_level_of(&self, look: &phosphor::Look) -> u8 {
+        phosphor::shed_level(look, &self.shapes)
+    }
+
     /// `shed`: from `phosphor::SHED_SMEAR` the moving shapes leave no smear.
     pub fn phosphor_frame(
         &mut self,

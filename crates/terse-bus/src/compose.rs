@@ -102,6 +102,9 @@ pub struct Show {
     /// (`vector.tube`, DEVICES.md 7.2): its layers are light too, and the
     /// core adds the layers' light as it is, without a tube of its own.
     pub own_tube: bool,
+    /// The terminal as shown (its status line over it), when the core
+    /// draws its text by the beam (`core.strokes`, `terminal.state`).
+    pub terminal: Option<Terminal>,
 }
 
 impl Default for Show {
@@ -116,6 +119,7 @@ impl Default for Show {
             advance: None,
             light_slots: Vec::new(),
             own_tube: false,
+            terminal: None,
         }
     }
 }
@@ -519,7 +523,14 @@ impl Screen {
         s.set_rect(rect);
         s.set_force_phosphor(true);
         s.set_no_trails(looks.no_trails);
-        s.set_look(looks.look);
+        // The terminal's text by the beam, when the core draws it; without
+        // the terminal's state its text is all light.
+        let mut look = looks.look;
+        if self.show.terminal.is_none() {
+            look.strokes = None;
+        }
+        s.set_look(look);
+        s.update(self.show.terminal.as_ref().unwrap_or(&Terminal::default()));
         let vector3 = self.show.list3.is_some().then_some(&tube.v3);
         s.update_vectors(&VectorScene { vector: self.show.vector.as_ref(), vector3, eye, caps: self.show.caps });
         s.set_excluded(&self.show.excluded);
@@ -585,6 +596,12 @@ impl Screen {
 
     /// The 3D layer, to go over a scene's panels (not in the phosphor
     /// style: its scene's lines are the core's).
+    /// How a scene over this screen draws its 3D lines (by the beam in the
+    /// phosphor style's MAME model).
+    fn beam_settings(&self) -> Option<terse_host::soft::mame::Settings> {
+        self.tube.as_ref().and_then(|t| t.screen.beam_settings())
+    }
+
     fn top(&self) -> Option<LayerTop<'_>> {
         if self.phosphor() {
             return None;
@@ -838,7 +855,23 @@ impl Compositor {
         let light_slots = if phosphor { d.light_slots() } else { Vec::new() };
         let list3 = (phosphor && lines).then(|| d.list3().into_owned());
         let own_tube = phosphor && d.property(property::TUBE)?.is_some_and(|v| v.first() == Some(&1));
-        Ok(Show { plate, phosphor, vector, list3, caps, excluded, advance, light_slots, own_tube })
+        // The terminal's text by the beam (DEVICES.md 7.1): the font, for the
+        // terminal to leave those characters out, and its state, to draw them.
+        let font = self.looks.look.stroke_font().filter(|_| phosphor && !own_tube);
+        let mut terminal = None;
+        if !plate {
+            d.set_property(property::STROKES, font.map_or("", |f| f.name()).as_bytes())?;
+            if font.is_some()
+                && let Some(bytes) = d.property(property::TERMINAL)?
+                && let Some((&full, state)) = bytes.split_last()
+            {
+                let mut t = Terminal::with_full_text(full == 1);
+                if t.restore(&mut terse_core::snapshot::Reader::new(state)).is_ok() {
+                    terminal = Some(terse_host::mame::text::shown(&t, &status).into_owned());
+                }
+            }
+        }
+        Ok(Show { plate, phosphor, vector, list3, caps, excluded, advance, light_slots, own_tube, terminal })
     }
 
     /// Draws the picture of `system` for `viewport` after a frame, with the
@@ -1019,6 +1052,7 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = s.top();
+                scene.set_beam(s.beam_settings());
                 changed = scene.refresh(s.image(), changed, &none, s.screen_rect(native, size), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top));
             }
             if changed || panel.is_none() {
@@ -1038,6 +1072,7 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = self.shell.top();
+                scene.set_beam(self.shell.beam_settings());
                 if scene.refresh(self.shell.image(), !shell_damage.is_empty(), &pyramids, rect, eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                     self.damage.add(scene.image.area);
                 }
@@ -1059,6 +1094,7 @@ impl Compositor {
                         scene.stale = true;
                     }
                     let top = s.top();
+                    scene.set_beam(s.beam_settings());
                     if scene.refresh(s.image(), !d.is_empty(), &none, s.screen_rect(native, viewport), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                         self.damage.add(scene.image.area);
                     }

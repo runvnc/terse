@@ -23,15 +23,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::beams::BeamInstance;
-
-/// `BLOOM_PASSES`: horizontal and vertical blur iterations.
-pub const BLOOM_PASSES: u32 = 2;
-
-/// `BEAM_SIGMA_SCALE`: "Empirical conversion from MAME's target-pixel line
-/// width to Gaussian sigma. This controls profile calibration; it is not a
-/// resolution-scaling factor."
-pub const BEAM_SIGMA_SCALE: f32 = 0.085;
+use crate::mame::beams::BeamInstance;
+pub use super::params::{BEAM_SIGMA_SCALE, BLOOM_PASSES, Params, shaders};
 
 /// The format of MAME's phosphor and bloom targets (`RGBA16F`).
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -44,90 +37,6 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// alpha 255, then red, green, blue).
 pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
-/// The seven sliders of `create_sliders`, at their values (MAME's defaults
-/// unless changed).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Params {
-    /// "Vector phosphor persistence": τ in seconds (1–100 ms, default 2 ms).
-    pub persistence: f32,
-    /// "Vector beam width": multiplier on the target-scaled line width
-    /// (0.30–4.00, default 0.75).
-    pub beam_width: f32,
-    /// "Vector beam intensity": HDR energy gain (0.10–5.00, default 4.00).
-    pub beam_intensity: f32,
-    /// "Vector beam halo": the wide Gaussian's strength (0–1, default 0.04).
-    pub halo: f32,
-    /// "Vector bloom strength" (0–3, default 0.20).
-    pub bloom_strength: f32,
-    /// "Vector bloom radius" in output pixels at 1080 lines (0.50–2.60,
-    /// default 2.12).
-    pub bloom_radius: f32,
-    /// "Vector exposure" (0.10–4.00, default 0.78).
-    pub exposure: f32,
-}
-
-impl Default for Params {
-    /// The sliders' default values (`create_sliders`' `descriptions`):
-    /// persistence 2 (× 0.001 s), width 75, intensity 400, halo 4, bloom
-    /// strength 20, bloom radius 212, exposure 78 (× 0.01).
-    fn default() -> Self {
-        Params { persistence: 0.002, beam_width: 0.75, beam_intensity: 4.00, halo: 0.04, bloom_strength: 0.20, bloom_radius: 2.12, exposure: 0.78 }
-    }
-}
-
-impl Params {
-    /// The defaults, changed by environment variables named as the sliders
-    /// (`TERSE_MAME_PERSISTENCE` in milliseconds, `TERSE_MAME_BEAM_WIDTH`,
-    /// `TERSE_MAME_BEAM_INTENSITY`, `TERSE_MAME_HALO`,
-    /// `TERSE_MAME_BLOOM_STRENGTH`, `TERSE_MAME_BLOOM_RADIUS`,
-    /// `TERSE_MAME_EXPOSURE`), each clamped to its slider's range.
-    pub fn from_env() -> Self {
-        let mut p = Params::default();
-        let get = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite());
-        if let Some(v) = get("TERSE_MAME_PERSISTENCE") {
-            p.persistence = v.clamp(1.0, 100.0) / 1000.0;
-        }
-        let set = |name: &str, field: &mut f32, lo: f32, hi: f32| {
-            if let Some(v) = get(name) {
-                *field = v.clamp(lo, hi);
-            }
-        };
-        set("TERSE_MAME_BEAM_WIDTH", &mut p.beam_width, 0.30, 4.00);
-        set("TERSE_MAME_BEAM_INTENSITY", &mut p.beam_intensity, 0.10, 5.00);
-        set("TERSE_MAME_HALO", &mut p.halo, 0.0, 1.0);
-        set("TERSE_MAME_BLOOM_STRENGTH", &mut p.bloom_strength, 0.0, 3.0);
-        set("TERSE_MAME_BLOOM_RADIUS", &mut p.bloom_radius, 0.50, 2.60);
-        set("TERSE_MAME_EXPOSURE", &mut p.exposure, 0.10, 4.00);
-        p
-    }
-}
-
-/// The shaders: the BSD-3-Clause translations and the two interface files.
-pub mod shaders {
-    pub const BEAM_COMMON: &str = include_str!("../shaders/beam_common.wgsl");
-    pub const VS_BEAM: &str = include_str!("../shaders/vs_beam.wgsl");
-    pub const FS_BEAM: &str = include_str!("../shaders/fs_beam.wgsl");
-    pub const POST_COMMON: &str = include_str!("../shaders/post_common.wgsl");
-    pub const VS_POST: &str = include_str!("../shaders/vs_post.wgsl");
-    pub const FS_DECAY: &str = include_str!("../shaders/fs_decay.wgsl");
-    pub const FS_DOWNSAMPLE: &str = include_str!("../shaders/fs_downsample.wgsl");
-    pub const FS_BLUR: &str = include_str!("../shaders/fs_blur.wgsl");
-    pub const FS_COMPOSITE: &str = include_str!("../shaders/fs_composite.wgsl");
-
-    /// Each program as one WGSL module: (name, vertex entry, fragment
-    /// entry, source). bgfx compiles a vertex and a fragment shader
-    /// separately and links them by the varyings; WGSL wants one module.
-    pub fn programs() -> Vec<(&'static str, &'static str, &'static str, String)> {
-        let post = |fs: &str| format!("{POST_COMMON}\n{VS_POST}\n{fs}");
-        vec![
-            ("beam", "vs_beam", "fs_beam", format!("{BEAM_COMMON}\n{VS_BEAM}\n{FS_BEAM}")),
-            ("decay", "vs_post", "fs_decay", post(FS_DECAY)),
-            ("downsample", "vs_post", "fs_downsample", post(FS_DOWNSAMPLE)),
-            ("blur", "vs_post", "fs_blur", post(FS_BLUR)),
-            ("composite", "vs_post", "fs_composite", post(FS_COMPOSITE)),
-        ]
-    }
-}
 
 /// A graphics device and MAME's five effects on it, shared by every
 /// machine a driver draws.
@@ -170,7 +79,9 @@ impl Gpu {
         Ok(Gpu::on(device, queue, name, software))
     }
 
-    fn on(device: wgpu::Device, queue: wgpu::Queue, adapter: String, software: bool) -> Gpu {
+    /// The effects on a device someone else opened (terse-host's GPU
+    /// renderer).
+    pub fn on(device: wgpu::Device, queue: wgpu::Queue, adapter: String, software: bool) -> Gpu {
         let mut modules = std::collections::HashMap::new();
         for (name, vs, fs, src) in shaders::programs() {
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(name), source: wgpu::ShaderSource::Wgsl(src.into()) });
@@ -188,7 +99,7 @@ impl Gpu {
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<BeamInstance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Float32x4],
+                attributes: &wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4],
             }),
         ];
         let post_buffers = [Some(wgpu::VertexBufferLayout {
@@ -401,10 +312,35 @@ pub struct Crt {
     blur_uniforms: [wgpu::Buffer; 2],
     blur_groups: [wgpu::BindGroup; 2],
     composite_groups: [wgpu::BindGroup; 2],
+    /// Tersenet: clears rectangles of the bloom's first target after the
+    /// downsample (the light of a machine's Surfaces' sources does not
+    /// bloom): the decay effect with a factor of 0.
+    zero_groups: [wgpu::BindGroup; 2],
     /// The bloom is drawn (shed: off).
     pub bloom_on: bool,
     pub params: Params,
     pub last: FrameTime,
+}
+
+/// Tersenet's additions to a tube, for terse-host's renderer (none for the
+/// driver).
+#[derive(Clone, Copy)]
+pub struct Extras<'a> {
+    /// The picture is read back ([`Crt::deliver`]); else it is only in
+    /// [`Crt::output`], for the renderer to sample.
+    pub readback: bool,
+    /// The text's light (the picture's size, linear), added to the
+    /// phosphor's in the composite times `text_gain`.
+    pub text: Option<&'a wgpu::TextureView>,
+    pub text_gain: f32,
+    /// The composite's vignette (MAME's `u_composite.w`, 0 by default).
+    pub vignette: f32,
+}
+
+impl Default for Extras<'_> {
+    fn default() -> Self {
+        Extras { readback: true, text: None, text_gain: 0.0, vignette: 0.0 }
+    }
 }
 
 impl Crt {
@@ -414,6 +350,11 @@ impl Crt {
     /// and the picture read back is `out`; with `bloom` false the bloom is
     /// not drawn (its strength 0).
     pub fn new(gpu: &Gpu, out: (u32, u32), internal: (u32, u32), params: Params, bloom: bool) -> Crt {
+        Crt::with(gpu, out, internal, params, bloom, Extras::default())
+    }
+
+    /// [`Crt::new`] with Tersenet's additions ([`Extras`]).
+    pub fn with(gpu: &Gpu, out: (u32, u32), internal: (u32, u32), params: Params, bloom: bool, extras: Extras) -> Crt {
         let (out_width, out_height) = (out.0.max(1), out.1.max(1));
         let (width, height) = (internal.0.max(1), internal.1.max(1));
         let bloom_width = width.div_ceil(2).max(1);
@@ -422,7 +363,7 @@ impl Crt {
         let bloom_targets = [target(gpu, "bloom 0", bloom_width, bloom_height, HDR_FORMAT, false).1, target(gpu, "bloom 1", bloom_width, bloom_height, HDR_FORMAT, false).1];
         let (output_texture, output) = target(gpu, "output", out_width, out_height, OUTPUT_FORMAT, true);
         let padded_row = (out_width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let ring = (0..RING)
+        let ring = (0..if extras.readback { RING } else { 0 })
             .map(|_| Readback {
                 buffer: gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("readback"),
@@ -434,13 +375,16 @@ impl Crt {
                 index: None,
             })
             .collect();
-        let group = |pipeline: &wgpu::RenderPipeline, label: &str, textures: &[(u32, &wgpu::TextureView)], u: &wgpu::Buffer| {
+        let group_with = |pipeline: &wgpu::RenderPipeline, label: &str, textures: &[(u32, &wgpu::TextureView)], uniforms: &[(u32, &wgpu::Buffer)]| {
             let layout = pipeline.get_bind_group_layout(0);
             let mut entries: Vec<wgpu::BindGroupEntry> = textures.iter().map(|(b, v)| wgpu::BindGroupEntry { binding: *b, resource: wgpu::BindingResource::TextureView(v) }).collect();
             entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&gpu.sampler) });
-            entries.push(wgpu::BindGroupEntry { binding: 2, resource: u.as_entire_binding() });
+            for (b, u) in uniforms {
+                entries.push(wgpu::BindGroupEntry { binding: *b, resource: u.as_entire_binding() });
+            }
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(label), layout: &layout, entries: &entries })
         };
+        let group = |pipeline: &wgpu::RenderPipeline, label: &str, textures: &[(u32, &wgpu::TextureView)], u: &wgpu::Buffer| group_with(pipeline, label, textures, &[(2, u)]);
         let beam_uniforms = uniform(gpu, "beam uniforms", 96);
         let beam_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("beam"),
@@ -458,9 +402,27 @@ impl Crt {
         let composite_uniforms = uniform(gpu, "u_composite", 16);
         // composite(): u_composite = (bloom strength, exposure, 2.2, 0): the
         // vignette is off. Tersenet: a bloom shed is a strength of 0.
-        gpu.queue.write_buffer(&composite_uniforms, 0, &vec4([if bloom { params.bloom_strength } else { 0.0 }, params.exposure, 2.2, 0.0]));
-        let composite_groups =
-            [0, 1].map(|c| group(&gpu.composite, "composite", &[(0, &accumulation[c].view), (3, &bloom_targets[0].view)], &composite_uniforms));
+        // Tersenet: the vignette's strength is an extra (0, MAME's, by default).
+        gpu.queue.write_buffer(&composite_uniforms, 0, &vec4([if bloom { params.bloom_strength } else { 0.0 }, params.exposure, 2.2, extras.vignette]));
+        // Tersenet: the text's light and its gain (none for the driver).
+        let text_uniforms = uniform(gpu, "u_text", 16);
+        let no_text = target(gpu, "no text", 1, 1, HDR_FORMAT, false).1;
+        let (text_view, gain) = match extras.text {
+            Some(v) => (v, extras.text_gain),
+            None => (&no_text.view, 0.0),
+        };
+        gpu.queue.write_buffer(&text_uniforms, 0, &vec4([gain, 0.0, 0.0, 0.0]));
+        let composite_groups = [0, 1].map(|c| {
+            group_with(
+                &gpu.composite,
+                "composite",
+                &[(0, &accumulation[c].view), (3, &bloom_targets[0].view), (4, text_view)],
+                &[(2, &composite_uniforms), (5, &text_uniforms)],
+            )
+        });
+        let zero_uniforms = uniform(gpu, "u_decay zero", 16);
+        gpu.queue.write_buffer(&zero_uniforms, 0, &vec4([0.0; 4]));
+        let zero_groups = [0, 1].map(|p| group(&gpu.decay, "zero", &[(0, &accumulation[p].view)], &zero_uniforms));
         Crt {
             width,
             height,
@@ -487,6 +449,7 @@ impl Crt {
             blur_uniforms,
             blur_groups,
             composite_groups,
+            zero_groups,
             bloom_on: bloom,
             params,
             last: FrameTime::default(),
@@ -520,16 +483,50 @@ impl Crt {
         // Tersenet: a readback buffer of the ring that is not in flight
         // (one always is: deliveries leave at most two in flight).
         let Some(slot) = (0..RING).find(|i| !self.flight.contains(i)) else { return };
+        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("vector crt") });
+        self.encode(gpu, &mut encoder, beams, frame_time, &[]);
+        encoder.copy_texture_to_buffer(
+            self.output_texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.ring[slot].buffer,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.padded_row), rows_per_image: None },
+            },
+            wgpu::Extent3d { width: self.out_width, height: self.out_height, depth_or_array_layers: 1 },
+        );
+        let index = gpu.queue.submit([encoder.finish()]);
+        let rb = &mut self.ring[slot];
+        rb.state.store(PENDING, Ordering::Release);
+        let state = rb.state.clone();
+        rb.buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release));
+        rb.index = Some(index);
+        self.flight.push_back(slot);
+        self.last = FrameTime { total: start.elapsed(), wait: Duration::ZERO, copy: Duration::ZERO, beams: beams.len() };
+    }
+
+    /// The composite's target: the picture (BGRA, gamma-encoded), for a
+    /// renderer to sample or copy (Tersenet).
+    pub fn output(&self) -> &wgpu::TextureView {
+        &self.output.view
+    }
+
+    /// The composite's target texture.
+    pub fn output_texture(&self) -> &wgpu::Texture {
+        &self.output_texture
+    }
+
+    /// `prepare` then `composite`, recorded into `encoder` (Tersenet: the
+    /// renderer's, with its other passes). `no_bloom`: rectangles (x, y, w,
+    /// h) of the bloom's half-size target cleared after the downsample.
+    pub fn encode(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, beams: &[BeamInstance], frame_time: f64, no_bloom: &[(u32, u32, u32, u32)]) {
         // "Avoid an unusually large elapsed time causing undesirable behaviour."
         let frame_time = frame_time.clamp(0.0, 0.100);
         let p = self.params;
         let previous = self.current_accumulation;
         let current = previous ^ 1;
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("vector crt") });
         let pass = begin;
         // Decay or clear the persistent phosphor target.
         {
-            let mut rp = pass(&mut encoder, &self.accumulation[current].view, self.reset_accumulation);
+            let mut rp = pass(encoder, &self.accumulation[current].view, self.reset_accumulation);
             if self.reset_accumulation {
                 self.reset_accumulation = false;
             } else {
@@ -566,7 +563,7 @@ impl Crt {
             u.extend(vec4([frame_time as f32, p.persistence, p.beam_intensity, p.halo]));
             u.extend(vec4([w, h, 1.0 / w, 1.0 / h]));
             gpu.queue.write_buffer(&self.beam_uniforms, 0, &u);
-            let mut rp = pass(&mut encoder, &self.accumulation[current].view, false);
+            let mut rp = pass(encoder, &self.accumulation[current].view, false);
             rp.set_pipeline(&gpu.beam);
             rp.set_bind_group(0, &self.beam_group, &[]);
             rp.set_vertex_buffer(0, gpu.beam_vertices.slice(..));
@@ -576,11 +573,26 @@ impl Crt {
         if self.bloom_on {
             // Downsample the phosphor image into the first bloom target.
             {
-                let mut rp = pass(&mut encoder, &self.bloom[0].view, false);
+                let mut rp = pass(encoder, &self.bloom[0].view, false);
                 rp.set_pipeline(&gpu.downsample);
                 rp.set_bind_group(0, &self.downsample_groups[current], &[]);
                 rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
                 rp.draw(0..6, 0..1);
+            }
+            // Tersenet: no bloom from where a machine's Surfaces' sources are.
+            if !no_bloom.is_empty() {
+                let mut rp = pass(encoder, &self.bloom[0].view, false);
+                rp.set_pipeline(&gpu.decay);
+                rp.set_bind_group(0, &self.zero_groups[current], &[]);
+                rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
+                for &(x, y, w, h) in no_bloom {
+                    let (x, y) = (x.min(self.bloom_width), y.min(self.bloom_height));
+                    let (w, h) = (w.min(self.bloom_width - x), h.min(self.bloom_height - y));
+                    if w > 0 && h > 0 {
+                        rp.set_scissor_rect(x, y, w, h);
+                        rp.draw(0..6, 0..1);
+                    }
+                }
             }
             // "Scale the output-pixel bloom radius relative to a 1080-line reference."
             let bloom_scale = (self.height as f32 / 1080.0).clamp(0.25, 2.0);
@@ -594,7 +606,7 @@ impl Crt {
             gpu.queue.write_buffer(&self.blur_uniforms[1], 0, &vec4([0.0, 1.0 / self.bloom_height as f32, sigma_y * pass_scale, 0.0]));
             for _ in 0..BLOOM_PASSES {
                 for (dst, g) in [(1, 0), (0, 1)] {
-                    let mut rp = pass(&mut encoder, &self.bloom[dst].view, false);
+                    let mut rp = pass(encoder, &self.bloom[dst].view, false);
                     rp.set_pipeline(&gpu.blur);
                     rp.set_bind_group(0, &self.blur_groups[g], &[]);
                     rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
@@ -606,28 +618,12 @@ impl Crt {
         // a black one). Tersenet: into the picture's size, sampling the
         // phosphor and the bloom.
         {
-            let mut rp = begin_with(&mut encoder, &self.output.view, Some(wgpu::Color::BLACK));
+            let mut rp = begin_with(encoder, &self.output.view, Some(wgpu::Color::BLACK));
             rp.set_pipeline(&gpu.composite);
             rp.set_bind_group(0, &self.composite_groups[current], &[]);
             rp.set_vertex_buffer(0, gpu.post_vertices.slice(..));
             rp.draw(0..6, 0..1);
         }
-        encoder.copy_texture_to_buffer(
-            self.output_texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.ring[slot].buffer,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.padded_row), rows_per_image: None },
-            },
-            wgpu::Extent3d { width: self.out_width, height: self.out_height, depth_or_array_layers: 1 },
-        );
-        let index = gpu.queue.submit([encoder.finish()]);
-        let rb = &mut self.ring[slot];
-        rb.state.store(PENDING, Ordering::Release);
-        let state = rb.state.clone();
-        rb.buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release));
-        rb.index = Some(index);
-        self.flight.push_back(slot);
-        self.last = FrameTime { total: start.elapsed(), wait: Duration::ZERO, copy: Duration::ZERO, beams: beams.len() };
     }
 
     /// Hands a submitted picture to `sink` (the mapped bytes, BGRA, a

@@ -348,7 +348,7 @@ fn phosphor_look_checks_checks() {
     let mut renderers = vec![Renderer::Soft];
     #[cfg(feature = "gpu")]
     renderers.extend(Renderer::gpu());
-    let look = Look::default();
+    let look = Look::classic();
     for r in &renderers {
         for size in SIZES {
             let g = || -> Box<dyn GlyphSource> { Box::new(NoGlyphs(size.0 / terse_core::COLS as u32)) };
@@ -422,16 +422,16 @@ fn tube_presets_and_glass_checks() {
     let mut pictures = Vec::new();
     for r in &renderers {
         let at = |p: &Picture, x: i32| (0..p.size.1 as i32).map(|y| p.at(x, y)).max_by_key(|c| c[0] as u32 + c[1] as u32 + c[2] as u32).unwrap();
-        let xy = r.draw(g(), size, &blank(), &list, true, Look::default());
+        let xy = r.draw(g(), size, &blank(), &list, true, Look::classic());
         let c = at(&xy, 400);
         assert!(c[0] > 150 && c[1] < 40 && c[2] < 40, "{}: colour tube {c:?}", r.name());
-        let p31 = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::P31, ..Look::default() });
+        let p31 = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::P31, ..Look::classic() });
         let c = at(&p31, 400);
         assert!(c[1] > 120 && c[1] > c[0] + 40 && c[1] > c[2] + 40, "{}: P31 {c:?}", r.name());
-        let amber = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Amber, ..Look::default() });
+        let amber = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Amber, ..Look::classic() });
         let c = at(&amber, 400);
         assert!(c[0] > c[1] && c[1] > c[2], "{}: amber {c:?}", r.name());
-        let glass = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Xy, vignette: true, ..Look::default() });
+        let glass = r.draw(g(), size, &blank(), &list, true, Look { preset: Preset::Xy, vignette: true, ..Look::classic() });
         let (centre, corner) = (at(&glass, 400), at(&glass, 60));
         let plain = at(&xy, 400);
         assert!((0..3).all(|i| centre[i].abs_diff(plain[i]) <= 1), "{}: the centre {centre:?} {plain:?}", r.name());

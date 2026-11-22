@@ -441,6 +441,7 @@ Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
 (wgpu) or by the CPU (see [Software renderer](#software-renderer)); `auto`, the
 default, uses the GPU if a hardware graphics adapter is found and the CPU otherwise.
 `--threads <n>` sets the software renderer's drawing threads (default one per core);
+`--look mame|classic`, `--font-strokes arcade|hershey|drafting|off`,
 `--tube xy|p31|amber|vectrex` and `--vignette` choose how the phosphor style is drawn
 (see [Phosphor style](#phosphor-style)); `--panels flat`
 makes it draw the shell's panels upright instead of in perspective (`auto`, the
@@ -1539,7 +1540,45 @@ persistence / 256 each frame (`vec_persistence(n)`, 160 after reset, a hint othe
 hosts may ignore). The style, persistence and fill mode are machine state (in the
 state hash, STATE.md 1.7); the afterglow is not, and the program cannot see it.
 
-How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`): the
+**The look (`--look mame`, the default).** Both reference hosts (`terse-host`, either
+renderer, and `terse-bus`'s core) draw the phosphor style with MAME's vector CRT
+renderer (`crates/terse-host/src/mame/`; its shaders translated from MAME, BSD-3-Clause,
+`third_party/mame-vector-crt/`): each line is a sharp Gaussian beam about a pixel wide
+whatever its stated width (a wider line is brighter more than wider), lines that cross
+or meet add their light (joints between separate strokes are bright beads), the
+phosphor decays with MAME's 2 ms persistence (gone in a frame: no trails), a small
+bloom at half resolution, and MAME's tone map (exposure, 1 − e^−L on the luminance,
+gamma 1/2.2), which also makes dark colours paler. The GPU renderer runs MAME's passes
+on the GPU it draws with; the software renderer computes the same passes on the CPU
+(`soft/mame.rs`), within a few levels of the GPU's picture. A screen taller than 960
+lines has its phosphor drawn at 960 lines and sampled up. The terminal's characters
+are drawn by the beam as strokes of a vector character generator (`--font-strokes
+arcade`, the default: original straight-stroke glyphs for all 361 characters of the
+basic repertoire; `hershey`, the Hershey Roman Simplex font; `drafting`, slanted
+single-stroke lettering; `off`, the glyphs as light); a character a stroke font does
+not draw (the rest of the full-text repertoire, wide characters) and the page's text
+are drawn as light in their colours, as before. 3D segments fade along their length
+(the depth cue) and end flat where a face cuts them; the 3D lines over a scene's
+Screens and Surfaces are the beam's light too. `--tube p31|amber|vectrex` make the
+colours a monochrome tube's and its persistence the tube's (3, 50, 15 ms);
+`--vignette` darkens the glass towards its edges; `--no-trails` clears the phosphor
+every frame. MAME's sliders can be changed with environment variables
+(`TERSE_MAME_PERSISTENCE` in ms, `TERSE_MAME_BEAM_WIDTH`, `TERSE_MAME_BEAM_INTENSITY`,
+`TERSE_MAME_HALO`, `TERSE_MAME_BLOOM_STRENGTH`, `TERSE_MAME_BLOOM_RADIUS`,
+`TERSE_MAME_EXPOSURE`; `crates/terse-mame-crt/README.md`). The look sheds in steps
+when frames run long (PERFORMANCE.md R15): 1 draws the phosphor at most 720 lines
+high, 2 at most 480, 3 also without the bloom; a frame whose lists draw much ink is
+shed by the same thresholds as below. `--look classic` draws the earlier look,
+described next.
+
+The look's options can also be kept in `<config>/look`, one a line, as on the
+command line without the dashes (the command line wins):
+
+    look mame
+    font-strokes hershey
+    tube xy
+
+**The classic look (`--look classic`).** How `terse-host` draws it (all constants in `crates/terse-host/src/phosphor.rs`): the
 aim is a real vector monitor or oscilloscope, a thin, sharp, nearly white-hot line
 on true black with a very faint, very wide glow, not a neon blur. Each line is the
 light of a Gaussian beam spot moved along it at constant speed: a Gaussian across the

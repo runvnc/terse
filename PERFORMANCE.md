@@ -425,6 +425,50 @@ counted, below); reader, fetch, hello and tune draw no vector list.
   Before, with only the smear shed: 24.7, 19.7, 28.8 and 75.6 ms on one
   thread. The GPU sheds the smear and the halo; its beam costs it
   little, so it draws the plain level as the halo one.
+
+  That table is the classic look (`--look classic`). **The default look
+  since 2026-11-22 is MAME's vector CRT** (README "Phosphor style"): a
+  beam about a pixel wide, a 2 ms phosphor, a half-resolution bloom and a
+  tone map; it sheds in steps too (1: the phosphor at most 720 lines high,
+  2: 480, 3: also no bloom; by the same ink thresholds and the same
+  governor). Measured the same way (release, `terse perf --runs 3`, load
+  average 2 to 4), p50 shed (in full):
+
+  | Worst list, phosphor style, MAME look | 1 thread |
+  |---|---|
+  | 2D lines 16 units wide | 7.0 (11.4) ms |
+  | 2D circles | 9.9 (19.2) ms |
+  | 3D lines | 12.1 (21.1) ms |
+  | 3D points 16 units wide | 13.1 (27.4) ms |
+
+  In full it costs a fifth of the classic look's (whose halo and smear
+  are its cost); shed, about twice the classic's plain lines at these
+  extreme lists (the MAME beam is drawn as a beam even at level 3), all
+  within a frame. Every other W row is unchanged within noise (the "all"
+  row 16.7 ms, the system rows 35–51 ms). Frames whose text does not
+  change cost almost nothing: a frame whose beams, text and time are the
+  last frames', once the phosphor has settled (3 frames), is not drawn
+  again (a full screen of text: 0.2 ms, against 7–10 ms for the classic
+  look's halo). Per frame on the reference, software renderer
+  (`--bench-render`, p50, 1 thread / 12 threads), MAME look against
+  classic:
+
+  | Scene | 640 × 480 | 1280 × 960 | 1900 × 1000 | 2560 × 1440 |
+  |---|---|---|---|---|
+  | sparks (phosphor session) | 5.9 / 1.5 (classic 5.7 / 1.7) | 10.5 / 2.9 (11.8 / 2.7) | 11.0 / 3.4 (12.3 / 3.7) | 32.9 / 9.7 (35.0 / 8.0) |
+  | holo's city, forced phosphor | 6.9 / 1.9 (8.6 / 2.3) | 14.4 / 3.5 (14.6 / 3.6) | 13.1 / 4.3 (13.9 / 4.3) | 39.3 / 13.2 (33.1 / 8.6) |
+  | 2D lines at the cap | 6.3 / 3.3 (2.1 / 1.0) | 8.7 / 4.3 (4.4 / 2.3) | 8.7 / 5.2 (4.5 / 3.5) | 18.2 / 13.0 (14.6 / 10.9) |
+  | 3D points at the cap | 7.4 / 1.5 (6.6 / 1.8) | 16.5 / 2.8 (13.2 / 3.5) | 15.2 / 4.1 (12.4 / 4.3) | 46.0 / 8.1 (36.4 / 11.6) |
+  | a full screen of text, still | 0.2 / 0.2 (4.8 / 1.1) | 0.2 / 0.2 (10.1 / 2.5) | 0.2 / 0.2 (9.9 / 3.2) | 0.2 / 0.2 (39.8 / 10.8) |
+
+  The GPU renderer runs MAME's passes on the GPU it draws with (no
+  read-back): 0.3–1.0 ms a frame on the RTX 2060 at 640 × 480 to
+  2560 × 1440 for sparks and the lists at the caps, against 0.4–2.3 ms for
+  the classic look.
+  At 2560 × 1440 the software renderer composites 1920 × 1440 pixels a
+  frame (the phosphor itself is drawn at 1280 × 960 and sampled up), which
+  shedding does not make smaller: on one thread such a window is late in
+  either look; with the renderer's threads it keeps up.
 - *A system of machines* is bounded by R12, §5.
 - *Text in another script.* The terminal's 2,400 cells are bounded, and
   the full repertoire's worst frame fits (9.2 ms, §3). With a CJK font

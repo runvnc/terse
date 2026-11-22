@@ -1,10 +1,10 @@
 //! The terminal's screen as strokes: each cell's character from the stroke
-//! font ([`crate::stroke`]) in its foreground colour, the cursor as a
+//! font ([`crate::mame::stroke`]) in its foreground colour, the cursor as a
 //! stroke under its cell, in reading order (the order the beam draws them).
 
 use terse_core::{COLS, ROWS, Terminal};
 
-use crate::stroke::{CELL_H, CELL_W, Font, Stroke, strokes_in};
+use crate::mame::stroke::{CELL_H, CELL_W, Font, Stroke, strokes_in};
 
 /// A stroke on the screen, in screen units, with its colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -74,6 +74,46 @@ pub fn screen_in(t: &Terminal, font: Font) -> Vec<Lit> {
             }
             buf.clear();
             strokes_in(font, code, wide, &mut buf);
+            let (ox, oy) = (col as f32 * CELL_W, row as f32 * CELL_H);
+            for s in &buf {
+                out.push(Lit { s: Stroke { x0: s.x0 + ox, y0: s.y0 + oy, x1: s.x1 + ox, y1: s.y1 + oy, ..*s }, rgb: palette[fg as usize] });
+            }
+        }
+    }
+    if t.cursor_visible() {
+        let (col, row) = t.cursor();
+        let (col, row) = (col as usize, row as usize);
+        if col < COLS && row < ROWS {
+            let fg = cells[row * COLS + col].2;
+            let (x, y) = (col as f32 * CELL_W, row as f32 * CELL_H + CELL_H - 1.0);
+            out.push(Lit { s: Stroke { x0: x + 0.75, y0: y, x1: x + CELL_W - 0.75, y1: y, width: 1.5, level: 1.0 }, rgb: palette[fg as usize] });
+        }
+    }
+    merge(out)
+}
+
+/// The strokes of the screen in `font` for the characters the font draws
+/// (`stroke::covers_in`: the whole basic repertoire), and the cursor's;
+/// `stroked[i]` says whether cell `i` (row by row) was drawn so. A wide
+/// character, and any character the font does not draw (the rest of the
+/// full-text repertoire), is not: the host draws it as light (terse-host's
+/// built-in look).
+pub fn screen_covered(t: &Terminal, font: Font, stroked: &mut Vec<bool>) -> Vec<Lit> {
+    let cells = cells(t);
+    let palette = t.palette();
+    stroked.clear();
+    stroked.resize(COLS * ROWS, false);
+    let mut out = Vec::new();
+    let mut buf = Vec::new();
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let (code, wide, fg, _) = cells[row * COLS + col];
+            if code == 0 || wide || !crate::mame::stroke::covers_in(font, code) {
+                continue;
+            }
+            stroked[row * COLS + col] = true;
+            buf.clear();
+            strokes_in(font, code, false, &mut buf);
             let (ox, oy) = (col as f32 * CELL_W, row as f32 * CELL_H);
             for s in &buf {
                 out.push(Lit { s: Stroke { x0: s.x0 + ox, y0: s.y0 + oy, x1: s.x1 + ox, y1: s.y1 + oy, ..*s }, rgb: palette[fg as usize] });

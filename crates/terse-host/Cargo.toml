@@ -4,7 +4,10 @@ description = "Host for Tersenet: a window drawn with the GPU or the CPU, screen
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-license.workspace = true
+# The translated MAME files (src/mame, shaders/mame, src/soft/mame.rs) are
+# BSD-3-Clause, their headers kept; the rest is the workspace's Apache-2.0.
+# See NOTICE and third_party/mame-vector-crt.
+license = "Apache-2.0 AND BSD-3-Clause"
 
 [lib]
 name = "terse_host"

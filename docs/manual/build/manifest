@@ -1,59 +1,59 @@
-120694b944148aab1d1b7b2c36c6c2f997625b66ef34c0fa594dd0f7b363302a index Tersenet
-ffd0ca1496381d5e234e8e6d610d4ad6899db6f07cdfa7d7a6216dab13a65df0 contents Contents
-1d30be24a9b3b5c3ccd00e07c669dc9c703d9d58e6cc4bf52c30a0fbc4ade3e4 guide-install Install Tersenet
-0cdcbea19c921652d80b4e548db6f9fd2329b24735c5b91b2a81669549d149ac guide-run Run Tersenet
-828a110074e77ce00bd9de23c9174c63220de1a5ac76198c591a09b341545e8d guide-profile Create your profile
-0ce2e90a3cb61f8f795e81fbc898fe9dcaba2b692301c58c8f4fbeed5ec8485b guide-write Write and publish an article
-5b02adcb10d11e668f48e6df8a39484ce15b21f0263c050dfdffef13cff6ccfe guide-read Read articles and follow links
-16e514a0deca537571994ee21b5d5e0bd674ee8f6fc4dc4b290c74e635fc5579 guide-subscribe Subscribe to someone's feed
-fbde994c74c42469ca667242769d77556473484ec79505e03b8bd061ed0d8156 guide-games Find and play a game
-e7931f663ca04183f33682af117eb63b311911adb7b1a4d100b91356ddb13614 guide-reader Make a reader
-d34e710d10b181a81572acfa27b81545871a6ed5dc1b2491f2a1f3097f84058f guide-reader-go Make a reader in Go, step 1: show an article
-039b5a5543b4915da3c8e02b891b6f3821ab3e1c09413b078413bd7a93192b2f guide-reader-rust Make a reader in Rust, step 1: show an article
-79bd17ce61b9d3bf5246549a92df7f3a4b9dfa305f83f7c341f9b1f6c616d44d guide-reader-fetch-go Make a reader in Go, step 2: fetch an article
-a564803e1171afd9eb1b555346b708532098a1a9b33ce9e683aee6a700e8b14c guide-reader-fetch-rust Make a reader in Rust, step 2: fetch an article
-e5436709c8ab13a1a249c93b95055f21207767c92a35af5cf2f9554f26274658 guide-reader-feed-go Make a reader in Go, step 3: follow a feed
-5c35d916eddcb759947a356a8e7cb10257ed9111fc7e535e1cfedcc5dc89712e guide-reader-feed-rust Make a reader in Rust, step 3: follow a feed
-109be1fa422d4b6252a5a1632a00794680da34f1acacf12e6487b7f92dbb3100 guide-program Write a program in C
-4e1358f3aae2c40350753345b12fe202274ca9c95dbc5d6c683d08b2bbad5968 guide-program-rust Write a program in Rust
-4eb0a163b0925a5100f4dab7ae0f0bc1802e1d156e491960fe7d8273cbe8cdff guide-drawing Draw a line and read a key
-02080ad6fae7f9a990a277373988d0a8433631e5dc0bb34ea59c2709912f1369 guide-drawing-rust Draw a line and read a key in Rust
-3727c682d54df4184434e05fa79b05995e9fefd3300608402844e2f23c16bd74 guide-game Make a small game
-8ffef3e2ec7d612c826a5a964529ef15e879ba2ce0aa41df08954c70862ca603 guide-game-rust Make a small game in Rust
-60838a175db4b94d52c4a0fcb193dfb19eba8e85ece4425fef0f6c624edeecf0 guide-host Make a host
-3609b01b6cbf3970c415604130749d0330af33e90c10400290b8fdf37a1502ad guide-host-go Make a host in Go, step 1: run a program to its end
-879f18ca3bfa8333977d9d2a389941c7b78ab1d712d025088a3a47488a6e8dbd guide-host-rust Make a host in Rust, step 1: run a program to its end
-489474f87c51eed7aa9d201e07099f317709259540fa8eb57bd74ee776228a88 guide-host-go-frames Make a host in Go, step 2: frames and the budget
-0b455fcd31c5d572701286de777591386bc72ed49f72f32a7742c6cedf101d3a guide-host-rust-frames Make a host in Rust, step 2: frames and the budget
-75b668d3add0eeb2c70abe3b3d32891446e622572866f460794c642704405931 guide-host-go-driver Make a host in Go, step 3: a driver shows hello
-3e71264d3445623ca61fb5e7c4d38d258d8f980f6739e185ef815c881af90380 guide-host-rust-driver Make a host in Rust, step 3: a driver shows hello
-36f16816ebfa34e14d7ebd30fcff022faff5032a00d2704007a6951096f5ac43 guide-host-go-state Make a host in Go, step 4: prove it exact
-f2ccb795926abfd8c218e875393722cfccb1f6dfd1b52c05259db5cd7e37854f guide-host-rust-state Make a host in Rust, step 4: prove it exact
-9d22ce76089082843afbc9980e3a9b915bd9a691c2be2b32ae5ab65221b4c2ec guide-device Make a device
-af89054a4291dff75970002517ea6e1d589b1af702f4b0bb7ba005916d184329 guide-device-go Make a device in Go
-cd09877c18e1c91fd35fad74437974b06a803172ab3df07515e4c3112015c4e6 guide-device-rust Make a device in Rust
-60e4dc34b1e052c58acb175626b79122ad0615ea138a20a8eeae91a6e06d45b1 guide-swap Swap in your own part
-2bad19d4a32e5e339566de75bcb4d1ece51f43e4b03fafc91625ad0d9374faa9 guide-shell Make a shell
-a2ee7056775d1fede882a5774ef6395512a25a81c71c972787e61539ff38ddf6 guide-shell-rust Make a shell in Rust
-320718a939d2bc3db7b5b3cbbb46f5b8004ac98f0539ae51d68974fc5bdcf04c guide-invent Invent a device
-976e8ec7190c6294e733069c352255b2b9ae803f6db3939699a9d817a97bbc7f guide-invent-rust Invent a device: the program in Rust
-368db1c51c9d41617bde0806278f5da6cba3b4a253be2d686a53086347d75bcc how-it-works How Tersenet works
-f24e9e55a548fc8333ef013c8b3fa6ca0c93520ceacd114867cf80120a610716 toolchain Building a program
-746b89d6df582927ba6a686d3269120d51b278177d828ce2bcab7f38ec63cfc5 toolchain-c The C library
-b0f7a8cf2c12c611e9157b4f351395cdf0511b8a2192b87e5c0983d186d4a713 toolchain-rust Rust programs
-02c6914c18385584d2e3d7b036168202cdb55d7c5b378e5651489de00cc6484f toolchain-other Building by hand, and other languages
-53a7df3edfdf85aaef2dea5ed371b88e6591576a89bcf4ef55f8784f1aa89987 running-programs Running and publishing a program
-e852c277bae37bb711b8260a9a7297f91b951c73373dd8de09b14f550ac8ebfe using Using the shell
+f1b6c4bd9f6afe3872e84e76cd240e908ac733b9e02c8fa9fffe3b724ed3fba0 index Tersenet
+3b4e8641a125ae2837fb845ba679f589d29f1ad76e6c89848770535b13a19790 contents Contents
+b85d10d716b904bba571d823fd79e00afce047629e812af3a7945bbf87ac3b1a guide-install Install Tersenet
+1f0b76a606e0a37805925a6f66959c0bfc32ff1a1b47ba05f3f9ad1af318ae2a guide-run Run Tersenet
+b08a52eb69fc957a0428d4a63a07460cc3acdbf7ed057de6b8eb0556de4c0efe guide-profile Create your profile
+a43bc0fdf5879595d07ad179ed88f3a0fda4ec3df565a0f65844114b5e005600 guide-write Write and publish an article
+8489c828dca6a5a689335b0ccabeccf75acf8ad81e313fdafaa97e2b588d21b8 guide-read Read articles and follow links
+b4daffa6561b5e4203d3a670013c8713d8e9034d7f0893ea7973414d55ff72af guide-subscribe Subscribe to someone's feed
+1195fcd22a16b38f30b735e4ef04c3170a2ff6c691997de1b0d88052c186fac4 guide-games Find and play a game
+d7f991698ca4e0da40dd5b03fb68c533bd62ec0bf5b12d678c59a17d77a88440 guide-reader Make a reader
+837d1e3b482051ae341d3282b9733f6c1c4cb3abdd58746826da5fad559116d1 guide-reader-go Make a reader in Go, step 1: show an article
+aaa969b44ccfc6ae5dd73b326dc31d33ae828ff70e60b7f2d1ecd3a87acd3db1 guide-reader-rust Make a reader in Rust, step 1: show an article
+45a63f328149a8a3ebe863b0d15ef7d71e79205dd635f8576bf7b756cc729282 guide-reader-fetch-go Make a reader in Go, step 2: fetch an article
+1e8d93d0980b8bdb082ea643e71d1a4b5ee83d890dc3c23e6b0f3f19b48d6363 guide-reader-fetch-rust Make a reader in Rust, step 2: fetch an article
+ea657b2770a92d503c1c2822194fd1ba7d8171885327707efcee980e92f15cd9 guide-reader-feed-go Make a reader in Go, step 3: follow a feed
+bc6c04cbd54c301d96769d0dd0ba49067748404bce393b86a1179506d159fba2 guide-reader-feed-rust Make a reader in Rust, step 3: follow a feed
+afc4abf7d71a8d5fd2bf0e51cb6ff7747fe674308e08ebb6ba5489d96b824b05 guide-program Write a program in C
+17aaa9f76dd78682e3cae8ec8f21351a7da2d368e5b41fc3dde1af3f253119aa guide-program-rust Write a program in Rust
+15b0a65ec81abda01a64f509f058e047640ccb56035f98d54a7f6d64a6cec967 guide-drawing Draw a line and read a key
+305164ac4c2328501f52298ab35eb6b52577ce6c8c00bf03175d372facb0e4a7 guide-drawing-rust Draw a line and read a key in Rust
+8d15056b77a6cea58e18bab0f83f1c4f2c03c67f6ecac9e095f274703c074492 guide-game Make a small game
+017d54d1079f74ee53313c9c091cbe4859a6f675be6815b85b169ada9a4cc1a9 guide-game-rust Make a small game in Rust
+5d616b5f919c167490f87eab1a690b206a09ab9aa521a25fdc337cfc97423559 guide-host Make a host
+87c525bb655036ad91c86669c2e99936df03cbfdffb9a757feb3677fcf9a7759 guide-host-go Make a host in Go, step 1: run a program to its end
+f454437c136b006160c3863030a41e5c0bfcd4014299e78d2710f8686425ab01 guide-host-rust Make a host in Rust, step 1: run a program to its end
+440eb540cab17c73b7d7c035dcf0f0505251fa2d1f2d754470964a79b2c48e96 guide-host-go-frames Make a host in Go, step 2: frames and the budget
+4bc9e53a0770064c730f88ee1df13c14ef01f352e1eb1459b51dfbb724bda7de guide-host-rust-frames Make a host in Rust, step 2: frames and the budget
+064ce6bcd822691cb076d9faff21c063b301a42c581481427b70fa5c30c163e3 guide-host-go-driver Make a host in Go, step 3: a driver shows hello
+f0fc98d4d721dfc6022116109b7e13d78d2633073304fecdfabfac10504ac2fb guide-host-rust-driver Make a host in Rust, step 3: a driver shows hello
+74c1acd30ea049bd59fc9177da4e2b7c2c0dad8b0eddea1ec9aae5c2b060ae49 guide-host-go-state Make a host in Go, step 4: prove it exact
+348784bdb060062b0512b513e1460666ca6bcc00a612744addec9cd0a43708cc guide-host-rust-state Make a host in Rust, step 4: prove it exact
+a01dd7d866fe98b4586e1374919c4f8c4122ec87cb3f8eba6c5e88d45301da63 guide-device Make a device
+c0065b33ec8ffef8c6267ca65f2229703ad07f03076f118b4eeea70c3cb11cc9 guide-device-go Make a device in Go
+d1cad96a2cf6c0b182032a0066177bdd68dc73c767f9bc0e465e592cc0c6920c guide-device-rust Make a device in Rust
+a3aead1b10ec51a22f52adb089576b0c5c945fa4e469c749c17833933189fb85 guide-swap Swap in your own part
+2617a0e3a045c0324aa17fa4889ed62dce8c33362899fce88b574768d96eee4a guide-shell Make a shell
+151be75da79d6955e2cb5b0a10e835a0b736ab8fc6e212fbafe969e8225c8966 guide-shell-rust Make a shell in Rust
+0e28d058782b8fcbc6e37e4c22686ae618fd0a7c62f7d8b598ef4a0c033a5338 guide-invent Invent a device
+7a2e3da1a699aa801ee3ca6966b34998b8efa5036629827909c15981b6ee7bd4 guide-invent-rust Invent a device: the program in Rust
+e30a2d720f6696db824f256e1e2ab33c609673c66b874a4e0444e38d4316f0f0 how-it-works How Tersenet works
+c9d0abede30d65b3757e5ccb979c89d0fa62ddd7de787ca75b41430925350253 toolchain Building a program
+8fadc28cfd4371a1acf5e4c9a04a842ce98168f0a80d12b36e65784cec8409bb toolchain-c The C library
+8e6b58fa68b1f3a2defdac931dc0cf9b1b1e812ef3b00e6c203cf9ee5c68d4f5 toolchain-rust Rust programs
+13593f73217a461af50d3722944d702c1d0a04b83dd564296141bad8215a99df toolchain-other Building by hand, and other languages
+36b4b75fbf1e302b6f4ef685ac3f491684a580aa7d782cea189eda3e7c90365c running-programs Running and publishing a program
+0ffe2241fc6030e66f08c2629902bbb714763e55ee7a6c441794b47a1f458786 using Using the shell
 82cd9ff43f26d84879092b8dfe51d9f9b521b1cbd96e3e0b47c64729d5a1d367 using-reader Using the reader
 092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df fonts Fonts
 d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37 writing-articles Writing an article
 366289c7f2990017cb8e6c71ee66b36db468efe9a4dfc4ba790fb60a7cfb32f9 native-reader Writing a reader without the machine
-abcfc2ca05ff8ff13eda120ef4cb791e5285126cc57e5db5386ca6fd2eb68410 state State, replay and conformance
+c4eed4b40525bda762bac9d8c7b875933c8e43120305edb8ff5aaa6e46da2612 state State, replay and conformance
 b47a54142603b1deb6e3eee12c680ebb0fda294aa6cc5fa79aa6c2cc8ca5060e performance-reports Performance reports
-f909d0839469c1653e0a8301d39269b0eb8ca8d9d8aa278a3af5ab982ffe61fd machine The Terse32 machine
+2ab6fd2eb62b7d76587d8334d3efa424691a64a96154d05871a06ac8c1b9c4ad machine The Terse32 machine
 0f28a71d5ad960bb85e7ed14bcff93e559dac01f3d4c269b36f54d18af12f1d0 device-system The system device (device 1)
-1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804 device-terminal The terminal (device 2)
-6c6b812bc0498df9321e562dae3dee47c6e9b272436c051b51e0bb1fa09d152d device-vector The 2D vector display (device 3)
+d909b3f58a7a4f441a340ba421cc7241ea5e73e55e79b96b84b79317940a8218 device-terminal The terminal (device 2)
+f03644893420c10ddf145f9f8b7d806ba200932f0ed496af5777f3de017a6e5d device-vector The 2D vector display (device 3)
 d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e device-vector3 The 3D vector display (device 9)
 3977dab63bc65a337e55f00eba3e3dee536c624ea3e9388ab1cc835a618d2d44 device-vector3-surfaces Surfaces: a program's own screen in its 3D scene
 698ca31c5cf788d3306e5047c2e4d771bbac3f3399c5d75a1d5bc7c069e35c00 device-sound The sound device (device 6)

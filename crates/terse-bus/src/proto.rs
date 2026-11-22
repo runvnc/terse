@@ -574,6 +574,18 @@ pub mod property {
     /// are then light like the text's, and the core adds the light of
     /// every light layer as it is instead of drawing its own tube.
     pub const TUBE: &str = "vector.tube";
+    /// Published by the terminal: its state as `STATE.md`'s terminal
+    /// section (cells, cursor, colours, palette) and a byte, 1 if it has
+    /// full text (SPEC §terminal.text) else 0, which the core needs to
+    /// draw the terminal's text by the beam in the phosphor style
+    /// (DEVICES.md 7.1, `core.strokes`).
+    pub const TERMINAL: &str = "terminal.state";
+    /// Published by the core for the terminal: in the phosphor style, the
+    /// stroke font (`arcade`, `hershey`, `drafting`) in which the core draws
+    /// the characters that font draws by the beam itself, from
+    /// `terminal.state`; the terminal then leaves those characters and the
+    /// cursor out of its light layer. Empty: the terminal draws them all.
+    pub const STROKES: &str = "core.strokes";
     /// Published by the core for the drivers that draw a look of their own
     /// (DEVICES.md 7.2): how much of it the host sheds because its frames
     /// run long (PERFORMANCE.md R15 step 1), a level (u8) from 0 (none) to

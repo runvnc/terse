@@ -36,6 +36,9 @@ use crate::halo::{HaloChain, HaloPipelines};
 use crate::phosphor;
 use crate::vectors::{PHOSPHOR_FORMAT, PhosphorTargets, VectorLayer};
 
+/// A machine frame in seconds (MAME's frame interval).
+const FRAME_SECONDS_F64: f64 = phosphor::FRAME_SECONDS as f64;
+
 /// Format of the offscreen layer of backgrounds and shapes.
 const LAYER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -56,6 +59,8 @@ struct Params {
     flags: u32,             // bit 0: cursor shown, bit 1: target is sRGB, bit 2: background mode,
                             // bit 3: show the phosphor light instead (glyph mode),
                             // bit 4: glyph light mode (into the text texture),
+                            // bit 5: the phosphor light is MAME's picture (in `beam`, gamma-encoded),
+                            // bit 6: glyph light without the cells the beam draws (slot bit 15) or the cursor,
                             // bits 8-15: the first row of the host's overlay (glyph mode; 0: none)
     look: vec4<f32>,        // the phosphor tube: a monochrome tube's tint (rgb, 0 for colour), the vignette
 }
@@ -108,11 +113,15 @@ fn glyph_light(q: vec2<f32>) -> vec3<f32> {
     let cell = min(vec2<u32>(g), p.grid - 1u);
     let px = min(vec2<u32>(fract(g) * vec2<f32>(p.cell_px)), p.cell_px - 1u);
     let c = textureLoad(cells, cell, 0);
-    let slot = c.r | (c.g << 8u);
+    let strokes = (p.flags & 64u) != 0u;
+    if strokes && (c.g & 128u) != 0u {
+        return vec3<f32>(0.0);
+    }
+    let slot = (c.r | (c.g << 8u)) & 0x7FFFu;
     let origin = vec2<u32>(slot % p.atlas_cols, slot / p.atlas_cols) * p.cell_px;
     var coverage = textureLoad(atlas, origin + px, 0).r;
     let underline = max(p.cell_px.y / 10u, 1u);
-    if (p.flags & 1u) != 0u && all(cell == p.cursor) && px.y >= p.cell_px.y - underline {
+    if !strokes && (p.flags & 1u) != 0u && all(cell == p.cursor) && px.y >= p.cell_px.y - underline {
         coverage = 1.0;
     }
     return to_linear(palette_rgb(c.b)) * coverage;
@@ -148,6 +157,10 @@ fn phosphor_screen(pos: vec2<f32>) -> vec3<f32> {
     let size = vec2<i32>(textureDimensions(beam));
     if any(at < vec2<i32>(0)) || any(at >= size) {
         return vec3<f32>(0.0);
+    }
+    if (p.flags & 32u) != 0u {
+        // MAME's picture (mame::gpu), tone-mapped and gamma-encoded.
+        return textureLoad(beam, at, 0).rgb;
     }
     let direct = textureLoad(beam, at, 0).rgb + textureLoad(text, at, 0).rgb;
     let glow = max(textureLoad(glow_fast, at, 0).rgb, vec3<f32>(0.0)) + max(textureLoad(glow_slow, at, 0).rgb, vec3<f32>(0.0));
@@ -192,7 +205,7 @@ fn overlay(pos: vec2<f32>) -> vec3<f32> {
     }
     let px = min(vec2<u32>(fract(g) * vec2<f32>(p.cell_px)), p.cell_px - 1u);
     let c = textureLoad(cells, cell, 0);
-    let slot = c.r | (c.g << 8u);
+    let slot = (c.r | (c.g << 8u)) & 0x7FFFu;
     let origin = vec2<u32>(slot % p.atlas_cols, slot / p.atlas_cols) * p.cell_px;
     let coverage = textureLoad(atlas, origin + px, 0).r;
     return mix(overlay_bg(c.a), overlay_fg(c.b), coverage);
@@ -233,7 +246,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             // sRGB-encoded, unconverted: the layer is not an sRGB format.
             return vec4<f32>(palette_rgb(c.a), 1.0);
         }
-        let slot = c.r | (c.g << 8u);
+        let slot = (c.r | (c.g << 8u)) & 0x7FFFu;
         let origin = vec2<u32>(slot % p.atlas_cols, slot / p.atlas_cols) * p.cell_px;
         var coverage = textureLoad(atlas, origin + px, 0).r;
         let underline = max(p.cell_px.y / 10u, 1u);
@@ -300,11 +313,23 @@ struct Atlas {
 pub struct Shaders {
     device: wgpu::Device,
     modules: std::sync::Arc<std::sync::Mutex<HashMap<&'static str, wgpu::ShaderModule>>>,
+    /// MAME's effects on this device (the phosphor style's MAME model),
+    /// made the first time they are needed.
+    mame: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<crate::mame::gpu::Gpu>>>>,
 }
 
 impl Shaders {
     pub fn new(device: &wgpu::Device) -> Self {
-        Shaders { device: device.clone(), modules: Default::default() }
+        Shaders { device: device.clone(), modules: Default::default(), mame: Default::default() }
+    }
+
+    /// MAME's effects on this device (`mame::gpu`).
+    pub fn mame(&self, queue: &wgpu::Queue) -> std::sync::Arc<crate::mame::gpu::Gpu> {
+        self.mame
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| std::sync::Arc::new(crate::mame::gpu::Gpu::on(self.device.clone(), queue.clone(), String::new(), false)))
+            .clone()
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -385,6 +410,24 @@ pub struct Renderer {
     /// 1 × 1 stand-ins for the textures a pass does not read.
     unused: wgpu::Texture,
     unused_phosphor: wgpu::Texture,
+    /// The MAME model (`mame::gpu`): its tube and what it was made for,
+    /// made in the first frame of light after the layer.
+    mame: Option<(MameKey, crate::mame::gpu::Crt)>,
+    /// The terminal's text drawn by the beam (as `soft::screen`).
+    strokes: Vec<crate::mame::text::Lit>,
+    stroked: Vec<bool>,
+    stroke_key: u64,
+}
+
+/// What a MAME tube is made for: the picture's size, the phosphor's, the
+/// sliders, the bloom, the vignette.
+#[derive(Clone, Copy, PartialEq)]
+struct MameKey {
+    size: (u32, u32),
+    internal: (u32, u32),
+    params: crate::mame::Params,
+    bloom: bool,
+    vignette: f32,
 }
 
 /// The phosphor textures: beam, text and the afterglow's components, the
@@ -397,6 +440,9 @@ struct PhosphorTextures {
     slow: wgpu::TextureView,
     beam_group: wgpu::BindGroup,
     halo: HaloChain,
+    /// The MAME model's picture (its tube's composite, copied here), bound
+    /// in place of the beam; `None` for the classic model.
+    picture: Option<wgpu::Texture>,
 }
 
 fn texture(
@@ -584,6 +630,10 @@ impl Renderer {
             excluded: Vec::new(),
             unused,
             unused_phosphor,
+            mame: None,
+            strokes: Vec::new(),
+            stroked: Vec::new(),
+            stroke_key: 0,
         }
     }
 
@@ -729,6 +779,9 @@ impl Renderer {
 
     /// How the phosphor style is drawn: the tube's preset and its glass.
     pub fn set_look(&mut self, look: phosphor::Look) {
+        if look.stroke_font() != self.look.stroke_font() {
+            self.stroke_key = 0;
+        }
         self.look = look;
     }
 
@@ -736,6 +789,12 @@ impl Renderer {
     /// testing). Takes effect at the next `update_vectors`.
     pub fn set_force_phosphor(&mut self, force: bool) {
         self.force_phosphor = force;
+    }
+
+    /// The MAME model's sliders when this screen is drawn with it (the
+    /// phosphor style): a scene over it draws its lines by the beam.
+    pub fn beam_params(&self) -> Option<crate::mame::Params> {
+        (self.style.0 && self.look.model == phosphor::Model::Mame).then(|| self.look.mame_params(self.no_trails))
     }
 
     /// Whether the phosphor presentation is in use.
@@ -798,7 +857,7 @@ impl Renderer {
             grid: [COLS as u32, ROWS as u32],
             cursor: [cursor.0, cursor.1],
             atlas_cols: ATLAS_COLS,
-            flags: shown | 16,
+            flags: shown | 16 | if self.look.stroke_font().is_some() { 64 } else { 0 },
             look: self.look.uniform(),
         };
         queue.write_buffer(&self.light_params, 0, &params.bytes());
@@ -838,6 +897,9 @@ impl Renderer {
             });
             self.page.draw(&mut pass, true);
         }
+        if self.look.model == phosphor::Model::Mame {
+            return self.mame_frame(queue, encoder, (w, h));
+        }
         let persistence = if self.no_trails { 0 } else { self.style.1 };
         let targets = PhosphorTargets { beam: &t.beam, text: &t.text, beam_group: &t.beam_group, fast: &t.fast, slow: &t.slow };
         let clear = self.phosphor_stale;
@@ -869,6 +931,78 @@ impl Renderer {
         }
     }
 
+    /// The MAME model's frame (`mame::gpu`): the shapes' beams and the
+    /// terminal's strokes into its tube (timed each as MAME times a display
+    /// list), its bloom and composite with the text's light, the picture
+    /// copied to where the glyph pass reads it.
+    fn mame_frame(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, (w, h): (f32, f32)) {
+        use crate::mame::beams::{Line, Screen, instances};
+        let Some(t) = &self.phosphor else { return };
+        let Some(picture) = &t.picture else { return };
+        let size = t.size;
+        let level = self.vectors.shed_level(&self.look);
+        let (max_lines, bloom) = crate::soft::mame::lines_at(level);
+        let internal = crate::soft::mame::internal_size((size.0 as usize, size.1 as usize), max_lines);
+        let internal = (internal.0 as u32, internal.1 as u32);
+        let key = MameKey {
+            size,
+            internal,
+            params: self.look.mame_params(self.no_trails),
+            bloom,
+            vignette: if self.look.vignette { phosphor::MAME_VIGNETTE } else { 0.0 },
+        };
+        let gpu = self.shaders.mame(queue);
+        if self.phosphor_stale || self.mame.as_ref().is_none_or(|(k, _)| *k != key) {
+            let extras = crate::mame::gpu::Extras { readback: false, text: Some(&t.text), text_gain: crate::mame::params::TEXT_GAIN, vignette: key.vignette };
+            self.mame = Some((key, crate::mame::gpu::Crt::with(&gpu, size, internal, key.params, bloom, extras)));
+            self.phosphor_stale = false;
+        }
+        let look = self.look;
+        let screen = Screen { size: internal };
+        let shapes: Vec<terse_core::Primitive> = if look.preset.tint().is_some() {
+            self.vectors.shapes().iter().map(|p| crate::soft::screen::tint_primitive(p, &look)).collect()
+        } else {
+            self.vectors.shapes().to_vec()
+        };
+        let mut lines = Vec::new();
+        screen.lines(&shapes, &mut lines);
+        let mut beams = instances(&lines, key.params.beam_width);
+        if !self.strokes.is_empty() {
+            let text: Vec<Line> = self
+                .strokes
+                .iter()
+                .map(|l| {
+                    let st = l.s;
+                    let rgba = look.tint_bytes([l.rgb[0], l.rgb[1], l.rgb[2], (st.level * 255.0).round() as u8]);
+                    screen.line(st.x0 * 16.0, st.y0 * 16.0, st.x1 * 16.0, st.y1 * 16.0, st.width * 16.0, rgba, 1.0)
+                })
+                .collect();
+            beams.extend(instances(&text, key.params.beam_width));
+        }
+        // The sources of the machine's Surfaces do not bloom: their
+        // rectangles in the bloom's half-size target.
+        let half = (internal.0.div_ceil(2) as f32 / size.0 as f32, internal.1.div_ceil(2) as f32 / size.1 as f32);
+        let no_bloom: Vec<(u32, u32, u32, u32)> = self
+            .excluded
+            .iter()
+            .filter_map(|&r| {
+                let (x0, y0, x1, y1) = crate::display::source_pixels((0.0, 0.0, w, h), r);
+                let c = |v: i32, n: u32| v.clamp(0, n as i32) as u32;
+                let (x0, y0, x1, y1) = (c(x0, size.0), c(y0, size.1), c(x1, size.0), c(y1, size.1));
+                let (a, b) = ((x0 as f32 * half.0) as u32, (y0 as f32 * half.1) as u32);
+                let (cx, d) = ((x1 as f32 * half.0).ceil() as u32, (y1 as f32 * half.1).ceil() as u32);
+                (cx > a && d > b).then_some((a, b, cx - a, d - b))
+            })
+            .collect();
+        let (_, crt) = self.mame.as_mut().expect("made above");
+        crt.encode(&gpu, encoder, &beams, FRAME_SECONDS_F64, &no_bloom);
+        encoder.copy_texture_to_texture(
+            crt.output_texture().as_image_copy(),
+            picture.as_image_copy(),
+            wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+        );
+    }
+
     /// Size of the whole grid at the atlas's native cell width: 4:3, so that
     /// screen units are square (SPEC §screen) whatever the glyph source's cell.
     pub fn grid_size(&self) -> (u32, u32) {
@@ -886,8 +1020,32 @@ impl Renderer {
         // SPEC §terminal.cells, §terminal.text: wide characters across two
         // cells, or, without full text, the basic repertoire and the placeholder.
         let cells = terse_core::text::draw_cells(terminal, |code, wide| self.slot_for(queue, code, wide) as u32);
+        // The MAME model's text by the beam (as soft::screen): the cells it
+        // draws are marked (bit 15 of the slot), and not drawn as light.
+        match self.look.stroke_font().filter(|_| self.style.0 || self.force_phosphor) {
+            Some(font) => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                terminal.cell_bytes().hash(&mut h);
+                terminal.palette().hash(&mut h);
+                (terminal.cursor_visible(), terminal.cursor()).hash(&mut h);
+                terminal.full_text().hash(&mut h);
+                font.name().hash(&mut h);
+                let key = h.finish() | 1;
+                if key != self.stroke_key {
+                    self.stroke_key = key;
+                    self.strokes = crate::mame::text::screen_covered(terminal, font, &mut self.stroked);
+                }
+            }
+            None => {
+                self.strokes.clear();
+                self.stroked.clear();
+                self.stroke_key = 0;
+            }
+        }
         for (i, &(slot, fg, bg)) in cells.iter().enumerate() {
-            let [lo, hi] = (slot as u16).to_le_bytes();
+            let stroked = self.stroked.get(i).copied().unwrap_or(false);
+            let [lo, hi] = (slot as u16 | if stroked { 0x8000 } else { 0 }).to_le_bytes();
             self.cell_data[i * 4..i * 4 + 4].copy_from_slice(&[lo, hi, fg, bg]);
         }
         write_texture(queue, &self.cell_texture, (0, 0), (COLS as u32, ROWS as u32), 4, &self.cell_data);
@@ -972,12 +1130,17 @@ impl Renderer {
         // The phosphor textures cover the grid rectangle, which starts at a
         // whole pixel; new ones start dark.
         let size = self.layer_key(viewport).1;
+        let mame = self.look.model == phosphor::Model::Mame;
         if let Some((key, view, group)) = &self.layer
             && *key == (viewport, size)
+            && self.phosphor.as_ref().is_some_and(|t| t.picture.is_some() == mame)
         {
             return (view.clone(), group.clone());
         }
-        let phosphor = |label| {
+        // The MAME model draws its own phosphor: the classic model's
+        // textures are stand-ins, its picture is bound in the beam's place.
+        let classic = if mame { (1, 1) } else { size };
+        let phosphor_sized = |label, size: (u32, u32)| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -989,11 +1152,24 @@ impl Renderer {
                 view_formats: &[],
             })
         };
-        let (beam, fast, slow) = (phosphor("phosphor beam"), phosphor("afterglow fast"), phosphor("afterglow slow"));
-        let text = phosphor("phosphor text");
+        let (beam, fast, slow) = (phosphor_sized("phosphor beam", classic), phosphor_sized("afterglow fast", classic), phosphor_sized("afterglow slow", classic));
+        let text = phosphor_sized("phosphor text", size);
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let (beam_view, text_view, fast_view, slow_view) = (view(&beam), view(&text), view(&fast), view(&slow));
-        let halo = HaloChain::new(device, &self.halo, size, &beam_view, &text_view, &fast_view, &slow_view, &view(&self.unused_phosphor));
+        let halo = HaloChain::new(device, &self.halo, classic, &beam_view, &text_view, &fast_view, &slow_view, &view(&self.unused_phosphor));
+        let picture = mame.then(|| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("mame picture"),
+                size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::mame::gpu::OUTPUT_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        });
+        self.mame = None;
         let halo_view = halo.halo.clone();
         self.phosphor = Some(PhosphorTextures {
             size,
@@ -1003,6 +1179,7 @@ impl Renderer {
             fast: fast_view.clone(),
             slow: slow_view.clone(),
             halo,
+            picture: picture.clone(),
         });
         self.phosphor_stale = true;
         let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -1021,7 +1198,7 @@ impl Renderer {
             device,
             &self.bind_group_layout,
             &self.params_buffer,
-            [c, a, p, l, beam_view, fast_view, slow_view, halo_view, text_view],
+            [c, a, p, l, picture.as_ref().map_or(beam_view, view), fast_view, slow_view, halo_view, text_view],
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         self.layer = Some(((viewport, size), view.clone(), group.clone()));
@@ -1058,7 +1235,10 @@ impl Renderer {
             grid: [COLS as u32, ROWS as u32],
             cursor: [cursor.0, cursor.1],
             atlas_cols: ATLAS_COLS,
-            flags: shown | if self.target_is_srgb { 2 } else { 0 } | if self.style.0 { 8 } else { 0 },
+            flags: shown
+                | if self.target_is_srgb { 2 } else { 0 }
+                | if self.style.0 { 8 } else { 0 }
+                | if self.style.0 && self.look.model == phosphor::Model::Mame { 32 } else { 0 },
             look: self.look.uniform(),
         };
         let glyph_params = Params { flags: params.flags | self.overlay << 8, ..params };
