@@ -44,6 +44,16 @@ seq 2 blob 5d86159d495906bb…ad537da380d
 
 The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, `terse: taken by 1 of 1 relays: ws://127.0.0.1:7878`, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.
 
+## Links to your other articles
+
+An article can link to another by its blob ID, `terse:` and 64 hex digits (the `blob` that `terse feed publish` printed). Before publishing, `terse feed publish` lists each link of the article and what becomes of it:
+
+```
+link terse:5d86159d…ad537da380d: held here, uploaded now (taken by 1 of 1 relays); kept: your feed's entry #2 names it, and relays keep it while they keep that entry
+```
+
+An entry names one article, and a public relay drops an article no entry names after a while, so publish each part of yours as an article of its own before the article that links to it. A link to an article held here that no entry names is refused, unless you add `--force` (for someone else's article you were given). A link to another feed's article is *link-only*: that feed's relays keep it. `--dry-run` shows the list and publishes nothing.
+
 ## See it
 
 The timeline shows the feeds you follow, so follow your own:
