@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a host in Go, step 3: a driver shows hello - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-host-in-go-step-3-a-driver-shows-hello">Make a host in Go, step 3: a driver shows hello</h1>
+<p>Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds <code>bus.go</code>: start one driver, the terminal&#39;s, pass it the terminal&#39;s calls, and ask it for the grid to print.</p>
+<p>The reference drivers run on Linux and are not in the downloads. Build them from the top folder of the sources:</p>
+<pre>cargo build --release -p terse-devices</pre>
+<h2 id="messages">Messages</h2>
+<p>Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. <code>send</code> writes one; <code>request</code> writes one and reads the reply, which must be of the type asked for. Anything else, an <code>ERROR</code> from the driver included, ends the run with status 3:</p>
+<pre>func check(err error) {
+    if err != nil {
+        fmt.Fprintln(os.Stderr, &quot;bus:&quot;, err)
+        os.Exit(3)
+    }
+}
+
+func (b *Bus) send(slot byte, body []byte) {
+    message := le.AppendUint32(nil, uint32(8+len(body)))
+    message = append(message, 0, 0, 0, 0, slot, 0, 0, 0)
+    _, err := b.conn.Write(append(message, body...))
+    check(err)
+}
+
+func (b *Bus) request(slot, want byte, body []byte) []byte {
+    b.send(slot, body)
+    var length [4]byte
+    _, err := io.ReadFull(b.conn, length[:])
+    check(err)
+    reply := make([]byte, le.Uint32(length[:]))
+    _, err = io.ReadFull(b.conn, reply)
+    check(err)
+    if len(reply) &lt; 9 || reply[8] != want {
+        check(fmt.Errorf(&quot;the driver said %q&quot;, reply[8:]))
+    }
+    return reply[8:]
+}</pre>
+<h2 id="starting-the-driver">Starting the driver</h2>
+<pre>type Bus struct {
+    m      *Machine
+    conn   net.Conn
+    driver *exec.Cmd
+    dir    string
+    tables map[uint32]map[uint32][]byte
+    Grants []byte
+}
+
+func Start(command string, m *Machine, file []byte,
+    devices []Device) *Bus {
+    dir, err := os.MkdirTemp(&quot;&quot;, &quot;terse-bus&quot;)
+    check(err)
+    path := filepath.Join(dir, &quot;bus.sock&quot;)
+    listener, err := net.Listen(&quot;unix&quot;, path)
+    check(err)
+    driver := exec.Command(command)
+    driver.Env = append(os.Environ(), &quot;TERSE_BUS_SOCKET=&quot;+path)
+    driver.Stdout, driver.Stderr = os.Stderr, os.Stderr
+    check(driver.Start())
+    conn, err := listener.Accept()
+    check(err)
+    listener.Close()
+    b := &amp;Bus{m: m, conn: conn, driver: driver, dir: dir,
+        tables: map[uint32]map[uint32][]byte{}}
+
+    var ask []byte
+    for _, d := range devices {
+        if d.Slot == 2 || d.Slot == 10 {
+            ask = append(ask, d.Slot)
+        }
+    }
+    hello := []byte{0x01, 1, 0, 0, 0, 0, 0, 0, byte(len(ask))}
+    hello = append(hello, ask...)
+    hello = le.AppendUint16(hello, uint16(len(dir)))
+    hello = append(append(hello, dir...), 0, 0)
+    reply := b.request(0, 0x81, hello)
+    at := 10 + int(le.Uint16(reply[4:]))
+    versions := map[byte]byte{}
+    for range reply[at] {
+        slot, version := reply[at+1], reply[at+2]
+        at += 4 + 2*int(reply[at+3])
+        table := map[uint32][]byte{}
+        for range reply[at] {
+            table[uint32(reply[at+1])] = reply[at+1 : at+65]
+            at += 64
+        }
+        b.tables[uint32(slot)], versions[slot] = table, version
+    }
+
+    var has []byte
+    for _, d := range devices {
+        version, served := versions[d.Slot]
+        granted := served &amp;&amp; version == d.Version
+        if !granted &amp;&amp; !d.Optional {
+            check(fmt.Errorf(&quot;no driver for device %d&quot;, d.Slot))
+        }
+        if d.Optional {
+            b.Grants = append(b.Grants, byte(flag(granted)))
+        }
+        if granted {
+            has = append(has, d.Slot, d.Version)
+        }
+    }
+    id := blake3.Sum256(file)
+    open := append([]byte{0x03, 0, 0, 0}, id[:]...)
+    open = le.AppendUint32(open, uint32(len(m.ROM)))
+    open = le.AppendUint32(open, uint32(len(m.RAM)))
+    open = append(open, 0, 0, byte(len(has)/2))
+    open = append(append(open, has...), 0)
+    reply = b.request(0, 0x83, append(open, m.ROM...))
+    if reply[1] != 1 {
+        check(fmt.Errorf(&quot;the driver will not run the program&quot;))
+    }
+    return b
+}</pre>
+<p>In order:</p>
+<ul>
+<li>Listen on a socket in a new directory, start the driver with the socket&#39;s path in <code>TERSE_BUS_SOCKET</code>, and accept its connection.</li>
+<li>HELLO (<code>01h</code>) asks for the slots the program lists among 2 (the terminal) and 10 (full text, which goes with it), and names the directory. The reply gives a name, then for each slot its version and a call table: 64 bytes per function, which says where the call&#39;s buffer is and what the call costs.</li>
+<li>Grants: a device the program requires and the driver does not serve stops the run; an optional one is granted if the driver serves it, in the version the program lists. <code>hello</code> requires 2 and lists 10 as optional.</li>
+<li>OPEN (<code>03h</code>) gives the driver the machine: its image ID, the BLAKE3 hash of the program file; the ROM and RAM lengths; the slots it has; the ROM. The reply says if the driver took it.</li>
+</ul>
+<h2 id="calls-through-the-table">Calls through the table</h2>
+<pre>func (b *Bus) Call(slot, fn uint32) (uint32, int64) {
+    m := b.m
+    entry := b.tables[slot][fn]
+    if entry == nil {
+        return 0xffffffff, 4
+    }
+    charge := int64(64)
+    if entry[1]&amp;2 != 0 {
+        charge = 4
+    }
+    args, access := m.X[10:16], entry[16]
+    addr := args[entry[2]]
+    var buffer []byte
+    if entry[1]&amp;4 != 0 {
+        size := uint64(le.Uint32(entry[4:]))
+        if entry[3] != 0xff {
+            size *= uint64(args[entry[3]])
+        }
+        if size &lt; uint64(le.Uint32(entry[8:])) ||
+            size &gt; uint64(le.Uint32(entry[12:])) {
+            return le.Uint32(entry[24:]), charge
+        }
+        ramOnly := access&amp;4 == 0 || access&amp;2 != 0
+        buffer = m.Memory(addr, uint32(size), ramOnly)
+        if buffer == nil &amp;&amp; size &gt; 0 {
+            return le.Uint32(entry[28:]), charge
+        }
+    }
+    checked, most := entry[17], le.Uint32(entry[20:])
+    if checked != 0xff &amp;&amp; args[checked] &gt; most {
+        return le.Uint32(entry[28:]), charge
+    }
+
+    call := []byte{0x10, byte(fn), 0, 0}
+    for _, a := range args {
+        call = le.AppendUint32(call, a)
+    }
+    call = le.AppendUint64(call, uint64(m.Budget-4))
+    if access&amp;1 == 0 {
+        call = le.AppendUint32(call, 0)
+    } else {
+        call = le.AppendUint32(call, uint32(len(buffer)))
+        call = append(call, buffer...)
+    }
+    reply := b.request(byte(slot), 0x90, call)
+    if reply[1]&amp;1 != 0 {
+        m.X[11] = le.Uint32(reply[8:])
+    }
+    at := 20
+    for range le.Uint32(reply[16:]) {
+        offset := uint64(le.Uint32(reply[at:]) - addr)
+        size := uint64(le.Uint32(reply[at+4:]))
+        if access&amp;2 == 0 || offset+size &gt; uint64(len(buffer)) {
+            check(fmt.Errorf(&quot;a write outside the buffer&quot;))
+        }
+        copy(buffer[offset:], reply[at+8:at+8+int(size)])
+        at += 8 + int(size)
+    }
+    extra := int64(le.Uint32(reply[12:]))
+    return le.Uint32(reply[4:]), charge + extra
+}</pre>
+<p>A function the table does not have is a call the machine does not have: <code>FFFF_FFFFh</code>, charge 4. Otherwise the charge starts at 4 for a deferred call (flag 2: its result and charge follow from its arguments) or 64 for one the driver must answer. Before anything is sent, the table&#39;s checks: the buffer&#39;s length within its range, the buffer wholly in RAM (or in ROM, for one the device only reads), and a checked argument no larger than its limit; a call that fails gets the table&#39;s failure result and goes no further. Then CALL (<code>10h</code>) carries <code>a0</code> to <code>a5</code>, the budget, and the bytes of a buffer the device reads, and RESULT (<code>90h</code>) gives <code>a0</code>, maybe <code>a1</code>, the charge on top, and bytes to write into the call&#39;s buffer.</p>
+<h2 id="frames">Frames</h2>
+<p>BEGIN (<code>30h</code>) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:</p>
+<pre>func (b *Bus) Begin(frame uint32) int64 {
+    begin := le.AppendUint32([]byte{0x30, 0, 0, 0}, frame)
+    begin = append(begin, make([]byte, 12)...)
+    return int64(le.Uint32(b.request(0, 0xb0, begin)[4:]))
+}</pre>
+<p>END (<code>31h</code>) ends the frame, with no reply. STATE (<code>40h</code>) asks for a slot&#39;s part of the machine&#39;s state; the terminal&#39;s starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (<code>60h</code>) stops the driver:</p>
+<pre>func (b *Bus) End() {
+    stopped := byte(flag(b.m.Stopped != Running))
+    end := []byte{0x31, stopped, 0, 0}
+    b.send(0, le.AppendUint32(end, b.m.Frame))
+}
+
+func (b *Bus) State(slot byte) []byte {
+    return b.request(slot, 0xc0, []byte{0x40})[8:]
+}
+
+func (b *Bus) Close() {
+    b.send(0, []byte{0x60})
+    b.conn.Close()
+    b.driver.Wait()
+    os.RemoveAll(b.dir)
+}</pre>
+<h2 id="the-program">The program</h2>
+<pre>package main
+
+import (
+    &quot;encoding/binary&quot;
+    &quot;fmt&quot;
+    &quot;os&quot;
+    &quot;strconv&quot;
+    &quot;strings&quot;
+
+    &quot;host/machine&quot;
+)
+
+func main() {
+    file, err := os.ReadFile(os.Args[1])
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    frames, _ := strconv.Atoi(os.Args[2])
+    cpu, devices, err := machine.Load(file)
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    m := &amp;machine.Machine{CPU: cpu}
+    bus := machine.Start(os.Args[3], m, file, devices)
+    m.Devices = bus.Call
+    for m.Stopped == machine.Running &amp;&amp; int(m.Frame) &lt; frames {
+        m.Budget -= bus.Begin(m.Frame)
+        m.RunFrame()
+        bus.End()
+    }
+    fmt.Print(screen(bus.State(2)))
+    bus.Close()
+    if m.Fault != nil {
+        fmt.Fprintln(os.Stderr, m.Fault)
+        os.Exit(1)
+    }
+    os.Exit(int(m.ExitCode))
+}
+
+func screen(grid []byte) string {
+    code := func(cell int) rune {
+        return rune(binary.LittleEndian.Uint16(grid[4*cell:]))
+    }
+    var text strings.Builder
+    for row := range 30 {
+        var line []rune
+        for col := range 80 {
+            cell := row*80 + col
+            rightHalf := col &gt; 0 &amp;&amp; code(cell-1) != 0xffff
+            switch {
+            case code(cell) != 0xffff:
+                line = append(line, code(cell))
+            case !rightHalf:
+                line = append(line, &#39; &#39;)
+            }
+        }
+        trimmed := strings.TrimRight(string(line), &quot; &quot;)
+        text.WriteString(trimmed + &quot;\n&quot;)
+    }
+    return text.String()
+}</pre>
+<p><code>screen</code> prints the grid as <code>terse run --dump</code> does: a row&#39;s 80 cells, stripped of spaces at the end. <code>FFFFh</code> in a cell is the right half of a wide character, skipped after the character, else a space.</p>
+<h2 id="run-it">Run it</h2>
+<p>From <code>examples/host/go</code>, after <code>go build -o bin/ ./...</code>:</p>
+<pre>bin/step3 ../../../programs/hello/hello.terse 30 \
+    ../../../target/release/terse-dev-terminal</pre>
+<p>prints <code>hello</code>&#39;s screen after 30 frames, 30 lines, which begins</p>
+<pre> Tersenet · hello
+
+  héllo, wörld — привет, мир
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓</pre>
+<p>and is the reference&#39;s exactly: from the top folder, <code>terse run programs/hello/hello.terse --frames 30 --dump</code> prints the same 30 lines.</p>
+<p>The driver can be any program that speaks the bus. <a href="guide-device-go.html">Make a device in Go</a> writes a terminal of 257 lines that is enough for <code>hello</code>; give its path instead of the reference&#39;s.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A core that shows <code>hello</code> through a driver: <code>bus.go</code>, 202 lines, and <code>step3/main.go</code>, 63. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: <a href="guide-host-go-state.html">Make a host in Go, step 4: prove it exact</a>.</p>
+<ul>
+<li>The same step in Rust: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</li>
+<li>Full implementations: <code>native/core-c/bus.c</code> (every reference driver, batching, 663 lines of C) and <code>crates/terse-bus</code>.</li>
+<li>The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); <a href="device-terminal.html">The terminal (device 2)</a>.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-host-rust-frames.html">← Make a host in Rust, step 2: frames and the budget</a><a rel="next" href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello →</a></nav></footer>
+</body>
+</html>

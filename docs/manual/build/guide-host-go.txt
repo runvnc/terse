@@ -1,0 +1,318 @@
+# Make a host in Go, step 1: run a program to its end
+
+This step reads a program file, sets up memory and runs the processor until the program calls `exit`. It is the package `machine` in `examples/host/go` (files `image.go`, `decode.go` and `cpu.go`) and the program `step1`. You need Go 1.22 or later. `gofmt` indents with tabs; here they are shown as four spaces.
+
+## The program file
+
+A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `Load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM.
+
+```go from examples/host/go/machine/image.go
+package machine
+
+import "errors"
+
+type Device struct {
+    Slot, Version byte
+    Optional      bool
+}
+
+func Load(file []byte) (*CPU, []Device, error) {
+    if len(file) < 32 || string(file[:6]) != "TERS\x00\x01" {
+        return nil, nil, errors.New("not a Terse32 program")
+    }
+    romLen := int(file[6]) | int(file[7])<<8 | int(file[8])<<16
+    pages, count := int(file[9]), int(file[10])
+    size := 32 + 2*count + romLen
+    if romLen < 1 || romLen > 131072 || pages < 1 ||
+        pages > 128 || count > 16 || len(file) != size {
+        return nil, nil, errors.New("a malformed program file")
+    }
+    var devices []Device
+    for i := 32; i < 32+2*count; i += 2 {
+        version := file[i+1]
+        devices = append(devices,
+            Device{file[i], version & 0x7f, version&0x80 != 0})
+    }
+    cpu := &CPU{PC: ROMBase, ROM: file[32+2*count:],
+        RAM: make([]byte, pages*8192)}
+    cpu.X[2] = RAMBase + uint32(len(cpu.RAM))
+    return cpu, devices, nil
+}
+```
+
+The list of devices matters from step 3 on.
+
+## Decoding
+
+The processor is RV32IMC: RISC-V's 32-bit integer instructions, multiply and divide (M) and 16-bit compressed forms of the common ones (C). `decode` takes a 32-bit instruction apart into its fields:
+
+```go from examples/host/go/machine/decode.go
+type instruction struct {
+    op, f3, f7, rd, rs1, rs2, imm uint32
+}
+
+func sext(v, bits uint32) uint32 {
+    return uint32(int32(v<<(32-bits)) >> (32 - bits))
+}
+
+func decode(i uint32) instruction {
+    in := instruction{op: i & 0x7f, rd: i >> 7 & 31,
+        f3: i >> 12 & 7, rs1: i >> 15 & 31, rs2: i >> 20 & 31,
+        f7: i >> 25}
+    switch in.op {
+    case 0x37, 0x17:
+        in.imm = i &^ 0xfff
+    case 0x6f:
+        in.imm = sext(i>>11&0x100000|i&0xff000|i>>9&0x800|
+            i>>20&0x7fe, 21)
+    case 0x63:
+        in.imm = sext(i>>19&0x1000|i<<4&0x800|i>>20&0x7e0|
+            i>>7&0x1e, 13)
+    case 0x23:
+        in.imm = sext(i>>20&0xfe0|i>>7&31, 12)
+    default:
+        in.imm = sext(i>>20, 12)
+    }
+    return in
+}
+```
+
+`expand` gives a 16-bit instruction the same fields, as the 32-bit instruction it stands for, so that one `execute` runs both. Its first cases:
+
+```go from examples/host/go/machine/decode.go
+func expand(c uint32) instruction {
+    rd, rs2 := c>>7&31, c>>2&31
+    rdc, rs2c := 8+c>>7&7, 8+c>>2&7
+    imm := sext(c>>7&0x20|c>>2&31, 6)
+    word := c>>7&0x38 | c>>4&4 | c<<1&0x40
+    jump := sext(c>>1&0x800|c>>7&0x10|c>>1&0x300|c<<2&0x400|
+        c>>1&0x40|c<<1&0x80|c>>2&0xe|c<<3&0x20, 12)
+    branch := sext(c>>4&0x100|c>>7&0x18|c<<1&0xc0|c>>2&6|
+        c<<3&0x20, 9)
+    switch c&3<<3 | c>>13 {
+    case 0o00:
+        u := c>>7&0x30 | c>>1&0x3c0 | c>>4&4 | c>>2&8
+        if u != 0 {
+            return instruction{op: 0x13, rd: rs2c, rs1: 2,
+                imm: u}
+        }
+    case 0o02:
+        return instruction{op: 0x03, f3: 2, rd: rs2c, rs1: rdc,
+            imm: word}
+    case 0o06:
+        return instruction{op: 0x23, f3: 2, rs1: rdc, rs2: rs2c,
+            imm: word}
+    case 0o10:
+        return instruction{op: 0x13, rd: rd, rs1: rd, imm: imm}
+    case 0o11:
+        return instruction{op: 0x6f, rd: 1, imm: jump}
+    case 0o12:
+        return instruction{op: 0x13, rd: rd, imm: imm}
+```
+
+and so on for the other 16-bit forms, 90 lines in all. A form the machine does not have, or one the specification reserves, such as an immediate of zero where one is needed, comes out as `instruction{}`, whose opcode 0 is no instruction at all.
+
+## Executing
+
+`Step` fetches one instruction from ROM or RAM, 16 or 32 bits, and runs it. It returns what the instruction costs, which step 2 uses, whether it was an `ecall`, or a fault:
+
+```go from examples/host/go/machine/cpu.go
+func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
+    raw, fault := c.fetch()
+    if fault != nil {
+        return 0, false, fault
+    }
+    in, next := decode(raw), c.PC+4
+    if raw&3 != 3 {
+        in, next = expand(raw), c.PC+2
+    }
+    cost = 1
+    if c.PC >= RAMBase {
+        cost = 4
+    }
+    ecall, fault = c.execute(in, next)
+    if fault != nil && fault.Kind == Illegal {
+        fault.Address, fault.Encoding = c.PC, raw
+    }
+    return cost, ecall, fault
+}
+```
+
+`execute` is one switch on the opcode. Each case checks the encoding as the specification says, then writes the result to `rd` (never to `x0`) and moves `pc` on:
+
+```go from examples/host/go/machine/cpu.go
+func (c *CPU) execute(in instruction, next uint32) (
+    bool, *Fault) {
+    a, b, pc := c.X[in.rs1], c.X[in.rs2], c.PC
+    illegal := &Fault{Kind: Illegal}
+    switch in.op {
+    case 0x37:
+        c.set(in.rd, in.imm)
+    case 0x17:
+        c.set(in.rd, pc+in.imm)
+    case 0x6f:
+        c.set(in.rd, next)
+        next = pc + in.imm
+    case 0x67:
+        if in.f3 != 0 {
+            return false, illegal
+        }
+        c.set(in.rd, next)
+        next = (a + in.imm) &^ 1
+    case 0x63:
+        if in.f3 == 2 || in.f3 == 3 {
+            return false, illegal
+        }
+        if branches(in.f3, a, b) {
+            next = pc + in.imm
+        }
+    case 0x03:
+        if in.f3 == 3 || in.f3 > 5 {
+            return false, illegal
+        }
+        size := uint32(1) << (in.f3 & 3)
+        mem, fault := c.access(a+in.imm, size, false)
+        if fault != nil {
+            return false, fault
+        }
+        var word [4]byte
+        copy(word[:], mem)
+        v := le.Uint32(word[:])
+        if in.f3 < 2 {
+            v = sext(v, 8*size)
+        }
+        c.set(in.rd, v)
+    case 0x23:
+        if in.f3 > 2 {
+            return false, illegal
+        }
+        mem, fault := c.access(a+in.imm, 1<<in.f3, true)
+        if fault != nil {
+            return false, fault
+        }
+        var word [4]byte
+        le.PutUint32(word[:], b)
+        copy(mem, word[:])
+    case 0x13:
+        arithmetic := in.f3 == 5 && in.f7 == 32
+        if in.f3&3 == 1 && in.f7 != 0 && !arithmetic {
+            return false, illegal
+        }
+        c.set(in.rd, alu(in.f3, arithmetic, a, in.imm))
+    case 0x33:
+        alternate := in.f7 == 32 && (in.f3 == 0 || in.f3 == 5)
+        switch {
+        case in.f7 == 1:
+            c.set(in.rd, muldiv(in.f3, a, b))
+        case in.f7 == 0 || alternate:
+            c.set(in.rd, alu(in.f3, alternate, a, b))
+        default:
+            return false, illegal
+        }
+    case 0x0f:
+        if in.f3 != 0 {
+            return false, illegal
+        }
+    case 0x73:
+        if in.f3|in.rd|in.rs1 != 0 || in.imm > 1 {
+            return false, illegal
+        }
+        if in.imm == 1 {
+            return false, &Fault{Kind: Breakpoint, Address: pc}
+        }
+        c.PC = next
+        return true, nil
+    default:
+        return false, illegal
+    }
+    c.PC = next
+    return false, nil
+}
+```
+
+The rest of `cpu.go` is the arithmetic of `alu` and `muldiv` (division by zero gives RISC-V's answers, not a trap), the branch conditions, and memory: `access` faults on a load or store that is misaligned or outside RAM (and ROM, for a load), checking alignment first.
+
+A fault stops the machine with `pc` on the faulting instruction, which is not carried out: an encoding the machine does not have (`ebreak` and the CSR instructions among them), a fetch, load or store outside memory, or a misaligned load or store.
+
+## Calls
+
+`ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. This step has one call, `exit`, `106h`; every other call returns `FFFF_FFFFh`, as a call the machine does not have must:
+
+```go from examples/host/go/step1/main.go
+package main
+
+import (
+    "fmt"
+    "os"
+
+    "host/machine"
+)
+
+func main() {
+    file, err := os.ReadFile(os.Args[1])
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    cpu, _, err := machine.Load(file)
+    if err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(2)
+    }
+    for {
+        _, ecall, fault := cpu.Step()
+        if fault != nil {
+            fmt.Fprintln(os.Stderr, fault)
+            os.Exit(1)
+        }
+        if ecall && cpu.X[17] == 0x106 {
+            os.Exit(int(cpu.X[10] & 0xff))
+        }
+        if ecall {
+            cpu.X[10] = 0xffffffff
+        }
+    }
+}
+```
+
+## Run it
+
+Build all four steps at once, into `bin`. The first build downloads the BLAKE3 package:
+
+```
+cd examples/host/go
+go build -o bin/ ./...
+```
+
+A program that exits with code 7, `c.li a0, 7`, `addi a7, x0, 106h` and `ecall`, as a file:
+
+```
+xxd -r -p > exit.terse <<EOF
+5445525300010a000001000000000000657869740000
+000000000000000000001d459308601073000000
+EOF
+bin/step1 exit.terse
+echo $?
+```
+
+prints `7`. This one adds 100 + 99 + ... + 1 and exits with the sum's low byte:
+
+```
+xxd -r -p > sum.terse <<EOF
+544552530001160000010000000000007375
+6d0000000000000000000000000001459302
+40061695fd12e39e02fe9308601073000000
+EOF
+bin/step1 sum.terse
+echo $?
+```
+
+prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, then `echo $?`.
+
+## What you have now
+
+A Terse32 processor that runs a program to its end: `cpu.go` (271 lines), `decode.go` (122), `image.go` (31) and `step1/main.go` (34). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:3f6e117602b1abb6e6e38cdb12be52d7e80e569cf8139846062aa8ec7f2fcf7c).
+
+- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:56aa99456178ff29e58dcc0c67e9862f9f163ae5312d4ca8fa6ab107658347b3).
+- Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
+- The rules: [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
