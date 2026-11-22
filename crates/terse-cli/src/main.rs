@@ -159,7 +159,7 @@ A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapsh
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
 --shell runs a system (SPEC §machines): the image (default: the built-in shell, programs/shell) is the shell,
-with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports), and each --builtin image after
+with device 8; the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef), and each --builtin image after
 them, are put into the store and offered to it. Scripted events are the host's input: `home` is the
 home key, pointer positions are in the whole screen's units, and the system routes them. --dump
 prints the shell's screen, then for each machine whose rectangle is not empty a line
