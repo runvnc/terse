@@ -1,6 +1,6 @@
 [package]
 name = "terse-mame-crt"
-description = "MAME's BGFX vector CRT pipeline (BSD-3-Clause, translated to WGSL) as a Tersenet device driver for the vector displays and the terminal, with a Hershey stroke font."
+description = "MAME's BGFX vector CRT pipeline (BSD-3-Clause, translated to WGSL) as a Tersenet device driver for the vector displays and the terminal, with stroke fonts (an arcade vector font, Hershey, drafting)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

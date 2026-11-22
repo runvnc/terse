@@ -7,9 +7,9 @@ a machine runs identically with it (its tests compare state hashes frame by
 frame). Only the picture differs: in the phosphor style
 (SPEC §vector.phosphor) it draws the screen with **MAME's BGFX vector CRT
 renderer**, translated from MAME's BSD-3-Clause sources to WGSL and wgpu,
-and it draws the terminal's text as **strokes of the beam** (the Hershey
-Roman Simplex font and strokes of its own), like a vector monitor's
-character generator.
+and it draws the terminal's text as **strokes of the beam** in a vector
+font of its own (or Hershey Roman Simplex, or a drafting style), like a
+vector monitor's character generator.
 
 ## See it
 
@@ -43,6 +43,36 @@ MAME's sliders are environment variables, clamped to the sliders' ranges:
 (0.50–2.60, 2.12), `TERSE_MAME_EXPOSURE` (0.10–4.00, 0.78).
 `TERSE_MAME_TIMES=1` prints each pipeline's frame times when the run ends.
 
+## Fonts
+
+`TERSE_MAME_FONT` chooses the terminal's stroke font:
+
+- `arcade` (the default): a vector monitor's character generator, as
+  vector arcade games and terminals of about 1980 drew text. Original
+  glyphs (`src/arcade.rs`), straight strokes only on a grid of whole
+  units: the ink is 5 units wide (x 1.5 to 6.5 of the 8-unit cell, so two
+  dark pixels between letters at 640 × 480), capitals and ascenders 10
+  units high, small letters 6, descenders 3. Whole units fall on pixel
+  centres at 1×, so the straight strokes are one pixel sharp there.
+  Corners are cut instead of rounded (O an octagon, S a chamfered zigzag),
+  parallel strokes stay 2 units apart, and each glyph is as few polylines
+  as it can be, so that the beads the beam makes where strokes meet fall on
+  corners and junctions, not along a line. The small letters are their own
+  shapes, with a large x-height for prose; 0 is slashed, I has bars, l a
+  foot, 1 a flag. Accented capitals are drawn shorter to make room for the
+  accent.
+- `hershey`: the Hershey Roman Simplex font, a plotter's curves (about
+  twice the arcade font's beams).
+- `drafting`: Hershey's strokes simplified to fewer, longer segments and
+  inclined, like single-stroke engineering lettering.
+
+Any other value is said on stderr and the arcade font used. Every font
+draws all 361 characters of the basic repertoire; the box drawing and
+block elements are the same in all. Pictures of each:
+`crates/terse-mame-crt/pictures.sh <out dir> fonts`; a specimen of every
+glyph without a graphics adapter: `scripts/cargo run --release -p
+terse-mame-crt --example specimen -- <out dir>`.
+
 ## How it is put together
 
 - `shaders/`: MAME's seven shaders (`vs_beam`, `fs_beam`, `vs_post`,
@@ -60,8 +90,8 @@ MAME's sliders are environment variables, clamped to the sliders' ranges:
 - `src/beams.rs`: `draw_beams`' instances (scan timing from accumulated
   length, σ = width × beam width × 0.085) and the width model of MAME's
   `vector.cpp`; Tersenet's lists as MAME's line primitives.
-- `src/stroke.rs`, `src/text.rs`: the stroke font and the terminal's
-  screen as strokes.
+- `src/stroke.rs`, `src/arcade.rs`, `src/text.rs`: the stroke fonts and
+  the terminal's screen as strokes.
 - `src/bin/terse-dev-mame.rs`: the driver. `pattern/`: a test pattern and
   a full screen of text (`build.sh` builds the `.terse` images).
 - The originals, unmodified, with their licence: `third_party/mame-vector-crt/`.
