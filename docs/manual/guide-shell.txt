@@ -1,47 +1,51 @@
 # Make a shell
 
-When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own.
+When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:{guide-shell-rust}).
 
 ## The smallest shell
 
-This one starts the built-in program `hello` and gives it the whole screen and the keyboard:
+`myshell.c` starts the built-in program `hello` and gives it the whole screen and the keyboard:
 
-```
+```c examples/program/c/myshell.c
 #include "terse.h"
 
-static const uint8_t builtin[32]; /* all zero */
+static const uint8_t built_in[32];
 
 int main(void)
 {
-    uint32_t h = mach_start_named(builtin, "hello", 5);
-    mach_place(h, 0, 0, 640, 480);
-    mach_focus(h);
+    uint32_t hello = mach_start_named(built_in, "hello", 5);
+    mach_place(hello, 0, 0, 640, 480);
+    mach_focus(hello);
     for (;;)
         terse_wait_frame();
 }
 ```
 
-- `mach_start_named` starts a program by its publisher's key and its name; 32 zero bytes mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).
+- `mach_start_named` starts a program by its publisher's key and its name; 32 zero bytes, `built_in`, mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).
 - `mach_place` sets the rectangle of the shell's screen where that machine's screen is shown: here all of it, 640 by 480 units.
 - `mach_focus` sends the keyboard to that machine.
 
 Each machine is a whole separate Terse32 machine, with its own memory, devices and budget. The shell only decides what runs and where it is seen.
 
-## Build and run it
+## Build it and run it
 
-Save it as `myshell.c` and build it, listing device 8 besides the usual terminal (2) and line display (3):
-
-```
-terse build myshell.c --device 2:0 --device 3:0 --device 8:0
-```
-
-Then:
+A shell lists device 8; this one needs nothing else:
 
 ```
+terse build myshell.c --device 8:0
 terse run --shell myshell.terse --frames 30 --dump
 ```
 
-runs it headless and prints the shell's screen, then each machine's: a line `-- machine 1 running 0 0 640 480 hello --` and hello's text. In a window:
+The run prints the shell's own screen, then each machine's:
+
+```
+terse: image has no terminal device
+-- machine 1 running 0 0 640 480 hello --
+ Tersenet · hello
+  héllo, wörld — привет, мир
+```
+
+and the rest of hello's screen. The first line says only that the shell itself has no text grid to print. In a window:
 
 ```
 terse-host --shell myshell.terse
@@ -49,10 +53,10 @@ terse-host --shell myshell.terse
 
 ## Where to take it
 
-From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell`, does all of these in about 2,000 lines of C.
+From here a shell is a matter of taste: a list of programs to choose from (`mach_builtin` lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, `programs/shell/shell.c`, does all of these in about 2,000 lines of C.
 
 ## What you have now
 
-A system of machines under your own shell. That is the end of the implementation guide. What remains is the reference, which starts with [How Tersenet works](terse:{how-it-works}).
+A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:{guide-shell-rust}), or a device nobody has specified yet: [Invent a device](terse:{guide-invent}).
 
 Every call of device 8 is in [The Machines device](terse:{device-machines}), and panels, the 3D view and input routing in [Screens, panels and input](terse:{device-machines-screens}).

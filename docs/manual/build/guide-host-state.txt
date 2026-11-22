@@ -76,6 +76,6 @@ In `tcore` the serialization is 46 lines of C, the events file about 160, and th
 
 ## What you have now
 
-A host that runs Terse32 programs exactly as the reference does, and proves it. Next, write a device as a separate program: [Make a device](terse:bb63f56d9e751ed89b8f5abd89a7894cbd93b77aa31c3f8337defd6d71b75e65).
+A host that runs Terse32 programs exactly as the reference does, and proves it. Next, write a device as a separate program: [Make a device](terse:f5d9c510c9d4873ce1ba321e2599cabb425f471eba21f399df16470e94d603eb).
 
-The detail is in [State, replay and conformance](terse:3d301b04ac7d3a4327891586c316a6df1655298c8ae08f57722440f8c32e85a1), sections "The state serialization", "The hash", "Snapshots" and "The conformance image" (STATE.md sections 1, 3, 4 and 6; SPEC §conformance), with the input in [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62) and the calls in [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc).
+The detail is in [State, replay and conformance](terse:e831bfb3baad8c5aa556bd85f3f8fc53abccaa526b43dcf0d7b3e28d9c8f591f), sections "The state serialization", "The hash", "Snapshots" and "The conformance image" (STATE.md sections 1, 3, 4 and 6; SPEC §conformance), with the input in [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62) and the calls in [The system device](terse:9931faaf61b8c8f94759720fc438753e2761179730bbb7b27e43cf508c9db6ea).

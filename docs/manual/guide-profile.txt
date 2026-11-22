@@ -29,7 +29,7 @@ terse profile set --name Sam --listed
 seq 1 blob c87e03f4b03f250e…8ce0369e33e (listed)
 ```
 
-(Before that line `terse` says which relay it used, as every command that uses the network does. Long numbers are shortened with `…` on these pages.) Your profile is the first entry of your feed. It gives you a name, from 1 to 48 bytes, that readers show beside your key. `--listed` lets search find the name; leave it out and only people who already have your key see it. Names are not unique: two people may both be "Sam", which is why readers always show the key too. Run the command again to change the name.
+(Before that line `terse` says which relay it used, as every command that uses the network does, and which relays took the profile: `terse: taken by 1 of 1 relays: ws://127.0.0.1:7878`. With several relays it waits for each and warns about any that did not take it; it succeeds when one did. Long numbers are shortened with `…` on these pages.) Your profile is the first entry of your feed. It gives you a name, from 1 to 48 bytes, that readers show beside your key. `--listed` lets search find the name; leave it out and only people who already have your key see it. Names are not unique: two people may both be "Sam", which is why readers always show the key too. Run the command again to change the name.
 
 ```
 terse profile show

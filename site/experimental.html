@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experimental devices - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="experimental-devices">Experimental devices</h1>
+<p>An experimental device is a device that nobody has specified yet, tried out on Terse32 without a change to the specification and without changing any machine that does not use it. Its driver declares its calls, their charges and the size of its state; the core checks and charges the calls and keeps the state without knowing what the device means. The rules are <code>spec/experimental.md</code> in the Tersenet sources (with <code>DEVICES.md</code> section 15 for the driver&#39;s side); in short:</p>
+<ul>
+<li>**Slots 240 to 255.** They are never given to a numbered device. The slot is only the handle by which one image&#39;s program calls the device: call <code>(slot &lt;&lt; 8) | function</code>.</li>
+<li>**A name.** The device is identified by a name of 1 to 30 bytes of <code>a</code>-<code>z</code>, <code>0</code>-<code>9</code>, <code>-</code> and <code>.</code>, starting with a letter, by convention the author&#39;s own word first (<code>example.dice</code>). The image names it in a table at the end of its ROM, which <code>terse build --optional 240:0=example.dice</code> writes and <code>terse info</code> shows; the driver announces the same name. Nothing registers names.</li>
+<li>**Optional only.** An image that lists an experimental device as required is refused by every host, so no program can depend on an experiment. Where the device is not granted, <code>device</code> returns <code>FFFF_FFFFh</code> for its slot, every call returns <code>FFFF_FFFFh</code> at a charge of 4, and the program runs without it.</li>
+<li>**Where it is granted.** Only by <code>terse-bus</code> running one machine, with a driver for that name and version, named for the run (<code>--driver example.dice=./dice</code>) or installed with <code>terse drivers add</code>. <code>terse run</code>, <code>terse-host</code>, a system under a shell and <code>tcore</code> never grant one.</li>
+<li>**Charges by the table.** Every call&#39;s charge, answered or deferred, is the base charge plus the rule the driver declared, computed by the core. A table has 1 to 16 calls, buffers of at most 4,096 bytes and bounded charges.</li>
+<li>**State.** At most 16,384 bytes that only the driver understands, kept with the machine&#39;s state, so the state hash, snapshots and recordings work; a machine without the device has the state it would have had before experimental devices existed.</li>
+<li>**Determinism.** The driver reads no clock, random source, file, network or environment: its results are a function of its reset state, the calls and a restored section. A program that wants chance seeds it from <code>random</code>, which the host records.</li>
+<li>**Not conformance.** An experimental device is outside the conformance programs, and no profile includes one.</li>
+</ul>
+<p>The example, <code>example.dice</code>, is <code>native/driver-experimental</code>: the driver in C, a program that uses it and a test of every rule. The implementation guide&#39;s page &quot;Invent a device&quot; walks through it.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="content-records.html">← Content: named records</a><a rel="next" href="network.html">The network →</a></nav></footer>
+</body>
+</html>

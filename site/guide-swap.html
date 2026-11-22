@@ -37,7 +37,7 @@ terse-bus programs/hello/hello.terse --frames 30 --hash</pre>
     --hash --drivers target/release --driver 2=$PWD/terminal</pre>
 <h2 id="what-does-not-work-yet">What does not work yet</h2>
 <ul>
-<li>The device bus needs Unix sockets and Linux&#39;s futexes: <code>terse-bus</code> and the drivers run on Linux only, and are not in the downloads.</li>
+<li><code>terse-bus</code> and the reference drivers run on Linux, macOS and Windows, and are in the downloads&#39; <code>bus</code> folder; their tests pass on all three in the project&#39;s cross-platform test workflow. The C drivers, <code>tcore</code> and <code>terse node</code> need Unix sockets: Linux and macOS only.</li>
 <li><code>terse-host</code>, the windowed host of the downloads, has its devices built in and does not load drivers, installed or not. To see a driver&#39;s machine in a window, use <code>terse-bus --window</code>.</li>
 <li><code>tcore</code> does not read the drivers folder: give it <code>--driver</code>.</li>
 <li>The local socket of a node (LOCAL.md) serves readers only: a reader cannot publish through it, and a machine host&#39;s content device does not use it yet. Nodes listen on Unix sockets only, so not on Windows.</li>
