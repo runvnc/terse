@@ -81,6 +81,7 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
 | `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range | core |
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused | core |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused | core |
+| `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32 bytes, written) | 2 granted, 1 not granted, or 0 if there is no such entry | core |
 
 - **`start`** reads the 32-byte image ID at `a0`, which must lie wholly in
   ROM or wholly in RAM (else `FFFF_FFFEh`). If every handle is in use it
@@ -143,6 +144,25 @@ starts as its own built-in shell has the identity of a built-in. §content.recor
   | 16 | 32 | The image ID given to `start`; for `start_program` and `restore`, zeros while loading, then the ID of the image the host got (also when it failed as not an image the host can run, or as not fitting the snapshot); zeros for a handle not in use |
 
   The record is as the host latched it at the start of the frame (§machines.frames), with the changes the shell's own calls made since.
+- **`experimental`** tells the shell of the experimental devices
+  (`spec/experimental.md`) of machine `a0`, so that it can tell the user
+  that the program is, or may be elsewhere, outside the standard. It writes
+  entry `a1` (0 for the first) of those its image lists, in the order of
+  the image's header, to the buffer, 32 bytes wholly in RAM (else
+  `FFFF_FFFEh`): the entry as the image's experimental device table holds
+  it (the slot, the name's length, the name, `00h` up to 32 bytes,
+  §experimental.image). It returns 2 if the machine was granted that
+  device (§experimental.grants), and 1 if it was not: it runs without it,
+  as on any host. It writes nothing and returns 0 for `a1` past the last
+  entry, for `a0` outside 1–8, for a handle with no machine (none,
+  loading, or failed), and for an image whose header lists no
+  experimental device or whose table is not valid (no host grants one of
+  those). The entries are the machine's from when it was made (reset, or
+  restored with its snapshot's grants) until its handle is stopped, also
+  once it has exited, faulted or halted. A host that grants no
+  experimental device (§experimental.grants) returns 1 for every entry.
+  The entries are not part of device 8's state (`STATE.md` 1.10): they
+  follow from the machine's image and grants.
 - **`builtin`** writes the image ID of the host's built-in program number
   `a0` to the buffer, 32 bytes wholly in RAM (else `FFFF_FFFEh`), and
   returns 1; past the last program it writes nothing and returns 0. The
@@ -510,7 +530,8 @@ requested and snapshot done events and what device 8 returns that the
 shell did not set itself: the latched records (states, exit codes, faults,
 failure reasons, the image IDs and identities of programs started by
 identity or restored, units, frame counters), the open requests `request`
-delivers, the built-in programs and what `snapshot_info` tells; the view
+delivers, the built-in programs and what `snapshot_info` tells, and the entries
+`experimental` reports; the view
 is the shell's own state, and the eye the host routes the pointer by is
 part of the input. For a machine
 the shell started, what `open` returns (whether a request of it still
@@ -563,7 +584,7 @@ Every call is the machine's own (**core**), with the base charge of 4
 
 | What | Charge |
 |---|---|
-| Bytes copied between memory and the device: device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0) and `snapshot_info` (122, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and the device: device 8's `start` (32, when the ID is read, also when no handle is free), `start_program` (33 + n, when the record is read), `info` (48, when written), `builtin` (32, when written), `identity` (81, when written), `request` (82, when written), `argument` (32, when the ID is read, also when it returns 0), `snapshot_info` (122, when written) and `experimental` (32, when written) | 1 per 4 bytes, rounded up, per call |
 
 Provisional values (§provisional):
 

@@ -1465,6 +1465,7 @@ the same.
 | `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range | core |
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused | core |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused | core |
+| `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32 bytes, written) | 2 granted, 1 not granted, or 0 if there is no such entry | core |
 | `900h` | `submit` | `a0` = list address, `a1` = length | 0 done, 1 rejected | deferred |
 | `901h` | `clear` | — | 0 | deferred |
 | `902h` | `style` | `a0` = style | 0 done, 1 rejected | deferred |

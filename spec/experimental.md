@@ -146,6 +146,16 @@ device as always ("no room"), never because of an experimental device.
 A restored machine is granted what its snapshot's grants say, not by
 this rule (§experimental.conformance).
 
+**Telling the user.** Device 8's `experimental` call (§machines.calls)
+gives a shell, for each machine, the experimental devices its image lists
+(the table's entries) and whether the machine was granted each. Granted,
+the machine is outside §conformance; listed but not granted, it runs as
+on any host, but would not on a host with the driver. So a shell can mark
+both, and tell them apart, on every host: `terse run` and `terse-host`
+report every entry as not granted. The bundled shell marks such a
+program in its bar, in its launcher line and in the question it asks
+before it starts a program opened from a link.
+
 ## §experimental.calls Calls and charges
 
 A call to a granted experimental device goes to its driver, checked
@@ -358,11 +368,6 @@ the start of item 7's test.
 
 ## §experimental.open Not yet specified
 
-- **Showing the device in a shell.** The Machines device's record of a
-  machine (§machines.calls `info`) says nothing of its grants, so a shell
-  cannot tell the user that a machine has an experimental device (and is
-  outside conformance). A flag in the record, set when the machine's
-  grants include one, would let the launcher mark it.
 - **Inputs.** An experimental device has none (no events, no
   completions). A device that senses something outside the machine (a
   sensor, a MIDI port) needs event types, which are SPEC's.
