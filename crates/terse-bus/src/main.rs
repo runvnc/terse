@@ -25,7 +25,7 @@ const USAGE: &str = "usage:
             [--hash] [--hash-all] [--hash-every N] [--dump] [--save-state <file>] [--load-state <file>]
             [--driver <slot>[,<slot>...]=<command line>]... [--transport shm|socket] [--no-batch] [--in-process]
             [--screenshot <out.png>] [--size <W>x<H>] [--eye <dx>,<dy>] [--panels perspective|flat]
-            [--present-every-frame] [--window] [--selftest] [--parallax off|pointer] [--threads N]
+            [--present-every-frame] [--window] [--selftest] [--resize F:WxH,...] [--parallax off|pointer] [--threads N]
             [--bench] [--realtime] [--frame-times <file>] [--pin] [--spin-us N] [--spin fixed|adaptive]
             [--driver-timeout S] [--start-timeout S] [--record <file>] [--replay <file>]
             [--store <dir>] [--config <dir>] [--data <dir>] [--relay ws://...] [--consent allow|deny|ask]
@@ -54,7 +54,8 @@ every frame (as a window does) and --bench then times it too. --window shows the
 pointer). A machine in the phosphor style is drawn as terse-host draws it: --tube, --vignette,
 --no-trails, --force-phosphor and --no-shed as terse-host's (in a window the look is shed when frames
 run long, unless --no-shed); a --screenshot draws the last 600 frames to build up the afterglow; --selftest runs --frames frames (default 300) in the window with the scripted input only and
-prints the emulation, bus, composition and present-interval timings. --realtime runs at 60 frames a
+prints the emulation, bus, composition and present-interval timings; --resize gives the window's surface each size before
+frame F, as the window system's configure would (a script of size changes, for testing the rule's excuse for resizing). --realtime runs at 60 frames a
 second. --frame-times writes each frame's emulation time (ms). --bench prints the frame times
 (emulation including the bus) and per-driver latencies. --pin puts the core on CPU 1 and the drivers
 on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; drivers spin adaptively
@@ -118,6 +119,8 @@ struct Opts {
     perf_rule: Option<bool>,
     /// How the phosphor style is drawn.
     looks: Looks,
+    /// `--resize`: window sizes asked for before frames (with --selftest).
+    resizes: Vec<(u64, (u32, u32))>,
 }
 
 fn parse(args: Vec<String>) -> Result<Opts, String> {
@@ -162,6 +165,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         perf_log: None,
         perf_rule: None,
         looks: Looks::default(),
+        resizes: Vec::new(),
     };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -200,6 +204,15 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
                 let v = value()?;
                 let (w, h) = v.split_once('x').ok_or("--size <W>x<H>")?;
                 o.size = Some((w.parse().map_err(|_| "bad --size")?, h.parse().map_err(|_| "bad --size")?));
+            }
+            "--resize" => {
+                for item in value()?.split(',') {
+                    let bad = "--resize <frame>:<W>x<H>[,...]";
+                    let (f, size) = item.split_once(':').ok_or(bad)?;
+                    let (w, h) = size.split_once('x').ok_or(bad)?;
+                    let n = |v: &str| v.parse::<u32>().ok().filter(|&v| v > 0).ok_or(bad);
+                    o.resizes.push((f.parse().map_err(|_| bad)?, (n(w)?, n(h)?)));
+                }
             }
             "--eye" => {
                 let v = value()?;
@@ -536,6 +549,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             flat: opts.panels_flat,
             startup,
             looks: opts.looks,
+            resizes: opts.resizes.clone(),
         };
         return window::run(bs, script, native, w);
     }

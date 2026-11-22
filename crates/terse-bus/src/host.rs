@@ -440,6 +440,22 @@ impl BusSystem {
         Ok(out)
     }
 
+    /// The window's surface the frame is composed for (R15: the frames
+    /// just after a size change are excused).
+    pub fn surface(&mut self, size: (u32, u32)) {
+        if let Some(m) = &mut self.monitor {
+            m.surface(size);
+        }
+    }
+
+    /// At the end of a run: a line for each of the host's own components
+    /// that was blamed for late frames (they are said only once as they
+    /// happen).
+    pub fn own_late(&self) -> Vec<String> {
+        let Some(m) = &self.monitor else { return Vec::new() };
+        m.own_late.iter().map(|(c, n)| format!("terse-bus: the host's own {c} made {n} frames late in this run (the record has each)")).collect()
+    }
+
     /// The driver serving `component`'s slot, with its description.
     fn driver_of(&self, c: terse_perflog::Component) -> Option<(usize, String)> {
         let terse_perflog::Component::Device(slot) = c else { return None };
@@ -533,9 +549,14 @@ impl BusSystem {
             }
         };
         let Some((p, what)) = self.driver_of(c) else {
-            // The host's own part: it cannot stop itself; it records and shows.
+            // The host's own part: it cannot stop itself (the rule only
+            // warns about it, once until it has gone 300 frames without a
+            // late frame); it records every late frame, sheds its look while
+            // frames run long, and says so once.
             log(self, Line::Warn { frame, component: c, count });
-            out.push(format!("terse-bus: the host's own {c} made {count} frames late"));
+            out.push(format!(
+                "terse-bus: the host's own {c} made {count} frames late within a second (said once while it goes on; the record has every late frame, and a window sheds the phosphor look while frames run long)"
+            ));
             return Ok(out);
         };
         let users = self.users(p);

@@ -73,6 +73,12 @@ pub struct Monitor {
     pub late: u64,
     /// The monitor's own cost per frame.
     pub overhead: Histogram,
+    /// The window's surface size last composed, and whether this frame is
+    /// the first composed at it (R15: the frames after a resize).
+    surface: Option<(u32, u32)>,
+    size_changed: bool,
+    /// Late frames blamed on the host's own components (by component).
+    pub own_late: std::collections::BTreeMap<Component, u64>,
 }
 
 impl Monitor {
@@ -128,6 +134,9 @@ impl Monitor {
             run_start: Instant::now(),
             late: 0,
             overhead: Histogram::default(),
+            surface: None,
+            size_changed: false,
+            own_late: Default::default(),
         }
     }
 
@@ -151,6 +160,17 @@ impl Monitor {
         self.emulated = None;
         self.overhead.add(t.elapsed());
         self.t0 = Instant::now();
+    }
+
+    /// The frame is composed for a window's surface of `size` (called each
+    /// frame in a window, before [`Monitor::end`]): a new size is recorded
+    /// and the rule excuses the frames just after it (R15).
+    pub fn surface(&mut self, size: (u32, u32)) {
+        if self.surface != Some(size) {
+            self.surface = Some(size);
+            self.size_changed = true;
+            self.add(Line::Resize { frame: self.frame, width: size.0, height: size.1 });
+        }
     }
 
     /// The machines' frames have run (composing follows).
@@ -210,11 +230,15 @@ impl Monitor {
             (Some(a), Some(b)) => Some(a.saturating_sub(b)),
             _ => None,
         };
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory };
+        let size_changed = std::mem::take(&mut self.size_changed);
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory, size_changed };
         let (late, actions) = self.judge.judge(&sample);
         if let Some(l) = &late {
             self.late += 1;
             self.add(Line::late(l));
+            if l.verdict == terse_perflog::Verdict::Blamed && !l.top.component.is_device() {
+                *self.own_late.entry(l.top.component).or_default() += 1;
+            }
         }
         if !self.start_written {
             self.start_written = true;

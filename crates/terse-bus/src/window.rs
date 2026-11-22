@@ -40,6 +40,10 @@ pub struct Options {
     pub startup: Duration,
     /// How the phosphor style is drawn.
     pub looks: terse_bus::compose::Looks,
+    /// `--resize` (with --selftest): the window's surface takes these sizes
+    /// before these frames, as when the window system configures it (a
+    /// script of size changes, for testing R15).
+    pub resizes: Vec<(u64, (u32, u32))>,
 }
 
 /// One frame's timings (ms).
@@ -91,6 +95,10 @@ struct App {
     presented: VecDeque<((u32, u32), Vec<terse_host::soft::base::IRect>)>,
     /// The last present's wait for a buffer the compositor had released (ms).
     buffer_wait: f64,
+    /// The highest shed level said on standard error.
+    shed_said: u8,
+    /// `--resize`: the window's size asked for before these frames.
+    resizes: VecDeque<(u64, (u32, u32))>,
 }
 
 impl App {
@@ -157,6 +165,9 @@ impl App {
         self.comp.notice = self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone()));
         self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         let compose = start.elapsed().as_secs_f64() * 1000.0;
+        // R15: a new size of the surface is recorded, and the frames just
+        // after it are excused.
+        self.bs.surface(viewport);
         let drivers: Vec<f64> = self.present_ms().iter().zip(&presents_before).map(|(a, b)| a - b).collect();
         let start = Instant::now();
         if let Some(surface) = &mut self.surface {
@@ -207,16 +218,25 @@ impl App {
         let present_took = start.elapsed();
         let present = present_took.as_secs_f64() * 1000.0;
         // PERFORMANCE.md R15 step 1: the phosphor look is shed first when
-        // frames run long to draw and present (terse-host's governor).
+        // frames run long to draw and present (terse-host's governor): the
+        // core's tube, and a driver's own look through core.shed. The wait
+        // for the window system to give a buffer back is not the host's
+        // drawing: shedding would not shorten it.
+        let drawing = compose + (present - self.buffer_wait).max(0.0);
         if !self.comp.looks.look.no_shed
-            && let Some(floor) = self.governor.presented(Duration::from_secs_f64((compose + present) / 1000.0))
+            && let Some(floor) = self.governor.presented(Duration::from_secs_f64(drawing / 1000.0))
         {
             let why = if floor > self.comp.looks.look.floor { "late" } else { "recover" };
             self.comp.looks.look.floor = floor;
             if let Some(m) = &self.bs.monitor {
                 m.add(terse_perflog::record::Line::Shed { frame: m.frame, level: floor as u32, why: why.into() });
             }
-            eprintln!("terse-bus: frames ran long or caught up: the phosphor look sheds from level {floor}");
+            // Said when it sheds further than before in the run (the
+            // record has every change).
+            if floor > self.shed_said {
+                self.shed_said = floor;
+                eprintln!("terse-bus: frames ran long: the phosphor look is shed to level {floor} of 3 while they do");
+            }
         }
         for line in self.bs.end_frame(present_took)? {
             eprintln!("{line}");
@@ -452,6 +472,15 @@ impl ApplicationHandler for App {
         }
         let now = Instant::now();
         if now >= self.next {
+            while let Some(&(f, (w, h))) = self.resizes.front()
+                && f <= self.frames
+            {
+                self.resizes.pop_front();
+                // As a configure from the window system would: the surface
+                // takes the size (a tiling compositor sets it; a kiosk or
+                // fullscreen one shows a smaller buffer centred).
+                self.resize(PhysicalSize::new(w, h));
+            }
             self.coalesced_input();
             if self.bs.system.stopped().is_none()
                 && let Err(e) = self.frame()
@@ -510,8 +539,14 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         governor: Default::default(),
         presented: VecDeque::new(),
         buffer_wait: 0.0,
+        shed_said: 0,
+        resizes: VecDeque::new(),
     };
+    app.resizes = app.opts.resizes.iter().copied().collect();
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
+    for line in app.bs.own_late() {
+        eprintln!("{line}");
+    }
     if app.opts.selftest.is_some() {
         app.report();
         // The hashes, to compare with a headless run of the same script.
