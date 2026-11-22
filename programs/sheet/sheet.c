@@ -2443,10 +2443,13 @@ static void loaded(void)
             load_chunk();
             return;
         }
-        if (load_req.status == STATUS_NOT_FOUND)
-            load_example();
-        else
-            say("Could not load the saved sheet");
+        /* No saved sheet: the example. A host that keeps no records
+         * (the reading profile may refuse them) shows it too. */
+        if (load_req.status == STATUS_REFUSED && !arg_msg)
+            arg_msg = "Sheets are not kept on this host";
+        else if (load_req.status != STATUS_NOT_FOUND && !arg_msg)
+            arg_msg = "Could not load the saved sheet";
+        load_example();
         return;
     }
     flen += got;
