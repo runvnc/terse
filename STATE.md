@@ -719,12 +719,12 @@ The commands of a window:
 |---|---|---|
 | `pointer-px`, `click-px` | x, y (window pixels)[, buttons] | as `pointer` and `click`, at a pixel of the window |
 | `drag`, `drag-px` | x0, y0, x1, y1 | the primary button pressed at the first point, the pointer moved to the second over 8 frames, released in the 9th |
-| `hold` | key, frames | the key held down for that many frames, repeating as a keyboard does (after 30 frames, every 2) |
+| `hold` | key, frames, then any modifiers | the key held down (with the modifier keys) for that many frames, repeating as a keyboard does (after 30 frames, every 2) |
 | `resize` | width, height | asks for the window's inner size in pixels; the next line waits 3 frames |
 | `sleep` | milliseconds | the next line waits that long in real time |
 | `shot` | file | writes the picture presented, as PNG |
 | `dump` | `terminal`, `page`, `vectors` or `state`, optionally a machine handle, optionally `> file` | the terminal grid (6.3), the page as this host laid it out (each line in view: its top, height and x in screen units and its text), the vector lists (as `--dump-vectors`), or the frame, window and machines |
-| `watch` | frames, optionally `every <n>`, `save <dir>` | reports, after that many pictures, how many changed, where (a box of pixels) and by how much, how many were distinct, and blinks: 32 × 32 pixel tiles that changed and came back to what they were 2 to 4 pictures before |
+| `watch` | frames, optionally `every <n>`, `save <dir>` | reports, after that many pictures, how many changed, where (a box of pixels) and by how much, and blinks: 32 × 32 pixel tiles that changed and came back to what they were 2 or 3 pictures before (a part that vanished or changed for one or two pictures; input given less than 3 frames apart can look like one) |
 | `settle` | optionally `max <frames>` (600), `still <n>` (10) | waits until n pictures in a row are the same |
 | `expect idle` | frames, optionally `tolerance <pixels>` (0) | as `watch`; fails if a picture differs from the one before by more pixels than the tolerance, or blinks |
 | `expect <terminal\|page\|vectors\|state> contains\|lacks` | text (the rest of the line) | fails unless the dump contains (lacks) the text |

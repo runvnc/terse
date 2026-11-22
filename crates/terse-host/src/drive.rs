@@ -115,7 +115,7 @@ pub struct Drive {
     /// Characters still to type, one a frame, and keys held (usage,
     /// frames left, frames to the next repeat).
     typing: VecDeque<char>,
-    held: Option<(u8, u32, u32)>,
+    held: Option<(u8, u32, u32, u8)>,
     /// Observations to make of the next picture presented (frame asked for).
     want_picture: Vec<(u32, String)>,
     /// The thread that looks at the pictures (so that comparing and
@@ -128,6 +128,8 @@ pub struct Drive {
     watching: u32,
     /// Late frames noted.
     late: u32,
+    /// The picture thread has done all it was given (at the end).
+    flushed: bool,
     pads: [Controller; CONTROLLERS],
     pads_set: bool,
     failures: Vec<String>,
@@ -187,6 +189,8 @@ enum Job {
     /// An observation of the pictures (`shot`, `watch`, `settle`, `expect idle`).
     Observe(u32, String),
     Picture(u32, (u32, u32), Raw),
+    /// The run ends: report a watch still going, then answer `Flushed`.
+    Flush,
 }
 
 /// What it answers.
@@ -195,6 +199,7 @@ enum Msg {
     Fail(String),
     /// An observation is done.
     Done,
+    Flushed,
 }
 
 /// The picture thread's state.
@@ -300,6 +305,7 @@ fn parse(line: &str) -> Result<Option<(Option<u32>, String, String)>, String> {
         "hold" => {
             key(0)?;
             num(1, "frames")?;
+            mods(w.get(2..).unwrap_or(&[]))?;
         }
         "pointer" | "click" | "pointer-px" | "click-px" => {
             num(0, "x")?;
@@ -393,6 +399,14 @@ impl Drive {
                     match j {
                         Job::Observe(f, what) => l.queue.push_back((f, what)),
                         Job::Picture(f, size, raw) => l.picture(f, size, raw),
+                        Job::Flush => {
+                            if let Some(w) = l.watch.take() {
+                                let f = w.started_frame + w.seen;
+                                l.say(format!("(the run ended {} pictures before the watch did)", w.left));
+                                l.report(w, f);
+                            }
+                            let _ = l.out.send(Msg::Flushed);
+                        }
                     }
                 }
             })
@@ -412,6 +426,7 @@ impl Drive {
             outstanding: 0,
             watching: 0,
             late: 0,
+            flushed: false,
             pads: [Controller::default(); CONTROLLERS],
             pads_set: false,
             failures: Vec::new(),
@@ -453,6 +468,11 @@ impl Drive {
         }
         if note.starts_with("late frame") {
             self.late += 1;
+            // The window system's own delay (the compositor, a busy
+            // computer) is not the program's or this host's: counted only.
+            if note.contains(": Outside ") {
+                return;
+            }
         } else {
             self.say(&format!("frame {}: slow: {note}", self.frame));
         }
@@ -469,6 +489,7 @@ impl Drive {
                     self.failures.push(s);
                 }
                 Msg::Done => self.outstanding = self.outstanding.saturating_sub(1),
+                Msg::Flushed => self.flushed = true,
             }
         }
     }
@@ -480,9 +501,10 @@ impl Drive {
 
     /// Prints the summary at the end.
     pub fn finish(&mut self) {
-        // What the picture thread has still to say.
+        // What the picture thread has still to say (it may be behind).
+        let _ = self.worker.send(Job::Flush);
         let t = Instant::now();
-        while self.outstanding > 0 && t.elapsed() < Duration::from_secs(10) {
+        while !self.flushed && t.elapsed() < Duration::from_secs(300) {
             self.results();
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -516,17 +538,17 @@ impl Drive {
             }
             return out;
         }
-        if let Some((k, left, next)) = self.held {
+        if let Some((k, left, next, m)) = self.held {
             // A held key repeats as a keyboard's does: after 30 frames,
             // then every 2 (25 a second).
             if left == 0 {
-                out.push(Action::Key { usage: k, pressed: false, repeat: false, text: None });
+                self.key(&mut out, k, m, false, None);
                 self.held = None;
             } else {
                 if next == 0 {
-                    out.push(Action::Key { usage: k, pressed: true, repeat: true, text: key_text(k, 0) });
+                    out.push(Action::Key { usage: k, pressed: true, repeat: true, text: key_text(k, m) });
                 }
-                self.held = Some((k, left - 1, if next == 0 { 1 } else { next - 1 }));
+                self.held = Some((k, left - 1, if next == 0 { 1 } else { next - 1 }, m));
                 return out;
             }
         }
@@ -628,8 +650,9 @@ impl Drive {
             }
             "hold" => {
                 let k = key_code(w[0]).unwrap_or(0);
-                out.push(Action::Key { usage: k, pressed: true, repeat: false, text: key_text(k, 0) });
-                self.held = Some((k, int(1).max(1) as u32, 30));
+                let m = mods(w.get(2..).unwrap_or(&[])).unwrap_or(0);
+                self.key(out, k, m, true, key_text(k, m));
+                self.held = Some((k, int(1).max(1) as u32, 30, m));
                 return true;
             }
             "text" => out.push(Action::Text(args.to_string())),
@@ -697,7 +720,16 @@ impl Drive {
             }
             "watch" | "settle" | "expect" | "shot" | "dump" | "perf" | "budget" => {
                 self.want_picture.push((frame, format!("{command} {args}")));
-                return true;
+                // Observation lines in a row look at the same picture.
+                if self.queue.is_empty() {
+                    match self.lines.try_recv() {
+                        Ok(Line::Text(n, l)) => self.queue.push_back((n, l)),
+                        Ok(Line::End) | Err(TryRecvError::Disconnected) => self.ended = true,
+                        Err(TryRecvError::Empty) => {}
+                    }
+                }
+                let next = self.queue.front().and_then(|(_, l)| parse(l).ok().flatten());
+                return !next.is_some_and(|(f, c, _)| f.is_none() && matches!(c.as_str(), "shot" | "dump" | "expect" | "perf" | "budget"));
             }
             _ => {}
         }
@@ -997,9 +1029,12 @@ impl Looker {
         }
         if !w.blinks.is_empty() {
             let b = union(&w.blinks).unwrap();
-            s += &format!("; {} blinks (a part changed and changed back within 3 pictures) within x {}..{}, y {}..{}", w.blinks.len(), b.0, b.2, b.1, b.3);
+            s += &format!("; {} blinks (a part changed and changed back within 2 pictures) within x {}..{}, y {}..{}", w.blinks.len(), b.0, b.2, b.1, b.3);
         }
         self.say(s);
+        for b in w.blinks.iter().take(50) {
+            self.say(format!("  frame {}: blink in x {}..{}, y {}..{}", b.frame, b.bbox.0, b.bbox.2, b.bbox.1, b.bbox.3));
+        }
         for c in w.changed.iter().take(12) {
             self.say(format!("  frame {}: {} pixels changed in x {}..{}, y {}..{}, by up to {}", c.frame, c.pixels, c.bbox.0, c.bbox.2, c.bbox.1, c.bbox.3, c.max));
         }
@@ -1031,7 +1066,7 @@ fn pad_line(args: &str) -> Result<Option<(u32, (usize, Controller))>, String> {
 
 /// How `now` differs from `prev`, the picture before it: pixels, their
 /// box, the largest difference of a channel; and the box of its TILE ×
-/// TILE tiles that changed from `prev` back to what they were 2 to 4
+/// TILE tiles that changed from `prev` back to what they were 2 or 3
 /// pictures before (`history`, newest first: a blink). Rows are compared
 /// whole first, so a still picture costs little.
 fn compare(now: &Picture, prev: &Picture, history: &VecDeque<Picture>, frame: u32) -> (Option<Change>, Option<Change>) {
@@ -1075,7 +1110,7 @@ fn compare(now: &Picture, prev: &Picture, history: &VecDeque<Picture>, frame: u3
                     }
                 }
             }
-            if history.iter().skip(1).take(3).any(|p| p.size == now.size && same(p)) {
+            if history.iter().skip(1).take(2).any(|p| p.size == now.size && same(p)) {
                 let b = blink.get_or_insert((u32::MAX, u32::MAX, 0, 0, 0));
                 *b = (b.0.min(xa), b.1.min(ya), b.2.max(xb), b.3.max(yb), b.4 + ((xb - xa) * (yb - ya)) as u64);
             }

@@ -1146,8 +1146,11 @@ impl App {
             Action::Wheel { v, h } => self.wheel(MouseScrollDelta::LineDelta(-h as f32, -v as f32)),
             Action::Event(e) => self.pending.push(e),
             Action::Resize(w, h) => {
-                if let Some(gfx) = &self.gfx {
-                    let _ = gfx.window.request_inner_size(PhysicalSize::new(w, h));
+                // A size the window system applies at once comes back here
+                // rather than as a Resized event (winit on Wayland).
+                let applied = self.gfx.as_ref().and_then(|g| g.window.request_inner_size(PhysicalSize::new(w, h)));
+                if let Some(size) = applied {
+                    self.window_event(event_loop, self.gfx.as_ref().unwrap().window.id(), WindowEvent::Resized(size));
                 }
             }
             Action::Quit => event_loop.exit(),

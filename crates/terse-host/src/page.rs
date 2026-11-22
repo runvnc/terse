@@ -189,7 +189,7 @@ impl Typesetter {
                 // cut at its right edge; drawn from the decoded paths.
                 let b = FigureBox::place(f, p.align, width as u32);
                 out.figures.push(HostFigure {
-                    id: figures::figure_id(f),
+                    id: crate::figures::figure_id(f),
                     top: y,
                     x: b.x as f32,
                     width: b.shown as f32,

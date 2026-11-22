@@ -363,7 +363,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     #[cfg(not(feature = "window"))]
     let _ = &all_args;
     // A drive never uses the user's directories unless told.
-    let scratch = match driving && (store.is_none() || config.is_none() || data.is_none()) {
+    let scratch: Option<PathBuf> = match driving && (store.is_none() || config.is_none() || data.is_none()) {
         #[cfg(feature = "window")]
         true => {
             let d = drive::scratch()?;

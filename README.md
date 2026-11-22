@@ -810,7 +810,7 @@ without a frame number run one after another, `wait <frames>` and `type
 
     press g ctrl          keys as a keyboard sends them: Ctrl down, G, G up, Ctrl up
     type =SUM(A1:A3)      a character a frame: key down, its text, key up
-    hold down 60          a key held 60 frames, auto-repeating as a keyboard does
+    hold down 60 shift    a key held 60 frames (Shift too), auto-repeating as a keyboard does
     click 120 80          the pointer at a screen unit, through the window's mapping
     click-px 900 400      ... at a window pixel (pointer-px, drag, drag-px likewise)
     wheel 3               wheel steps
