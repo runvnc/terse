@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write and publish an article - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="write-and-publish-an-article">Write and publish an article</h1>
+<p>An article is a plain text file. Write it in any text editor and save it as <code>hello.txt</code>:</p>
+<pre># Hello, Tersenet
+
+This is my first article. Lines next to each other
+are joined into one paragraph.
+
+## What I like
+
+- short pages
+- no adverts
+- `code` in backquotes
+
+| Day | Walked |
+|---|--:|
+| Monday | 4 km |
+| Tuesday | 6 km |</pre>
+<p>A blank line ends a paragraph. <code># </code> starts a heading and <code>## </code> a smaller one; <code>- </code> starts an item of a list; text between backquotes is code; lines that start with <code>|</code> are a table, and the <code>|---|--:|</code> line under its first row makes that row a header and puts the second column on the right.</p>
+<h2 id="is-it-markdown">Is it Markdown?</h2>
+<p>It looks like Markdown, and what the two have in common is written the same way as in GitHub-flavoured Markdown: paragraphs, <code>#</code> and <code>##</code> headings, lists with <code>-</code> or <code>*</code>, code blocks (indented four spaces, or between lines of three backquotes), code spans, tables, and links written <code>[text](target)</code>. But it is not strictly a subset of it. It is much smaller, and a few things differ:</p>
+<ul>
+<li>Not in Tersenet, and shown just as you typed them: emphasis and bold (<code>*</code>, <code>_</code>), headings smaller than <code>##</code>, numbered and nested lists, quotes (<code>&gt;</code>), images, HTML, rules (<code>---</code>), backslash escapes, and links to web pages: a link&#39;s target must be a <code>terse:</code> address.</li>
+<li>Tersenet&#39;s own: <code>terse:</code> links to articles, feeds and programs, and figures: drawings, written as a fence whose opening backquotes are followed by <code>path</code> and a size.</li>
+<li>Read differently: a table needs no <code>|---|</code> line (without one it simply has no header), and a line indented four spaces starts a code block even right after a paragraph&#39;s line.</li>
+</ul>
+<p>So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. <a href="writing-articles.html">Writing an article</a> shows every rule.</p>
+<h2 id="publish-it">Publish it</h2>
+<pre>terse feed publish hello.txt --title &quot;Hello, Tersenet&quot;</pre>
+<pre>seq 2 blob 5d86159d495906bb…ad537da380d</pre>
+<p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
+<h2 id="see-it">See it</h2>
+<p>The timeline shows the feeds you follow, so follow your own:</p>
+<pre>terse feed subscribe $(terse key show)</pre>
+<pre>subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c</pre>
+<p>(That works in bash, zsh, fish and PowerShell; or paste your key after <code>subscribe</code>.) The window reads the list of feeds you follow when it starts, so close it, run <code>terse-host</code> again and start the reader:</p>
+<pre>Timeline
+1 article  ·  1 feed
+Hello, Tersenet
+Sam (710522…7e084c)  ·  2026-11-22 00:17  ·  233 bytes</pre>
+<p>Enter opens it: the title, a grey line with your name, the entry number, the date and the size, then the text, with the paragraph wrapped to the column, &quot;What I like&quot; in bold, the list with bullets, <code>code</code> in a monospaced face and the table as a grid with its header in bold. Esc goes back to the timeline.</p>
+<p>The heading is the title, so the reader shows it once. A shortcut for trying this: T in the reader publishes a short test article and follows your feed for you, after the window asks you.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A feed with an article in it, and a reader that shows it. Next, the reader itself: <a href="guide-read.html">Read articles and follow links</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-profile.html">← Create your profile</a><a rel="next" href="guide-read.html">Read articles and follow links →</a></nav></footer>
+</body>
+</html>

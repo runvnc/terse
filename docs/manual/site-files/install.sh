@@ -136,4 +136,4 @@ case ":$PATH:" in
     ;;
 esac
 say "start it with: terse-host"
-say "remove it with: curl -fsSL https://tersenet.org/install.sh | sh -s uninstall"
+say "to remove it: the same command, ending sh -s uninstall"

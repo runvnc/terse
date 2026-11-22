@@ -1,0 +1,48 @@
+# Read articles and follow links
+
+The reader is where you spend most of your time in Tersenet. It has a few views, and the bottom row always shows the keys of the one you are in.
+
+## The timeline
+
+The timeline lists the articles of every feed you follow, newest first. Each has its title and, below it, the feed's name and short key, the date and time (UTC) and the size:
+
+```
+Timeline
+2 articles  ·  1 feed
+A game for you
+Ana (73670a…a9ee5f)  ·  2026-11-22 00:18  ·  133 bytes
+Spring in the valley
+Ana (73670a…a9ee5f)  ·  2026-11-22 00:18  ·  82 bytes
+```
+
+Up and Down choose, Enter opens. New articles appear by themselves while the window is open. Small articles are downloaded as they arrive, so they open at once and can be read without a network later.
+
+## Reading
+
+An article fills the window as a column of text. Up and Down scroll a little, PgUp, PgDn and Space a screen, Home and End to the top and the end; the bottom row shows how far you are. Esc goes back.
+
+## Links
+
+Links are in colour. Tab moves to the next one (Shift+Tab to the one before), which turns amber while the bottom row shows where it leads; Enter follows it. A link can lead to:
+
+- another article, which opens in place: Esc comes back, up to 8 articles deep, each where you left it;
+- a feed, whose page shows its name and key and offers to subscribe (the next page);
+- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:6bcae353ed4363e427a08d1418ed4a8609ef072fb8bc98ac046cd42ee3bf247a)).
+
+There are no links to web pages: an address such as `https://example.org` in an article is plain text. Links are written `terse:` and a long number, and a reader shows them by their text or shortened.
+
+Someone may send you an article's link, `terse:` and 64 digits, in an e-mail or a message. The reader opens articles from your timeline, from links and from search, but not from a pasted link. In a terminal, `terse get` and the 64 digits prints the article, if one of your relays has it.
+
+## Search
+
+/ on the timeline searches. Type words and press Enter: the reader looks through the articles on this computer, by title and text, and asks your relays for feeds by name and articles by title. Letters A to Z match either case. Enter on a result opens it.
+
+## The manual
+
+M on the timeline opens the first page of this manual. It is part of every Tersenet window, so it is there without a network.
+
+## What you have now
+
+The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:5989a3a13663e7f597cec5c3b6297e532b0b675061552a1378ab2e2b163ef88a).
+
+Every view and key of the reader is in [Using the reader](terse:0ab883909924b49a23471eb66aec2d0e7f55e5ef035c2ac20db1a430928c6cd6).

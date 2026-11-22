@@ -1,0 +1,52 @@
+# Find and play a game
+
+Reading is the heart of Tersenet; programs are the optional part. A program is small, at most 1 MiB of memory, and runs on a tiny virtual machine of its own, Terse32, inside the window. It cannot read your files, and the window asks you before it publishes anything in your name.
+
+## The game that comes with Tersenet
+
+The launcher lists the programs built into the window. One of them is a game: sparks. Choose it and press Enter:
+
+```
+  SPARKS    HIGH 0000         demo - Enter or Start to play
+                                   S P A R K S
+                     Collect the sparks, avoid the sweepers.
+                     Arrows or stick: turn. Up or A: thrust.
+                     Enter or Start: play.        Esc: quit.
+```
+
+Enter plays. Left and Right turn your craft, Up thrusts; a game controller works too. Your high score is kept on this computer, for the next time. F12 takes you back to the launcher while the game goes on in its tile; Enter on its line there, or a click on it, brings it back.
+
+The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.
+
+## Games from other people
+
+Anyone can publish a program in their feed, as they publish an article. There are three ways to come across one:
+
+- In the launcher. Under FROM YOUR FEEDS it lists the programs of the feeds you follow, each with the name of the feed it came from. Enter starts one.
+- In an article. Following a link to a program asks you first, in the bar at the top, naming the program and its publisher (here with the nickname from the last page), with Y/N at the end:
+
+```
+reader asks to start Sparks by Ana from choir 73670a…a9ee5f.
+```
+
+- By search. `terse find --programs` and a name lists matching programs on your relays, with the publisher's key; subscribe to that feed, and the program is in your launcher.
+
+Y starts it in a tile of its own. A program from someone you do not know is still boxed in: it sees only its own screen, keyboard and the few things the window lets it ask for, and every request to publish or to follow a feed comes to you as a prompt. Say N to anything you did not expect.
+
+There is not much to find yet, though. Tersenet has no public relay and no catalogue of games, so for now you find programs the same way as feeds: through people you share a relay with.
+
+## Keeping your place
+
+Machines in Tersenet can be saved whole. In the launcher, S saves the session: every program you have open, exactly where it is, mid-game included. The next time you start the window, the launcher's first line offers to bring it back:
+
+```
+Restore last session (1 program)
+```
+
+Enter restores it; D discards it. Nothing is saved without S, except what a program keeps for itself, such as the high score.
+
+## What you have now
+
+The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader, step 1: show an article](terse:84d022841e16996496eb0decb2306052b3dac92ccbce3f76b4943a46aa05136a).
+
+The launcher, sessions and every prompt are in [Using the shell](terse:9294766419c5492ad33ed9e6bdf471fa771093eadd375afad06674578a0fba59); publishing a program of your own is in [Running and publishing a program](terse:1dbf0a30991c396dca02176530125886a25af9df0c8e4fe770baef27b074dc8e).
