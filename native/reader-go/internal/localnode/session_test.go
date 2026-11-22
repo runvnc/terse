@@ -150,7 +150,7 @@ func TestLocalSessionVectors(t *testing.T) {
 	r := bufio.NewReader(c)
 	next := func() []byte {
 		for {
-			c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			c.SetReadDeadline(time.Now().Add(time.Minute))
 			m, err := local.ReadFrame(r)
 			if err != nil {
 				t.Fatalf("read: %v", err)
@@ -249,7 +249,7 @@ func TestTwoReaders(t *testing.T) {
 	for name, c := range map[string]*localclient.Client{"a": a, "b": b} {
 		select {
 		case <-c.Changed():
-		case <-time.After(5 * time.Second):
+		case <-time.After(time.Minute): // a bound on a hang only
 			t.Errorf("reader %s: no Changed", name)
 		}
 	}

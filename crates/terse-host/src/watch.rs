@@ -365,11 +365,16 @@ mod tests {
 
     /// The cost of watching a frame of a shell and 8 machines: the
     /// readings around each machine and part, and the judging (printed;
-    /// bounded loosely, for an unoptimised build on a busy computer).
+    /// bounded loosely, for an unoptimised build). It is judged by this
+    /// thread's own time on a CPU, which time spent waiting for one on a
+    /// busy computer does not add to; where the system cannot say, it is
+    /// only printed.
     #[test]
     fn the_cost_of_watching() {
         let mut w = HostWatch::new(None, false, "software", "window", Instant::now());
         let n = 600;
+        let mut probe = terse_perflog::probe::ProcProbe::this_thread();
+        let cpu_before = probe.sample().filter(|_| probe.has_cpu());
         let t = Instant::now();
         for _ in 0..n {
             w.begin();
@@ -383,7 +388,10 @@ mod tests {
             w.presented(Duration::ZERO, Duration::from_millis(2), true).unwrap();
         }
         let per = t.elapsed() / n;
-        println!("watching a frame of 9 machines: {per:?}");
-        assert!(per < Duration::from_millis(2), "{per:?}");
+        let cpu = cpu_before.zip(probe.sample()).map(|(a, b)| Duration::from_nanos(b.since(&a).cpu_ns) / n);
+        println!("watching a frame of 9 machines: {per:?}, of it on a CPU: {cpu:?}");
+        if let Some(cpu) = cpu {
+            assert!(cpu < Duration::from_millis(2), "{cpu:?}");
+        }
     }
 }

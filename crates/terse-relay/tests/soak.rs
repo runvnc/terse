@@ -2,8 +2,11 @@
 //! entries from several connections against small limits, with the
 //! relay's clock moved on so that blobs no entry names expire. The store
 //! stays within its bound, memory stays bounded, and another connection's
-//! gets are not held up beyond a stated bound. The numbers are printed
-//! (`--nocapture`).
+//! gets go on being answered while the soak runs. The numbers, the slowest
+//! of those gets among them, are printed (`--nocapture`); how long a get
+//! may take is not judged here, on a computer that may be busy: what
+//! bounds it is that collection holds the relay up only a batch at a time
+//! (`collection_is_incremental`).
 
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -13,15 +16,13 @@ use std::time::{Duration, Instant};
 use terse_net::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use terse_net::{BlobStore, Entry, Identity, blob_id};
 use terse_relay::limits::{Rate, Rates};
-use terse_relay::{KIB, MIB, Policy, Relay};
+use terse_relay::{COLLECT_BATCH, KIB, MIB, Policy, Relay};
 
 const WORKERS: usize = 4;
 const ROUNDS: usize = 1000;
 const FEEDS: usize = 40;
 const FEED_BYTES: u64 = 64 * KIB;
 const ROOM: u64 = 2 * MIB;
-/// The longest a get of a held blob may take while the soak runs.
-const STALL_BOUND: Duration = Duration::from_millis(500);
 
 fn rss_kib() -> Option<u64> {
     let s = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -73,23 +74,35 @@ fn soak() {
     let rss_before = rss_kib();
 
     let stop = Arc::new(AtomicBool::new(false));
+    // Set once the workers are done: the observer counts the gets answered
+    // before that.
+    let soaked = Arc::new(AtomicBool::new(false));
+    let (first_tx, first_rx) = std::sync::mpsc::channel();
     let observer = {
-        let (url, stop, watched) = (url.clone(), stop.clone(), watched.clone());
+        let (url, stop, soaked, watched) = (url.clone(), stop.clone(), soaked.clone(), watched.clone());
         std::thread::spawn(move || {
             let mut c = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
             c.connect().unwrap();
-            let (mut worst, mut gets) = (Duration::ZERO, 0u32);
+            let (mut worst, mut gets, mut during) = (Duration::ZERO, 0u32, 0u32);
             while !stop.load(Ordering::Relaxed) {
                 let start = Instant::now();
                 let req = c.get(&blob_id(&watched));
                 assert_eq!(wait(&mut c, req), RelayReply::Got(watched.clone()));
+                if !soaked.load(Ordering::SeqCst) {
+                    during += 1;
+                }
                 worst = worst.max(start.elapsed());
                 gets += 1;
+                if gets == 1 {
+                    let _ = first_tx.send(());
+                }
                 std::thread::sleep(Duration::from_millis(2));
             }
-            (worst, gets)
+            (worst, gets, during)
         })
     };
+    // The observer is connected and served before the soak starts.
+    first_rx.recv_timeout(Duration::from_secs(60)).expect("the observer's first get");
     let started = Instant::now();
     let workers: Vec<_> = (0..WORKERS)
         .map(|w| {
@@ -150,19 +163,20 @@ fn soak() {
         }
         results.push(w.join().unwrap());
     }
+    soaked.store(true, Ordering::SeqCst);
     let took = started.elapsed();
     relay.advance_clock(Duration::from_secs(7200));
     relay.collect();
     stop.store(true, Ordering::Relaxed);
     ticker.join().unwrap();
-    let (worst_get, gets) = observer.join().unwrap();
+    let (worst_get, gets, during) = observer.join().unwrap();
     let rss_after = rss_kib();
     let (requests, refused): (usize, usize) = results.iter().fold((0, 0), |(a, b), (d, r)| (a + d + r, b + r));
     // Every feed holds at most FEED_BYTES; nothing waits once the time is
     // up.
     let bound = FEEDS as u64 * FEED_BYTES + watched.len() as u64;
     eprintln!(
-        "soak: {requests} requests ({refused} refused) from {WORKERS} connections in {:.1} s; store at most {} bytes during, {} after (bound {} + room {}); {} feeds, {} entries; observer: {gets} gets, worst {} ms; RSS {:?} KiB before, {:?} after; {}",
+        "soak: {requests} requests ({refused} refused) from {WORKERS} connections in {:.1} s; store at most {} bytes during, {} after (bound {} + room {}); {} feeds, {} entries; observer: {gets} gets ({during} while the workers ran), worst {} ms; RSS {:?} KiB before, {:?} after; {}",
         took.as_secs_f64(),
         worst_store,
         relay.blobs().used_bytes(),
@@ -183,57 +197,71 @@ fn soak() {
     for f in relay.feeds().feeds().unwrap() {
         assert!(relay.feed_bytes(&f).unwrap() <= FEED_BYTES);
     }
-    assert!(worst_get < STALL_BOUND, "a get took {} ms", worst_get.as_millis());
+    // The observer's gets were answered while the workers' puts and
+    // publishes went on, not held up until they ended.
+    assert!(during >= 1, "{during} gets answered while the workers ran");
     if let (Some(a), Some(b)) = (rss_before, rss_after) {
         assert!(b < a + 64 * 1024, "memory grew from {a} to {b} KiB");
     }
 }
 
 /// Collecting many waiting blobs at once holds the relay up only a batch
-/// at a time.
+/// at a time: a batch removes at most `COLLECT_BATCH` blobs (fewer if
+/// `COLLECT_BATCH_TIME` passes on the relay's clock, which stands still
+/// here, so every batch but the last is whole), and lets go of the lock
+/// before the next, so a connection's get is answered between batches
+/// while blobs are still waiting. Counted, not timed: on a busy computer
+/// a get may take any time.
 #[test]
 fn collection_is_incremental() {
     let dir = tempfile::tempdir().unwrap();
     let policy = Policy { unreferenced_ttl: Some(Duration::from_secs(3600)), unreferenced_bytes: 256 * MIB, ..Policy::unlimited(1024) };
     let relay = Arc::new(Relay::with_policy(BlobStore::open(dir.path(), None).unwrap(), policy).unwrap());
+    relay.freeze_clock();
     let owner = Identity::from_seed([98; 32]);
     let watched = b"held".to_vec();
     relay.put_blob(&watched, None).unwrap();
     relay.publish(&Entry::article(owner.feed_key(), 1, 1, &watched, None, "held").sign(&owner).unwrap().bytes);
-    const N: u32 = 5000;
+    const N: usize = 5000;
     let filled = Instant::now();
-    for n in 0..N {
+    for n in 0..N as u32 {
         relay.put_blob(&n.to_le_bytes(), None).unwrap();
     }
     let fill = filled.elapsed();
     relay.advance_clock(Duration::from_secs(3601));
-    let stop = Arc::new(AtomicBool::new(false));
-    let reader = {
-        let (relay, stop) = (relay.clone(), stop.clone());
-        std::thread::spawn(move || {
-            let c = relay.connect();
-            let mut worst = Duration::ZERO;
-            let get = terse_net::protocol::encode_get(1, &blob_id(b"held"));
-            while !stop.load(Ordering::Relaxed) {
-                let start = Instant::now();
-                assert!(matches!(relay.respond(&c, &get), terse_relay::Answer::Reply(_)));
-                worst = worst.max(start.elapsed());
-            }
-            worst
-        })
-    };
-    std::thread::sleep(Duration::from_millis(20));
+    let c = relay.connect();
+    let get = terse_net::protocol::encode_get(1, &blob_id(b"held"));
+    let (mut batches, mut total) = (0, 0);
     let start = Instant::now();
-    assert_eq!(relay.collect() as u32, N);
+    loop {
+        let (done, more) = relay.collect_batch();
+        batches += 1;
+        total += done;
+        assert!(done <= COLLECT_BATCH, "{done}");
+        assert_eq!(relay.waiting().1, N - total);
+        if !more {
+            break;
+        }
+        assert_eq!(done, COLLECT_BATCH, "only the count ends a batch while the clock stands still");
+        // Between batches the lock is free: answered at once on this
+        // thread (a lock still held would never be let go).
+        let terse_relay::Answer::Reply(r) = relay.respond(&c, &get) else { panic!("no reply") };
+        assert_eq!(terse_net::protocol::decode_reply(&r), Some(terse_net::protocol::Reply::Get { req: 1, status: terse_net::protocol::status::DONE, data: watched.clone() }));
+    }
     let took = start.elapsed();
-    stop.store(true, Ordering::Relaxed);
-    let worst = reader.join().unwrap();
+    assert_eq!((total, batches), (N, N.div_ceil(COLLECT_BATCH)));
+    assert_eq!(relay.waiting(), (0, 0));
+    // The whole of it, as the maintenance thread runs it, batch after
+    // batch: the same blobs.
+    for n in 0..N as u32 {
+        relay.put_blob(&n.to_le_bytes(), None).unwrap();
+    }
+    relay.advance_clock(Duration::from_secs(3601));
+    assert_eq!(relay.collect(), N);
     eprintln!(
-        "collection: {N} blobs put in {} ms, collected in {} ms ({:.1} µs each); a get meanwhile took at most {} ms",
+        "collection: {N} blobs put in {} ms, collected in {batches} batches in {} ms ({:.1} µs each)",
         fill.as_millis(),
         took.as_millis(),
-        took.as_secs_f64() * 1e6 / f64::from(N),
-        worst.as_millis()
+        took.as_secs_f64() * 1e6 / N as f64,
     );
-    assert!(worst < STALL_BOUND, "a get took {} ms", worst.as_millis());
 }

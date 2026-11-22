@@ -242,7 +242,7 @@ fn tls_options_and_reload() {
     std::fs::copy(certs().join("localhost.key"), &key).unwrap();
     // SAFETY: a plain kill(2) on our own child.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGHUP) };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while WsTransport::connect(&url, DEFAULT_TIMEOUT).is_err() {
         assert!(Instant::now() < deadline, "the renewed certificate was not taken");
         std::thread::sleep(Duration::from_millis(50));

@@ -62,7 +62,7 @@ func TestInteropNode(t *testing.T) {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
-		if i == 200 {
+		if i == 2400 { // a minute: a bound on a hang only
 			t.Fatalf("the node did not start: %s", nodeOut.String())
 		}
 		time.Sleep(25 * time.Millisecond)

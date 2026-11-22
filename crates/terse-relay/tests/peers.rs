@@ -135,12 +135,17 @@ fn no_storm_in_a_triangle() {
         replies.len() == 2
     });
     wait_until("the entry everywhere", || relays.iter().all(|r| r.relay.feeds().seqs(&author.feed_key()).unwrap() == [1]));
-    std::thread::sleep(Duration::from_millis(500));
-    let sent: Vec<usize> = kinds.iter().zip(&before).map(|(&k, b)| count(k) - b).collect();
-    eprintln!("peer messages for one put and one publish (put, put reply, publish, publish reply, entry): {sent:?}");
     // Each relay sends what it newly stored to the peers it did not get it
     // from: A to B and C; B and C each to the other; the second copy is a
-    // duplicate and goes no further.
-    assert_eq!(sent, [4, 4, 4, 4, 0]);
+    // duplicate and goes no further. The copies and their replies are
+    // waited for (on a busy computer the last reply may come late); then a
+    // storm, which would only add messages, is given half a second to show.
+    let want = [4, 4, 4, 4, 0];
+    let sent = || -> Vec<usize> { kinds.iter().zip(&before).map(|(&k, b)| count(k) - b).collect() };
+    wait_until("the copies and their replies", || sent().iter().zip(&want).all(|(s, w)| s >= w));
+    std::thread::sleep(Duration::from_millis(500));
+    let sent = sent();
+    eprintln!("peer messages for one put and one publish (put, put reply, publish, publish reply, entry): {sent:?}");
+    assert_eq!(sent, want);
     assert!(replies.iter().all(|(_, r)| matches!(r, terse_net::relay::RelayReply::Put(_) | terse_net::relay::RelayReply::Done)));
 }

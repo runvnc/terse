@@ -13,7 +13,6 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use terse_core::{Outcome, Request, RequestKind};
-use terse_net::relay::DEFAULT_TIMEOUT;
 use terse_net::{BlobStore, ContentService, Node};
 
 const FRAMES: &str = "140";
@@ -80,25 +79,31 @@ fn reading_profile() {
 /// spec/content.md §content.submit: a get of a held blob and a timeline
 /// request complete without waiting on the network. The only relay
 /// accepts the TCP connection and never answers the WebSocket handshake,
-/// so anything that waited for it would wait for the connect timeout
-/// (10 s); both requests finish long before.
+/// and the node gives it an hour, so anything that waited for it would
+/// wait an hour; both requests finish (within a minute, a bound on a hang
+/// only).
 #[test]
 fn held_content_does_not_wait_for_a_silent_relay() {
     let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("ws://{}", silent.local_addr().unwrap());
     let store = tempfile::tempdir().unwrap();
     let id = BlobStore::open(store.path(), None).unwrap().put(b"held here").unwrap();
-    let node = Node::open(Some(store.path().to_path_buf()), &[url], DEFAULT_TIMEOUT).unwrap();
+    let node = Node::open(Some(store.path().to_path_buf()), &[url], Duration::from_secs(3600)).unwrap();
     let mut service = ContentService::start(node);
     let start = Instant::now();
     service.submit(vec![
         Request { handle: 1, kind: RequestKind::Get { id, offset: 0, length: 64 } },
         Request { handle: 2, kind: RequestKind::Timeline { offset: 0, length: 64 } },
     ]);
-    let mut done = service.wait_finished();
+    let mut done = Vec::new();
+    while done.len() < 2 {
+        assert!(start.elapsed() < Duration::from_secs(60), "held content waited for a relay that never answers: {done:?}");
+        done.extend(service.take_finished());
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let took = start.elapsed();
+    eprintln!("held content answered in {took:?}");
     done.sort_by_key(|c| c.handle);
     assert!(matches!(&done[0].outcome, Outcome::Got { data, .. } if data == b"held here"), "{done:?}");
     assert!(matches!(done[1].outcome, Outcome::Records { .. }), "{done:?}");
-    assert!(took < Duration::from_secs(5), "held content waited {took:?} for a relay that never answers");
 }

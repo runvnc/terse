@@ -451,30 +451,56 @@ fn proxy_header_and_connections() {
     assert_eq!(ws_with(&few.url, &[]).err(), Some(503));
 }
 
-/// A silent connection gets pings; a client that answers them stays
-/// connected; a graceful close closes every connection.
+/// A silent connection gets a ping each time `ping_every` passes on the
+/// relay's clock, and no more; a client that answers them stays connected;
+/// a graceful close closes every connection. The relay's clock stands
+/// still unless the test moves it.
 #[test]
 fn pings_and_close() {
-    let s = serve(Policy { ping_every: Some(Duration::from_millis(100)), ..Policy::unlimited(1024) });
+    const EVERY: Duration = Duration::from_secs(30);
+    let s = serve(Policy { ping_every: Some(EVERY), ..Policy::unlimited(1024) });
+    s.relay.freeze_clock();
     let mut ws = ws_with(&s.url, &[]).unwrap();
-    let start = Instant::now();
-    let mut pings = 0;
-    while start.elapsed() < Duration::from_millis(550) {
-        if let Ok(Message::Ping(_)) = ws.read() {
-            pings += 1;
+    // Wait (by the relay's count) for the connection's thread to be
+    // serving it before the clock moves.
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !ok() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(5));
         }
+    };
+    wait_for("the connection", &|| s.relay.connection_count() == 1);
+    for n in 1..=3 {
+        // Not yet: a request is answered, with no ping before the reply.
+        s.relay.advance_clock(EVERY - Duration::from_secs(1));
+        ws.send(Message::binary(protocol::encode_get(n, &blob_id(b"none")))).unwrap();
+        assert!(matches!(ws.read().unwrap(), Message::Binary(_)), "a reply, not a ping");
+        // The reply counts as something sent: a whole period after it, a
+        // ping; then nothing until the next period (the next request's
+        // reply comes first).
+        s.relay.advance_clock(EVERY);
+        assert!(matches!(ws.read().unwrap(), Message::Ping(_)));
+        wait_for("the count", &|| s.relay.pings_sent() == n as usize);
     }
-    assert!((3..=6).contains(&pings), "{pings} pings");
-    // The ordinary client answers them and goes on working.
+    // The ordinary client gets one too, answers it and goes on working.
     let mut client = RelayClient::websocket(&s.url, DEFAULT_TIMEOUT);
     client.connect().unwrap();
-    std::thread::sleep(Duration::from_millis(400));
-    let req = client.put(b"after pings");
-    let mut got = Vec::new();
-    while got.is_empty() {
-        got = client.poll();
-    }
-    assert_eq!(got, [(req, terse_net::relay::RelayReply::Put(blob_id(b"after pings")))]);
+    let mut put = |data: &[u8]| {
+        let req = client.put(data);
+        let mut got = Vec::new();
+        while got.is_empty() {
+            got = client.poll();
+        }
+        assert_eq!(got, [(req, terse_net::relay::RelayReply::Put(blob_id(data)))]);
+    };
+    // A reply on it: its connection is being served, its period started.
+    put(b"before pings");
+    s.relay.advance_clock(EVERY);
+    // A ping on each connection.
+    wait_for("the pings", &|| s.relay.pings_sent() == 5);
+    assert!(matches!(ws.read().unwrap(), Message::Ping(_)));
+    put(b"after pings");
     s.relay.close();
     loop {
         match ws.read() {
@@ -560,7 +586,13 @@ fn mirrors() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(a.relay.feeds().seqs(&ana.feed_key()).unwrap(), [2, 3], "the peer dropped the first");
-    std::thread::sleep(Duration::from_millis(200));
+    // Bo's entry reaches the mirror and is refused there.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while b.relay.refused(Reason::NotWriter) == 0 {
+        assert!(Instant::now() < deadline, "bo's entry never reached the mirror");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(b.relay.refused(Reason::NotWriter), 1);
     assert!(b.relay.feeds().seqs(&bo.feed_key()).unwrap().is_empty(), "not on the mirror's list");
     assert!(b.relay.blobs().read(&blob_id(&[1; 10])).unwrap().is_some(), "the mirror keeps it");
     let _ = IpAddr::from([127, 0, 0, 1]);

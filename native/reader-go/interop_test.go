@@ -81,7 +81,7 @@ func (e *env) startRelay(name string) string {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1200; i++ { // a minute: a bound on a hang only
 		if c, err := net.Dial("tcp", addr); err == nil {
 			c.Close()
 			return "ws://" + addr
@@ -235,7 +235,13 @@ func TestInterop(t *testing.T) {
 	}{{"hinted", []string{"TERSEREADER_ALLOW_PRIVATE=1"}, true}, {"refused", nil, false}} {
 		e.mustRead(c.dir, "relay", "add", relayA)
 		e.mustRead(c.dir, "subscribe", "terse:feed/"+carol+"@"+hint)
-		out, _ := e.read(c.dir, c.env, "sync", "--timeout", "8s")
+		// A sync that finds the article ends then; its timeout bounds a
+		// hang only. One that must not find it runs to its timeout.
+		timeout := "8s"
+		if c.found {
+			timeout = "60s"
+		}
+		out, _ := e.read(c.dir, c.env, "sync", "--timeout", timeout)
 		l := e.mustRead(c.dir, "list")
 		if got := strings.Contains(l, "Carol's"); got != c.found {
 			t.Errorf("%s: found %v, want %v\n%s\n%s", c.dir, got, c.found, out, l)

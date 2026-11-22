@@ -377,9 +377,21 @@ pub fn session_dir() -> Result<std::path::PathBuf, String> {
 mod tests {
     use super::*;
 
+    /// A thread's time on a CPU plus its time waiting for one, in ns, where
+    /// the system says both (Linux with schedstats): the time it was not
+    /// blocked.
+    fn unblocked_ns(probe: &mut terse_perflog::probe::ProcProbe) -> Option<u64> {
+        probe.has_wait().then(|| probe.sample()).flatten().map(|s| s.run_ns + s.wait_ns)
+    }
+
     /// Packets go both ways through a bus file, sleeping and spinning,
     /// each end sleeping on the address (where the system has one) or on
-    /// the socket, in every combination.
+    /// the socket, in every combination. A lost wake costs a whole nap
+    /// with both ends blocked; a busy computer only makes an end wait for
+    /// a CPU. So where the system says how long each thread waited for a
+    /// CPU, a round trip counts as a nap only if, of its time, what neither
+    /// end spent on a CPU or waiting for one is most of a nap; elsewhere
+    /// its wall time is all there is to go by.
     #[test]
     fn shared_memory_hand_over() {
         for (core_socket, driver_socket) in [(false, false), (true, true), (false, true), (true, false)] {
@@ -398,35 +410,62 @@ mod tests {
             let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Spin { max: Duration::from_micros(200), adaptive: true }, b).unwrap();
             d.sleep_on_socket = driver_socket;
             let driver = std::thread::spawn(move || {
+                let mut probe = terse_perflog::probe::ProcProbe::this_thread();
                 for i in 0..1000 {
                     // Now and then the core is slow, so that this end sleeps.
                     let p = d.recv().unwrap().to_vec();
-                    let reply: Vec<u8> = p.iter().map(|x| x.wrapping_add(1)).collect();
+                    let mut reply: Vec<u8> = p.iter().map(|x| x.wrapping_add(1)).collect();
                     if i % 100 == 0 {
                         std::thread::sleep(Duration::from_millis(2));
                     }
+                    // How long this end has not been blocked, so far.
+                    reply.extend(unblocked_ns(&mut probe).unwrap_or(u64::MAX).to_le_bytes());
                     d.send(&reply).unwrap();
                 }
                 // The core goes: the next wait says so.
                 assert!(d.recv().is_err());
             });
-            let mut napped = 0;
+            let mut probe = terse_perflog::probe::ProcProbe::this_thread();
+            let readings = probe.has_wait();
+            let mut driver_before: Option<u64> = None;
+            let (mut napped, mut slow) = (0, 0);
             for i in 0..1000u32 {
                 if i % 100 == 50 {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 let p = i.to_le_bytes();
+                let core_before = unblocked_ns(&mut probe);
                 let start = Instant::now();
                 core.send(&p).unwrap();
                 let r = core.recv().unwrap();
-                assert_eq!(r, p.map(|x| x.wrapping_add(1)));
-                if start.elapsed() >= NAP - Duration::from_millis(5) {
+                let took = start.elapsed();
+                assert_eq!(r[..4], p.map(|x| x.wrapping_add(1)));
+                let driver_now = u64::from_le_bytes(r[4..12].try_into().unwrap());
+                // Where the system says: the time neither end was on a CPU
+                // or waiting for one (the first round trip has no
+                // reading of the driver's to start from, and is not judged).
+                let both_blocked = match (core_before, unblocked_ns(&mut probe), driver_before) {
+                    (Some(a), Some(b), Some(d)) if driver_now != u64::MAX => {
+                        let unblocked = (b - a) + driver_now.saturating_sub(d);
+                        Some(Duration::from_nanos((took.as_nanos() as u64).saturating_sub(unblocked)))
+                    }
+                    _ if readings => None,
+                    _ => Some(took),
+                };
+                driver_before = Some(driver_now).filter(|&d| d != u64::MAX);
+                if took >= NAP - Duration::from_millis(5) {
+                    slow += 1;
+                }
+                if both_blocked.is_some_and(|b| b >= NAP - Duration::from_millis(5)) {
                     napped += 1;
                 }
             }
             // The sleeps (about 20) were woken: a lost wake would have cost
-            // a whole nap. A few slow round trips are a busy computer.
-            assert!(napped < 5, "core {core_socket}, driver {driver_socket}: {napped} round trips took a nap");
+            // a whole nap with both ends blocked. Without the readings, a
+            // few round trips as long as a nap are a busy computer.
+            eprintln!("core {core_socket}, driver {driver_socket}: {slow} round trips as long as a nap, {napped} judged naps");
+            let allowed = if readings { 0 } else { 4 };
+            assert!(napped <= allowed, "core {core_socket}, driver {driver_socket}: {napped} round trips took a nap");
             drop(core.socket.shutdown(std::net::Shutdown::Both));
             drop(core);
             driver.join().unwrap();

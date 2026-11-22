@@ -49,6 +49,9 @@ fn lookup_answers_and_rate_limit() {
     program(&r, &author, 1, b"v1", "tool");
     program(&r, &author, 2, b"other", "other");
     program(&r, &author, 3, b"v2", "tool");
+    // The relay's clock moves only when the test moves it: the lookups and
+    // finds below are in one second however slowly they are sent.
+    r.freeze_clock();
     let url = serve(r.clone());
     let mut client = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
     client.connect().unwrap();
@@ -59,11 +62,11 @@ fn lookup_answers_and_rate_limit() {
     let e = entry::decode(bytes).unwrap().entry;
     assert_eq!((e.seq, e.blob), (3, blob_id(b"v2")));
     assert_eq!(got[1..], [RelayReply::NotFound, RelayReply::NotFound]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    r.advance_clock(std::time::Duration::from_secs(1));
     let reqs = vec![client.lookup(&key, 1, b"tool"), client.lookup(&key, 3, b" tool")];
     let refused = RelayReply::Refused(terse_net::protocol::Refusal::Unspecified);
     assert_eq!(ask(&mut client, reqs), [refused.clone(), refused]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    r.advance_clock(std::time::Duration::from_secs(1));
     let mut reqs: Vec<u32> = (0..3).map(|_| client.lookup(&key, 3, b"other")).collect();
     reqs.push(client.find(SCOPE_ENTRIES, b"x"));
     reqs.push(client.lookup(&key, 3, b"other"));
