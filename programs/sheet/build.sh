@@ -27,4 +27,4 @@ cflags="--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32 -Os -ffreestandi
 "${CLANG:-clang}" $cflags -c "$lib/terse.c" -o 2.o
 "${LLD:-ld.lld}" -T "$lib/terse.ld" --gc-sections 0.o 1.o 2.o -o out.elf
 "${OBJCOPY:-llvm-objcopy}" -O binary out.elf sheet.bin
-terse pack --rom sheet.bin --title sheet --ram-pages 34 --device 7:0 --optional 3:0 --optional 4:0 -o "$out/sheet.terse"
+terse pack --rom sheet.bin --title sheet --ram-pages 34 --device 7:0 --optional 2:0 --optional 3:0 --optional 4:0 -o "$out/sheet.terse"

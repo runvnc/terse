@@ -117,8 +117,9 @@ typedef uint64_t u64;
 #define FMT_NAME_LEN 5
 #define HEAD (TDOC_HEAD + FMT_NAME_LEN)
 #define SCALE 10000
-#define WORK_PER_FRAME 1200
-#define LOAD_BYTES 1024
+#define WORK_PER_FRAME 1000
+#define PARSE_WORK 1000
+#define PARSE_CELL 16
 #define SAVE_ROWS 6
 #define BARS_MAX 32
 #define CHART_H 90
@@ -192,13 +193,26 @@ static const uint8_t fn_max[FN_N] = { 30, 30, 30, 30, 30, 2, 1, 3 };
 static uint8_t pool[POOL];
 static uint32_t pool_used;
 static uint16_t c_off[NCELLS]; /* the text's offset in the pool */
-static uint8_t c_rlen[NCELLS], c_clen[NCELLS], c_flag[NCELLS];
-static uint8_t c_kind[NCELLS], c_state[NCELLS];
+static uint8_t c_rlen[NCELLS] __attribute__((aligned(4))), c_clen[NCELLS] __attribute__((aligned(4))),
+    c_flag[NCELLS] __attribute__((aligned(4)));
+static uint8_t c_kind[NCELLS] __attribute__((aligned(4))), c_state[NCELLS] __attribute__((aligned(4)));
 static i64 c_val[NCELLS];
 static uint8_t c_disp[NCELLS][DISP_MAX];
-static uint8_t c_dlen[NCELLS];
+static uint8_t c_dlen[NCELLS] __attribute__((aligned(4)));
 
 static uint16_t idx(uint32_t r, uint32_t c) { return (uint16_t)(r * NCOLS + c); }
+
+/* Zeroes n bytes at a word-aligned p, a word at a time (the library's
+ * memset goes a byte at a time). */
+static void zero(void *p, uint32_t n)
+{
+    uint32_t *w = p;
+    uint8_t *b;
+    for (; n >= 16; n -= 16, w += 4)
+        w[0] = w[1] = w[2] = w[3] = 0;
+    for (b = (uint8_t *)w; n; n--)
+        *b++ = 0;
+}
 
 /* --- Numbers -------------------------------------------------------------- */
 
@@ -364,17 +378,24 @@ static uint32_t format_num(i64 v, int pct, uint32_t width, uint8_t *out)
     if (pct && !mul_fix(v, 100 * SCALE, &v))
         pct = 0;
     m = mag(v);
-    for (try = 0; try < 3; try++) {
+    /* Tries: as it is; to 2 places; to none; without separators. */
+    for (try = 0; try < 4; try++) {
         u64 ip = divs(m, SCALE, &frac);
         n = 0;
-        if (try > 0) {
+        if (try == 1) {
+            frac = (frac + 50) / 100 * 100;
+            if (frac == SCALE) {
+                ip++;
+                frac = 0;
+            }
+        } else if (try > 1) {
             if (2 * frac >= SCALE)
                 ip++;
             frac = 0;
         }
         if (v < 0 && (ip || frac))
             buf[n++] = '-';
-        n += put_int(ip, try < 2, buf + n);
+        n += put_int(ip, try < 3, buf + n);
         if (frac) {
             uint8_t f[4];
             uint32_t k = 4;
@@ -393,7 +414,7 @@ static uint32_t format_num(i64 v, int pct, uint32_t width, uint8_t *out)
         if (!width || est_width(buf, n) <= width)
             break;
     }
-    if (try == 3) {
+    if (try == 4) {
         memcpy(out, "####", 4);
         return 4;
     }
@@ -859,6 +880,9 @@ static uint8_t compile(const uint8_t *p, uint32_t n, i64 *val)
 /* --- The pool ------------------------------------------------------------- */
 
 static uint8_t dirty_all; /* a recalculation is wanted */
+/* How many formulas each row holds: the scans for them skip the rows
+ * without any. */
+static uint8_t row_f[NROWS] __attribute__((aligned(4)));
 
 /* Moves the live blocks down over the dead ones. The string values of
  * formulas point into the pool, so everything is recalculated after. */
@@ -915,6 +939,8 @@ static int set_cell(uint16_t i, const uint8_t *p, uint32_t n)
         size = 4; /* room for a dead block's size */
     if (n && pool_used + size > POOL) {
         free_block(i);
+        if (c_flag[i] & F_FORMULA)
+            row_f[i / NCOLS]--;
         c_rlen[i] = c_flag[i] = c_kind[i] = c_dlen[i] = 0;
         c_state[i] = S_CLEAN;
         compact();
@@ -922,6 +948,10 @@ static int set_cell(uint16_t i, const uint8_t *p, uint32_t n)
             return 0;
     } else
         free_block(i);
+    if (c_flag[i] & F_FORMULA)
+        row_f[i / NCOLS]--;
+    if (flag & F_FORMULA)
+        row_f[i / NCOLS]++;
     c_flag[i] = flag;
     c_rlen[i] = (uint8_t)n;
     c_clen[i] = (uint8_t)clen;
@@ -1065,7 +1095,7 @@ static value power(i64 x, i64 y)
     if (frac || m > 64)
         return err(E_NUM);
     while (m--) {
-        work++;
+        work += 20;
         if (!mul_fix(r, x, &r))
             return err(E_NUM);
     }
@@ -1125,7 +1155,7 @@ static value aggregate(uint8_t f, value *a, uint32_t n)
         for (r = r0; r <= r1; r++)
             for (c = c0; c <= c1; c++) {
                 value y = x;
-                work++;
+                work += 3;
                 if (x.k == K_RANGE) {
                     y = cell_value(idx(r, c));
                     if (y.k == K_ERR && f != FN_COUNT)
@@ -1161,7 +1191,7 @@ static value aggregate(uint8_t f, value *a, uint32_t n)
     default:
         if (!count)
             return err(E_DIV);
-        work += 40;
+        work += 120;
         return div_fix(sum, count, &sum) ? num(sum) : err(E_NUM);
     }
 }
@@ -1172,12 +1202,13 @@ static value evaluate(uint16_t i)
     value st[STACK_MAX];
     uint32_t sp = 0, pc = 0, n;
     const uint8_t *p = code_of(i, &n);
+    work += 8;
     if (c_flag[i] & F_BAD)
         return err((uint8_t)c_val[i]);
     while (pc < n) {
         uint8_t op = p[pc], e = 0;
         value a, b;
-        work++;
+        work += 2;
         if (sp + 1 >= STACK_MAX)
             return err(E_ERR);
         switch (op) {
@@ -1258,12 +1289,12 @@ static value evaluate(uint16_t i)
                         e = E_NUM;
                     break;
                 case OP_MUL:
-                    work += 4;
+                    work += 20;
                     if (!mul_fix(x, y, &r))
                         e = E_NUM;
                     break;
                 case OP_DIV:
-                    work += 40;
+                    work += 120;
                     if (!y)
                         e = E_DIV;
                     else if (!div_fix(x, y, &r))
@@ -1299,10 +1330,12 @@ static uint8_t doc_dirty, vec_dirty, chart_dirty;
 
 static void start_recalc(void)
 {
-    uint32_t i;
-    for (i = 0; i < NCELLS; i++)
-        if (c_flag[i] & F_FORMULA)
-            c_state[i] = S_DIRTY;
+    uint32_t r, i;
+    for (r = 0; r < NROWS; r++)
+        if (row_f[r])
+            for (i = r * NCOLS; i < r * NCOLS + NCOLS; i++)
+                if (c_flag[i] & F_FORMULA)
+                    c_state[i] = S_DIRTY;
     rsp = rscan = 0;
     recalcing = 1;
     dirty_all = 0;
@@ -1310,10 +1343,12 @@ static void start_recalc(void)
 
 static void set_result(uint16_t i, value v)
 {
-    work += 12; /* formatting the value */
+    c_state[i] = S_CLEAN;
+    if (c_kind[i] == v.k && c_val[i] == v.v && v.k != K_STR)
+        return; /* shown as it was */
+    work += 48; /* formatting the value */
     c_kind[i] = v.k;
     c_val[i] = v.v;
-    c_state[i] = S_CLEAN;
     update_disp(i);
 }
 
@@ -1324,6 +1359,7 @@ static int need(uint16_t d)
     if (!(c_flag[d] & F_FORMULA) || c_state[d] == S_CLEAN)
         return 0;
     if (c_state[d] == S_DIRTY) {
+        work += 4;
         c_state[d] = S_BUSY;
         rs_cell[rsp] = d;
         rs_pc[rsp] = 0;
@@ -1347,9 +1383,13 @@ static void recalc_step(void)
     while (work < WORK_PER_FRAME) {
         if (!rsp) {
             while (rscan < NCELLS && c_state[rscan] != S_DIRTY) {
-                rscan++;
-                if (!(rscan & 15))
-                    work++;
+                if (work >= WORK_PER_FRAME)
+                    return;
+                if (!(rscan % NCOLS) && !row_f[rscan / NCOLS])
+                    rscan += NCOLS;
+                else
+                    rscan++;
+                work++;
             }
             if (rscan == NCELLS) {
                 recalcing = 0;
@@ -1365,7 +1405,7 @@ static void recalc_step(void)
         int pushed = 0;
         while (rs_pc[t] < n) {
             const uint8_t *o = p + rs_pc[t];
-            work++;
+            work += 2;
             if (*o == OP_REF) {
                 int r = need(idx(o[1], o[2]));
                 if (r) {
@@ -1376,7 +1416,7 @@ static void recalc_step(void)
                 uint32_t w = o[4] - o[2] + 1, count = (o[3] - o[1] + 1) * w;
                 while (rs_ri[t] < count) {
                     uint32_t k = rs_ri[t];
-                    work++;
+                    work += 2;
                     if (need(idx(o[1] + k / w, o[2] + k % w))) {
                         pushed = 1;
                         break;
@@ -2028,7 +2068,7 @@ static uint8_t tmp[RAW_MAX];
  * much, so a block pastes once and a row or column fills by repeating.
  * Where the target overlaps the source, the order reads every source
  * cell before it is written. A clear empties the target. */
-#define JOB_CELLS 12
+#define JOB_CELLS 6
 enum { JOB_NONE, JOB_COPY, JOB_CLEAR };
 static uint8_t job, job_full;
 static uint32_t js_r0, js_c0, js_h, js_w, jt_r0, jt_c0, jt_h, jt_w, j_at;
@@ -2140,16 +2180,19 @@ static uint8_t arg[32];
 static char title[121];
 static uint32_t title_len;
 
-/* Reading the saved form at fdata[0..flen), LOAD_BYTES a frame. */
-static uint32_t parse_at, parse_row;
+/* Reading the saved form at fdata[0..flen), PARSE_WORK a frame. */
+static uint32_t parse_at, parse_row, parse_col;
 static uint8_t parsing, cut;
 
 static void clear_sheet(void)
 {
-    for (uint32_t i = 0; i < NCELLS; i++) {
-        c_rlen[i] = c_clen[i] = c_flag[i] = c_kind[i] = c_dlen[i] = 0;
-        c_state[i] = S_CLEAN;
-    }
+    zero(c_rlen, sizeof c_rlen);
+    zero(c_clen, sizeof c_clen);
+    zero(c_flag, sizeof c_flag);
+    zero(c_kind, sizeof c_kind);
+    zero(c_dlen, sizeof c_dlen);
+    zero(c_state, sizeof c_state);
+    zero(row_f, sizeof row_f);
     pool_used = 0;
     chart_kind = 0;
     recalcing = 0;
@@ -2162,7 +2205,7 @@ static void clear_sheet(void)
 static void start_parse(void)
 {
     clear_sheet();
-    parse_at = parse_row = 0;
+    parse_at = parse_row = parse_col = 0;
     parsing = 1;
     cut = 0;
 }
@@ -2207,36 +2250,32 @@ static void parse_chart(const uint8_t *p, uint32_t n)
 
 static void parse_step(void)
 {
-    uint32_t budget = LOAD_BYTES;
-    while (parse_at < flen && budget) {
-        uint32_t end = parse_at;
-        while (end < flen && fdata[end] != '\n')
-            end++;
-        uint32_t len = end - parse_at;
-        const uint8_t *line = fdata + parse_at;
-        if (len && line[len - 1] == '\r')
+    int32_t budget = PARSE_WORK;
+    while (parse_at < flen && budget > 0) {
+        uint32_t e = parse_at, len;
+        while (e < flen && fdata[e] != '\t' && fdata[e] != '\n')
+            e++;
+        len = e - parse_at;
+        if (len && (e == flen || fdata[e] == '\n') && fdata[e - 1] == '\r')
             len--;
-        if (len && line[0] == 0x0C)
-            parse_chart(line + 1, len - 1);
-        else if (parse_row < NROWS) {
-            uint32_t c = 0, s = 0, i;
-            for (i = 0; i <= len; i++)
-                if (i == len || line[i] == '\t') {
-                    if (c < NCOLS && i > s) {
-                        if (i - s > RAW_MAX)
-                            cut = 1;
-                        if (!set_cell(idx(parse_row, c), line + s, i - s))
-                            cut = 1;
-                    } else if (c >= NCOLS && i > s)
-                        cut = 1;
-                    c++;
-                    s = i + 1;
-                }
-            parse_row++;
+        if (!parse_col && len && fdata[parse_at] == 0x0C)
+            parse_chart(fdata + parse_at + 1, len - 1);
+        else if (parse_row < NROWS && parse_col < NCOLS) {
+            if (len > RAW_MAX)
+                cut = 1;
+            if (len && !set_cell(idx(parse_row, parse_col), fdata + parse_at, len))
+                cut = 1;
         } else if (len)
             cut = 1;
-        budget = len + 1 >= budget ? 0 : budget - len - 1;
-        parse_at = end + 1;
+        /* About what reading and showing a cell costs, in work units. */
+        budget -= (int32_t)(PARSE_CELL + len);
+        if (e < flen && fdata[e] == '\t')
+            parse_col++;
+        else {
+            parse_row++;
+            parse_col = 0;
+        }
+        parse_at = e + 1;
     }
     if (parse_at >= flen) {
         parsing = 0;
@@ -2359,7 +2398,7 @@ static void load_chunk(void)
 static const char example[] =
     "Estimate\n"
     "Item\tQty\tPrice\tAmount\n"
-    "Fence panels\t12\t45.50\t=B3*C3\n"
+    "Panels\t12\t45.50\t=B3*C3\n"
     "Posts\t13\t18.75\t=B4*C4\n"
     "Concrete\t13\t6.20\t=B5*C5\n"
     "Labour (h)\t16\t38\t=B6*C6\n"
@@ -2631,10 +2670,37 @@ static void pointer(const terse_event *e)
 
 static int busy(void) { return loading || parsing || head_h || job; }
 
+/* Input that arrives while the sheet is loading or a copy runs waits here. */
+#define HELD_MAX 128
+static terse_event held[HELD_MAX];
+static uint32_t held_n, held_at;
+
+static void input(const terse_event *ev)
+{
+    if (ev->type == EV_KEY_DOWN)
+        key(ev->a, ev->b);
+    else if (ev->type == EV_TEXT) {
+        if (!editing) {
+            new_armed = 0;
+            start_edit(0);
+        }
+        insert_cp(EV_TEXT_CP(*ev));
+    } else if (ev->type == EV_POINTER)
+        pointer(ev);
+    else if (ev->type == EV_WHEEL) {
+        int32_t t = (int32_t)top + 3 * EV_WHEEL_Y(*ev), max = NROWS - (int32_t)vrows();
+        top = (uint32_t)(t < 0 ? 0 : t > max ? max : t);
+        doc_dirty = 1;
+    }
+}
+
 int main(void)
 {
     page_region(0, 0, 640, 480);
     page_background(255, 255, 255, 255);
+    /* The terminal is not used: its cursor would show over the page. */
+    if (terse_has_device(2))
+        term_cmd(TERM_CURSOR_OFF);
     has_vec = terse_has_device(3);
     keeps = terse_has_device(4);
     default_geometry();
@@ -2667,24 +2733,17 @@ int main(void)
                     located(&place);
                 continue;
             }
-            if (busy())
-                continue;
-            if (ev.type == EV_KEY_DOWN)
-                key(ev.a, ev.b);
-            else if (ev.type == EV_TEXT) {
-                if (!editing) {
-                    new_armed = 0;
-                    start_edit(0);
-                }
-                insert_cp(EV_TEXT_CP(ev));
-            } else if (ev.type == EV_POINTER)
-                pointer(&ev);
-            else if (ev.type == EV_WHEEL) {
-                int32_t t = (int32_t)top + 3 * EV_WHEEL_Y(ev), max = NROWS - (int32_t)vrows();
-                top = (uint32_t)(t < 0 ? 0 : t > max ? max : t);
-                doc_dirty = 1;
+            if (ev.type == EV_KEY_DOWN || ev.type == EV_TEXT || ev.type == EV_POINTER || ev.type == EV_WHEEL) {
+                /* Kept in order until the sheet is free for them. */
+                if (held_n < HELD_MAX)
+                    held[held_n++] = ev;
             }
         }
+        /* At most 8 a frame, as a host spreads a paste. */
+        for (uint32_t k = 0; k < 8 && held_at < held_n && !busy(); k++)
+            input(&held[held_at++]);
+        if (held_at == held_n)
+            held_at = held_n = 0;
         if (parsing)
             parse_step();
         else if (job)
@@ -2697,7 +2756,7 @@ int main(void)
         }
         if (saving && !recalcing && serialize_step())
             finish_save();
-        if (doc_dirty && !parsing && !loading) {
+        if (doc_dirty && !parsing && !loading && !job) {
             doc_dirty = 0;
             build_doc();
         }

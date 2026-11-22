@@ -123,7 +123,7 @@ impl Run {
         let image = Image::parse(IMAGE).unwrap();
         let (m, content) = match grants {
             Some(g) => {
-                let has_content = g.0.get(1).copied().unwrap_or(false);
+                let has_content = g.0.get(2).copied().unwrap_or(false);
                 let content = has_content.then(|| ContentService::start_with_consent(node, consent));
                 (Machine::with_grants(&image, g), content)
             }
@@ -183,7 +183,7 @@ impl Run {
     fn grid(&self) -> BTreeMap<String, String> {
         let l = self.layout();
         let mut out = BTreeMap::new();
-        let head = l.lines.iter().position(|l| l.spans.iter().any(|s| s.style.anchor == 2000)).expect("the header row");
+        let Some(head) = l.lines.iter().position(|l| l.spans.iter().any(|s| s.style.anchor == 2000)) else { return out };
         // The header's cells are lines at the same height.
         let y = l.lines[head].y;
         let letters: Vec<(u32, String)> =
@@ -261,7 +261,7 @@ fn the_example_is_an_estimate_with_a_chart() {
         ("A1", "Estimate"),
         ("A2", "Item"),
         ("D2", "Amount"),
-        ("A3", "Fence p…"),
+        ("A3", "Panels"),
         ("D3", "546"),
         ("D4", "243.75"),
         ("D5", "80.60"),
@@ -281,7 +281,7 @@ fn the_example_is_an_estimate_with_a_chart() {
     // The chart: a figure across the page, then the labels and values.
     assert_eq!(run.figures(), vec![(640, 90)]);
     let text: String = run.layout().lines.iter().map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>() + "\n").collect();
-    assert!(text.contains("PostsConcreteLabour (h)Delivery"), "{text}");
+    assert!(text.contains("Posts\nConcrete\nLabour (h)\nDelivery\n"), "{text}");
     // The example in the program is programs/sheet/estimate.tsv.
     let rom = &Image::parse(IMAGE).unwrap().rom;
     assert!(rom.windows(ESTIMATE.len()).any(|w| w == ESTIMATE.as_bytes()), "estimate.tsv is the example in sheet.c");
@@ -612,13 +612,13 @@ fn publishes_and_opens_a_document() {
 #[test]
 fn without_the_optional_devices() {
     let k = Keys::new().goto("E2").press("s ctrl");
-    let mut run = Run::with(&k.lines, Consent::Deny, None, Some(Grants(vec![false, false])), |_| {});
+    let mut run = Run::with(&k.lines, Consent::Deny, None, Some(Grants(vec![true, false, false])), |_| {});
     run.finish(&k);
     assert!(run.status().starts_with("No saving on this host"), "{}", run.status());
     assert_eq!(run.cell("E2"), "·");
     assert!(run.m.vector().is_none());
     let k = Keys::new().goto("D3");
-    let mut run = Run::with(&k.lines, Consent::Deny, None, Some(Grants(vec![false, true])), |_| {});
+    let mut run = Run::with(&k.lines, Consent::Deny, None, Some(Grants(vec![true, false, true])), |_| {});
     run.finish(&k);
     let l = run.layout();
     let sel = l.lines.iter().flat_map(|l| &l.spans).find(|s| s.text == "546").unwrap();
@@ -705,5 +705,53 @@ fn a_long_session_stays_within_the_budget() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["sheet/sheet.c"], true, "sheet", RAM_PAGES, &[(7, 0), (3, 0x80), (4, 0x80)]);
+    common::check_up_to_date(IMAGE, &["sheet/sheet.c"], true, "sheet", RAM_PAGES, &[(7, 0), (2, 0x80), (3, 0x80), (4, 0x80)]);
+}
+
+// TEMPORARY: page documents for timing the host's layout.
+#[test]
+fn dump_docs_tmp() {
+    let Ok(dir) = std::env::var("SHEET_DOC_DIR") else { return };
+    let mut run = Run::new(&Keys::new());
+    run.frames(8);
+    std::fs::write(format!("{dir}/example.doc"), run.m.page().unwrap().document().unwrap()).unwrap();
+    let mut tsv = String::new();
+    for r in 0..99 {
+        let cells: Vec<String> = (0..26).map(|c| if c % 2 == 0 { format!("Label {r} {c}") } else { format!("{}", (r * 26 + c) as f64 * 1234.5678) }).collect();
+        tsv += &cells.join("\t");
+        tsv.push('\n');
+    }
+    let data = tempfile::tempdir().unwrap();
+    Records::in_data_dir(data.path()).save(&owner(), b"sheet", tsv.as_bytes()).unwrap();
+    let mut run = Run::with("", Consent::Deny, Some(data.path()), None, |_| {});
+    run.frames(300);
+    std::fs::write(format!("{dir}/full.doc"), run.m.page().unwrap().document().unwrap()).unwrap();
+}
+
+// TEMPORARY: frame units of an image and script given by path.
+#[test]
+fn profile_tmp() {
+    let Ok(img) = std::env::var("SHEET_IMAGE") else { return };
+    let script = std::fs::read_to_string(std::env::var("SHEET_SCRIPT").unwrap()).unwrap();
+    let frames: u32 = std::env::var("SHEET_FRAMES").unwrap().parse().unwrap();
+    let bytes = std::fs::read(img).unwrap();
+    let image = Image::parse(&bytes).unwrap();
+    let mut m = Machine::new(&image);
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let mut node = Node::new(BlobStore::open(&store, None).unwrap(), None);
+    node.set_identity(identity());
+    let data = std::env::var("SHEET_DATA").map(PathBuf::from).unwrap_or(dir.path().join("data"));
+    node.set_records(Records::in_data_dir(&data));
+    if let Ok(tsv) = std::env::var("SHEET_TSV") {
+        Records::in_data_dir(&data).save(&Owner::Image(image.id), b"sheet", &std::fs::read(tsv).unwrap()).unwrap();
+    }
+    let mut h = Headless::new(Some(ContentService::start_with_consent(node, Consent::Deny)), Script::parse(&script).unwrap());
+    let mut line = String::new();
+    for f in 0..frames {
+        let r = h.frame(&mut m);
+        line += &format!("{f}:{} ", r.used / 1000);
+    }
+    println!("UNITS {line}");
 }
