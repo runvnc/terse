@@ -82,8 +82,8 @@ spread, from `terse perf` on a release build.
 | Machine host | R10 | The host work a frame can demand is bounded: what a machine's displays make a host draw in a frame is within the caps, counted in square screen units of ink from the lists alone (the 2D list at most 230,400, `SPEC.md` §vector.ink-cap; the 3D list at most 153,600, with its segment, face and faces × segments caps, §vector3d.caps), the terminal's 2,400 cells and the page's lines in view (its layout outside the frames, §page.layout) | square screen units; cells | `terse perf` W rows: each device's worst legal list, built to ask far more than the cap, is drawn only up to it (PASS or FAIL), and its drawing time on one thread is a target; `cargo test -p terse-core` (`vector`, `vector3`: the counts and where the lists are cut) |
 | Machine host | R11 | The frame loop never waits on finding or loading a font: every font is opened when the host starts, and no file is opened, nor any font directory read, for text after that; a glyph is rasterised on first use, at a bounded cost per glyph | files opened | `cargo test -p terse-host fonts` (the fonts are loaded from bytes the host holds: built in, or files read once at start, which the test counts); `terse perf` H2 and the W row `term-full`: the first frame of the whole full repertoire |
 | Host and devices | R13 | Every host and every device implementation states who it is: a name, a version and a build identifier (`DEVICES.md` 1.1's HELLO reply for a driver; a host's own for its built-in devices; `--version` of every program). No machine can read any of it | fields present | `cargo test -p terse-bus` (proto), `native/core-c/test.sh` (`--identities`), `native/driver-example/test.sh`, the drivers' `--version` |
-| Machine host | R14 | The host attributes each late frame to one of its components, by that component's own time (its time less the time it waited for a CPU), and keeps a record of it (`RECORD.md`) that is bounded, written off the frame loop and never sent | frames; bytes | `cargo test -p terse-perflog` (the judge, the format, `vectors/perf-record.txt`); `cargo test -p terse-devices --test slow_driver` (a blocked driver, a spinning one and a starved one) |
-| Machine host | R15 | A component that makes frames late is not tolerated: after its 3rd late frame within 60 the host warns the user and saves the machines that use it; after its 10th within 300 it saves and stops them (`SPEC.md` §stopping, stopped by the host). The host's own components are recorded and shown | late frames | `cargo test -p terse-devices --test slow_driver` (warned at the 3rd, stopped at the 10th, the snapshot restores and goes on identically, a replay stops at the same frame) |
+| Machine host | R14 | The host attributes each late frame to one of its components, by that component's own time (its time less the time it waited for a CPU), and keeps a record of it (`RECORD.md`) that is bounded, written off the frame loop and never sent | frames; bytes | `cargo test -p terse-perflog` (the judge, the format, `vectors/perf-record.txt`); `cargo test -p terse-devices --test slow_driver` (a blocked driver, a spinning one and a starved one); `cargo test -p terse-host rule watch` (terse-host's parts: each machine, `core`, `compose`, `present`, `outside`) |
+| Machine host | R15 | A component that makes frames late is not tolerated: after its 3rd late frame within 60 the host warns the user and saves the machines that use it; after its 10th within 300 it saves and stops them (`SPEC.md` §stopping, stopped by the host). The host's own components are recorded and shown | late frames | `cargo test -p terse-devices --test slow_driver` (warned at the 3rd, stopped at the 10th, the snapshot restores and goes on identically, a replay stops at the same frame); `cargo test -p terse-host` (`rule`: shed, warn, stop, starved, excused frames and their bound; `halt`: the shell shows the machine halted and restores it; `--test slow_machine`: a slow machine in a window, under a headless compositor) |
 | Machine host | R16 | A host checks at start that this computer can draw each device's worst legal frame in time, once per build and computer; where it cannot, the optional look is not offered and the device is said to be too slow here | ms (a target) | `terse-host --hardware-check`; `cargo test -p terse-host hwcheck` |
 | Machine host | R12 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut); `cargo test -p terse-devices --test pictures` (terse-bus counts the same shares, frame by frame, and draws the same plates and cut lists) |
 | Machine host | R17 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts, its own store and data directories and its hardware check's result (R16), besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes at once, and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
@@ -533,13 +533,35 @@ one over it.
   (`GetProcessTimes`: CPU time only). What a host could read is in the
   record (`readings`, `RECORD.md` 2), and what it may conclude without a
   reading is `RECORD.md` 4's.
-- *A host with built-in devices* (`terse-host`) can only time its own
-  stages: the emulation (the devices' calls within it), taking the
-  screens and drawing, presenting, and how late a frame began after its
-  tick; starvation is its frame loop thread's. This is less independent:
-  a slow device is blamed as `core` or `compose`, not by name, and one
-  stage that slows another (a lock, the caches) is not told apart. Every
-  component is the host's own: it records and shows (R15).
+- *A host with built-in devices* (`terse-host`) runs every machine and
+  every device on its frame loop thread (and draws with its renderer's
+  threads), so it times the parts of that loop, not processes:
+  - **each machine's frame**: its emulation, the calls of its built-in
+    devices within it (a vector list built, the terminal written, sound
+    mixed) and their host-side work for it after the frame (its page's
+    layouts taken in and asked for, its content requests handed over);
+  - `core`: the rest of the emulation stage (completions delivered, the
+    sound sent to the output);
+  - `compose`: taking the machines' screens and drawing the picture, the
+    renderer's threads included;
+  - `present`: acquiring the surface and presenting;
+  - `outside`: how late the frame began after its tick.
+
+  The frame loop thread's CPU time and run-queue wait are read before and
+  after each machine and each stage (Linux: schedstat; macOS: the
+  process's wait, which is at least the thread's), and the whole
+  process's wait (every thread) around the drawing. A machine's part is
+  recorded as `core` with its program as the `late` line's image: every
+  component is the host's own build. What this cannot tell apart: a
+  device's calls from the emulation of the machine making them (a device
+  slow for one machine is blamed as that machine; a device slow for every
+  machine makes each machine's frame slower, and is blamed on a machine
+  only where one machine's share is over the allowance, else `spread`),
+  and one part that slows another (a lock, the caches). The page's layout
+  runs on its own thread, outside the frames, and so does content work.
+  What a machine can ask of the drawing is bounded by its caps (R10) and
+  its share of the system ink (R12), so `compose` is never a machine's
+  doing: a slow picture is the host's drawing on this computer.
 - *Memory* is sampled every 600 frames (10 s) per process, so a leak
   shows as a trend (`terse perf log`); *start-up* is the time from the
   process's start to its first frame presented, with whether it was the
@@ -587,8 +609,56 @@ ms p50). The record's writer is a thread of its own.
    records every late frame, and never stops a machine for it
    (`RECORD.md` 4).
 4. **The host's own components** (the core, composing, presenting): a
-   host cannot stop itself usefully. It records them and shows them, as
-   for a warning.
+   host cannot stop itself usefully, and no machine is at fault. Where the
+   host can tell its own work from its machines' (`terse-host`, below) it
+   sheds first (step 1: one level of the look for each frame whose drawing
+   is blamed, instead of counting it), then warns (step 2, saving nothing:
+   no machine's work is late), and after 10 certain late frames within 300
+   with nothing left to shed **says plainly that it does not keep up on
+   this computer**: a `fail` line in the record (a report counts it as a
+   halt of that component, so against the host's build, `RECORD.md` 5.5),
+   a notice to the user and a line on standard error, again after every
+   10 more. It stops no machine: the programs did nothing wrong, and what
+   they ask of the drawing is within the caps. `outside` (the event loop
+   held elsewhere) is only warned about. terse-bus, whose own parts
+   compose the drivers' pictures, records and shows them.
+
+**In a host with built-in devices** (`terse-host`) the rule acts on the
+parts it times (R14): a machine whose frame is blamed is warned about
+(its snapshot saved at once into its automatic slot, or a machine alone's
+into `stopped-<image>.tsnp` in the record's directory) and stopped
+(halted, with device 1, the system device, or 7 or 4 when its page's or
+its content requests' host-side work was most of its frame), with the
+same counts, record lines, slots and exit status (4, for the shell or a
+machine alone) as terse-bus; with a shell, only the machine responsible
+is halted, the shell only if its own frame is. A blame is certain, and
+counts towards a stop, when the operating system said how long the
+frame loop thread waited for a CPU (and, for `compose`, the whole
+process): Linux with schedstats and macOS; on Windows a machine and the
+drawing are warned about, never stopped or failed. The rule acts in a
+window (`--perf-rule on|off`; off for a self-test unless asked), and
+`TERSE_HOST_SLOW=machine<h>:<ms>:<frame>` or `compose:<ms>:<frame>`
+makes one machine's frames or the drawing sleep, for its tests.
+
+Why say it rather than draw still less. What remains after the look is
+shed is the picture the specification requires: each machine's lists to
+their caps, its share of the system ink. Drawing less of it, or fewer
+machines, would degrade conforming programs silently and hide, from the
+user and from the reports, the failure this rule exists to expose, on a
+computer where the hardware check (R16) could have said so; halting the
+machines would punish programs that did nothing wrong. The user can act
+(a smaller window: the software renderer's cost is in proportion to the
+pixels; the GPU renderer), and the reports count it against the build.
+
+**Window events.** A frame right after the window first appears (the
+first 30), after its surface really changes size (10: a new surface,
+glyphs at the new size), after it moves to another monitor or its scale
+changes (10), and a machine's first two frames (as terse-bus never blames
+a machine's first frames) are judged and recorded with their reason
+(`excused`, `RECORD.md` 2) but not counted. At most 60 late frames within
+any 300 are excused, so continuous resizing hides at most a fifth of the
+frames: a part late in 10 of the other 240 is still stopped. A real size
+change is also recorded (`resize`). (terse-host; `rule::Excuse`.)
 
 Why these numbers: one or two late frames are a hiccup a person barely
 sees, and the frames in which a machine starts may be slow for reasons

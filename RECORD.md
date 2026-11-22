@@ -44,7 +44,10 @@ space:
   `compose` (putting the picture together), `present` (handing it to the
   display), `outside` (the frame loop's time in none of these: an event
   loop held elsewhere, a host service waited on), or `dev<n>`: the device
-  driver serving slot n (its lowest slot);
+  driver serving slot n (its lowest slot). A host with built-in devices
+  (`terse-host`) times each machine's frame apart (`PERFORMANCE.md` R14)
+  and writes it as `core`, the machine named by the line's image and, in
+  a `stop` line, its handle;
 - a **verdict** is `blamed`, `starved`, `memory` or `spread` (section 4).
 
 A reader skips blank lines, lines whose first word starts with `#`, and
@@ -59,13 +62,16 @@ of a line). The first line of every file is `terse-perf 1`.
 | `host` | name, version, build | The host's identity (R13) |
 | `env` | os, os-version, arch, cores, ram-gib, renderer, cpu | The computer: `Linux`, the kernel's release, `x86_64`, logical CPUs, GiB, the renderer (`software`, `gpu`, `auto`, `drivers`: the drivers draw, `none`), the CPU's model string |
 | `device` | component, slots, name, version, build | A device implementation: its slots (comma-separated) and identity. A host whose devices are built in writes one line for `core` with its own identity |
-| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three |
+| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three. A host with built-in devices writes `core` (its frame loop thread: its machines, `core`, `present`, `outside`) and `compose` (its whole process: the drawing's threads) |
 | `start` | ms, cold | From the process's start to its first frame presented. Cold: `build` (the first run of this build: no record of it yet), `boot` (the first since the computer or the user's session started: no marker in the runtime directory), `warm`, or `-` (unknown) |
 | `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked, its starvation, and the program it worked for most |
 | `block` | frame, ms, component, what | One wait of 100 ms or more on a component: `frame` work, `start` (a machine's first frames), `open` (starting a machine), `service` (a host service, an image fetched), `state` (a snapshot the rule took) |
 | `shed` | frame, level, why | The host shed optional work (the phosphor look, `SPEC.md` §vector.phosphor) to `level` (0 none … 3 plain lines): `late` (frames ran long), `recover`, `check` (the hardware check, R16) |
 | `warn` | frame, component, count | The host warned the user (R15): `count` late frames within the warning window |
 | `stop` | frame, component, machine, image, saved | The host stopped a machine (R15): its handle (0: the shell or a machine alone), its program, where its snapshot went: `slot<n>` (an automatic slot, `spec/machines.md` §machines.snapshots), `file`, `none` |
+| `fail` | frame, component, count | One of the host's own components (`core`, `compose`, `present`) made `count` certain late frames within the stop window with nothing left to shed and no machine to blame: the host does not keep up on this computer as it runs (R15 step 4). A report counts it as a halt of that component |
+| `excused` | frame, ms, why, component, own-ms, image | A late frame the rule did not count (`PERFORMANCE.md` R15, window events): `start` (the window's first frames), `open` (a machine's first frames), `size` (the surface's size changed), `monitor` (another monitor, or its scale); the part with the most own time and its program, as in `late`. At most 60 within any 300 frames; later late frames are `late` lines |
+| `resize` | frame, width, height, why | The picture's surface changed before this frame: `size` (its new size in pixels), `monitor` |
 | `mem` | seconds, component, rss-kib | A component's resident memory, every 600 frames (10 s) from the run's start: the host's process is `core` |
 | `check` | component, ms, result | The start-up hardware check (R16): a device's worst legal frame took this long; `ok`, `shed` (the look is not offered), `slow` (the device's worst frame takes more than a frame), `absent` (not provided) |
 | `end` | frames, late, seconds | The run ended cleanly: its frames, how many were late (also those past the late lines' cap), how long it ran |
@@ -127,9 +133,17 @@ and the `readings` lines say which were there:
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
 (no memory stall) never `memory`; on Windows (CPU time only) only
-`blamed` and `spread`. A `blamed` verdict is **certain** when the
-blamed device's `wait` and the frame loop's were both read: the time a
-busy computer took is then known not to be in its own time. Only certain
+`blamed` and `spread`. In a host with built-in devices every part is on
+the frame loop thread but the drawing: a part's starvation is that
+thread's run-queue wait while it ran, the drawing's the whole process's
+while it drew (macOS gives the process's wait for both, which is at least
+the thread's: it can only excuse more).
+
+A `blamed` verdict is **certain** when the blamed device's `wait` and
+the frame loop's were both read: the time a busy computer took is then
+known not to be in its own time. In a host with built-in devices: when
+the frame loop thread's `wait` was read (and, for `compose`, the
+process's), for a machine or the host's own part alike. Only certain
 blame counts towards stopping a machine (`PERFORMANCE.md` R15 step 3);
 uncertain blame counts towards the warning and is recorded like any
 other. `terse perf log` names the devices without a `wait` reading.
@@ -376,7 +390,8 @@ For one identity (a host, a device, a `terse perf` build) in one sample
    listed, not judged.
 3. A judged reporter **fails** the identity if R15 halted a machine for
    it (a `halt` line for one of its components; for a host, `core`,
-   `compose`, `present` or `outside`), or, for a `terse perf` build, a
+   `compose`, `present` or `outside`, a record's `fail` lines counted as
+   halts: the host did not keep up), or, for a `terse perf` build, a
    `bench` requirement or ceiling failed. Late frames judged `starved` or
    `memory` never count against anything; blamed and warned are shown,
    not failing.

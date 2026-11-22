@@ -981,9 +981,13 @@ each one's screen where the shell placed it, and routes input.
   one exact version of a program; named records are not in it. Nothing is saved
   without S yet.
 - **Halted machines** (PERFORMANCE.md R15): when a device a machine uses keeps making
-  frames late, the host (terse-bus) warns, saves the machine into its automatic
-  snapshot slot (15 + its handle, slots 16–23), and if it goes on saves it again and
-  stops it: the machine is *halted*. The bar says once "Tersenet stopped sparks:
+  frames late (terse-bus: a driver; terse-host: the machine's own share of the frame,
+  its emulation and its built-in devices' work for it), the host warns, saves the
+  machine into its automatic snapshot slot (15 + its handle, slots 16–23), and if it
+  goes on saves it again and stops it: the machine is *halted*. terse-host's own
+  drawing is never a machine's fault: it sheds the phosphor look first, then warns,
+  and with nothing left to shed says plainly that it does not keep up on this
+  computer (`terse perf log`); `--perf-rule off` only records. The bar says once "Tersenet stopped sparks:
   device 3 was too slow (state saved)"; the machine's tile shows that in words instead
   of its last picture, its bar segment says `halted`, and its launcher line explains
   it ("Tersenet stopped it: the vector display (device 3) kept making frames late. Its
