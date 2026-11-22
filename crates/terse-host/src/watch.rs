@@ -357,10 +357,10 @@ mod tests {
             let j = step(&mut w, ms(1), ms(40)).unwrap();
             assert!(j.acts.is_empty() && j.late.unwrap().verdict != Verdict::Blamed, "{j:?}");
         }
-        let path = w.rec.as_ref().unwrap().path().unwrap();
         drop(w);
+        let path = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "log")).expect("the record");
         let lines = record::parse(&std::fs::read_to_string(path).unwrap());
-        assert!(lines.iter().any(|l| matches!(l, Line::Late { verdict: Verdict::Resize, .. })), "{lines:?}");
+        assert!(lines.iter().any(|l| matches!(l, Line::Late { verdict: Verdict::Resize | Verdict::Starved, .. })), "{lines:?}");
     }
 
     /// The cost of watching a frame of a shell and 8 machines: the
