@@ -526,6 +526,7 @@ impl<D: Devices> System<D> {
                                 machine.set_in_system(true);
                                 child.identity = snapshot.identity.clone();
                                 s.identity = snapshot.identity;
+                                s.experimental = crate::machines::experimental_entries(&image, machine.grants());
                                 child.machine = Some(machine);
                                 new = Some(if run { state::RUNNING } else { state::PAUSED });
                             }
@@ -547,6 +548,7 @@ impl<D: Devices> System<D> {
                                 machine.set_identity(child.identity.clone());
                                 machine.set_in_system(true);
                                 machine.set_argument(child.argument);
+                                dev.slot_mut(h).experimental = crate::machines::experimental_entries(&image, machine.grants());
                                 child.machine = Some(machine);
                                 new = Some(if run { state::RUNNING } else { state::PAUSED });
                             }
