@@ -810,7 +810,7 @@ impl Drive {
             }
             "expect" => self.expect(&w, args, frame, probe),
             "perf" => {
-                let s = format!("frame {frame}: {} late frames, {} other slow-frame notes", self.late, self.slow.len() as u32 - self.late);
+                let s = format!("frame {frame}: {} late frames, {} other slow-frame notes", self.late, self.slow.iter().filter(|n| !n.starts_with("late frame")).count());
                 self.say(&s);
                 for n in self.slow.clone().into_iter().filter(|n| !n.starts_with("late frame")) {
                     self.say(&format!("  {n}"));
