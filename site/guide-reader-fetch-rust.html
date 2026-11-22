@@ -22,14 +22,14 @@ publish = false
 
 [dependencies]
 blake3 = &quot;1.8&quot;
-ed25519-dalek = &quot;2.2&quot;
+tersenet = &quot;0.1&quot;
 tungstenite = &quot;0.30&quot;
 
 [workspace]</pre>
 <ul>
 <li><code>tungstenite</code> is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must.</li>
 <li><code>blake3</code> is BLAKE3 by its authors; <code>blake3::hash</code> gives the 32-byte hash that is a blob&#39;s ID.</li>
-<li><code>ed25519-dalek</code> checks signatures in step 3.</li>
+<li><code>tersenet</code> is the Tersenet SDK for Rust: step 3 checks entries with it. It brings <code>curve25519-dalek</code>, the curve arithmetic under the widely used <code>ed25519-dalek</code>, and <code>sha2</code>.</li>
 </ul>
 <p>The empty <code>[workspace]</code> keeps the package apart from the Tersenet sources around it. <code>Cargo.lock</code>, beside it, pins the versions the Tersenet sources themselves use.</p>
 <h2 id="the-code">The code</h2>

@@ -51,8 +51,10 @@ func main() {
 		seq := binary.LittleEndian.Uint32(entry[32:])
 		caughtUp = seq >= highest
 		e, err := tersenet.VerifyEntry(entry)
-		if err == nil && bytes.Equal(e.Feed[:], key) && e.Kind == 1 {
-			fmt.Printf("%d  %s\n", seq, article.Visible(e.Title))
+		mine := err == nil && bytes.Equal(e.Feed[:], key)
+		if mine && e.Kind == 1 {
+			title := article.Visible(e.Title)
+			fmt.Printf("%d  %s\n", seq, title)
 			articles[seq] = e.Blob
 		}
 	}

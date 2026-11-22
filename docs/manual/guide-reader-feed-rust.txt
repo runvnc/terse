@@ -33,7 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = &message[1..];
         let seq = u32::from_le_bytes(entry[32..36].try_into()?);
         caught_up = seq >= highest;
-        let Ok(e) = tersenet::verify_entry(entry) else { continue };
+        let Ok(e) = tersenet::verify_entry(entry) else {
+            continue;
+        };
         if e.feed == key && e.kind == 1 {
             println!("{seq}  {}", article::visible(e.title));
             articles.insert(seq, e.blob);
@@ -50,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-It is 41 lines; the whole program, with `lib.rs`, `article.rs` and `relay.rs`, is 140. The entries are checked by one call to the Tersenet SDK for Rust, `tersenet::verify_entry`, named in step 2's `Cargo.toml`.
+It is 43 lines; the whole program, with `lib.rs`, `article.rs` and `relay.rs`, is 142. The entries are checked by one call to the Tersenet SDK for Rust, `tersenet::verify_entry`, named in step 2's `Cargo.toml`.
 
 ## How it works
 

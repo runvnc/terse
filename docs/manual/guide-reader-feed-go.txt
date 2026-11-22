@@ -60,8 +60,10 @@ func main() {
         seq := binary.LittleEndian.Uint32(entry[32:])
         caughtUp = seq >= highest
         e, err := tersenet.VerifyEntry(entry)
-        if err == nil && bytes.Equal(e.Feed[:], key) && e.Kind == 1 {
-            fmt.Printf("%d  %s\n", seq, article.Visible(e.Title))
+        mine := err == nil && bytes.Equal(e.Feed[:], key)
+        if mine && e.Kind == 1 {
+            title := article.Visible(e.Title)
+            fmt.Printf("%d  %s\n", seq, title)
             articles[seq] = e.Blob
         }
     }
@@ -82,7 +84,7 @@ func main() {
 }
 ```
 
-It is 73 lines; the whole program, with the `article` and `relay` packages, is 180. The entries are checked by one call to the Tersenet SDK for Go, `tersenet.VerifyEntry`, named in step 2's `go.mod`.
+It is 75 lines; the whole program, with the `article` and `relay` packages, is 182. The entries are checked by one call to the Tersenet SDK for Go, `tersenet.VerifyEntry`, named in step 2's `go.mod`.
 
 ## How it works
 

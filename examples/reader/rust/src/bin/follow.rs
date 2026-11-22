@@ -24,7 +24,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = &message[1..];
         let seq = u32::from_le_bytes(entry[32..36].try_into()?);
         caught_up = seq >= highest;
-        let Ok(e) = tersenet::verify_entry(entry) else { continue };
+        let Ok(e) = tersenet::verify_entry(entry) else {
+            continue;
+        };
         if e.feed == key && e.kind == 1 {
             println!("{seq}  {}", article::visible(e.title));
             articles.insert(seq, e.blob);

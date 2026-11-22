@@ -217,7 +217,7 @@ these devices, and `--without S` withholds one more.
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:c204c509821ac75ee6391c8729024f8fb7f1dfc6432bf0b0c1097f21d9ef0cd0)), they are what a host records per frame to
+[blobs](terse:10737fd4499db18fc44775c44cc8fb8496ad24a6e1d92387407b4498472a0a37)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.

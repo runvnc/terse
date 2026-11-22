@@ -315,6 +315,6 @@ All of that is in `native/driver-example/terminal.c`, 583 lines of C. The refere
 
 ## What you have now
 
-A device of your own, running under the reference core with the reference's hashes. Next, the same driver in Rust: [Make a device in Rust](terse:03c7bf440c24301f39a7d115e8cb477be2873393638e0462fb031e9cfe52a28e). Or mix your parts with the reference's: [Swap in your own part](terse:5923c1cec9cdee61e078fd0ba72ebd9b70dec918edfb23a4eca3f624b39c0d13).
+A device of your own, running under the reference core with the reference's hashes. Next, the same driver in Rust: [Make a device in Rust](terse:c39bcaca882a5b8c7b6b6deb5a1baa094d3bdca9f282f5a866b2348ca2ee1c18). Or mix your parts with the reference's: [Swap in your own part](terse:4f1cc09813068aa68819c77142d5a6fd6e74efda8445cedb0fea3615f3ae431b).
 
 The rules: [The terminal (device 2)](terse:1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).
