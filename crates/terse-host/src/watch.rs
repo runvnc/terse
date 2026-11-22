@@ -99,7 +99,7 @@ impl HostWatch {
             Part::new(Component::Outside, ns(late)),
         ];
         let wall = parts.iter().map(|p| p.wall_ns).sum();
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: starved, memory_stall_ns: memory };
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: starved, memory_stall_ns: memory, size_changed: false };
         let (l, actions) = self.judge.judge(&sample);
         if let Some(l) = &l {
             self.late += 1;

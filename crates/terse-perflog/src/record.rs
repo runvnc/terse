@@ -68,6 +68,10 @@ pub enum Line {
     /// `shed <frame> <level> <why>`: the host shed (or took back) optional
     /// work (`why`: `late`, `recover`, `check`).
     Shed { frame: u64, level: u32, why: String },
+    /// `resize <frame> <width> <height>`: the window's surface changed
+    /// size; the frame is the first composed at the new size (the rule
+    /// excuses the frames after it, PERFORMANCE.md R15).
+    Resize { frame: u64, width: u32, height: u32 },
     /// `warn <frame> <component> <count>`.
     Warn { frame: u64, component: Component, count: u32 },
     /// `stop <frame> <component> <machine> <image> <saved>`: the host
@@ -221,6 +225,7 @@ impl Line {
             }
             Line::Block { frame, ms, component, what } => format!("block {frame} {ms:.1} {component} {}", escape(what)),
             Line::Shed { frame, level, why } => format!("shed {frame} {level} {}", escape(why)),
+            Line::Resize { frame, width, height } => format!("resize {frame} {width} {height}"),
             Line::Warn { frame, component, count } => format!("warn {frame} {component} {count}"),
             Line::Stop { frame, component, machine, image, saved } => format!("stop {frame} {component} {machine} {} {}", escape(image), escape(saved)),
             Line::Mem { seconds, component, rss_kib } => format!("mem {seconds} {component} {rss_kib}"),
@@ -274,13 +279,14 @@ impl Line {
             },
             "block" if want(5) => Line::Block { frame: n(1)?, ms: x(2)?, component: c(3)?, what: s(4)? },
             "shed" if want(4) => Line::Shed { frame: n(1)?, level: n(2)? as u32, why: s(3)? },
+            "resize" if want(4) => Line::Resize { frame: n(1)?, width: n(2)? as u32, height: n(3)? as u32 },
             "warn" if want(4) => Line::Warn { frame: n(1)?, component: c(2)?, count: n(3)? as u32 },
             "stop" if want(6) => Line::Stop { frame: n(1)?, component: c(2)?, machine: n(3)? as u32, image: s(4)?, saved: s(5)? },
             "mem" if want(4) => Line::Mem { seconds: n(1)?, component: c(2)?, rss_kib: n(3)? },
             "check" if want(4) => Line::Check { component: c(1)?, ms: x(2)?, result: s(3)? },
             "end" if want(4) => Line::End { frames: n(1)?, late: n(2)?, seconds: n(3)? },
             "drop" if want(2) => Line::Drop(n(1)?),
-            "terse-perf" | "run" | "host" | "env" | "device" | "readings" | "start" | "late" | "block" | "shed" | "warn" | "stop" | "mem" | "check" | "end" | "drop" => return None,
+            "terse-perf" | "run" | "host" | "env" | "device" | "readings" | "start" | "late" | "block" | "shed" | "resize" | "warn" | "stop" | "mem" | "check" | "end" | "drop" => return None,
             t if !t.is_empty() && !t.starts_with('#') => Line::Other(line.to_string()),
             _ => return None,
         })
@@ -580,6 +586,8 @@ mod tests {
             Line::late(&late),
             Line::Block { frame: 3, ms: 812.0, component: Component::Device(4), what: "service".into() },
             Line::Shed { frame: 9, level: 2, why: "late".into() },
+            Line::Resize { frame: 1250, width: 1900, height: 1000 },
+            Line::Late { frame: 1251, ms: 30.2, verdict: Verdict::Resize, component: Component::Device(3), own_ms: 28.0, cpu_ms: 20.0, blocked_ms: 8.0, starved_ms: 0.0, image: String::new() },
             Line::Warn { frame: 1300, component: Component::Device(7), count: 3 },
             Line::Stop { frame: 1500, component: Component::Device(7), machine: 2, image: "abababababababab".into(), saved: "slot17".into() },
             Line::Mem { seconds: 10, component: Component::Core, rss_kib: 51_200 },

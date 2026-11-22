@@ -164,7 +164,7 @@ fn synthetic(cores: u32, ram: u32, halted: bool, start: f64) -> Report {
     r.ended = 1;
     r.start = Some(report::Start { count: 1, median_ms: start, worst_ms: start, cold: 0, cold_worst_ms: None });
     if halted {
-        r.late.push((terse_perflog::Component::Device(3), [20, 5, 0, 0]));
+        r.late.push((terse_perflog::Component::Device(3), [20, 5, 0, 0, 0]));
         r.halt.push((terse_perflog::Component::Device(3), 1));
     }
     r
