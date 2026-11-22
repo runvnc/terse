@@ -767,6 +767,9 @@ pub fn from_record(lines: &[Line], o: &Options) -> Option<Report> {
             }
             Line::Warn { component, .. } => *warn.entry(*component).or_default() += 1,
             Line::Stop { component, .. } => *halt.entry(*component).or_default() += 1,
+            // A host's own component that did not keep up with nothing left
+            // to shed counts as a halt of it (RECORD.md 2).
+            Line::Other(_) if l.as_fail().is_some() => *halt.entry(l.as_fail().unwrap().1).or_default() += 1,
             Line::Shed { why, .. } => {
                 shed_any = true;
                 match why.as_str() {

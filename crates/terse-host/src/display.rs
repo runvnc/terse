@@ -385,6 +385,10 @@ pub trait Display {
     /// How the phosphor style is drawn (`--tube`, `--vignette`): presentation
     /// only, nothing a program can observe.
     fn set_look(&mut self, look: crate::phosphor::Look);
+    /// The host's notice over the shell's bottom rows (`PERFORMANCE.md`
+    /// R15: a slow machine, or the host's own drawing), shown from the
+    /// next `update` while no consent prompt is; `None` takes it away.
+    fn set_notice(&mut self, notice: Option<crate::consent::Notice>);
     /// The user's presentation options: the phosphor style without its
     /// afterglow, the phosphor presentation whatever the style, and whether
     /// the page's scroll is animated (and its figures rasterised on their

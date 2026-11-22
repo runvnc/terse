@@ -108,6 +108,8 @@ pub struct SoftScreens {
     /// What the frame was put together from: the children's areas in
     /// order, and the overlay's rectangle.
     composed: (Vec<IRect>, IRect),
+    /// The host's notice (R15), drawn like the prompt.
+    notice: Option<consent::Notice>,
 }
 
 impl SoftScreens {
@@ -128,6 +130,7 @@ impl SoftScreens {
             eye: (0.0, 0.0),
             last_damage: Vec::new(),
             composed: (Vec::new(), IRect::EMPTY),
+            notice: None,
         }
     }
 
@@ -323,10 +326,16 @@ impl Display for SoftScreens {
                 self.shell.update(&consent::with_prompt(&shown, title, p, *waiting));
                 self.shell.set_overlay(Some(consent::FIRST_ROW));
             }
-            None => {
-                self.shell.update(&shown);
-                self.shell.set_overlay(None);
-            }
+            None => match &self.notice {
+                Some(n) => {
+                    self.shell.update(&consent::with_notice(&shown, &n.heading, &n.what, &n.then));
+                    self.shell.set_overlay(Some(consent::FIRST_ROW));
+                }
+                None => {
+                    self.shell.update(&shown);
+                    self.shell.set_overlay(None);
+                }
+            },
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
@@ -438,6 +447,10 @@ impl Display for SoftScreens {
 
     fn set_look(&mut self, look: crate::phosphor::Look) {
         SoftScreens::set_look(self, look);
+    }
+
+    fn set_notice(&mut self, notice: Option<consent::Notice>) {
+        self.notice = notice;
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {

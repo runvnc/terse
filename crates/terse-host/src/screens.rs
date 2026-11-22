@@ -246,6 +246,8 @@ pub struct Screens {
     look: crate::phosphor::Look,
     /// The eye for 3D lists, the same for every machine (SPEC §vector3d.space).
     eye: Eye,
+    /// The host's notice (R15), drawn like the prompt.
+    pub notice: Option<consent::Notice>,
 }
 
 impl Screens {
@@ -264,6 +266,7 @@ impl Screens {
             animate_page: true,
             look: crate::phosphor::Look::default(),
             eye: (0.0, 0.0),
+            notice: None,
         }
     }
 
@@ -334,10 +337,16 @@ impl Screens {
                 self.shell.update(queue, &consent::with_prompt(&shown, title, p, *waiting));
                 self.shell.set_overlay(Some(consent::FIRST_ROW));
             }
-            None => {
-                self.shell.update(queue, &shown);
-                self.shell.set_overlay(None);
-            }
+            None => match &self.notice {
+                Some(n) => {
+                    self.shell.update(queue, &consent::with_notice(&shown, &n.heading, &n.what, &n.then));
+                    self.shell.set_overlay(Some(consent::FIRST_ROW));
+                }
+                None => {
+                    self.shell.update(queue, &shown);
+                    self.shell.set_overlay(None);
+                }
+            },
         }
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
@@ -662,6 +671,10 @@ impl Display for GpuDisplay {
 
     fn set_look(&mut self, look: crate::phosphor::Look) {
         self.screens.set_look(look);
+    }
+
+    fn set_notice(&mut self, notice: Option<consent::Notice>) {
+        self.screens.notice = notice;
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {

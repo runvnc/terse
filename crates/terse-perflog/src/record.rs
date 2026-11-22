@@ -182,6 +182,44 @@ impl Line {
         Line::Other(format!("device core {} =host", s.join(",")))
     }
 
+    /// `excused <frame> <ms> <why> <component> <own-ms> <image>`: a late
+    /// frame that would be blamed and that the rule does not count, for
+    /// another reason than a resize (`RECORD.md` 2): `open` (in a host
+    /// with built-in devices, the blamed machine's first frames).
+    pub fn excused(l: &Late, why: &str) -> Line {
+        let p = &l.top;
+        Line::Other(format!("excused {} {:.1} {} {} {:.1} {}", l.frame, ms(l.wall_ns), escape(why), p.component, ms(p.own()), image_field(p.image.as_ref())))
+    }
+
+    /// `fail <frame> <component> <count>`: one of the host's own
+    /// components made `count` late frames within the stop window, certain,
+    /// with nothing left to shed and nobody else to stop: this host does
+    /// not keep up on this computer as it runs (R15; a report counts it as
+    /// a halt of that component).
+    pub fn fail(frame: u64, component: Component, count: u32) -> Line {
+        Line::Other(format!("fail {frame} {component} {count}"))
+    }
+
+    /// A `fail` line's frame, component and count.
+    pub fn as_fail(&self) -> Option<(u64, Component, u32)> {
+        let Line::Other(s) = self else { return None };
+        let f: Vec<&str> = s.split(' ').collect();
+        match f[..] {
+            ["fail", frame, c, count, ..] => Some((frame.parse().ok()?, Component::parse(c)?, count.parse().ok()?)),
+            _ => None,
+        }
+    }
+
+    /// An `excused` line's frame and reason.
+    pub fn as_excused(&self) -> Option<(u64, &str)> {
+        let Line::Other(s) = self else { return None };
+        let f: Vec<&str> = s.split(' ').collect();
+        match f[..] {
+            ["excused", frame, _, why, ..] => Some((frame.parse().ok()?, why)),
+            _ => None,
+        }
+    }
+
     /// The line for a late frame.
     pub fn late(l: &Late) -> Line {
         let p = &l.top;
