@@ -4,7 +4,7 @@
 //! The identity (`identity.key`), the subscription list (`subscriptions`),
 //! the nicknames (`nicknames`) and the relay list (`relays`) live in the
 //! config directory, `--config` (default `$XDG_CONFIG_HOME/terse`,
-//! else `~/.config/terse`). Feed entries are kept with the blobs, in
+//! else `~/.config/terse`; `terse_dirs` for macOS and Windows). Feed entries are kept with the blobs, in
 //! `<store>/feeds`.
 
 use std::path::PathBuf;

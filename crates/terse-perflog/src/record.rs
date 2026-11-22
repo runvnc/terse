@@ -60,8 +60,10 @@ pub enum Line {
     /// (the first since the computer started), `warm` or `-`.
     Start { ms: f64, cold: String },
     /// `late <frame> <ms> <verdict> <component> <own-ms> <cpu-ms>
-    /// <blocked-ms> <starved-ms> <image>`.
-    Late { frame: u64, ms: f64, verdict: Verdict, component: Component, own_ms: f64, cpu_ms: f64, blocked_ms: f64, starved_ms: f64, image: String },
+    /// <blocked-ms> <starved-ms> <image>`. `cpu-ms` and `blocked-ms` are
+    /// `-` (`None`) where the component's time on a CPU was not read: the
+    /// record does not state a reading it does not have.
+    Late { frame: u64, ms: f64, verdict: Verdict, component: Component, own_ms: f64, cpu_ms: Option<f64>, blocked_ms: Option<f64>, starved_ms: f64, image: String },
     /// `block <frame> <ms> <component> <what>`: one wait of 100 ms or more
     /// (`what`: `frame` work, `open` a machine, `service`, `state`).
     Block { frame: u64, ms: f64, component: Component, what: String },
@@ -234,8 +236,8 @@ impl Line {
             verdict: l.verdict,
             component: p.component,
             own_ms: ms(p.own()),
-            cpu_ms: ms(p.cpu()),
-            blocked_ms: ms(p.blocked()),
+            cpu_ms: p.run_ns.map(|_| ms(p.cpu())),
+            blocked_ms: p.run_ns.map(|_| ms(p.blocked())),
             starved_ms: ms(p.starved()),
             image: image_field(p.image.as_ref()),
         }
@@ -264,7 +266,8 @@ impl Line {
             Line::Readings { component, readings } => format!("readings {component} {}", readings.encode()),
             Line::Start { ms, cold } => format!("start {ms:.1} {}", escape(cold)),
             Line::Late { frame, ms, verdict, component, own_ms, cpu_ms, blocked_ms, starved_ms, image } => {
-                format!("late {frame} {ms:.1} {} {component} {own_ms:.1} {cpu_ms:.1} {blocked_ms:.1} {starved_ms:.1} {}", verdict.name(), escape(image))
+                let opt = |v: &Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.1}"));
+                format!("late {frame} {ms:.1} {} {component} {own_ms:.1} {} {} {starved_ms:.1} {}", verdict.name(), opt(cpu_ms), opt(blocked_ms), escape(image))
             }
             Line::Block { frame, ms, component, what } => format!("block {frame} {ms:.1} {component} {}", escape(what)),
             Line::Shed { frame, level, why } => format!("shed {frame} {level} {}", escape(why)),
@@ -315,8 +318,8 @@ impl Line {
                 verdict: Verdict::parse(f[3])?,
                 component: c(4)?,
                 own_ms: x(5)?,
-                cpu_ms: x(6)?,
-                blocked_ms: x(7)?,
+                cpu_ms: if f[6] == "-" { None } else { Some(x(6)?) },
+                blocked_ms: if f[7] == "-" { None } else { Some(x(7)?) },
                 starved_ms: x(8)?,
                 image: s(9)?,
             },
@@ -349,7 +352,8 @@ pub fn parse(text: &str) -> Vec<Line> {
 }
 
 /// The default record directory: `$XDG_DATA_HOME/terse/perf`, else
-/// `~/.local/share/terse/perf` (`%LOCALAPPDATA%\terse\perf` on Windows;
+/// `~/.local/share/terse/perf` (`~/Library/Application Support/terse/data/perf`
+/// on macOS, `%LOCALAPPDATA%\terse\perf` on Windows;
 /// `terse_dirs`).
 pub fn default_dir() -> Option<PathBuf> {
     Some(terse_dirs::user_dir(terse_dirs::Kind::Data)?.join("perf"))
@@ -628,7 +632,7 @@ mod tests {
             Line::Block { frame: 3, ms: 812.0, component: Component::Device(4), what: "service".into() },
             Line::Shed { frame: 9, level: 2, why: "late".into() },
             Line::Resize { frame: 1250, width: 1900, height: 1000 },
-            Line::Late { frame: 1251, ms: 30.2, verdict: Verdict::Resize, component: Component::Device(3), own_ms: 28.0, cpu_ms: 20.0, blocked_ms: 8.0, starved_ms: 0.0, image: String::new() },
+            Line::Late { frame: 1251, ms: 30.2, verdict: Verdict::Resize, component: Component::Device(3), own_ms: 28.0, cpu_ms: Some(20.0), blocked_ms: Some(8.0), starved_ms: 0.0, image: String::new() },
             Line::Warn { frame: 1300, component: Component::Device(7), count: 3 },
             Line::Stop { frame: 1500, component: Component::Device(7), machine: 2, image: "abababababababab".into(), saved: "slot17".into() },
             Line::Mem { seconds: 10, component: Component::Core, rss_kib: 51_200 },
@@ -646,6 +650,12 @@ mod tests {
             Line::late(&late).encode(),
             "late 1200 52.3 blamed dev7 47.5 1.0 46.5 0.5 abababababababab"
         );
+        // A part whose time on a CPU was not read: the record says so
+        // rather than give its own time as time on a CPU.
+        let unread = Late { top: Part { run_ns: None, ..late.top }, ..late };
+        let e = Line::late(&unread).encode();
+        assert_eq!(e, "late 1200 52.3 blamed dev7 47.5 - - 0.5 abababababababab");
+        assert!(matches!(Line::parse(&e), Some(Line::Late { cpu_ms: None, blocked_ms: None, .. })), "{e}");
         assert_eq!(Line::Readings { component: Component::Device(3), readings: Readings { cpu: true, wait: true, stall: false, idle: true } }.encode(), "readings dev3 cpu,wait,idle");
         assert_eq!(Line::parse("late 1 2"), None);
         assert_eq!(Line::parse("# a comment"), None);

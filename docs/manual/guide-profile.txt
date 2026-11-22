@@ -60,7 +60,7 @@ prints the address to give to people: your key, and after an `@` the relays wher
 | `~/.local/share/terse` | what programs keep, the relay's store |
 | `~/.cache/terse` | articles and programs you downloaded |
 
-On macOS they are the same folders. On Windows the first is `%APPDATA%\terse` and the others are both `%LOCALAPPDATA%\terse`. Wherever you are, setting `XDG_CONFIG_HOME`, `XDG_DATA_HOME` or `XDG_CACHE_HOME` to a folder puts the `terse` folder there instead.
+On macOS the first is `~/Library/Application Support/terse`, the second the folder `data` in it and the third `~/Library/Caches/terse`. On Windows the first is `%APPDATA%\terse` and the others are both `%LOCALAPPDATA%\terse`. Wherever you are, setting `XDG_CONFIG_HOME`, `XDG_DATA_HOME` or `XDG_CACHE_HOME` to a folder puts the `terse` folder there instead.
 
 ## What you have now
 

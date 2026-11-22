@@ -88,7 +88,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R18 | Sound is prompt: a frame's samples (`SPEC.md` §sound, rendered at the frame's end) reach the system's audio output (the sound server's sink, or the ALSA device) within 3 frames of that end, and the host's hand-over never makes the output run dry while it keeps up (no gap and no dropped sample at 60 frames a second). Only the hand-over is timed: the machines' samples are what they are | ms; gaps | by hand on Linux (below): a private PipeWire with a null sink, `TERSE_AUDIO_TRACE` (each frame's hand-over time) against a recording of the sink, and the recording compared with `terse run --audio-out`, sample for sample |
 | Machine host | R19 | Sound leaves the host promptly: each frame's samples are handed to the system's audio interface (the write to libpulse-simple or ALSA that carries the frame's first pair has returned; on CoreAudio or WASAPI, the callback has copied it) within 2 frames of the frame's end for 99 frames in 100, through the host's own queue and output thread; the host asks that interface to hold at most 3 frames (50 ms) ahead of playing, and drops nothing while it keeps up. What the system adds after the hand-over (the sound server, the card) is not counted here (R18 times it to the sink) | ms; pairs dropped | `terse perf` S1: `terse-host --sound-check` runs `programs/tune` headless for 240 frames at 60 a second and hands its sound to the null output, a device's buffer of the size the host asks for that takes 48,000 pairs a second with no device behind it (nothing is opened, nothing is heard), and prints the hand-over's p50, p99 and max, the buffer and the pairs dropped; `cargo test -p terse-host --test sound` (`sound_check_runs_headless_with_no_device`), `cargo test -p terse-host audio` (how each frame's hand-over is counted) |
 | Machine host | R12 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut); `cargo test -p terse-devices --test pictures` (terse-bus counts the same shares, frame by frame, and draws the same plates and cut lists) |
-| Machine host | R17 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts, its own store and data directories and its hardware check's result (R16), besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes at once, and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
+| Machine host | R17 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts, its own store and data directories and its hardware check's result (R16), besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes with no FIFO opened and no connection to the relay given up before it (judged by order, not by time), and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
 
 What the machine already guarantees needs no row: a frame's work for a
 program is bounded by the budget (`SPEC.md` §frames, §charges), so no
@@ -624,13 +624,19 @@ one over it.
   and the processors' idle time as exact cycle counts,
   `QueryProcessCycleTime`, `QueryThreadCycleTime`,
   `QueryIdleProcessorCycleTimeEx`, from which the wait is **inferred**:
-  a suspect on a CPU for at least half the interval it was waited for was
-  running; one that was not, while the processors had at least one
-  processor's worth of idle time, was blocked; otherwise it was starved,
-  for no longer than it was off a CPU nor than no processor need have
-  been idle, `RECORD.md` 4; no memory stall). What a host could read is in the
-  record (`readings`, `RECORD.md` 2), and what it may conclude without a
-  reading is `RECORD.md` 4's.
+  while the processors had at least one processor's worth of idle time
+  over the interval it was waited for, its time off a CPU was its own
+  blocking, nothing excused; otherwise it may have waited for a CPU
+  whenever it was off one, however long it ran, and is excused for no
+  longer than it was off a CPU nor than no processor need have been
+  idle, its time on a CPU never, `RECORD.md` 4; no memory stall). The bus's own parts have
+  their time on a CPU too, so that a memory stall excuses no more of it
+  than it lasted (condition 3): `core` and `present` the frame loop
+  thread's CPU time over them, `compose` the whole process's (it composes
+  on a pool of threads); `outside` (its waits for drivers' services) is
+  blocked on another process by design and has no CPU reading. What a
+  host could read is in the record (`readings`, `RECORD.md` 2), and what
+  it may conclude without a reading is `RECORD.md` 4's.
 - *A host with built-in devices* (`terse-host`) runs every machine and
   every device on its frame loop thread (and draws with its renderer's
   threads), so it times the parts of that loop, not processes:
@@ -652,7 +658,21 @@ one over it.
   process's wait, which is at least the thread's; Windows: the thread's
   cycles and the processors' idle cycles, the wait inferred as for a
   driver, `RECORD.md` 4), and the whole
-  process's wait (every thread) around the drawing. A machine's part is
+  process's wait (every thread) around the drawing. Every part has its
+  time on a CPU (condition 3 holds for the host's own stages as for a
+  driver): a machine's frame, `core`, `present` (the acquire) and
+  `outside` (from the last picture to the frame's start) the frame loop
+  thread's CPU time over them; `compose` the frame loop thread's over the
+  upload and the whole process's over the drawing less the thread's in
+  the acquire, since the drawing runs on other threads too (the software
+  renderer's pool, a GPU driver's). The process's time includes threads
+  that do not draw (the page layout thread, which the frame loop never
+  waits for, content, sound): counted as the drawing's, it can only
+  excuse less. The readings this takes are two more of the frame loop
+  thread a frame (its CPU clock, 0.2 µs, and its schedstat, together 1.3
+  µs on the reference machine in a debug build); watching a frame of 9
+  machines costs about 0.09 ms of CPU in all (`watch.rs`,
+  `the_cost_of_watching`, bounded at 2 ms). A machine's part is
   recorded as `core` with its program as the `late` line's image: every
   component is the host's own build. What this cannot tell apart: a
   device's calls from the emulation of the machine making them (a device
@@ -850,7 +870,7 @@ covers.
 (the generators behind the W rows, `terse_core::worst`) with the renderer
 it will use, when it first starts on a computer, and keeps the result
 (the reference: `$XDG_CACHE_HOME/terse/hwcheck-<size>-<mtime>.txt`, else
-`~/.cache/terse/...`, `%LOCALAPPDATA%\terse\...` on Windows, keyed
+`~/.cache/terse/...`, `~/Library/Caches/terse/...` on macOS, `%LOCALAPPDATA%\terse\...` on Windows, keyed
 by the program file and checked against the computer's `env` line), so
 it runs once per build and computer, not at every start. Where the look's
 worst frame takes more than its allowance (half a frame), the look is

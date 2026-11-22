@@ -76,7 +76,8 @@ granted. In a system (--shell) every such driver the run has is started, and the
 machine it starts is granted the devices its image names that one serves, in the version listed.
 --probe-driver --experimental asks a program which experimental device it serves.
 --perf-log: where the performance record goes (RECORD.md; default: none headless, and
-$XDG_DATA_HOME/terse/perf, else ~/.local/share/terse/perf, %LOCALAPPDATA%\\terse\\perf on Windows,
+$XDG_DATA_HOME/terse/perf, else ~/.local/share/terse/perf, ~/Library/Application Support/terse/data/perf on macOS,
+%LOCALAPPDATA%\\terse\\perf on Windows,
 with --window or --realtime; it never leaves this computer). --perf-rule
 (default: on with --window or --realtime, off headless): the rule of PERFORMANCE.md R15: a driver
 that makes 3 frames late within 60 is warned about (its machines are saved at once), one that makes

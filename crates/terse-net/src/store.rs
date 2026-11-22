@@ -149,7 +149,8 @@ impl BlobStore {
 }
 
 /// The default store: `$XDG_CACHE_HOME/terse/blobs`, else
-/// `~/.cache/terse/blobs` (`%LOCALAPPDATA%\terse\blobs` on Windows;
+/// `~/.cache/terse/blobs` (`~/Library/Caches/terse/blobs` on macOS,
+/// `%LOCALAPPDATA%\terse\blobs` on Windows;
 /// `terse_dirs`).
 pub fn default_store_dir() -> Option<PathBuf> {
     Some(terse_dirs::user_dir(terse_dirs::Kind::Cache)?.join("blobs"))
@@ -157,14 +158,16 @@ pub fn default_store_dir() -> Option<PathBuf> {
 
 /// The default directory for data a host keeps for itself (the relay
 /// `terse-host` starts keeps its store in `relay` there):
-/// `$XDG_DATA_HOME/terse`, else `~/.local/share/terse` (`%LOCALAPPDATA%\terse`
+/// `$XDG_DATA_HOME/terse`, else `~/.local/share/terse` (`~/Library/Application
+/// Support/terse/data` on macOS, `%LOCALAPPDATA%\terse`
 /// on Windows; `terse_dirs`).
 pub fn default_data_dir() -> Option<PathBuf> {
     terse_dirs::user_dir(terse_dirs::Kind::Data)
 }
 
 /// The default directory for the identity and subscriptions:
-/// `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`%APPDATA%\terse` on
+/// `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`~/Library/Application
+/// Support/terse` on macOS, `%APPDATA%\terse` on
 /// Windows; `terse_dirs`).
 pub fn default_config_dir() -> Option<PathBuf> {
     terse_dirs::user_dir(terse_dirs::Kind::Config)

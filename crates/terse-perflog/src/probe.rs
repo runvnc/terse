@@ -78,10 +78,13 @@ impl ProcSample {
 }
 
 /// What a suspect was doing while it was waited for, as [`infer`] judges
-/// it where the system does not say how long it waited for a CPU.
+/// it where the system does not say how long it waited for a CPU (a
+/// description for the record and tests: the excuse is decided by the
+/// system's idle time alone, [`infer`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Doing {
-    /// On a CPU for at least half the interval: its own doing.
+    /// On a CPU for at least half the interval: mostly running. On a busy
+    /// computer its time off a CPU may still have been a wait for one.
     Running,
     /// Little on a CPU while the system had less than one processor's
     /// worth of idle time: the computer was busy.
@@ -96,7 +99,8 @@ pub enum Doing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Inference {
     pub doing: Doing,
-    /// The time taken as its wait for a CPU: 0 unless `Starved`.
+    /// The time taken as its wait for a CPU: 0 when the system had a
+    /// processor's worth of idle time.
     pub starved_ns: u64,
 }
 
@@ -106,31 +110,44 @@ pub struct Inference {
 /// process) should have been running, it used `cpu_ns` of CPU time, and
 /// the system's `cpus` processors were idle for `idle_ns` in all:
 ///
-/// 1. `cpu_ns` at least half the interval: [`Doing::Running`]. It was
-///    running, not waiting: nothing is excused.
-/// 2. Else, at least one processor's worth of idle time (`idle_ns` ≥
-///    `interval_ns`): [`Doing::Blocked`]. The system gives a thread that
-///    is ready to run an idle processor, so the time it was not running it
-///    was blocked on something of its own: nothing is excused.
-/// 3. Else [`Doing::Starved`]: the computer was busy. The excuse is no
-///    longer than the wait could have lasted: the interval less its time
-///    on a CPU, and less the time some processor must have been idle
-///    (`idle_ns / cpus`, were they all idle at once).
+/// The excuse is decided by the system's idle capacity, as Linux's read
+/// run-queue wait would be, whatever the suspect's own time on a CPU:
 ///
-/// A pure function of its inputs, the same on every system.
+/// 1. At least one processor's worth of idle time (`idle_ns` ≥
+///    `interval_ns`): nothing is excused. The system gives a thread that
+///    is ready to run an idle processor, so the time it was not running it
+///    was blocked on something of its own.
+/// 2. Else the computer was busy, and the suspect may have waited for a
+///    CPU whenever it was off one: the excuse is no longer than that wait
+///    could have lasted, the interval less its time on a CPU, and less the
+///    time some processor must have been idle (`idle_ns / cpus`, were they
+///    all idle at once). A suspect on a CPU for half the interval or more
+///    is excused that too (Linux would read the same wait): its time on a
+///    CPU is never excused, so a spinning driver is still blamed for it.
+///
+/// [`Doing`] describes it: [`Doing::Running`] at least half the interval
+/// on a CPU, else [`Doing::Blocked`] (case 1) or [`Doing::Starved`]
+/// (case 2). A pure function of its inputs, the same on every system.
 pub fn infer(interval_ns: u64, cpu_ns: u64, idle_ns: u64, cpus: u32) -> Inference {
     let cpus = cpus.max(1) as u64;
     // No more idle time than every processor idle all the time.
     let idle_ns = idle_ns.min(interval_ns.saturating_mul(cpus));
-    if cpu_ns.saturating_mul(2) >= interval_ns {
-        Inference { doing: Doing::Running, starved_ns: 0 }
-    } else if idle_ns >= interval_ns {
-        Inference { doing: Doing::Blocked, starved_ns: 0 }
+    let idle = idle_ns >= interval_ns;
+    let starved_ns = if idle {
+        0
     } else {
-        let off_cpu = interval_ns - cpu_ns;
+        let off_cpu = interval_ns.saturating_sub(cpu_ns);
         let none_idle = interval_ns - idle_ns / cpus;
-        Inference { doing: Doing::Starved, starved_ns: off_cpu.min(none_idle) }
-    }
+        off_cpu.min(none_idle)
+    };
+    let doing = if cpu_ns.saturating_mul(2) >= interval_ns {
+        Doing::Running
+    } else if idle {
+        Doing::Blocked
+    } else {
+        Doing::Starved
+    };
+    Inference { doing, starved_ns }
 }
 
 /// Whether readings are turned off (`TERSE_PERF_PROBE=none`).
@@ -282,10 +299,18 @@ mod tests {
 
     #[test]
     fn the_rule_of_inference() {
-        // Running: at least half the interval on a CPU, however busy the
-        // system (it was running, not waiting).
-        assert_eq!(infer(40 * MS, 20 * MS, 0, 8), Inference { doing: Doing::Running, starved_ns: 0 });
+        // Running: at least half the interval on a CPU. With a processor
+        // to spare nothing is excused; on a busy computer its time off a
+        // CPU may have been a wait for one, as Linux would read it, but
+        // never its time on one.
         assert_eq!(infer(40 * MS, 39 * MS, 300 * MS, 8), Inference { doing: Doing::Running, starved_ns: 0 });
+        assert_eq!(infer(40 * MS, 20 * MS, 40 * MS, 8), Inference { doing: Doing::Running, starved_ns: 0 });
+        assert_eq!(infer(40 * MS, 20 * MS, 0, 8), Inference { doing: Doing::Running, starved_ns: 20 * MS });
+        assert_eq!(infer(40 * MS, 30 * MS, 16 * MS, 8), Inference { doing: Doing::Running, starved_ns: 10 * MS });
+        assert_eq!(infer(40 * MS, 40 * MS, 0, 8), Inference { doing: Doing::Running, starved_ns: 0 });
+        // A suspect said to have run longer than the interval (clocks
+        // read apart) is excused nothing.
+        assert_eq!(infer(40 * MS, 50 * MS, 0, 8).starved_ns, 0);
         // Little on a CPU, a processor's worth idle or more: blocked on
         // something of its own (a sleep), nothing excused.
         assert_eq!(infer(40 * MS, MS, 40 * MS, 8), Inference { doing: Doing::Blocked, starved_ns: 0 });
@@ -311,8 +336,8 @@ mod tests {
         assert_eq!(infer(40 * MS, 0, u64::MAX, 2).doing, Doing::Blocked);
         assert_eq!(infer(40 * MS, MS, 10 * MS, 0), infer(40 * MS, MS, 10 * MS, 1));
         assert_eq!(infer(0, 0, 0, 4), Inference { doing: Doing::Running, starved_ns: 0 });
-        // Never more than the interval, whatever the inputs.
-        for (i, c, idle, n) in [(17 * MS, 0, 0, 1), (17 * MS, 3, 5, 64), (1, 0, 0, 2), (u64::MAX / 2, 1, 1, 3)] {
+        // Never more than its time off a CPU, whatever the inputs.
+        for (i, c, idle, n) in [(17 * MS, 0, 0, 1), (17 * MS, 3, 5, 64), (1, 0, 0, 2), (u64::MAX / 2, 1, 1, 3), (17 * MS, 16 * MS, 0, 4)] {
             assert!(infer(i, c, idle, n).starved_ns <= i - c);
         }
     }
@@ -331,8 +356,9 @@ mod tests {
         // Within the 30 ms it was waited for (its share of the idle time,
         // 6 ms, still under one processor's worth): 28 ms.
         assert_eq!(d.wait_within(30 * MS), 28 * MS);
-        // Within 4 ms it was running (2 ms of 4).
-        assert_eq!(d.wait_within(4 * MS), 0);
+        // Within 4 ms it was running (2 ms of 4), on a computer with no
+        // processor to spare: its other 2 ms may have been a wait.
+        assert_eq!(d.wait_within(4 * MS), 2 * MS);
         // With 200 ms idle in the 40 ms (5 processors' worth on 8, say):
         // blocked, nothing excused.
         let b2 = ProcSample { idle_ns: 700 * MS, cpus: 8, ..b };

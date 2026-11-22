@@ -136,7 +136,7 @@ URLs listed in the file `relays` in the config directory, one per line
 if there is no list); a relay already accepting connections on
 `ws://127.0.0.1:7878`; or one it starts itself on that port, for as long as
 it runs, with its store in `~/.local/share/terse/relay`
-(`$XDG_DATA_HOME/terse/relay`; `%LOCALAPPDATA%\terse\relay` on Windows). It prints one line on stderr saying which.
+(`$XDG_DATA_HOME/terse/relay`; `~/Library/Application Support/terse/data/relay` on macOS; `%LOCALAPPDATA%\terse\relay` on Windows). It prints one line on stderr saying which.
 `--relay` may be given several times; `--relay none` runs without a network.
 The host connects to all its relays (at most 8): puts and publishes go to
 each, subscriptions are made on each, and a blob is asked of them in turn.
@@ -384,7 +384,7 @@ images were built with clang and LLD 23.1.4.
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `ws://` or
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `~/Library/Caches/terse/blobs` on macOS; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `ws://` or
 `wss://` ("Relays over TLS"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
@@ -668,7 +668,7 @@ to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
 - `--config <dir>` holds the secret key (`identity.key`, mode 0600, never printed),
   the subscription list (`subscriptions`), your nicknames for feeds (`nicknames`) and
   the relay list (`relays`). Default
-  `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`%APPDATA%\terse` on Windows). A host creates the identity
+  `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`~/Library/Application Support/terse` on macOS, `%APPDATA%\terse` on Windows). A host creates the identity
   itself when a program first publishes.
 - Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`, the seq as 10 decimal digits (`0000000003`).
 
@@ -1002,6 +1002,7 @@ without a frame number run one after another, `wait <frames>` and `type
     wheel 3               wheel steps
     resize 1900 1000      the window's size
     wait 30               frames; sleep <ms> waits real time
+    time 1800000000       hold the Unix time the machines see (the shell's clock) at this value
     settle [max N]        until 10 presented pictures in a row are the same
     shot out.png          the picture last presented, as presented
     dump page             page (this host's layout), terminal, vectors or state; `> file` to a file
@@ -1168,7 +1169,7 @@ title), so a new version of a program reads the old version's records; a program
 from a file or started by image ID has the records of that exact image. They never
 leave the machine and no other program can read them. Hosts keep them in
 `<data>/records` (`--data`, default `$XDG_DATA_HOME/terse`, else
-`~/.local/share/terse`, `%LOCALAPPDATA%\terse` on Windows); `terse run` and `terse-host` take `--data`. Sparks keeps its
+`~/.local/share/terse`, `~/Library/Application Support/terse/data` on macOS, `%LOCALAPPDATA%\terse` on Windows); `terse run` and `terse-host` take `--data`. Sparks keeps its
 high score there, the shell its layout and its session.
 
 The shell's snapshots (SPEC §machines.snapshots, below) are kept beside them, in
