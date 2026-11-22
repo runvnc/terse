@@ -65,8 +65,8 @@ impl Bus {
         hello.extend(session.as_bytes());
         hello.extend([0, 0]);
         let reply = bus.request(0, 0x81, &hello);
-        let name = u16::from_le_bytes([reply[4], reply[5]]);
-        let mut at = 10 + name as usize;
+        let name_len = u16::from_le_bytes([reply[4], reply[5]]);
+        let mut at = 10 + name_len as usize;
         let mut versions = HashMap::new();
         for _ in 0..reply[at] {
             let slot = reply[at + 1];
