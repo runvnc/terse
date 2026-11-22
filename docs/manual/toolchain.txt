@@ -26,7 +26,7 @@ terse build --write-lib <dir>
 - `-o`: the image. Default: the first source's stem with `.terse`, in the current directory (`terse build src/game.c` writes `game.terse`).
 - `--title`: the image's title, at most 16 bytes of UTF-8. Default: the first source's stem, cut to 16 bytes.
 - `--device`, `--optional`: the devices the header lists (below). Without `--device` the image requires the program profile: `2:0`, the terminal, and `3:0`, the 2D vector display (device 1, System, is always there and is not listed). Giving `--device` replaces that list; `--optional` adds to it, and `--optional 3:0` makes the vector display optional instead of required.
-- `--ram-pages`: RAM in 8 KiB pages, 1 to 112. Default: the program's `.data` and `.bss` plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for `.data` and `.bss` alone is refused. The stack grows down from the end of RAM towards `.bss` and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.
+- `--ram-pages`: RAM in 8 KiB pages, 1 to 96. Default: the program's `.data` and `.bss` plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for `.data` and `.bss` alone is refused. The stack grows down from the end of RAM towards `.bss` and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.
 - `--cflag`: one more flag for clang, for example `--cflag -DDEBUG`; repeat it for several.
 - `--clang`, `--lld`, `--rustc`: the tools to run. Default: the variables `CLANG`, `LLD` and `RUSTC` if set (the `build.sh` scripts of `programs/` read the same names), else `clang`, `ld.lld` and `rustc` from `PATH`.
 - `--show`: print each command as it is run, then the `terse pack` command that gives the same image. The files built into `terse` are written to a temporary directory for the build, named in the first line.
@@ -84,7 +84,7 @@ crt0.S comes first and terse.c last. `crt0.S` holds `_start`, in the section `.t
 
 ```
 ROM (rx) : ORIGIN = 0x00010000, LENGTH = 256K
-RAM (rw) : ORIGIN = 0x00100000, LENGTH = 896K
+RAM (rw) : ORIGIN = 0x00100000, LENGTH = 768K
 .text   : KEEP(*(.text.start)), then *(.text .text.*)  > ROM
 .rodata : constants                                     > ROM
 .data   : __data_start .. __data_end  > RAM, at __data_load
@@ -92,7 +92,7 @@ RAM (rw) : ORIGIN = 0x00100000, LENGTH = 896K
 /DISCARD/ : .comment, .note*, .riscv.attributes, .eh_frame*
 ```
 
-`.data` is loaded in ROM at `__data_load`, after `.rodata`, and copied to RAM by the start code. The image's RAM is set by its header, not by the script (which allows the largest, 896 KiB); `terse build` reads where `.bss` ends from the ELF file to choose the default RAM and to refuse a count too small.
+`.data` is loaded in ROM at `__data_load`, after `.rodata`, and copied to RAM by the start code. The image's RAM is set by its header, not by the script (which allows the largest, 768 KiB); `terse build` reads where `.bss` ends from the ELF file to choose the default RAM and to refuse a count too small.
 
 ## The ROM from the ELF file
 
@@ -100,7 +100,7 @@ The ROM is the bytes of each loadable segment (program header `PT_LOAD` with a f
 
 ## The devices an image lists
 
-`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>` writes the header before a raw ROM and checks the result as a host would; `terse build` takes the same `--device` and `--optional`. The title is at most 16 bytes; RAM is 1 to 112 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
+`terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>]... -o <out.terse>` writes the header before a raw ROM and checks the result as a host would; `terse build` takes the same `--device` and `--optional`. The title is at most 16 bytes; RAM is 1 to 96 pages of 8 KiB; at most 16 devices. It prints the file's size and its image ID.
 
 | Slot | Device | `--device` |
 |---|---|---|

@@ -249,9 +249,9 @@ fn check_host(bin: &Path, other_terminal: Option<&Path>) {
         assert_eq!(text(&o.stdout), text(&screen.stdout), "step 3's screen with {driver}");
     }
 
-    // The sizes' boundaries (SPEC §profile): 262,144 bytes of ROM and 112
+    // The sizes' boundaries (SPEC §profile): 262,144 bytes of ROM and 96
     // pages of RAM run; one byte or one page more is a malformed file. With
-    // 112 pages sp starts at 001E_0000h: the byte below it is RAM's last
+    // 96 pages sp starts at 001C_0000h: the byte below it is RAM's last
     // (written and read back: exit 5Ah), the byte at it faults.
     let image = |pages: u8, rom: &[u8]| {
         let mut f = b"TERS\x00\x01".to_vec();
@@ -270,11 +270,12 @@ fn check_host(bin: &Path, other_terminal: Option<&Path>) {
     };
     let boundary = [
         ("rom-max", image(1, &padded(262_144)), Some(9)),
-        ("pages-112", image(112, &exit9), Some(9)),
-        ("ram-last", image(112, &words(&[0x05A0_0513, 0xFEA1_0FA3, 0xFFF1_4503, 0x1060_0893, 0x73])), Some(0x5a)),
-        ("ram-past", image(112, &words(&[0x05A0_0513, 0x00A1_0023, 0x1060_0893, 0x73])), None),
+        ("pages-96", image(96, &exit9), Some(9)),
+        ("ram-last", image(96, &words(&[0x05A0_0513, 0xFEA1_0FA3, 0xFFF1_4503, 0x1060_0893, 0x73])), Some(0x5a)),
+        ("ram-past", image(96, &words(&[0x05A0_0513, 0x00A1_0023, 0x1060_0893, 0x73])), None),
         ("rom-over", image(1, &padded(262_145)), None),
-        ("pages-113", image(113, &exit9), None),
+        ("pages-97", image(97, &exit9), None),
+        ("pages-112", image(112, &exit9), None),
     ];
     let mut programs: Vec<String> = tiny.iter().map(path).collect();
     for (name, bytes, exit) in &boundary {
@@ -283,7 +284,7 @@ fn check_host(bin: &Path, other_terminal: Option<&Path>) {
         let o = run(step(2), &[&path(&file), "10"]);
         match exit {
             Some(code) => assert_eq!(status(&o), *code, "step 2, {name}: {}", text(&o.stderr)),
-            None if name.starts_with("ram") => assert!(text(&o.stderr).contains("1e0000"), "step 2, {name}: {}", text(&o.stderr)),
+            None if name.starts_with("ram") => assert!(text(&o.stderr).contains("1c0000"), "step 2, {name}: {}", text(&o.stderr)),
             None => assert!(text(&o.stderr).contains("a malformed program file"), "step 2, {name}: {}", text(&o.stderr)),
         }
         if exit.is_some() || name.starts_with("ram") {

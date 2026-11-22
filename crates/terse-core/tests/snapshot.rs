@@ -200,13 +200,13 @@ fn malformed_states_are_refused() {
 
 #[test]
 fn snapshot_files() {
-    let image = common::program(&[0x01, 0x00], 112, &ALL);
+    let image = common::program(&[0x01, 0x00], 96, &ALL);
     let m = Machine::new(&image);
     let s = Snapshot::of(&m);
     let file = s.encode();
     // Nothing has run: RAM is all zero and no page is stored.
     assert!(file.len() < 32 * 1024, "zero pages are not stored: {} bytes", file.len());
-    assert_eq!(s.state.len(), 200 + 112 * 8192 + 37 + 10_379 + 8 + 425 + 21);
+    assert_eq!(s.state.len(), 200 + 96 * 8192 + 37 + 10_379 + 8 + 425 + 21);
     assert_eq!(Snapshot::decode(&file).unwrap(), s);
     assert_eq!(&file[..4], b"TSNP");
     assert_eq!(&file[file.len() - 32..], &m.state_hash());
@@ -225,16 +225,16 @@ fn snapshot_files() {
     let mut map = file.clone();
     map[294 + 15] = 0x80;
     assert!(Snapshot::decode(&map).is_err(), "a page past the end");
-    // RAM has at most 112 pages (SPEC §memory): bits 112 to 127 of the
-    // map are past the end of the largest RAM; bit 111 is its last page.
+    // RAM has at most 96 pages (SPEC §memory): bits 96 to 127 of the
+    // map are past the end of the largest RAM; bit 95 is its last page.
     let mut map = file.clone();
-    map[294 + 14] = 1;
-    assert!(Snapshot::decode(&map).is_err(), "page 112");
+    map[294 + 12] = 1;
+    assert!(Snapshot::decode(&map).is_err(), "page 96");
     let mut last = file[..310].to_vec();
-    last[294 + 13] = 0x80;
+    last[294 + 11] = 0x80;
     last.extend_from_slice(&[0; 8192]);
     last.extend_from_slice(&file[310..]);
-    assert_eq!(Snapshot::decode(&last).unwrap(), s, "page 111 stored");
+    assert_eq!(Snapshot::decode(&last).unwrap(), s, "page 95 stored");
     // A page that is stored although zero reads the same.
     let mut stored = file[..310].to_vec();
     stored[294] = 1;
@@ -279,8 +279,8 @@ fn a_table_document_round_trips() {
 
 /// STATE.md 4: what a reader of a snapshot file refuses besides a
 /// malformed S: N below 200 or above the longest serialization
-/// (1,292,019 bytes), L that is 0, not a multiple of 8,192, above
-/// 917,504 (112 pages) or past N, and a page-map bit past the last page. And SPEC
+/// (1,160,947 bytes), L that is 0, not a multiple of 8,192, above
+/// 786,432 (96 pages) or past N, and a page-map bit past the last page. And SPEC
 /// §machines.calls `snapshot_info`: the time is the one latched for the machine's
 /// last frame as its state holds it, so a restored machine snapshotted
 /// before it runs again keeps the time of the first snapshot.
@@ -299,11 +299,12 @@ fn snapshot_file_fields_and_time() {
     };
     let malformed = |why| Some(RestoreError::Malformed(why));
     assert_eq!(with(90, 199), malformed("state length"));
-    // 1,292,019 and the 16 experimental sections of STATE.md 1.13 at their largest.
-    assert_eq!(with(90, 1_554_228), malformed("state length"));
+    // 1,160,947 and the 16 experimental sections of STATE.md 1.13 at their largest.
+    assert_eq!(with(90, 1_423_156), malformed("state length"));
     assert_eq!(with(94 + 196, 0), malformed("RAM size"));
     assert_eq!(with(94 + 196, 8193), malformed("RAM size"));
-    assert_eq!(with(94 + 196, 113 * 8192), malformed("RAM size"));
+    assert_eq!(with(94 + 196, 97 * 8192), malformed("RAM size"));
+    assert_eq!(with(94 + 196, 112 * 8192), malformed("RAM size"));
     assert_eq!(with(94 + 196, 128 * 8192), malformed("RAM size"), "128 pages, once allowed");
     assert_eq!(with(94 + 196, 64 * 8192), malformed("RAM size"), "past N");
     let mut map = file.clone();

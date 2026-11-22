@@ -42,7 +42,7 @@ const FRAME_AT: usize = 173;
 const BEFORE_RAM: usize = 200;
 const PAGE: usize = 8192;
 /// Bytes of the page map: one bit per RAM page, 128 bits (RAM has at
-/// most 112 pages, so bits 112 to 127 are always clear: STATE.md 4).
+/// most 96 pages, so bits 96 to 127 are always clear: STATE.md 4).
 const PAGE_MAP: usize = 16;
 /// The longest serialization: header, CPU, frame loop, the largest RAM, a
 /// full queue, every device at its largest, 16 experimental sections at

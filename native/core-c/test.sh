@@ -149,13 +149,13 @@ for img in "$T"/hdr/*.terse; do
     [ $sa -eq $sb ] && [ "$a" = "$b" ] && ok "$n (status $sa)" || no "$n: status $sa vs $sb"
 done
 # The sizes' boundaries (SPEC §profile): what the statuses must be, not only equal.
-for c in ok-rom-max:9 ok-pages-112:9 ok-ram-last:90 bad-rom-over:2 bad-pages-113:2 bad-pages-128:2; do
+for c in ok-rom-max:9 ok-pages-96:9 ok-ram-last:90 bad-rom-over:2 bad-pages-97:2 bad-pages-112:2 bad-pages-128:2; do
     n=${c%:*} want=${c#*:}
     "$TC" "$T/hdr/$n.terse" --frames 2 > /dev/null 2>&1; s=$?
     [ $s -eq "$want" ] && ok "$n: status $want" || no "$n: status $s, not $want"
 done
 "$TC" "$T/hdr/fault-ram-past.terse" --frames 2 > /dev/null 2> "$T/e"
-grep -q "001e0000" "$T/e" && ok "fault-ram-past: a store fault at 001e0000h" || no "fault-ram-past: $(head -1 "$T/e")"
+grep -q "001c0000" "$T/e" && ok "fault-ram-past: a store fault at 001c0000h" || no "fault-ram-past: $(head -1 "$T/e")"
 
 if [ "$FUZZ" -gt 0 ]; then
     echo "== $FUZZ random RV32IMC images (tests/fuzz.py), 3 frames each"

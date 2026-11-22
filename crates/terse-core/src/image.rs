@@ -9,8 +9,9 @@ pub const HEADER_LEN: usize = 32;
 /// ROM's largest size (SPEC §profile): it ends by 0005_0000h.
 pub const ROM_MAX: usize = 262_144;
 pub const RAM_PAGES_MIN: u8 = 1;
-/// RAM's largest size in 8 KiB pages (896 KiB): it ends by 001E_0000h.
-pub const RAM_PAGES_MAX: u8 = 112;
+/// RAM's largest size in 8 KiB pages (768 KiB): it ends by 001C_0000h,
+/// and ROM and RAM together are at most 1 MiB.
+pub const RAM_PAGES_MAX: u8 = 96;
 pub const MAX_DEVICES: usize = 16;
 pub const TITLE_LEN: usize = 16;
 /// The top bit of a device entry's version byte: the device is optional
@@ -432,7 +433,8 @@ mod tests {
         check(&|f| f[6] = 0, ImageError::RomLength(0));
         check(&|f| f[8] = 4, ImageError::RomLength(0x40001));
         check(&|f| f[9] = 0, ImageError::RamPages(0));
-        check(&|f| f[9] = 113, ImageError::RamPages(113));
+        check(&|f| f[9] = 97, ImageError::RamPages(97));
+        check(&|f| f[9] = 112, ImageError::RamPages(112));
         check(&|f| f[9] = 128, ImageError::RamPages(128));
         check(&|f| f[10] = 17, ImageError::DeviceCount(17));
         check(&|f| f[15] = 1, ImageError::ReservedNotZero);
@@ -472,10 +474,10 @@ mod tests {
 
     #[test]
     fn max_rom_accepted() {
-        assert_eq!((ROM_MAX, RAM_PAGES_MAX), (262_144, 112), "SPEC §profile");
+        assert_eq!((ROM_MAX, RAM_PAGES_MAX), (262_144, 96), "SPEC §profile");
         let file = Image::build("", RAM_PAGES_MAX, &[], &vec![0; ROM_MAX]);
         let image = Image::parse(&file).unwrap();
-        assert_eq!((image.rom.len(), image.ram_pages), (ROM_MAX, 112));
+        assert_eq!((image.rom.len(), image.ram_pages), (ROM_MAX, 96));
     }
 
     /// SPEC §image: an image of 262,145 bytes of ROM is refused, also when

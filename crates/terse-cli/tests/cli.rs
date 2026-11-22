@@ -107,7 +107,8 @@ fn pack_refuses_bad_headers() {
     for (extra, why) in [
         (&["--ram-pages", "0"][..], "RAM pages 0"),
         (&["--ram-pages", "129"][..], "RAM pages 129"),
-        (&["--ram-pages", "113"][..], "RAM pages 113 outside 1..=112"),
+        (&["--ram-pages", "97"][..], "RAM pages 97 outside 1..=96"),
+        (&["--ram-pages", "112"][..], "RAM pages 112 outside 1..=96"),
         (&["--ram-pages", "1", "--device", "11:0"][..], "device 11 version 0"),
     ] {
         let out = terse(&[&base[..], extra].concat());
@@ -116,11 +117,11 @@ fn pack_refuses_bad_headers() {
     }
     let out = terse(&["pack", "--rom", bin, "--title", "a title over sixteen bytes", "--ram-pages", "1", "-o", out_path]);
     assert!(!out.status.success());
-    // SPEC §profile: 262,144 bytes of ROM and 112 pages are the largest.
+    // SPEC §profile: 262,144 bytes of ROM and 96 pages are the largest.
     let big = dir.path().join("big.bin");
     let big = big.to_str().unwrap();
     std::fs::write(big, vec![0; 262_144]).unwrap();
-    let out = terse(&["pack", "--rom", big, "--title", "x", "--ram-pages", "112", "-o", out_path]);
+    let out = terse(&["pack", "--rom", big, "--title", "x", "--ram-pages", "96", "-o", out_path]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     std::fs::write(big, vec![0; 262_145]).unwrap();
     let out = terse(&["pack", "--rom", big, "--title", "x", "--ram-pages", "1", "-o", out_path]);

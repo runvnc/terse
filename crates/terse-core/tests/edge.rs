@@ -481,8 +481,8 @@ fn reset_state() {
 
 
 /// SPEC §memory and §reset at the largest image: 262,144 bytes of ROM
-/// (its last byte at 0004_FFFFh) and 112 pages of RAM (its last byte at
-/// 001D_FFFFh). `sp` starts at 001E_0000h; the last byte of each region
+/// (its last byte at 0004_FFFFh) and 96 pages of RAM (its last byte at
+/// 001B_FFFFh). `sp` starts at 001C_0000h; the last byte of each region
 /// can be read (and RAM's written); the byte after either faults.
 #[test]
 fn the_largest_rom_and_ram() {
@@ -502,14 +502,14 @@ fn the_largest_rom_and_ram() {
         *rom.last_mut().unwrap() = 0x77;
         let image = common::program(&rom, terse_core::image::RAM_PAGES_MAX, &[]);
         let mut m = Machine::new(&image);
-        assert_eq!(m.cpu().x[2], 0x001E_0000, "sp at the end of 112 pages of RAM");
+        assert_eq!(m.cpu().x[2], 0x001C_0000, "sp at the end of 96 pages of RAM");
         frame(&mut m);
         assert_eq!((m.cpu().x[11], m.cpu().x[13]), (0x5a, 0x77), "the last bytes of RAM and ROM");
         m.fault().expect("the access past the end faults")
     };
     let at = ROM_BASE + 20;
     // sb a0, 0(sp); lbu a4, 0(sp); lbu a4, 0(a2).
-    assert_eq!(run(0x00a1_0023), Fault { kind: FaultKind::Store, pc: at, addr: 0x001E_0000 });
-    assert_eq!(run(0x0001_4703), Fault { kind: FaultKind::Load, pc: at, addr: 0x001E_0000 });
+    assert_eq!(run(0x00a1_0023), Fault { kind: FaultKind::Store, pc: at, addr: 0x001C_0000 });
+    assert_eq!(run(0x0001_4703), Fault { kind: FaultKind::Load, pc: at, addr: 0x001C_0000 });
     assert_eq!(run(0x0006_4703), Fault { kind: FaultKind::Load, pc: at, addr: 0x0005_0000 });
 }
