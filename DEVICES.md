@@ -156,10 +156,11 @@ The driver answers HELLO (`81h`):
   name, with no slot (section 15). Slots
   that share state are asked for together (next item).
 - A driver answers for **exactly** the slots it was asked for, or for all
-  of them but slot 10 (below). The core refuses a driver that answers for
-  any other set (a slot it did not ask for, or one asked for left out),
-  or that chooses shared memory when it was not offered: the run does not
-  start (`STATE.md` 6.4, status 2).
+  of them but slot 10 (below); an experimental driver, asked for none,
+  answers with one entry for slot 0 (section 15.1). The core refuses a
+  driver that answers for any other set (a slot it did not ask for, or
+  one asked for left out), or that chooses shared memory when it was not
+  offered: the run does not start (`STATE.md` 6.4, status 2).
 - **A driver may serve several slots.** It does when the devices share
   state: device 9's `style` and `persistence` are device 3's (SPEC §vector3d.calls),
   one section of the state (`STATE.md` 1.7), so `terse-dev-vector` serves
@@ -1743,9 +1744,10 @@ back to, and no machine has seen the device).
 by nothing outside this repository) asked an experimental driver for the
 one slot of a single machine, in HELLO's slot list and again in the
 experimental field, and the driver answered for that slot. It is
-replaced, not kept beside the new one: a driver that answers with a
-slot other than 0 is refused with a message saying that it was written
-for the earlier form. `native/driver-experimental/dice.c` has been
+replaced, not kept beside the new one: a driver written for it either
+refuses the new HELLO (ERROR, which fails its handshake) or, if it
+answers with a slot other than 0, is refused with a message saying that
+it was written for the earlier form. `native/driver-experimental/dice.c` has been
 updated; a copy installed before must be installed again (`terse drivers
 add`).
 
@@ -1770,7 +1772,7 @@ with "needs a device", as for any driver.
 
 | What | Limit |
 |---|---|
-| Slots | exactly the one asked for; no numbered slot |
+| Slots | one entry, for slot 0 (section 15.1); no numbered slot |
 | Layers, properties published or subscribed, host services | none (section 7, 7.2, 9) |
 | Call table | 1 to 16 entries, each function once |
 | A buffer's greatest length (entry offset 12) | at most 4,096 bytes |

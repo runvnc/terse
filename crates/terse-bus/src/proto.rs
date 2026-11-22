@@ -1065,6 +1065,12 @@ mod tests {
         let h = Hello { flags: hello_flags::SHM, slots: vec![3, 9], session_dir: "/s".into(), bus_path: "/b".into(), experimental: vec![] };
         let mut out = Vec::new();
         h.encode(&mut out);
+        // The bytes of DEVICES.md 1.1, unchanged by experimental devices
+        // (section 15): length, address, type, version, reserved, flags,
+        // the slots, the session directory, the bus file, and nothing after.
+        let mut want = vec![27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 1, 0, 0, 1, 0, 0, 0, 2, 3, 9];
+        want.extend([2, 0, b'/', b's', 2, 0, b'/', b'b']);
+        assert_eq!(out, want);
         let m: Vec<Msg> = messages(&out).map(Result::unwrap).collect();
         assert_eq!(m[0].to, Addr::PROCESS);
         let back = Hello::decode(m[0].body).unwrap();
