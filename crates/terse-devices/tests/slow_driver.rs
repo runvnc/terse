@@ -76,6 +76,10 @@ fn ready() -> Option<(tempfile::TempDir, String)> {
         eprintln!("skipped: terse-bus is not built");
         return None;
     }
+    if cfg!(windows) {
+        eprintln!("skipped: native/driver-example is a POSIX driver (sys/socket.h, sys/un.h); it is not built on Windows");
+        return None;
+    }
     let tmp = tempfile::tempdir().unwrap();
     match example(tmp.path()) {
         Some(x) => Some((tmp, x)),
@@ -212,7 +216,8 @@ fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
     let blamed = late.iter().filter(|l| matches!(l, Line::Late { verdict: Verdict::Blamed, cpu_ms, .. } if *cpu_ms >= 15.0)).count();
     // The machine may well share its CPU with others; at least most of
     // the 15 slow frames are its own CPU time.
-    assert!(blamed >= 10, "{late:?}");
+    let every_late: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Late { .. } | Line::Readings { .. })).collect();
+    assert!(blamed >= 10, "{late:?}\nevery late frame and the readings: {every_late:?}");
     assert!(!lines.iter().any(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. })), "the rule is off headless: {lines:?}");
 }
 
