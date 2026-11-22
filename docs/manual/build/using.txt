@@ -1,6 +1,6 @@
 # Using the shell
 
-`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:c06168b36427927b128661bfa5b28e7938e290c39a40c051e240214d50f6f149) does the same for the reader.
+`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:7d7630180785a93dad318ecbe1be19b0ff723f034328663078d7e440617db467) does the same for the reader.
 
 ## Starting
 
@@ -10,7 +10,7 @@ cargo run --release -p terse-host -- --demo
 
 builds everything, sets up four sample articles and opens the shell. The first time, it creates your feed key (`~/.config/terse/identity.key`), subscribes you to your own feed and publishes the samples to it; run again, it publishes nothing new. After that, `cargo run --release -p terse-host` with no image named opens the shell.
 
-Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:1baef48333f2d077eacaf4f12ce8ba06bff2949710da16afec571d44b81738d7).
+Without `--relay` the host uses the relays listed in `relays` in the config directory (`terse relay add <url>` writes it), else a relay already listening on `ws://127.0.0.1:7878`, else one it starts itself on that port. `--relay` may be given several times; `--relay none` runs without a network. To share with someone, one of you runs a relay the other can reach, the other adds it with `terse relay add ws://their-host:7878`, and you exchange feed addresses (the key, `@` and a relay others can reach: the reader's help page and `terse feed address` show yours). How relays work is in [The network](terse:503e11afbb308c4daba5d20a1f30eb0a3345d301a5b9f7e925b4a6bed79faa68).
 
 The 3D drawings, the gallery's included, are seen from an eye that follows the pointer; `--parallax off` keeps it still. `--renderer software` draws with the CPU instead of the GPU, and with it `--panels flat` draws the gallery's panels upright instead of in perspective (`perspective` or `auto`, the default; the GPU always draws them in perspective). Programs in the phosphor style (every program, with `--force-phosphor`) are drawn on a colour vector monitor; `--tube p31`, `amber` or `vectrex` gives a green, amber or white tube instead (`xy` is the default), `--vignette` darkens its corners and `--no-trails` turns the afterglow off.
 
@@ -47,7 +47,7 @@ reef is Lumen Reef, a game on the 3D vector display: the user guide's page "Find
 
 ## Sessions
 
-S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:985171555fbe7edf6836381901810b2780f51c74b23b5622959e6a430b5e65ad).
+S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:3de611bb385ef71c5c32b3050762bb27a5813101412e6e8a6e9638c1507865bf).
 
 ## Halted machines
 
@@ -86,4 +86,4 @@ Every prompt names the title of the program that asks. Y allows; N or Esc refuse
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). How the shell's devices work: [The machines device](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b). Feeds and consent from a program's side: [Feeds](terse:aedb9f6e2fae5324d78ddb4e834ed1a55bf4690d88b55d1ae1a8be0efb4fcddc).
+How articles are written: [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). How the shell's devices work: [The machines device](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b). Feeds and consent from a program's side: [Feeds](terse:c829ab3773739bfa4d84197db766b2cf8be6d87521d20abc2ed14b7c24889dc5).

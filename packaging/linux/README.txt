@@ -37,9 +37,13 @@ What it needs
 - glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or newer).
 - For drawing with the GPU: Vulkan or OpenGL drivers (Mesa has them). Without
   them terse-host draws with the CPU by itself; `--renderer software` forces that.
-- libasound.so.2 (ALSA, for sound) and libudev.so.1 (for game controllers):
-  terse-host does not start without them. Desktop distributions have both;
-  PipeWire and PulseAudio play the sound.
+- libudev.so.1 (for game controllers): terse-host does not start without it.
+  Desktop distributions have it.
+- For sound: PipeWire or PulseAudio (libpulse-simple.so.0, which desktops
+  have), else ALSA (libasound.so.2). terse-host loads them when a program
+  first makes a sound; without them it runs silently and says why in a
+  notice. terse-host --hardware-check says what it plays through.
+  Ctrl+Alt+minus and Ctrl+Alt+plus change the volume, Ctrl+Alt+M mutes.
 - No fonts: terse-host has its own (DejaVu, built in; FONTS-LICENSE.txt).
   For Japanese, Chinese, Korean and other scripts it lacks, add a font:
   terse fonts add <font file> (the manual article "Fonts").

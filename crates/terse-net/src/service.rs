@@ -1190,6 +1190,17 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 return;
             }
         }
+        // A relay's refusal of a put or publish, with its reason (NETWORK
+        // 3.1), goes to the log: the program sees only that it failed.
+        for (url, d) in node.take_delivery() {
+            match d {
+                crate::node::Delivery::Refused(why) => eprintln!("terse-host: {url} refused a put or publish: {}", why.describe()),
+                crate::node::Delivery::BlobRefused(why) => {
+                    eprintln!("terse-host: {url} took an entry but refused its blob: {}", why.describe())
+                }
+                _ => {}
+            }
+        }
         for event in node.take_feed_events() {
             if events.send(event).is_err() {
                 return;

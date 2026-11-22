@@ -18,7 +18,7 @@ The other game is sparks:
                      Enter or Start: play.        Esc: quit.
 ```
 
-Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.
+Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. Lumen Reef has sound. If you hear nothing, Tersenet says why in a notice at the bottom of the window; `terse-host --hardware-check` names the sound output it found. Ctrl+Alt+minus and Ctrl+Alt+plus change the volume, Ctrl+Alt+M mutes it, and the volume is remembered. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.
 
 The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.
 
@@ -53,6 +53,6 @@ Enter restores it; D discards it. Nothing is saved without S, except what a prog
 
 ## What you have now
 
-The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:1752e2f91902cb77c2a4caf3c479b5d7c4d55420757182ef885e54f8a458d84e).
+The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:71fb23e7ab66100e11de2c9985e31d1e37dee393ad4e1820cd207a901198a336).
 
-The launcher, sessions and every prompt are in [Using the shell](terse:f437042ae218f4f6a397619bd728b6a95831a5f1d41ec6ce589c06e163db72af); publishing a program of your own is in [Running and publishing a program](terse:3747862acfa254c43bfd418e5e86294f3288f12e37ff103182c9b8b2fd37a933).
+The launcher, sessions and every prompt are in [Using the shell](terse:1b893e13192aa1d2344717f99be04cf553709f8dc18c245d8ac97165fd4a7fac); publishing a program of your own is in [Running and publishing a program](terse:3b414aeabd0c9f7449a08fd18940ed671ceb5a1a1be770c0f3cdb27adf50fd74).

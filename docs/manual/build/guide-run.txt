@@ -58,10 +58,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:589bbd3f9c2e130973fc9c780156e8041aaff778e88d4da28184f07b71396a2c) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:ec41e72baeb031100dd8bdf47aad656a8288c13ce67313d25926eb2ce1d07c8f) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:cba4b0cf468807598634fe5c131c45febb39aa9f47c7be34b0981b748b057571).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:0ee07926683f0783d2ff92f34b46dbcff4e71596403600c008c33a6f855a3841).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:f437042ae218f4f6a397619bd728b6a95831a5f1d41ec6ce589c06e163db72af).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:1b893e13192aa1d2344717f99be04cf553709f8dc18c245d8ac97165fd4a7fac).

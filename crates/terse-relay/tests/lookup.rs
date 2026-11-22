@@ -61,14 +61,18 @@ fn lookup_answers_and_rate_limit() {
     assert_eq!(got[1..], [RelayReply::NotFound, RelayReply::NotFound]);
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let reqs = vec![client.lookup(&key, 1, b"tool"), client.lookup(&key, 3, b" tool")];
-    assert_eq!(ask(&mut client, reqs), [RelayReply::Refused, RelayReply::Refused]);
+    let refused = RelayReply::Refused(terse_net::protocol::Refusal::Unspecified);
+    assert_eq!(ask(&mut client, reqs), [refused.clone(), refused]);
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let mut reqs: Vec<u32> = (0..3).map(|_| client.lookup(&key, 3, b"other")).collect();
     reqs.push(client.find(SCOPE_ENTRIES, b"x"));
     reqs.push(client.lookup(&key, 3, b"other"));
     let got = ask(&mut client, reqs);
     assert!(matches!(got[..3], [RelayReply::LookedUp(_), RelayReply::LookedUp(_), RelayReply::LookedUp(_)]), "{got:?}");
-    assert_eq!(got[3..], [RelayReply::Found(Vec::new()), RelayReply::Refused], "the fifth in a second");
+    assert_eq!(got[3], RelayReply::Found(Vec::new()));
+    // The fifth in a second: refused, try again within a second (NETWORK 3.1).
+    let RelayReply::Refused(terse_net::protocol::Refusal::TryLater(wait)) = got[4] else { panic!("{got:?}") };
+    assert!(wait <= std::time::Duration::from_secs(1));
 }
 
 /// SPEC §machines.calls: `start_program` for a feed the host does not follow and a

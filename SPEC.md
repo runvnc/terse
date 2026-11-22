@@ -677,7 +677,9 @@ full is dropped.
   may keep a few keys for its own functions, such as a paste key; such a
   key's press and its release reach no program (the modifier keys held
   with it are still delivered). A host should keep as few as it can and
-  say which.
+  say which. (The reference host keeps its paste keys and, for its
+  volume, Control+Alt with minus, equals or M, and the keyboard's volume
+  keys: README "Sound".)
 - **Pointer** positions are in screen units (§screen): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current

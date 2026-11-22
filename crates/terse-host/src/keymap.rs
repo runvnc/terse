@@ -96,6 +96,30 @@ pub const MAX_PASTE: usize = 1 << 20;
 /// The host's home key (SPEC §machines.input) when it runs a shell.
 pub const HOME_KEY: KeyCode = KeyCode::F12;
 
+/// The volume keys the host keeps (SPEC §events "Keys a host keeps"):
+/// Ctrl+Alt+minus and Ctrl+Alt+equals (plus) a tenth down and up,
+/// Ctrl+Alt+M mute, and the keyboard's own volume keys when the desktop
+/// lets them reach the window. Physical keys, so every layout has them in
+/// the same place.
+pub fn volume_key(key: KeyCode, mods: ModifiersState) -> Option<crate::audio::VolumeKey> {
+    use crate::audio::VolumeKey::*;
+    match key {
+        KeyCode::AudioVolumeDown => return Some(Down),
+        KeyCode::AudioVolumeUp => return Some(Up),
+        KeyCode::AudioVolumeMute => return Some(Mute),
+        _ => {}
+    }
+    if !(mods.control_key() && mods.alt_key()) || mods.super_key() {
+        return None;
+    }
+    match key {
+        KeyCode::Minus | KeyCode::NumpadSubtract => Some(Down),
+        KeyCode::Equal | KeyCode::NumpadAdd => Some(Up),
+        KeyCode::KeyM => Some(Mute),
+        _ => None,
+    }
+}
+
 /// The characters of pasted text the program receives: newlines (a CR LF
 /// pair or a lone CR counts as one) and no other control characters.
 pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
@@ -136,6 +160,24 @@ pub fn prompt_answer(event: &KeyEvent) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The volume keys need Control and Alt together; a program keeps
+    /// minus, equals and M with any other modifiers.
+    #[test]
+    fn volume_keys() {
+        use crate::audio::VolumeKey::*;
+        let ca = ModifiersState::CONTROL | ModifiersState::ALT;
+        assert_eq!(volume_key(KeyCode::Minus, ca), Some(Down));
+        assert_eq!(volume_key(KeyCode::Equal, ca | ModifiersState::SHIFT), Some(Up));
+        assert_eq!(volume_key(KeyCode::KeyM, ca), Some(Mute));
+        assert_eq!(volume_key(KeyCode::AudioVolumeMute, ModifiersState::empty()), Some(Mute));
+        for m in [ModifiersState::empty(), ModifiersState::CONTROL, ModifiersState::ALT, ca | ModifiersState::SUPER] {
+            for k in [KeyCode::Minus, KeyCode::Equal, KeyCode::KeyM] {
+                assert_eq!(volume_key(k, m), None, "{k:?} {m:?}");
+            }
+        }
+        assert_eq!(volume_key(KeyCode::KeyA, ca), None);
+    }
 
     #[test]
     fn spec_examples() {

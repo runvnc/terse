@@ -31,7 +31,7 @@ trap 'rm -rf "$stage_root"' EXIT
 export CARGO_PROFILE_RELEASE_STRIP=${CARGO_PROFILE_RELEASE_STRIP:-symbols}
 
 # The windowed host: GPU renderer with the software one as fallback
-# (--renderer auto, the default) and sound.
+# (--renderer auto, the default) and sound (a default feature, named anyway).
 host_features=(--features terse-host/audio)
 
 build() { # <target> <cargo args...>
@@ -57,7 +57,8 @@ linux-x86_64 | linux-aarch64)
     arch=${platform#linux-}
     gnu="$arch-unknown-linux-gnu"
     musl="$arch-unknown-linux-musl"
-    # The host links the system's graphics, sound and input libraries:
+    # The host links the system's graphics and input libraries (sound it
+    # loads at run time):
     # glibc, on the oldest runner image the workflow can use.
     build "$gnu" -p terse-host "${host_features[@]}" "${bus_packages[@]}"
     # The command-line tools need nothing from the system: static (musl),

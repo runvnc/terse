@@ -15,7 +15,7 @@ publish = false
 
 [dependencies]
 blake3 = "1.8"
-ed25519-dalek = "2.2"
+tersenet = "0.1"
 tungstenite = "0.30"
 
 [workspace]
@@ -23,7 +23,7 @@ tungstenite = "0.30"
 
 - `tungstenite` is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must.
 - `blake3` is BLAKE3 by its authors; `blake3::hash` gives the 32-byte hash that is a blob's ID.
-- `ed25519-dalek` checks signatures in step 3.
+- `tersenet` is the Tersenet SDK for Rust: step 3 checks entries with it. It brings `curve25519-dalek`, the curve arithmetic under the widely used `ed25519-dalek`, and `sha2`.
 
 The empty `[workspace]` keeps the package apart from the Tersenet sources around it. `Cargo.lock`, beside it, pins the versions the Tersenet sources themselves use.
 
@@ -141,11 +141,11 @@ Error: "the relay does not have it"
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:b6d6ffd3f980f607910ffe613feb173cf094971854a6f66ad1a6a4373d0b59c4) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:1bc4f7b8fc7dee25a66e4fab2c23ab1f9724edb6bd91ceb8237fc98524ea0f6b) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Rust, step 3: follow a feed](terse:5fd994b8150698ea82b27b6585947fec3f640e6eeab08a0ac09337dc1879fe6f).
-- Every relay message: [The network](terse:1baef48333f2d077eacaf4f12ce8ba06bff2949710da16afec571d44b81738d7).
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:dfa89dd1f08372be3440d17f95657046684959192a2a654bae3003c4679fe283).
+- Every relay message: [The network](terse:503e11afbb308c4daba5d20a1f30eb0a3345d301a5b9f7e925b4a6bed79faa68).

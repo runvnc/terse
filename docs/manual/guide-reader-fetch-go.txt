@@ -12,17 +12,20 @@ module reader
 go 1.24.0
 
 require (
-    filippo.io/edwards25519 v1.2.0
     github.com/gorilla/websocket v1.5.3
+    github.com/runvnc/terse/sdk/go v0.1.0
     lukechampine.com/blake3 v1.5.1
 )
 
-require github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+require (
+    filippo.io/edwards25519 v1.2.0 // indirect
+    github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+)
 ```
 
 - `github.com/gorilla/websocket` is the most widely used WebSocket package for Go. It has no dependencies of its own and a plain blocking interface (dial, write a message, read a message), and it answers pings and joins fragmented messages by itself, as a Tersenet client must.
 - `lukechampine.com/blake3` is a widely used BLAKE3 for Go; `blake3.Sum256` gives the 32-byte hash that is a blob's ID. It brings one small package of its own, `klauspost/cpuid`, to find the processor's fast instructions.
-- `filippo.io/edwards25519` checks signatures in step 3.
+- `github.com/runvnc/terse/sdk/go` is the Tersenet SDK for Go (package `tersenet`): step 3 checks entries with it. It brings `filippo.io/edwards25519`, the curve arithmetic Go's own `crypto/ed25519` is built on.
 
 `go.sum`, beside it, pins their exact contents. Go downloads them the first time you build.
 

@@ -118,6 +118,10 @@ struct App {
     since_hold: u64,
     /// Frame periods held in all.
     held: u64,
+    /// The sound (SPEC §sound.presentation), played as terse-host plays it.
+    audio: terse_host::audio::Audio,
+    /// Why sound cannot be heard, shown until this frame.
+    sound_notice: Option<((String, String, String), u64)>,
 }
 
 impl App {
@@ -161,6 +165,15 @@ impl App {
         let emulate = start.elapsed().as_secs_f64() * 1000.0;
         self.comp.ran(&done, &self.bs.system);
         let bus = self.bus_ms() - bus_before;
+        let mut sound = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
+        let any = self.bs.system.take_audio(&mut sound);
+        if let Some(s) = self.audio.frame(any.then_some(&sound[..])) {
+            eprintln!("terse-bus: {}", s.line());
+            self.sound_notice = Some((s.notice(), self.frames + terse_bus::host::NOTICE_FRAMES));
+        }
+        if self.sound_notice.as_ref().is_some_and(|(_, until)| *until < self.frames) {
+            self.sound_notice = None;
+        }
         // Parallax: the eye moves towards where the pointer says, a quarter
         // of the way each frame, and rests exactly there.
         if self.opts.parallax && self.opts.selftest.is_none() {
@@ -181,7 +194,8 @@ impl App {
         let start = Instant::now();
         let prompt = self.bs.prompt()?;
         let viewport = self.viewport;
-        self.comp.notice = self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone()));
+        self.comp.notice =
+            self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone())).or_else(|| self.sound_notice.as_ref().map(|(n, _)| n.clone()));
         self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         let compose = start.elapsed().as_secs_f64() * 1000.0;
         // R15: a new size of the surface is recorded, and the frames just
@@ -329,6 +343,18 @@ impl App {
         if self.bs.system.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
             if pressed && !event.repeat {
                 self.pending.push(Event::home());
+            }
+            return;
+        }
+        // The volume: the host's keys, as in terse-host.
+        if let PhysicalKey::Code(code) = event.physical_key
+            && let Some(k) = terse_host::keymap::volume_key(code, self.modifiers)
+        {
+            if pressed {
+                self.bs.swallow(usage);
+                let what = self.audio.change(k);
+                let then = "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes; it is kept.".to_string();
+                self.sound_notice = Some((("sound".into(), what, then), self.frames + 90));
             }
             return;
         }
@@ -591,6 +617,7 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
     }
     let viewport = opts.size.unwrap_or(native);
     let eye = opts.eye;
+    let opts_selftest = opts.selftest.is_some();
     let mut app = App {
         bs,
         script,
@@ -626,6 +653,8 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         held_run: 0,
         since_hold: RUN_BETWEEN,
         held: 0,
+        audio: terse_host::audio::Audio::new(terse_host::audio::Choice::from_env(opts_selftest)),
+        sound_notice: None,
     };
     app.resizes = app.opts.resizes.iter().copied().collect();
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;

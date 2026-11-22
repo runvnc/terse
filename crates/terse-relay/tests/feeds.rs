@@ -188,7 +188,7 @@ fn keeps_the_most_recent_entries_and_survives_a_restart() {
     assert_eq!(held.len(), cap);
     assert_eq!(held[0], 11);
     // An entry older than everything kept is not stored.
-    assert_eq!(publish(&mut ws, 999, &entry(&author, 3, "late")), status::REFUSED);
+    assert_eq!(publish(&mut ws, 999, &entry(&author, 3, "late")), status::FEED_FULL, "the feed is full (NETWORK 3.1)");
 
     // A second relay on the same directory (a restart) serves the same feed.
     let restarted = start(dir.path(), cap);

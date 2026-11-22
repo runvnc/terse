@@ -75,5 +75,6 @@ content-feeds
 content-records
 experimental
 network
+signatures
 events
 charges

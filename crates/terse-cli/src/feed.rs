@@ -186,7 +186,7 @@ pub fn manual(args: &[String]) -> Result<ExitCode, String> {
                 crate::say_delivery(&mut node);
                 match done {
                     Done::Published { seq, blob } => println!("seq {seq} blob {} {name}", to_hex(&blob)),
-                    Done::Refused => return Err(format!("{name}: the relays refused the entry")),
+                    Done::Refused => return Err(format!("{name}: every relay refused the entry (each one's reason is above)")),
                     _ => return Err(format!("{name}: publish failed (store error, or no relay accepted it)")),
                 }
             }
@@ -344,7 +344,7 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
             println!("seq {seq} blob {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }
@@ -379,7 +379,7 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
             println!("seq {seq} program {name} image {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }
@@ -851,7 +851,7 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
             println!("seq {seq} blob {} ({})", to_hex(&blob), if listed { "listed" } else { "unlisted" });
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the profile entry".into()),
+        Done::Refused => Err("every relay refused the profile entry (each one's reason is above)".into()),
         _ => Err("publishing the profile failed (store error, or no relay accepted it)".into()),
     }
 }
