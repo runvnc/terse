@@ -161,37 +161,79 @@ The signature is Ed25519 over the 13 ASCII bytes `terse-entry-0` followed by
 bytes 0 to 108 + `n` of the entry. An entry is at most 293 bytes.
 
 **Strict verification.** The signature is R (its first 32 bytes) and S
-(its last 32, a little-endian integer); A is the feed key's 32 bytes, M
-the signed message. It verifies if and only if all of these hold:
+(its last 32, a little-endian integer of all 256 bits: no bit is
+ignored); A is the feed key's 32 bytes, M the signed message. B is the
+base point of RFC 8032 (section 5.1), [n]P the point P added to itself n
+times, and a point is **of small order** if [8]P is the neutral point
+(x = 0, y = 1). It verifies if and only if all of these hold:
 
 1. A is a valid feed key (section 4.1): canonical, and not of small
    order.
 2. S < L, where L = 2^252 + 27742317777372353535851937790883648493 (the
-   order of the base point B).
-3. R decodes to a point (as A does, but without the canonical check,
-   which step 4 makes) that is not of small order.
-4. With k = SHA-512(R ‖ A ‖ M) taken as a little-endian integer modulo
-   L (R and A as the bytes received), the canonical encoding of the
-   point [S]B − [k]A is exactly the 32 bytes R. This is the
-   cofactorless equation: it is not multiplied by 8. A non-canonical R
-   never verifies, since the encoding computed is canonical.
+   order of B).
+3. R decodes to a point that is not of small order. Here R may be
+   decoded as A is (section 4.1) or more loosely (y taken modulo p, x = 0
+   accepted with the sign bit set): the verdict is the same, since every
+   R that only the loose decoding accepts either is of small order or
+   fails step 4.
+4. With k = SHA-512(R ‖ A ‖ M), its 64 bytes taken as a little-endian
+   integer modulo L (R and A as the bytes received), the canonical
+   encoding of the point [S]B − [k]A is exactly the 32 bytes R. This is
+   the cofactorless equation: it is not multiplied by 8. A non-canonical
+   R never verifies, since the encoding computed is canonical.
+
+The order of the checks does not change the verdict. There are eight
+points of small order; their canonical encodings, in hexadecimal, are
+
+    0100000000000000000000000000000000000000000000000000000000000000  order 1 (neutral)
+    ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f  order 2
+    0000000000000000000000000000000000000000000000000000000000000000  order 4
+    0000000000000000000000000000000000000000000000000000000000000080  order 4
+    26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05  order 8
+    26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85  order 8
+    c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a  order 8
+    c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa  order 8
+
+and a loose decoder also takes these six to points of small order:
+`eeff…ff7f` and `eeff…ffff` (y = p + 1), `edff…ff7f` and `edff…ffff`
+(y = p), `0100…0080` and `ecff…ffff` (x = 0 with the sign bit set).
+Comparing with these fourteen byte strings is an alternative to
+computing [8]P.
+
+**Why so strict.** Ed25519 as RFC 8032 and the common libraries define
+it leaves room: a library may check [8][S]B = [8]R + [8][k]A (the
+cofactored equation) or the equation above, may or may not refuse S ≥ L,
+non-canonical encodings and points of small order, and the choices
+change the verdict on signatures that an attacker can make. For a key of
+small order anyone can make signatures that satisfy the equation; with
+non-canonical encodings or S ≥ L one valid entry has several encodings;
+and where two implementations disagree on one entry, relays and clients
+disagree on which entries a feed holds. With these four rules every
+signature is valid for every conforming implementation or for none, no
+one but the holder of the secret key can sign for a feed, and each valid
+entry has exactly one valid encoding.
 
 An ordinary Ed25519 verification function is not enough: many accept a
 small-order R or A, a non-canonical A, an S ≥ L that passes a check of
 its top bits only, or check the cofactored equation. An implementation
 adds the checks it lacks (1 to 3 can be done before calling it; 4 by
-comparing bytes). `vectors/entries.txt` has an entry for each check
-(`small-order-key-signed`, `small-order-key-order-8-signed`,
-`non-canonical-key`, `non-canonical-signature`, `small-order-r`,
-`non-canonical-r`, `mixed-order-r`): an implementation that accepts any
-of them is wrong. With these rules each valid entry has exactly one
-valid encoding.
+comparing bytes), or computes step 4 itself. `vectors/entries.txt` has
+an entry for each check (`small-order-key-signed`,
+`small-order-key-order-8-signed`, `non-canonical-key`,
+`non-canonical-signature`, `small-order-r`, `non-canonical-r`,
+`mixed-order-r`): an implementation that accepts any of them is wrong.
+`sdk/testdata/strict.txt` has 64 more cases (every point of small order
+as A and as R, S + L and S = L, mixed-order R, and keys with a
+small-order component, whose signatures are valid exactly when [k]
+times that component is the neutral point). The Tersenet SDK, `sdk/go`
+and `sdk/rust`, implements all of section 4.2 in one call.
 
 An entry is valid if `n` is at most 120, its length matches `n`, the
 signature verifies under the feed key by strict verification (above),
 `seq` is at least 1, the kind is
 not `0` or `255`, the size is 1 to 1,048,576 (1 to 4,096 for a profile),
-the title is valid UTF-8, and, for a profile or a program, the title is a
+the title is valid UTF-8 (RFC 3629: no overlong forms, no surrogates,
+nothing above U+10FFFF), and, for a profile or a program, the title is a
 valid display name (section 4.6). Clients and relays discard invalid
 entries.
 
