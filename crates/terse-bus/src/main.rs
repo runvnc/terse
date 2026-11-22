@@ -55,7 +55,7 @@ pointer). A machine in the phosphor style is drawn as terse-host draws it: --tub
 --no-trails, --force-phosphor and --no-shed as terse-host's (in a window the look is shed when frames
 run long, unless --no-shed); a --screenshot draws the last 600 frames to build up the afterglow; --selftest runs --frames frames (default 300) in the window with the scripted input only and
 prints the emulation, bus, composition and present-interval timings; --resize gives the window's surface each size before
-frame F, as the window system's configure would (a script of size changes, for testing the rule's excuse for resizing). --realtime runs at 60 frames a
+frame period F, as the window system's configure would (a script of size changes, for testing the rule's excuse for resizing). --realtime runs at 60 frames a
 second. --frame-times writes each frame's emulation time (ms). --bench prints the frame times
 (emulation including the bus) and per-driver latencies. --pin puts the core on CPU 1 and the drivers
 on CPUs 2, 3, ... --spin-us (default 100) is the core's spin for a reply; drivers spin adaptively
