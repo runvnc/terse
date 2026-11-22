@@ -14,23 +14,29 @@
  * an integer count of 1/10,000ths): exact for money-like sums, from
  * -922,337,203,685,477.5807 to 922,337,203,685,477.5807. Products and quotients
  * are computed exactly (128 bits) and rounded half away from zero to 4
- * places; a result outside the range is #NUM. A number is shown with
+ * places; a result outside the range is #NUM!. A number is shown with
  * thousands separators and its decimals without trailing zeros, but with
  * at least 2 if it has any (12.5 shows as 12.50); one typed with % shows
  * as a percentage. A number too wide for its column loses its decimals,
  * then its separators, then shows as ####.
  *
- * Formulas: numbers, cell references (A1, a1), ranges (A1:B5) as function
- * arguments, + - * / ^ (a whole exponent, -64 to 64), unary minus, %
- * after a number or reference, parentheses, the comparisons = <> < > <=
- * >= (1 or 0), text in double quotes, and the functions SUM, AVERAGE,
- * MIN, MAX, COUNT, ROUND(x, places), ABS and IF(test, then[, else]).
- * Empty cells count 0; in ranges, text and empty cells are skipped (COUNT
- * counts numbers). Errors are values that spread to the cells that use
- * them: #DIV/0, #CYCLE (a cell that depends on itself, and every cell of
- * the cycle), #ERR (a formula that cannot be read), #REF (a reference
- * outside the sheet), #VALUE (text where a number is needed), #NUM (out
- * of range).
+ * Formulas: numbers, cell references (A1, a1; $A$1, A$1, $A1 keep the
+ * part after the $ when copied), ranges (A1:B5) as function arguments,
+ * + - * / ^ (a whole exponent, -64 to 64), unary minus, % after a number
+ * or reference, & (joins text), parentheses, the comparisons = <> < > <=
+ * >= (TRUE or FALSE), TRUE, FALSE, text in double quotes, and the
+ * functions SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, AND, OR, ROUND(x,
+ * places), ABS, INT, NOT and IF(test, then[, else]). A formula is kept with
+ * its names and references in capitals and its open brackets closed. An
+ * empty cell counts 0 (=A1 of an empty A1 is 0); in ranges, text, TRUE,
+ * FALSE and empty cells are skipped (COUNT counts numbers, COUNTA what is
+ * not empty, AND and OR take TRUE and FALSE). TRUE or FALSE typed into a
+ * cell is that value. Errors are values that spread to the cells that use
+ * them, named as other spreadsheets name them: #DIV/0!, #CYCLE! (a cell
+ * that depends on itself, and every cell of the cycle), #ERROR! (a formula
+ * that cannot be read), #NAME? (no such function or name), #REF! (a
+ * reference outside the sheet), #VALUE! (text where a number is needed),
+ * #NUM! (out of range); the content line says what the selected one means.
  *
  * Recalculation. After every change every formula is recalculated in
  * dependency order: a depth-first walk with an explicit stack that
@@ -40,8 +46,10 @@
  * no frame runs long however large the sheet (the status says
  * "Calculating" meanwhile; the cells show their old values until then).
  *
- * The screen is one page document: the entry line (the selected cell's
- * name and content; while editing, the text with a caret), a table of 8
+ * The screen is one page document: the content line (the selection's
+ * name and the active cell's content as typed, then a formula's value or
+ * what its error means; while editing, the entry with its text cursor,
+ * as much of it as fits around the cursor), a table of 8
  * columns (the row numbers and 7 sheet columns), the chart if there is
  * one, and the status line. Every column is 80 screen units wide, on every
  * host: a last row of invisible text (white on white, size 6) makes each
@@ -55,17 +63,43 @@
  * is cut with an ellipsis where it would not fit (by an estimate of its
  * width), so that rows stay one line high.
  *
- * Keys. Arrows, Tab and Enter (with Shift: back) move; Shift+arrows or a
- * drag select a range; a click selects a cell. Typing starts a new entry,
- * F2 edits the cell's content; while editing, Left, Right, Home, End,
- * Backspace and Delete edit, Enter, Tab, Up and Down keep the entry and
- * move, Esc cancels. Delete clears the selection. Ctrl+C copies the
- * selection, Ctrl+Y pastes it at the selected cell, Ctrl+D fills the
- * selection down from its top row and Ctrl+R right from its left column
- * (references move with the copy: relative references only). Ctrl+G shows
- * a bar chart of the selection, Ctrl+L a line chart (the same key again
- * removes it). Ctrl+S saves, Ctrl+P publishes, Ctrl+N twice starts a new
- * sheet.
+ * Keys and the pointer, as in other spreadsheets. Arrows, Tab and Enter
+ * (with Shift: back; Enter after Tabs goes back to the column they began
+ * in) move; Ctrl+arrows go to the edge of the filled cells, Ctrl+Home to
+ * A1, Ctrl+End to the last cell used, Ctrl+A selects the sheet.
+ * Shift+arrows, Shift+click and a drag select a range, keeping the active
+ * cell where it began; a click on a column letter or row number selects
+ * it. Typing starts a new entry in the active cell ("enter" mode); F2, a
+ * double-click (two presses on a cell DOUBLE_FRAMES apart or less) or a
+ * press on the content line edits its content ("edit" mode). The entry
+ * shows on the content line and in its cell, with a text cursor; every
+ * character of both is a page anchor, so a press on one puts the cursor
+ * before it. In enter mode an arrow keeps the entry and moves; in edit
+ * mode Left, Right, Home and End move the cursor; F2 switches. Backspace
+ * and Delete delete, Enter and Tab keep the entry and move, Esc cancels,
+ * F4 cycles the $ of the reference at the cursor.
+ *
+ * Pointing. While a formula is typed and the cursor is where a reference
+ * may go (after =, an operator, "(", "," or ":"), a press on another cell
+ * puts its name in at the cursor, a drag a range ("B3:B7"), and in enter
+ * mode the arrows (Shift: a range) move such a reference from the cell
+ * being edited; the next press or arrow replaces the reference just put
+ * in. The range pointed at is shaded orange. Anywhere else in an entry, a
+ * press on another cell keeps the entry and selects that cell.
+ *
+ * Delete clears the selection. Ctrl+C copies it, Ctrl+X cuts it, Ctrl+B
+ * pastes at the selection's top left (one cell copied fills a selected
+ * range; after a cut, moves the cells, their formulas unchanged). Ctrl+V
+ * pastes too where the host passes it on; a window keeps Ctrl+V for the
+ * text of other programs, which arrives as typing (a line break as Enter).
+ * Ctrl+D fills the selection down from its top row and Ctrl+R right from
+ * its left column (references move with the copy, except after a $).
+ * Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes every change of cells
+ * (the log below). Ctrl+G shows a bar chart of the selection, Ctrl+L a
+ * line chart (the same key again removes it). Ctrl+S saves, Ctrl+P
+ * publishes, Ctrl+N twice starts a new sheet. The status line names the
+ * mode of an entry and its keys, else what happened last and how to begin
+ * an entry.
  *
  * Chart. One series: the values of the selection's first column that
  * holds numbers (a selection one row high: its row), at most 32; the
@@ -371,6 +405,10 @@ static uint32_t est(uint8_t ch)
     if (ch == '.' || ch == ',' || ch == ':' || ch == ';' || ch == 'i' || ch == 'l' || ch == 'j' || ch == '!' || ch == '|'
         || ch == '\'')
         return 36;
+    if (ch == '+' || ch == '=' || ch == '<' || ch == '>' || ch == '^' || ch == '~')
+        return 100; /* the wide operators of formulas */
+    if (ch == '/' || ch == '*')
+        return 50;
     if (ch == 'f' || ch == 't' || ch == 'r' || ch == '(' || ch == ')' || ch == '-' || ch == 'I')
         return 50;
     if (ch == 'm' || ch == 'M' || ch == 'W' || ch == '%' || ch == '@')
@@ -382,6 +420,7 @@ static uint32_t est(uint8_t ch)
     return 75;
 }
 #define CELL_WIDTH 650 /* tenths: 80 less 12 of padding, less a margin */
+#define LINE_WIDTH 4400 /* the content line's room for an entry, as size-12 tenths */
 
 static uint32_t est_width(const uint8_t *p, uint32_t n)
 {
@@ -1502,6 +1541,8 @@ static value evaluate(uint16_t i)
         return err(E_ERR);
     if (st[0].k == K_RANGE)
         return err(E_VALUE);
+    if (st[0].k == K_EMPTY)
+        return num(0); /* =A1 of an empty A1 shows 0 */
     return st[0];
 }
 
@@ -1626,7 +1667,7 @@ static void recalc_step(void)
 /* --- Screen state --------------------------------------------------------- */
 
 static uint32_t top, left;         /* the first row and column shown */
-static uint32_t sr, sc, ar, ac;    /* the selected cell and the range's other corner */
+static uint32_t sr, sc, ar, ac;    /* the active cell (where typing goes) and the range's far corner */
 /* Editing: the entry in ebuf, the text cursor at ecaret. An entry started
  * by typing is in "enter" mode (the arrows keep it and move, or point at a
  * cell for a formula); F2, a double-click or a click on the text is "edit"
@@ -1938,9 +1979,9 @@ static void anchored(const uint8_t *p, uint32_t from, uint32_t to, uint16_t base
 
 /* The part of the entry that the cell being edited shows: as much as fits
  * around the cursor. */
-static void edit_window(uint32_t *from, uint32_t *to)
+static void edit_window(uint32_t room, uint32_t *from, uint32_t *to)
 {
-    uint32_t w = 0, s = ecaret, e = ecaret, room = CELL_WIDTH - 40;
+    uint32_t w = 0, s = ecaret, e = ecaret;
     if (est_width(ebuf, elen) > room)
         room -= 180; /* an ellipsis at each end */
     while (s) {
@@ -1997,9 +2038,17 @@ static void build_doc(void)
     doc_text(nm, n);
     doc_font(DOC_SANS, 0);
     text("   ");
-    if (editing)
-        anchored(ebuf, 0, elen, A_LINE, ecaret);
-    else if (c_rlen[sel]) {
+    if (editing) {
+        /* As much as the line holds around the cursor (estimated at size
+         * 12: the line's width less the name, scaled from 14). */
+        uint32_t s, e;
+        edit_window(LINE_WIDTH, &s, &e);
+        if (s)
+            text("\xE2\x80\xA6");
+        anchored(ebuf, s, e, A_LINE, ecaret);
+        if (e < elen)
+            text("\xE2\x80\xA6");
+    } else if (c_rlen[sel]) {
         anchored(pool + c_off[sel], 0, c_rlen[sel], A_LINE, RAW_MAX + 1);
         if (c_flag[sel] & F_FORMULA) {
             /* Then its value, or what its error means. */
@@ -2065,7 +2114,7 @@ static void build_doc(void)
             if (c == sel && editing) {
                 /* The entry being typed, in its cell too. */
                 uint32_t s, e;
-                edit_window(&s, &e);
+                edit_window(CELL_WIDTH - 40, &s, &e);
                 doc_colour(25, 25, 25);
                 if (s)
                     text("\xE2\x80\xA6");
@@ -2278,17 +2327,25 @@ static void show_selection(void) { show_cell(sr, sc); }
 
 static uint32_t clamp(int32_t v, uint32_t n) { return v < 0 ? 0 : v >= (int32_t)n ? n - 1 : (uint32_t)v; }
 
+/* Selects cell (r, c); extending, moves the range's far corner there and
+ * keeps the active cell (where typing goes), as spreadsheets do. */
 static void move_to(int32_t r, int32_t c, int extend)
 {
-    sr = clamp(r, NROWS);
-    sc = clamp(c, NCOLS);
+    ar = clamp(r, NROWS);
+    ac = clamp(c, NCOLS);
     if (!extend) {
-        ar = sr;
-        ac = sc;
+        sr = ar;
+        sc = ac;
     }
     new_armed = 0;
     tab_col = -1;
-    show_selection();
+    show_cell(ar, ac);
+}
+
+/* An arrow: from the active cell, or (extending) from the far corner. */
+static void step(int32_t dr, int32_t dc, int extend)
+{
+    move_to((int32_t)(extend ? ar : sr) + dr, (int32_t)(extend ? ac : sc) + dc, extend);
 }
 
 /* Enter: down (Shift: up); after a row of entries kept with Tab, to the
@@ -2312,7 +2369,7 @@ static int filled(int32_t r, int32_t c) { return r >= 0 && r < NROWS && c >= 0 &
  * filled cell, or to the sheet's edge. */
 static void jump(int dr, int dc, int extend)
 {
-    int32_t r = (int32_t)sr, c = (int32_t)sc;
+    int32_t r = (int32_t)(extend ? ar : sr), c = (int32_t)(extend ? ac : sc);
     if (filled(r, c) && filled(r + dr, c + dc))
         while (filled(r + dr, c + dc)) {
             r += dr;
@@ -2753,7 +2810,7 @@ static void edit_key(uint8_t k, int shift, int ctrl)
         return;
     }
     commit();
-    move_to((int32_t)sr + dr, (int32_t)sc + dc, shift);
+    step(dr, dc, shift);
 }
 
 /* --- Copying, filling, clearing ------------------------------------------- */
@@ -3023,7 +3080,7 @@ static void copy(int cut)
  * selected range. After a cut, moves it (once). */
 static void paste(void)
 {
-    uint32_t h = cl_r1 - cl_r0 + 1u, w = cl_c1 - cl_c0 + 1u, th = h, tw = w, r0 = sr, c0 = sc;
+    uint32_t h = cl_r1 - cl_r0 + 1u, w = cl_c1 - cl_c0 + 1u, th = h, tw = w, r0 = rmin(), c0 = cmin();
     if (!clip_on) {
         say("Nothing copied: Ctrl+C copies, Ctrl+X cuts");
         return;
@@ -3452,7 +3509,8 @@ static void key(uint8_t k, uint8_t mods)
             shift_held = 1;
         return;
     }
-    shift_held = (uint8_t)(shift != 0);
+    if (!shift)
+        shift_held = 0; /* its release was missed */
     if (editing) {
         if (ctrl && (k == KEY_S || k == KEY_P))
             commit();
@@ -3515,15 +3573,15 @@ static void key(uint8_t k, uint8_t mods)
     }
     new_armed = 0;
     switch (k) {
-    case KEY_UP: move_to((int32_t)sr - 1, (int32_t)sc, shift); return;
-    case KEY_DOWN: move_to((int32_t)sr + 1, (int32_t)sc, shift); return;
-    case KEY_LEFT: move_to((int32_t)sr, (int32_t)sc - 1, shift); return;
-    case KEY_RIGHT: move_to((int32_t)sr, (int32_t)sc + 1, shift); return;
+    case KEY_UP: step(-1, 0, shift); return;
+    case KEY_DOWN: step(1, 0, shift); return;
+    case KEY_LEFT: step(0, -1, shift); return;
+    case KEY_RIGHT: step(0, 1, shift); return;
     case KEY_TAB: tab_move(shift); return;
     case KEY_ENTER: enter_move(shift); return;
-    case KEY_PAGE_UP: move_to((int32_t)sr - (int32_t)vrows(), (int32_t)sc, shift); return;
-    case KEY_PAGE_DOWN: move_to((int32_t)sr + (int32_t)vrows(), (int32_t)sc, shift); return;
-    case KEY_HOME: move_to((int32_t)sr, 0, shift); return;
+    case KEY_PAGE_UP: step(-(int32_t)vrows(), 0, shift); return;
+    case KEY_PAGE_DOWN: step((int32_t)vrows(), 0, shift); return;
+    case KEY_HOME: move_to((int32_t)(shift ? ar : sr), 0, shift); return;
     case KEY_F2: start_edit(1, M_EDIT); return;
     case KEY_DELETE:
     case KEY_BACKSPACE: clear_range(); return;
@@ -3575,7 +3633,7 @@ static void pointer(const terse_event *e)
         if (editing && pt_drag) {
             if (r != pr1 || c != pc1)
                 point_set(pr0, pc0, r, c);
-        } else if (!editing && sel_drag && (r != sr || c != sc))
+        } else if (!editing && sel_drag && (r != ar || c != ac))
             move_to((int32_t)r, (int32_t)c, 1);
         return;
     }
