@@ -4,54 +4,54 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## User guide
 
-- [Install Tersenet](terse:e7865503eaf22981292b1eb7e76ebb2a53e1487cf2a45684937adc4117fb451d): one command on Linux and macOS, a zip on Windows, or from the source.
-- [Run Tersenet](terse:883b42cd4e1382253bc3368bf972169c7127b99302c8fdb3af510b222ae5b5a5): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:7b10fe64f3f9f8bb6004c0f363621260ec9fecdedba860649e25921dbcf576c6): your key, your name and your address; no account needed.
-- [Write and publish an article](terse:e511808f1510e3fb32dc3953e1693ab9890e3d554e10debf32ff90208f58841d): a plain text file, how it compares with Markdown, and your feed.
-- [Read articles and follow links](terse:5fd9aa739297f73ba6e3c7ad0cd49c630937ef9a0f7650a1845ba5a6120c2d2d): the timeline, links and search.
-- [Subscribe to someone's feed](terse:53b3c4643d0b05902f7bc0e5851dce86c0941b494dc535afbb20ddf65d7266af): a shared relay, by address or by name, nicknames.
-- [Find and play a game](terse:60ea52b6fffad00d5a88d920eccfc22c55a9636376af154aadac7e99c1b77adb): the built-in game, programs from feeds and links, saving your place.
+- [Install Tersenet](terse:2b51714f31c65716b83f9dd9e95653e97e7e86e877ae736d8cd8ddb4bed4a31e): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:3cbd80f372ca71278a401da0a4e99fed291c69a8d916b4328feed568b60b3eed): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:cba4b0cf468807598634fe5c131c45febb39aa9f47c7be34b0981b748b057571): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:b32c81155e121b077845a9eb4b215e9010517836d9f8d644b00e410c2a6cdcb5): a plain text file, how it compares with Markdown, and your feed.
+- [Read articles and follow links](terse:c328764c9c45c14dcb8e74b799c084af3b14d0c574e9bbaf93f638ab4e6bf88b): the timeline, links and search.
+- [Subscribe to someone's feed](terse:d41fcdeaf24001979f9f76937b5d475b26b0870bd5721407f21d22d9c2b63b10): a shared relay, by address or by name, nicknames.
+- [Find and play a game](terse:589bbd3f9c2e130973fc9c780156e8041aaff778e88d4da28184f07b71396a2c): the built-in game, programs from feeds and links, saving your place.
 
 ## Implementation guide
 
-- [Make a reader](terse:c59e37e9b05fe26e1daa4c7852f2bdf6d8c58ec0014ffd4b48231e50c5c04b0c): what a reader does, and a small one built in three steps, in Go or in Rust.
-- [Make a reader in Go, step 1: show an article](terse:f2480f4e73228c7240619a19ce3bf510573c5749030ccdb75bfa07c4609ab07e): an article file's headings and paragraphs, with the standard library alone.
-- [Make a reader in Rust, step 1: show an article](terse:12ac1aed4549c299fa0eb49f72af229a0c7bfeafb9921158a5cdf51fe54cb667): the same program in Rust.
-- [Make a reader in Go, step 2: fetch an article](terse:26aeeb59d2b8d319cb20418040a48c6b537210a0b200dc6bca64c0a73e37a1c5): get an article from a relay by its ID and check its BLAKE3 hash.
-- [Make a reader in Rust, step 2: fetch an article](terse:960d47e03407185464b6cf1b914e4c5501d71681902099fde222f387f54e86ab): the same in Rust.
-- [Make a reader in Go, step 3: follow a feed](terse:8ffac7f9cdf5bcfdfc0933a4aaac7e7ce334135fc8812bc7e2af325e6abea6e8): subscribe to a feed, check its entries' signatures strictly, open an article.
-- [Make a reader in Rust, step 3: follow a feed](terse:23f964cb75fbecc7f23b20e47d32176cfb103a5cd64acfcb891013fd7336394d): the same in Rust.
-- [Write a program in C](terse:02c7b9b1f0b68c4b29ca520dc9b95538fcacbadcdfda8cff156c79eed5f60423): hello on the text grid, built, run in a window and tested without one; Go has no compiler for Terse32, so the program pages are in C and Rust.
-- [Write a program in Rust](terse:308591584b3c49a5e0ed92af759d233c3df41687dbe3e44b3c9bc5ce363e6c0d): the same program with the Rust runtime.
-- [Draw a line and read a key](terse:13fbb40fd9b49a4ce1e9480efab36137d269091fddae9e9be6ce39d536730878): a line on the 2D vector display that the arrow keys move, in C.
-- [Draw a line and read a key in Rust](terse:2f3031f78962831acedc41a12b24dbcf59fb21a929bae6ff47f4d598ed4d0ac9): the same with `VecList`.
-- [Make a small game](terse:d0e1c14c20cb5c0b351475f865f78611915c01c2cde30840d06ae0dada3cbdab): steer a dot to a ring, keep score; the way to sparks and Lumen Reef, in C.
-- [Make a small game in Rust](terse:602dbed30379dd5311dd5d73341674beb770be42da2a4ccfedc20b07ef7dcd2a): the same game in Rust.
-- [Make a host](terse:5a322b5d74beeb133a987aa439eec39677182805d9fd91173167c5927e75e914): what a host is, and the four steps in Go and in Rust.
-- [Make a host in Go, step 1: run a program to its end](terse:fe2150ee199267c777c694d475985c41902a8f9a3be4f74e07df8a0be8b28a50): the program file, memory and the processor, until `exit`.
-- [Make a host in Rust, step 1: run a program to its end](terse:5462fcc93f2ea80ec45104195f1f33b1ebd0d433d4842de470db5e6e41980d05): the same in Rust.
-- [Make a host in Go, step 2: frames and the budget](terse:ccc81fb2907cd52a1a4f2fa2d5e1621accc61942bfd40422935abba67f24a1c7): 125,000 units a frame, `wait_frame` and the carry rule.
-- [Make a host in Rust, step 2: frames and the budget](terse:f67fe104596e13d625c73cc0b59c5765794c5bddd5942f29c64231dacd2ecbc0): the same in Rust.
-- [Make a host in Go, step 3: a driver shows hello](terse:b551899458b4dc9ee1ac843347f52cd8f4db441d470b17e743020a286a1f4c53): the reference terminal over the device bus.
-- [Make a host in Rust, step 3: a driver shows hello](terse:9988cb3a5c46052f105b408645a62cb7dcb73087ecaf5d2315024c45b77e259e): the same in Rust.
-- [Make a host in Go, step 4: prove it exact](terse:cf7dbe58a26de5950c57b24afbdcfebd7adc0de5f3cae36134d9e6a5cafa5f37): the state hash, equal to the reference's.
-- [Make a host in Rust, step 4: prove it exact](terse:f26a67ea1aa69cc5afeb0e1aee3b29c5c14558ffb96a8963027ea90c2b48b4f6): the same in Rust.
-- [Make a device](terse:ecd297233d1238beebab29e0b2de7ceee19becc169b6cf895b8164b536eef088): a device as a separate program on the device bus.
-- [Make a device in Go](terse:47bacc87af6bd2944dbd29615767918e18924e6ec13929599cafdb7a1491fd93): a terminal driver enough for `hello`, under the reference core and the example hosts.
-- [Make a device in Rust](terse:03c7bf440c24301f39a7d115e8cb477be2873393638e0462fb031e9cfe52a28e): the same in Rust.
-- [Swap in your own part](terse:5923c1cec9cdee61e078fd0ba72ebd9b70dec918edfb23a4eca3f624b39c0d13): your reader, core or device with the reference for everything else.
-- [Make a shell](terse:fda07d0f4249e14eff5dd7beac8b5d5fa6ca74906178da155fa7fba64bc93652): a program that starts another machine and shows it (device 8), in C.
-- [Make a shell in Rust](terse:4f3707d6d71d872058070bae1ce93631dddb4a5ab315d318b63402ad1a3e72d2): the same shell with the runtime's calls of device 8.
-- [Invent a device](terse:bb6bf83eaec009b2293d53ab5dcbf85a1c9e8715b7954b4872f561d736844976): an experimental device, its driver in C and a program in C that uses it.
-- [Invent a device: the program in Rust](terse:742f1e5381fc3559dc5232dd6b1651046988795416c7cba31038fff3de5a8e55): the same program in Rust, with raw calls.
+- [Make a reader](terse:1752e2f91902cb77c2a4caf3c479b5d7c4d55420757182ef885e54f8a458d84e): what a reader does, and a small one built in three steps, in Go or in Rust.
+- [Make a reader in Go, step 1: show an article](terse:06c25b61992b5f108e4524717bd97f13dfc104b809a11fe3543b46362034d5af): an article file's headings and paragraphs, with the standard library alone.
+- [Make a reader in Rust, step 1: show an article](terse:bbe351b3659f321d2fd30ab341aff96e19dd3690858e24b5023061fcd1934694): the same program in Rust.
+- [Make a reader in Go, step 2: fetch an article](terse:faa059c371d9fd5995c716629a45875e9c9191fa64c17caf9d0435dc25badee4): get an article from a relay by its ID and check its BLAKE3 hash.
+- [Make a reader in Rust, step 2: fetch an article](terse:0a9440d21aa865bb9940eb6c4e95a7b32b68c480558d087275400e6f86f0cd58): the same in Rust.
+- [Make a reader in Go, step 3: follow a feed](terse:90707c990fb48ecc8e88cef1465c778d47198225f05bbab3da1b935c34e06449): subscribe to a feed, check its entries' signatures strictly, open an article.
+- [Make a reader in Rust, step 3: follow a feed](terse:5fd994b8150698ea82b27b6585947fec3f640e6eeab08a0ac09337dc1879fe6f): the same in Rust.
+- [Write a program in C](terse:6365c781200051d19beb16696f41350d0bb11cb5a25b5dded3f7879bb5811667): hello on the text grid, built, run in a window and tested without one; Go has no compiler for Terse32, so the program pages are in C and Rust.
+- [Write a program in Rust](terse:ab4ae30aaab6e135acfa4284e448c85d83c7fc65d14845cc28c6516f464b638e): the same program with the Rust runtime.
+- [Draw a line and read a key](terse:282c375b583eaa136f435cc4459a21c5cda969aa58bdad672d6bb828a43d2a99): a line on the 2D vector display that the arrow keys move, in C.
+- [Draw a line and read a key in Rust](terse:f7b439a14a42d5eed41f13017af7cdf6a15162c6406263e51b73bb673d7a1594): the same with `VecList`.
+- [Make a small game](terse:91505e7e09b0c836a1349ce3ba0911d01b767d0526f252069691d7b507f1993a): steer a dot to a ring, keep score; the way to sparks and Lumen Reef, in C.
+- [Make a small game in Rust](terse:0e321494c3f384e604f24d926f73b9bb5a4c8fe50b07e87d87b8e8765f377aa9): the same game in Rust.
+- [Make a host](terse:9748e43e0e0e9e1b119621c0eaff6ed73f9674ff1def83d00f7be1345d1f5955): what a host is, and the four steps in Go and in Rust.
+- [Make a host in Go, step 1: run a program to its end](terse:87629301f964cc4d8a8efd57600a5c6d798cb4d04738cb9d152e3223e6b5e9c9): the program file, memory and the processor, until `exit`.
+- [Make a host in Rust, step 1: run a program to its end](terse:41e507c91db642acfa23ec356fb3ecc627cbe8151868b165d964c12d2524739c): the same in Rust.
+- [Make a host in Go, step 2: frames and the budget](terse:ed1a66c5863199a0deae7c15c5b0d60345bda86887eaa90b72114f3cd7047ca9): 125,000 units a frame, `wait_frame` and the carry rule.
+- [Make a host in Rust, step 2: frames and the budget](terse:2b733f46fce699e151335a571e22985203f9a204295d4892b590032aaeb89779): the same in Rust.
+- [Make a host in Go, step 3: a driver shows hello](terse:af1727ac4b368afe5caf39984e4b1b650349c15cf8973ea254208e57b0e54213): the reference terminal over the device bus.
+- [Make a host in Rust, step 3: a driver shows hello](terse:9ef108083866897157320f024368004c4c5371e4575b679d88ebe1cd5631c889): the same in Rust.
+- [Make a host in Go, step 4: prove it exact](terse:2d4e709e17e0d0db8f73ea27e94a7319516651516716fcd390317b0acecdfcdc): the state hash, equal to the reference's.
+- [Make a host in Rust, step 4: prove it exact](terse:be75254fe465746f4e33f3d86f14d2048ce4da26648dc71d898aa61137de659a): the same in Rust.
+- [Make a device](terse:0fcddad27527635648a7df91e7ed173c6bb1b06ced8f9e1482265fac64a46adb): a device as a separate program on the device bus.
+- [Make a device in Go](terse:638f6c9b950a60969802bb2adacbe9370a5c93a2d840b5065ef24de37ef6eed4): a terminal driver enough for `hello`, under the reference core and the example hosts.
+- [Make a device in Rust](terse:c6a61584643755366d85c612bdaf3a543abf1bf3b43fd294fd1915db3c9416ef): the same in Rust.
+- [Swap in your own part](terse:8dc251052fe47a1d7b68961e00bbee7e7b06650776062f7d9f8e2654ad715e44): your reader, core or device with the reference for everything else.
+- [Make a shell](terse:1ec64c288312e83a032d3e90dc015e7e6cafa279c77a7133fba0a876a60c5a0e): a program that starts another machine and shows it (device 8), in C.
+- [Make a shell in Rust](terse:2eab08c87b57cd81ccd2aea9e254397b960ae34bb2c3549928767fa028ecb186): the same shell with the runtime's calls of device 8.
+- [Invent a device](terse:ea7971c959b7fdf1dc3762ad8ef6adc876ee656cdb2f63bf24b1a71703919ca1): an experimental device, its driver in C and a program in C that uses it.
+- [Invent a device: the program in Rust](terse:147fc70a05d471f4531ff29e008a93b8a0eeb6b4828ded95704233d2220bcbad): the same program in Rust, with raw calls.
 
 ## Reference
 
 Tersenet as a whole:
 
-- [How Tersenet works](terse:fbd11c46706a748e4be28337a9362bb8982664868cf5ebc9a54febef60e4d000): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
-- [Using the shell](terse:95e3a595d660c8dfef95b3cdff069195525b5a429fc323e286c584518b05a02b): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
-- [Using the reader](terse:c8ddf24d89c2f2d85b4fd319decae29e504088be3881a97ec8180e7be27b09d9): the timeline, feeds, search and reading an article, with every key.
+- [How Tersenet works](terse:4c2b44297d6a272d963cdc39f01cf03565badc28ba60e0c36df5210fe0502bae): sharing articles and programs, the network, the machine, the devices, determinism and the shell.
+- [Using the shell](terse:f437042ae218f4f6a397619bd728b6a95831a5f1d41ec6ce589c06e163db72af): the launcher and tiles, layouts, sessions, halted machines, open requests and consent prompts.
+- [Using the reader](terse:c06168b36427927b128661bfa5b28e7938e290c39a40c051e240214d50f6f149): the timeline, feeds, search and reading an article, with every key.
 - [Fonts](terse:092c1553f918b65e2dce3f366618f981ff05c75461abc2010806b2b2779f63df): the fonts the host draws with, which characters they show, and adding one.
 - [Performance reports](terse:b47a54142603b1deb6e3eee12c680ebb0fda294aa6cc5fa79aa6c2cc8ca5060e): what a report of your host's record holds, publishing one, and reading many.
 
@@ -63,22 +63,22 @@ Articles and the network:
 
 Programs:
 
-- [Building a program](terse:81d47bc638cad06e3d9c5b579e1a642c40a91448cb8e102a9789eb0b13b15f8a): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
-- [The C library](terse:0a3d0e125cd20d5dff30838e3150fd93ccce8b592ce752aa02abfe0d5d2e940e): the start code, the linker script, terse.h, and the hello program in assembly and C.
-- [Rust programs](terse:697299ec36d1e2ced432d7be8757d8ef201882954a7bd21fdd59fbd449a7b685): the Rust runtime, what things cost, a larger program with cargo.
-- [Building by hand, and other languages](terse:6b60a73525b9d0efa6013e8f7a05305b45d06caf58caf14cefac9b97b4bc53e7): the build without `terse build`, and what any compiler must do.
-- [Running and publishing a program](terse:d9928cc35c818abfa6255bdd21a1501f86ef54cbc9949f0a6318098063af9b52): headless runs, scripted input, the state hash, the window, costs, publishing.
+- [Building a program](terse:1fe79a1c1c623a6f6a45a748a07a2cf4659b9458d08a99f55ea48d00ab90cf2e): `terse build` and `terse new`, every option, what they run and why, the devices an image lists.
+- [The C library](terse:7fa8821974086aad00fd79b91025436ae8e161d5add9fe0c1bf91501236a28f4): the start code, the linker script, terse.h, and the hello program in assembly and C.
+- [Rust programs](terse:6444fb46caec44370fea9994557464a90327bcbc1b4b0f06f0762d957885f2b3): the Rust runtime, what things cost, a larger program with cargo.
+- [Building by hand, and other languages](terse:52562054080ec23e46ccf10e54cf80a31c621abd9fec3ff9bb9e24d32ad9acae): the build without `terse build`, and what any compiler must do.
+- [Running and publishing a program](terse:3747862acfa254c43bfd418e5e86294f3288f12e37ff103182c9b8b2fd37a933): headless runs, scripted input, the state hash, the window, costs, publishing.
 
 The Terse32 machine:
 
-- [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5): the CPU, the memory map, frames and the budget, faults, the image format, the call table.
+- [The Terse32 machine](terse:38ad1f8980973c04d35030db73e7b092ba3586caca094a0f7e60f7a5a4418bce): the CPU, the memory map, frames and the budget, faults, the image format, the call table.
 - [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62): every event, the queue, keys, text, the pointer, the wheel and controllers.
 - [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620): every charge and every numeric limit on one page.
-- [State, replay and conformance](terse:e831bfb3baad8c5aa556bd85f3f8fc53abccaa526b43dcf0d7b3e28d9c8f591f): the machine's state, its hash, snapshots and the conformance image.
+- [State, replay and conformance](terse:985171555fbe7edf6836381901810b2780f51c74b23b5622959e6a430b5e65ad): the machine's state, its hash, snapshots and the conformance image.
 
 The devices:
 
-- [The system device (device 1)](terse:9931faaf61b8c8f94759720fc438753e2761179730bbb7b27e43cf508c9db6ea): frames, events, time, random bytes, controllers, exit, opening things.
+- [The system device (device 1)](terse:9aca2b519b624a24249bd1f8deed920911aabd3e86ac7fdfe50148d178de6bcd): frames, events, time, random bytes, controllers, exit, opening things.
 - [The terminal (device 2)](terse:1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804): an 80 by 30 grid of character cells.
 - [The 2D vector display (device 3)](terse:6c6b812bc0498df9321e562dae3dee47c6e9b272436c051b51e0bb1fa09d152d): lines and filled shapes from a display list, clean or phosphor.
 - [Content: blobs, requests and statuses (device 4)](terse:c204c509821ac75ee6391c8729024f8fb7f1dfc6432bf0b0c1097f21d9ef0cd0): fetching and publishing blobs by hash.
@@ -87,8 +87,8 @@ The devices:
 - [The sound device (device 6)](terse:698ca31c5cf788d3306e5047c2e4d771bbac3f3399c5d75a1d5bc7c069e35c00): a 16-voice wavetable synthesizer, optional and bit-exact.
 - [The page (device 7)](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5): typeset proportional text and tables in a rectangle of the screen.
 - [Figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04): drawings within the page's text.
-- [The Machines device (device 8)](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063): the shell's device, which starts other machines.
+- [The Machines device (device 8)](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b): the shell's device, which starts other machines.
 - [Screens, panels and input (device 8)](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f): where machines' screens go, flat or as panels in 3D.
 - [The 3D vector display (device 9)](terse:d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e): lines, points and circles in a box, seen from the host's eye.
 - [Surfaces](terse:3977dab63bc65a337e55f00eba3e3dee536c624ea3e9388ab1cc835a618d2d44): a program's own screen placed in its 3D scene.
-- [Experimental devices](terse:56f7cf8bc1c03d7fb37ef333522cecda02923cb56670a2f440b328f6e391771d): slots 240 to 255, a name, optional only: a device tried out before it is specified.
+- [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7): slots 240 to 255, a name, optional only: a device tried out before it is specified.

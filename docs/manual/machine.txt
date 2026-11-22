@@ -256,27 +256,28 @@ The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{c
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
-[Machines](terse:{device-machines}), slot 8, the shell only:
+[Machines](terse:{device-machines}), slot 8, the shell only (buffer sizes in bytes):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
-| `800h` | `start` | `a0` = image ID address (32 bytes, read) | a handle 1 to 8, or 0 if none is free |
+| `800h` | `start` | `a0` = image ID (32, read) | a handle, or 0 if none is free |
 | `801h` | `stop` | `a0` = handle | 1, or 0 if not in use |
 | `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if not in use |
 | `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused |
 | `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
-| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1 to 8 |
-| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
-| `807h` | `start_program` | `a0` = program record address (read) | a handle 1 to 8, or 0 if none is free |
-| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
-| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
-| `80Ah` | `argument` | `a0` = handle, `a1` = blob ID address (32 bytes, read) | 1, or 0 if not loading |
+| `805h` | `info` | `a0` = handle, `a1` = buffer (48, written) | 1, or 0 if not 1 to 8 |
+| `806h` | `builtin` | `a0` = index, `a1` = buffer (32, written) | 1, or 0 past the last |
+| `807h` | `start_program` | `a0` = program record (read) | a handle, or 0 if none is free |
+| `808h` | `identity` | `a0` = handle, `a1` = buffer (81, written) | 1, or 0 if it has none |
+| `809h` | `request` | `a0` = handle, `a1` = buffer (82, written) | 1, or 0 if no request waits |
+| `80Ah` | `argument` | `a0` = handle, `a1` = blob ID (32, read) | 1, or 0 if not loading |
 | `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused |
-| `80Ch` | `restore` | `a0` = slot | a handle 1 to 8, or 0 if none is free or the slot is out of range |
-| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
-| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+| `80Ch` | `restore` | `a0` = slot | a handle, or 0 if none is free or out of range |
+| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122, written) | 1 if it holds one, else 0 |
+| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if out of range |
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
+| `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32, written) | 2 granted, 1 not, 0 none |
 
 [The 3D vector display](terse:{device-vector3}), slot 9:
 

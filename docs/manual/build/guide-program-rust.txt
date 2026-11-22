@@ -48,6 +48,6 @@ The screen is the C program's, word for word, and the `esc.txt` of the last page
 
 ## What you have now
 
-The same program in Rust, built, run and tested the same way. It is `examples/program/rust/hello.rs` in the Tersenet sources. Next, draw and react to keys: [Draw a line and read a key](terse:13fbb40fd9b49a4ce1e9480efab36137d269091fddae9e9be6ce39d536730878), in C, then in Rust.
+The same program in Rust, built, run and tested the same way. It is `examples/program/rust/hello.rs` in the Tersenet sources. Next, draw and react to keys: [Draw a line and read a key](terse:282c375b583eaa136f435cc4459a21c5cda969aa58bdad672d6bb828a43d2a99), in C, then in Rust.
 
-What the runtime gives, what things cost and how to build a larger program with cargo is in [Rust programs](terse:697299ec36d1e2ced432d7be8757d8ef201882954a7bd21fdd59fbd449a7b685).
+What the runtime gives, what things cost and how to build a larger program with cargo is in [Rust programs](terse:6444fb46caec44370fea9994557464a90327bcbc1b4b0f06f0762d957885f2b3).

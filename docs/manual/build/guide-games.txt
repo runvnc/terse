@@ -53,6 +53,6 @@ Enter restores it; D discards it. Nothing is saved without S, except what a prog
 
 ## What you have now
 
-The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:c59e37e9b05fe26e1daa4c7852f2bdf6d8c58ec0014ffd4b48231e50c5c04b0c).
+The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:1752e2f91902cb77c2a4caf3c479b5d7c4d55420757182ef885e54f8a458d84e).
 
-The launcher, sessions and every prompt are in [Using the shell](terse:95e3a595d660c8dfef95b3cdff069195525b5a429fc323e286c584518b05a02b); publishing a program of your own is in [Running and publishing a program](terse:d9928cc35c818abfa6255bdd21a1501f86ef54cbc9949f0a6318098063af9b52).
+The launcher, sessions and every prompt are in [Using the shell](terse:f437042ae218f4f6a397619bd728b6a95831a5f1d41ec6ce589c06e163db72af); publishing a program of your own is in [Running and publishing a program](terse:3747862acfa254c43bfd418e5e86294f3288f12e37ff103182c9b8b2fd37a933).

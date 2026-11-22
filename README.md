@@ -742,7 +742,7 @@ see is what every host shows. Of the bundled programs the reader requires full
 text (titles and names come in any script); hello (other scripts), fetch (the
 message it fetches), sparks and the shell list it as optional; the rest print
 only basic text. Sparks and the shell draw basic stand-ins for their own
-symbols without it (sparks' hearts as `<3`; the shell's ⌂ ‖ ■ ✗ as ~ ║ ▄ ×),
+symbols without it (sparks' hearts as `<3`; the shell's ⌂ ‖ ■ ✗ ⚗ as ~ ║ ▄ × ¤),
 so they look whole on every host; the shell still shows titles in any script.
 
 `crt0.S` must come first. There is no C library beyond `terse.c` and no
@@ -966,7 +966,9 @@ Everything about the layout is the shell's; the host only runs the machines, dra
 each one's screen where the shell placed it, and routes input.
 
 - **The bar** (row 0): the home segment `⌂`, then one segment per machine: its handle,
-  a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed, `⊘` halted), its title and
+  a mark (`…` loading, `‖` paused, `■` exited, `!` faulted, `✗` failed, `⊘` halted),
+  `⚗` for a program that uses an experimental device (faint if it only lists one and
+  runs without it here; below), its title and
   the units it used in its last frame as a share of the budget (`halted` instead for a
   halted machine); the machine with the
   keyboard in blue, the one selected in the launcher in amber; the clock (UTC) at the
@@ -1045,8 +1047,10 @@ each one's screen where the shell placed it, and routes input.
   relays if it holds no entry for it), then the bar asks
   `reader asks to start Tool by Alice 3fa9c2…c21e07. Y/N` (the keyboard goes to the
   shell until you answer): Y starts it in a new tile with the keyboard, N or Esc does
-  not. For a blob the shell reads its first bytes: an image (`TERS`) is asked about as
-  an unpublished program (its title and short ID); a document (`TDOC`, SPEC §content.documents) starts
+  not. For a blob the shell reads its first bytes: an image (`TERS`) is loaded paused
+  (it runs nothing before the answer) and asked about as an unpublished program (its
+  title and short ID); a program that lists an experimental device has a second row
+  saying whether it uses one here; a document (`TDOC`, SPEC §content.documents) starts
   its format's program with the document as its argument (a published format is asked
   about the first time in a run); anything else opens in a new reader tile. A failure
   (not found, no free handle) is a brief message in the bar.
@@ -1739,7 +1743,12 @@ whatever slot its image gives the device (one driver process serves them all).
 Everywhere else (`terse run`, `terse-host`) the program runs without it. A machine
 that has one is outside conformance, and its snapshots (a saved session's too) and
 recordings say so; restoring one where the driver is missing fails for that machine
-with "needs a device".
+with "needs a device". The shell marks such programs (device 8's `experimental`
+call, `spec/machines.md`): in the bar with `⚗`, and in the launcher line and the
+question before a program opened from a link starts, "Uses an experimental device
+(example.dice): not part of Tersenet's standard." where it is granted, or, faint,
+"Can use an experimental device (example.dice); here it runs without it." where
+it is not.
 
 ## Sparks
 

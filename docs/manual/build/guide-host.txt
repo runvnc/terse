@@ -11,8 +11,8 @@ Each step is a small working program in the Tersenet sources, built and checked 
 
 ## Two tracks
 
-- In Go, in `examples/host/go`: [Make a host in Go, step 1: run a program to its end](terse:fe2150ee199267c777c694d475985c41902a8f9a3be4f74e07df8a0be8b28a50).
-- In Rust, in `examples/host/rust`: [Make a host in Rust, step 1: run a program to its end](terse:5462fcc93f2ea80ec45104195f1f33b1ebd0d433d4842de470db5e6e41980d05).
+- In Go, in `examples/host/go`: [Make a host in Go, step 1: run a program to its end](terse:87629301f964cc4d8a8efd57600a5c6d798cb4d04738cb9d152e3223e6b5e9c9).
+- In Rust, in `examples/host/rust`: [Make a host in Rust, step 1: run a program to its end](terse:41e507c91db642acfa23ec356fb3ecc627cbe8151868b165d964c12d2524739c).
 
 The two have the same design, so either explains the other. Each is a package that gains a file per step (the processor, then frames, the bus, the state) with a short program per step on top, `step1` to `step4`. The pages list every file in full or its important part, exactly as it is in the sources. Lines of code below are counted with blank lines.
 
@@ -27,4 +27,4 @@ They run `programs/hello` exactly, prove it, and stop there: no input events, fo
 - `native/core-c`: `tcore`, an independent core in C, about 1,580 lines, which passes the conformance program with the reference drivers;
 - `crates/terse-core`: the reference machine in Rust, which `terse run` and `terse-host` use; `crates/terse-bus`, the reference core on the device bus.
 
-The specification is [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5) and the pages after it.
+The specification is [The Terse32 machine](terse:38ad1f8980973c04d35030db73e7b092ba3586caca094a0f7e60f7a5a4418bce) and the pages after it.
