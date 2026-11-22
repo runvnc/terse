@@ -1,3 +1,13 @@
+## Install
+
+On Linux or macOS, in a terminal:
+
+    curl -fsSL https://tersenet.org/install.sh | sh
+
+installs `terse-host`, `terse` and `terse-relay` of the latest release into
+`~/.local/bin`, after checking them against `SHA256SUMS.txt`
+(`TERSE_VERSION=@VERSION@` before `sh` for this one). Or download:
+
 ## Download
 
 | System | File |
