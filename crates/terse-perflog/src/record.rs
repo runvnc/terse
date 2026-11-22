@@ -352,7 +352,8 @@ pub fn parse(text: &str) -> Vec<Line> {
 }
 
 /// The default record directory: `$XDG_DATA_HOME/terse/perf`, else
-/// `~/.local/share/terse/perf` (`%LOCALAPPDATA%\terse\perf` on Windows;
+/// `~/.local/share/terse/perf` (`~/Library/Application Support/terse/data/perf`
+/// on macOS, `%LOCALAPPDATA%\terse\perf` on Windows;
 /// `terse_dirs`).
 pub fn default_dir() -> Option<PathBuf> {
     Some(terse_dirs::user_dir(terse_dirs::Kind::Data)?.join("perf"))

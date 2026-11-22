@@ -19,7 +19,8 @@ was late, and it carries dates (days, UTC) and times since a run began.
 ## 1. Where it lives
 
 In the host's data directory: `$XDG_DATA_HOME/terse/perf/` (else
-`~/.local/share/terse/perf/`, on macOS too; `%LOCALAPPDATA%\terse\perf\` on
+`~/.local/share/terse/perf/`; `~/Library/Application Support/terse/data/perf/` on
+macOS; `%LOCALAPPDATA%\terse\perf\` on
 Windows). One
 file per **host identity**: `<name>-<build hex>.log` (the host's name and
 the hex digits of its build identifier, R13; characters other than

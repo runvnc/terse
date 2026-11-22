@@ -854,7 +854,7 @@ covers.
 (the generators behind the W rows, `terse_core::worst`) with the renderer
 it will use, when it first starts on a computer, and keeps the result
 (the reference: `$XDG_CACHE_HOME/terse/hwcheck-<size>-<mtime>.txt`, else
-`~/.cache/terse/...`, `%LOCALAPPDATA%\terse\...` on Windows, keyed
+`~/.cache/terse/...`, `~/Library/Caches/terse/...` on macOS, `%LOCALAPPDATA%\terse\...` on Windows, keyed
 by the program file and checked against the computer's `env` line), so
 it runs once per build and computer, not at every start. Where the look's
 worst frame takes more than its allowance (half a frame), the look is

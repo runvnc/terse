@@ -38,7 +38,7 @@ To remove the programs:
 curl -fsSL https://tersenet.org/install.sh | sh -s uninstall
 ```
 
-Your key and the feeds you follow stay in `~/.config/terse` (on Windows `%APPDATA%\terse`) until you delete that folder too.
+Your key and the feeds you follow stay in `~/.config/terse` (on macOS `~/Library/Application Support/terse`, on Windows `%APPDATA%\terse`) until you delete that folder too.
 
 ## Windows
 
