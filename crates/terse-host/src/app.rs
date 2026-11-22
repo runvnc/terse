@@ -439,10 +439,10 @@ impl Gfx {
     /// frame scaled to the window (nearest pixel), nothing drawn again; the
     /// GPU draws the screens as they are at the window's size (the machines
     /// held).
-    fn draw_held(&mut self, capture: bool) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
+    fn draw_held(&mut self, capture: bool, watch: &mut crate::watch::HostWatch) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
         match &mut self.presenter {
             #[cfg(feature = "gpu")]
-            Presenter::Gpu { .. } => self.draw(capture),
+            Presenter::Gpu { .. } => self.draw(capture, watch),
             Presenter::Soft { surface, display, size, history } => {
                 if size.0 == 0 || size.1 == 0 {
                     return None;
@@ -471,12 +471,14 @@ impl Gfx {
 
     /// Draws and presents; returns how long acquiring the swapchain image
     /// (or buffer) took and how long the rest (draw, present) took, and
-    /// with `capture` the picture presented (RGBA, `--drive`).
-    fn draw(&mut self, capture: bool) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
+    /// with `capture` the picture presented (RGBA, `--drive`). `watch`
+    /// reads the frame loop thread's CPU time around the acquire.
+    fn draw(&mut self, capture: bool, watch: &mut crate::watch::HostWatch) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
         match &mut self.presenter {
             #[cfg(feature = "gpu")]
             Presenter::Gpu { surface, config, display } => {
                 let viewport = (config.width, config.height);
+                watch.acquiring();
                 let start = Instant::now();
                 let frame = match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -487,6 +489,7 @@ impl Gfx {
                     _ => return None,
                 };
                 let acquired = Instant::now();
+                watch.acquired();
                 let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let mut encoder = display.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 display.screens.render(&display.device, &display.queue, &mut encoder, &view, viewport);
@@ -512,6 +515,7 @@ impl Gfx {
                 display.render(*size);
                 let damage = display.damage().to_vec();
                 let frame = display.frame();
+                watch.acquiring();
                 let drawn = Instant::now();
                 let mut buffer = match surface.buffer_mut() {
                     Ok(b) => b,
@@ -521,6 +525,7 @@ impl Gfx {
                     }
                 };
                 let acquired = Instant::now();
+                watch.acquired();
                 history.push_front(damage);
                 history.truncate(4);
                 // The buffer holds the frame of `age` presents ago: copy
@@ -848,12 +853,14 @@ impl App {
             }
             return;
         }
-        let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+        let mut unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         if let Some(mut d) = self.drive.take() {
             let actions = d.before_frame(self.system.shell().frame());
             for a in actions {
                 self.drive_action(a, event_loop);
             }
+            // A script's `time` line holds the clock (STATE.md 6.5).
+            unix_time = d.time().unwrap_or(unix_time);
             self.drive = Some(d);
         }
         self.coalesced_input();
@@ -1492,7 +1499,7 @@ impl ApplicationHandler for App {
                 let holding = self.hold.holding();
                 if !self.occluded
                     && let Some(gfx) = &mut self.gfx
-                    && let Some((acquire, render, picture)) = if holding { gfx.draw_held(capture) } else { gfx.draw(capture) }
+                    && let Some((acquire, render, picture)) = if holding { gfx.draw_held(capture, &mut self.watch) } else { gfx.draw(capture, &mut self.watch) }
                 {
                     if holding {
                         // Not a frame: nothing is judged, nothing sheds.

@@ -325,8 +325,11 @@ pub fn verdict(r: &Rule, s: &FrameSample) -> Option<Late> {
 /// stall may account for all of its blocked time. Memory reclaimed in its
 /// own allocations runs on its CPU and is counted in the stall: a stall
 /// accounts for no more of its time on a CPU than the stall itself; the
-/// rest is its work. Where its time on a CPU is not known (the host's own
-/// parts), 0: the stall excuses it.
+/// rest is its work. This holds for the host's own parts as for drivers
+/// and machines: the hosts read their stages' time on a CPU (terse-host's
+/// `watch.rs`, terse-bus's `monitor.rs`). Where it is not known (the system
+/// gives no reading, `TERSE_PERF_PROBE=none`), 0: the stall excuses it, and
+/// the record gives its `cpu-ms` as `-`.
 fn cpu_beyond_stall(p: &Part, stall_ns: u64) -> u64 {
     p.run_ns.map_or(0, |_| p.cpu().saturating_sub(stall_ns))
 }
@@ -523,6 +526,37 @@ mod tests {
         // Unknown starvation (no schedstat): blamed by the wait alone.
         let l = j.verdict(&frame(7, 30 * MS, &[Part::new(Component::Device(7), 25 * MS)])).unwrap();
         assert_eq!(l.verdict, Verdict::Blamed);
+    }
+
+    /// The host's own parts have their time on a CPU read like any
+    /// other's: a stage that spins through a frame in which the system
+    /// stalled on memory is blamed, one that was blocked is excused.
+    #[test]
+    fn a_memory_stall_excuses_a_host_stage_no_more_than_a_driver() {
+        let j = Judge::default();
+        let stage = |c: Component, own: u64, run: Option<u64>, stall: u64| {
+            let mut f = frame(9, own + MS, &[Part { run_ns: run, starved_ns: Some(0), ..Part::new(c, own) }, Part::new(Component::Outside, MS)]);
+            f.memory_stall_ns = Some(stall);
+            j.verdict(&f).unwrap()
+        };
+        // As recorded on a computer short of memory (`TERSE_HOST_SLOW=
+        // compose:30:0:spin`): the drawing 30.4 ms on a CPU, the system
+        // stalled 6 ms. Its doing.
+        for c in [Component::Compose, Component::Core, Component::Present, Component::Outside] {
+            let l = stage(c, 30_400_000, Some(30_400_000), 6 * MS);
+            assert_eq!((l.verdict, l.top.component, l.top.cpu(), l.top.blocked()), (Verdict::Blamed, c, 30_400_000, 0), "{c}");
+            // The same stage blocked (its pages read back): excused.
+            assert_eq!(stage(c, 30_400_000, Some(MS), 6 * MS).verdict, Verdict::Memory, "{c}");
+            // On a CPU no more than the allowance and the stall: excused.
+            assert_eq!(stage(c, 30 * MS, Some(14 * MS), 6 * MS).verdict, Verdict::Memory, "{c}");
+            assert_eq!(stage(c, 30 * MS, Some(15 * MS), 6 * MS).verdict, Verdict::Blamed, "{c}");
+        }
+        // A process's CPU time over a stage drawn on many threads may be
+        // more than the stage's time: it counts as on a CPU all of it.
+        let l = stage(Component::Compose, 30 * MS, Some(200 * MS), 20 * MS);
+        assert_eq!((l.verdict, l.top.cpu()), (Verdict::Blamed, 30 * MS));
+        // Only where no reading was had does a stall excuse it whole.
+        assert_eq!(stage(Component::Compose, 30_400_000, None, 6 * MS).verdict, Verdict::Memory);
     }
 
     #[test]

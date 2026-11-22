@@ -35,7 +35,9 @@ bytes. A line is a **type** word and then **fields in a fixed order**,
 separated by single spaces. No field is ever empty and none contains a
 space:
 
-- numbers are decimal; times in milliseconds have one decimal (`52.3`);
+- numbers are decimal; times in milliseconds have one decimal (`52.3`),
+  or are `-` where a reading was not had (a `late` line's `cpu-ms` and
+  `blocked-ms`);
 - a string (a name, the CPU model) is written with every byte outside
   `!` to `~`, and `%`, as `%` and two uppercase hex digits (`Intel(R)%20Core(TM)`),
   and an empty string as `-`;
@@ -67,9 +69,9 @@ of a line). The first line of every file is `terse-perf 1`.
 | `host` | name, version, build | The host's identity (R13) |
 | `env` | os, os-version, arch, cores, ram-gib, renderer, cpu | The computer: `Linux`, the kernel's release, `x86_64`, logical CPUs, GiB, the renderer (`software`, `gpu`, `auto`, `drivers`: the drivers draw, `none`), the CPU's model string |
 | `device` | component, slots, name, version, build | A device implementation: its slots (comma-separated) and identity. A host whose devices are built in writes one line for `core` with its own identity |
-| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), `idle` (the `wait` is inferred from the CPU time and the processors' idle time, not read: Windows, section 4), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three. A host with built-in devices writes `core` (its frame loop thread: its machines, `core`, `present`, `outside`) and `compose` (its whole process: the drawing's threads) |
+| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), `idle` (the `wait` is inferred from the CPU time and the processors' idle time, not read: Windows, section 4), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three. A host with built-in devices writes `core` (its frame loop thread: its machines, `core`, `present`, `outside`) and `compose` (its whole process: the drawing's threads); terse-bus writes `compose` too (its process's time on a CPU, no `wait`) |
 | `start` | ms, cold | From the process's start to its first frame presented. Cold: `build` (the first run of this build: no record of it yet), `boot` (the first since the computer or the user's session started: no marker in the runtime directory), `warm`, or `-` (unknown) |
-| `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked, its starvation, and the program it worked for most |
+| `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked (each `-` where its time on a CPU was not read), its starvation, and the program it worked for most |
 | `block` | frame, ms, component, what | One wait of 100 ms or more on a component: `frame` work, `start` (a machine's first frames), `open` (starting a machine), `service` (a host service, an image fetched), `state` (a snapshot the rule took) |
 | `shed` | frame, level, why | The host shed optional work (the phosphor look, `SPEC.md` §vector.phosphor) to `level` (0 none … 3 plain lines): `late` (frames ran long), `recover`, `check` (the hardware check, R16) |
 | `resize` | frame, width, height | The window's surface changed size: the frame is the first composed at this size (pixels). The frames just after it may be excused (section 4, `resize`) |
@@ -138,7 +140,15 @@ starvation (time its threads were runnable but not running: Linux
 
 Own time is split by the component's waited-on thread's time on a CPU
 (`cpu-ms`); the rest is `blocked-ms`. A driver stopped by a signal (a
-debugger, job control) counts as blocked.
+debugger, job control) counts as blocked. The host's own parts have a
+time on a CPU like the drivers': in terse-host the frame loop thread's
+over `core`, `present`, `outside` and each machine's frame, and for
+`compose` the thread's over the upload plus the whole process's over the
+drawing (its renderer's threads); in terse-bus the frame loop thread's
+over `core` and `present`, the process's over `compose` (`outside`, its
+waits for drivers' services, has none). A process's time on a CPU over a
+part may be more than the part's time (several threads): it counts as
+on a CPU all of it.
 
 **Where the operating system does not say.** Each reading may be missing,
 and the `readings` lines say which were there:
@@ -149,7 +159,7 @@ and the `readings` lines say which were there:
 | The frame loop's `wait` (`core`) | no starvation | |
 | Any `wait` | | `starved` is given only if the starvation that was read suffices; a frame that a busy computer made late may be `blamed` instead |
 | `stall` | no stall | `memory` is never given |
-| A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0; a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
+| A component's `cpu` | not known | `cpu-ms` and `blocked-ms` are `-` (the record does not state a reading it does not have); a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
 (no memory stall) and on Windows (below) never `memory`. In a host with

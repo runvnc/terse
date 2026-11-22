@@ -612,9 +612,14 @@ one over it.
   running; one that was not, while the processors had at least one
   processor's worth of idle time, was blocked; otherwise it was starved,
   for no longer than it was off a CPU nor than no processor need have
-  been idle, `RECORD.md` 4; no memory stall). What a host could read is in the
-  record (`readings`, `RECORD.md` 2), and what it may conclude without a
-  reading is `RECORD.md` 4's.
+  been idle, `RECORD.md` 4; no memory stall). The bus's own parts have
+  their time on a CPU too, so that a memory stall excuses no more of it
+  than it lasted (condition 3): `core` and `present` the frame loop
+  thread's CPU time over them, `compose` the whole process's (it composes
+  on a pool of threads); `outside` (its waits for drivers' services) is
+  blocked on another process by design and has no CPU reading. What a
+  host could read is in the record (`readings`, `RECORD.md` 2), and what
+  it may conclude without a reading is `RECORD.md` 4's.
 - *A host with built-in devices* (`terse-host`) runs every machine and
   every device on its frame loop thread (and draws with its renderer's
   threads), so it times the parts of that loop, not processes:
@@ -636,7 +641,21 @@ one over it.
   process's wait, which is at least the thread's; Windows: the thread's
   cycles and the processors' idle cycles, the wait inferred as for a
   driver, `RECORD.md` 4), and the whole
-  process's wait (every thread) around the drawing. A machine's part is
+  process's wait (every thread) around the drawing. Every part has its
+  time on a CPU (condition 3 holds for the host's own stages as for a
+  driver): a machine's frame, `core`, `present` (the acquire) and
+  `outside` (from the last picture to the frame's start) the frame loop
+  thread's CPU time over them; `compose` the frame loop thread's over the
+  upload and the whole process's over the drawing less the thread's in
+  the acquire, since the drawing runs on other threads too (the software
+  renderer's pool, a GPU driver's). The process's time includes threads
+  that do not draw (the page layout thread, which the frame loop never
+  waits for, content, sound): counted as the drawing's, it can only
+  excuse less. The readings this takes are two more of the frame loop
+  thread a frame (its CPU clock, 0.2 µs, and its schedstat, together 1.3
+  µs on the reference machine in a debug build); watching a frame of 9
+  machines costs about 0.09 ms of CPU in all (`watch.rs`,
+  `the_cost_of_watching`, bounded at 2 ms). A machine's part is
   recorded as `core` with its program as the `late` line's image: every
   component is the host's own build. What this cannot tell apart: a
   device's calls from the emulation of the machine making them (a device
