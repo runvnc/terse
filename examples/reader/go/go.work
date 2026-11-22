@@ -1,0 +1,7 @@
+go 1.24.0
+
+use .
+
+// Inside the Tersenet repository the SDK is the copy in sdk/go;
+// outside it, go fetches the version go.mod requires.
+replace github.com/runvnc/terse/sdk/go v0.1.0 => ../../../sdk/go

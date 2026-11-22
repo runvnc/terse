@@ -3,17 +3,15 @@ package main
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
-	"unicode/utf8"
 
-	"filippo.io/edwards25519"
 	"github.com/gorilla/websocket"
+	tersenet "github.com/runvnc/terse/sdk/go"
 
 	"reader/article"
 	"reader/relay"
@@ -52,10 +50,10 @@ func main() {
 		entry := message[1:]
 		seq := binary.LittleEndian.Uint32(entry[32:])
 		caughtUp = seq >= highest
-		if valid(entry, key) && entry[40] == 1 {
-			title := string(entry[109 : len(entry)-64])
-			fmt.Printf("%d  %s\n", seq, article.Visible(title))
-			articles[seq] = [32]byte(entry[44:76])
+		e, err := tersenet.VerifyEntry(entry)
+		if err == nil && bytes.Equal(e.Feed[:], key) && e.Kind == 1 {
+			fmt.Printf("%d  %s\n", seq, article.Visible(e.Title))
+			articles[seq] = e.Blob
 		}
 	}
 	if len(os.Args) < 4 {
@@ -72,38 +70,4 @@ func main() {
 	}
 	fmt.Println()
 	article.Show(blob)
-}
-
-func valid(e, key []byte) bool {
-	if len(e) < 173 || len(e) != 173+int(e[108]) {
-		return false
-	}
-	signed, signature := e[:len(e)-64], e[len(e)-64:]
-	message := append([]byte("terse-entry-0"), signed...)
-	seq := binary.LittleEndian.Uint32(e[32:])
-	size := int(e[41]) | int(e[42])<<8 | int(e[43])<<16
-	return bytes.Equal(e[:32], key) &&
-		e[108] <= 120 &&
-		seq >= 1 &&
-		size >= 1 && size <= 1<<20 &&
-		utf8.Valid(signed[109:]) &&
-		verify(key, message, signature)
-}
-
-func verify(key, message, signature []byte) bool {
-	a, err := new(edwards25519.Point).SetBytes(key)
-	canonical := err == nil && bytes.Equal(a.Bytes(), key)
-	if !canonical || smallOrder(a) {
-		return false
-	}
-	r, err := new(edwards25519.Point).SetBytes(signature[:32])
-	if err != nil || smallOrder(r) {
-		return false
-	}
-	return ed25519.Verify(key, message, signature)
-}
-
-func smallOrder(p *edwards25519.Point) bool {
-	p8 := new(edwards25519.Point).MultByCofactor(p)
-	return p8.Equal(edwards25519.NewIdentityPoint()) == 1
 }

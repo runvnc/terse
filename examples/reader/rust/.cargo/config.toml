@@ -1,0 +1,4 @@
+# Inside the Tersenet repository, the SDK is the one in sdk/rust
+# (outside it, cargo gets tersenet from crates.io).
+[patch.crates-io]
+tersenet = { path = "../../../sdk/rust" }
