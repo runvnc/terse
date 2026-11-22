@@ -526,7 +526,16 @@ with these defaults (each can be given on its own, and changed):
 | Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
 | Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
 | Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| Feeds one connection may subscribe to | 1024 | `--subscriptions-per-connection` |
 | A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
+
+What the relay keeps in memory and on disk grows with what it keeps, never with the
+traffic it has seen (NETWORK.md section 5.3, "The reference relay's bounds"): the log
+of when entries arrived is compacted to the entries still kept, the table of addresses
+has 8192 places, and so on. The status file (`--status-file`) has a line for each such
+table or log, with where it stands and its bound. Memory also grows with connections:
+each may hold a message of up to 1 MiB while it arrives, so on a small server give
+`--max-connections` a number that fits (200 for 1 GB of memory, say).
 
 An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
 a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`

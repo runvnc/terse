@@ -692,15 +692,22 @@ ordinary messages.
   pushed. Peers are not sent the pushed-entry message (`90h`) for new
   entries.
 - When a client (not a peer) subscribes to a feed, the relay subscribes to
-  it on each peer, once per peer link, with `after` set to its own highest
-  `seq` for the feed, so the peer's backlog flows in; entries a peer pushes
-  are stored and passed on like published ones. A new peer link is
-  subscribed to every feed clients are subscribed to.
+  it on each peer, unless it is subscribed to it there already, with
+  `after` set to its own highest `seq` for the feed, so the peer's backlog
+  flows in; entries a peer pushes are stored and passed on like published
+  ones. A new peer link is subscribed to every feed clients are subscribed
+  to. When no client subscribes to a feed any more (they unsubscribed or
+  disconnected), the relay may unsubscribe from it on its peers, so that
+  what it is subscribed to on a peer link follows what its clients
+  subscribe to now.
 - A get from a client that the relay cannot serve from its store is asked
   of every peer at once; the first reply with a blob that matches the ID
   wins and is stored (if the store has room) and served. If every peer
   says not found or fails, or none answers within 3 s, the reply is "not
-  found". A get from a peer is answered from the relay's store only.
+  found". A get from a peer is answered from the relay's store only. A
+  relay may limit the gets it has asked of its peers and is waiting for,
+  per connection and in all (section 5.3); a get over the limit is
+  answered from its store only.
 - Find and lookup are answered from the relay's own store only.
 
 Because a relay passes on only what it newly stores, an entry crosses each
@@ -759,7 +766,57 @@ users what happened (section 3.1).
   puts from anyone under the rules for blobs no entry names, and may give
   an address that none of its listed feeds has published from lately a
   smaller allowance.
+- **Subscriptions per connection.** A relay may refuse a subscribe
+  (status `3`) that would make one connection subscribed to more feeds
+  than its limit; subscribing again to a feed the connection is
+  subscribed to is not refused. It may exempt the peers it connected to
+  itself.
+- **Gets asked of peers.** A relay with peers may limit the gets of
+  clients it has asked of its peers and is still waiting for (section
+  5.2), per connection and in all, and answer a get over the limit from
+  its store only.
 - **The whole store** (status `5`), as section 3 says.
+
+**The reference relay's bounds.** What `terse-relay` keeps grows with
+what it keeps (entries, blobs, feeds, connections), never with the
+traffic it has seen. These are rules for it; another relay may keep other
+bounds, or none:
+
+- **The arrival log** (the order in which it stored entries, for finds,
+  section 4.7) holds at most twice as many records as there are entries
+  kept, plus 1,024: past that, it is rewritten with the records of the
+  entries still kept, in their order. The rewrite is a copy beside the
+  log, synced and then renamed over it, made a batch at a time (at most
+  1,024 records, and no more after 2 ms by its own clock, under the log's
+  lock; syncing holds no lock), so no request waits for more than one
+  batch. A crash before the rename leaves the log as it was (the copy is
+  removed at the next start); a crash after it leaves a log whose end may
+  lack the records copied since the sync, and at the next start a torn
+  record is cut off and every entry kept that the log lacks is recorded.
+- **Entries** are at most the entry limit per feed (section 4.3), and
+  their blobs' bytes at most the feed's limit (above); feeds themselves
+  are kept (with at least their latest entry), and new ones come at most
+  at the rate of entries of new feeds.
+- **Blobs** are at most the bytes the feeds' entries name, plus the room
+  for blobs no entry names (in bytes, and in blobs at most that room over
+  4,096, since each counts at least a disk block), and at most
+  `--max-store-bytes` in all.
+- **The table of addresses** (rates, connections, writers) has a fixed
+  number of places (8,192); when it is full, places nothing depends on
+  are forgotten (no connection, not a writer's, every allowance full
+  again), and if none is, new addresses share one more place, limited as
+  strictly as any address.
+- **Connections** are at most `--max-connections`; each has a queue of at
+  most its entry limit plus 1,024 messages (a client that falls further
+  behind is disconnected), at most 4 finds a second, and at most
+  `--subscriptions-per-connection` subscriptions (1,024 with `--public`).
+  A peer link is subscribed only to the feeds clients subscribe to now.
+- **Gets asked of peers** are at most 16 per connection and 1,024 in all,
+  each forgotten when answered, after 3 s, or when its client
+  disconnects.
+- **Profiles** (for finds of feeds, section 4.7) are one per feed kept.
+- **The status file** (`--status-file`) is rewritten whole, a line for
+  each of these with where it stands and its bound.
 
 
 ## 6. What a reading client must and may do

@@ -169,19 +169,27 @@ impl FeedStore {
 
     /// Deletes all but the `keep` highest entries of a feed.
     pub fn prune(&self, feed: &FeedKey, keep: usize) -> io::Result<()> {
-        self.prune_keeping(feed, keep, None)
+        self.prune_keeping(feed, keep, None).map(drop)
     }
 
     /// Deletes all but the `keep` highest entries of a feed, and never the
     /// entry with `seq` `also` (a relay keeps the latest profile, NETWORK
-    /// 4.6).
-    pub fn prune_keeping(&self, feed: &FeedKey, keep: usize, also: Option<u32>) -> io::Result<()> {
+    /// 4.6). Returns how many it deleted.
+    pub fn prune_keeping(&self, feed: &FeedKey, keep: usize, also: Option<u32>) -> io::Result<usize> {
         let seqs = self.seqs(feed)?;
         let excess = seqs.len().saturating_sub(keep);
+        let mut removed = 0;
         for seq in seqs[..excess].iter().filter(|&&s| Some(s) != also) {
             fs::remove_file(self.feed_dir(feed).join(seq_name(*seq)))?;
+            removed += 1;
         }
-        Ok(())
+        Ok(removed)
+    }
+
+    /// Whether an entry is stored (a look at its file's name, not its
+    /// bytes).
+    pub fn contains(&self, feed: &FeedKey, seq: u32) -> bool {
+        self.feed_dir(feed).join(seq_name(seq)).exists()
     }
 
     /// Deletes one entry; deleting one that is not stored succeeds.
@@ -470,8 +478,9 @@ mod tests {
             store.insert(&e).unwrap();
         }
         assert_eq!(store.latest_profile(&feed).unwrap().unwrap().entry.title, "New");
-        store.prune_keeping(&feed, 1, Some(3)).unwrap();
+        assert_eq!(store.prune_keeping(&feed, 1, Some(3)).unwrap(), 3);
         assert_eq!(store.seqs(&feed).unwrap(), [3, 5]);
+        assert!(store.contains(&feed, 5) && !store.contains(&feed, 4));
         assert_eq!(store.latest_profile(&feed).unwrap().unwrap().entry.seq, 3);
     }
 
