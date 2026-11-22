@@ -248,9 +248,10 @@ fn a_resized_window_shows_the_picture_of_its_final_size() {
             let want: Vec<u32> = end.split('x').map(|v| v.parse().unwrap()).collect();
             assert_eq!((sa.0, sa.1), (want[0], want[1]), "{name} {renderer}: the picture's size");
             assert_eq!(sa, sb);
-            // The clock in the bar may have turned a minute.
-            let (_, off, _) = differ(&a, &b);
-            assert!(off < 0.002, "{name} {renderer}: {:.3}% of the pixels differ from a fresh window's", off * 100.0);
+            // The same, pixel for pixel: the time is held (the bar's clock),
+            // and nothing else in the picture depends on how it got there.
+            let (max, off, _) = differ(&a, &b);
+            assert!(max == 0, "{name} {renderer}: {:.3}% of the pixels differ from a fresh window's, by up to {max}", off * 100.0);
         }
     }
 }
