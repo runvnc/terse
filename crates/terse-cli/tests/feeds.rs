@@ -14,11 +14,17 @@ use terse_net::{BlobStore, Entry, Identity, blob_id, protocol, to_hex};
 
 
 fn start_relay(store: &Path) -> String {
+    start_relay_kept(store).0
+}
+
+/// A relay and its URL, for a test that looks at what the relay sees.
+fn start_relay_kept(store: &Path) -> (String, Arc<terse_relay::Relay>) {
     let relay = Arc::new(terse_relay::Relay::new(BlobStore::open(store, None).unwrap(), terse_relay::DEFAULT_FEED_CAP));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    std::thread::spawn(move || terse_relay::serve(listener, relay));
-    url
+    let served = relay.clone();
+    std::thread::spawn(move || terse_relay::serve(listener, served));
+    (url, relay)
 }
 
 fn terse(args: &[&str]) -> Output {
@@ -81,7 +87,7 @@ impl User {
 #[test]
 fn author_and_reader() {
     let relay_dir = tempfile::tempdir().unwrap();
-    let url = start_relay(relay_dir.path());
+    let (url, relay) = start_relay_kept(relay_dir.path());
     let (author, reader) = (User::new(), User::new());
 
     let config = author.config.path().to_str().unwrap();
@@ -167,18 +173,25 @@ fn author_and_reader() {
             let _ = tx.send((Instant::now(), line.unwrap()));
         }
     });
-    // Let it connect and subscribe, so the entry is pushed live rather than
-    // sent as backlog.
-    std::thread::sleep(Duration::from_millis(1000));
+    // Wait for it to be subscribed on the relay, so that the entry is
+    // pushed live rather than sent as backlog.
+    let feed_key = terse_net::parse_hex(&key).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while relay.subscribers(&feed_key) == 0 {
+        assert!(Instant::now() < deadline, "the watcher never subscribed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(rx.try_recv().is_err());
+    let subscribes = relay.received(protocol::SUBSCRIBE);
     let fresh = author.store.path().join("fresh.txt");
     std::fs::write(&fresh, b"Breaking news.\n").unwrap();
     author.feed(&["publish", fresh.to_str().unwrap(), "--title", "fresh"], Some(&url));
-    let published = Instant::now();
-    let (arrived, line) = rx.recv_timeout(Duration::from_secs(5)).expect("pushed entry");
+    let line = rx.recv_timeout(Duration::from_secs(60)).expect("pushed entry").1;
     drop(watcher);
     assert!(line.contains("#5 ") && line.contains(" local ") && line.ends_with("fresh"), "{line}");
-    assert!(arrived - published < Duration::from_secs(1), "took {:?}", arrived - published);
+    // Pushed on the subscription already in place: nobody subscribed again
+    // (which would have fetched it as backlog).
+    assert_eq!(relay.received(protocol::SUBSCRIBE), subscribes, "the entry came by a new subscription, not by push");
     assert!(reader.has_blob(b"Breaking news.\n"));
 
     // A forged entry is refused by the relay; one planted in the relay's

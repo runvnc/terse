@@ -707,20 +707,23 @@ mod tests {
     }
 
     /// A background client connects on its own thread; requests made
-    /// meanwhile fail at once instead of waiting.
+    /// meanwhile fail at once instead of waiting: the failure comes while
+    /// the attempt is still in progress (nobody answers the handshake, and
+    /// the client waits an hour for it).
     #[test]
     fn background_connect() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("ws://{}", listener.local_addr().unwrap());
+        let mut patient = RelayClient::websocket(&url, Duration::from_secs(3600));
+        patient.start_connect();
+        assert!(patient.connecting() && !patient.connected());
+        let a = patient.get(&[1; 32]);
+        assert_eq!(patient.poll(), [(a, RelayReply::Failed)]);
+        assert!(patient.connecting() && !patient.connected());
+        // Nobody answers the handshake: the attempt fails at the timeout.
         let mut c = RelayClient::websocket(&url, Duration::from_millis(200));
         c.start_connect();
-        assert!(c.connecting() && !c.connected());
-        let start = Instant::now();
-        let a = c.get(&[1; 32]);
-        assert_eq!(c.poll(), [(a, RelayReply::Failed)]);
-        assert!(start.elapsed() < Duration::from_millis(100));
-        // Nobody answers the handshake: the attempt fails at the timeout.
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while c.connecting() {
             assert!(Instant::now() < deadline);
             c.poll();

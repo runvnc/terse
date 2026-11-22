@@ -255,7 +255,7 @@ impl Run {
         let mut content = ContentService::start_with_consent(node, Consent::Allow);
         if relay.is_some() {
             // Wait for the relay to connect, as a host does before its user acts.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             loop {
                 match content.wait_feed_event(deadline.saturating_duration_since(std::time::Instant::now())) {
                     Some(terse_net::FeedEvent::Connected(_)) => break,
