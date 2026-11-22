@@ -1,0 +1,6 @@
+# Every file is checked out exactly as stored, on every system: no
+# line-ending conversion. Golden screens, test vectors, the manual's
+# sources and the programs' files are compared byte for byte or hashed
+# (blob IDs are hashes of a file's bytes), so a CRLF checkout on Windows
+# (core.autocrlf) would change them.
+* -text
