@@ -140,7 +140,7 @@ A lookup's kind must be 3 (program) and the name a valid display name, else it i
 
 A client's relays are those it is configured with (at most eight) and, for each subscribed feed whose profile in force has `relay` lines, up to two of those not already among its own (else up to two hints of its address, above): the feed relays, which may be turned off. A client keeps at most 16 relay connections. It ignores a `relay` line that names `localhost` (or a name under it) or a loopback, unspecified, private or link-local address (NETWORK.md 5.1 lists the ranges), does not connect if a name resolves to one, and connects only to the addresses it checked. A failed or dropped connection is retried after 1 s, doubling up to 30 s. Requests go to the connected relays and wait only while none is connected.
 
-Put and publish go to every connected relay and succeed when one accepts (an article's entry once a relay has its blob); subscribe goes to every connected relay that serves the feed (the client's own and the feed's relays); find and lookup go to all. A get asks the feed's relays first, then the rest two at a time, and is not found only when every connected relay said so or failed.
+Put and publish go to every connected relay and succeed when one accepts (an article's entry once a relay has its blob). The `terse` commands wait for every relay's answer, say on stderr which took it and warn about each that did not; subscribe goes to every connected relay that serves the feed (the client's own and the feed's relays); find and lookup go to all. A get asks the feed's relays first, then the rest two at a time, and is not found only when every connected relay said so or failed.
 
 ## Relays that mirror each other
 

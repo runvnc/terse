@@ -4,7 +4,7 @@
 a memory, written as an **experimental driver** (`spec/experimental.md`,
 `DEVICES.md` 15). `demo.c` is a Tersenet program that rolls its dice when
 the host grants the device and says so on the terminal when it does not.
-C11 and POSIX, no dependencies; about 330 lines for the driver, 40 of them
+C11 and POSIX, no dependencies; about 340 lines for the driver, 40 of them
 the device.
 
     cc -std=c11 -O2 -Wall -Wextra -o dice dice.c

@@ -62,6 +62,6 @@ In `tcore` the frame loop is about 25 lines of C (`main.c`), and the whole Syste
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed. Next, give it a screen: [Make a host, step 3: a driver shows hello](terse:f8f97a165cb0e9474c1e784224989a6b9eeb408d71b67f3695a6e18561988835).
+A machine that runs programs at exactly the reference's speed. Next, give it a screen: [Make a host, step 3: a driver shows hello](terse:c1090f2dcc0db6881e93710dd6aa5c797d90209926cb7993f61b12416fd75799).
 
-The detail is in [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), section "Frames and the budget" (SPEC §frames); [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc), sections "wait_frame", "next_event", "frame_count and unix_time" and "exit" (SPEC §system); and [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620), section "Charges" (SPEC §charges).
+The detail is in [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5), section "Frames and the budget" (SPEC §frames); [The system device](terse:9931faaf61b8c8f94759720fc438753e2761179730bbb7b27e43cf508c9db6ea), sections "wait_frame", "next_event", "frame_count and unix_time" and "exit" (SPEC §system); and [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620), section "Charges" (SPEC §charges).

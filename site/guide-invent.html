@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invent a device - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="invent-a-device">Invent a device</h1>
+<p>The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; <a href="guide-invent-rust.html">the next page</a> has the program in Rust.</p>
+<h2 id="the-device">The device</h2>
+<p><code>example.dice</code> is a dice roller with a memory. Its driver, <code>native/driver-experimental/dice.c</code> in the Tersenet sources, is one file of C, about 310 lines. This is the device itself:</p>
+<pre>/* The state: x, rolls, history. */
+enum { HISTORY = 16, SECTION = 4 + 4 + HISTORY };
+
+typedef struct {
+    uint32_t x;             /* xorshift32, never 0 */
+    uint32_t rolls;         /* rolls so far */
+    uint8_t last[HISTORY];  /* roll n at last[n % 16] */
+} Dice;
+
+static void reset(Dice *d)
+{
+    memset(d, 0, sizeof *d);
+    d-&gt;x = 0x2545F491;
+}
+static void seed(Dice *d, uint32_t s)
+{
+    d-&gt;x = s ? s : 0x2545F491;
+}
+static uint32_t roll(Dice *d, uint32_t sides)
+{
+    if (!sides) return 0;
+    d-&gt;x ^= d-&gt;x &lt;&lt; 13; d-&gt;x ^= d-&gt;x &gt;&gt; 17; d-&gt;x ^= d-&gt;x &lt;&lt; 5;
+    uint32_t r = 1 + d-&gt;x % sides;
+    d-&gt;last[d-&gt;rolls++ % HISTORY] = r;
+    return r;
+}
+/* The last n rolls, oldest first; 0 where there were fewer. */
+static void history(const Dice *d, uint32_t n, uint8_t *out)
+{
+    for (uint32_t i = 0; i &lt; n; i++) {
+        uint32_t k = d-&gt;rolls - n + i;  /* which roll, if any */
+        out[i] = d-&gt;rolls &gt;= n - i ? d-&gt;last[k % HISTORY] : 0;
+    }
+}</pre>
+<p>The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Three things differ from a driver of a numbered device, each marked <code>EXPERIMENTAL</code> in the file:</p>
+<ul>
+<li>**HELLO.** The core names the device it wants, <code>example.dice</code>, and one slot; the driver answers with its name and the most bytes its state can have.</li>
+<li>**Charges.** Every call&#39;s cost is declared in the driver&#39;s call table, and the core charges by the table, never by what the driver says afterwards.</li>
+<li>**State.** The 24 bytes of <code>Dice</code> are the driver&#39;s own layout. The core keeps them in the machine&#39;s state, so the state hash, snapshots and replays work as for any device.</li>
+</ul>
+<p>Nothing in the device reads a clock or a random source: the program seeds it.</p>
+<h2 id="the-program">The program</h2>
+<p><code>roll.c</code>:</p>
+<pre>#include &quot;terse.h&quot;
+
+#define DICE 240
+#define DICE_SEED (DICE &lt;&lt; 8 | 0)
+#define DICE_ROLL (DICE &lt;&lt; 8 | 1)
+
+int main(void)
+{
+    uint32_t seed;
+    if (!terse_has_device(DICE)) {
+        term_puts(&quot;No dice here: run me with example.dice.\n&quot;);
+        for (;;)
+            terse_wait_frame();
+    }
+    terse_random(&amp;seed, 4);
+    terse_call(DICE_SEED, seed, 0, 0);
+    for (;;) {
+        for (int frame = 0; frame &lt; 30; frame++)
+            terse_wait_frame();
+        term_puts(&quot;You rolled &quot;);
+        term_putc(&#39;0&#39; + terse_call(DICE_ROLL, 6, 0, 0));
+        term_puts(&quot;.\n&quot;);
+    }
+}</pre>
+<p>Function <code>f</code> of the device on slot 240 is the call <code>(240 &lt;&lt; 8) | f</code>, made with <code>terse_call</code>; <code>terse_has_device</code> says whether the host granted the device. The seed comes from the machine&#39;s own random bytes, which the host records, so a replay rolls the same dice.</p>
+<h2 id="build-them-and-run-them">Build them and run them</h2>
+<p>The image names the device on a slot, as optional: an experimental device is never required, and a host without its driver runs the program without it.</p>
+<pre>cc -std=c11 -O2 -o dice native/driver-experimental/dice.c
+terse build roll.c --optional 240:0=example.dice
+terse-bus roll.terse --driver example.dice=$PWD/dice \
+    --frames 100 --dump</pre>
+<p><code>terse-bus</code> is the host that runs every device as a driver, from the downloads&#39; <code>bus</code> folder or built from the sources; the C driver needs Linux or macOS. It prints:</p>
+<pre>You rolled 1.
+You rolled 2.
+You rolled 5.</pre>
+<p>(Headless, the random bytes are zeros, so the dice are always these.) <code>terse run roll.terse --frames 30 --dump</code> and <code>terse-host</code>, which never load drivers, print <code>No dice here: run me with example.dice.</code> <code>terse info roll.terse</code> shows the device&#39;s name: <code>experimental: 240=example.dice (not covered by conformance)</code>.</p>
+<p><code>terse drivers add dice</code> installs the driver, so that <code>terse-bus</code> uses it with no <code>--driver</code>.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is <code>examples/program/c/roll.c</code>; the driver, a fuller program, <code>demo.c</code>, and a test of every rule are in <code>native/driver-experimental</code>. Next, <a href="guide-invent-rust.html">the program in Rust</a>.</p>
+<p>The rules (slots 240 to 255, names, optional only, charges, state) are in <a href="experimental.html">Experimental devices</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-shell-rust.html">← Make a shell in Rust</a><a rel="next" href="guide-invent-rust.html">Invent a device: the program in Rust →</a></nav></footer>
+</body>
+</html>

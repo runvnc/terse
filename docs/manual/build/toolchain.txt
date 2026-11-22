@@ -1,6 +1,6 @@
 # Building a program
 
-A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:32dc9412dd1cd49975aaead7f0bf2349c177876400adcdc97d76eeee388cd805) describes the library and the hello program, [Rust programs](terse:68d5858ed25d53d7df3ed434ef3a033b5e765c1194f09846fed83d069acd593b) the Rust runtime, and [Building by hand, and other languages](terse:1f50b429395fafb530c31bd7a695c595490ed1613b1c83f65fd0e14e104597c4) the same build without `terse build` and what any other compiler must do.
+A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:0a3d0e125cd20d5dff30838e3150fd93ccce8b592ce752aa02abfe0d5d2e940e) describes the library and the hello program, [Rust programs](terse:697299ec36d1e2ced432d7be8757d8ef201882954a7bd21fdd59fbd449a7b685) the Rust runtime, and [Building by hand, and other languages](terse:6b60a73525b9d0efa6013e8f7a05305b45d06caf58caf14cefac9b97b4bc53e7) the same build without `terse build` and what any other compiler must do.
 
 ## What you need
 
@@ -114,9 +114,10 @@ The ROM is the bytes of each loadable segment (program header `PT_LOAD` with a f
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |
 | 10 | Full text | `10:0` |
+| 240-255 | experimental | `--optional 240:0=<name>` only |
 
 A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that requires (`--device`) a device version it does not have. A device the program can do without is listed with `--optional` instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it, with `terse_has_device(slot)` in C, the system device's `device` call; the answer never changes while the machine runs.
 
 A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
-Next: [The C library](terse:32dc9412dd1cd49975aaead7f0bf2349c177876400adcdc97d76eeee388cd805).
+Next: [The C library](terse:0a3d0e125cd20d5dff30838e3150fd93ccce8b592ce752aa02abfe0d5d2e940e).

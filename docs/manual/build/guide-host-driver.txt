@@ -53,6 +53,6 @@ native/core-c/tcore programs/hello/hello.terse --frames 30 \
 
 ## What you have now
 
-A core that shows `hello` through a reference driver. Next: [Make a host, step 4: prove it exact](terse:b131278d148eafc77b810ea1cbae0aeadb2951b259861ae94b93bd361ae02007).
+A core that shows `hello` through a reference driver. Next: [Make a host, step 4: prove it exact](terse:93f915d95f13b48ff01473ddc657ecaf593233d0f492d50c6e6e1ed38a027cda).
 
-The detail is in DEVICES.md: sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core, step by step); the terminal in [The terminal (device 2)](terse:109353cb353476bc6b7de663f9c9afc097275cb86f02ce936ef74ed620996f0b); deferred and answered calls in [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), section "Call table" (SPEC §calls.table, §charges).
+The detail is in DEVICES.md: sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core, step by step); the terminal in [The terminal (device 2)](terse:1e2c0a46ae773d189bd84cf38da5d4d636177136bbbb4e066ae5391559ffd804); deferred and answered calls in [The Terse32 machine](terse:86773a33018d279802e597e7021ab3096afd9d8c9452e010faa781dbffa8bba5), section "Call table" (SPEC §calls.table, §charges).
