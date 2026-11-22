@@ -211,7 +211,7 @@ impl TerminalDriver {
         let i = self.inst.get_mut(&instance).ok_or("no such instance")?;
         let t = shown(&i.t, &i.status);
         let mut cells = cells(&t, g, &mut self.generations);
-        let mut cursor = t.cursor_visible().then(|| (t.cursor().0 as usize, t.cursor().1 as usize));
+        let mut cursor = t.shows_cursor().then(|| (t.cursor().0 as usize, t.cursor().1 as usize));
         // The characters the core draws by the beam (DEVICES.md 7.1,
         // `core.strokes`): not drawn here, nor the cursor.
         let strokes = if i.light { i.strokes } else { None };

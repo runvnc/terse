@@ -27,12 +27,13 @@
 
 
 
- ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit
--- page: height 257, scroll 0 (stored 0), region 64 0 512 464 --
+ ↑↓ move  Enter open  / search  O link  F feeds  ? help  Esc quit
+-- page: height 286, scroll 0 (stored 0), region 64 0 512 464 --
    48  33     0   sans26b |No articles yet
    97  19     0   sans15 |The timeline shows the articles of the feeds this host subscribes
   116  19     0   sans15 |to, newest first. New articles appear here as they arrive.
   151  19     0   sans15 |Press F to see your feeds and subscribe to one by its key.
-  180  19     0   sans15 |Press T to publish a test article of your own; it shows up here.
-  209  19     0   sans15 |Press M to read the Tersenet manual.
-  238  19     0   sans15 |Press ? for help, Esc to quit.
+  180  19     0   sans15 |Press O to open a terse: link someone gave you.
+  209  19     0   sans15 |Press T to publish a test article of your own; it shows up here.
+  238  19     0   sans15 |Press M to read the Tersenet manual.
+  267  19     0   sans15 |Press ? for help, Esc to quit.

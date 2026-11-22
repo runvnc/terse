@@ -80,7 +80,7 @@ pub fn screen_in(t: &Terminal, font: Font) -> Vec<Lit> {
             }
         }
     }
-    if t.cursor_visible() {
+    if t.shows_cursor() {
         let (col, row) = t.cursor();
         let (col, row) = (col as usize, row as usize);
         if col < COLS && row < ROWS {
@@ -120,7 +120,7 @@ pub fn screen_covered(t: &Terminal, font: Font, stroked: &mut Vec<bool>) -> Vec<
             }
         }
     }
-    if t.cursor_visible() {
+    if t.shows_cursor() {
         let (col, row) = t.cursor();
         let (col, row) = (col as usize, row as usize);
         if col < COLS && row < ROWS {

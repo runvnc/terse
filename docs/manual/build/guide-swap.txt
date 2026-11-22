@@ -83,4 +83,4 @@ target/release/terse-bus programs/hello/hello.terse \
 
 ## What you have now
 
-The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:30dfdf1637f6a1fae425d77a136334180b656390c9d53d6b18bc5d92386de010).
+The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:a1e3343696229dda58f6f2a7867de0beb45b3c6c3f53abbfb7ea0d423df078ab).

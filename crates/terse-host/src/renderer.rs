@@ -1028,7 +1028,7 @@ impl Renderer {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 terminal.cell_bytes().hash(&mut h);
                 terminal.palette().hash(&mut h);
-                (terminal.cursor_visible(), terminal.cursor()).hash(&mut h);
+                (terminal.shows_cursor(), terminal.cursor()).hash(&mut h);
                 terminal.full_text().hash(&mut h);
                 font.name().hash(&mut h);
                 let key = h.finish() | 1;
@@ -1054,7 +1054,7 @@ impl Renderer {
         write_texture(queue, &self.palette_texture, (0, 0), (256, 1), 4, &palette);
 
         let (col, row) = terminal.cursor();
-        self.cursor = terminal.cursor_visible().then_some((col as u32, row as u32));
+        self.cursor = terminal.shows_cursor().then_some((col as u32, row as u32));
     }
 
     /// Draws the rows from `first` on as the host's overlay: the cells as

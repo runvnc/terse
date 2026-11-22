@@ -394,6 +394,7 @@
 #define KEY_Y 0x1C
 #define KEY_F1 0x3A
 #define KEY_M 0x10
+#define KEY_O 0x12
 
 enum { TIMELINE, FEEDS, HELP, ARTICLE, SEARCH, FEED };
 enum { FETCHING, READY, NOT_FOUND, FAILED, TOO_LARGE };
@@ -471,7 +472,7 @@ static uint16_t nm_at[NM_MAX], nm_n;
  * past ENTRY_CAP). The character of the key that opened the entry is
  * not typed if its text arrives by the next frame (entry_eat). */
 #define ENTRY_CAP 240 /* a feed link with two hints is 237 */
-enum { E_OFF, E_KEY, E_NICK, E_NAME, E_SEARCH };
+enum { E_OFF, E_KEY, E_NICK, E_NAME, E_SEARCH, E_LINK };
 static uint8_t entry, entry_buf[ENTRY_CAP];
 static uint16_t entry_n;
 static uint8_t entry_eat;
@@ -3315,6 +3316,8 @@ static void empty_doc(void)
     doc_paragraph(DOC_START, 0, 16, 0);
     doc_s("Press F to see your feeds and subscribe to one by its key.");
     doc_paragraph(DOC_START, 0, 10, 0);
+    doc_s("Press O to open a terse: link someone gave you.");
+    doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press T to publish a test article of your own; it shows up here.");
     doc_paragraph(DOC_START, 0, 10, 0);
     doc_s("Press M to read the Tersenet manual.");
@@ -4406,6 +4409,7 @@ static const char *const help_keys[] = {
     "\xE2\x86\x91 \xE2\x86\x93  PgUp PgDn  Home End  wheel", "move the selection",
     "Enter, click", "open the article; a document (\xE2\x97\x86) is passed to the shell to open",
     "/", "search",
+    "O", "open a link: type or paste a terse: link to an article, a feed or a program, then Enter (Esc cancels)",
     "F", "feeds",
     "? or F1", "this help",
     "T", "publish a test article",
@@ -4425,7 +4429,7 @@ static const char *const help_keys[] = {
     "U", "unsubscribe from the selected feed",
     "N", "a nickname for the selected feed, which only you see (empty removes it)",
     "P", "your public name, shown beside your key; you choose whether search may find it",
-    "/, T, ? or F1", "as in the timeline",
+    "/, O, T, ? or F1", "as in the timeline",
     "Esc, Backspace, \xE2\x86\x90", "back to the timeline",
     0, "Search",
     "Enter", "search the articles on this host, titles and text (the newest first; those not downloaded by title "
@@ -4725,7 +4729,7 @@ static void article_start(int32_t restore, uint8_t state)
 static void opened(uint32_t r)
 {
     tb_n = 0;
-    tb_s(r == 1 ? "Asked the shell to open it" : "This needs the shell");
+    tb_s(r == 1 ? "Asked the shell to open it" : "This needs the shell: run terse-host with the link, or with no program");
     say(r == 1 ? C_OK : C_INFO);
     link_shown = 0;
 }
@@ -5456,10 +5460,10 @@ static void entry_text(uint32_t cp)
         if ((cp | 0x20) == eat && terse_frame() <= entry_eat_until)
             return; /* the text of the key that opened the entry */
     }
-    if (entry == E_KEY) {
+    if (entry == E_KEY || entry == E_LINK) {
         if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r')
             return;
-        if (!entry_n && (cp == 's' || cp == 'S'))
+        if (entry == E_KEY && !entry_n && (cp == 's' || cp == 'S'))
             return; /* the text of the S that opened the entry */
         if (entry_n < ENTRY_CAP)
             entry_buf[entry_n] = cp > 0x20 && cp < 0x7F ? cp : 0x80;
@@ -5510,7 +5514,7 @@ static void entry_back(void)
         return;
     if (entry == E_SEARCH)
         ls_halt(LS_STOPPED);
-    if (entry != E_KEY && entry_n <= ENTRY_CAP)
+    if (entry != E_KEY && entry != E_LINK && entry_n <= ENTRY_CAP)
         while (entry_n > 1 && (entry_buf[entry_n - 1] & 0xC0) == 0x80)
             entry_n--;
     entry_n--;
@@ -5765,6 +5769,104 @@ static void find_done(uint8_t feeds, uint8_t status)
     }
 }
 
+/* Whether the n bytes at p are 64 hex digits (either case) and no more. */
+static uint8_t hex64_is(const uint8_t *p, uint16_t n)
+{
+    uint8_t k;
+    if (n != 64)
+        return 0;
+    for (k = 0; k < 64; k++)
+        if (hex_value(p[k]) > 15)
+            return 0;
+    return 1;
+}
+
+/* Enter on a typed or pasted link (ARTICLE.md, links), blanks left out:
+ * terse: and a blob ID opens it as a followed link does (an article
+ * here, a program image or a document by the shell), terse:feed/ and a
+ * key (optionally @ and hints) the feed's page, terse:program/, a key, /
+ * and a name asks the shell to start the program. */
+static void entry_submit_link(void)
+{
+    uint8_t *p = entry_buf, id[32];
+    uint16_t n = entry_n, at;
+    tb_n = 0;
+    if (!n) {
+        tb_s("Type or paste a terse: link, or Esc to cancel");
+        say(C_ERROR);
+        return;
+    }
+    if (n > ENTRY_CAP || n < 7 || memcmp(p, "terse:", 6)) {
+        tb_s(n > ENTRY_CAP ? "Not a link: too long" : "Not a link: a Tersenet link begins with terse:");
+        say(C_ERROR);
+        return;
+    }
+    p += 6, n -= 6;
+    if (hex64_is(p, n)) {
+        if (art_handle) {
+            tb_s("Wait: an article is still being read");
+            say(C_ERROR);
+            return;
+        }
+        unhex(p, id);
+        entry_open(E_OFF, 0);
+        art_return = view;
+        bk_n = 0;
+        open_blob(id, 1, -1, FETCHING);
+        return;
+    }
+    if (n >= 5 && !memcmp(p, "feed/", 5)) {
+        for (at = 5; at < n && p[at] != '@'; at++)
+            ;
+        if (!hex64_is(p + 5, at - 5)) {
+            tb_s("Not a feed link: terse:feed/ is followed by a key, 64 hex digits");
+            say(C_ERROR);
+            return;
+        }
+        if (at < n && !hints_ok(p + at + 1, n - at - 1)) {
+            tb_s("Not a feed address: after @ give one or two relays, host or host:port");
+            say(C_ERROR);
+            return;
+        }
+        unhex(p + 5, id);
+        entry_open(E_OFF, 0);
+        feed_page(id, view);
+        if (at < n) {
+            fp_hlen = n - at - 1;
+            memcpy(fp_hints, p + at + 1, fp_hlen);
+        }
+        return;
+    }
+    if (n >= 8 && !memcmp(p, "program/", 8)) {
+        if (n < 73 || p[72] != '/' || !hex64_is(p + 8, 64)) {
+            tb_s("Not a program link: after program/ come a key, 64 hex digits, and /");
+            say(C_ERROR);
+            return;
+        }
+        for (at = 73; at < n; at++) {
+            if (p[at] == '%') {
+                if (n - at < 3 || hex_value(p[at + 1]) > 15 || hex_value(p[at + 2]) > 15)
+                    break;
+                at += 2;
+            } else if (!unreserved(p[at])) {
+                break;
+            }
+        }
+        if (at == n && n - 73 <= 48 * 3 && (open_req[33] = prog_name(p + 73, n - 73, open_req + 34))) {
+            entry_open(E_OFF, 0);
+            open_req[0] = OPEN_PROGRAM;
+            unhex(p + 8, open_req + 1);
+            opened(terse_open(open_req));
+            return;
+        }
+        tb_s("Not a program link: after the key's / comes the program's name");
+        say(C_ERROR);
+        return;
+    }
+    tb_s("Not a link: after terse: comes an article ID, feed/key or program/key/name");
+    say(C_ERROR);
+}
+
 static void entry_submit(void)
 {
     switch (entry) {
@@ -5772,6 +5874,7 @@ static void entry_submit(void)
     case E_NICK: entry_submit_nick(); break;
     case E_NAME: entry_submit_name(); break;
     case E_SEARCH: search_run(); break;
+    case E_LINK: entry_submit_link(); break;
     }
 }
 
@@ -5804,10 +5907,10 @@ static void draw_entry_row(void)
         return;
     }
     row_start(ENTRY_ROW, C_TEXT, C_ENTRY_BG);
-    if (entry == E_KEY) {
-        puts_(" Address: ");
-        if (n > COLS - 12) {
-            from = n - (COLS - 13);
+    if (entry == E_KEY || entry == E_LINK) {
+        puts_(entry == E_KEY ? " Address: " : " Link: ");
+        if (n > COLS - 2 - col) {
+            from = n - (COLS - 3 - col);
             ink(C_DIM);
             put1(0x2026);
             ink(C_TEXT);
@@ -5886,6 +5989,8 @@ static void draw_status(void)
         spaces(1);
         ink(msg_fg);
         put_title((const uint8_t *)msg, msg_n, COLS - 2);
+    } else if (entry == E_LINK) {
+        puts_(" Paste or type a terse: link (article, feed, program)  Enter: open  Esc: cancel");
     } else if (entry == E_KEY) {
         puts_(" Type or paste it (a key, or key@relay)   Enter: subscribe   Esc: cancel");
     } else if (entry == E_NICK) {
@@ -5895,7 +6000,7 @@ static void draw_status(void)
     } else if (entry == E_SEARCH) {
         puts_(" Words in your articles, or a feed's name   Enter: search   Esc: cancel");
     } else if (view == TIMELINE) {
-        puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  / search  F feeds  ? help  T test  Esc quit");
+        puts_(" \xE2\x86\x91\xE2\x86\x93 move  Enter open  / search  O link  F feeds  ? help  Esc quit");
         if (tl_total) {
             ink(C_BAR_DIM);
             tb_n = 0;
@@ -6098,6 +6203,7 @@ static uint8_t key(uint8_t code, uint8_t mods)
         case KEY_F: show(FEEDS); return 0;
         case KEY_F1: show(HELP); return 0;
         case KEY_T: test_publish(); return 0;
+        case KEY_O: entry_open(E_LINK, 'o'); return 0;
         case KEY_S:
             if (view == FEEDS)
                 entry_show(1);

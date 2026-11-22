@@ -31,7 +31,7 @@ Allow?   Y yes     N or Esc no
 
 Y, and their articles appear in your timeline: everything they have published, and from now on whatever they publish next. An address with a relay after the `@` also finds the feed on that relay if yours do not have it, as long as it is on the internet rather than a home network.
 
-In a terminal, `terse feed subscribe` and the address does the same (the window then shows the feed the next time it starts).
+In a terminal, `terse feed subscribe` and the address does the same; an open window takes it in within a second, and its articles arrive as if you had pressed S. `terse feed unsubscribe` takes them out again the same way.
 
 ## From a name
 
@@ -54,6 +54,6 @@ While the window is open it keeps up by itself. From a terminal, `terse feed syn
 
 ## What you have now
 
-Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:b472f954971a567342dca994f9efbcb21395564d43d4fed8e3f14c93d2fad827).
+Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:fa88cc702ad33d99093078b04c00d837315642755a690473588a69bcb6173faf).
 
 Relays, addresses and how feeds are kept in sync are in [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

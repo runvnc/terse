@@ -141,7 +141,7 @@ fn digest(machine: &Machine, layout: &Option<Arc<HostLayout>>, eye: Eye, share: 
     let t = shown_terminal(machine, share);
     t.cell_bytes().hash(&mut h);
     t.palette().hash(&mut h);
-    (t.cursor(), t.cursor_visible()).hash(&mut h);
+    (t.cursor(), t.shows_cursor()).hash(&mut h);
     machine.vector().map(|v| (v.generation(), v.phosphor())).hash(&mut h);
     machine.vector3().map(|v| v.generation()).hash(&mut h);
     machine.vector3().filter(|v| !v.list().is_empty()).map(|_| (eye.0.to_bits(), eye.1.to_bits())).hash(&mut h);

@@ -134,6 +134,7 @@ pub fn run(
     let title = if program.shell { "Tersenet".to_string() } else { format!("{} — Tersenet", program.image.title_lossy()) };
     let mut system = System::new(&program.image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    system.shell_mut().set_argument(program.argument);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let looks_eye = looks.eye;
     let watch = crate::watch::HostWatch::new(
@@ -947,10 +948,13 @@ impl App {
             let io = &self.io;
             let layout = |serial: u32| io.get(&serial).and_then(|io| io.page.as_ref()).and_then(|w| w.shown.clone());
             // Parallax: the eye moves towards where the pointer says, a
-            // quarter of the way each frame, and rests exactly there.
+            // quarter of the way each frame, and rests exactly there; over a
+            // machine that lists the 3D display it goes back to rest
+            // (spec/vector3d.md §vector3d.space).
             if self.looks.parallax && self.selftest.is_none() {
                 let max = terse_core::vector3::MAX_EYE_OFFSET;
                 let target = match self.pointer_px {
+                    Some((x, y)) if !self.system.eye_may_follow(gfx.display().screen_pos(viewport, x, y)) => self.looks.eye,
                     Some((x, y)) => {
                         let (ux, uy) = gfx.display().screen_pos(viewport, x, y);
                         let w = terse_core::SCREEN_WIDTH as f32 / 2.0;
@@ -1206,7 +1210,8 @@ impl App {
                 };
                 self.key_input(PhysicalKey::Code(code), pressed, repeat, text.as_deref(), answer);
             }
-            Action::Text(t) => self.pending.extend(t.chars().map(Event::text)),
+            // As a paste: no faster than the focused machine's queue has room for.
+            Action::Text(t) => self.paste.extend(t.chars()),
             Action::Pointer { x, y, px } => {
                 let pos = if px {
                     PhysicalPosition::new(x, y)

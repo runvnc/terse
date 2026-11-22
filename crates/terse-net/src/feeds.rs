@@ -220,6 +220,33 @@ pub struct Subscriptions {
     feeds: BTreeSet<FeedKey>,
     /// Valid hint lists, as written; only for feeds in `feeds`.
     hints: BTreeMap<FeedKey, String>,
+    /// The two files' text as last read or written here, to notice another
+    /// program's change ([`Subscriptions::reload`]).
+    disk: (String, String),
+}
+
+/// What [`Subscriptions::reload`] found changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SubscriptionChanges {
+    pub added: Vec<FeedKey>,
+    pub removed: Vec<FeedKey>,
+    /// The hint lists changed.
+    pub hints: bool,
+}
+
+impl SubscriptionChanges {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && !self.hints
+    }
+}
+
+/// A file's text, empty if it does not exist.
+fn read_text(path: &Path) -> io::Result<String> {
+    match fs::read_to_string(path) {
+        Ok(t) => Ok(t),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e),
+    }
 }
 
 /// The file of hints beside the subscription list at `path`.
@@ -248,17 +275,19 @@ fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
 impl Subscriptions {
     /// An unsaved list.
     pub fn in_memory(feeds: impl IntoIterator<Item = FeedKey>) -> Self {
-        Subscriptions { path: None, feeds: feeds.into_iter().collect(), hints: BTreeMap::new() }
+        Subscriptions { path: None, feeds: feeds.into_iter().collect(), hints: BTreeMap::new(), disk: Default::default() }
     }
 
     /// Loads the list in `path` (empty if the file does not exist).
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, String> {
         let path = path.into();
-        let text = match fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        };
+        let text = read_text(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let hints = read_text(&hints_path(&path)).unwrap_or_default();
+        Self::parse(path, text, hints)
+    }
+
+    /// The list from the text of its two files.
+    fn parse(path: PathBuf, text: String, hints_text: String) -> Result<Self, String> {
         let mut feeds = BTreeSet::new();
         for (i, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
             let key = parse_hex(line.trim()).ok_or(format!("{}:{}: not a feed key", path.display(), i + 1))?;
@@ -267,18 +296,42 @@ impl Subscriptions {
         // Hints: lines that are not a subscribed key and a valid hint list
         // are skipped (the file is only an aid).
         let mut hints = BTreeMap::new();
-        if let Ok(text) = fs::read_to_string(hints_path(&path)) {
-            for line in text.lines() {
-                let Some((key, list)) = line.trim().split_once('@') else { continue };
-                if let Some(key) = parse_hex(key).filter(|k| feeds.contains(k))
-                    && list.len() <= terse_core::hints::MAX_HINT_LIST
-                    && terse_core::hints::parse_hints(list.as_bytes()).is_ok()
-                {
-                    hints.insert(key, list.to_string());
-                }
+        for line in hints_text.lines() {
+            let Some((key, list)) = line.trim().split_once('@') else { continue };
+            if let Some(key) = parse_hex(key).filter(|k| feeds.contains(k))
+                && list.len() <= terse_core::hints::MAX_HINT_LIST
+                && terse_core::hints::parse_hints(list.as_bytes()).is_ok()
+            {
+                hints.insert(key, list.to_string());
             }
         }
-        Ok(Subscriptions { path: Some(path), feeds, hints })
+        Ok(Subscriptions { path: Some(path), feeds, hints, disk: (text, hints_text) })
+    }
+
+    /// Whether the list is kept in a file (which another program, such as
+    /// `terse feed subscribe`, may change).
+    pub fn in_file(&self) -> bool {
+        self.path.is_some()
+    }
+
+    /// Reads the files again if another program changed them since they
+    /// were last read or written here, and takes their list: the feeds
+    /// added and removed. A file that cannot be read or does not parse
+    /// changes nothing (it is read again next time).
+    pub fn reload(&mut self) -> SubscriptionChanges {
+        let Some(path) = &self.path else { return SubscriptionChanges::default() };
+        let (Ok(text), Ok(hints)) = (read_text(path), read_text(&hints_path(path))) else { return SubscriptionChanges::default() };
+        if (&text, &hints) == (&self.disk.0, &self.disk.1) {
+            return SubscriptionChanges::default();
+        }
+        let Ok(new) = Self::parse(path.clone(), text, hints) else { return SubscriptionChanges::default() };
+        let changes = SubscriptionChanges {
+            added: new.feeds.difference(&self.feeds).copied().collect(),
+            removed: self.feeds.difference(&new.feeds).copied().collect(),
+            hints: new.hints != self.hints,
+        };
+        *self = new;
+        changes
     }
 
     /// The hint list `feed` was subscribed with, if any.
@@ -340,16 +393,20 @@ impl Subscriptions {
         Ok(removed)
     }
 
-    fn save(&self) -> io::Result<()> {
+    fn save(&mut self) -> io::Result<()> {
         let Some(path) = &self.path else { return Ok(()) };
         let text: String = self.feeds.iter().map(|k| format!("{}\n", to_hex(k))).collect();
-        write_atomic(path, &text)
+        write_atomic(path, &text)?;
+        self.disk.0 = text;
+        Ok(())
     }
 
-    fn save_hints(&self) -> io::Result<()> {
+    fn save_hints(&mut self) -> io::Result<()> {
         let Some(path) = &self.path else { return Ok(()) };
         let text: String = self.hints.iter().map(|(k, h)| format!("{}@{h}\n", to_hex(k))).collect();
-        write_atomic(&hints_path(path), &text)
+        write_atomic(&hints_path(path), &text)?;
+        self.disk.1 = text;
+        Ok(())
     }
 }
 
@@ -447,5 +504,30 @@ mod tests {
         assert_eq!(fs::read_to_string(&hints).unwrap(), "");
         fs::write(&path, "nonsense\n").unwrap();
         assert!(Subscriptions::load(&path).is_err());
+    }
+
+    /// Another program's change to the files is taken in by `reload`
+    /// (only when the text changed; not a file that does not parse).
+    #[test]
+    fn subscriptions_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subscriptions");
+        let mut subs = Subscriptions::load(&path).unwrap();
+        assert!(subs.add([1; 32]).unwrap());
+        assert!(subs.reload().is_empty(), "its own change is no change");
+        // Another program adds 2 and removes 1.
+        let mut other = Subscriptions::load(&path).unwrap();
+        assert!(other.add([2; 32]).unwrap());
+        assert!(other.remove(&[1; 32]).unwrap());
+        assert_eq!(subs.reload(), SubscriptionChanges { added: vec![[2; 32]], removed: vec![[1; 32]], hints: false });
+        assert_eq!(subs.feeds().collect::<Vec<_>>(), [&[2; 32]]);
+        assert!(subs.reload().is_empty());
+        assert!(other.set_hints(&[2; 32], Some("a.example")).unwrap());
+        assert_eq!(subs.reload(), SubscriptionChanges { hints: true, ..Default::default() });
+        assert_eq!(subs.hints(&[2; 32]), Some("a.example"));
+        fs::write(&path, "nonsense\n").unwrap();
+        assert!(subs.reload().is_empty(), "a file that does not parse changes nothing");
+        assert_eq!(subs.feeds().collect::<Vec<_>>(), [&[2; 32]]);
+        assert!(Subscriptions::in_memory([[1; 32]]).reload().is_empty());
     }
 }

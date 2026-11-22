@@ -38,7 +38,7 @@ To remove the programs:
 curl -fsSL https://tersenet.org/install.sh | sh -s uninstall
 ```
 
-Your key and the feeds you follow stay in `~/.config/terse` (on Windows `%APPDATA%\terse`) until you delete that folder too.
+Your key and the feeds you follow stay in `~/.config/terse` until you delete that folder too.
 
 ## Windows
 
@@ -60,4 +60,4 @@ That puts the three programs in `~/.cargo/bin`. On Linux the window needs the ud
 
 ## What you have now
 
-Tersenet installed. Next, start it: [Run Tersenet](terse:159a0ad16f383de8e94e5ef4a7f3a720c4a80f98b39156b1e772f338b55d4993).
+Tersenet installed. Next, start it: [Run Tersenet](terse:5f27f1aeb87900ca52c05c7b3434ec2f55d75bbee49dc45207a7376ce3f2bc16).

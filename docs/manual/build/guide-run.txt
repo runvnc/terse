@@ -12,7 +12,7 @@ terse-host
 terse-host: relay ws://127.0.0.1:7878 (started here, store …)
 ```
 
-A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse` (on Windows `%LOCALAPPDATA%\terse`). Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
+A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse`. Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
 
 ## The launcher
 
@@ -29,6 +29,7 @@ sketch
 holo
 reports
 reef
+sheet
 Up, Down choose · Enter start · the home key comes back here
 ```
 
@@ -58,10 +59,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:b472f954971a567342dca994f9efbcb21395564d43d4fed8e3f14c93d2fad827) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:fa88cc702ad33d99093078b04c00d837315642755a690473588a69bcb6173faf) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:6804f1fa243cad56951290488ab4699d4c98d111ef4cf72dabc98af6e76ee176).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:1fb784fc8a54c6bf5405672409756e71978be9c57756688a71049f0cf8aca1e6).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:5d49618acdfe73b4c22450dfe24e3766de624c158532fee5241199bb7335e32d).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:8509fb3a42839c641af154559ad482b735b854e528aae4a4e1152a7afbdfb9be).

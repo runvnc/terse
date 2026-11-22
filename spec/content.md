@@ -149,6 +149,12 @@ The device's events (§events):
   the timeline's "local" flags are already correct. The download of a
   program's image (`NETWORK.md` 4.4), which starts once its feed is caught
   up, is announced by a feeds-updated event of its own when it ends.
+  It is also sent when the subscription list changed (a machine's
+  subscribe or unsubscribe, or another program of the host changing the
+  list it keeps, such as a command run while the host runs): the
+  timeline is that of the list as it is now,
+  and the host follows the list as it is now (`NETWORK.md` 4.4), within
+  about a second of the change, without being restarted.
 
 ## §content.determinism Determinism
 

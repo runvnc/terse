@@ -39,5 +39,6 @@ PROGRAMS
 [holo]{105}
 [reports]{106}
 [reef]{107}
+[sheet]{108}
 Up, Down choose · Enter start · the home key comes back
 here

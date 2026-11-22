@@ -147,5 +147,5 @@ The program asks one relay and keeps nothing. A complete reader keeps every blob
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Rust, step 3: follow a feed](terse:ef439222a8bcab0b18be03e7cbaaf3cb3afdb0e9b820b9371601d717274cc79f).
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:66747e767f9cb3a319bb90af0de4fc4a89694c8648275bcebaaabe06540efb45).
 - Every relay message: [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

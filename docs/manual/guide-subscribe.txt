@@ -31,7 +31,7 @@ Allow?   Y yes     N or Esc no
 
 Y, and their articles appear in your timeline: everything they have published, and from now on whatever they publish next. An address with a relay after the `@` also finds the feed on that relay if yours do not have it, as long as it is on the internet rather than a home network.
 
-In a terminal, `terse feed subscribe` and the address does the same (the window then shows the feed the next time it starts).
+In a terminal, `terse feed subscribe` and the address does the same; an open window takes it in within a second, and its articles arrive as if you had pressed S. `terse feed unsubscribe` takes them out again the same way.
 
 ## From a name
 

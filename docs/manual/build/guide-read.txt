@@ -27,11 +27,11 @@ Links are in colour. Tab moves to the next one (Shift+Tab to the one before), wh
 
 - another article, which opens in place: Esc comes back, up to 8 articles deep, each where you left it;
 - a feed, whose page shows its name and key and offers to subscribe (the next page);
-- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:b472f954971a567342dca994f9efbcb21395564d43d4fed8e3f14c93d2fad827)).
+- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:fa88cc702ad33d99093078b04c00d837315642755a690473588a69bcb6173faf)).
 
 There are no links to web pages: an address such as `https://example.org` in an article is plain text. Links are written `terse:` and a long number, and a reader shows them by their text or shortened.
 
-Someone may send you an article's link, `terse:` and 64 digits, in an e-mail or a message. The reader opens articles from your timeline, from links and from search, but not from a pasted link. In a terminal, `terse get` and the 64 digits prints the article, if one of your relays has it.
+Someone may send you a link in an e-mail or a message: `terse:` and 64 digits (an article), `terse:feed/` and a key (a feed) or `terse:program/` (a program). On the timeline press O, paste it (Ctrl+V) or type it, and press Enter: the article opens, the feed's page shows, or the launcher starts the program. A link that is mistyped, or an article none of your relays has, is named as such. From a terminal, `terse-host` and the link opens it too.
 
 ## Search
 
@@ -43,6 +43,6 @@ M on the timeline opens the first page of this manual. It is part of every Terse
 
 ## What you have now
 
-The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:92d243e6b833921fea75060002a5bee1e6ca83cc7e8efca815cd5b8ee2f6d79e).
+The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:1cae81549e716f9dbc666565d08ff7d871f96675a4a28efa1a82bfd5b024a1b1).
 
-Every view and key of the reader is in [Using the reader](terse:58f2fd46491fcf57b0c3ac4c547aad267510c258594bb86b665fb1fb336dabca).
+Every view and key of the reader is in [Using the reader](terse:488dcf6dc73d11615a988b8a85cdca726ebacd6cb886962212a47e98daead6f1).

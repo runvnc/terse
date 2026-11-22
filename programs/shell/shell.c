@@ -56,6 +56,8 @@
  * blob as its argument. Failures (not found, no free handle) are a brief
  * message in the bar. An image is started paused by its ID and asked about
  * once it has loaded, like a program (it runs no frame before the answer).
+ * The shell's own argument, if the host gave it one (a blob its user
+ * named), is opened the same way when it starts.
  *
  * Experimental devices (spec/experimental.md, SPEC §machines.calls
  * `experimental`): a machine whose image lists one is marked, since such a
@@ -2005,6 +2007,16 @@ int main(void)
     layout_handle = record_load(&layout_req, "layout", 0, 2, layout_buf);
     /* A session kept from an earlier run is offered in the launcher. */
     sess_handle = record_load(&sess_req, "session", 0, SESSION_LEN, sess_buf);
+    /* An argument: a blob the host's user named (a link on its command
+     * line), opened as a blob request is (asked about as from
+     * "terse-host"). */
+    if (terse_argument(oj_req + 1)) {
+        oj_req[0] = OPEN_BLOB;
+        prog_ix[0] = MAX_PROGS;
+        memcpy(mname[0], "terse-host", 10);
+        if ((oj_chandle = content_get(&oj_creq, oj_req + 1, 0, HDR_LEN, oj_hdr)))
+            oj = OJ_GET;
+    }
     uint8_t last_state[MACH_MAX + 1] = { 0 };
     for (;;) {
         /* The programs of the followed feeds and their publishers' names,

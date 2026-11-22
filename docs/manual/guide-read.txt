@@ -31,7 +31,7 @@ Links are in colour. Tab moves to the next one (Shift+Tab to the one before), wh
 
 There are no links to web pages: an address such as `https://example.org` in an article is plain text. Links are written `terse:` and a long number, and a reader shows them by their text or shortened.
 
-Someone may send you an article's link, `terse:` and 64 digits, in an e-mail or a message. The reader opens articles from your timeline, from links and from search, but not from a pasted link. In a terminal, `terse get` and the 64 digits prints the article, if one of your relays has it.
+Someone may send you a link in an e-mail or a message: `terse:` and 64 digits (an article), `terse:feed/` and a key (a feed) or `terse:program/` (a program). On the timeline press O, paste it (Ctrl+V) or type it, and press Enter: the article opens, the feed's page shows, or the launcher starts the program. A link that is mistyped, or an article none of your relays has, is named as such. From a terminal, `terse-host` and the link opens it too.
 
 ## Search
 

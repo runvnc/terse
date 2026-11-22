@@ -103,7 +103,7 @@
 <tr><td><code>05h</code></td><td>Show the cursor</td></tr>
 <tr><td><code>06h</code></td><td>Hide the cursor</td></tr>
 </tbody></table></div>
-<p>&quot;Cleared&quot; means a space (<code>0020h</code>) with the current colours. For <code>04h</code>, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands <code>02h</code> to <code>06h</code> leave the cursor and pending wrap as they are; <code>01h</code> clears pending wrap. In terse.h the values are <code>TERM_CLEAR</code>, <code>TERM_SCROLL_UP</code>, <code>TERM_SCROLL_DOWN</code>, <code>TERM_CLEAR_EOL</code>, <code>TERM_CURSOR_ON</code> and <code>TERM_CURSOR_OFF</code>; <code>term_cmd</code> sends one.</p>
+<p>&quot;Cleared&quot; means a space (<code>0020h</code>) with the current colours. For <code>04h</code>, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands <code>02h</code> to <code>06h</code> leave the cursor and pending wrap as they are; <code>01h</code> clears pending wrap. In terse.h the values are <code>TERM_CLEAR</code>, <code>TERM_SCROLL_UP</code>, <code>TERM_SCROLL_DOWN</code>, <code>TERM_CLEAR_EOL</code>, <code>TERM_CURSOR_ON</code> and <code>TERM_CURSOR_OFF</code>; <code>term_cmd</code> sends one. A host draws the cursor only once the program has used the terminal since reset (any call that changes it), so a program that never touches the terminal shows none.</p>
 <h2 id="reset-state-and-palette">Reset state and palette</h2>
 <p>At reset every cell is a space with foreground 7 and background 0. The cursor is at (0, 0) and shown, pending wrap is clear and no UTF-8 sequence is pending. The palette is the xterm 256-colour palette:</p>
 <div class="table"><table>

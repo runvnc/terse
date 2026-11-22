@@ -112,6 +112,11 @@ pub struct Terminal {
     /// how a host draws the cells, not machine state. A terminal of the
     /// host's own (a prompt, a status line) has it.
     full_text: bool,
+    /// Whether the program has used the terminal (a call that changes it)
+    /// since reset: a host draws the cursor only then (SPEC
+    /// §terminal.presentation). Not machine state; after a restore, whether
+    /// the state differs from reset.
+    used: bool,
 }
 
 impl Default for Terminal {
@@ -133,6 +138,7 @@ impl Default for Terminal {
             palette: xterm_palette(),
             decoder: Utf8Decoder::default(),
             full_text: true,
+            used: false,
         };
         t.fill_rows(0..ROWS);
         t
@@ -235,6 +241,20 @@ impl Terminal {
         self.cursor_visible
     }
 
+    /// Whether a host draws the cursor (SPEC §terminal.presentation): it is
+    /// shown and the program has used the terminal since reset.
+    pub fn shows_cursor(&self) -> bool {
+        self.cursor_visible && self.used
+    }
+
+    /// Whether the state is the reset state (SPEC §terminal.reset).
+    fn is_reset(&self) -> bool {
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        self.write_state(&mut a);
+        Terminal::default().write_state(&mut b);
+        a == b
+    }
+
     pub fn pending_wrap(&self) -> bool {
         self.pending_wrap
     }
@@ -318,12 +338,14 @@ impl Terminal {
             return Err(bad("incomplete UTF-8 sequence"));
         }
         self.decoder = d;
+        self.used = !self.is_reset();
         Ok(())
     }
 
     /// Put character (SPEC §terminal.put) for each byte of a UTF-8 stream; a sequence
     /// may continue in the next call. Returns the clears and scrolls done.
     pub fn write(&mut self, bytes: &[u8]) -> u32 {
+        self.used = true;
         let mut ops = 0;
         for &b in bytes {
             ops += self.put_byte(b);
@@ -361,6 +383,7 @@ impl Terminal {
 
     /// Moves the cursor, clamping to the grid (SPEC §terminal.calls); clears pending wrap.
     pub fn set_cursor(&mut self, col: u32, row: u32) {
+        self.used = true;
         self.col = col.min(COLS as u32 - 1) as u8;
         self.row = row.min(ROWS as u32 - 1) as u8;
         self.pending_wrap = false;
@@ -368,6 +391,7 @@ impl Terminal {
 
     /// Sets the current colours.
     pub fn set_colours(&mut self, fg: u8, bg: u8) {
+        self.used = true;
         self.fg = fg;
         self.bg = bg;
     }
@@ -403,6 +427,7 @@ impl Terminal {
     /// Writes cells from cell `first`, the reverse of `cells_read`. The
     /// bytes are not checked (SPEC §terminal.calls).
     pub fn cells_write(&mut self, first: usize, data: &[u8]) {
+        self.used = true;
         let mut at = first * CELL_BYTES % CELL_MEMORY;
         let mut done = 0;
         while done < data.len() {
@@ -417,6 +442,7 @@ impl Terminal {
     /// Sets palette entries from `first` (wrapping from 255 to 0) from
     /// red, green, blue triples.
     pub fn palette_set(&mut self, first: usize, rgb: &[u8]) {
+        self.used = true;
         for (i, c) in rgb.chunks_exact(3).enumerate() {
             self.palette[(first + i) % 256] = [c[0], c[1], c[2]];
         }
@@ -424,6 +450,7 @@ impl Terminal {
 
     /// A command (SPEC §terminal.commands); returns the clears and scrolls done (0 or 1).
     pub fn command(&mut self, value: u8) -> u32 {
+        self.used = true;
         match value {
             0x01 => self.clear(),
             0x02 => self.scroll_up(),
@@ -615,6 +642,33 @@ pub fn xterm_palette() -> [[u8; 3]; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SPEC §terminal.presentation: no cursor for a terminal the program
+    /// has not used since reset; one once it is used, until hidden. A
+    /// restored terminal counts as used unless it is in the reset state.
+    #[test]
+    fn cursor_shown_only_once_used() {
+        let mut t = Terminal::default();
+        assert!(t.cursor_visible() && t.is_reset() && !t.shows_cursor());
+        assert!(!Terminal::with_full_text(false).shows_cursor());
+        t.set_cursor(0, 0);
+        assert!(t.shows_cursor(), "used, though its state is still the reset state");
+        t.command(0x06);
+        assert!(!t.shows_cursor(), "hidden");
+        t.command(0x05);
+        assert!(t.shows_cursor());
+        t.write(b"x");
+        let mut fresh = Terminal::default();
+        fresh.write(b"");
+        assert!(fresh.shows_cursor(), "a write");
+        for (state, used) in [(Terminal::default(), false), (t, true)] {
+            let mut bytes = Vec::new();
+            state.write_state(&mut bytes);
+            let mut restored = Terminal::default();
+            restored.restore(&mut crate::snapshot::Reader::new(&bytes)).unwrap();
+            assert_eq!(restored.shows_cursor(), used);
+        }
+    }
 
     /// Feeds the bytes through the decoder and put character, without the
     /// fast path of `write`.

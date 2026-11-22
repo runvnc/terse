@@ -288,6 +288,60 @@ fn reader_follows_feeds_while_running() {
     assert!(second.is_some() && first.is_some() && second < first, "newest first: {screen}");
 }
 
+/// Subscribing with the CLI while the reader runs (NETWORK 4.4, SPEC
+/// §content.events): the running host takes in the changed list, follows
+/// the feed on its relay and tells the reader, whose timeline then shows
+/// the feed's entries, also those published later; unsubscribing takes
+/// them out again. No restart.
+#[test]
+fn subscribing_while_running_takes_effect() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let url = start_relay(relay_dir.path());
+    let (author, reader) = (User::new(), User::new());
+    let config = author.config.path().to_str().unwrap();
+    let key = terse_ok(&["key", "new", "--config", config]).trim().to_string();
+    let publish = |name: &str, title: &str| {
+        let file = author.store.path().join(name);
+        std::fs::write(&file, format!("{title}\n")).unwrap();
+        author.feed(&["publish", file.to_str().unwrap(), "--title", title], Some(&url));
+    };
+    publish("one.txt", "Published before subscribing");
+
+    let store = BlobStore::open(reader.store.path(), None).unwrap();
+    let mut node = terse_net::Node::new(store, Some(terse_net::relay::RelayClient::websocket(&url, Duration::from_secs(10))));
+    node.set_subscriptions(terse_net::Subscriptions::load(reader.config.path().join("subscriptions")).unwrap());
+    let content = terse_net::ContentService::start(node);
+    let image = terse_core::Image::parse(&std::fs::read(reader_image()).unwrap()).unwrap();
+    let mut machine = terse_core::Machine::new(&image);
+    let mut headless = terse_net::service::Headless::new(Some(content), terse_core::Script::default());
+    let page = |machine: &terse_core::Machine| {
+        let p = machine.page().unwrap();
+        let layout = p.document().map(|d| terse_core::page::reference_layout(d, p.region().w)).unwrap_or_default();
+        layout.dump(p)
+    };
+    // Frames until the timeline shows what `done` looks for (failing after
+    // a generous bound, which only a broken host reaches).
+    let mut until = |machine: &mut terse_core::Machine, what: &str, done: &dyn Fn(&str) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !done(&page(machine)) {
+            assert!(Instant::now() < deadline, "{what}: {}", page(machine));
+            headless.frame(machine);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(&mut machine, "the empty timeline", &|p| p.contains("No articles yet"));
+
+    reader.feed(&["subscribe", &key], None);
+    until(&mut machine, "the feed's entry after subscribing", &|p| p.contains("[Published before subscribing]"));
+    publish("two.txt", "Published while subscribed");
+    until(&mut machine, "a live entry", &|p| p.contains("[Published while subscribed]"));
+
+    reader.feed(&["unsubscribe", &key], None);
+    until(&mut machine, "the timeline without the feed", &|p| !p.contains("Published") && p.contains("No articles yet"));
+    let subs = std::fs::read_to_string(reader.config.path().join("subscriptions")).unwrap();
+    assert!(!subs.contains(&key), "the host keeps the list as the CLI left it: {subs}");
+}
+
 /// `feed sync` also fetches the `terse:` links of the articles it downloads
 /// (NETWORK 4.4), unless `--no-prefetch`.
 #[test]

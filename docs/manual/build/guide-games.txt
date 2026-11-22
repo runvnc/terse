@@ -20,9 +20,9 @@ The other game is sparks:
 
 Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. Lumen Reef has sound. If you hear nothing, Tersenet says why in a notice at the bottom of the window; `terse-host --hardware-check` names the sound output it found. Ctrl+Alt+minus and Ctrl+Alt+plus change the volume, Ctrl+Alt+M mutes it, and the volume is remembered. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.
 
-The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.
+The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, reports gathers performance reports, and sheet is a small spreadsheet.
 
-Not built in, but in the Tersenet sources: sheet, a small spreadsheet. Start it with `terse-host programs/sheet/sheet.terse`. A cell holds a number, text or a formula starting with `=`: arithmetic, references such as `A1`, ranges such as `A1:A5`, and SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS and IF. Numbers are exact to four decimal places, so sums of money come out right. Ctrl+G shows a bar chart of the selection, Ctrl+L a line chart; Ctrl+S keeps the sheet on this computer for the next start, and Ctrl+P publishes it in your feed, after the window asks you.
+In sheet, a cell holds a number, text or a formula starting with `=`: arithmetic, references such as `A1`, ranges such as `A1:A5`, and SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS and IF. Numbers are exact to four decimal places, so sums of money come out right. Ctrl+G shows a bar chart of the selection, Ctrl+L a line chart; Ctrl+S keeps the sheet on this computer for the next start, and Ctrl+P publishes it in your feed as a document, after the window asks you. A sheet document in a timeline (marked `◆`), or a link to one, opens in sheet when you press Enter on it.
 
 ## Games from other people
 
@@ -53,6 +53,6 @@ Enter restores it; D discards it. Nothing is saved without S, except what a prog
 
 ## What you have now
 
-The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:1062f40677839b2020351e850fc4f0ea04f72a990c4e72e52c165149a8d46344).
+The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:35f6e43fd6b90bd1e005d11c0bee69aa03ff799ccdb82a404f5679394cf3f571).
 
-The launcher, sessions and every prompt are in [Using the shell](terse:5d49618acdfe73b4c22450dfe24e3766de624c158532fee5241199bb7335e32d); publishing a program of your own is in [Running and publishing a program](terse:a178a4f889cc6196fd70fadf181919af07c2287092945673af53141c26b1c96e).
+The launcher, sessions and every prompt are in [Using the shell](terse:8509fb3a42839c641af154559ad482b735b854e528aae4a4e1152a7afbdfb9be); publishing a program of your own is in [Running and publishing a program](terse:b84b9f92d22c7d47183739e12f1901756acaa1e90a33f8fe98554c58e7716efa).

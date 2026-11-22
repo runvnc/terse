@@ -614,8 +614,11 @@ machine's own and cost 4.
 - **`argument`** writes the machine's **argument**, the blob ID the shell
   gave it when it started it (§machines.calls), to the buffer, 32 bytes wholly
   in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
-  shell gave none, it runs on its own, or it is the shell) gets 0 and
-  nothing is written. The argument never changes and is part of the
+  shell gave none, or it runs on its own) gets 0 and nothing is written.
+  The shell's own argument, if any, is given by its host: a blob the
+  host's user named for it to open (the reference host: a `terse:` link
+  on its command line), which a shell opens as it would a machine's
+  request to open that blob. The argument never changes and is part of the
   machine's state (`STATE.md` 1.14).
 - **`device`** returns the version of device `a0` if the machine has it:
   device 1, every device its image requires, and every optional device
@@ -869,7 +872,15 @@ bright colours, 16–231 the 6 × 6 × 6 colour cube, 232–255 the grey ramp.
 
 How the host draws the grid (font, size, cursor shape, smoothing) is not part
 of this spec and cannot be observed by the program, except which
-characters it must be able to draw (§terminal.text). §vector.layers says how the
+characters it must be able to draw (§terminal.text). The one rule on the
+cursor: a host draws it only when it is shown and the program has used the
+terminal since reset (made a call that changes it: `write`, `command`,
+`set_cursor`, `set_colours`, `cells_write`, `palette_set`; a terminal
+restored from a snapshot counts as used unless it is in the reset state,
+§terminal.reset). So a program that never uses the terminal, or has not yet
+(before its first frame), shows no cursor; nor does a blank grid a host
+draws in place of a machine's (one without the terminal, a plate,
+§machines.ink). §vector.layers says how the
 grid is combined with the vector display. Since the scrolls and clears inside
 a `write` are not charged, a host should make a scroll or a clear cost time
 proportional to one row, not to the whole grid (for example, rows kept as a
