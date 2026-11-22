@@ -644,6 +644,72 @@ pub struct DeviceInfo {
     /// driver's reply ends after the services).
     pub version: String,
     pub build: String,
+    /// An experimental driver's declaration (DEVICES.md 15.1), after the
+    /// build: empty for every other driver, and then not sent.
+    pub experimental: Vec<Experimental>,
+}
+
+/// What an experimental driver declares of its device (DEVICES.md 15.1).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Experimental {
+    pub slot: u8,
+    pub name: String,
+    /// The most bytes its state section can have.
+    pub state_max: u32,
+}
+
+/// The limits of DEVICES.md 15.2.
+pub mod limits {
+    pub const CALLS: usize = 16;
+    pub const BUFFER: u32 = 4096;
+    pub const CONSTANT: u32 = 4096;
+    pub const PER_BYTE: u16 = 2;
+    pub const EXTRA: u32 = 4096;
+    pub const STATE: u32 = terse_core::image::EXPERIMENTAL_STATE_MAX as u32;
+}
+
+impl DeviceInfo {
+    /// Checks an experimental driver's reply against DEVICES.md 15.1 and
+    /// 15.2: it serves exactly `slot`, as `name` (any valid name if
+    /// `name` is empty), within the limits.
+    pub fn check_experimental(&self, slot: u8, name: &str) -> Result<(), String> {
+        let [x] = self.experimental.as_slice() else { return Err("it did not declare one experimental device (DEVICES.md 15.1)".into()) };
+        if x.slot != slot || self.slots.len() != 1 || self.slots[0].slot != slot {
+            return Err(format!("it answered for slots other than {slot}"));
+        }
+        if !terse_core::image::valid_experimental_name(&x.name) {
+            return Err(format!("it calls its device {:?}, not a valid name", x.name));
+        }
+        if !name.is_empty() && x.name != name {
+            return Err(format!("it serves {}, not {name}", x.name));
+        }
+        if x.state_max > limits::STATE {
+            return Err(format!("its state may be {} bytes, more than {}", x.state_max, limits::STATE));
+        }
+        let s = &self.slots[0];
+        if !s.layers.is_empty() || !self.publishes.is_empty() || !self.subscribes.is_empty() || !self.services.is_empty() {
+            return Err("an experimental driver declares no layers, properties or services".into());
+        }
+        if s.table.is_empty() || s.table.len() > limits::CALLS {
+            return Err(format!("its call table has {} calls, not 1 to {}", s.table.len(), limits::CALLS));
+        }
+        for (i, e) in s.table.iter().enumerate() {
+            let f = e.function;
+            if s.table[..i].iter().any(|o| o.function == f) {
+                return Err(format!("function {f} is in its call table twice"));
+            }
+            if e.has_buffer() && e.buf_max > limits::BUFFER {
+                return Err(format!("function {f}: a buffer of up to {} bytes, more than {}", e.buf_max, limits::BUFFER));
+            }
+            if e.has_buffer() && e.buf_max > 0 && !e.charge_per4 && e.charge_per_byte == 0 {
+                return Err(format!("function {f}: a buffer must be charged at least 1 per 4 bytes"));
+            }
+            if e.charge_const > limits::CONSTANT || e.charge_per_byte > limits::PER_BYTE || (e.charge_arg != NO_ARG && e.charge_extra > limits::EXTRA) {
+                return Err(format!("function {f}: a charge above the limits of DEVICES.md 15.2"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The HELLO a driver receives.
@@ -656,12 +722,22 @@ pub struct Hello {
     /// The driver's bus file (section 4.2); empty if shared memory is not
     /// offered.
     pub bus_path: String,
+    /// The experimental devices asked for (DEVICES.md 15.1): slot and
+    /// name, an empty name asking the driver which it is. Empty for every
+    /// other driver, and then not sent.
+    pub experimental: Vec<(u8, String)>,
 }
 
 impl Hello {
     pub fn encode(&self, out: &mut Vec<u8>) {
         let mut w = Writer::new(out, Addr::PROCESS, msg::HELLO);
         w.u8(VERSION).u16(0).u32(self.flags).u8(self.slots.len() as u8).bytes(&self.slots).str(self.session_dir.as_bytes()).str(self.bus_path.as_bytes());
+        if !self.experimental.is_empty() {
+            w.u8(self.experimental.len() as u8);
+            for (slot, name) in &self.experimental {
+                w.u8(*slot).str(name.as_bytes());
+            }
+        }
         w.finish();
     }
 
@@ -680,7 +756,13 @@ impl Hello {
         let slots = r.take(n)?.to_vec();
         let session_dir = r.string()?;
         let bus_path = r.string()?;
-        Ok(Hello { flags, slots, session_dir, bus_path })
+        let mut experimental = Vec::new();
+        if !r.clone().rest().is_empty() {
+            for _ in 0..r.u8()? {
+                experimental.push((r.u8()?, r.string()?));
+            }
+        }
+        Ok(Hello { flags, slots, session_dir, bus_path, experimental })
     }
 }
 
@@ -717,6 +799,12 @@ impl DeviceInfo {
         names(&mut w, &self.subscribes);
         names(&mut w, &self.services);
         w.str(self.version.as_bytes()).str(self.build.as_bytes());
+        if !self.experimental.is_empty() {
+            w.u8(self.experimental.len() as u8);
+            for x in &self.experimental {
+                w.u8(x.slot).str(x.name.as_bytes()).u32(x.state_max);
+            }
+        }
         w.finish();
     }
 
@@ -756,11 +844,22 @@ impl DeviceInfo {
         let services = read_names(&mut r)?;
         // The identity, if given; anything after it is for later versions.
         let (mut version, mut build) = (String::new(), String::new());
+        let mut experimental = Vec::new();
         if !r.clone().rest().is_empty() {
             version = terse_perflog::identity::clean_field(&r.string()?);
             build = terse_perflog::identity::clean_field(&r.string()?);
+            // An experimental driver's declaration (DEVICES.md 15.1). What
+            // does not parse as one is a later field, ignored as before.
+            let mut x = r.clone();
+            let mut read = || -> Result<Vec<Experimental>, Short> {
+                let n = x.u8()?;
+                (0..n).map(|_| Ok(Experimental { slot: x.u8()?, name: x.string()?, state_max: x.u32()? })).collect()
+            };
+            if let Ok(v) = read() {
+                experimental = v;
+            }
         }
-        Ok((transport, DeviceInfo { name, native, slots, publishes, subscribes, services, version, build }))
+        Ok((transport, DeviceInfo { name, native, slots, publishes, subscribes, services, version, build, experimental }))
     }
 }
 
@@ -893,9 +992,64 @@ mod tests {
         assert!(CallEntry::decode(&bad).is_err());
     }
 
+    /// DEVICES.md 15: an experimental driver's HELLO fields, and the limits.
+    #[test]
+    fn experimental_hello_and_limits() {
+        let h = Hello { flags: 0, slots: vec![240], session_dir: "/s".into(), bus_path: String::new(), experimental: vec![(240, "example.dice".into())] };
+        let mut out = Vec::new();
+        h.encode(&mut out);
+        let back = Hello::decode(split(&out[4..]).unwrap().body).unwrap();
+        assert_eq!(back.experimental, h.experimental);
+        // A HELLO with no experimental slot is byte for byte as before.
+        let plain = Hello { experimental: vec![], ..h.clone() };
+        let mut p = Vec::new();
+        plain.encode(&mut p);
+        assert_eq!(p.len() + 1 + 1 + 2 + 12, out.len());
+        assert!(Hello::decode(split(&p[4..]).unwrap().body).unwrap().experimental.is_empty());
+        let roll = CallEntry::plain(1).check(0, 255);
+        let hist = CallEntry::plain(2).buffer(0, 1, 1, 0, 64, access::WRITE).per4();
+        let info = DeviceInfo {
+            name: "dice".into(),
+            slots: vec![SlotInfo { slot: 240, version: 0, layers: vec![], table: vec![roll, hist] }],
+            experimental: vec![Experimental { slot: 240, name: "example.dice".into(), state_max: 72 }],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        info.encode(TRANSPORT_SOCKET, &mut out);
+        let (_, d) = DeviceInfo::decode(split(&out[4..]).unwrap().body).unwrap();
+        assert_eq!(d.experimental, info.experimental);
+        assert_eq!(d.check_experimental(240, "example.dice"), Ok(()));
+        assert_eq!(d.check_experimental(240, ""), Ok(()));
+        assert!(d.check_experimental(240, "other.dice").is_err());
+        assert!(d.check_experimental(241, "example.dice").is_err());
+        let with = |f: &dyn Fn(&mut DeviceInfo)| {
+            let mut d = info.clone();
+            f(&mut d);
+            d.check_experimental(240, "example.dice")
+        };
+        assert!(with(&|d| d.experimental[0].state_max = 16_385).is_err());
+        assert!(with(&|d| d.slots[0].table[1].buf_max = 4097).is_err());
+        assert!(with(&|d| d.slots[0].table[1].charge_per4 = false).is_err());
+        assert_eq!(
+            with(&|d| {
+                d.slots[0].table[1].charge_per4 = false;
+                d.slots[0].table[1].charge_per_byte = 1
+            }),
+            Ok(())
+        );
+        assert!(with(&|d| d.slots[0].table[0].charge_const = 4097).is_err());
+        assert!(with(&|d| d.slots[0].table[1].charge_per_byte = 3).is_err());
+        assert!(with(&|d| d.slots[0].table = vec![]).is_err());
+        assert!(with(&|d| d.slots[0].table = vec![roll; 17]).is_err());
+        assert!(with(&|d| d.slots[0].table.push(roll)).is_err());
+        assert!(with(&|d| d.slots[0].layers.push(LayerDecl { id: 0, z: 30 })).is_err());
+        assert!(with(&|d| d.publishes.push("x".into())).is_err());
+        assert!(with(&|d| d.experimental.clear()).is_err());
+    }
+
     #[test]
     fn hello_open_and_info_round_trip() {
-        let h = Hello { flags: hello_flags::SHM, slots: vec![3, 9], session_dir: "/s".into(), bus_path: "/b".into() };
+        let h = Hello { flags: hello_flags::SHM, slots: vec![3, 9], session_dir: "/s".into(), bus_path: "/b".into(), experimental: vec![] };
         let mut out = Vec::new();
         h.encode(&mut out);
         let m: Vec<Msg> = messages(&out).map(Result::unwrap).collect();
@@ -929,6 +1083,7 @@ mod tests {
             services: vec![],
             version: "0.1.0".into(),
             build: "b3:0011223344556677".into(),
+            experimental: vec![],
         };
         let mut out = Vec::new();
         info.encode(TRANSPORT_SHM, &mut out);

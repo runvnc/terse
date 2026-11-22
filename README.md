@@ -1707,6 +1707,21 @@ message saying how to stop using it; one that fails during a run stops the run, 
 any driver does. The performance record names the installed driver's own build.
 `terse-host` has its devices built in and does not load drivers.
 
+**Inventing a device.** A device nobody has specified yet can be tried as an
+**experimental device** (`spec/experimental.md`, `DEVICES.md` 15): its driver
+declares its calls, their charges and the size of its state, and a program lists
+it, by name, as optional on a slot from 240 to 255. `native/driver-experimental`
+is one, `example.dice`, with a program that uses it:
+
+    cc -std=c11 -O2 -o dice native/driver-experimental/dice.c
+    terse build native/driver-experimental/demo.c --optional 240:0=example.dice
+    terse-bus demo.terse --driver example.dice=$PWD/dice --frames 200 --dump
+    terse drivers add dice               # installed: every terse-bus run grants it
+
+Only `terse-bus`, for a single machine, grants one; everywhere else (`terse run`,
+`terse-host`, a shell's machines) the program runs without it. A machine that has
+one is outside conformance, and its snapshots and recordings say so.
+
 ## Sparks
 
 `programs/sparks` is a small game for the vector display, in C. Steer a small

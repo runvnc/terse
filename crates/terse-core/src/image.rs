@@ -15,6 +15,44 @@ pub const TITLE_LEN: usize = 16;
 /// (SPEC §image); the version is the other seven bits, 0 to 127.
 pub const OPTIONAL: u8 = 0x80;
 
+/// The experimental slots (`spec/experimental.md`): 240 to 255. A device
+/// on one is named in the image's experimental device table and served
+/// only by a driver on a device bus.
+pub const EXPERIMENTAL: std::ops::RangeInclusive<u8> = 240..=255;
+/// The longest name of an experimental device.
+pub const EXPERIMENTAL_NAME_MAX: usize = 30;
+/// The longest state section of an experimental device (STATE.md 1.13).
+pub const EXPERIMENTAL_STATE_MAX: usize = 16_384;
+/// The end of the experimental device table, the last 3 bytes of the ROM.
+pub const EXPERIMENTAL_MAGIC: [u8; 3] = *b"TXD";
+/// Bytes of one entry of the table.
+const EXPERIMENTAL_ENTRY: usize = 32;
+
+/// Whether `name` may name an experimental device: 1 to 30 of `a`-`z`,
+/// `0`-`9`, `-` and `.`, starting with a letter.
+pub fn valid_experimental_name(name: &str) -> bool {
+    (1..=EXPERIMENTAL_NAME_MAX).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+}
+
+/// The experimental device table for `entries` (slot, name), the bytes
+/// `terse pack` puts at the end of the ROM (`spec/experimental.md`
+/// §experimental.image). The caller checks the names and slots.
+pub fn experimental_table(entries: &[(u8, String)]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(EXPERIMENTAL_ENTRY * entries.len() + 4);
+    for (slot, name) in entries {
+        let mut e = [0u8; EXPERIMENTAL_ENTRY];
+        e[0] = *slot;
+        e[1] = name.len() as u8;
+        e[2..2 + name.len()].copy_from_slice(name.as_bytes());
+        out.extend_from_slice(&e);
+    }
+    out.push(entries.len() as u8);
+    out.extend_from_slice(&EXPERIMENTAL_MAGIC);
+    out
+}
+
 /// Device slots and versions this implementation provides (SPEC §image).
 pub const SUPPORTED_DEVICES: [DeviceReq; 9] = [
     DeviceReq::new(1, 0),
@@ -53,6 +91,11 @@ impl DeviceReq {
     /// Whether this implementation provides the device in this version.
     pub fn supported(&self) -> bool {
         SUPPORTED_DEVICES.iter().any(|d| d.slot == self.slot && d.version == self.version)
+    }
+
+    /// Whether the slot is an experimental one (240-255).
+    pub fn experimental(&self) -> bool {
+        EXPERIMENTAL.contains(&self.slot)
     }
 
     /// The entry's second byte: the version, with the top bit set if optional.
@@ -243,6 +286,68 @@ impl Image {
         Grants(self.optional().map(|d| d.supported() && provides(d)).collect())
     }
 
+    /// The image's experimental devices (slot, name), in header order, if
+    /// its header lists any and its experimental device table is valid
+    /// (`spec/experimental.md` §experimental.image); `None` if the table
+    /// is invalid or missing, an empty list if it lists none.
+    pub fn experimental(&self) -> Option<Vec<(u8, String)>> {
+        let slots: Vec<u8> = self.devices.iter().filter(|d| d.experimental()).map(|d| d.slot).collect();
+        if slots.is_empty() {
+            return Some(Vec::new());
+        }
+        let rom = &self.rom;
+        let n = rom.len();
+        if n < 4 || rom[n - 3..] != EXPERIMENTAL_MAGIC {
+            return None;
+        }
+        let k = rom[n - 4] as usize;
+        if k != slots.len() || n < 4 + EXPERIMENTAL_ENTRY * k {
+            return None;
+        }
+        let table = &rom[n - 4 - EXPERIMENTAL_ENTRY * k..n - 4];
+        let mut names: Vec<(u8, String)> = Vec::new();
+        for e in table.chunks_exact(EXPERIMENTAL_ENTRY) {
+            let len = e[1] as usize;
+            if !(1..=EXPERIMENTAL_NAME_MAX).contains(&len) || e[2 + len..].iter().any(|&b| b != 0) {
+                return None;
+            }
+            let name = std::str::from_utf8(&e[2..2 + len]).ok().filter(|s| valid_experimental_name(s))?;
+            if !slots.contains(&e[0]) || names.iter().any(|(s, m)| *s == e[0] || m == name) {
+                return None;
+            }
+            names.push((e[0], name.to_string()));
+        }
+        // In header order.
+        Some(slots.iter().map(|s| names.iter().find(|(t, _)| t == s).cloned().unwrap()).collect())
+    }
+
+    /// The name of the experimental device on `slot`, if the image lists one
+    /// there and its table is valid.
+    pub fn experimental_name(&self, slot: u8) -> Option<String> {
+        self.experimental()?.into_iter().find(|(s, _)| *s == slot).map(|(_, n)| n)
+    }
+
+    /// [`Image::grants`] on a host that also grants experimental devices
+    /// (a device bus): an optional experimental device is granted when the
+    /// image's table is valid and `experimental` accepts it with its name;
+    /// every other one as [`Image::grants`] decides.
+    pub fn grants_on(&self, provides: impl Fn(&DeviceReq) -> bool, experimental: impl Fn(&DeviceReq, &str) -> bool) -> Grants {
+        let names = self.experimental().unwrap_or_default();
+        Grants(
+            self.optional()
+                .map(|d| match d.experimental() {
+                    true => names.iter().find(|(s, _)| *s == d.slot).is_some_and(|(_, n)| experimental(d, n)),
+                    false => d.supported() && provides(d),
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether `grants` grants one of the image's experimental devices.
+    pub fn grants_experimental(&self, grants: &Grants) -> bool {
+        self.optional().zip(&grants.0).any(|(d, g)| *g && d.experimental())
+    }
+
     /// Every optional device this implementation supports granted.
     pub fn all_grants(&self) -> Grants {
         self.grants(|_| true)
@@ -252,10 +357,18 @@ impl Image {
     /// does not support, or `Err(None)` if `grants` does not fit the image
     /// (a flag per optional entry).
     pub fn check_grants(&self, grants: &Grants) -> Result<(), Option<DeviceReq>> {
+        self.check_grants_on(grants, false)
+    }
+
+    /// [`Image::check_grants`] on a host that may grant experimental
+    /// devices (`experimental`): a granted one is accepted if the image's
+    /// table is valid; whether a driver serves it is the caller's to check.
+    pub fn check_grants_on(&self, grants: &Grants, experimental: bool) -> Result<(), Option<DeviceReq>> {
         if grants.0.len() != self.optional().count() {
             return Err(None);
         }
-        match self.optional().zip(&grants.0).find(|(d, g)| **g && !d.supported()) {
+        let table = experimental && self.experimental().is_some();
+        match self.optional().zip(&grants.0).find(|(d, g)| **g && !(d.supported() || (table && d.experimental()))) {
             Some((d, _)) => Err(Some(*d)),
             None => Ok(()),
         }
@@ -402,6 +515,41 @@ mod tests {
         // Device 1 and device 8 cannot be optional.
         assert_eq!(p([1, 0x80]), Err(ImageError::NotOptional(1)));
         assert_eq!(p([8, 0x80]), Err(ImageError::NotOptional(8)));
+    }
+
+    /// spec/experimental.md: the table at the end of the ROM names the
+    /// experimental slots; a host without drivers never grants them, a
+    /// required one is refused.
+    #[test]
+    fn experimental_devices() {
+        let entries = vec![(241, "example.dice".to_string()), (240, "a.b".to_string())];
+        let mut rom = vec![0x13, 0, 0, 0];
+        rom.extend(experimental_table(&entries));
+        let devs = [DeviceReq::new(2, 0), DeviceReq::optional(240, 3), DeviceReq::optional(241, 0)];
+        let img = Image::parse(&Image::build("", 1, &devs, &rom)).unwrap();
+        assert_eq!(img.experimental(), Some(vec![(240, "a.b".to_string()), (241, "example.dice".to_string())]));
+        assert_eq!(img.all_grants(), Grants(vec![false, false]));
+        let g = img.grants_on(|_| true, |d, n| d.slot == 241 && n == "example.dice");
+        assert_eq!(g, Grants(vec![false, true]));
+        assert!(img.grants_experimental(&g) && !img.grants_experimental(&img.all_grants()));
+        assert_eq!(img.check_grants(&g), Err(Some(DeviceReq::optional(241, 0))));
+        assert_eq!(img.check_grants_on(&g, true), Ok(()));
+        // Required: refused by every host.
+        let req = [DeviceReq::new(240, 0)];
+        assert_eq!(Image::parse(&Image::build("", 1, &req, &rom)), Err(ImageError::UnsupportedDevice(DeviceReq::new(240, 0))));
+        // A table that does not match the header grants nothing.
+        let one = [DeviceReq::optional(240, 0)];
+        let img = Image::parse(&Image::build("", 1, &one, &rom)).unwrap();
+        assert_eq!(img.experimental(), None);
+        assert_eq!(img.grants_on(|_| true, |_, _| true), Grants(vec![false]));
+        let img = Image::parse(&Image::build("", 1, &one, &[0])).unwrap();
+        assert_eq!(img.experimental(), None);
+        for bad in ["", "Dice", "1dice", "a b", "this-name-is-longer-than-thirty"] {
+            assert!(!valid_experimental_name(bad), "{bad}");
+        }
+        assert!(valid_experimental_name("example.dice") && valid_experimental_name("a-1.x"));
+        // No experimental slot: no table looked for.
+        assert_eq!(Image::parse(&valid()).unwrap().experimental(), Some(vec![]));
     }
 
     /// A slot is listed once, whether required or optional.

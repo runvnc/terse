@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The device documents, by the id prefix that names them.
-const DEVICES: [&str; 5] = ["content", "sound", "page", "machines", "vector3d"];
+const DEVICES: [&str; 6] = ["content", "sound", "page", "machines", "vector3d", "experimental"];
 
 fn documents() -> Vec<(String, String)> {
     let root = common::workspace();

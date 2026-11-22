@@ -281,13 +281,16 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
         let mut pack = vec!["terse".to_string(), "pack".into(), "--rom".into(), "rom.bin".into(), "--title".into(), title.clone()];
         pack.extend(["--ram-pages".into(), ram_pages.to_string()]);
         for d in &devices {
-            pack.extend([if d.optional { "--optional" } else { "--device" }.into(), format!("{}:{}", d.slot, d.version)]);
+            let name = crate::experimental_names(&args).into_iter().find(|(s, _)| *s == d.slot).map_or(String::new(), |(_, n)| format!("={n}"));
+            pack.extend([if d.optional { "--optional" } else { "--device" }.into(), format!("{}:{}{name}", d.slot, d.version)]);
         }
         pack.extend(["-o".into(), out.clone()]);
         let mut cmd = Command::new(&pack[0]);
         cmd.args(&pack[1..]);
         println!("{}", shown(&cmd));
     }
+    // spec/experimental.md: the names of experimental devices end the ROM.
+    let rom = crate::with_experimental_table(&args, &devices, rom)?;
     let file = Image::build(&title, ram_pages, &devices, &rom);
     let image = Image::parse(&file).map_err(|e| e.to_string())?;
     crate::write(&out, &file)?;
