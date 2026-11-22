@@ -67,11 +67,12 @@ To check a download, compare it with `SHA256SUMS.txt` from the same release:
 `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` (macOS), or
 `Get-FileHash <file>` in PowerShell (Windows), compared by eye.
 
-To build from source instead, with a Rust toolchain (on Linux, the ALSA and
-udev headers too: `libasound2-dev libudev-dev pkg-config` on Debian and
-Ubuntu), install the three programs into `~/.cargo/bin`:
+To build from source instead, with a Rust toolchain (on Linux, the udev
+headers too, for game controllers: `libudev-dev pkg-config` on Debian and
+Ubuntu; sound needs nothing to build with), install the three programs into
+`~/.cargo/bin`:
 
-    cargo install --locked --path crates/terse-host --features audio
+    cargo install --locked --path crates/terse-host
     cargo install --locked --path crates/terse-cli
     cargo install --locked --path crates/terse-relay
 
@@ -409,7 +410,9 @@ host's prompt first, then F12 (the home key, with a shell), then to the machine 
 the focus. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
 newlines kept and other control characters dropped, fed in only as fast as the event
-queue has room, so none is lost. The screen
+queue has room, so none is lost. Ctrl+Alt+minus, Ctrl+Alt+plus (`=`) and Ctrl+Alt+M are
+the host's volume keys (down, up, mute; "Sound" below), and so are the keyboard's own
+volume keys if the desktop passes them on: no program receives them. The screen
 (SPEC §screen) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
@@ -1980,14 +1983,34 @@ then it exits):
     terse run programs/tune/tune.terse --audio-out tune.wav     # write it, play nothing
 
 `terse-bus --audio-out` does the same with the device as a driver process
-(`terse-dev-sound`). `terse-host` plays the sound only when built with the `audio`
-feature (cpal, so ALSA, which PipeWire serves):
+(`terse-dev-sound`). `terse-host` and `terse-bus` play it in a window
+(`crates/terse-host/src/audio`): on Linux through PipeWire or PulseAudio
+(`libpulse-simple.so.0`), else ALSA (`libasound.so.2`), both loaded when a program
+first makes a sound, so building needs no audio headers and the binary links no
+audio library; on macOS and Windows through cpal (CoreAudio, WASAPI). The `audio`
+cargo feature is on by default (`--no-default-features` leaves it out, as the
+bootable image does).
 
-    scripts/cargo build --release -p terse-host --features audio
+If sound cannot be heard (no output found, the output stopped, a host built without
+sound), the window shows a notice and one line on standard error says why, once, and
+again only if the cause changes; the machines run exactly as before (SPEC
+§sound.presentation). `terse-host --hardware-check` opens and closes the output and
+says what it plays through, or why not; `--version` says what the build can play
+through. `TERSE_AUDIO` chooses: `auto` (default), `off` (play nothing, say nothing),
+`none` (as if no output were found), `pulse`, `pulse:<server>`, `alsa`,
+`alsa:<pcm>`; `--selftest` plays only when it is set, so tests never make a sound.
+`TERSE_AUDIO_STATS=1` prints the output's latency and underruns when it closes.
 
-Without the feature, and in `--selftest` or with `TERSE_AUDIO=off`, the device is
-there and runs as usual but nothing is heard; the audio output is opened only when a
-machine first gives samples. Tests: `crates/terse-core/src/sound.rs` (the
+The volume is the host's, applied on the way out (never to the machines or an
+`--audio-out` file): Ctrl+Alt+minus and Ctrl+Alt+plus (`=`) turn it down and up a
+tenth, Ctrl+Alt+M mutes, and so do the keyboard's volume keys where the desktop
+lets them reach the window. These keys are the host's: no program receives them. A
+short notice shows the new volume, which is kept in `<config>/sound`; `--volume
+<0-100>` and `--mute` set it for one run.
+
+A frame's sound reaches the sound server's sink about 27 ms after the frame (PERFORMANCE.md
+R18: at most 3 frames). `TERSE_AUDIO_TRACE=<file>` writes each frame's hand-over time,
+to measure that against a recording. Tests: `crates/terse-core/src/sound.rs` (the
 synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
 snapshot in the middle of a note, `--audio-out`, the reading profile),
 `crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the

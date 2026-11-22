@@ -18,7 +18,10 @@ programs, from `third_party/tls/`) and a `README.txt` from `packaging/<system>/`
 the `terse-host` archives also have `FONTS-LICENSE.txt`, the licence of the
 DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
-fallback, `--renderer auto`) and with sound (`--features audio`).
+fallback, `--renderer auto`) and with sound (the `audio` feature, on by
+default: on Linux it loads libpulse-simple or libasound at run time, so the
+Linux build needs no ALSA headers and links no audio library; cpal on macOS
+and Windows).
 
 **The device bus** (`bus/`: `terse-bus` and the drivers `terse-dev-terminal`,
 `-vector`, `-content`, `-sound` and `-page`, for people who build or swap a

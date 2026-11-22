@@ -12,17 +12,20 @@ module reader
 go 1.24.0
 
 require (
-    filippo.io/edwards25519 v1.2.0
     github.com/gorilla/websocket v1.5.3
+    github.com/runvnc/terse/sdk/go v0.1.0
     lukechampine.com/blake3 v1.5.1
 )
 
-require github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+require (
+    filippo.io/edwards25519 v1.2.0 // indirect
+    github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+)
 ```
 
 - `github.com/gorilla/websocket` is the most widely used WebSocket package for Go. It has no dependencies of its own and a plain blocking interface (dial, write a message, read a message), and it answers pings and joins fragmented messages by itself, as a Tersenet client must.
 - `lukechampine.com/blake3` is a widely used BLAKE3 for Go; `blake3.Sum256` gives the 32-byte hash that is a blob's ID. It brings one small package of its own, `klauspost/cpuid`, to find the processor's fast instructions.
-- `filippo.io/edwards25519` checks signatures in step 3.
+- `github.com/runvnc/terse/sdk/go` is the Tersenet SDK for Go (package `tersenet`): step 3 checks entries with it. It brings `filippo.io/edwards25519`, the curve arithmetic Go's own `crypto/ed25519` is built on.
 
 `go.sum`, beside it, pins their exact contents. Go downloads them the first time you build.
 
@@ -155,12 +158,12 @@ exit status 1
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:b6d6ffd3f980f607910ffe613feb173cf094971854a6f66ad1a6a4373d0b59c4) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:1bc4f7b8fc7dee25a66e4fab2c23ab1f9724edb6bd91ceb8237fc98524ea0f6b) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:8ffac7f9cdf5bcfdfc0933a4aaac7e7ce334135fc8812bc7e2af325e6abea6e8).
-- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:960d47e03407185464b6cf1b914e4c5501d71681902099fde222f387f54e86ab).
-- Every relay message: [The network](terse:1baef48333f2d077eacaf4f12ce8ba06bff2949710da16afec571d44b81738d7).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:e102ae9cdbdd4582e684d35da4a1b677bd46825ea28d9c68c248537d9a42f82b).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:8776d50c1b97984ae6d33cb0bdc3b075a3cfe8c346db707a5fdf571b68c08349).
+- Every relay message: [The network](terse:503e11afbb308c4daba5d20a1f30eb0a3345d301a5b9f7e925b4a6bed79faa68).

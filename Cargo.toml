@@ -11,6 +11,7 @@ members = [
     "crates/terse-perflog",
     "crates/terse-mame-crt",
     "crates/terse-testkit",
+    "sdk/rust",
 ]
 
 [workspace.package]

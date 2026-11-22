@@ -27,4 +27,9 @@ terse-net.workspace = true
 terse-relay.workspace = true
 terse-bus.workspace = true
 tempfile = "3"
+# tests/sdk_agreement.rs: the SDK, and the curve to make its entries.
+tersenet = { path = "../../sdk/rust" }
+curve25519-dalek = "4"
+ed25519-dalek = "2"
+sha2 = "0.10"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

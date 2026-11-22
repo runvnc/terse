@@ -66,7 +66,7 @@
 <tr><td>109 + <code>n</code></td><td>64</td><td>signature</td></tr>
 </tbody></table></div>
 <p>The signature is Ed25519 over the 13 ASCII bytes <code>terse-entry-0</code> followed by bytes 0 to 108 + <code>n</code> of the entry. An entry is at most 293 bytes.</p>
-<p>An entry is valid if: <code>n</code> is at most 120 and the entry&#39;s length matches it; the signature verifies under the feed key with strict verification (NETWORK.md section 4.2 lists its checks: a canonical key and S below the group order, no small-order key or R, and the cofactorless equation compared byte for byte; an ordinary library verify is not enough); <code>seq</code> is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and <code>seq</code>, the one received first is kept. <code>seq</code> values need not be consecutive, and the time is not checked.</p>
+<p>An entry is valid if: <code>n</code> is at most 120 and the entry&#39;s length matches it; the signature verifies under the feed key with strict verification, which an ordinary library verify is not (<a href="signatures.html">Signatures and valid entries</a> gives every check); <code>seq</code> is at least 1; the kind is not 0 or 255; the size is 1 to 1,048,576 (1 to 4,096 for a profile); the title is valid UTF-8; and for a profile or a program the title is a valid display name. Clients and relays discard invalid entries. If two different valid entries have the same feed key and <code>seq</code>, the one received first is kept. <code>seq</code> values need not be consecutive, and the time is not checked.</p>
 <div class="table"><table>
 <thead><tr><th>Kind</th><th>Entry</th><th>Title</th><th>Blob</th></tr></thead>
 <tbody>
@@ -135,6 +135,6 @@
 <p>Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events (<a href="events.html">events</a>) and cost budget (<a href="charges.html">charges</a>).</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="experimental.html">← Experimental devices</a><a rel="next" href="events.html">Events and input →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="experimental.html">← Experimental devices</a><a rel="next" href="signatures.html">Signatures and valid entries →</a></nav></footer>
 </body>
 </html>

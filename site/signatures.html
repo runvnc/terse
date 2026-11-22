@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signatures and valid entries - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="signatures-and-valid-entries">Signatures and valid entries</h1>
+<p>Every entry of a feed is signed with the author&#39;s key, and every client and relay checks every entry it receives. This page gives the entry&#39;s exact bytes, each rule an entry must meet and the reason for it, and the strict Ed25519 verification the network requires, in enough detail to write the check without a library of ours. NETWORK.md sections 4.1 and 4.2 are the specification; this page explains them. The Tersenet SDK, at the end, does it all in one call.</p>
+<h2 id="the-bytes">The bytes</h2>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>32</td><td>feed key (A)</td></tr>
+<tr><td>32</td><td>4</td><td><code>seq</code></td></tr>
+<tr><td>36</td><td>4</td><td>time, Unix seconds</td></tr>
+<tr><td>40</td><td>1</td><td>kind</td></tr>
+<tr><td>41</td><td>3</td><td>blob size</td></tr>
+<tr><td>44</td><td>32</td><td>blob ID</td></tr>
+<tr><td>76</td><td>32</td><td>reply-to, or zeros</td></tr>
+<tr><td>108</td><td>1</td><td><code>n</code>, the title&#39;s length</td></tr>
+<tr><td>109</td><td><code>n</code></td><td>title</td></tr>
+<tr><td>109 + <code>n</code></td><td>64</td><td>signature: R, then S</td></tr>
+</tbody></table></div>
+<p>Integers are little-endian. The signed message M is the 13 ASCII bytes <code>terse-entry-0</code> followed by bytes 0 to 108 + <code>n</code>: everything but the signature. The prefix keeps a signature over an entry from being taken for one over anything else signed with the same key.</p>
+<h2 id="the-rules">The rules</h2>
+<p>An entry is valid if all of these hold; clients and relays discard any other.</p>
+<ul>
+<li>**Length.** At least 173 bytes, <code>n</code> at most 120, and exactly 173 + <code>n</code> bytes. Every field is then where the table says, and an entry is at most 293 bytes.</li>
+<li>**Title.** Valid UTF-8 (no overlong forms, no surrogates, nothing above U+10FFFF), so every reader shows the same text.</li>
+<li>**Seq.** At least 1: <code>seq</code> 0 means &quot;nothing yet&quot; in a Subscribe&#39;s <code>after</code>.</li>
+<li>**Kind.** Not 0 or 255, which are reserved. Kinds 5 to 254 are valid: a later revision may define them, and today&#39;s relays must carry them.</li>
+<li>**Size.** 1 to 1,048,576, the sizes a blob may have; 1 to 4,096 for a profile (kind 2), the most a profile document may hold.</li>
+<li>**Name.** For a profile or a program (kinds 2 and 3) the title is a display name: 1 to 48 bytes, no control character (U+0000 to U+001F, U+007F to U+009F) anywhere, and no white space (the Unicode White_Space property, listed in NETWORK.md 4.6) first or last.</li>
+<li>**Signature.** Strict Ed25519 verification, below, of the signature over M under the feed key.</li>
+</ul>
+<h2 id="points-and-encodings">Points and encodings</h2>
+<p>Ed25519 works on the points of a curve over the integers modulo p = 2^255 − 19. A point is written in 32 bytes: y as a 255-bit little-endian integer, and in the top bit of the last byte the sign of x (its lowest bit). Decoding finds x from y with the curve&#39;s equation.</p>
+<ul>
+<li>An encoding is **canonical** if y &lt; p and it is not x = 0 with the sign bit set. Each point has exactly one canonical encoding. Many decoders also accept y ≥ p (taking it modulo p) and the sign bit on x = 0, so one point can have two encodings. A simple test: decode, encode again, compare the 32 bytes.</li>
+<li>The group has order 8 × L, where L = 2^252 + 27742317777372353535851937790883648493 is the order of the base point B. A point P is **of small order** if [8]P is the neutral point (x = 0, y = 1). There are eight.</li>
+<li>A point of large order may still have a small-order component (P = Q + T, with T of small order). That is fine for a key: it is not of small order.</li>
+</ul>
+<p>The eight canonical encodings of the points of small order, in hexadecimal: order 1 (the neutral point), order 2, two of order 4, four of order 8:</p>
+<pre>0100000000000000000000000000000000000000000000000000000000000000
+ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+0000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000080
+26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05
+26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85
+c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a
+c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa</pre>
+<p>A decoder that accepts non-canonical encodings also takes six more to these points: <code>ee</code> then 30 <code>ff</code> then <code>7f</code> or <code>ff</code> (y = p + 1), <code>ed</code> then 30 <code>ff</code> then <code>7f</code> or <code>ff</code> (y = p), <code>01</code> then 30 <code>00</code> then <code>80</code>, and <code>ec</code> then 31 <code>ff</code> (x = 0 with the sign bit set). Comparing with these fourteen byte strings is an alternative to multiplying by 8.</p>
+<h2 id="strict-verification">Strict verification</h2>
+<p>R is the signature&#39;s first 32 bytes; S its last 32, an integer of all 256 bits. The signature verifies if and only if:</p>
+<p>1. **A is a valid feed key**: its encoding is canonical and the point is not of small order. 2. **S &lt; L.** Not a check of S&#39;s top three bits only: S + L passes that. 3. **R decodes to a point not of small order.** Decoding R loosely changes nothing: an R only a loose decoder accepts is of small order or fails step 4. 4. **The cofactorless equation, by bytes.** k is SHA-512(R ‖ A ‖ M), R and A as received, its 64 bytes a little-endian integer reduced modulo L. Compute [S]B − [k]A; its canonical encoding must be exactly the 32 bytes R. Not [8][S]B = [8]R + [8][k]A, the cofactored form.</p>
+<p>Why each:</p>
+<ul>
+<li>**A of small order**: for such a key, R = [r]B and S = r make [S]B − [k]A = R whenever [k]A is neutral (always for the neutral point, one time in 8 for one of order 8). Anyone could sign for that feed.</li>
+<li>**Canonical A, S &lt; L, comparing R&#39;s bytes**: without them one valid entry has several valid encodings (S + L, another spelling of R or A), which a relay would store as different entries with the same <code>seq</code>.</li>
+<li>**R of small order, and the cofactorless equation**: whether a signature whose R has a small-order component verifies depends on which equation is used. Both are allowed by RFC 8032, so two correct libraries can disagree on the same entry, and relays and clients then disagree on what a feed holds.</li>
+</ul>
+<p>With all four, every signature is valid for every conforming implementation or for none, no one but the key&#39;s owner can sign for a feed, and each valid entry has exactly one encoding. A key with a small-order component signed by its owner verifies exactly when [k] times that component is neutral: the same for everyone, so it is allowed.</p>
+<h2 id="what-libraries-do">What libraries do</h2>
+<p>What each verification call does by default, read from its source; &quot;add&quot; is what you must check before calling it.</p>
+<div class="table"><table>
+<thead><tr><th>Call</th><th>Missing</th><th>Add</th></tr></thead>
+<tbody>
+<tr><td>Go <code>ed25519.Verify</code></td><td>canonical A; small-order A, R</td><td>1, 3</td></tr>
+<tr><td>Rust <code>verify_strict</code></td><td>canonical A</td><td>1 (canonical)</td></tr>
+<tr><td>libsodium</td><td>nothing</td><td>nothing</td></tr>
+<tr><td>OpenSSL</td><td>canonical A; small-order A, R</td><td>1, 3</td></tr>
+<tr><td>tweetnacl</td><td>all but step 4</td><td>1, 2, 3</td></tr>
+<tr><td>noble-ed25519</td><td>3, 4; by default also 1</td><td>1, 3, and 4 by hand</td></tr>
+</tbody></table></div>
+<ul>
+<li>**Go**, <code>crypto/ed25519</code> (Go 1.27): refuses S ≥ L and compares R&#39;s bytes with the canonical encoding of [S]B − [k]A; its point decoding accepts non-canonical encodings, and nothing refuses small order. <code>filippo.io/edwards25519</code> has what the checks need: <code>SetBytes</code>, <code>Bytes</code>, <code>MultByCofactor</code>.</li>
+<li>**Rust**, <code>ed25519-dalek</code> 2.2: <code>verify_strict</code> refuses small-order A and R and S ≥ L and compares bytes, but <code>VerifyingKey::from_bytes</code> accepts a non-canonical key. With the crate&#39;s <code>legacy_compatibility</code> feature, which any crate in a build can turn on, it checks only S&#39;s top three bits. Its <code>verify</code> refuses no small-order point.</li>
+<li>**C**, libsodium <code>crypto_sign_verify_detached</code> (1.0.20, 1.0.21): makes all four checks exactly, unless built with <code>ED25519_COMPAT</code>, which replaces checks 1 to 3 with a check of S&#39;s top three bits.</li>
+<li>**Python**: PyNaCl&#39;s <code>VerifyKey.verify</code> is libsodium&#39;s (it bundles 1.0.20). <code>cryptography</code>&#39;s <code>Ed25519PublicKey.verify</code> is OpenSSL&#39;s (its wheels link OpenSSL 4.0.3): S &lt; L, bytes compared, the cofactorless equation, but no canonical or small-order check on A, none on R.</li>
+<li>**JavaScript**: Node&#39;s <code>crypto.verify</code> is OpenSSL&#39;s; since Node 24.19 and 26.5 it also refuses small-order A and R (by a list that includes some non-canonical forms), but still accepts other non-canonical keys, so add 1. <code>tweetnacl</code>&#39;s <code>nacl.sign.detached.verify</code> makes no check of S at all. <code>@noble/ed25519</code> 3.2 checks the cofactored equation, in both its default mode (<code>zip215: true</code>) and the strict one, so checks added before it are not enough: compute step 4 with its point arithmetic.</li>
+</ul>
+<h2 id="test-vectors">Test vectors</h2>
+<p><code>vectors/entries.txt</code> (format in <code>vectors/README</code>) holds valid entries signed with a public test key and an invalid one for each rule, among them every strict check: <code>small-order-key-signed</code>, <code>small-order-key-order-8-signed</code>, <code>non-canonical-key</code>, <code>non-canonical-signature</code>, <code>small-order-r</code>, <code>non-canonical-r</code>, <code>mixed-order-r</code>. <code>sdk/testdata/strict.txt</code> adds 64 cases of key, message and signature: every point of small order as A and as R, the six non-canonical ones, S + L, S = L, S with its top bit set, R with a component of each small order, and keys with a small-order component, each with the rule it breaks or <code>valid</code>. An implementation that accepts one it should not is wrong.</p>
+<p>The SDK&#39;s tests run both files: <code>go test ./...</code> in <code>sdk/go</code>, <code>cargo test -p tersenet</code>. <code>cargo test -p terse-cli --test sdk_agreement</code> checks that the reference, both SDKs and tersereader give the same verdict on 4,000 altered entries.</p>
+<h2 id="the-sdk">The SDK</h2>
+<p><code>sdk/go</code> (package <code>tersenet</code>) and <code>sdk/rust</code> (crate <code>tersenet</code>) make every check on this page, with no options. Go:</p>
+<pre>e, err := tersenet.VerifyEntry(b)
+if err != nil {
+    return err // names the rule: tersenet.ErrKey, ...
+}
+fmt.Println(e.Seq, e.Title)</pre>
+<p>Rust:</p>
+<pre>let e = tersenet::verify_entry(&amp;bytes)?;
+println!(&quot;{} {}&quot;, e.seq, e.title);</pre>
+<p>Both also offer <code>Verify</code> / <code>verify</code> (strict verification of any key, message and signature) and <code>ValidFeedKey</code> / <code>valid_feed_key</code> (section 4.1). Each is one short file: <code>sdk/go/tersenet.go</code>, <code>sdk/rust/src/lib.rs</code>. The reference implementation checks entries with the Rust one.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="network.html">← The network</a><a rel="next" href="events.html">Events and input →</a></nav></footer>
+</body>
+</html>

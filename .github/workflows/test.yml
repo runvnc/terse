@@ -57,10 +57,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # udev (game controllers) and ALSA for the host's window and sound;
+          # udev (game controllers) for the host's window (sound is loaded at run time);
           # fonts (the pictures, CJK coverage) and lavapipe (a software GPU
           # adapter for wgpu) so that those tests run instead of skipping.
-          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config \
+          sudo apt-get install -y --no-install-recommends libudev-dev pkg-config \
             fonts-dejavu-core fonts-noto-cjk mesa-vulkan-drivers
           # The RISC-V tools at the version the checked-in images were built
           # with (README: clang and LLD 23), first on the PATH.

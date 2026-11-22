@@ -63,9 +63,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # ALSA (sound) and udev (game controllers) for the host; musl for
+          # udev (game controllers) for the host (sound needs nothing to
+          # build with: it is loaded at run time); musl for
           # the static command-line tools.
-          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev musl-tools pkg-config
+          sudo apt-get install -y --no-install-recommends libudev-dev musl-tools pkg-config
 
       - name: Build and package
         run: scripts/release/build.sh ${{ matrix.platform }}

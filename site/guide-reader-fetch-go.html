@@ -19,16 +19,19 @@
 go 1.24.0
 
 require (
-    filippo.io/edwards25519 v1.2.0
     github.com/gorilla/websocket v1.5.3
+    github.com/runvnc/terse/sdk/go v0.1.0
     lukechampine.com/blake3 v1.5.1
 )
 
-require github.com/klauspost/cpuid/v2 v2.0.9 // indirect</pre>
+require (
+    filippo.io/edwards25519 v1.2.0 // indirect
+    github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+)</pre>
 <ul>
 <li><code>github.com/gorilla/websocket</code> is the most widely used WebSocket package for Go. It has no dependencies of its own and a plain blocking interface (dial, write a message, read a message), and it answers pings and joins fragmented messages by itself, as a Tersenet client must.</li>
 <li><code>lukechampine.com/blake3</code> is a widely used BLAKE3 for Go; <code>blake3.Sum256</code> gives the 32-byte hash that is a blob&#39;s ID. It brings one small package of its own, <code>klauspost/cpuid</code>, to find the processor&#39;s fast instructions.</li>
-<li><code>filippo.io/edwards25519</code> checks signatures in step 3.</li>
+<li><code>github.com/runvnc/terse/sdk/go</code> is the Tersenet SDK for Go (package <code>tersenet</code>): step 3 checks entries with it. It brings <code>filippo.io/edwards25519</code>, the curve arithmetic Go&#39;s own <code>crypto/ed25519</code> is built on.</li>
 </ul>
 <p><code>go.sum</code>, beside it, pins their exact contents. Go downloads them the first time you build.</p>
 <h2 id="the-code">The code</h2>

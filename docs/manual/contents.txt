@@ -60,6 +60,7 @@ Articles and the network:
 - [Writing an article](terse:{writing-articles}): the article format, every construct shown as source and as shown.
 - [Writing a reader without the machine](terse:{native-reader}): what a native reader must do to be a complete Tersenet client.
 - [The network](terse:{network}): blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.
+- [Signatures and valid entries](terse:{signatures}): the entry's bytes, every rule and its reason, strict Ed25519 verification, what libraries do, the test vectors and the SDK.
 
 Programs:
 
