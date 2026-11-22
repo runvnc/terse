@@ -21,7 +21,7 @@ use tungstenite::{Message, WebSocket};
 
 use crate::blob::{BlobId, MAX_BLOB};
 use crate::identity::FeedKey;
-use crate::protocol::{self, Reply, status};
+use crate::protocol::{self, Refusal, Reply, status};
 
 /// Largest WebSocket message either side accepts: a full blob plus headers,
 /// with room so that an oversize put still reaches the relay to be refused.
@@ -174,7 +174,8 @@ pub enum RelayReply {
     /// A lookup found an entry, not yet verified.
     LookedUp(Vec<u8>),
     NotFound,
-    Refused,
+    /// The relay refused, and why (NETWORK 3.1).
+    Refused(Refusal),
     /// Connection error, protocol error or timeout.
     Failed,
 }
@@ -443,13 +444,13 @@ impl RelayClient {
                 Some(Reply::Status { req, status: status::DONE, .. }) => (req, RelayReply::Done),
                 Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
                 Some(Reply::Found { req, status: status::DONE, entries }) => (req, RelayReply::Found(entries)),
-                Some(Reply::Found { req, .. }) => (req, RelayReply::Refused),
+                Some(Reply::Found { req, status, .. }) => (req, RelayReply::Refused(Refusal::of_status(status))),
                 Some(Reply::LookedUp { req, entry: Some(entry), .. }) => (req, RelayReply::LookedUp(entry)),
                 Some(Reply::LookedUp { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
-                Some(Reply::LookedUp { req, .. }) => (req, RelayReply::Refused),
+                Some(Reply::LookedUp { req, status, .. }) => (req, RelayReply::Refused(Refusal::of_status(status))),
                 Some(Reply::Get { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
-                Some(Reply::Get { req, .. } | Reply::Put { req, .. } | Reply::Status { req, .. }) => {
-                    (req, RelayReply::Refused)
+                Some(Reply::Get { req, status, .. } | Reply::Put { req, status, .. } | Reply::Status { req, status, .. }) => {
+                    (req, RelayReply::Refused(Refusal::of_status(status)))
                 }
                 Some(Reply::Entry(entry)) => {
                     self.pushed.push(entry);
@@ -557,7 +558,20 @@ mod tests {
         relay.send(protocol::encode_entry(b"pushed")).unwrap();
         relay.send(protocol::encode_status_reply(protocol::PUBLISH_REPLY, p, status::REFUSED)).unwrap();
         relay.send(protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, u, status::DONE)).unwrap();
-        assert_eq!(c.poll(), [(s, RelayReply::Subscribed { highest: 12 }), (p, RelayReply::Refused), (u, RelayReply::Done)]);
+        assert_eq!(
+            c.poll(),
+            [(s, RelayReply::Subscribed { highest: 12 }), (p, RelayReply::Refused(Refusal::Unspecified)), (u, RelayReply::Done)]
+        );
+        // The reason of a refusal is kept (NETWORK 3.1).
+        let p = c.publish(b"entry");
+        let q = c.put(b"blob");
+        relay.send(protocol::encode_status_reply(protocol::PUBLISH_REPLY, p, status::NOT_WRITER)).unwrap();
+        relay.send(protocol::encode_put_reply(q, status::retry(Duration::from_secs(30)), &[0; 32])).unwrap();
+        assert_eq!(
+            c.poll(),
+            [(p, RelayReply::Refused(Refusal::NotWriter)), (q, RelayReply::Refused(Refusal::TryLater(Duration::from_secs(30))))]
+        );
+        sent.try_iter().count();
         assert_eq!(c.take_pushed(), [b"pushed".to_vec()]);
         // Entries arrive while nothing is waiting, too.
         relay.send(protocol::encode_entry(b"later")).unwrap();
