@@ -41,7 +41,7 @@ MAME's sliders are environment variables, clamped to the sliders' ranges:
 (0.10–5.00, 4.00), `TERSE_MAME_HALO` (0–1, 0.04),
 `TERSE_MAME_BLOOM_STRENGTH` (0–3, 0.20), `TERSE_MAME_BLOOM_RADIUS`
 (0.50–2.60, 2.12), `TERSE_MAME_EXPOSURE` (0.10–4.00, 0.78).
-`TERSE_MAME_TIMES=1` prints each pipeline's frame times when the run ends.
+`TERSE_MAME_TIMES=1` prints each pipeline's frame times when the run ends (submitting, waiting for a picture, the picture into the layer, the whole PRESENT; frames drawn and not drawn). `TERSE_MAME_MAX_LINES` and `TERSE_MAME_LATENCY`: below.
 
 ## How it is put together
 
@@ -98,9 +98,33 @@ pictures the core adds.
   a quarter of a pixel from the circle. A 3D segment that fades from one
   end to the other has one intensity, the mean.
 - **Targets.** The phosphor targets are the screen's size (MAME's: the
-  vector screen's item); the composite goes to a BGRA8 target cleared to
-  opaque black and read back into the light layer (MAME's: added into its
-  view), so the picture costs a readback each frame.
+  vector screen's item) up to **960 lines** (`TERSE_MAME_MAX_LINES`,
+  480–4320): a larger screen (the 640 × 480 screen three or more times
+  over, 1920 × 1440 in a 2560 × 1440 window) has its phosphor and bloom
+  drawn at 1280 × 960 and the composite samples them (bilinear, before
+  the tone map) up to the screen's size. Widths, σ and the bloom radius
+  are MAME's for the phosphor's own height, as MAME would draw at that
+  resolution; the picture is that one enlarged, a little softer than one
+  drawn at full size (`~/terse-builds/mame-vector-crt/perf/` has both).
+  The composite goes to a BGRA8 target cleared to opaque black and read
+  back into the light layer (MAME's: added into its view).
+- **Latency.** The picture is read back **a frame later**: each PRESENT
+  submits this frame's passes and takes the picture of the frame before,
+  which the GPU finished meanwhile, through a ring of three buffers, and
+  writes it into the layer only where rows changed (the damage is those
+  rows). The driver never waits for the GPU (it waited 2–4 ms a frame,
+  often more on a busy GPU); the vector picture is one frame behind the
+  machine, like a presentation with one frame queued. The first picture
+  of a tube, a new layer and a machine that stopped running are not kept
+  waiting. `TERSE_MAME_LATENCY=0` waits for each picture instead.
+- **Frames not drawn.** When a frame's beams are those of the frames
+  before (the same lines, the same time) and the phosphor has reached its
+  fixed point (MAME's decay^n ≤ 2^-16: 3 frames at the default 2 ms, 68 at
+  100 ms), the frame is not drawn: the picture would be the same. A
+  terminal whose text does not change costs nothing.
+- **Shedding.** The host's shed level (`core.shed`, DEVICES.md 7.1) gives
+  up resolution then bloom: 1 draws the phosphor at most 720 lines high,
+  2 at most 480, 3 also without the bloom (MAME's bloom strength 0).
 - **Time.** A machine frame is 1/60 s of emulated time; a picture drawn
   when the machine has not run does not excite the phosphor again
   (MAME's paused emulation); the first frame after a size change starts a
