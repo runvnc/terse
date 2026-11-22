@@ -197,8 +197,13 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     );
 }
 
-/// A driver that spins 40 ms in END (on a CPU): blamed with its time on
-/// the CPU; without the rule it is only recorded.
+/// A driver that spins in END for 60 ms of its own CPU time (a fixed
+/// amount of work, `cpu`: however busy the computer, it does all of it)
+/// in 15 frames: each of them is late and blamed on it with that time on
+/// the CPU, whatever else the computer is doing (waiting for a CPU is
+/// taken off its own time, not added to it; another program's swapping
+/// does not excuse time on a CPU, `RECORD.md` 4); without the rule it is
+/// only recorded.
 #[test]
 fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -206,17 +211,25 @@ fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
     let perf = tmp.path().join("perf");
     let driver = format!("2={x}");
     let perf_s = perf.display().to_string();
-    let out = bus(&[&hello(), "--frames", "40", "--hash", "--driver", &driver, "--perf-log", &perf_s], &[("TERSE_EXAMPLE_SLOW", "spin:40:20:35")]);
+    let out = bus(&[&hello(), "--frames", "40", "--hash", "--driver", &driver, "--perf-log", &perf_s], &[("TERSE_EXAMPLE_SLOW", "cpu:60:20:35")]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let healthy = bus(&[&hello(), "--frames", "40", "--hash"], &[]);
     assert_eq!(text(&out.stdout), text(&healthy.stdout), "a slow driver changes nothing in the machine");
     let lines = record_lines(&perf);
-    let late: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Late { component: Component::Device(2), .. })).collect();
-    let blamed = late.iter().filter(|l| matches!(l, Line::Late { verdict: Verdict::Blamed, cpu_ms, .. } if *cpu_ms >= 15.0)).count();
-    // The machine may well share its CPU with others; at least most of
-    // the 15 slow frames are its own CPU time.
     let every_late: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Late { .. } | Line::Readings { .. })).collect();
-    assert!(blamed >= 10, "{late:?}\nevery late frame and the readings: {every_late:?}");
+    // END's work is waited for by the next frame's first request: the
+    // driver's END of host frames 19 to 33 (counters 20 to 34) makes
+    // frames 20 to 34 late. Each is blamed on the driver with most of its
+    // 60 ms on a CPU (its time on a CPU in the frame before, while the
+    // frame loop finished that frame, is not in it).
+    let blamed: Vec<u64> = lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::Late { frame, verdict: Verdict::Blamed, component: Component::Device(2), cpu_ms, own_ms, .. } if *cpu_ms >= 30.0 && *own_ms >= *cpu_ms => Some(*frame),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blamed, (20..35).collect::<Vec<u64>>(), "every late frame and the readings: {every_late:?}");
     assert!(!lines.iter().any(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. })), "the rule is off headless: {lines:?}");
 }
 

@@ -1241,7 +1241,12 @@ mod tests {
         assert_eq!(key_text(0x04, modifiers::CONTROL), None);
         assert_eq!(key_text(0x28, 0), None);
         assert_eq!(key_text(0x2E, modifiers::SHIFT).as_deref(), Some("+"));
-        let mut d = Drive::new("/dev/null").unwrap();
+        // An empty script, in a file of its own (there is no /dev/null on
+        // Windows).
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("empty");
+        std::fs::write(&script, "").unwrap();
+        let mut d = Drive::new(script.to_str().unwrap()).unwrap();
         let mut out = Vec::new();
         d.key(&mut out, 0x0A, modifiers::CONTROL, true, None);
         d.key(&mut out, 0x0A, modifiers::CONTROL, false, None);

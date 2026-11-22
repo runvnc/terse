@@ -116,7 +116,15 @@ starvation (time its threads were runnable but not running: Linux
 1. `starved`: less every component's starvation and the frame loop's own,
    the frame would have been on time. The computer was busy.
 2. `memory`: the system was stalled on memory for a quarter of a frame or
-   more (pages read back from swap). Nobody's fault.
+   more (pages read back from swap), and the component with the most own
+   time spent no more than its allowance and that stall on a CPU. Nobody's
+   fault. The stall is the whole system's, not the component's: its
+   blocked time may be its pages read back, which the record cannot tell
+   from other blocking, so the stall excuses all of it; memory pressure
+   enters its time on a CPU only as memory reclaimed in its own
+   allocations, which the stall counts, so the stall excuses no more of
+   that than its own length. A driver that spins 40 ms while another
+   program swaps is blamed.
 3. `blamed`: the component with the most own time (its time less its
    starvation: on a CPU, or blocked on a disk, a lock, a sleep) had more
    than its allowance, half a frame. Its doing.
@@ -140,7 +148,7 @@ and the `readings` lines say which were there:
 | The frame loop's `wait` (`core`) | no starvation | |
 | Any `wait` | | `starved` is given only if the starvation that was read suffices; a frame that a busy computer made late may be `blamed` instead |
 | `stall` | no stall | `memory` is never given |
-| A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0 |
+| A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0; a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
 (no memory stall) never `memory`; on Windows (CPU time only) only

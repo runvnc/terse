@@ -114,13 +114,26 @@ mod tests {
     fn this_process_and_thread() {
         let mut p = ProcProbe::process(std::process::id());
         let mut t = ProcProbe::this_thread();
-        let (a, ta) = (p.sample(), t.sample());
         let start = std::time::Instant::now();
+        let (a, ta) = (p.sample(), t.sample());
         let mut x = 0u64;
-        while start.elapsed() < std::time::Duration::from_millis(20) {
-            x = x.wrapping_add(std::hint::black_box(1));
+        // Work until this thread has had 20 ms of a CPU by its own clock
+        // (on a busy computer that may take much longer than 20 ms of
+        // wall time; without readings, 20 ms of wall time). Windows charges
+        // a clock tick at a time: until it has been charged any.
+        let enough = |tb: Option<ProcSample>| match (ta, tb) {
+            (Some(ta), Some(tb)) if cfg!(windows) => tb.since(&ta).cpu_ns > 0,
+            (Some(ta), Some(tb)) => tb.since(&ta).cpu_ns >= 20_000_000,
+            _ => start.elapsed() >= std::time::Duration::from_millis(20),
+        };
+        while !enough(t.sample()) && start.elapsed() < std::time::Duration::from_secs(20) {
+            for _ in 0..10_000 {
+                x = x.wrapping_add(std::hint::black_box(1));
+            }
         }
-        let (b, tb) = (p.sample(), t.sample());
+        let tb = t.sample();
+        let wall = start.elapsed().as_nanos() as u64;
+        let b = p.sample();
         assert!(x > 0);
         if disabled() {
             assert!(a.is_none() && b.is_none() && ta.is_none() && tb.is_none() && !p.has_wait() && !p.has_cpu());
@@ -132,8 +145,11 @@ mod tests {
             assert!(b.since(&a).cpu_ns > 0 && tb.since(&ta).cpu_ns > 0, "{a:?} {b:?} {ta:?} {tb:?}");
             assert!(p.rss_kib().unwrap() > 100);
         } else if cfg!(any(target_os = "linux", target_os = "macos")) {
-            assert!(b.since(&a).cpu_ns >= 10_000_000, "{a:?} {b:?}");
-            assert!(tb.since(&ta).cpu_ns >= 10_000_000 && tb.since(&ta).cpu_ns <= 40_000_000, "{ta:?} {tb:?}");
+            // The thread's CPU time: what it worked for, never more than
+            // the time that passed; the process's: at least the thread's.
+            let thread = tb.since(&ta).cpu_ns;
+            assert!(thread >= 20_000_000 && thread <= wall, "{ta:?} {tb:?} {wall}");
+            assert!(b.since(&a).cpu_ns >= thread, "{a:?} {b:?} {ta:?} {tb:?}");
             assert!(p.rss_kib().unwrap() > 100);
         }
     }
