@@ -410,7 +410,9 @@ impl SoftScreen {
             }
         }
         let bytes = terminal.cell_bytes();
-        let font = self.look.stroke_font();
+        // Only in the phosphor style (as last seen: a switch to it draws one
+        // frame of text as light first).
+        let font = self.look.stroke_font().filter(|_| self.style.0 || self.force_phosphor);
         if let Some(font) = font {
             self.update_strokes(terminal, &bytes, font);
         } else if !self.strokes.is_empty() || self.stroke_key != 0 {

@@ -1022,7 +1022,7 @@ impl Renderer {
         let cells = terse_core::text::draw_cells(terminal, |code, wide| self.slot_for(queue, code, wide) as u32);
         // The MAME model's text by the beam (as soft::screen): the cells it
         // draws are marked (bit 15 of the slot), and not drawn as light.
-        match self.look.stroke_font() {
+        match self.look.stroke_font().filter(|_| self.style.0 || self.force_phosphor) {
             Some(font) => {
                 use std::hash::{Hash, Hasher};
                 let mut h = std::collections::hash_map::DefaultHasher::new();

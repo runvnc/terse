@@ -889,10 +889,13 @@ mod tests {
         let temporal = (-(1.0 / 60.0) * (1.0 - 20.5 / 40.0f32) / (10.0 / 60.0)).exp();
         let want = radial * temporal * 4.0;
         assert!((t.accum[at] - want).abs() < 1e-3 * want, "{} {want}", t.accum[at]);
-        // One row off: across 1 pixel.
-        let off = t.accum[at + 640 * 3];
+        // One row off either way: across 1 pixel, on the quad's edges (its
+        // padding is a pixel): the top one is in it, the bottom one not, as
+        // the GPU's rasteriser has it.
         let want_off = (core / fc * (-0.5 / (fc * fc)).exp() + 0.04 * halo / fh * (-0.5 / (fh * fh)).exp()) * temporal * 4.0;
-        assert!((off - want_off).abs() < 1e-3 * want_off.max(1e-6) + 1e-7, "{off} {want_off}");
+        let (above, below) = (t.accum[at - 640 * 3], t.accum[at + 640 * 3]);
+        assert!((above - want_off).abs() < 1e-3 * want_off, "{above} {want_off}");
+        assert_eq!(below, 0.0);
         // The same frame again is drawn until the phosphor is steady, then not.
         let light = Light { beams: &i, text: &grid, text_key: Some(0), lin: &lin, dt: 1.0 / 60.0, excluded: &[] };
         let drawn: Vec<bool> = (0..5).map(|_| t.frame(&light, &pool)).collect();
