@@ -1556,22 +1556,24 @@ fn serve_connection(
         }
         ws.send(Message::binary(m))
     };
-    // The relay's clock, so that a test can move it on.
+    // When something was last sent, by the relay's clock (so that a test
+    // can move it on), taken just before the sending: whoever has the
+    // message, the time stands as of it.
     let mut sent_at = relay.instant();
     loop {
         if conn.dropped.load(Ordering::Relaxed) || relay.closing() {
             break;
         }
         for message in conn.queue.try_iter() {
-            send(ws, message)?;
             sent_at = relay.instant();
+            send(ws, message)?;
         }
         // A silent connection is kept alive through proxies that close
         // idle ones (NETWORK 3: the other side answers pings).
         if relay.policy.ping_every.is_some_and(|every| relay.instant().saturating_duration_since(sent_at) >= every) {
+            sent_at = relay.instant();
             ws.send(Message::Ping(Default::default()))?;
             relay.pings.fetch_add(1, Ordering::Relaxed);
-            sent_at = relay.instant();
         }
         let answer = match ws.read() {
             Ok(Message::Binary(m)) => relay.respond(conn, &m),
@@ -1584,8 +1586,8 @@ fn serve_connection(
         };
         match answer {
             Answer::Reply(r) => {
-                send(ws, r)?;
                 sent_at = relay.instant();
+                send(ws, r)?;
             }
             Answer::Nothing => {}
             Answer::Close => break,
