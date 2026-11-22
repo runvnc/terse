@@ -17,8 +17,12 @@ guide-read
 guide-subscribe
 guide-games
 guide-reader
-guide-reader-fetch
-guide-reader-feeds
+guide-reader-go
+guide-reader-rust
+guide-reader-fetch-go
+guide-reader-fetch-rust
+guide-reader-feed-go
+guide-reader-feed-rust
 guide-program
 guide-drawing
 guide-host

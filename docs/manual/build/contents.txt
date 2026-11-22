@@ -4,19 +4,23 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## User guide
 
-- [Install Tersenet](terse:4f32b7c77ac28ac023dce59597be635800aa6494baf123c5151f30aafcf3c6ef): one command on Linux and macOS, a zip on Windows, or from the source.
-- [Run Tersenet](terse:afe049a7cccf81855ce1083d761e449bc84aec9997b30f372664361fd45d3f69): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:6277bdb92c177ee06e138bfaabce91d0e855bf26f3eedfc4d13b7081a212f82a): your key, your name and your address; no account needed.
-- [Write and publish an article](terse:556f149871205230e8978cd6e5784dcca6aee28ddd3f762c8e0883b788e5814f): a plain text file, how it compares with Markdown, and your feed.
-- [Read articles and follow links](terse:38092104567c33783031e01ee534e1f10b3f44fa33fcec15c20a08889e7644da): the timeline, links and search.
-- [Subscribe to someone's feed](terse:5989a3a13663e7f597cec5c3b6297e532b0b675061552a1378ab2e2b163ef88a): a shared relay, by address or by name, nicknames.
-- [Find and play a game](terse:6bcae353ed4363e427a08d1418ed4a8609ef072fb8bc98ac046cd42ee3bf247a): the built-in game, programs from feeds and links, saving your place.
+- [Install Tersenet](terse:c42860160d48bd2b1a2c511df350499e3ccf86ecc8dd99e0f3a5228d638a9874): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:7a3fca112e85396cacdcce860ed099fc8a51ae32d8134e367d4024be4edafb18): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:c005021287348daadd54ea40c16ed583bac73d0bb995cddc53b4c92f8ad775f1): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:5fcd7facf2e4a23a5dfc90a5361f8165726e6e7559f5d170078d99224126c145): a plain text file, how it compares with Markdown, and your feed.
+- [Read articles and follow links](terse:307fb4df3dd2952be4abb9cfce1b8f1062dd30513d4be5326196ee9db2162e23): the timeline, links and search.
+- [Subscribe to someone's feed](terse:53e0db3032aae1ca478fe16993828cb90d8f916f1d1dd5efb63da9470dacd09f): a shared relay, by address or by name, nicknames.
+- [Find and play a game](terse:536271f387c628cf1683da4a2c4905c9065b8cd829b407fdc6d9f1611d64d674): the built-in game, programs from feeds and links, saving your place.
 
 ## Implementation guide
 
-- [Make a reader, step 1: show an article](terse:84d022841e16996496eb0decb2306052b3dac92ccbce3f76b4943a46aa05136a): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:3cb5e31f6381b016d1ce2583b3880400bd205455e3585fb07dafe8df684d2bf7): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:5fc8f4e4b85c47994b68d3fdf9ccbd426f316972b126353b9faf567d00dc60d8): follow links, subscribe to a feed, check its signatures.
+- [Make a reader](terse:0dfd0d30350943288e5351a005bd7b079a5f6388d771657831abd450a8cf9190): what a reader does, and a small one built in three steps, in Go or in Rust.
+- [Make a reader in Go, step 1: show an article](terse:744b3d807d5ec7d6d61ec83d3a737121927b48e655e5d9f20b68f2b9c76eff62): an article file's headings and paragraphs, with the standard library alone.
+- [Make a reader in Rust, step 1: show an article](terse:6abcbb5ef323678107addfe70781d1e248f37c5bf5a9a4951a8435013fd80d19): the same program in Rust.
+- [Make a reader in Go, step 2: fetch an article](terse:f37350f03eedb951ffcdc211d009f89adc248c5772bac2f782bdb34142290495): get an article from a relay by its ID and check its BLAKE3 hash.
+- [Make a reader in Rust, step 2: fetch an article](terse:bc1ddd741e9c989caeaff0d179ce285dc47be92ee9f892320ce56168ba74cd57): the same in Rust.
+- [Make a reader in Go, step 3: follow a feed](terse:a186570f0499314bec99179f78743fa277f8bf23a6af8c08a7329f94bc00e374): subscribe to a feed, check its entries' signatures strictly, open an article.
+- [Make a reader in Rust, step 3: follow a feed](terse:4fb6068375759660bd803bd56d4ec36776d1f4732b2b11988c6cabf2470fec1f): the same in Rust.
 - [Write a program](terse:08ec867525554141e0f28bc7cd71acf4a2608bf909cc4937835836308b8eb130): a first Terse32 program, built and run in three commands.
 - [Draw a line and read a key](terse:a2711f0d75e381ff63e5c86a1d7e13d239cb702729d221bf2066691891b4e791): the 2D vector display and keyboard events.
 - [Make a host, step 1: run a program to its end](terse:9425bbb888a54563147498e7ac9e1c88ae9f6c30592c19597cfd51fc01c3d5bb): the program file, memory and the processor, until `exit`.
