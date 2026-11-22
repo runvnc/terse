@@ -433,3 +433,68 @@ fn a_slow_driver_stops_every_machine_that_uses_it() {
     // Machine 2 was halted with its own slot for the device, 241.
     assert!(dump.contains("dice241: device 241 was too slow"), "{dump}");
 }
+
+/// spec/machines.md `experimental`, on the bus with the driver: a program
+/// (`opener`) asks the shell to open dice240's image by its ID; the shell
+/// starts it paused, learns that it was granted example.dice and asks
+/// with a second row saying so; with Y it runs, marked in the bar. The
+/// shell's screen at the question is programs/shell/expected/
+/// experimental-granted.txt (the short image ID, which depends on the
+/// compiler, masked).
+#[test]
+fn the_shell_marks_a_granted_program() {
+    let Some((h, dice)) = ready() else { return };
+    let Some(demos) = demos(&h) else { return };
+    let id = Command::new(bin("terse")).args(["info", &demos[0], "--relay", "none"]).args(h.dirs()).output().unwrap();
+    let id = String::from_utf8_lossy(&id.stdout).lines().find_map(|l| l.strip_prefix("id:").map(|s| s.trim().to_string())).unwrap();
+    let bytes: Vec<String> = (0..32).map(|i| u8::from_str_radix(&id[2 * i..2 * i + 2], 16).unwrap().to_string()).collect();
+    let src = h.path("opener.c");
+    std::fs::write(
+        &src,
+        format!(
+            "#include \"terse.h\"\nstatic const uint8_t req[33] = {{1, {}}};\nint main(void)\n{{\n    terse_event e;\n    for (;;) {{\n        while (terse_event_pop(&e))\n            if (e.type == EV_KEY_DOWN)\n                terse_open(req);\n        terse_wait_frame();\n    }}\n}}\n",
+            bytes.join(", ")
+        ),
+    )
+    .unwrap();
+    let opener = h.path("opener.terse");
+    let o = Command::new(bin("terse")).args(["build", &src, "--title", "opener", "--device", "2:0", "-o", &opener]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    // The opener is the 12th built-in: 11 down from the first.
+    let mut script: String = (0..11).map(|i| format!("{} press down\n", 2 + i)).collect();
+    script += "14 press enter\n30 press space\n";
+    let run = |script: &str, frames: u32| {
+        let events = h.path("events");
+        std::fs::write(&events, script).unwrap();
+        let d = format!("example.dice={dice}");
+        let frames = frames.to_string();
+        let args = ["--shell", "--builtin", &demos[0], "--builtin", &demos[1], "--builtin", &demos[2], "--builtin", &opener, "--events", &events, "--frames", &frames, "--dump", "--driver", &d];
+        let o = h.bus(&args);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let dump = run(&script, 60);
+    let short = format!("{}…{}", &id[..6], &id[58..]);
+    let screen: String = dump.split("-- machine ").next().unwrap().replace(&short, "xxxxxx…xxxxxx");
+    let rows: Vec<&str> = screen.lines().collect();
+    assert!(rows[0].contains("opener asks to start an unpublished program dice240 (xxxxxx…xxxxxx).") && rows[0].ends_with("Y/N"), "{screen}");
+    assert_eq!(rows[1].trim(), "Uses an experimental device (example.dice): not part of Tersenet's standard.", "{screen}");
+    golden("experimental-granted", &screen);
+    // Y: it runs, granted (its own screen says so), marked in the bar.
+    let dump = run(&format!("{script}70 press y\n"), 90);
+    let m = machines(&dump);
+    let (head, screen) = m.iter().find(|(head, _)| head.ends_with("dice240 --")).expect(&dump);
+    assert!(head.contains("running") && screen.contains("Granted, version 0, on slot 240."), "{dump}");
+    assert!(dump.lines().next().unwrap().contains("2 ⚗dice240"), "{dump}");
+}
+
+/// A golden file of programs/shell/expected (UPDATE_GOLDEN=1 writes it).
+fn golden(name: &str, got: &str) {
+    let path = workspace().join(format!("programs/shell/expected/{name}.txt"));
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, got).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (UPDATE_GOLDEN=1 writes it)", path.display()));
+    assert!(want == got, "{} differs; got:\n{got}", path.display());
+}

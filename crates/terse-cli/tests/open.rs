@@ -268,8 +268,9 @@ fn program_link_not_found() {
     assert!(s.bar().contains("1 reader"), "the message goes: {}", s.bar());
 }
 
-/// A link to an image by its ID: asked about as an unpublished program
-/// (its title and short ID), started by its ID with Y.
+/// A link to an image by its ID: started paused by its ID (out of the
+/// layout, so it runs no frame), asked about as an unpublished program
+/// (its title and short ID), run with Y.
 #[test]
 fn image_link_asks_then_starts() {
     let mut s = Sys::new(&format!("{}50 press y\n", follow(2)), Setup::default());
@@ -277,7 +278,9 @@ fn image_link_asks_then_starts() {
     let id = to_hex(&blob_id(&greeter()));
     let short = format!("{}…{}", &id[..6], &id[58..]);
     assert!(s.bar().contains(&format!("reader asks to start an unpublished program greeter ({short}).")), "{}", s.bar());
-    assert_eq!(s.state(2), state::NONE, "nothing started before the answer");
+    assert_eq!(s.state(2), state::PAUSED, "loaded, waiting for the answer");
+    assert_eq!(s.system.shell().machines().unwrap().slot(2).rect.w, 0, "not shown yet");
+    assert_eq!(s.machine(2).frame(), 0, "it has run no frame");
     golden("image-question", &s.dump());
     s.run(10);
     assert_eq!((s.state(2), s.title(2)), (state::RUNNING, "greeter".to_string()));
@@ -343,6 +346,43 @@ fn article_opens_a_reader() {
     assert_eq!(s.system.focus(), 2);
     let page = s.machine(2).page().unwrap().document().map(|d| String::from_utf8_lossy(d).into_owned()).unwrap_or_default();
     assert!(page.contains("Opened in a tile of its own."), "{page}");
+}
+
+/// hello under the title "dicer", its image listing the experimental
+/// device example.dice on slot 240 (spec/experimental.md).
+fn dicer() -> Vec<u8> {
+    let hello = Image::parse(builtin::PROGRAMS[3]).unwrap();
+    let mut rom = hello.rom.clone();
+    rom.extend(terse_core::image::experimental_table(&[(240, "example.dice".to_string())]));
+    let mut devices = hello.devices.clone();
+    devices.push(terse_core::DeviceReq::optional(240, 0));
+    Image::build("dicer", hello.ram_pages, &devices, &rom)
+}
+
+/// A request for an image that lists an experimental device (SPEC
+/// §machines.calls `experimental`): the shell starts it paused, and its
+/// question has a second row saying that it can use one, which this host
+/// does not give it; the tiles move down a row meanwhile. With Y it runs.
+#[test]
+fn experimental_device_in_the_question() {
+    if !common::have_tools() {
+        return;
+    }
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n40 press y\n";
+    let mut s = Sys::new(script, Setup { extra: vec![opener(&blob_id(&dicer())), dicer()], ..Default::default() });
+    s.run(35);
+    assert_eq!(s.title(1), "opener");
+    assert_eq!(s.state(2), state::PAUSED, "loaded, waiting for the answer");
+    let text = Sys::screen(s.system.shell());
+    let rows: Vec<&str> = text.lines().collect();
+    assert!(rows[0].contains("opener asks to start an unpublished program dicer (") && rows[0].ends_with("Y/N"), "{text}");
+    assert_eq!(rows[1].trim(), "Can use an experimental device (example.dice); here it runs without it.", "{text}");
+    assert_eq!(s.system.shell().machines().unwrap().slot(1).rect.y, 39, "a row lower");
+    golden("experimental-question", &s.dump());
+    s.run(10);
+    assert_eq!((s.state(2), s.title(2)), (state::RUNNING, "dicer".to_string()));
+    assert!(s.bar().contains("2 ⚗dicer"), "{}", s.bar());
+    assert_eq!(s.system.shell().machines().unwrap().slot(1).rect.y, 23, "back in place");
 }
 
 /// Eight machines: a request finds no free handle; the bar says so.
