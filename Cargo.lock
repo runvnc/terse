@@ -2868,7 +2868,10 @@ dependencies = [
 name = "terse-cli"
 version = "0.1.0"
 dependencies = [
+ "curve25519-dalek",
+ "ed25519-dalek",
  "libc",
+ "sha2",
  "tempfile",
  "terse-bus",
  "terse-core",
@@ -2876,6 +2879,7 @@ dependencies = [
  "terse-perflog",
  "terse-relay",
  "terse-testkit",
+ "tersenet",
  "tungstenite",
 ]
 
@@ -2960,6 +2964,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "terse-core",
+ "tersenet",
  "ttf-parser",
  "tungstenite",
 ]
@@ -2990,6 +2995,15 @@ name = "terse-testkit"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+]
+
+[[package]]
+name = "tersenet"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "sha2",
 ]
 
 [[package]]

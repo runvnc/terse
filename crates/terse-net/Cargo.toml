@@ -11,6 +11,8 @@ terse-core.workspace = true
 blake3 = { version = "1.8", default-features = false }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 ed25519-dalek = "2"
+# The entry check with strict Ed25519 verification (NETWORK 4.2): the SDK.
+tersenet = { path = "../../sdk/rust" }
 # Curve arithmetic for the canonical-key check and the signature vectors.
 curve25519-dalek = "4"
 sha2 = "0.10"

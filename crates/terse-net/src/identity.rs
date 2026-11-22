@@ -86,11 +86,9 @@ impl Identity {
 /// of a curve point (RFC 8032 decoding: y below p, no sign bit on x = 0;
 /// equivalently, the decoded point encodes back to the same bytes) that is
 /// not of small order. A key with a small-order component but of large
-/// order itself is valid.
+/// order itself is valid. Checked by the `tersenet` crate (sdk/rust).
 pub fn valid_feed_key(key: &FeedKey) -> bool {
-    curve25519_dalek::edwards::CompressedEdwardsY(*key)
-        .decompress()
-        .is_some_and(|p| p.compress().to_bytes() == *key && !p.is_small_order())
+    tersenet::valid_feed_key(key)
 }
 
 #[cfg(unix)]

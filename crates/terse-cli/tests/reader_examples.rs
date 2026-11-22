@@ -15,7 +15,9 @@
 //!
 //! The Go examples need Go and their modules (go.sum; downloaded once into
 //! Go's module cache), the Rust ones the crates of their Cargo.lock (the
-//! versions of the workspace's): each test skips, saying so, when it
+//! versions of the workspace's). Both use the SDK (`tersenet`) from the
+//! repository, sdk/go and sdk/rust, through examples/reader/go/go.work and
+//! examples/reader/rust/.cargo/config.toml: each test skips, saying so, when it
 //! cannot get them. `articles_show_the_examples` checks that the guide's
 //! pages show each file whole and unchanged.
 
@@ -90,7 +92,9 @@ fn rust_examples() {
     let target = terse_testkit::skip_log().parent().unwrap().join("reader-examples");
     let cargo = || {
         let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-        cmd.arg("--quiet").env("CARGO_TARGET_DIR", &target);
+        // From the example's directory, so that cargo reads its
+        // .cargo/config.toml (the SDK, sdk/rust, in place of crates.io's).
+        cmd.arg("--quiet").env("CARGO_TARGET_DIR", &target).current_dir(examples().join("rust"));
         cmd
     };
     let fetch = cargo().args(["fetch", "--locked", "--manifest-path"]).arg(&manifest).output().unwrap();

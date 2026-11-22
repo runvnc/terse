@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 blake3 = "1.8"
-ed25519-dalek = "2.2"
+tersenet = "0.1"
 tungstenite = "0.30"
 
 [workspace]

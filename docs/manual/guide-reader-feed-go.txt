@@ -12,17 +12,15 @@ package main
 
 import (
     "bytes"
-    "crypto/ed25519"
     "encoding/binary"
     "encoding/hex"
     "fmt"
     "log"
     "os"
     "strconv"
-    "unicode/utf8"
 
-    "filippo.io/edwards25519"
     "github.com/gorilla/websocket"
+    tersenet "github.com/runvnc/terse/sdk/go"
 
     "reader/article"
     "reader/relay"
@@ -61,10 +59,12 @@ func main() {
         entry := message[1:]
         seq := binary.LittleEndian.Uint32(entry[32:])
         caughtUp = seq >= highest
-        if valid(entry, key) && entry[40] == 1 {
-            title := string(entry[109 : len(entry)-64])
-            fmt.Printf("%d  %s\n", seq, article.Visible(title))
-            articles[seq] = [32]byte(entry[44:76])
+        e, err := tersenet.VerifyEntry(entry)
+        mine := err == nil && bytes.Equal(e.Feed[:], key)
+        if mine && e.Kind == 1 {
+            title := article.Visible(e.Title)
+            fmt.Printf("%d  %s\n", seq, title)
+            articles[seq] = e.Blob
         }
     }
     if len(os.Args) < 4 {
@@ -82,43 +82,9 @@ func main() {
     fmt.Println()
     article.Show(blob)
 }
-
-func valid(e, key []byte) bool {
-    if len(e) < 173 || len(e) != 173+int(e[108]) {
-        return false
-    }
-    signed, signature := e[:len(e)-64], e[len(e)-64:]
-    message := append([]byte("terse-entry-0"), signed...)
-    seq := binary.LittleEndian.Uint32(e[32:])
-    size := int(e[41]) | int(e[42])<<8 | int(e[43])<<16
-    return bytes.Equal(e[:32], key) &&
-        e[108] <= 120 &&
-        seq >= 1 &&
-        size >= 1 && size <= 1<<20 &&
-        utf8.Valid(signed[109:]) &&
-        verify(key, message, signature)
-}
-
-func verify(key, message, signature []byte) bool {
-    a, err := new(edwards25519.Point).SetBytes(key)
-    canonical := err == nil && bytes.Equal(a.Bytes(), key)
-    if !canonical || smallOrder(a) {
-        return false
-    }
-    r, err := new(edwards25519.Point).SetBytes(signature[:32])
-    if err != nil || smallOrder(r) {
-        return false
-    }
-    return ed25519.Verify(key, message, signature)
-}
-
-func smallOrder(p *edwards25519.Point) bool {
-    p8 := new(edwards25519.Point).MultByCofactor(p)
-    return p8.Equal(edwards25519.NewIdentityPoint()) == 1
-}
 ```
 
-It is 109 lines; the whole program, with the `article` and `relay` packages, is 216. It uses one more library, `filippo.io/edwards25519` (in step 2's `go.mod`): the elliptic curve arithmetic that Go's own `crypto/ed25519` is built on, offered as a package of its own.
+It is 75 lines; the whole program, with the `article` and `relay` packages, is 182. The entries are checked by one call to the Tersenet SDK for Go, `tersenet.VerifyEntry`, named in step 2's `go.mod`.
 
 ## How it works
 
@@ -126,11 +92,21 @@ It is 109 lines; the whole program, with the `article` and `relay` packages, is 
 
 Then the relay sends the feed's entries, oldest first, each in a message that starts with `90h`. The loop reads them until it has one numbered `highest` or more: then it has caught up. An entry is, in order: the feed's key (32 bytes), its number `seq` (4), a time (4), a kind (1: 1 for an article), the blob's size (3) and ID (32), a reply-to ID (32), the title's length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.
 
-`valid` checks what the network asks of every entry: the length, that it is of the feed asked for, a title of at most 120 bytes and valid UTF-8, a `seq` from 1, a size from 1 byte to 1 MiB, and the signature. The signature is Ed25519, over the 13 bytes `terse-entry-0` followed by the entry without its signature. An entry that fails any check is dropped, unseen. `main` then keeps the entries of kind 1, articles, and prints each one's number and title.
+`tersenet.VerifyEntry` checks an entry by every rule the network sets and returns its fields, or an error naming the rule it breaks: the length, a title of at most 120 bytes and valid UTF-8, a `seq` from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile's or a program's title, and the signature. `main` keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one's number and title; any other entry is dropped, unseen.
 
-`verify` is Tersenet's strict signature check. Go's `ed25519.Verify` makes most of it: it refuses a signature whose S is not below the group order, and compares R's bytes with the canonical encoding of the point it computes, without the factor of 8. It does not refuse a key that is not the canonical encoding of its point, nor a key or an R of small order, which anyone can forge signatures for. `verify` refuses those first: it decodes the key and encodes it again, which must give the same bytes, and `smallOrder` multiplies a point by 8 and compares with the neutral point. With these three checks it is the whole of the strict verification NETWORK.md asks for. `vectors/entries.txt` holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.
+The signature is Ed25519, over the 13 bytes `terse-entry-0` followed by the entry without its signature, and it is checked strictly. Go's own `ed25519.Verify` is not enough: it accepts a key that is not the canonical encoding of its point, and a key or an R of small order, for which anyone can forge signatures. [Signatures and valid entries](terse:{signatures}) gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, `sdk/go/tersenet.go` in the Tersenet sources, 168 lines with its comments: read it. `vectors/entries.txt` holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.
 
 To open an entry, `main` gets its blob with step 2's `relay.Get`, which checks its hash and skips any entry the relay sends meanwhile, and shows it with `article.Show`.
+
+## Getting the SDK
+
+In a module of your own, `go get` adds it to `go.mod`:
+
+```
+go get github.com/runvnc/terse/sdk/go@v0.1.0
+```
+
+In the Tersenet sources, `go.work` beside `go.mod` replaces that version with the copy in `sdk/go`, so the examples build with the SDK they are tested with.
 
 ## Run it
 
@@ -162,7 +138,7 @@ It prints the list again, an empty line, and the article as step 1 shows it.
 
 ## What it leaves out
 
-A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. tersereader checks entries in `internal/terse/entry.go` and `internal/terse/key.go` (its strict check, without a library) and does the rest in `internal/client/client.go`. [Writing a reader without the machine](terse:{native-reader}) lists all a complete reader must do.
+A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. tersereader, written from the specification alone, checks entries without the SDK, in `internal/terse/entry.go` and `internal/terse/key.go`, and does the rest in `internal/client/client.go`; a test checks that it and the SDK agree on thousands of altered entries. [Writing a reader without the machine](terse:{native-reader}) lists all a complete reader must do.
 
 ## What you have now
 

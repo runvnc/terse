@@ -1,7 +1,5 @@
 //! Feed entries (NETWORK 4.2): encoding, signing and the validity rules.
 
-use ed25519_dalek::{Signature, VerifyingKey};
-
 use crate::blob::{BlobId, MAX_BLOB};
 use crate::identity::{FeedKey, Identity};
 
@@ -188,43 +186,33 @@ fn signed_message(unsigned: &[u8]) -> Vec<u8> {
     [DOMAIN, unsigned].concat()
 }
 
-/// Decodes and validates an entry (NETWORK 4.2).
+/// Decodes and validates an entry (NETWORK 4.2). The rules, the strict
+/// Ed25519 verification among them, are checked by the `tersenet` crate
+/// (sdk/rust), the SDK offered to other implementations, so that the
+/// reference and the SDK cannot differ.
 pub fn decode(bytes: &[u8]) -> Result<SignedEntry, Invalid> {
-    if bytes.len() < HEAD + SIG {
-        return Err(Invalid::Length);
-    }
-    let n = bytes[HEAD - 1] as usize;
-    if n > MAX_TITLE {
-        return Err(Invalid::TitleLength);
-    }
-    if bytes.len() != HEAD + n + SIG {
-        return Err(Invalid::Length);
-    }
-    let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
-    let id_at = |at: usize| -> [u8; 32] { bytes[at..at + 32].try_into().unwrap() };
-    let title = std::str::from_utf8(&bytes[HEAD..HEAD + n]).map_err(|_| Invalid::TitleUtf8)?;
+    use tersenet::Invalid as Rule;
+    let e = tersenet::verify_entry(bytes).map_err(|rule| match rule {
+        Rule::Length => Invalid::Length,
+        Rule::TitleLength => Invalid::TitleLength,
+        Rule::TitleUtf8 => Invalid::TitleUtf8,
+        Rule::Seq => Invalid::Seq,
+        Rule::Kind => Invalid::Kind,
+        Rule::Size => Invalid::Size,
+        Rule::Name => Invalid::Name,
+        Rule::Key => Invalid::Key,
+        Rule::SignatureS | Rule::SignatureR | Rule::Signature => Invalid::Signature,
+    })?;
     let entry = Entry {
-        feed: id_at(0),
-        seq: u32_at(32),
-        time: u32_at(36),
-        kind: bytes[40],
-        size: u32::from_le_bytes([bytes[41], bytes[42], bytes[43], 0]),
-        blob: id_at(44),
-        reply_to: id_at(76),
-        title: title.to_string(),
+        feed: e.feed,
+        seq: e.seq,
+        time: e.time,
+        kind: e.kind,
+        size: e.size,
+        blob: e.blob,
+        reply_to: e.reply_to,
+        title: e.title.to_string(),
     };
-    entry.check()?;
-    // Strict verification (NETWORK 4.2): the key is canonical and not of
-    // small order (checked here, since the library accepts non-canonical
-    // key encodings); `verify_strict` then refuses S >= L and a small-order
-    // R, and compares the canonical encoding of [S]B - [k]A with R's bytes
-    // (cofactorless), so each valid entry has exactly one valid encoding.
-    if !crate::identity::valid_feed_key(&entry.feed) {
-        return Err(Invalid::Key);
-    }
-    let key = VerifyingKey::from_bytes(&entry.feed).map_err(|_| Invalid::Key)?;
-    let signature = Signature::from_bytes(bytes[HEAD + n..].try_into().unwrap());
-    key.verify_strict(&signed_message(&bytes[..HEAD + n]), &signature).map_err(|_| Invalid::Signature)?;
     Ok(SignedEntry { entry, bytes: bytes.to_vec() })
 }
 
@@ -232,6 +220,7 @@ pub fn decode(bytes: &[u8]) -> Result<SignedEntry, Invalid> {
 mod tests {
     use super::*;
     use crate::blob::{blob_id, to_hex};
+    use ed25519_dalek::{Signature, VerifyingKey};
 
     /// Seed 00 01 02 … 1f.
     fn test_identity() -> Identity {

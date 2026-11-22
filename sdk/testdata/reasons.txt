@@ -1,0 +1,28 @@
+# The rule each invalid entry of vectors/entries.txt breaks, as the SDK
+# names it (Rust: Invalid::<rule>; Go: Err<rule>, with TitleUtf8 as
+# ErrTitleUTF8). The SDK's tests in both languages check that each is
+# refused for this rule and each valid entry accepted.
+bad-signature Signature
+changed-title Signature
+signed-by-another-key Signature
+non-canonical-signature SignatureS
+small-order-key Key
+small-order-r SignatureR
+non-canonical-r SignatureR
+mixed-order-r Signature
+small-order-key-signed Key
+small-order-key-order-8-signed Key
+non-canonical-key Key
+kind-0 Kind
+kind-255 Kind
+seq-0 Seq
+size-0 Size
+size-over-1-mib Size
+profile-size-4097 Size
+profile-title-not-a-name Name
+program-title-empty Name
+title-not-utf8 TitleUtf8
+title-121 TitleLength
+length-mismatch Length
+truncated Length
+too-short Length
