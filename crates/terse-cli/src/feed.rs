@@ -335,7 +335,8 @@ fn now() -> u32 {
 /// [--force]`: an article entry (NETWORK 4.2). Each `terse:` link of the
 /// article is listed first, with what this host holds, what is uploaded
 /// with it and what a relay keeps ([`crate::links`]); an article that links
-/// to a blob held here that no entry names is refused unless `--force`.
+/// to a blob of the user's feed that this host does not hold is refused
+/// unless `--force`.
 /// `--dry-run` lists them and publishes nothing.
 fn publish(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &["--dry-run", "--force"])?;
@@ -374,17 +375,31 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         })
         .collect();
     let name = |key: &FeedKey| names.get(key).cloned().unwrap_or_default();
-    let unnamed: Vec<String> = linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed).map(|l| l.link()).collect();
-    let refusal = (!unnamed.is_empty() && !args.has("--force")).then(|| {
-        let (what, them, it) = if unnamed.len() == 1 { ("a blob", "it", "it is") } else { ("blobs", "them", "they are") };
+    // The user's own parts (named by an entry of their feed) that this host
+    // does not hold cannot go up with the article.
+    let missing: Vec<String> = linked
+        .iter()
+        .filter(|l| matches!(l.keep, crate::links::Keep::Own { .. }) && !l.held)
+        .map(|l| l.link())
+        .collect();
+    let refusal = (!missing.is_empty() && !args.has("--force")).then(|| {
+        let (what, them, it) = if missing.len() == 1 { ("an article", "it", "it is") } else { ("articles", "them", "they are") };
         format!(
-            "not published: the article links to {what} held here that no entry names: {}. A relay that drops \
-             blobs no entry names (NETWORK.md 5.3) would drop {them}, and the article's link would lead nowhere. If \
-             {it} part of this article, publish {them} first, each as an article of its own (terse feed publish \
-             <file> --title <t>); if {it} someone else's, give --force",
-            unnamed.join(", ")
+            "not published: the article links to {what} of your feed that this host does not hold: {}, so {it} not \
+             uploaded with it. Get {them} first (terse get <id>), or give --force if your relays hold {them}",
+            missing.join(", ")
         )
     });
+    // A blob held here that no entry names goes up, but a relay that drops
+    // such blobs drops it after a while.
+    for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
+        eprintln!(
+            "terse: warning: {} is named by no entry: a relay that drops blobs no entry names (NETWORK.md 5.3) will \
+             drop it and the link will lead nowhere there; to keep it, publish it as an article of its own \
+             (terse feed publish <file> --title <t>)",
+            l.link()
+        );
+    }
     if dry_run || refusal.is_some() {
         let would = if dry_run { "would be uploaded" } else { "not uploaded" };
         for l in &linked {

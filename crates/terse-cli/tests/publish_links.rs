@@ -3,8 +3,10 @@
 //! uploaded with the article, and whether a relay keeps it (an entry of the
 //! user's own feed names it), or it is link-only (another feed's, or
 //! unknown here). A link to a blob held here that no entry names is
-//! refused unless `--force`, since a relay that drops such blobs (NETWORK
-//! 5.3) would drop it; `--dry-run` lists and publishes nothing. On a
+//! uploaded with a warning, since a relay that drops such blobs (NETWORK
+//! 5.3) drops it after a while; a link to a blob of the user's own feed
+//! that this host does not hold is refused unless `--force`; `--dry-run`
+//! lists and publishes nothing. On a
 //! scratch relay in this process, on an ephemeral port, whose clock the
 //! test moves on to show what it keeps.
 
@@ -119,35 +121,55 @@ fn publish_names_linked_articles() {
     };
     let highest = || relay.feeds().highest(&terse_net::parse_hex(&author.key).unwrap()).unwrap();
 
-    // A dry run lists and publishes nothing; it would be refused.
+    let warning = format!("terse: warning: terse:{picture_id} is named by no entry");
+    // A dry run lists and publishes nothing.
     let out = terse(&author.args(&["publish", &main_file, "--title", "Main", "--dry-run"], &url));
-    assert!(!out.status.success());
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), list("would be uploaded", "would be uploaded"));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains(&format!("not published: the article links to a blob held here that no entry names: terse:{picture_id}.")), "{stderr}");
-    assert!(stderr.contains("give --force"), "{stderr}");
-    // Refused without --force: the same list, nothing sent.
-    let out = terse(&author.args(&["publish", &main_file, "--title", "Main"], &url));
-    assert!(!out.status.success());
-    assert_eq!(String::from_utf8(out.stdout).unwrap().lines().collect::<Vec<_>>(), list("not uploaded", "not uploaded"));
-    assert_eq!(highest(), 1);
-    assert!(!relay.blobs().path(&blob_id(&picture)).exists());
-    // A dry run with --force says what would be done.
-    let dry = ok(&author.args(&["publish", &main_file, "--title", "Main", "--dry-run", "--force"], &url));
+    assert!(out.status.success());
     let mut expected = list("would be uploaded", "would be uploaded");
     expected.push("dry run: nothing uploaded or published".into());
-    assert_eq!(dry.lines().collect::<Vec<_>>(), expected);
+    assert_eq!(String::from_utf8(out.stdout).unwrap().lines().collect::<Vec<_>>(), expected);
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&warning));
     assert_eq!(highest(), 1);
+    assert!(!relay.blobs().path(&blob_id(&picture)).exists());
 
-    // With --force: the author's own blobs go up with it.
+    // Published: the author's own blobs, and the one no entry names, go up
+    // with it; the latter with a warning.
     let up = "uploaded now (taken by 1 of 1 relays)";
-    let out = ok(&author.args(&["publish", &main_file, "--title", "Main", "--force"], &url));
-    let lines: Vec<&str> = out.lines().collect();
+    let out = terse(&author.args(&["publish", &main_file, "--title", "Main"], &url));
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[..6], list(up, up));
-    assert!(lines[6].starts_with("seq 2 blob "), "{out}");
+    assert!(lines[6].starts_with("seq 2 blob "), "{stdout}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&warning));
     assert_eq!(highest(), 2);
     assert!(relay.blobs().path(&blob_id(&picture)).exists());
+
+    // A part of the author's own feed that this host no longer holds
+    // cannot go up with an article: refused, unless --force.
+    let gone = b"Part three, published and then lost here.\n".to_vec();
+    let gone_file = author.file("gone.txt", &gone);
+    ok(&author.args(&["publish", &gone_file, "--title", "Part three"], &url));
+    std::fs::remove_file(author.store.path().join(to_hex(&blob_id(&gone)))).unwrap();
+    let gone_id = to_hex(&blob_id(&gone));
+    let more = author.file("more.txt", format!("# More\n\nSee terse:{gone_id}.\n").as_bytes());
+    let line = |up: &str| {
+        format!("link terse:{gone_id}: not held here, {up}; kept: your feed's entry #3 names it, and relays keep it while they keep that entry")
+    };
+    let out = terse(&author.args(&["publish", &more, "--title", "More"], &url));
+    assert!(!out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), line("not uploaded") + "\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!("not published: the article links to an article of your feed that this host does not hold: terse:{gone_id}")),
+        "{stderr}"
+    );
+    assert!(stderr.contains("give --force"), "{stderr}");
+    let dry = terse(&author.args(&["publish", &more, "--title", "More", "--dry-run"], &url));
+    assert!(!dry.status.success(), "a dry run says it would be refused");
+    assert_eq!(highest(), 3);
+    let out = ok(&author.args(&["publish", &more, "--title", "More", "--force"], &url));
+    assert!(out.starts_with(&(line("not uploaded") + "\nseq 4 blob ")), "{out}");
 
     // An hour on, the relay has dropped the picture no entry names and
     // kept what entries name.
@@ -161,5 +183,5 @@ fn publish_names_linked_articles() {
     // An article without links publishes as before, with nothing listed.
     let plain = author.file("plain.txt", b"No links here.\n");
     let out = ok(&author.args(&["publish", &plain, "--title", "Plain"], &url));
-    assert!(out.starts_with("seq 3 blob "), "{out}");
+    assert!(out.starts_with("seq 5 blob "), "{out}");
 }

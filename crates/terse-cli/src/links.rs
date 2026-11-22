@@ -8,10 +8,12 @@
 //! linked blob named by an entry of the user's own feed is the user's own
 //! and is uploaded again; one named by another feed's entry is someone
 //! else's (**link-only**: kept where that feed is kept); one held here that
-//! no entry names would be dropped by such a relay, so publishing refuses
-//! it unless `--force` (publish it as an article of its own first). Figures
-//! are written in the article's text (ARTICLE.md 6), so they always go with
-//! it.
+//! no entry names is uploaded too, with a warning, since such a relay drops
+//! it after a while (publish it as an article of its own to keep it).
+//! Publishing refuses, unless `--force`, an article that links to a blob of
+//! the user's own feed that this host does not hold: that part cannot go up
+//! with it. Figures are written in the article's text (ARTICLE.md 6), so
+//! they always go with it.
 
 use std::collections::HashMap;
 
