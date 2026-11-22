@@ -22,6 +22,7 @@
 <li>**State.** At most 16,384 bytes that only the driver understands, kept with the machine&#39;s state, so the state hash, snapshots and recordings work; a machine without the device has the state it would have had before experimental devices existed.</li>
 <li>**Determinism.** The driver reads no clock, random source, file, network or environment: its results are a function of its reset state, the calls and a restored section. A program that wants chance seeds it from <code>random</code>, which the host records.</li>
 <li>**Not conformance.** An experimental device is outside the conformance programs, and no profile includes one.</li>
+<li>**Marked in the shell.** Device 8&#39;s <code>experimental</code> call tells a shell which experimental devices a machine&#39;s image lists and whether it was granted each; the bundled shell marks such a program in its bar, its launcher line and the question before it starts (Using the shell).</li>
 </ul>
 <p>The example, <code>example.dice</code>, is <code>native/driver-experimental</code>: the driver in C, a program that uses it and a test of every rule. The implementation guide&#39;s page &quot;Invent a device&quot; walks through it.</p>
 </article>

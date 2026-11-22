@@ -46,6 +46,7 @@ A program's identity is (publisher's feed key, name), as in a program entry of a
 | `80Eh` | `snapshot_delete` | `a0` slot | 1, 0 out of range |
 | `80Fh` | `face` | `a0` handle, `a1` frames, `a2`-`a5` x y w h | 1, 0 refused |
 | `810h` | `unface` | `a0` frames | 1, 0 refused |
+| `811h` | `experimental` | `a0` handle, `a1` index, `a2` buffer (32, written) | 2, 1, 0 none |
 
 A read buffer must lie wholly in ROM or wholly in RAM, a written one wholly in RAM, else the call returns `FFFF_FFFEh` and does nothing else. The reference host checks the buffer before the handle or slot.
 
@@ -68,6 +69,7 @@ A read buffer must lie wholly in ROM or wholly in RAM, a written one wholly in R
 - `snapshot_delete`: the slot reads as empty at once; the file is removed at the end of the frame, in order with the snapshots asked for.
 - `face`: flies the view so that machine `a0`'s panel comes to lie flat on the glass over `a1` frames (0-600), then shows the machine flat in the rectangle `a2`-`a5` (clamped as `place` clamps). Refused (0, nothing changes) unless `a0` is 1-8, its machine has a picture, its own rectangle shows none, the shell's 3D list as it holds it now has a Screen of `a0` (decoded only, caps not counted), `a1` is at most 600 and the rectangle shows a picture. Otherwise the view becomes: that handle, towards the glass, that rectangle, starting at this frame's counter, lasting `a1` frames, from the view's progress now if it already moved `a0`'s panel, else from 0.
 - `unface`: moves the view back to the scene as listed over `a0` frames (0-600), from its progress now. Refused (0) if `a0` is above 600 or there is no view.
+- `experimental`: entry `a1` (from 0, in header order) of the [experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7) machine `a0`'s image lists, as its table holds it: the slot, the name's length, the name, zeros to 32 bytes (`mach_experimental` in terse.h). Returns 2 if the machine was granted the device, 1 if not (it runs without it, as on any host), 0 past the last entry, for a handle with no machine (none, loading, failed) and for an image without a valid table. Fixed from the machine's reset or restore until its handle is stopped; not part of the device's state. A host that grants no experimental device (`terse run`, `terse-host`) returns 1 for each entry. The shell marks such machines (Using the shell).
 
 ## Records
 
@@ -149,7 +151,7 @@ Each machine is deterministic given its own inputs. The shell's include its devi
 
 ## Charges
 
-Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read) and `snapshot_info` 31, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read), `snapshot_info` 31 and `experimental` 8, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
 
 ## Example: a minimal shell
 

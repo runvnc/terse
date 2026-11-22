@@ -164,6 +164,6 @@ The program asks one relay and keeps nothing. A complete reader keeps every blob
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:b3384b28200dc7a0a3d66caf2337995b460d45915cc5b41971f750244b29c20a).
-- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:4bee7aac1361a8fdfa985ecff8f4a3fa9df420947d59bdbbd9b659971e3c3855).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:e5436709c8ab13a1a249c93b95055f21207767c92a35af5cf2f9554f26274658).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:a564803e1171afd9eb1b555346b708532098a1a9b33ce9e683aee6a700e8b14c).
 - Every relay message: [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

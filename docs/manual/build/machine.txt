@@ -10,7 +10,7 @@ The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:98e1b4ac362ac8fa13e7c90054605f6150e9bf6c91f4fdcda1f4e374cce8534f).
+[the system device](terse:0f28a71d5ad960bb85e7ed14bcff93e559dac01f3d4c269b36f54d18af12f1d0).
 
 ## CPU
 
@@ -199,7 +199,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:98e1b4ac362ac8fa13e7c90054605f6150e9bf6c91f4fdcda1f4e374cce8534f), slot 1, always present:
+[The system device](terse:0f28a71d5ad960bb85e7ed14bcff93e559dac01f3d4c269b36f54d18af12f1d0), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -256,27 +256,28 @@ The content device, slot 4 (see [blobs](terse:7738331ba2627503741289301b6fc0f658
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
-[Machines](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063), slot 8, the shell only:
+[Machines](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b), slot 8, the shell only (buffer sizes in bytes):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
-| `800h` | `start` | `a0` = image ID address (32 bytes, read) | a handle 1 to 8, or 0 if none is free |
+| `800h` | `start` | `a0` = image ID (32, read) | a handle, or 0 if none is free |
 | `801h` | `stop` | `a0` = handle | 1, or 0 if not in use |
 | `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if not in use |
 | `803h` | `run` | `a0` = handle, `a1` = 1 run, 0 pause | 1, or 0 if refused |
 | `804h` | `focus` | `a0` = handle, or 0 | 1, or 0 if refused |
-| `805h` | `info` | `a0` = handle, `a1` = buffer (48 bytes, written) | 1, or 0 if the handle is not 1 to 8 |
-| `806h` | `builtin` | `a0` = index, `a1` = buffer (32 bytes, written) | 1, or 0 past the last |
-| `807h` | `start_program` | `a0` = program record address (read) | a handle 1 to 8, or 0 if none is free |
-| `808h` | `identity` | `a0` = handle, `a1` = buffer (81 bytes, written) | 1, or 0 if it has none |
-| `809h` | `request` | `a0` = handle, `a1` = buffer (82 bytes, written) | 1, or 0 if no request waits |
-| `80Ah` | `argument` | `a0` = handle, `a1` = blob ID address (32 bytes, read) | 1, or 0 if not loading |
+| `805h` | `info` | `a0` = handle, `a1` = buffer (48, written) | 1, or 0 if not 1 to 8 |
+| `806h` | `builtin` | `a0` = index, `a1` = buffer (32, written) | 1, or 0 past the last |
+| `807h` | `start_program` | `a0` = program record (read) | a handle, or 0 if none is free |
+| `808h` | `identity` | `a0` = handle, `a1` = buffer (81, written) | 1, or 0 if it has none |
+| `809h` | `request` | `a0` = handle, `a1` = buffer (82, written) | 1, or 0 if no request waits |
+| `80Ah` | `argument` | `a0` = handle, `a1` = blob ID (32, read) | 1, or 0 if not loading |
 | `80Bh` | `snapshot` | `a0` = handle, `a1` = slot | 1 accepted, 0 refused |
-| `80Ch` | `restore` | `a0` = slot | a handle 1 to 8, or 0 if none is free or the slot is out of range |
-| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122 bytes, written) | 1 if the slot holds a snapshot, else 0 |
-| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if the slot is out of range |
+| `80Ch` | `restore` | `a0` = slot | a handle, or 0 if none is free or out of range |
+| `80Dh` | `snapshot_info` | `a0` = slot, `a1` = buffer (122, written) | 1 if it holds one, else 0 |
+| `80Eh` | `snapshot_delete` | `a0` = slot | 1, or 0 if out of range |
 | `80Fh` | `face` | `a0` = handle, `a1` = frames, `a2` = x, `a3` = y, `a4` = width, `a5` = height | 1, or 0 if refused |
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
+| `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32, written) | 2 granted, 1 not, 0 none |
 
 [The 3D vector display](terse:d623d4e3893be9af232d0904b8a31ccce919e40365b5202fd7e5d34dc125578e), slot 9:
 

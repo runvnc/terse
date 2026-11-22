@@ -701,6 +701,42 @@ fn programs_from_feeds() {
     golden("feed-programs-started", &format!("{}-- launcher --\n{launcher}", s.dump()));
 }
 
+/// hello under the title "dicer", its image listing the experimental
+/// device example.dice on slot 240 (spec/experimental.md): its table at
+/// the end of the ROM.
+fn dicer() -> Vec<u8> {
+    let hello = Image::parse(builtin::PROGRAMS[3]).unwrap();
+    let mut rom = hello.rom.clone();
+    rom.extend(terse_core::image::experimental_table(&[(240, "example.dice".to_string())]));
+    let mut devices = hello.devices.clone();
+    devices.push(terse_core::DeviceReq::optional(240, 0));
+    Image::build("dicer", hello.ram_pages, &devices, &rom)
+}
+
+/// SPEC §machines.calls `experimental` where nothing is granted (`terse run
+/// --shell`, as terse-host): a program of a followed feed whose image lists
+/// an experimental device runs without it, and the shell marks it faintly
+/// in the bar (⚗ in grey, 244, where a granted one has its segment's
+/// colour) and says so in its launcher line.
+#[test]
+fn a_program_that_lists_an_experimental_device() {
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n8 press enter\n20 home\n";
+    let mut s = Sys::new(script, Setup { programs: vec![("Dicer".into(), dicer(), true)], ..Default::default() });
+    s.run(19);
+    assert_eq!((s.state(1), s.system.child(1).unwrap().title.as_str()), (state::RUNNING, "dicer"));
+    assert_eq!(s.machine(1).grants().0.last(), Some(&false), "example.dice (the last optional entry) not granted here");
+    let dev = s.system.shell().machines().unwrap();
+    assert_eq!(dev.slot(1).experimental.iter().map(|e| e.0).collect::<Vec<_>>(), [terse_core::machines::experimental::LISTED]);
+    assert!(s.bar().contains("1 ⚗dicer"), "{}", s.bar());
+    let col = s.bar().chars().position(|c| c == '⚗').unwrap();
+    let t = s.system.shell().terminal().unwrap();
+    assert_eq!((t.cell(col, 0).fg, t.cell(col + 1, 0).fg), (244, 15), "faint; the title in the focused segment's colour");
+    s.run(5);
+    let launcher = s.launcher();
+    assert!(launcher.contains("[Can use an experimental]{1}\n[device (example.dice); here]{1}\n[it runs without it.]{1}\n"), "{launcher}");
+    golden("experimental-listed", &format!("{}-- launcher --\n{launcher}", s.dump()));
+}
+
 /// The shell keeps its layout in the named record "layout" (SPEC §content.records): L
 /// in one run, and the next run tiles four machines as a grid.
 #[test]

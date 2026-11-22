@@ -11,5 +11,6 @@ An experimental device is a device that nobody has specified yet, tried out on T
 - **State.** At most 16,384 bytes that only the driver understands, kept with the machine's state, so the state hash, snapshots and recordings work; a machine without the device has the state it would have had before experimental devices existed.
 - **Determinism.** The driver reads no clock, random source, file, network or environment: its results are a function of its reset state, the calls and a restored section. A program that wants chance seeds it from `random`, which the host records.
 - **Not conformance.** An experimental device is outside the conformance programs, and no profile includes one.
+- **Marked in the shell.** Device 8's `experimental` call tells a shell which experimental devices a machine's image lists and whether it was granted each; the bundled shell marks such a program in its bar, its launcher line and the question before it starts (Using the shell).
 
 The example, `example.dice`, is `native/driver-experimental`: the driver in C, a program that uses it and a test of every rule. The implementation guide's page "Invent a device" walks through it.

@@ -57,4 +57,4 @@ Anything that can produce RV32IMC machine code for a bare machine can make a Ter
 
 Other compilers with a 32-bit RISC-V bare-metal target (Zig, for one) should fit these rules with their own start code and the linker script of "Building a program"; none has been tried.
 
-Next: [Running and publishing a program](terse:6fa82a93a4db57390a765d9d382e16d94567bd2706e98d63cf6847a036c8ae39).
+Next: [Running and publishing a program](terse:53a7df3edfdf85aaef2dea5ed371b88e6591576a89bcf4ef55f8784f1aa89987).

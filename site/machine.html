@@ -192,27 +192,28 @@
 <tr><td><code>704h</code></td><td><code>background</code></td><td><code>a0</code> = colour</td><td>0</td><td>deferred</td></tr>
 <tr><td><code>705h</code></td><td><code>locate</code></td><td><code>a0</code> = anchor id</td><td>0 done, 1 rejected</td><td>answered</td></tr>
 </tbody></table></div>
-<p><a href="device-machines.html">Machines</a>, slot 8, the shell only:</p>
+<p><a href="device-machines.html">Machines</a>, slot 8, the shell only (buffer sizes in bytes):</p>
 <div class="table"><table>
 <thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
 <tbody>
-<tr><td><code>800h</code></td><td><code>start</code></td><td><code>a0</code> = image ID address (32 bytes, read)</td><td>a handle 1 to 8, or 0 if none is free</td></tr>
+<tr><td><code>800h</code></td><td><code>start</code></td><td><code>a0</code> = image ID (32, read)</td><td>a handle, or 0 if none is free</td></tr>
 <tr><td><code>801h</code></td><td><code>stop</code></td><td><code>a0</code> = handle</td><td>1, or 0 if not in use</td></tr>
 <tr><td><code>802h</code></td><td><code>place</code></td><td><code>a0</code> = handle, <code>a1</code> = x, <code>a2</code> = y, <code>a3</code> = width, <code>a4</code> = height</td><td>1, or 0 if not in use</td></tr>
 <tr><td><code>803h</code></td><td><code>run</code></td><td><code>a0</code> = handle, <code>a1</code> = 1 run, 0 pause</td><td>1, or 0 if refused</td></tr>
 <tr><td><code>804h</code></td><td><code>focus</code></td><td><code>a0</code> = handle, or 0</td><td>1, or 0 if refused</td></tr>
-<tr><td><code>805h</code></td><td><code>info</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (48 bytes, written)</td><td>1, or 0 if the handle is not 1 to 8</td></tr>
-<tr><td><code>806h</code></td><td><code>builtin</code></td><td><code>a0</code> = index, <code>a1</code> = buffer (32 bytes, written)</td><td>1, or 0 past the last</td></tr>
-<tr><td><code>807h</code></td><td><code>start_program</code></td><td><code>a0</code> = program record address (read)</td><td>a handle 1 to 8, or 0 if none is free</td></tr>
-<tr><td><code>808h</code></td><td><code>identity</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (81 bytes, written)</td><td>1, or 0 if it has none</td></tr>
-<tr><td><code>809h</code></td><td><code>request</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (82 bytes, written)</td><td>1, or 0 if no request waits</td></tr>
-<tr><td><code>80Ah</code></td><td><code>argument</code></td><td><code>a0</code> = handle, <code>a1</code> = blob ID address (32 bytes, read)</td><td>1, or 0 if not loading</td></tr>
+<tr><td><code>805h</code></td><td><code>info</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (48, written)</td><td>1, or 0 if not 1 to 8</td></tr>
+<tr><td><code>806h</code></td><td><code>builtin</code></td><td><code>a0</code> = index, <code>a1</code> = buffer (32, written)</td><td>1, or 0 past the last</td></tr>
+<tr><td><code>807h</code></td><td><code>start_program</code></td><td><code>a0</code> = program record (read)</td><td>a handle, or 0 if none is free</td></tr>
+<tr><td><code>808h</code></td><td><code>identity</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (81, written)</td><td>1, or 0 if it has none</td></tr>
+<tr><td><code>809h</code></td><td><code>request</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (82, written)</td><td>1, or 0 if no request waits</td></tr>
+<tr><td><code>80Ah</code></td><td><code>argument</code></td><td><code>a0</code> = handle, <code>a1</code> = blob ID (32, read)</td><td>1, or 0 if not loading</td></tr>
 <tr><td><code>80Bh</code></td><td><code>snapshot</code></td><td><code>a0</code> = handle, <code>a1</code> = slot</td><td>1 accepted, 0 refused</td></tr>
-<tr><td><code>80Ch</code></td><td><code>restore</code></td><td><code>a0</code> = slot</td><td>a handle 1 to 8, or 0 if none is free or the slot is out of range</td></tr>
-<tr><td><code>80Dh</code></td><td><code>snapshot_info</code></td><td><code>a0</code> = slot, <code>a1</code> = buffer (122 bytes, written)</td><td>1 if the slot holds a snapshot, else 0</td></tr>
-<tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> = slot</td><td>1, or 0 if the slot is out of range</td></tr>
+<tr><td><code>80Ch</code></td><td><code>restore</code></td><td><code>a0</code> = slot</td><td>a handle, or 0 if none is free or out of range</td></tr>
+<tr><td><code>80Dh</code></td><td><code>snapshot_info</code></td><td><code>a0</code> = slot, <code>a1</code> = buffer (122, written)</td><td>1 if it holds one, else 0</td></tr>
+<tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> = slot</td><td>1, or 0 if out of range</td></tr>
 <tr><td><code>80Fh</code></td><td><code>face</code></td><td><code>a0</code> = handle, <code>a1</code> = frames, <code>a2</code> = x, <code>a3</code> = y, <code>a4</code> = width, <code>a5</code> = height</td><td>1, or 0 if refused</td></tr>
 <tr><td><code>810h</code></td><td><code>unface</code></td><td><code>a0</code> = frames</td><td>1, or 0 if refused</td></tr>
+<tr><td><code>811h</code></td><td><code>experimental</code></td><td><code>a0</code> = handle, <code>a1</code> = index, <code>a2</code> = buffer (32, written)</td><td>2 granted, 1 not, 0 none</td></tr>
 </tbody></table></div>
 <p><a href="device-vector3.html">The 3D vector display</a>, slot 9:</p>
 <div class="table"><table>

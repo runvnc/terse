@@ -66,6 +66,7 @@
 #define CALL_MACH_SNAPSHOT_DELETE 0x80E
 #define CALL_MACH_FACE 0x80F
 #define CALL_MACH_UNFACE 0x810
+#define CALL_MACH_EXPERIMENTAL 0x811
 #define CALL_V3_SUBMIT 0x900
 #define CALL_V3_CLEAR 0x901
 #define CALL_V3_STYLE 0x902
@@ -978,6 +979,19 @@ static inline uint32_t mach_face(uint32_t h, uint32_t frames, uint32_t x, uint32
     return terse_call6(CALL_MACH_FACE, h, frames, x, y, w, ht);
 }
 static inline uint32_t mach_unface(uint32_t frames) { return terse_call(CALL_MACH_UNFACE, frames, 0, 0); }
+
+/* Machine h's experimental device number n (0, 1, ... in header order;
+ * spec/experimental.md) into 32 bytes at `out`, as its image's table has it:
+ * the slot, the name's length, the name, zeros. MACH_XP_LISTED: its image
+ * lists the device and it was not granted it (it runs as on any host);
+ * MACH_XP_GRANTED: it has the device, outside Tersenet's conformance; 0
+ * past the last, or for a handle with no machine (loading, failed, none). */
+#define MACH_XP_LISTED 1
+#define MACH_XP_GRANTED 2
+static inline uint32_t mach_experimental(uint32_t h, uint32_t n, uint8_t *out)
+{
+    return terse_call(CALL_MACH_EXPERIMENTAL, h, n, (uint32_t)out);
+}
 
 /* --- Page tables (SPEC §page.document, §page.layout) -------------------------------------
  * A table is a block of cells laid out by the host: doc_table starts it

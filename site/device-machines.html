@@ -51,6 +51,7 @@
 <tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> slot</td><td>1, 0 out of range</td></tr>
 <tr><td><code>80Fh</code></td><td><code>face</code></td><td><code>a0</code> handle, <code>a1</code> frames, <code>a2</code>-<code>a5</code> x y w h</td><td>1, 0 refused</td></tr>
 <tr><td><code>810h</code></td><td><code>unface</code></td><td><code>a0</code> frames</td><td>1, 0 refused</td></tr>
+<tr><td><code>811h</code></td><td><code>experimental</code></td><td><code>a0</code> handle, <code>a1</code> index, <code>a2</code> buffer (32, written)</td><td>2, 1, 0 none</td></tr>
 </tbody></table></div>
 <p>A read buffer must lie wholly in ROM or wholly in RAM, a written one wholly in RAM, else the call returns <code>FFFF_FFFEh</code> and does nothing else. The reference host checks the buffer before the handle or slot.</p>
 <ul>
@@ -73,6 +74,7 @@
 <li><code>snapshot_delete</code>: the slot reads as empty at once; the file is removed at the end of the frame, in order with the snapshots asked for.</li>
 <li><code>face</code>: flies the view so that machine <code>a0</code>&#39;s panel comes to lie flat on the glass over <code>a1</code> frames (0-600), then shows the machine flat in the rectangle <code>a2</code>-<code>a5</code> (clamped as <code>place</code> clamps). Refused (0, nothing changes) unless <code>a0</code> is 1-8, its machine has a picture, its own rectangle shows none, the shell&#39;s 3D list as it holds it now has a Screen of <code>a0</code> (decoded only, caps not counted), <code>a1</code> is at most 600 and the rectangle shows a picture. Otherwise the view becomes: that handle, towards the glass, that rectangle, starting at this frame&#39;s counter, lasting <code>a1</code> frames, from the view&#39;s progress now if it already moved <code>a0</code>&#39;s panel, else from 0.</li>
 <li><code>unface</code>: moves the view back to the scene as listed over <code>a0</code> frames (0-600), from its progress now. Refused (0) if <code>a0</code> is above 600 or there is no view.</li>
+<li><code>experimental</code>: entry <code>a1</code> (from 0, in header order) of the <a href="experimental.html">experimental devices</a> machine <code>a0</code>&#39;s image lists, as its table holds it: the slot, the name&#39;s length, the name, zeros to 32 bytes (<code>mach_experimental</code> in terse.h). Returns 2 if the machine was granted the device, 1 if not (it runs without it, as on any host), 0 past the last entry, for a handle with no machine (none, loading, failed) and for an image without a valid table. Fixed from the machine&#39;s reset or restore until its handle is stopped; not part of the device&#39;s state. A host that grants no experimental device (<code>terse run</code>, <code>terse-host</code>) returns 1 for each entry. The shell marks such machines (Using the shell).</li>
 </ul>
 <h2 id="records">Records</h2>
 <p>The <code>info</code> record (48 bytes, <code>mach_record</code> in terse.h), as latched at the start of the frame plus the shell&#39;s own calls since:</p>
@@ -137,7 +139,7 @@
 <h2 id="determinism-and-state">Determinism and state</h2>
 <p>Each machine is deterministic given its own inputs. The shell&#39;s include its device 8 events and what the device reports that the shell did not set (latched records, identities of restored or by-name programs, requests, built-ins, <code>snapshot_info</code>). For a started machine, what <code>open</code> returns is an input. The view is the shell&#39;s own state; the eye the host routes the pointer by is an input. Device 8&#39;s state is part of the shell&#39;s; a started machine&#39;s state holds nothing of the system.</p>
 <h2 id="charges">Charges</h2>
-<p>Each call costs 4 (plus the <code>ecall</code> instruction), and copies cost 1 per 4 bytes, rounded up: <code>start</code> 8 (when the ID is read), <code>start_program</code> (33 + n) / 4 up, <code>info</code> 12, <code>builtin</code> 8, <code>identity</code> 21, <code>request</code> 21, <code>argument</code> 8 (when the ID is read) and <code>snapshot_info</code> 31, each when written. <code>face</code> and <code>unface</code> copy nothing; drawing the scene is the host&#39;s work. See <a href="charges.html">charges</a>.</p>
+<p>Each call costs 4 (plus the <code>ecall</code> instruction), and copies cost 1 per 4 bytes, rounded up: <code>start</code> 8 (when the ID is read), <code>start_program</code> (33 + n) / 4 up, <code>info</code> 12, <code>builtin</code> 8, <code>identity</code> 21, <code>request</code> 21, <code>argument</code> 8 (when the ID is read), <code>snapshot_info</code> 31 and <code>experimental</code> 8, each when written. <code>face</code> and <code>unface</code> copy nothing; drawing the scene is the host&#39;s work. See <a href="charges.html">charges</a>.</p>
 <h2 id="example-a-minimal-shell">Example: a minimal shell</h2>
 <pre>#include &quot;terse.h&quot;
 

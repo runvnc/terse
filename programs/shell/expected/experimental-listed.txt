@@ -1,0 +1,84 @@
+ ⌂  1 ⚗dicer         0%                                                    00:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- machine 1 running 203 23 434 325 dicer --
+ Tersenet · hello
+
+  héllo, wörld — привет, мир
+  Ελληνικά · кириллица · ┌─┬─┐ · ♥ ★ ✓
+  Type to echo text below. Enter: new line, Backspace, Esc: exit.
+
+  Palette entries 0-15, written with cells_write:
+   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+
+  frame 0000000E
+
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- launcher --
+PROGRAMS
+[Manual]{301}
+[reader]{100}
+[sparks]{101}
+[fetch]{102}
+[hello]{103}
+[sketch]{104}
+[holo]{105}
+[reports]{106}
+[reef]{107}
+FROM YOUR FEEDS
+[Dicer]{200}
+[Alice 66be7e…0c473a]{200}
+MACHINES
+[1  dicer]{1}[  running  0%]{1}
+[Can use an experimental]{1}
+[device (example.dice); here]{1}
+[it runs without it.]{1}
+Enter start or focus · Esc back ·
+Tab next machine · X stop · P
+pause · Z zoom · L layout · 1-8
+select · S save session

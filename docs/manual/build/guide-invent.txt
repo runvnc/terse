@@ -1,6 +1,6 @@
 # Invent a device
 
-The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; [the next page](terse:d4b03517eb9b2d4a514667366c91edb9f350c68bd4809e52ed5f65ee0560d769) has the program in Rust.
+The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; [the next page](terse:976e8ec7190c6294e733069c352255b2b9ae803f6db3939699a9d817a97bbc7f) has the program in Rust.
 
 ## The device
 
@@ -110,6 +110,6 @@ You rolled 5.
 
 ## What you have now
 
-A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is `examples/program/c/roll.c`; the driver, a fuller program, `demo.c`, and a test of every rule are in `native/driver-experimental`. Next, [the program in Rust](terse:d4b03517eb9b2d4a514667366c91edb9f350c68bd4809e52ed5f65ee0560d769).
+A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is `examples/program/c/roll.c`; the driver, a fuller program, `demo.c`, and a test of every rule are in `native/driver-experimental`. Next, [the program in Rust](terse:976e8ec7190c6294e733069c352255b2b9ae803f6db3939699a9d817a97bbc7f).
 
-The rules (slots 240 to 255, names, optional only, charges, state) are in [Experimental devices](terse:56f7cf8bc1c03d7fb37ef333522cecda02923cb56670a2f440b328f6e391771d).
+The rules (slots 240 to 255, names, optional only, charges, state) are in [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7).

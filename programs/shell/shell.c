@@ -54,7 +54,19 @@
  * first time its identity is asked for in this run, asked about as above,
  * then without asking); anything else starts the built-in reader with the
  * blob as its argument. Failures (not found, no free handle) are a brief
- * message in the bar.
+ * message in the bar. An image is started paused by its ID and asked about
+ * once it has loaded, like a program (it runs no frame before the answer).
+ *
+ * Experimental devices (spec/experimental.md, SPEC §machines.calls
+ * `experimental`): a machine whose image lists one is marked, since such a
+ * device is outside Tersenet's standard. Granted here (a device bus with its
+ * driver), the mark (an alembic, else a currency sign) is drawn in the
+ * segment's colour and the launcher line says "Uses an experimental device
+ * (name): not part of Tersenet's standard."; listed but not granted (the
+ * program runs as on any host), the mark is faint and the line says "Can
+ * use ...; here it runs without it.". A question about a program that
+ * lists one has that line in a second row (the tiles move down a row
+ * meanwhile).
  *
  * Sessions (SPEC §machines.snapshots): S in command mode keeps every running or paused
  * machine as a snapshot, in slots 0, 1, ... in handle order, and then the
@@ -181,6 +193,12 @@ static uint8_t mtitle_hdr[MACH_MAX + 1][32];
 static content_req mtitle_req[MACH_MAX + 1];
 static uint8_t mname[MACH_MAX + 1][17];
 
+/* Each machine's experimental devices: 0 none, else the most its image's
+ * entries say (MACH_XP_LISTED, MACH_XP_GRANTED), and that entry (slot,
+ * name length, name); xp_line() says it in words. */
+static uint8_t xp[MACH_MAX + 1], xp_entry[MACH_MAX + 1][32];
+static uint8_t xp_text[96], xp_n;
+
 static mach_record info[MACH_MAX + 1]; /* by handle; [0] unused */
 static rect tile[MACH_MAX + 1], pic[MACH_MAX + 1];
 static uint8_t focus;        /* 0: the shell (command mode) */
@@ -216,8 +234,8 @@ static uint8_t oj_req[82], oj_hdr[HDR_LEN];
 static uint8_t oj_doc;                 /* it opens a document of a published format */
 static content_req oj_creq;
 static uint8_t oj_chandle;
-static uint8_t question[200];
-static uint8_t q_n;
+static uint8_t question[300];
+static uint16_t q_n, q2; /* q2: where its second row starts (0: none) */
 /* A brief message in the bar, until frame msg_until. */
 static uint8_t bmsg[80], bmsg_n;
 static uint32_t msg_until;
@@ -370,7 +388,8 @@ static uint8_t g_front(void);
  * and remembers the tiles and pictures. */
 static void place_all(void)
 {
-    uint32_t ax = focus ? 0 : PANEL_W, aw = 640 - ax, ay = AREA_Y, ah = AREA_H;
+    /* A question with a second row: the tiles one row lower. */
+    uint32_t ax = focus ? 0 : PANEL_W, aw = 640 - ax, ay = oj == OJ_ASK && q2 ? AREA_Y + 16 : AREA_Y, ah = 480 - ay;
     uint8_t n = machine_count(), z = layout == ZOOM ? zoomed() : 0, cols = 1, rows;
     while (cols * cols < n)
         cols++;
@@ -655,7 +674,7 @@ static void draw_bar(void)
             bar[col + i] = cell(' ', fg, bg);
         if (oj == OJ_ASK) {
             /* "Y/N" always shows, at the right; a long question is cut. */
-            if (bar_text(col + 1, w - 6, question, q_n, fg, bg) == w - 6)
+            if (bar_text(col + 1, w - 6, question, q2 ? q2 : q_n, fg, bg) == w - 6)
                 bar[col + w - 6] = cell(0x2026, fg, bg);
             bar_text(col + w - 4, 3, (const uint8_t *)"Y/N", 3, fg, bg);
         } else {
@@ -690,9 +709,15 @@ static void draw_bar(void)
             bar_num(pc, pct, fg, bg);
             bar[pc + digits] = cell('%', fg, bg);
         }
-        uint8_t room = pc ? pc - col - 3 : w - 2;
-        if (w > 2)
-            bar_text(col + 2, room, title_of(h), 16, fg, bg);
+        uint8_t room = pc ? pc - col - 3 : w - 2, tc = col + 2;
+        if (w > 2) {
+            /* An experimental device: clear if granted, faint if only listed. */
+            if (xp[h] && room > 1) {
+                bar[tc++] = cell(full_text ? 0x2697 : 0xA4, xp[h] == MACH_XP_GRANTED ? fg : 244, bg); /* ⚗, else ¤ */
+                room--;
+            }
+            bar_text(tc, room, title_of(h), 16, fg, bg);
+        }
         col += width;
     }
     /* The clock, UTC. */
@@ -700,6 +725,12 @@ static void draw_bar(void)
     uint8_t c = TERM_COLS - 6;
     if (oj == OJ_ASK) {
         term_cells_write(0, bar, TERM_COLS);
+        if (q2) {
+            for (uint8_t i = 0; i < TERM_COLS; i++)
+                bar[i] = i < 4 ? cell(' ', BAR_FG, BAR_BG) : cell(' ', SEL_FG, SEL_BG);
+            bar_text(4, TERM_COLS - 4, question + q2, q_n - q2, SEL_FG, SEL_BG);
+            term_cells_write(TERM_COLS, bar, TERM_COLS);
+        }
         return;
     }
     bar[c] = cell(' ', BAR_FG, BAR_BG);
@@ -790,6 +821,42 @@ static void draw_frames(void)
         outline(pic[sel], 230, 180, 60);
     vec_end();
     vec_submit_list(vlist);
+}
+
+/* --- Experimental devices (see the header comment) ---------------------- */
+
+/* Adds up to n bytes of s (to its first zero) to xp_text. */
+static __attribute__((noinline)) void xp_cat(const void *s, uint8_t n)
+{
+    const uint8_t *p = s;
+    while (n-- && *p)
+        xp_text[xp_n++] = *p++;
+}
+
+/* Reads machine h's experimental devices (none for a handle with no
+ * machine): the most any entry says, and that entry. */
+static void xp_read(uint8_t h)
+{
+    uint8_t e[32];
+    uint32_t r;
+    xp[h] = 0;
+    for (uint8_t i = 0; (r = mach_experimental(h, i, e)) && r <= MACH_XP_GRANTED; i++)
+        if (r > xp[h]) {
+            xp[h] = r;
+            memcpy(xp_entry[h], e, 32);
+        }
+}
+
+/* Machine h's experimental device in words, in xp_text; its length. */
+static uint8_t xp_line(uint8_t h)
+{
+    uint8_t g = xp[h] == MACH_XP_GRANTED;
+    xp_n = 0;
+    xp_cat(g ? "Uses" : "Can use", 8);
+    xp_cat(" an experimental device (", 30);
+    xp_cat(xp_entry[h] + 2, 30);
+    xp_cat(g ? "): not part of Tersenet's standard." : "); here it runs without it.", 40);
+    return xp_n;
 }
 
 /* --- The launcher (command mode) ----------------------------------------- */
@@ -1024,6 +1091,14 @@ static void build_launcher(void)
                 doc_colour(255, 175, 95);
                 doc_str("A device it uses was slow; Tersenet saved its state.");
             }
+            if (xp[h]) {
+                doc_paragraph(DOC_START, 24, 0, 0);
+                if (xp[h] == MACH_XP_GRANTED)
+                    doc_colour(255, 175, 95);
+                else
+                    doc_colour(150, 160, 180);
+                doc_text(xp_text, xp_line(h));
+            }
         }
     }
     doc_anchor(0);
@@ -1254,6 +1329,13 @@ static void ask(void)
         q_short(key);
         q_str(oj_doc ? " to open a document." : ".");
     }
+    /* Its experimental device, if it lists one, in a second row. */
+    q2 = 0;
+    xp_read(oj_h);
+    if (xp[oj_h]) {
+        q2 = q_n;
+        q_add(xp_text, xp_line(oj_h));
+    }
     oj = OJ_ASK;
     mach_focus(0);
     dirty = bar_dirty = 1;
@@ -1287,24 +1369,9 @@ static void answer(uint8_t yes)
         fmt_len[fmt_n] = oj_hdr[37];
         memcpy(fmt_name[fmt_n++], oj_hdr + TDOC_HEAD, oj_hdr[37]);
     }
-    if (oj_h) {
-        uint8_t h = oj_h;
-        mach_run(h, 1);
-        open_done();
-        focus_machine(h);
-        return;
-    }
-    /* An unpublished image: started now, by its ID. */
+    uint8_t h = oj_h;
+    mach_run(h, 1);
     open_done();
-    uint8_t h = mach_start(oj_req + 1);
-    if (!h) {
-        bar_msg("No free handle: stop a machine first", 0, 0);
-        return;
-    }
-    info[h].state = MACH_LOADING;
-    memcpy(info[h].image, oj_req + 1, 32);
-    mname[h][0] = 0;
-    mtitle_state[h] = 0;
     focus_machine(h);
 }
 
@@ -1330,9 +1397,19 @@ static void blob_head(void)
     }
     uint32_t n = oj_creq.length;
     if (n >= 32 && !memcmp(oj_hdr, "TERS", 4)) {
-        oj_h = 0;
-        oj_doc = 0;
-        ask();
+        /* Paused by its ID, out of the layout, until the answer. */
+        uint8_t h = mach_start(id);
+        if (!h) {
+            bar_msg("No free handle: stop a machine first", 0, 0);
+            return;
+        }
+        mach_run(h, 0);
+        info[h].state = MACH_LOADING;
+        memcpy(info[h].image, id, 32);
+        mname[h][0] = 0;
+        mtitle_state[h] = 0;
+        oj_h = h;
+        oj = OJ_LOAD;
         return;
     }
     if (n >= TDOC_HEAD + 1 && !memcmp(oj_hdr, "TDOC", 4) && !oj_hdr[4] && oj_hdr[37] && oj_hdr[37] <= 48
@@ -1406,7 +1483,9 @@ static void open_changed(uint8_t h, uint8_t state)
     mach_stop(h);
     info[h].state = MACH_NONE;
     open_done();
-    bar_msg("Could not start ", oj_doc ? oj_hdr + TDOC_HEAD : oj_req + 34, oj_doc ? oj_hdr[37] : oj_req[33]);
+    uint8_t image = oj_req[0] == OPEN_BLOB && !oj_doc;
+    bar_msg("Could not start ", oj_doc ? oj_hdr + TDOC_HEAD : image ? oj_hdr + 16 : oj_req + 34,
+            oj_doc ? oj_hdr[37] : image ? 16 : oj_req[33]);
 }
 
 /* Keeps the layout for the next run. */
@@ -1971,6 +2050,7 @@ int main(void)
                 }
                 last_state[h] = info[h].state;
                 prog_ix[h] = prog_of(info[h].image);
+                xp_read(h);
                 dirty = doc_dirty = 1;
             }
         }

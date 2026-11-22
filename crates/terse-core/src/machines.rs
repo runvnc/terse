@@ -183,6 +183,38 @@ pub mod call {
     pub const SNAPSHOT_DELETE: u32 = 0x80E;
     pub const FACE: u32 = 0x80F;
     pub const UNFACE: u32 = 0x810;
+    pub const EXPERIMENTAL: u32 = 0x811;
+}
+
+/// What `experimental` reports of an entry (SPEC §machines.calls): the
+/// image lists the device, and the machine was not granted it, or was.
+pub mod experimental {
+    pub const LISTED: u8 = 1;
+    pub const GRANTED: u8 = 2;
+}
+
+/// An entry of the experimental device table as `experimental` writes it,
+/// the image's own 32 bytes: slot, name length, name, zeros.
+pub const EXPERIMENTAL_BYTES: usize = 32;
+
+/// The experimental devices a machine of `image` with `grants` has, as
+/// `experimental` reports them (SPEC §machines.calls): each the image's
+/// table lists, in header order, with whether it was granted. None if the
+/// table is invalid or missing (then none can be granted anywhere).
+pub fn experimental_entries(image: &crate::image::Image, grants: &crate::image::Grants) -> Vec<(u8, [u8; EXPERIMENTAL_BYTES])> {
+    let granted: Vec<u8> = image.optional().zip(&grants.0).filter(|(d, g)| **g && d.experimental()).map(|(d, _)| d.slot).collect();
+    image
+        .experimental()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(slot, name)| {
+            let mut e = [0; EXPERIMENTAL_BYTES];
+            e[0] = slot;
+            e[1] = name.len() as u8;
+            e[2..2 + name.len()].copy_from_slice(name.as_bytes());
+            (if granted.contains(&slot) { experimental::GRANTED } else { experimental::LISTED }, e)
+        })
+        .collect()
 }
 
 /// The longest view motion `face` and `unface` take, in frames (SPEC §machines.calls).
@@ -262,6 +294,10 @@ pub struct Slot {
     pub image: [u8; 32],
     /// The identity the machine was started with (`start_program`).
     pub identity: Option<ProgramId>,
+    /// The machine's experimental devices as `experimental` reports them
+    /// ([`experimental_entries`]), set when the machine is made: host data,
+    /// an input for the shell, not part of device 8's state.
+    pub experimental: Vec<(u8, [u8; EXPERIMENTAL_BYTES])>,
 }
 
 impl Slot {
@@ -558,6 +594,16 @@ impl Machines {
                 self.view = View { toward: false, from, start: ctx.frame, duration: a0 as u16, ..self.view };
                 (1, 0)
             }
+            call::EXPERIMENTAL => {
+                let Some(at) = ram_range(ram.len(), a2, EXPERIMENTAL_BYTES) else { return (ERR_BUFFER, 0) };
+                match slot(a0).and_then(|i| self.slots[i].experimental.get(a1 as usize)) {
+                    None => (0, 0),
+                    Some((status, entry)) => {
+                        ram[at..at + EXPERIMENTAL_BYTES].copy_from_slice(entry);
+                        (*status as u32, copy_charge(EXPERIMENTAL_BYTES))
+                    }
+                }
+            }
             call::BUILTIN => {
                 let Some(at) = ram_range(ram.len(), a1, 32) else { return (ERR_BUFFER, 0) };
                 match self.builtins.get(a0 as usize) {
@@ -725,6 +771,46 @@ mod tests {
             m.take_commands(),
             [Command::Restore { handle: 1, slot: 3 }, Command::Snapshot { handle: 1, slot: 15 }, Command::DeleteSnapshot { slot: 4 }]
         );
+    }
+
+    /// SPEC §machines.calls `experimental`: the image's table entries in
+    /// header order, 1 listed or 2 granted; 0 past the last, for a handle
+    /// with no machine and out of range; the buffer checked first; none for
+    /// an image without a valid table.
+    #[test]
+    fn experimental_calls() {
+        use crate::image::{DeviceReq, Grants, Image, experimental_table};
+        let base = crate::cpu::RAM_BASE;
+        let mut ram = vec![0u8; 8192];
+        let entries = vec![(241, "example.dice".to_string()), (240, "a.b".to_string())];
+        let mut rom = vec![0x13, 0, 0, 0];
+        rom.extend(experimental_table(&entries));
+        let devs = [DeviceReq::new(2, 0), DeviceReq::optional(240, 3), DeviceReq::optional(241, 0)];
+        let img = Image::parse(&Image::build("", 1, &devs, &rom)).unwrap();
+        let mut m = Machines::new(Vec::new());
+        m.slot_mut(2).state = state::RUNNING;
+        m.slot_mut(2).experimental = experimental_entries(&img, &Grants(vec![false, true]));
+        let mut call = |m: &mut Machines, a0, a1, a2| m.call(call::EXPERIMENTAL, [a0, a1, a2, 0, 0, 0], &[], &mut ram, CallContext::default());
+        assert_eq!(call(&mut m, 2, 0, base), (1, 8), "a.b, listed");
+        assert_eq!(call(&mut m, 2, 1, base), (2, 8), "example.dice, granted");
+        assert_eq!(call(&mut m, 2, 2, base), (0, 0));
+        assert_eq!(call(&mut m, 1, 0, base), (0, 0), "no machine");
+        assert_eq!(call(&mut m, 9, 0, base), (0, 0));
+        assert_eq!(call(&mut m, 2, 0, base + 8170), (crate::machine::ERR_BUFFER, 0));
+        let mut want = [0u8; 32];
+        want[..14].copy_from_slice(b"\xF1\x0Cexample.dice");
+        m.call(call::EXPERIMENTAL, [2, 1, base, 0, 0, 0], &[], &mut ram, CallContext::default());
+        assert_eq!(ram[..32], want);
+        // The same entries whatever was granted; none without a valid table.
+        assert_eq!(experimental_entries(&img, &img.all_grants()).iter().map(|e| e.0).collect::<Vec<_>>(), [1, 1]);
+        let plain = Image::parse(&Image::build("", 1, &devs, &[0x13, 0, 0, 0])).unwrap();
+        assert!(experimental_entries(&plain, &plain.all_grants()).is_empty());
+        // Not machine state: the device's state is the same with and without.
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        m.write_state(&mut a);
+        m.slot_mut(2).experimental.clear();
+        m.write_state(&mut b);
+        assert_eq!(a, b);
     }
 
     /// SPEC §machines.calls `argument`: taken by a handle that is loading after `start`
