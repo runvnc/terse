@@ -139,7 +139,8 @@ fn fences(text: &str) -> Vec<String> {
 
 /// Runs the three programs in `bin`.
 fn check(bin: &Path) {
-    let (show, fetch, follow) = (bin.join("show"), bin.join("fetch"), bin.join("follow"));
+    let exe = |name: &str| bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let (show, fetch, follow) = (exe("show"), exe("fetch"), exe("follow"));
     check_show(&show);
     let scratch = tempfile::tempdir().unwrap();
     let relay = Relay::start(&scratch.path().join("relay"));
