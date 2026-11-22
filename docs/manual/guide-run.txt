@@ -12,7 +12,7 @@ terse-host
 terse-host: relay ws://127.0.0.1:7878 (started here, store …)
 ```
 
-A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse`. Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
+A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse` (on Windows `%LOCALAPPDATA%\terse`). Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
 
 ## The launcher
 

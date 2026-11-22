@@ -144,13 +144,10 @@ pub fn cached(looks: &Looks, cache: Option<PathBuf>) -> Option<(Check, bool)> {
     Some((c, false))
 }
 
-/// `$XDG_CACHE_HOME/terse`, else `~/.cache/terse`.
+/// `$XDG_CACHE_HOME/terse`, else `~/.cache/terse` (`%LOCALAPPDATA%\terse`
+/// on Windows; `terse_dirs`).
 pub fn default_cache() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_CACHE_HOME").filter(|v| !v.is_empty()) {
-        Some(d) => PathBuf::from(d),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(".cache"),
-    };
-    Some(base.join("terse"))
+    terse_dirs::user_dir(terse_dirs::Kind::Cache)
 }
 
 #[cfg(test)]

@@ -541,7 +541,8 @@ A user **installs** a driver once, and every later run uses it, without
 a `--driver` option. The folder is in the user's configuration
 directory, beside the fonts (README "Fonts"):
 
-    <config>/drivers/            $XDG_CONFIG_HOME/terse/drivers (else ~/.config/terse/drivers)
+    <config>/drivers/            $XDG_CONFIG_HOME/terse/drivers (else ~/.config/terse/drivers;
+                                 %APPDATA%\terse\drivers on Windows)
       use                        which installed driver serves which slots
       <name>/manifest            one installed driver: what it said it is
       <name>/<program>           a copy of its program file

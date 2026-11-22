@@ -19,7 +19,8 @@ was late, and it carries dates (days, UTC) and times since a run began.
 ## 1. Where it lives
 
 In the host's data directory: `$XDG_DATA_HOME/terse/perf/` (else
-`~/.local/share/terse/perf/`; the platform's equivalent elsewhere). One
+`~/.local/share/terse/perf/`, on macOS too; `%LOCALAPPDATA%\terse\perf\` on
+Windows). One
 file per **host identity**: `<name>-<build hex>.log` (the host's name and
 the hex digits of its build identifier, R13; characters other than
 letters, digits, `-` and `.` as `_`). A host may write elsewhere when told
@@ -66,7 +67,7 @@ of a line). The first line of every file is `terse-perf 1`.
 | `host` | name, version, build | The host's identity (R13) |
 | `env` | os, os-version, arch, cores, ram-gib, renderer, cpu | The computer: `Linux`, the kernel's release, `x86_64`, logical CPUs, GiB, the renderer (`software`, `gpu`, `auto`, `drivers`: the drivers draw, `none`), the CPU's model string |
 | `device` | component, slots, name, version, build | A device implementation: its slots (comma-separated) and identity. A host whose devices are built in writes one line for `core` with its own identity |
-| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three. A host with built-in devices writes `core` (its frame loop thread: its machines, `core`, `present`, `outside`) and `compose` (its whole process: the drawing's threads) |
+| `readings` | component, list | What the operating system tells the host about a component (section 4), written after the `device` lines for `core` and each driver: a comma-separated list of `cpu` (its time on a CPU), `wait` (the time its threads waited for one), `stall` (`core` only: the system's memory stall), `idle` (the `wait` is inferred from the CPU time and the processors' idle time, not read: Windows, section 4), or `-` for none. A reader ignores names it does not know. Absent (an older host): the readings of a Linux host with all three. A host with built-in devices writes `core` (its frame loop thread: its machines, `core`, `present`, `outside`) and `compose` (its whole process: the drawing's threads) |
 | `start` | ms, cold | From the process's start to its first frame presented. Cold: `build` (the first run of this build: no record of it yet), `boot` (the first since the computer or the user's session started: no marker in the runtime directory), `warm`, or `-` (unknown) |
 | `late` | frame, ms, verdict, component, own-ms, cpu-ms, blocked-ms, starved-ms, image | A frame that overran its deadline (section 4): the host's frame number, its time, the verdict, the component with the most own time, that time split into on a CPU and blocked, its starvation, and the program it worked for most |
 | `block` | frame, ms, component, what | One wait of 100 ms or more on a component: `frame` work, `start` (a machine's first frames), `open` (starting a machine), `service` (a host service, an image fetched), `state` (a snapshot the rule took) |
@@ -151,16 +152,44 @@ and the `readings` lines say which were there:
 | A component's `cpu` | all its own time on a CPU | `cpu-ms` is its own time, `blocked-ms` 0.0; a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
-(no memory stall) never `memory`; on Windows (CPU time only) only
-`blamed` and `spread`. In a host with built-in devices every part is on
+(no memory stall) and on Windows (below) never `memory`. In a host with
+built-in devices every part is on
 the frame loop thread but the drawing: a part's starvation is that
 thread's run-queue wait while it ran, the drawing's the whole process's
 while it drew (macOS gives the process's wait for both, which is at least
 the thread's: it can only excuse more).
 
+**Windows: the wait inferred.** Windows does not say how long a thread
+waited for a CPU, but it does say, exactly, how many cycles a thread or
+a process ran (`QueryThreadCycleTime`, `QueryProcessCycleTime`) and how
+many each processor spent idle (`QueryIdleProcessorCycleTimeEx`), in the
+same counter, whose rate the host measures once at start (the clock-tick
+readings, `GetThreadTimes` and `GetSystemTimes`, move 15.6 ms at a time:
+a frame). Over the interval in which a suspect should have been running
+(the time the frame loop waited for a driver; a stage or a machine's
+frame of the frame loop; the frame loop's own time less its waits for
+drivers, in terse-bus), with `C` its CPU time, `I` the idle time of all
+`N` processors and `T` the interval:
+
+1. `C` ≥ `T` / 2: it was **running**, not waiting. Nothing is excused.
+2. Else, `I` ≥ `T` (at least one processor's worth of idle time): a
+   thread that is ready to run is given an idle processor, so it was
+   **blocked** on something of its own (a sleep, a disk, a lock).
+   Nothing is excused: blamed as blocked, as on Linux.
+3. Else it was **starved**: the computer was busy. Its starvation is
+   taken as `T` − `C`, and no more than `T` − `I` / `N` (some processor
+   was idle for at least `I` / `N` of the interval, in which it could
+   have run): an excuse no longer than it could have lasted.
+
+The `readings` line says `wait` (the frame loop's and each driver's) and
+`idle` (inferred so). Where the cycle counts cannot be read or their
+rate not measured, there is no `wait` and Windows gives only `blamed`
+and `spread`, as the table says.
+
 A `blamed` verdict is **certain** when the blamed device's `wait` and
-the frame loop's were both read: the time a busy computer took is then
-known not to be in its own time. In a host with built-in devices: when
+the frame loop's were both read, or inferred as above: the time a busy
+computer took is then known not to be in its own time. In a host with
+built-in devices: when
 the frame loop thread's `wait` was read (and, for `compose`, the
 process's), for a machine or the host's own part alike. Only certain
 blame counts towards stopping a machine (`PERFORMANCE.md` R15 step 3);

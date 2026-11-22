@@ -703,7 +703,10 @@ withheld, SPEC §image). They end with:
 
 `terse-host --drive <script>` runs the image (or the system) in its window,
 in real time, with input from the script and reports on what it presents
-(README, Driving the window). The script is an events file (6.2, with the
+(README, Driving the window). The window never shows on the desktop the
+host was started from unless `TERSE_DRIVE_DISPLAY=current` asks for it (a
+CI machine): on Linux it is in a headless compositor the host starts; where
+there is none (Windows, macOS) the host refuses, with an error. The script is an events file (6.2, with the
 sequential lines); its lines are carried out in order, each in the frame it
 belongs to, and these differ from a headless run:
 

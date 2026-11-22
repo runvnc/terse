@@ -143,39 +143,26 @@ impl BlobStore {
     }
 }
 
-/// `$<xdg>/terse`, else `~/<home_sub>/terse` (`%<windows>%\terse` on
-/// Windows). The XDG variable, when set to an absolute path, is used on
-/// every system, Windows included: it is how a test or a second profile
-/// keeps away from the user's own folders.
-fn user_dir(windows: &str, xdg: &str, home_sub: &str) -> Option<PathBuf> {
-    let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
-    let base = match std::env::var_os(xdg).and_then(absolute) {
-        Some(p) => p,
-        None if cfg!(windows) => std::env::var_os(windows).and_then(absolute)?,
-        None => std::env::var_os("HOME").and_then(absolute)?.join(home_sub),
-    };
-    Some(base.join("terse"))
-}
-
 /// The default store: `$XDG_CACHE_HOME/terse/blobs`, else
-/// `~/.cache/terse/blobs` (`%LOCALAPPDATA%\terse\blobs` on Windows).
+/// `~/.cache/terse/blobs` (`%LOCALAPPDATA%\terse\blobs` on Windows;
+/// `terse_dirs`).
 pub fn default_store_dir() -> Option<PathBuf> {
-    Some(user_dir("LOCALAPPDATA", "XDG_CACHE_HOME", ".cache")?.join("blobs"))
+    Some(terse_dirs::user_dir(terse_dirs::Kind::Cache)?.join("blobs"))
 }
 
 /// The default directory for data a host keeps for itself (the relay
 /// `terse-host` starts keeps its store in `relay` there):
 /// `$XDG_DATA_HOME/terse`, else `~/.local/share/terse` (`%LOCALAPPDATA%\terse`
-/// on Windows).
+/// on Windows; `terse_dirs`).
 pub fn default_data_dir() -> Option<PathBuf> {
-    user_dir("LOCALAPPDATA", "XDG_DATA_HOME", ".local/share")
+    terse_dirs::user_dir(terse_dirs::Kind::Data)
 }
 
 /// The default directory for the identity and subscriptions:
 /// `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`%APPDATA%\terse` on
-/// Windows).
+/// Windows; `terse_dirs`).
 pub fn default_config_dir() -> Option<PathBuf> {
-    user_dir("APPDATA", "XDG_CONFIG_HOME", ".config")
+    terse_dirs::user_dir(terse_dirs::Kind::Config)
 }
 
 #[cfg(test)]

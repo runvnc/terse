@@ -97,12 +97,16 @@ pub struct Readings {
     pub cpu: bool,
     pub wait: bool,
     pub stall: bool,
+    /// The `wait` is inferred from the CPU time and the system's idle time
+    /// (Windows, `RECORD.md` 4), not read.
+    pub idle: bool,
 }
 
 impl Readings {
-    /// As the record writes it: `cpu,wait,stall`, a subset, or `-`.
+    /// As the record writes it: `cpu,wait,stall,idle`, a subset, or `-`.
     pub fn encode(&self) -> String {
-        let names: Vec<&str> = [(self.cpu, "cpu"), (self.wait, "wait"), (self.stall, "stall")].iter().filter(|r| r.0).map(|r| r.1).collect();
+        let names: Vec<&str> =
+            [(self.cpu, "cpu"), (self.wait, "wait"), (self.stall, "stall"), (self.idle, "idle")].iter().filter(|r| r.0).map(|r| r.1).collect();
         if names.is_empty() { "-".into() } else { names.join(",") }
     }
 
@@ -115,6 +119,7 @@ impl Readings {
                 "cpu" => r.cpu = true,
                 "wait" => r.wait = true,
                 "stall" => r.stall = true,
+                "idle" => r.idle = true,
                 _ => {}
             }
         }
@@ -344,13 +349,10 @@ pub fn parse(text: &str) -> Vec<Line> {
 }
 
 /// The default record directory: `$XDG_DATA_HOME/terse/perf`, else
-/// `~/.local/share/terse/perf`.
+/// `~/.local/share/terse/perf` (`%LOCALAPPDATA%\terse\perf` on Windows;
+/// `terse_dirs`).
 pub fn default_dir() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        Some(d) => PathBuf::from(d),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(".local/share"),
-    };
-    Some(base.join("terse").join("perf"))
+    Some(terse_dirs::user_dir(terse_dirs::Kind::Data)?.join("perf"))
 }
 
 /// The record file of `host` in `dir`: `<name>-<build hex>.log`.
@@ -618,7 +620,8 @@ mod tests {
             Line::Host(i.clone()),
             Line::Env(Environment::detect("software")),
             Line::Device { component: Component::Device(2), slots: vec![2, 10], identity: i },
-            Line::Readings { component: Component::Device(2), readings: Readings { cpu: true, wait: true, stall: false } },
+            Line::Readings { component: Component::Device(2), readings: Readings { cpu: true, wait: true, stall: false, idle: false } },
+            Line::Readings { component: Component::Device(3), readings: Readings { cpu: true, wait: true, stall: false, idle: true } },
             Line::Readings { component: Component::Core, readings: Readings::default() },
             Line::Start { ms: 84.2, cold: "build".into() },
             Line::late(&late),
@@ -643,6 +646,7 @@ mod tests {
             Line::late(&late).encode(),
             "late 1200 52.3 blamed dev7 47.5 1.0 46.5 0.5 abababababababab"
         );
+        assert_eq!(Line::Readings { component: Component::Device(3), readings: Readings { cpu: true, wait: true, stall: false, idle: true } }.encode(), "readings dev3 cpu,wait,idle");
         assert_eq!(Line::parse("late 1 2"), None);
         assert_eq!(Line::parse("# a comment"), None);
     }

@@ -2,9 +2,16 @@
 # (Actions, "test", "Run workflow"; or gh workflow run test.yml --ref <branch>).
 # The bus tests (crates/terse-devices, crates/terse-bus) run three times on
 # Linux and macOS: as they are, with every end sleeping on the socket and no
-# process timing (TERSE_BUS_WAKE=socket TERSE_PERF_PROBE=none: what Windows
-# always does, DEVICES.md 4.3), and with the drivers on the socket transport
-# only. Tests that need a GPU, a window, fonts or a tool the runner lacks skip
+# process timing (TERSE_BUS_WAKE=socket, what Windows always does, DEVICES.md
+# 4.3; TERSE_PERF_PROBE=none, a system that tells no CPU wait), and with the
+# drivers on the socket transport only. On Windows the CPU wait is inferred
+# from cycle counts (RECORD.md 4): terse-perflog's Windows-only test checks
+# the readings. Then each system drives hello, sparks and the sheet in
+# terse-host's real window (scripts/drive-shots.py, the software renderer:
+# in a headless weston on Linux, on the runner's own desktop on macOS and
+# Windows) and keeps the pictures and the performance records as the
+# artifact window-pictures-<os>; the step fails only if a script's
+# expectation fails or a drive cannot finish, not for want of a GPU. Tests that need a GPU, a window, fonts or a tool the runner lacks skip
 # themselves as they do anywhere, each one recorded; the last step lists them
 # (scripts/test-skips.py). On Linux every tool is installed and the main test
 # step runs with TERSE_TEST_NO_SKIP=1: a skip there fails, except a missing
@@ -91,6 +98,32 @@ jobs:
           TERSE_TEST_NO_SKIP: ${{ runner.os == 'Linux' && '1' || '' }}
           TERSE_TEST_ALLOW_SKIP: gpu,weston
         run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
+
+      - name: Weston, for the window pictures
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: sudo apt-get install -y --no-install-recommends weston
+
+      - name: Window pictures (terse-host --drive)
+        if: ${{ !cancelled() }}
+        env:
+          # macOS and Windows have no headless display: the window shows on
+          # the runner's desktop, which nobody uses. Never set this on a
+          # developer's machine (README "Driving the window").
+          TERSE_DRIVE_DISPLAY: ${{ runner.os != 'Linux' && 'current' || '' }}
+          TERSE_AUDIO: "off"
+        run: |
+          if python3 --version >/dev/null 2>&1; then py=python3; else py=python; fi
+          exe=target/debug/terse-host
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          "$py" scripts/drive-shots.py "$exe" window-pictures
+
+      - name: Keep the window pictures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-pictures-${{ matrix.os }}
+          path: window-pictures
+          if-no-files-found: warn
 
       - name: Bus tests, every end sleeping on the socket, no process timing
         if: ${{ !cancelled() && runner.os != 'Windows' }}

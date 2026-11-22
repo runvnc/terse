@@ -450,10 +450,13 @@ impl<K: Copy + Eq + std::hash::Hash> Tally<K> {
 
 /// Whether blaming `top` in frame `s` is certain enough to stop machines
 /// for (`RECORD.md` section 4): for a device, the operating system said
-/// how long its threads and the frame loop's waited for a CPU, so that
-/// time on a busy computer was not taken for its own. Where it cannot
-/// (Windows; Linux without schedstats; readings turned off), a device is
-/// blamed by its waits alone: warned about and recorded, never stopped.
+/// how long its threads and the frame loop's waited for a CPU (or, on
+/// Windows, the wait was inferred from their CPU time and the system's
+/// idle time, [`crate::probe::infer`]), so that time on a busy computer
+/// was not taken for its own. Where it cannot (Linux without schedstats;
+/// Windows where the cycle counts cannot be read; readings turned off), a
+/// device is blamed by its waits alone: warned about and recorded, never
+/// stopped.
 /// The host's own components are never stopped anyway.
 pub fn certain(s: &FrameSample, top: &Part) -> bool {
     !top.component.is_device() || (top.starved_ns.is_some() && s.host_starved_ns.is_some())
@@ -551,8 +554,8 @@ mod tests {
 
     #[test]
     fn without_starvation_readings_a_device_is_warned_about_never_stopped() {
-        // Windows, or Linux without schedstats: the driver's wait is all
-        // the host knows.
+        // Linux without schedstats, Windows without its cycle counts: the
+        // driver's wait is all the host knows.
         let unknown = |n| FrameSample { frame: n, wall_ns: 50 * MS, parts: vec![Part::new(Component::Device(2), 45 * MS)], host_starved_ns: None, memory_stall_ns: None, size_changed: false };
         let mut j = Judge::default();
         let mut actions = Vec::new();
@@ -570,6 +573,50 @@ mod tests {
             f.host_starved_ns = None;
             assert!(j.judge(&f).1.iter().all(|a| matches!(a, Action::Warn { .. })));
         }
+    }
+
+    /// Windows: the waits inferred from CPU time and idle time
+    /// (`probe::infer`) make blame certain where the facts allow it.
+    #[test]
+    fn inferred_waits_blame_with_certainty() {
+        use crate::probe::infer;
+        // A frame of 50 ms on 8 processors: the core waited 45 ms for the
+        // driver, which used `cpu` of CPU time in it; the processors were
+        // idle `idle` in all; the frame loop ran its own 5 ms.
+        let frame_of = |n: u64, cpu: u64, idle: u64| {
+            let starved = infer(45 * MS, cpu, idle * 45 / 50, 8).starved_ns;
+            let host = infer(5 * MS, 5 * MS, idle * 5 / 50, 8).starved_ns;
+            FrameSample {
+                frame: n,
+                wall_ns: 50 * MS,
+                parts: vec![Part { component: Component::Device(2), wall_ns: 45 * MS, run_ns: Some(cpu), starved_ns: Some(starved), image: None }],
+                host_starved_ns: Some(host),
+                memory_stall_ns: None,
+                size_changed: false,
+            }
+        };
+        let stops = |cpu: u64, idle: u64| {
+            let mut j = Judge::default();
+            let mut verdicts = Vec::new();
+            let mut stopped = None;
+            for n in 0..20 {
+                let (late, a) = j.judge(&frame_of(n, cpu, idle));
+                verdicts.push(late.unwrap().verdict);
+                if stopped.is_none() && a.iter().any(|a| matches!(a, Action::Stop { .. })) {
+                    stopped = Some(n);
+                }
+            }
+            (verdicts[0], stopped)
+        };
+        // Spinning (40 ms of CPU in 45), even on a computer with no
+        // processor idle: running, blamed, certain: stopped at the 10th.
+        assert_eq!(stops(40 * MS, 0), (Verdict::Blamed, Some(9)));
+        // Sleeping (1 ms of CPU) with processors to spare: blocked on
+        // something of its own, blamed, certain: stopped.
+        assert_eq!(stops(MS, 200 * MS), (Verdict::Blamed, Some(9)));
+        // Sleeping, or wanting a CPU, on a computer with no processor to
+        // spare: starved, nobody blamed.
+        assert_eq!(stops(MS, 10 * MS), (Verdict::Starved, None));
     }
 
     #[test]

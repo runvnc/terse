@@ -113,7 +113,8 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     );
     let err = text(&out.stderr);
     // Where the system does not say how long the driver and the frame
-    // loop waited for a CPU (Windows; TERSE_PERF_PROBE=none), the driver
+    // loop waited for a CPU, nor lets it be inferred (TERSE_PERF_PROBE=none;
+    // Windows without its cycle counts), the driver
     // is blamed by its waits alone: warned about, never stopped
     // (RECORD.md 4). The record's readings lines say which case this is.
     let lines = record_lines(&perf);

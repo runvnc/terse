@@ -1,0 +1,9 @@
+[package]
+name = "terse-dirs"
+description = "Where the programs keep the user's files by default (cache, data, config), on every system: one function, so that no program has a copy of its own."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]

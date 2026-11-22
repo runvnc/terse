@@ -7,7 +7,8 @@
 //! (`present`), and how late the frame began after its tick or the last picture (`outside`).
 //! The frame loop thread's CPU time and run-queue wait are read around
 //! each part, and the whole process's while it draws (the renderer's
-//! threads). `rule.rs` judges the frame; the host carries out what it asks.
+//! threads); on Windows the wait is inferred from the CPU time and the
+//! processors' idle time (`terse_perflog::probe::infer`). `rule.rs` judges the frame; the host carries out what it asks.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -93,8 +94,8 @@ impl HostWatch {
             r.add(Line::host_devices(&[2, 3, 4, 6, 7, 9, 10]));
             // What the system tells: the frame loop thread's readings, and
             // the whole process's for the drawing (its threads).
-            r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: thread.has_cpu(), wait: thread.has_wait(), stall: psi.available() } });
-            r.add(Line::Readings { component: Component::Compose, readings: Readings { cpu: process.has_cpu(), wait: process.has_wait(), stall: false } });
+            r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: thread.has_cpu(), wait: thread.has_wait(), stall: psi.available(), idle: thread.infers_wait() } });
+            r.add(Line::Readings { component: Component::Compose, readings: Readings { cpu: process.has_cpu(), wait: process.has_wait(), stall: false, idle: process.infers_wait() } });
         }
         HostWatch {
             rule: Enforcer::default(),
@@ -166,8 +167,15 @@ impl HostWatch {
     /// `late` after its tick.
     pub fn stepped(&mut self, emulate: Duration, upload: Duration, late: Duration) {
         let now = self.thread.sample();
+        // Before the frame began the thread slept until its tick, by
+        // design: its wait counts only within the time it began late (an
+        // inferred wait would count the sleep, `ProcSample::wait_within`).
+        let before = match (self.at_begin, self.last_presented) {
+            (Some(a), Some(b)) => a.since(&b).wait_within(late.as_nanos() as u64),
+            _ => 0,
+        };
         let waits = match (wait(self.at_emulated, self.at_begin), wait(now, self.at_emulated)) {
-            (Some(e), Some(u)) => Some((e, u, wait(self.at_begin, self.last_presented).unwrap_or(0))),
+            (Some(e), Some(u)) => Some((e, u, before)),
             _ => None,
         };
         self.step = Some(Stepped { emulate, upload, late, waits });

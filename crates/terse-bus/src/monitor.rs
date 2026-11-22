@@ -102,7 +102,7 @@ impl Monitor {
         let drivers: Vec<Watched> = bus.procs.iter().map(|d| {
                 let probe = d.pid.map(ProcProbe::process);
                 let p = probe.as_ref();
-                let readings = Readings { cpu: p.is_some_and(ProcProbe::has_cpu), wait: p.is_some_and(ProcProbe::has_wait), stall: false };
+                let readings = Readings { cpu: p.is_some_and(ProcProbe::has_cpu), wait: p.is_some_and(ProcProbe::has_wait), stall: false, idle: p.is_some_and(ProcProbe::infers_wait) };
                 Watched { component: Component::Device(d.component), probe, before: None, readings }
             }).collect();
         let core = ProcProbe::this_thread();
@@ -111,7 +111,7 @@ impl Monitor {
             // What the operating system tells us (RECORD.md 4): without a
             // driver's CPU wait, it is blamed by its waits alone and never
             // stopped.
-            r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: core.has_cpu(), wait: core.has_wait(), stall: psi.available() } });
+            r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: core.has_cpu(), wait: core.has_wait(), stall: psi.available(), idle: core.infers_wait() } });
             for w in &drivers {
                 r.add(Line::Readings { component: w.component, readings: w.readings });
             }
@@ -215,7 +215,7 @@ impl Monitor {
                 component: w.component,
                 wall_ns: d.acct.frame_ns,
                 run_ns: delta.filter(|_| w.readings.cpu).map(|s| s.run_ns),
-                starved_ns: delta.filter(|_| w.readings.wait).map(|s| s.wait_ns),
+                starved_ns: delta.filter(|_| w.readings.wait).map(|s| s.wait_within(d.acct.frame_ns)),
                 image: d.acct.top_instance().and_then(&image),
             });
             if d.acct.longest.0 >= BLOCK_NS {
@@ -242,7 +242,11 @@ impl Monitor {
             _ => None,
         };
         let size_changed = std::mem::take(&mut self.size_changed);
-        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: core.filter(|_| self.core_wait).map(|c| c.wait_ns), memory_stall_ns: memory, size_changed };
+        // The frame loop's own starvation: within its own time, not the
+        // time it waited for the drivers (blocked by design, and already
+        // the drivers' parts; an inferred wait would count it twice).
+        let host_starved = core.filter(|_| self.core_wait).map(|c| c.wait_within(wall.saturating_sub(waits_all)));
+        let sample = FrameSample { frame: self.frame, wall_ns: wall, parts, host_starved_ns: host_starved, memory_stall_ns: memory, size_changed };
         let (late, actions) = self.judge.judge(&sample);
         if let Some(l) = &late {
             self.late += 1;

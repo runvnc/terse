@@ -1,0 +1,14 @@
+# programs/sparks in the window (scripts/drive-shots.py): the title
+# screen (vectors and the terminal), then a game started and steered.
+wait 30
+expect terminal contains S P A R K S
+shot sparks-1-title.png
+press enter
+wait 30
+hold left 20
+hold up 30
+wait 30
+shot sparks-2-playing.png
+expect terminal contains HIGH
+perf
+quit
