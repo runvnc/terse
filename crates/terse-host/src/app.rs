@@ -127,6 +127,7 @@ pub fn run(
     program: Program,
     content: Option<ContentService>,
     selftest: Option<SelfTest>,
+    drive: Option<crate::drive::Drive>,
     looks: Looks,
 ) -> Result<ExitCode, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
@@ -143,7 +144,7 @@ pub fn run(
             RendererChoice::Gpu => "gpu",
             RendererChoice::Auto => "auto",
         },
-        if selftest.is_some() { "selftest" } else { "window" },
+        if selftest.is_some() { "selftest" } else if drive.is_some() { "drive" } else { "window" },
         looks.started,
     );
     if let Some(c) = &looks.check {
@@ -156,8 +157,12 @@ pub fn run(
     }
     // A self-test makes no sound unless TERSE_AUDIO says where (it runs
     // unattended, often in a headless compositor); nor does a host told
-    // TERSE_AUDIO=off.
-    let audio = crate::audio::Audio::new(crate::audio::Choice::from_env(selftest.is_some()));
+    // TERSE_AUDIO=off. A drive never does.
+    let audio = crate::audio::Audio::new(if drive.is_some() {
+        crate::audio::Choice::Off
+    } else {
+        crate::audio::Choice::from_env(selftest.is_some())
+    });
     let mut app = App {
         system,
         io: HashMap::new(),
@@ -195,6 +200,8 @@ pub fn run(
         notice: None,
         halted: None,
         monitor: None,
+        drive,
+        used: Vec::new(),
         audio,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
@@ -204,6 +211,9 @@ pub fn run(
     if let Some(t) = &app.selftest {
         t.report(app.refresh_hz);
     }
+    if let Some(d) = &mut app.drive {
+        d.finish();
+    }
     // Stopped by the host (PERFORMANCE.md R15): exit status 4 (STATE.md 6.4).
     if let Some((slot, saved)) = &app.halted {
         eprintln!("terse-host: stopped by the host: device {slot} did not keep up; its state before the stop: {saved}");
@@ -211,6 +221,9 @@ pub fn run(
     }
     if app.selftest.is_some() {
         return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(code) = app.drive.as_ref().and_then(|d| d.status()) {
+        return Ok(code);
     }
     let shell = app.system.shell();
     if shell.fault().is_some() {
@@ -250,7 +263,7 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(event_loop: &ActiveEventLoop, title: &str, looks: &Looks, test: bool) -> Result<Self, String> {
+    fn new(event_loop: &ActiveEventLoop, title: &str, looks: &Looks, test: bool, capture: bool) -> Result<Self, String> {
         // Size the window for the grid at the primary monitor's scale.
         let scale = event_loop.primary_monitor().map_or(1.0, |m| m.scale_factor());
         let glyphs = TermGlyphs::new(FONT_PX * scale as f32, &looks.term_fonts)?;
@@ -278,7 +291,7 @@ impl Gfx {
             #[cfg(feature = "gpu")]
             {
                 let auto = looks.renderer == RendererChoice::Auto;
-                match Self::gpu(event_loop, &window, glyphs.clone(), size, auto) {
+                match Self::gpu(event_loop, &window, glyphs.clone(), size, auto, capture) {
                     Ok(presenter) => return Ok(Self::with(window, presenter, looks)),
                     Err(e) if auto => eprintln!("terse-host: {e}; using the software renderer"),
                     Err(e) => return Err(e),
@@ -320,6 +333,7 @@ impl Gfx {
         glyphs: TermGlyphs,
         size: (u32, u32),
         hardware_only: bool,
+        capture: bool,
     ) -> Result<Presenter, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
             Box::new(event_loop.owned_display_handle()),
@@ -347,8 +361,14 @@ impl Gfx {
             wgpu::PresentMode::AutoVsync
         };
         eprintln!("terse-host: present mode {present_mode:?}");
+        // `--drive` reads back what is presented, if the surface allows.
+        let usage = if capture && caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        };
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage,
             format,
             width: size.0,
             height: size.1,
@@ -414,8 +434,9 @@ impl Gfx {
     }
 
     /// Draws and presents; returns how long acquiring the swapchain image
-    /// (or buffer) took and how long the rest (draw, present) took.
-    fn draw(&mut self) -> Option<(Duration, Duration)> {
+    /// (or buffer) took and how long the rest (draw, present) took, and
+    /// with `capture` the picture presented (RGBA, `--drive`).
+    fn draw(&mut self, capture: bool) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
         match &mut self.presenter {
             #[cfg(feature = "gpu")]
             Presenter::Gpu { surface, config, display } => {
@@ -433,10 +454,19 @@ impl Gfx {
                 let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let mut encoder = display.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 display.screens.render(&display.device, &display.queue, &mut encoder, &view, viewport);
+                let readback = (capture && config.usage.contains(wgpu::TextureUsages::COPY_SRC))
+                    .then(|| crate::screens::copy_out(&display.device, &mut encoder, &frame.texture, viewport));
                 display.queue.submit([encoder.finish()]);
                 self.window.pre_present_notify();
                 display.queue.present(frame);
-                Some((acquired - start, acquired.elapsed()))
+                let took = acquired.elapsed();
+                let picture = match readback {
+                    Some(r) => crate::screens::read_out(&display.device, r, viewport, config.format).ok(),
+                    // A surface that cannot be read: the same picture drawn offscreen.
+                    None if capture => display.snapshot(viewport).ok().map(|data| crate::drive::Raw::Rows { data, stride: viewport.0 as usize * 4, bgra: false }),
+                    None => None,
+                };
+                Some((acquired - start, took, picture))
             }
             Presenter::Soft { surface, display, size, history } => {
                 if size.0 == 0 || size.1 == 0 {
@@ -493,7 +523,8 @@ impl Gfx {
                 if let Err(e) = presented {
                     eprintln!("terse-host: softbuffer: {e}");
                 }
-                Some((acquired - drawn, (drawn - start) + acquired.elapsed()))
+                let took = (drawn - start) + acquired.elapsed();
+                Some((acquired - drawn, took, capture.then(|| crate::drive::Raw::Packed(display.frame().data.clone()))))
             }
         }
     }
@@ -532,6 +563,8 @@ struct FrameDriver<'a> {
     /// Times each machine's frame (PERFORMANCE.md R14).
     watch: &'a mut crate::watch::HostWatch,
     slow: Option<Slow>,
+    /// Each machine's budget use this frame (serial, units).
+    used: Vec<(u32, u64)>,
 }
 
 impl Driver for FrameDriver<'_> {
@@ -586,6 +619,7 @@ impl Driver for FrameDriver<'_> {
         let frame =
             FrameInput { events: &input, unix_time: self.unix_time, random: &io.random, completions: &completions, controllers };
         let result = machine.run_frame(&frame);
+        self.used.push((who.serial, result.used));
         // The test hook (TERSE_HOST_SLOW): this machine's frames take longer.
         if let Some(s @ Slow { what: SlowPart::Machine(h), from, .. }) = self.slow
             && h == who.handle
@@ -721,6 +755,10 @@ struct App {
     halted: Option<(u8, String)>,
     /// The monitor the window was last on (a change excuses frames).
     monitor: Option<winit::monitor::MonitorHandle>,
+    /// `--drive`: the script driving the window, and watching it.
+    drive: Option<crate::drive::Drive>,
+    /// Each machine's budget use in the last frame (serial, units).
+    used: Vec<(u32, u64)>,
     /// The sound device's output (SPEC §sound.presentation), opened when a machine
     /// first gives samples.
     /// The sound (SPEC §sound.presentation).
@@ -755,8 +793,18 @@ impl App {
             return;
         }
         let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+        if let Some(mut d) = self.drive.take() {
+            let actions = d.before_frame(self.system.shell().frame());
+            for a in actions {
+                self.drive_action(a, event_loop);
+            }
+            self.drive = Some(d);
+        }
         self.coalesced_input();
         let mut controllers = self.gamepads.poll();
+        if let Some(c) = self.drive.as_ref().and_then(|d| d.controllers()) {
+            controllers = c;
+        }
         if let Some(t) = &self.selftest {
             // The script is the only input (coalesced_input sent nothing).
             let frame = self.system.shell().frame();
@@ -813,11 +861,17 @@ impl App {
             trace: self.trace,
             watch: &mut self.watch,
             slow: self.slow,
+            used: Vec::new(),
         };
         // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
+        self.used = driver.used;
+        if let Some(mut d) = self.drive.take() {
+            d.after_frame(&*self, &self.used);
+            self.drive = Some(d);
+        }
         self.sound();
         self.pending.clear();
         self.watch.emulated();
@@ -945,6 +999,7 @@ impl App {
                             gfx.display_mut().set_look(self.looks.look);
                         }
                         eprintln!("terse-host: the drawing made a frame late: the phosphor look sheds from level {floor}");
+                        self.note_slow(format!("the look shed from level {floor}"));
                     }
                 }
                 Act::Warn { culprit: Culprit::Machine(serial), count } => {
@@ -954,6 +1009,7 @@ impl App {
                     // Save at once, while it still runs.
                     let (_, saved) = crate::halt::save(&mut self.system, &self.data, self.watch.dir.as_deref(), h);
                     eprintln!("terse-host: {what} is slow ({count} late frames): your work is saved ({saved}); if it goes on, it is stopped");
+                    self.note_slow(format!("warned: {what} is slow ({count} late frames)"));
                     self.show_notice("a slow machine", format!("{what} is slow: {count} late frames."), "Its work is saved; if it goes on, it is stopped.");
                 }
                 Act::Stop { culprit: Culprit::Machine(serial), count } => {
@@ -966,6 +1022,7 @@ impl App {
                     self.watch.add(Line::Stop { frame, component: Component::Core, machine: h as u32, image: terse_perflog::record::image_field(image.as_ref()), saved });
                     crate::halt::halt(&mut self.system, h, slot);
                     eprintln!("terse-host: {what} did not keep up ({count} late frames): machine {h} stopped; {d}");
+                    self.note_slow(format!("stopped: {what} did not keep up ({count} late frames)"));
                     self.show_notice("a machine did not keep up", format!("{what} did not keep up: {count} late frames."), "It was saved and stopped.");
                     if h == 0 {
                         self.halted = Some((slot, d));
@@ -976,6 +1033,7 @@ impl App {
                     self.watch.add(Line::Warn { frame, component: c, count });
                     let what = host_part(c);
                     eprintln!("terse-host: {what} made {count} frames late (`terse perf log` shows the record)");
+                    self.note_slow(format!("warned: {what} made {count} frames late"));
                     self.show_notice("this computer is slow", format!("{what} made {count} frames late."), "A smaller window may help; the record shows it (terse perf log).");
                 }
                 Act::Stop { culprit: Culprit::Host(c), count } => {
@@ -984,6 +1042,7 @@ impl App {
                     self.watch.add(Line::fail(frame, c, count));
                     let what = host_part(c);
                     eprintln!("terse-host: {what} does not keep up on this computer ({count} late frames, nothing left to shed): this terse-host fails PERFORMANCE.md R15 here; `terse-host --hardware-check` and `terse perf` show why");
+                    self.note_slow(format!("failed: {what} does not keep up ({count} late frames)"));
                     self.show_notice("Tersenet does not keep up here", format!("{what} does not keep up on this computer: {count} late frames."), "Recorded as this host's failure. A smaller window may help.");
                 }
             }
@@ -991,19 +1050,26 @@ impl App {
     }
 
     fn key(&mut self, event: KeyEvent) {
-        if self.selftest.is_some() {
+        if self.selftest.is_some() || self.drive.is_some() {
             return;
         }
         let pressed = event.state == ElementState::Pressed;
-        let usage = match event.physical_key {
+        self.key_input(event.physical_key, pressed, event.repeat, event.text.as_deref(), prompt_answer(&event));
+    }
+
+    /// A key from the window system (or `--drive`): its physical key,
+    /// whether pressed, auto-repeated, the text it types, and the answer it
+    /// gives the consent prompt.
+    fn key_input(&mut self, physical_key: PhysicalKey, pressed: bool, repeat: bool, text: Option<&str>, answer: Option<bool>) {
+        let usage = match physical_key {
             PhysicalKey::Code(code) => hid_usage(code),
             _ => None,
         };
         // SPEC §content.feeds: while the host asks for consent, the keyboard is the host's.
         if pressed && self.content.as_ref().is_some_and(|c| c.prompt().is_some()) {
             swallow(&mut self.swallowed, usage);
-            if !event.repeat
-                && let Some(allow) = prompt_answer(&event)
+            if !repeat
+                && let Some(allow) = answer
             {
                 self.content.as_mut().unwrap().answer(allow);
             }
@@ -1017,14 +1083,14 @@ impl App {
             }
         }
         // SPEC §machines.input: the home key is the host's, never a key event.
-        if self.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
-            if pressed && !event.repeat {
+        if self.is_system() && physical_key == PhysicalKey::Code(HOME_KEY) {
+            if pressed && !repeat {
                 self.pending.push(Event::home());
             }
             return;
         }
         // The volume: the host's keys, never a program's.
-        if let PhysicalKey::Code(code) = event.physical_key
+        if let PhysicalKey::Code(code) = physical_key
             && let Some(k) = crate::keymap::volume_key(code, self.modifiers)
         {
             if pressed {
@@ -1038,8 +1104,8 @@ impl App {
         let ctrl_v = self.modifiers.control_key()
             && !self.modifiers.alt_key()
             && !self.modifiers.super_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyV);
-        let shift_insert = self.modifiers.shift_key() && event.physical_key == PhysicalKey::Code(KeyCode::Insert);
+            && physical_key == PhysicalKey::Code(KeyCode::KeyV);
+        let shift_insert = self.modifiers.shift_key() && physical_key == PhysicalKey::Code(KeyCode::Insert);
         if pressed && (ctrl_v || shift_insert) {
             swallow(&mut self.swallowed, usage);
             self.paste_clipboard();
@@ -1049,8 +1115,72 @@ impl App {
             let mods = modifier_bits(self.modifiers);
             self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
         }
-        if pressed && let Some(text) = &event.text {
+        if pressed && let Some(text) = text {
             self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
+        }
+    }
+
+    /// The host noted a slow frame: `--drive` reports it.
+    fn note_slow(&mut self, note: String) {
+        if let Some(d) = &mut self.drive {
+            d.slow_frame(note);
+        }
+    }
+
+    /// Carries out what `--drive` asks, as the window system's events would.
+    fn drive_action(&mut self, a: crate::drive::Action, event_loop: &ActiveEventLoop) {
+        use crate::drive::Action;
+        match a {
+            Action::Modifiers(bits) => {
+                use terse_core::modifiers::*;
+                let mut m = ModifiersState::empty();
+                for (bit, s) in [(SHIFT, ModifiersState::SHIFT), (CONTROL, ModifiersState::CONTROL), (ALT, ModifiersState::ALT), (META, ModifiersState::SUPER)] {
+                    if bits & bit != 0 {
+                        m |= s;
+                    }
+                }
+                self.modifiers = m;
+            }
+            Action::Key { usage, pressed, repeat, text } => {
+                let Some(code) = crate::keymap::key_code(usage) else { return };
+                let answer = match code {
+                    KeyCode::KeyY => Some(true),
+                    KeyCode::KeyN | KeyCode::Escape => Some(false),
+                    _ => None,
+                };
+                self.key_input(PhysicalKey::Code(code), pressed, repeat, text.as_deref(), answer);
+            }
+            Action::Text(t) => self.pending.extend(t.chars().map(Event::text)),
+            Action::Pointer { x, y, px } => {
+                let pos = if px {
+                    PhysicalPosition::new(x, y)
+                } else {
+                    // The centre of the screen unit, in window pixels.
+                    let Some(gfx) = &self.gfx else { return };
+                    let (ox, oy, w, _) = gfx.display().screen_rect(gfx.viewport());
+                    let s = w as f64 / terse_core::SCREEN_WIDTH as f64;
+                    PhysicalPosition::new(ox as f64 + (x + 0.5) * s, oy as f64 + (y + 0.5) * s)
+                };
+                self.pointer_moved(pos);
+            }
+            Action::Buttons(b) => {
+                for (bit, button) in [(buttons::PRIMARY, MouseButton::Left), (buttons::SECONDARY, MouseButton::Right), (buttons::MIDDLE, MouseButton::Middle)] {
+                    if (self.buttons & bit != 0) != (b & bit != 0) {
+                        self.mouse_button(if b & bit != 0 { ElementState::Pressed } else { ElementState::Released }, button);
+                    }
+                }
+            }
+            Action::Wheel { v, h } => self.wheel(MouseScrollDelta::LineDelta(-h as f32, -v as f32)),
+            Action::Event(e) => self.pending.push(e),
+            Action::Resize(w, h) => {
+                // A size the window system applies at once comes back here
+                // rather than as a Resized event (winit on Wayland).
+                let applied = self.gfx.as_ref().and_then(|g| g.window.request_inner_size(PhysicalSize::new(w, h)));
+                if let Some(size) = applied {
+                    self.window_event(event_loop, self.gfx.as_ref().unwrap().window.id(), WindowEvent::Resized(size));
+                }
+            }
+            Action::Quit => event_loop.exit(),
         }
     }
 
@@ -1147,12 +1277,92 @@ impl App {
     }
 }
 
+/// What `--drive` reads: the machines' devices and the page as this host
+/// laid it out.
+impl crate::drive::Probe for App {
+    fn viewport(&self) -> (u32, u32) {
+        self.gfx.as_ref().map_or((0, 0), |g| g.viewport())
+    }
+
+    fn dump(&self, what: &str, handle: Option<u8>) -> Result<String, String> {
+        if what == "state" {
+            return Ok(self.state_dump());
+        }
+        let h = handle.unwrap_or_else(|| self.system.focus());
+        let (machine, serial) = match h {
+            0 => (self.system.shell(), 0),
+            h => {
+                let c = self.system.child(h).ok_or(format!("no machine {h}"))?;
+                (c.machine.as_ref().ok_or(format!("machine {h} has not started"))?, c.serial)
+            }
+        };
+        match what {
+            "terminal" => machine.terminal().map(|t| t.text()).ok_or_else(|| "no terminal device".to_string()),
+            "vectors" => {
+                let mut out = String::new();
+                if let Some(line) = machine.vector().and_then(|v| v.style_line()) {
+                    out += &format!("{line}\n");
+                }
+                match machine.vector() {
+                    Some(v) => out += &format!("-- vectors: {} list bytes --\n{}", machine.vector_list().len(), v.dump()),
+                    None => out += "-- no vector display --\n",
+                }
+                if let Some(v) = machine.vector3() {
+                    out += &v.dump();
+                }
+                Ok(out)
+            }
+            "page" => {
+                let page = machine.page().ok_or("no page device")?;
+                let layout = self.io.get(&serial).and_then(|io| io.page.as_ref()).and_then(|w| w.shown.clone());
+                Ok(match layout {
+                    None => "-- page: nothing laid out yet --\n".to_string(),
+                    Some(l) => {
+                        let scroll = page.scroll_for(l.reported_height()) as f32;
+                        let r = page.region();
+                        format!("-- page region {} {} {} {}, document generation {} (shown: {}) --\n{}", r.x, r.y, r.w, r.h, page.generation(), l.key.0, l.dump(scroll, r.h as f32))
+                    }
+                })
+            }
+            w => Err(format!("no dump {w}")),
+        }
+    }
+}
+
+impl App {
+    /// `dump state`: the frame, the window, the machines, the budget.
+    fn state_dump(&self) -> String {
+        let viewport = self.gfx.as_ref().map_or((0, 0), |g| g.viewport());
+        let rect = self.gfx.as_ref().map_or((0.0, 0.0, 0.0, 0.0), |g| g.display().screen_rect(viewport));
+        let name = self.gfx.as_ref().map_or(String::new(), |g| g.display().name());
+        let mut s = format!(
+            "frame {}, window {}x{}, screen at {},{} size {}x{}, renderer {name}\nfocus {}\n",
+            self.system.shell().frame(),
+            viewport.0,
+            viewport.1,
+            rect.0,
+            rect.1,
+            rect.2,
+            rect.3,
+            self.system.focus()
+        );
+        let shell = self.system.shell();
+        let total = terse_core::BUDGET_PER_FRAME as f64;
+        let used = |serial: u32| self.used.iter().find(|u| u.0 == serial).map_or(String::from("-"), |u| format!("{:.1}%", u.1 as f64 / total * 100.0));
+        s += &format!("machine 0 \"{}\" ({}), last frame's budget {}{}\n", self.shell_title, if self.is_system() { "shell" } else { "alone" }, used(0), shell.stopped().map_or(String::new(), |st| format!(", stopped: {st:?}")));
+        for (h, c) in self.system.children() {
+            s += &format!("machine {h} \"{}\" serial {}, state {}, last frame's budget {}\n", c.title, c.serial, self.system.state(h), used(c.serial));
+        }
+        s
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
         }
-        match Gfx::new(event_loop, &self.title, &self.looks, self.selftest.is_some()) {
+        match Gfx::new(event_loop, &self.title, &self.looks, self.selftest.is_some() || self.drive.is_some(), self.drive.is_some()) {
             Ok(gfx) => {
                 self.refresh_hz = gfx
                     .window
@@ -1208,9 +1418,10 @@ impl ApplicationHandler for App {
                     }
                     _ => Duration::ZERO,
                 };
+                let capture = self.drive.as_ref().is_some_and(crate::drive::Drive::wants_picture);
                 if !self.occluded
                     && let Some(gfx) = &mut self.gfx
-                    && let Some((acquire, render)) = gfx.draw()
+                    && let Some((acquire, render, picture)) = gfx.draw(capture)
                 {
                     let render = render + slept;
                     self.presented_at = Some(Instant::now());
@@ -1234,12 +1445,23 @@ impl ApplicationHandler for App {
                         eprintln!("terse-host: frames ran long or caught up: the phosphor look sheds from level {floor}");
                     }
                     let can_shed = !self.looks.look.no_shed && self.governor.can_shed();
-                    if let Some(judged) = self.watch.presented(acquire, render, can_shed)
-                        && self.looks.rule
-                    {
-                        self.act(event_loop, judged.acts);
+                    if let Some(judged) = self.watch.presented(acquire, render, can_shed) {
+                        if self.drive.is_some()
+                            && let Some(l) = judged.late.as_ref().filter(|l| judged.excused.is_none() && l.verdict == terse_perflog::Verdict::Blamed)
+                        {
+                            // Late by this host's or a machine's doing (not
+                            // starved by other work on the computer).
+                            self.note_slow(format!("late frame {}: {:?} took {:.1} ms", l.frame, l.top.component, l.wall_ns as f64 / 1e6));
+                        }
+                        if self.looks.rule {
+                            self.act(event_loop, judged.acts);
+                        }
                     }
                     self.expire_notice();
+                    if let Some(mut d) = self.drive.take() {
+                        d.presented(self.system.shell().frame(), picture, &*self);
+                        self.drive = Some(d);
+                    }
                 }
             }
             WindowEvent::Occluded(hidden) => {

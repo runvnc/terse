@@ -492,6 +492,10 @@ impl Display for SoftScreens {
         self.shell.row_height(viewport)
     }
 
+    fn screen_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32) {
+        self.shell.screen_rect(viewport)
+    }
+
     fn take_page_figure_log(&mut self) -> Vec<String> {
         self.shell.take_page_figure_log()
     }

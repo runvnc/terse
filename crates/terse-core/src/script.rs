@@ -24,6 +24,14 @@
 //! right stick defaults to 0 0. Controllers are disconnected until their
 //! first `pad` line.
 //!
+//! A line may also leave out its frame number: it then belongs to the
+//! current frame, which is the frame of the line before it (0 at the start),
+//! moved on by `wait <n>` lines; `type <text>` types its text one character
+//! a frame as a keyboard does (each character's key down, its text, its key
+//! up) and moves the current frame past it. Commands of `terse-host --drive`
+//! (pictures, dumps, window size; STATE.md 6.5) are accepted and kept apart,
+//! in [`Script::host_commands`], for the hosts that carry them out.
+//!
 //! The format is specified in STATE.md 6.2. `<key>` is a USB HID usage ID
 //! (two or more decimal digits, or `0x28`) or a name: `a`-`z`,
 //! `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`,
@@ -39,6 +47,78 @@ pub struct Script {
     frames: BTreeMap<u32, Vec<Event>>,
     /// Controller changes: from this frame on, controller n has this state.
     pads: BTreeMap<u32, Vec<(usize, Controller)>>,
+    /// Lines for `terse-host --drive` (STATE.md 6.5), with their frames.
+    host: Vec<(u32, String)>,
+}
+
+/// The commands of the events file proper (STATE.md 6.2).
+pub const INPUT_COMMANDS: [&str; 10] = ["down", "up", "press", "text", "pointer", "click", "wheel", "feeds-updated", "home", "pad"];
+
+/// The commands of `terse-host --drive` that are not input (STATE.md 6.5):
+/// a headless `terse run` skips them.
+pub const HOST_COMMANDS: [&str; 18] = [
+    "shot", "dump", "settle", "watch", "expect", "resize", "pointer-px", "click-px", "drag", "drag-px", "perf", "budget", "quit", "say",
+    "sleep", "renderer", "repeat", "hold",
+];
+
+/// The frame a line belongs to (STATE.md 6.2 and its extension): numbered
+/// lines name it, others take the current one; `wait` moves it on.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Timeline {
+    pub frame: u32,
+}
+
+/// A line of an events file split up: its frame (`None`: none written),
+/// command and the rest of the line. `None` for a blank line or a comment.
+pub fn split_line(line: &str) -> Result<Option<(Option<u32>, &str, &str)>, String> {
+    let trimmed = line.trim_start();
+    let (first, rest) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+    if first.is_empty() || first.starts_with('#') {
+        return Ok(None);
+    }
+    let (frame, rest) = match first.parse::<u32>() {
+        Ok(f) => (Some(f), rest.trim_start()),
+        Err(_) if first == "wait" || first == "type" || INPUT_COMMANDS.contains(&first) || HOST_COMMANDS.contains(&first) => {
+            (None, trimmed)
+        }
+        Err(_) => return Err(format!("bad frame number {first}")),
+    };
+    let (command, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    if command.is_empty() {
+        return Err("missing command".into());
+    }
+    Ok(Some((frame, command, args)))
+}
+
+/// The words of a line's arguments, before any `#` comment.
+pub fn words(args: &str) -> Vec<&str> {
+    args.split('#').next().unwrap_or("").split_whitespace().collect()
+}
+
+/// The key a US keyboard types `c` with, and whether with Shift: for
+/// `type`, which gives each character its key as a keyboard would.
+pub fn char_key(c: char) -> Option<(u8, bool)> {
+    const PLAIN: &str = "-=[]\\;'`,./";
+    const SHIFTED: &str = "_+{}|:\"~<>?";
+    const USAGES: [u8; 11] = [0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38];
+    match c {
+        'a'..='z' => Some((0x04 + (c as u8 - b'a'), false)),
+        'A'..='Z' => Some((0x04 + (c as u8 - b'A'), true)),
+        '1'..='9' => Some((0x1E + (c as u8 - b'1'), false)),
+        '0' => Some((0x27, false)),
+        ' ' => Some((0x2C, false)),
+        '\n' => Some((0x28, false)),
+        '\t' => Some((0x2B, false)),
+        _ => {
+            if let Some(i) = "!@#$%^&*()".find(c) {
+                return Some((if i == 9 { 0x27 } else { 0x1E + i as u8 }, true));
+            }
+            if let Some(i) = PLAIN.chars().position(|p| p == c) {
+                return Some((USAGES[i], false));
+            }
+            SHIFTED.chars().position(|p| p == c).map(|i| (USAGES[i], true))
+        }
+    }
 }
 
 /// The HID usage ID for a key name or number.
@@ -80,6 +160,11 @@ pub fn key_code(name: &str) -> Option<u8> {
         "left" => 0x50,
         "down" => 0x51,
         "up" => 0x52,
+        // The modifier keys themselves (a window sends them too).
+        "lctrl" => 0xE0,
+        "lshift" => 0xE1,
+        "lalt" => 0xE2,
+        "lmeta" => 0xE3,
         _ => return None,
     })
 }
@@ -129,24 +214,57 @@ fn parse_pad(words: &[&str]) -> Result<(usize, Controller), String> {
 impl Script {
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut script = Script::default();
+        let mut at = Timeline::default();
         for (i, line) in text.lines().enumerate() {
-            script.parse_line(line).map_err(|e| format!("line {}: {e}", i + 1))?;
+            script.parse_line(line, &mut at).map_err(|e| format!("line {}: {e}", i + 1))?;
         }
         Ok(script)
     }
 
-    fn parse_line(&mut self, line: &str) -> Result<(), String> {
-        let trimmed = line.trim_start();
-        let (frame, rest) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
-        if frame.is_empty() || frame.starts_with('#') {
+    /// The `terse-host --drive` lines (STATE.md 6.5), each with its frame,
+    /// in the order written; a headless run leaves them out.
+    pub fn host_commands(&self) -> &[(u32, String)] {
+        &self.host
+    }
+
+    fn parse_line(&mut self, line: &str, at: &mut Timeline) -> Result<(), String> {
+        let Some((frame, command, args)) = split_line(line)? else { return Ok(()) };
+        if let Some(f) = frame {
+            at.frame = f;
+        }
+        let frame = at.frame;
+        if command == "wait" {
+            let n: u32 = number(words(args).first(), "frame count")?;
+            at.frame = at.frame.checked_add(n).ok_or("frame count too large")?;
             return Ok(());
         }
-        let frame: u32 = frame.parse().map_err(|_| format!("bad frame number {frame}"))?;
-        let rest = rest.trim_start();
-        let (command, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        if command == "type" {
+            // As a keyboard types it: a frame a character, each its key
+            // down (with Shift where a US keyboard needs it), its text and
+            // its key up; a character no key gives is its text alone.
+            for c in args.chars() {
+                let events = self.frames.entry(at.frame).or_default();
+                match char_key(c) {
+                    Some((k, shift)) => {
+                        let m = if shift { modifiers::SHIFT } else { 0 };
+                        events.push(Event::key_down(k, m));
+                        if !c.is_control() {
+                            events.push(Event::text(c));
+                        }
+                        events.push(Event::key_up(k, m));
+                    }
+                    None => events.push(Event::text(c)),
+                }
+                at.frame += 1;
+            }
+            return Ok(());
+        }
+        if HOST_COMMANDS.contains(&command) {
+            self.host.push((frame, line.trim().to_string()));
+            return Ok(());
+        }
         if command == "pad" {
-            let words: Vec<&str> = args.split('#').next().unwrap_or("").split_whitespace().collect();
-            let pad = parse_pad(&words)?;
+            let pad = parse_pad(&words(args))?;
             self.pads.entry(frame).or_default().push(pad);
             return Ok(());
         }
@@ -261,6 +379,26 @@ mod tests {
         for bad in ["1 pad 4 0 0 0", "1 pad 0 xyz 0 0", "1 pad 0 0 -128 0", "1 pad 0 0 0", "1 pad 0 0 0 0 1"] {
             assert!(Script::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    /// STATE.md 6.2's extension: lines without a frame number take the
+    /// current frame, `wait` moves it on, `type` types a character a frame,
+    /// and the drive's lines are kept apart.
+    #[test]
+    fn sequential_lines_wait_and_type() {
+        let s = Script::parse("press a\nwait 2\npress b\n10 press c\nwait 1\ntype aB!\nshot x.png\npress d\n").unwrap();
+        assert_eq!(s.events(0), [Event::key_down(4, 0), Event::key_up(4, 0)]);
+        assert_eq!(s.events(2), [Event::key_down(5, 0), Event::key_up(5, 0)]);
+        assert_eq!(s.events(10), [Event::key_down(6, 0), Event::key_up(6, 0)]);
+        assert_eq!(s.events(11), [Event::key_down(4, 0), Event::text('a'), Event::key_up(4, 0)]);
+        assert_eq!(s.events(12), [Event::key_down(5, 1), Event::text('B'), Event::key_up(5, 1)]);
+        assert_eq!(s.events(13), [Event::key_down(0x1E, 1), Event::text('!'), Event::key_up(0x1E, 1)]);
+        assert_eq!(s.events(14), [Event::key_down(7, 0), Event::key_up(7, 0)]);
+        assert_eq!(s.host_commands(), [(14, "shot x.png".to_string())]);
+        assert_eq!(char_key('='), Some((0x2E, false)));
+        assert_eq!(char_key('"'), Some((0x34, true)));
+        assert_eq!(char_key('é'), None);
+        assert_eq!(key_code("lshift"), Some(0xE1));
     }
 
     #[test]

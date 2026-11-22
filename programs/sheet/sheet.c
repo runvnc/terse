@@ -1476,6 +1476,11 @@ static uint32_t cmax(void) { return sc < ac ? ac : sc; }
  * header's top, g_y[1 + i] the top of shown row i, g_y[1 + rows] the
  * table's bottom. */
 static uint32_t g_y[VROWS_ALL + 2];
+/* What a page document showed: the rows, the first row and column, the
+ * selection. The overlay draws the one shown (vis_v), not the newest. */
+static struct {
+    uint32_t top, left, sr, sc, ar, ac, rows;
+} pend_v, vis_v;
 static uint16_t loc_ids[VROWS_ALL + 2];
 static uint32_t loc_n, loc_at;
 
@@ -1837,14 +1842,26 @@ static void build_doc(void)
         loc_ids[loc_n++] = (uint16_t)(A_ROW + i);
     loc_ids[loc_n++] = A_BOTTOM;
     loc_at = 0;
-    vec_dirty = 1;
+    /* The overlay follows when this document is shown: the answers to its
+     * locates come with its layout. Drawn now, it would show the new
+     * selection over the old page for the frames the host takes. */
+    pend_v.top = top;
+    pend_v.left = left;
+    pend_v.sr = sr;
+    pend_v.sc = sc;
+    pend_v.ar = ar;
+    pend_v.ac = ac;
+    pend_v.rows = rows;
 }
 
 static void located(const page_place *p)
 {
-    uint32_t y = p->y, rows = vrows();
+    uint32_t y = p->y, rows;
     if (!p->height)
         return;
+    /* Answers come only for the document submitted last, once laid out. */
+    vis_v = pend_v;
+    rows = vis_v.rows;
     if (p->id == A_HEAD)
         g_y[0] = y - 3;
     else if (p->id == A_BOTTOM)
@@ -1866,7 +1883,10 @@ static void vrect(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 
 static void build_vec(void)
 {
-    uint32_t rows = vrows(), k;
+    /* The selection as the page shown has it. */
+    uint32_t rows = vis_v.rows, k, top = vis_v.top, left = vis_v.left, sr = vis_v.sr, sc = vis_v.sc;
+    uint32_t rmin = sr < vis_v.ar ? sr : vis_v.ar, rmax = sr < vis_v.ar ? vis_v.ar : sr;
+    uint32_t cmin = sc < vis_v.ac ? sc : vis_v.ac, cmax = sc < vis_v.ac ? vis_v.ac : sc;
     int32_t y0 = (int32_t)g_y[0], y1 = (int32_t)g_y[1], bottom = (int32_t)g_y[rows + 1];
     vec_begin(vlist, sizeof vlist);
     /* The headers' shade. */
@@ -1883,8 +1903,8 @@ static void build_vec(void)
     vec_move(0, (int16_t)(bottom * 16));
     vec_line(640 * 16, (int16_t)(bottom * 16));
     /* The range, then the selected cell's box, where shown. */
-    int32_t r0 = (int32_t)rmin() - (int32_t)top, r1 = (int32_t)rmax() - (int32_t)top;
-    int32_t c0 = (int32_t)cmin() - (int32_t)left, c1 = (int32_t)cmax() - (int32_t)left;
+    int32_t r0 = (int32_t)rmin - (int32_t)top, r1 = (int32_t)rmax - (int32_t)top;
+    int32_t c0 = (int32_t)cmin - (int32_t)left, c1 = (int32_t)cmax - (int32_t)left;
     if (r0 < 0)
         r0 = 0;
     if (r1 >= (int32_t)rows)
@@ -1893,7 +1913,7 @@ static void build_vec(void)
         c0 = 0;
     if (c1 >= VCOLS)
         c1 = VCOLS - 1;
-    if ((rmin() != rmax() || cmin() != cmax()) && r0 <= r1 && c0 <= c1) {
+    if ((rmin != rmax || cmin != cmax) && r0 <= r1 && c0 <= c1) {
         vec_colour(26, 100, 210, 36);
         vrect((c0 + 1) * COLW, (int32_t)g_y[1 + r0], (c1 + 2) * COLW, (int32_t)g_y[2 + r1]);
     }
@@ -2160,7 +2180,9 @@ static void clear_range(void)
 
 static void set_chart(uint8_t kind)
 {
-    if (chart_kind == kind && ch_r0 == rmin() && ch_c0 == cmin() && ch_r1 == rmax() && ch_c1 == cmax()) {
+    /* The same key again removes the chart: with its range selected, or one
+     * cell (nothing to chart). */
+    if (chart_kind == kind && ((ch_r0 == rmin() && ch_c0 == cmin() && ch_r1 == rmax() && ch_c1 == cmax()) || (rmin() == rmax() && cmin() == cmax()))) {
         chart_kind = 0;
         say("Chart removed");
     } else if (rmin() == rmax() && cmin() == cmax()) {
@@ -2539,6 +2561,10 @@ static uint8_t buttons;
 static void key(uint8_t k, uint8_t mods)
 {
     int shift = mods & MOD_SHIFT, ctrl = mods & MOD_CTRL;
+    /* The modifier keys themselves (a window sends them as keys too): only
+     * the keys they modify count. */
+    if (k >= 0xE0 && k <= 0xE7)
+        return;
     if (editing) {
         switch (k) {
         case KEY_ESCAPE:

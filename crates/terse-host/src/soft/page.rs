@@ -89,6 +89,10 @@ pub struct SoftPage {
     arrived: usize,
     /// Quads of figures not yet rasterised when they were prepared.
     pending_quads: Vec<(usize, FigureKey)>,
+    /// The figure drawn at each index of the layout last prepared: while a
+    /// changed figure is rasterised, the one shown before stays in its
+    /// place (SPEC §page.layout: re-submitting never makes a figure blink).
+    figure_shown: HashMap<usize, FigureKey>,
 }
 
 impl Default for SoftPage {
@@ -111,6 +115,7 @@ impl Default for SoftPage {
             quads: PageQuads::default(),
             arrived: 0,
             pending_quads: Vec::new(),
+            figure_shown: HashMap::new(),
         }
     }
 }
@@ -181,16 +186,16 @@ impl SoftPage {
     }
 
     fn store_figure(&mut self, d: figures::Done) {
-        let (w, h) = d.key.2;
+        let (w, h) = d.key.1;
         let bytes = d.data.len();
         self.figure_images.insert(d.key, Arc::new(FigureImage { w, h, data: d.data }));
         self.arrived += 1;
         if self.figure_log.len() < 256 {
             let held: usize = self.figure_images.values().map(|f| f.data.len()).sum();
             self.figure_log.push(format!(
-                "figure {} ({w} x {h} px{}) rasterised in {:.1} ms; {} figures held, {} KiB ({bytes} bytes)",
-                d.key.1,
-                if d.key.3 { ", outlines" } else { "" },
+                "figure {:016x} ({w} x {h} px{}) rasterised in {:.1} ms; {} figures held, {} KiB ({bytes} bytes)",
+                d.key.0,
+                if d.key.2 { ", outlines" } else { "" },
                 d.ms,
                 self.figure_images.len(),
                 held / 1024
@@ -295,13 +300,14 @@ impl SoftPage {
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let mut wanted = HashSet::new();
         let mut jobs = Vec::new();
+        let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
         for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
             let (qw, qh) = ((f.width * s).ceil().max(1.0), (f.height * s).ceil().max(1.0));
             let mut scale = s.min((FIGURE_PIXELS / (qw * qh)).sqrt() * s);
             scale = scale.min(FIGURE_SIDE as f32 / f.width.max(f.height));
             let size = (((f.width * scale).ceil() as u32).clamp(1, FIGURE_SIDE), ((f.height * scale).ceil() as u32).clamp(1, FIGURE_SIDE));
-            let key: FigureKey = (layout.key, i, size, outline);
+            let key: FigureKey = (f.id, size, outline);
             wanted.insert(key);
             if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
@@ -315,12 +321,23 @@ impl SoftPage {
                 let at = self.quads.quads.len() - 1;
                 if let Some(img) = self.figure_images.get(&key) {
                     self.quads.quads[at].paint = Paint::Figure(img.clone());
+                    shown.insert(i, key);
                 } else {
                     self.pending_quads.push((at, key));
+                    // Until it is rasterised, the figure shown here before
+                    // (if of the same size).
+                    if let Some(&before) = self.figure_shown.get(&i).filter(|k| k.1 == size)
+                        && let Some(img) = self.figure_images.get(&before)
+                    {
+                        self.quads.quads[at].paint = Paint::Figure(img.clone());
+                        keep.insert(before);
+                        shown.insert(i, before);
+                    }
                 }
             }
         }
-        self.figure_images.retain(|k, _| wanted.contains(k));
+        self.figure_shown = shown;
+        self.figure_images.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));
         if self.sync_figures {
             for job in &jobs {

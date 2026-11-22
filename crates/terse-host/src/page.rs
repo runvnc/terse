@@ -189,6 +189,7 @@ impl Typesetter {
                 // cut at its right edge; drawn from the decoded paths.
                 let b = FigureBox::place(f, p.align, width as u32);
                 out.figures.push(HostFigure {
+                    id: crate::figures::figure_id(f),
                     top: y,
                     x: b.x as f32,
                     width: b.shown as f32,
@@ -325,6 +326,7 @@ impl Typesetter {
                 width: 0.0,
                 alpha: 255,
                 reach: 0.0,
+                text: run_text(&run),
             });
             bottom = y + run.line_top + run.line_height;
         }
@@ -398,6 +400,7 @@ impl Typesetter {
                             width: 0.0,
                             alpha: 255,
                             reach: 0.0,
+                            text: run_text(&run),
                         });
                         tallest = tallest.max(run.line_top + run.line_height);
                     }
@@ -476,11 +479,13 @@ pub struct HostLine {
     pub alpha: u8,
     /// The lowest bottom of this line and those before it.
     pub reach: f32,
+    /// The text shown (for `--drive`'s dumps).
+    pub text: String,
 }
 
 impl HostLine {
     fn rule(top: f32, height: f32, rgb: [u8; 3], x: f32, width: f32, alpha: u8) -> Self {
-        HostLine { top, height, baseline: 0.0, x, glyphs: 0..0, rule: Some(rgb), width, alpha, reach: 0.0 }
+        HostLine { top, height, baseline: 0.0, x, glyphs: 0..0, rule: Some(rgb), width, alpha, reach: 0.0, text: String::new() }
     }
 
     /// A rule's extent in pixels: its top, thickness, left and right, for
@@ -504,12 +509,32 @@ impl HostLine {
 /// left edge, top from the document's top, the width shown) and its paths.
 #[derive(Clone, Debug)]
 pub struct HostFigure {
+    /// What it draws (`figures::figure_id`).
+    pub id: u64,
     pub top: f32,
     pub x: f32,
     pub width: f32,
     pub height: f32,
     pub anchor: u16,
     pub paths: Arc<Vec<FigurePath>>,
+}
+
+/// The text a laid-out run shows, in visual order of its glyphs (an
+/// ellipsis where the line was cut).
+fn run_text(run: &cosmic_text::LayoutRun) -> String {
+    let mut out = String::new();
+    let mut last = None;
+    for g in run.glyphs.iter() {
+        if last == Some((g.start, g.end)) {
+            continue;
+        }
+        last = Some((g.start, g.end));
+        match run.text.get(g.start..g.end) {
+            Some(t) if g.end > g.start => out.push_str(t),
+            _ => out.push('\u{2026}'),
+        }
+    }
+    out
 }
 
 /// A document laid out with the host's fonts.
@@ -551,6 +576,33 @@ impl HostLayout {
             }
         }
         0
+    }
+
+    /// The lines and figures in the rectangle (`h` units high, scrolled by
+    /// `scroll`), as `--drive`'s `dump page` shows them: a header, then
+    /// `<top> <height> <x> |<text>` per line (top and x in screen units
+    /// from the rectangle's corner, as shown), `-- rule --`, `-- figure
+    /// WxH --`.
+    pub fn dump(&self, scroll: f32, h: f32) -> String {
+        use std::fmt::Write;
+        let mut out = format!("-- page (this host's layout): height {:.1}, scroll {:.1} --\n", self.height, scroll);
+        let mut items: Vec<(f32, String)> = Vec::new();
+        for l in self.lines.iter().filter(|l| l.top + l.height > scroll && l.top < scroll + h) {
+            let s = if l.rule.is_some() {
+                format!("{:7.1} {:5.1} {:6.1}  -- rule --", l.top - scroll, l.height, l.x)
+            } else {
+                format!("{:7.1} {:5.1} {:6.1} |{}", l.top - scroll, l.height, l.x, l.text)
+            };
+            items.push((l.top, s));
+        }
+        for f in self.figures.iter().filter(|f| f.top + f.height > scroll && f.top < scroll + h) {
+            items.push((f.top, format!("{:7.1} {:5.1} {:6.1}  -- figure {}x{} --", f.top - scroll, f.height, f.x, f.width, f.height)));
+        }
+        items.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, s) in items {
+            let _ = writeln!(out, "{s}");
+        }
+        out
     }
 
     /// Where anchor `id` is (SPEC §page.events): the top of the first line or
@@ -965,6 +1017,10 @@ pub struct PageLayer {
     figures_ready: Vec<figures::Done>,
     figure_log: Vec<String>,
     figure_draws: Vec<(u32, FigureKey)>,
+    /// The figure drawn at each index of the layout last prepared: while a
+    /// changed figure is rasterised, the one shown before stays in its
+    /// place (SPEC §page.layout: re-submitting never makes a figure blink).
+    figure_shown: HashMap<usize, FigureKey>,
     text_count: u32,
     /// Whether filled shapes are drawn as outlines (the vector display's
     /// fill mode 1); the phosphor style always outlines.
@@ -1109,6 +1165,7 @@ impl PageLayer {
             figures_ready: Vec::new(),
             figure_log: Vec::new(),
             figure_draws: Vec::new(),
+            figure_shown: HashMap::new(),
             text_count: 0,
             outlines: false,
             sync_figures: false,
@@ -1333,6 +1390,7 @@ impl PageLayer {
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let max_side = device.limits().max_texture_dimension_2d;
         let mut wanted = HashSet::new();
+        let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         let mut jobs = Vec::new();
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
         for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
@@ -1342,7 +1400,7 @@ impl PageLayer {
             let mut scale = s.min((FIGURE_PIXELS / (qw * qh)).sqrt() * s);
             scale = scale.min(max_side as f32 / (f.width.max(f.height)));
             let size = (((f.width * scale).ceil() as u32).clamp(1, max_side), ((f.height * scale).ceil() as u32).clamp(1, max_side));
-            let key: FigureKey = (layout.key, i, size, outline);
+            let key: FigureKey = (f.id, size, outline);
             wanted.insert(key);
             if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
@@ -1352,11 +1410,22 @@ impl PageLayer {
                 let x = (rx + f.x * s).round();
                 let y = (ry + (f.top - scroll) * s).round();
                 let uv = [0.0, 0.0, size.0 as f32, size.1 as f32];
-                self.figure_draws.push(((self.scratch.len() / INSTANCE_BYTES) as u32, key));
+                // Not rasterised yet: the figure shown here before, if of
+                // the same size, until it is.
+                let mut draw = key;
+                if !self.figure_textures.contains_key(&key)
+                    && let Some(&before) = self.figure_shown.get(&i).filter(|k| k.1 == size && self.figure_textures.contains_key(k))
+                {
+                    draw = before;
+                    keep.insert(before);
+                }
+                shown.insert(i, draw);
+                self.figure_draws.push(((self.scratch.len() / INSTANCE_BYTES) as u32, draw));
                 push(&mut self.scratch, [x, y, x + qw, y + qh], uv, [255; 4], 3);
             }
         }
-        self.figure_textures.retain(|k, _| wanted.contains(k));
+        self.figure_shown = shown;
+        self.figure_textures.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));
         let mut done = Vec::new();
         if self.sync_figures {
@@ -1383,16 +1452,16 @@ impl PageLayer {
             bytes += d.data.len();
             n += 1;
             self.figures_pending.remove(&d.key);
-            let texture = self.figure_texture(device, queue, d.key.2, &d.data);
+            let texture = self.figure_texture(device, queue, d.key.1, &d.data);
             self.figure_textures.insert(d.key, texture);
-            let (w, h) = d.key.2;
+            let (w, h) = d.key.1;
             if self.figure_log.len() >= 256 {
                 continue; // nobody is reading it
             }
             self.figure_log.push(format!(
-                "figure {} ({w} x {h} px{}) rasterised in {:.1} ms; {} figures held, {} KiB",
-                d.key.1,
-                if d.key.3 { ", outlines" } else { "" },
+                "figure {:016x} ({w} x {h} px{}) rasterised in {:.1} ms; {} figures held, {} KiB",
+                d.key.0,
+                if d.key.2 { ", outlines" } else { "" },
                 d.ms,
                 self.figure_textures.len(),
                 self.figure_bytes() / 1024

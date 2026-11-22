@@ -455,7 +455,14 @@ fn load_image(arg: &str, net: &mut Net) -> Result<Image, String> {
 pub fn load_script(path: Option<&str>) -> Result<Script, String> {
     let Some(path) = path else { return Ok(Script::default()) };
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    Script::parse(&text).map_err(|e| format!("{path}: {e}"))
+    let script = Script::parse(&text).map_err(|e| format!("{path}: {e}"))?;
+    // STATE.md 6.5: the lines for a window (pictures, dumps, its size) are
+    // terse-host --drive's; a headless run passes over them.
+    if let Some((frame, line)) = script.host_commands().first() {
+        let n = script.host_commands().len();
+        eprintln!("terse: {path}: {n} line{} for terse-host --drive skipped (the first, frame {frame}: {line})", if n == 1 { "" } else { "s" });
+    }
+    Ok(script)
 }
 
 /// The devices the machine's reading profile provides (SPEC §profiles): the system (1), the terminal (2), content (4), the page (7)

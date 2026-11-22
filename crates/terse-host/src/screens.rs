@@ -707,6 +707,10 @@ impl Display for GpuDisplay {
         self.screens.shell.row_height(viewport)
     }
 
+    fn screen_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32) {
+        self.screens.shell.screen_rect(viewport)
+    }
+
     fn take_page_figure_log(&mut self) -> Vec<String> {
         self.screens.shell.take_page_figure_log()
     }
@@ -758,4 +762,35 @@ impl Display for GpuDisplay {
     fn name(&self) -> String {
         format!("gpu, {}", self.adapter)
     }
+}
+
+/// Copies a presented texture out into a buffer to read (`--drive`).
+#[cfg(feature = "window")]
+pub fn copy_out(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture, (width, height): (u32, u32)) -> wgpu::Buffer {
+    let padded = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("presented picture"),
+        size: (padded * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: None } },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
+    buffer
+}
+
+/// The picture [`copy_out`] copied, as RGBA rows, from a texture of `format`.
+#[cfg(feature = "window")]
+pub fn read_out(device: &wgpu::Device, buffer: wgpu::Buffer, (width, height): (u32, u32), format: wgpu::TextureFormat) -> Result<crate::drive::Raw, String> {
+    let padded = ((width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) as usize;
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+    let data = slice.get_mapped_range().map_err(|e| e.to_string())?;
+    let bgra = matches!(format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+    let _ = height;
+    Ok(crate::drive::Raw::Rows { data: data.to_vec(), stride: padded, bgra })
 }
