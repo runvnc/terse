@@ -22,8 +22,14 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
+/// A program: this package's drivers as cargo built them for this test;
+/// terse and terse-bus (other packages') built from the current sources
+/// beside them.
 fn bin(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join(name)
+    match name {
+        "terse" | "terse-bus" => terse_testkit::program(name),
+        _ => Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join(name),
+    }
 }
 
 fn program(name: &str) -> String {
@@ -116,19 +122,14 @@ impl Home {
     }
 }
 
-/// terse, terse-bus and a C compiler, or a visible line saying what is missing.
+/// terse, terse-bus and a C compiler, or a skip saying what is missing.
 fn ready() -> Option<(Home, String)> {
-    for b in ["terse", "terse-bus"] {
-        if !bin(b).exists() {
-            eprintln!("skipped: {b} is not built (scripts/cargo build -p terse-cli -p terse-bus)");
-            return None;
-        }
-    }
+    terse_testkit::programs(&["terse", "terse-bus"]);
     let home = Home::new();
     match home.example() {
         Some(x) => Some((home, x)),
         None => {
-            eprintln!("skipped: no C compiler for native/driver-example");
+            terse_testkit::skip!("cc", "no C compiler for native/driver-example");
             None
         }
     }

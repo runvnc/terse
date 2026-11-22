@@ -13,21 +13,14 @@ fn mame() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_terse-dev-mame"))
 }
 
-fn bin_dir() -> PathBuf {
-    mame().parent().unwrap().to_path_buf()
-}
-
 fn image(rel: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel).display().to_string()
 }
 
-fn built(names: &[&str]) -> bool {
-    let missing: Vec<&&str> = names.iter().filter(|n| !bin_dir().join(n).exists()).collect();
-    if !missing.is_empty() {
-        println!("skipped: not built: {missing:?} (build the workspace)");
-        return false;
-    }
-    true
+/// terse-bus and the reference drivers (other packages' programs), built
+/// from the current sources; terse-bus starts the drivers beside it.
+fn built(names: &[&str]) {
+    terse_testkit::programs(names);
 }
 
 /// terse-bus with scratch store, configuration and data (never the
@@ -40,7 +33,7 @@ fn bus(args: &[&str], font: Option<&str>) -> std::process::Output {
         std::fs::create_dir_all(&p).unwrap();
         p.display().to_string()
     };
-    let mut c = Command::new(bin_dir().join("terse-bus"));
+    let mut c = Command::new(terse_testkit::program("terse-bus"));
     c.args(args).args(["--store", &p("store"), "--config", &p("config"), "--data", &p("data"), "--relay", "none"]);
     c.env_remove("TERSE_MAME_TIMES").env_remove("TERSE_MAME_FONT");
     if let Some(f) = font {
@@ -57,9 +50,7 @@ fn ok(o: &std::process::Output, what: &str) -> String {
 
 #[test]
 fn every_font_leaves_the_machine_alone() {
-    if !built(&["terse-bus", "terse-dev-terminal", "terse-dev-vector"]) {
-        return;
-    }
+    built(&["terse-bus", "terse-dev-terminal", "terse-dev-vector"]);
     let tmp = tempfile::tempdir().unwrap();
     let shot = tmp.path().join("shot.png").display().to_string();
     let text = image("crates/terse-mame-crt/pattern/text.terse");
@@ -90,9 +81,7 @@ fn pixels(path: &Path) -> Vec<u8> {
 
 #[test]
 fn the_fonts_draw_differently() {
-    if !built(&["terse-bus"]) {
-        return;
-    }
+    built(&["terse-bus"]);
     let tmp = tempfile::tempdir().unwrap();
     let text = image("crates/terse-mame-crt/pattern/text.terse");
     let mut shots = Vec::new();
@@ -105,7 +94,7 @@ fn the_fonts_draw_differently() {
             assert!(err.contains("TERSE_MAME_FONT"), "{err}");
         }
         if !err.contains("MAME vector CRT pipeline on") {
-            println!("the_fonts_draw_differently: skipped: no graphics adapter");
+            terse_testkit::skip!("gpu", "no graphics adapter");
             return;
         }
         shots.push(pixels(&shot));

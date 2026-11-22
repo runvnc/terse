@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	"tersereader/internal/blake3"
+	"tersereader/internal/testenv"
 	"tersereader/internal/vecfile"
 )
 
@@ -54,18 +55,18 @@ func TestInteractive(t *testing.T) {
 
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
-		t.Skip("no pseudo-terminals:", err)
+		testenv.Skip(t, "pty", "no pseudo-terminals: %v", err)
 	}
 	defer master.Close()
 	var unlock int32
 	var n uint32
 	ioctl(int(master.Fd()), syscall.TIOCSPTLCK, unsafe.Pointer(&unlock))
 	if err := ioctl(int(master.Fd()), syscall.TIOCGPTN, unsafe.Pointer(&n)); err != nil {
-		t.Skip(err)
+		testenv.Skip(t, "pty", "%v", err)
 	}
 	slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", n), os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
-		t.Skip(err)
+		testenv.Skip(t, "pty", "%v", err)
 	}
 	ws := struct{ Row, Col, X, Y uint16 }{24, 80, 0, 0}
 	ioctl(int(slave.Fd()), syscall.TIOCSWINSZ, unsafe.Pointer(&ws))

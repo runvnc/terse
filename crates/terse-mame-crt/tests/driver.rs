@@ -14,10 +14,6 @@ fn mame() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_terse-dev-mame"))
 }
 
-fn bin_dir() -> PathBuf {
-    mame().parent().unwrap().to_path_buf()
-}
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -26,13 +22,10 @@ fn image(rel: &str) -> String {
     root().join(rel).display().to_string()
 }
 
-fn built(names: &[&str]) -> bool {
-    let missing: Vec<&&str> = names.iter().filter(|n| !bin_dir().join(n).exists()).collect();
-    if !missing.is_empty() {
-        println!("skipped: not built: {missing:?} (build the workspace)");
-        return false;
-    }
-    true
+/// terse-bus and the reference drivers (other packages' programs), built
+/// from the current sources; terse-bus starts the drivers beside it.
+fn built(names: &[&str]) {
+    terse_testkit::programs(names);
 }
 
 /// Scratch store, configuration and data: never the user's.
@@ -55,7 +48,7 @@ impl Dirs {
 
 fn bus(args: &[String], mame_drivers: bool) -> std::process::Output {
     let dirs = Dirs::new();
-    let mut c = Command::new(bin_dir().join("terse-bus"));
+    let mut c = Command::new(terse_testkit::program("terse-bus"));
     c.args(args).args(dirs.args());
     if mame_drivers {
         let m = mame().display().to_string();
@@ -72,12 +65,10 @@ fn ok(o: &std::process::Output, what: &str) -> String {
 
 #[test]
 fn handshake_answers_each_group() {
-    if !built(&["terse-bus"]) {
-        return;
-    }
+    built(&["terse-bus"]);
     let m = mame().display().to_string();
     for (slot, want) in [("3", ["slot 3 0", "slot 9 0"].as_slice()), ("2", ["slot 2 0"].as_slice())] {
-        let o = Command::new(bin_dir().join("terse-bus")).args(["--probe-driver", &m, "--slot", slot]).output().unwrap();
+        let o = Command::new(terse_testkit::program("terse-bus")).args(["--probe-driver", &m, "--slot", slot]).output().unwrap();
         let out = ok(&o, "probe");
         for w in want {
             assert!(out.lines().any(|l| l == *w), "--slot {slot}: {out}");
@@ -96,9 +87,7 @@ fn handshake_answers_each_group() {
 /// has it (sparks' hearts).
 #[test]
 fn the_look_never_changes_the_machine() {
-    if !built(&["terse-bus", "terse-dev-terminal", "terse-dev-vector"]) {
-        return;
-    }
+    built(&["terse-bus", "terse-dev-terminal", "terse-dev-vector"]);
     let tmp = tempfile::tempdir().unwrap();
     let shot = tmp.path().join("shot.png").display().to_string();
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
@@ -130,9 +119,7 @@ fn the_look_never_changes_the_machine() {
 /// graphics adapter (the driver then says so and the core draws its beam).
 #[test]
 fn pattern_picture() {
-    if !built(&["terse-bus"]) {
-        return;
-    }
+    built(&["terse-bus"]);
     let tmp = tempfile::tempdir().unwrap();
     let shot = tmp.path().join("pattern.png");
     let args: Vec<String> =
@@ -141,7 +128,7 @@ fn pattern_picture() {
     let o = bus(&args, true);
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
     if !err.contains("MAME vector CRT pipeline on") {
-        println!("pattern_picture: skipped: no graphics adapter ({})", err.lines().find(|l| l.contains("terse-dev-mame")).unwrap_or("").trim());
+        terse_testkit::skip!("gpu", "no graphics adapter ({})", err.lines().find(|l| l.contains("terse-dev-mame")).unwrap_or("").trim());
         return;
     }
     ok(&o, "pattern");

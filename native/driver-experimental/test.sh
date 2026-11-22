@@ -7,11 +7,13 @@
 # temporary store, config and data directories, and no network.
 #   TERSE_DRIVERS  directory of terse, terse-bus and the terse-dev-* drivers
 #                  (default ../../target/release; build them first with
-#                  scripts/cargo build --release -p terse-cli -p terse-devices -p terse-bus)
+#                  scripts/cargo build --release --workspace --bins)
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 D=${TERSE_DRIVERS:-$root/target/release}
+# Programs older than their sources would test something else: refuse them.
+python3 "$root/scripts/check-built.py" "$D" terse terse-bus terse-dev-terminal terse-dev-vector terse-dev-content terse-dev-page terse-dev-sound || exit 1
 T=$(mktemp -d "${TMPDIR:-/tmp}/driver-experimental.XXXXXX")
 trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/home"

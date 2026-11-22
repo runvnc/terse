@@ -10,6 +10,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 P=$root/programs
 D=${TERSE_DRIVERS:-$root/target/release}
+# Programs older than their sources would test something else: refuse them.
+python3 "$root/scripts/check-built.py" "$D" terse terse-bus terse-dev-terminal terse-dev-vector terse-dev-content terse-dev-page terse-dev-sound || exit 1
 TC=$here/tcore
 FUZZ=${FUZZ:-300}
 T=$(mktemp -d "${TMPDIR:-/tmp}/tcore-test.XXXXXX")

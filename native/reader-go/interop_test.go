@@ -12,31 +12,36 @@ import (
 
 	"tersereader/internal/article"
 	"tersereader/internal/blake3"
+	"tersereader/internal/testenv"
 )
 
 // The interoperability test runs the reference relay and command line
 // tool as black boxes (never on port 7878, never with the real
 // configuration or store) and checks that this reader syncs, verifies and
-// shows what they publish. It is skipped if the reference binaries are not
-// built; TERSE_BIN_DIR names their directory, else target/release of the
-// repository (or of a checkout above it) is used.
+// shows what they publish. TERSE_BIN_DIR names the reference binaries'
+// directory, else target/release of the repository is used. It is skipped
+// (a recorded skip, testenv) if they are not built, and fails if one is
+// older than its sources: build them first with
+// scripts/cargo build --release --workspace --bins.
 
 func findBin(t *testing.T, name string) string {
-	if d := os.Getenv("TERSE_BIN_DIR"); d != "" {
-		return filepath.Join(d, name)
+	t.Helper()
+	dir := os.Getenv("TERSE_BIN_DIR")
+	if dir == "" {
+		dir = filepath.Join(testenv.Root(), "target", "release")
 	}
-	d, _ := os.Getwd()
-	for {
-		p := filepath.Join(d, "target", "release", name)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			t.Skipf("%s not built (cargo build --release -p terse-cli -p terse-relay, or set TERSE_BIN_DIR)", name)
-		}
-		d = parent
+	p := filepath.Join(dir, name)
+	if _, err := os.Stat(p); err != nil {
+		testenv.Skip(t, "programs", "%s not built (scripts/cargo build --release --workspace --bins, or set TERSE_BIN_DIR)", p)
 	}
+	why, noted := testenv.Stale(p)
+	if why != "" {
+		t.Fatalf("%s is older than its sources (%s): run scripts/cargo build --release --workspace --bins", p, why)
+	}
+	if noted {
+		t.Logf("%s: no build record beside it, so not checked against the sources", p)
+	}
+	return p
 }
 
 type env struct {
