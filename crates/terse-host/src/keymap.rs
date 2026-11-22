@@ -78,6 +78,21 @@ pub fn hid_usage(key: KeyCode) -> Option<u8> {
     })
 }
 
+/// The key with HID usage `usage` (the inverse of [`hid_usage`]), for
+/// `--drive`, which presses keys as the window system would.
+pub fn key_code(usage: u8) -> Option<KeyCode> {
+    use KeyCode::*;
+    const ALL: &[KeyCode] = &[
+        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX,
+        KeyY, KeyZ, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+        Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9, Numpad0, Enter, Escape, Backspace, Tab, Space, Minus,
+        Equal, BracketLeft, BracketRight, Backslash, Semicolon, Quote, Backquote, Comma, Period, Slash, CapsLock, Insert, Home, PageUp, Delete,
+        End, PageDown, ArrowRight, ArrowLeft, ArrowDown, ArrowUp, NumpadDivide, NumpadMultiply, NumpadSubtract, NumpadAdd, NumpadEnter,
+        NumpadDecimal, ControlLeft, ShiftLeft, AltLeft, SuperLeft, ControlRight, ShiftRight, AltRight, SuperRight,
+    ];
+    ALL.iter().copied().find(|&k| hid_usage(k) == Some(usage))
+}
+
 /// Modifier bits: 0 Shift, 1 Control, 2 Alt, 3 Meta.
 pub fn modifier_bits(m: ModifiersState) -> u8 {
     use terse_core::modifiers::*;

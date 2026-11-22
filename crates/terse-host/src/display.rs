@@ -407,6 +407,9 @@ pub trait Display {
     fn anchor(&self, serial: u32, x: u16, y: u16) -> u16;
     /// A viewport position in the shell's screen units (SPEC §screen).
     fn screen_pos(&self, viewport: (u32, u32), x: f64, y: f64) -> (u16, u16);
+    /// Where the shell's screen is in the viewport (x, y, width, height
+    /// in pixels): the rectangle `screen_pos` maps through.
+    fn screen_rect(&self, viewport: (u32, u32)) -> (f32, f32, f32, f32);
     /// The height of one terminal row of the shell's screen in pixels.
     fn row_height(&self, viewport: (u32, u32)) -> f64;
     /// What the shell's page figures did since the last call (`TERSE_PAGE_TRACE`).

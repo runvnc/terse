@@ -45,3 +45,27 @@ build is needed before it.
   `native/reader-go`) use `target/release`: run
   `scripts/cargo build --release --workspace --bins` before them. They
   refuse a program older than its sources (`scripts/check-built.py`).
+
+## Testing a program as a user would
+
+Headless `terse run` and `terse-host --screenshot` lay the page out at once
+and feed one ideal event at a time; they cannot show what the window shows
+over time (a page laid out on its own thread, figures rasterised late, keys
+arriving as key + text + key up with modifier keys, the pointer in window
+pixels at any window size). Before calling a program done, drive it in the
+real window:
+
+    terse-host programs/sheet/sheet.terse --drive script.txt --size 1900x1000 --renderer software
+    terse-host programs/sheet/sheet.terse --drive script.txt --renderer gpu
+
+`--drive` starts its own headless weston (never a window on the user's
+desktop: do not set `TERSE_DRIVE_DISPLAY=current` here), uses scratch
+store/config/data unless given, and no relay unless `--relay`. The script
+language is README "Driving the window" (STATE.md 6.5). A good script:
+`settle`, `expect idle 120` (catches flashing), `type ...` / `press ...`
+with `wait`, `shot step.png` after each step (look at the PNG with the Read
+tool), `dump page` / `expect page contains ...`, `expect no-slow`.
+Interactive: `mkfifo /tmp/.../ctl; terse-host prog.terse --drive /tmp/.../ctl > out.txt &`,
+then `echo 'press down' > ctl`, read `out.txt`; end with `echo quit > ctl`.
+Tests: `crates/terse-host/tests/drive.rs` (and the sheet's) show how to run
+it from a test and skip with `terse_testkit::skip!("weston", ...)`.

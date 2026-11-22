@@ -325,6 +325,7 @@ impl Typesetter {
                 width: 0.0,
                 alpha: 255,
                 reach: 0.0,
+                text: run_text(&run),
             });
             bottom = y + run.line_top + run.line_height;
         }
@@ -398,6 +399,7 @@ impl Typesetter {
                             width: 0.0,
                             alpha: 255,
                             reach: 0.0,
+                            text: run_text(&run),
                         });
                         tallest = tallest.max(run.line_top + run.line_height);
                     }
@@ -476,11 +478,13 @@ pub struct HostLine {
     pub alpha: u8,
     /// The lowest bottom of this line and those before it.
     pub reach: f32,
+    /// The text shown (for `--drive`'s dumps).
+    pub text: String,
 }
 
 impl HostLine {
     fn rule(top: f32, height: f32, rgb: [u8; 3], x: f32, width: f32, alpha: u8) -> Self {
-        HostLine { top, height, baseline: 0.0, x, glyphs: 0..0, rule: Some(rgb), width, alpha, reach: 0.0 }
+        HostLine { top, height, baseline: 0.0, x, glyphs: 0..0, rule: Some(rgb), width, alpha, reach: 0.0, text: String::new() }
     }
 
     /// A rule's extent in pixels: its top, thickness, left and right, for
@@ -510,6 +514,24 @@ pub struct HostFigure {
     pub height: f32,
     pub anchor: u16,
     pub paths: Arc<Vec<FigurePath>>,
+}
+
+/// The text a laid-out run shows, in visual order of its glyphs (an
+/// ellipsis where the line was cut).
+fn run_text(run: &cosmic_text::LayoutRun) -> String {
+    let mut out = String::new();
+    let mut last = None;
+    for g in run.glyphs.iter() {
+        if last == Some((g.start, g.end)) {
+            continue;
+        }
+        last = Some((g.start, g.end));
+        match run.text.get(g.start..g.end) {
+            Some(t) if g.end > g.start => out.push_str(t),
+            _ => out.push('\u{2026}'),
+        }
+    }
+    out
 }
 
 /// A document laid out with the host's fonts.
@@ -551,6 +573,33 @@ impl HostLayout {
             }
         }
         0
+    }
+
+    /// The lines and figures in the rectangle (`h` units high, scrolled by
+    /// `scroll`), as `--drive`'s `dump page` shows them: a header, then
+    /// `<top> <height> <x> |<text>` per line (top and x in screen units
+    /// from the rectangle's corner, as shown), `-- rule --`, `-- figure
+    /// WxH --`.
+    pub fn dump(&self, scroll: f32, h: f32) -> String {
+        use std::fmt::Write;
+        let mut out = format!("-- page (this host's layout): height {:.1}, scroll {:.1} --\n", self.height, scroll);
+        let mut items: Vec<(f32, String)> = Vec::new();
+        for l in self.lines.iter().filter(|l| l.top + l.height > scroll && l.top < scroll + h) {
+            let s = if l.rule.is_some() {
+                format!("{:7.1} {:5.1} {:6.1}  -- rule --", l.top - scroll, l.height, l.x)
+            } else {
+                format!("{:7.1} {:5.1} {:6.1} |{}", l.top - scroll, l.height, l.x, l.text)
+            };
+            items.push((l.top, s));
+        }
+        for f in self.figures.iter().filter(|f| f.top + f.height > scroll && f.top < scroll + h) {
+            items.push((f.top, format!("{:7.1} {:5.1} {:6.1}  -- figure {}x{} --", f.top - scroll, f.height, f.x, f.width, f.height)));
+        }
+        items.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, s) in items {
+            let _ = writeln!(out, "{s}");
+        }
+        out
     }
 
     /// Where anchor `id` is (SPEC §page.events): the top of the first line or

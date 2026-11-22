@@ -792,6 +792,45 @@ next `pad` line for it; controllers are disconnected until their first one.
 `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start, `14` A and left); the
 sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 
+### Driving the window
+
+`terse-host [<image> | --shell] --drive <script|fifo|->` runs the program in the
+real window (the renderer chosen, the page laid out on its thread, figures
+rasterised beside the frames, 60 frames a second of real time) with input
+from a script, and reports what was presented. On Linux it starts a headless
+weston of its own and runs inside it, so no window appears on the desktop
+(`TERSE_DRIVE_DISPLAY=current` uses the current display: for CI on other
+systems). Without `--store`, `--config`, `--data` it uses scratch directories,
+removed afterwards; no relay without `--relay`; consent is asked as in a window
+(answer with `press y`).
+
+The script is the events file above (STATE.md 6.2 and its extension: lines
+without a frame number run one after another, `wait <frames>` and `type
+<text>`) plus (STATE.md 6.5):
+
+    press g ctrl          keys as a keyboard sends them: Ctrl down, G, G up, Ctrl up
+    type =SUM(A1:A3)      a character a frame: key down, its text, key up
+    hold down 60          a key held 60 frames, auto-repeating as a keyboard does
+    click 120 80          the pointer at a screen unit, through the window's mapping
+    click-px 900 400      ... at a window pixel (pointer-px, drag, drag-px likewise)
+    wheel 3               wheel steps
+    resize 1900 1000      the window's size
+    wait 30               frames; sleep <ms> waits real time
+    settle [max N]        until 10 presented pictures in a row are the same
+    shot out.png          the picture last presented, as presented
+    dump page             page (this host's layout), terminal, vectors or state; `> file` to a file
+    watch 120 [save dir]  report pictures that changed, where, how much, and blinks
+    expect idle 60        fail if the picture changes in the next 60 frames
+    expect page contains Total     (or lacks; terminal, vectors, state)
+    expect budget 80      fail if a machine used more than 80% of a frame's budget
+    expect no-slow        fail if a frame was late or the host warned
+    perf / budget         the slow-frame notes / each machine's budget use
+    quit
+
+Reports go to standard output; the exit status is 1 if an expectation failed.
+From a FIFO (`mkfifo ctl`) the host reads each writer's lines as they come, so
+an agent can drive it by hand: `echo 'type 42' > ctl; echo 'shot a.png' > ctl`.
+
 ## Writing an article
 
 An article is UTF-8 text that reads well as it is (`ARTICLE.md` is exact). Blank

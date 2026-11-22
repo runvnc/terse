@@ -12,6 +12,8 @@ mod app;
 mod audio;
 pub mod consent;
 pub mod display;
+#[cfg(feature = "window")]
+mod drive;
 pub mod fonts;
 
 /// GPU tests on a machine whose desktop is using the card.
@@ -104,6 +106,8 @@ const USAGE: &str = "usage:
              [--store <dir>] [--config <dir>] [--data <dir>] [--builtin <image|id>]...
   terse-host --bench-render [<image|id> | --shell [<image|id>]] --frames <N> [--warmup <N>] [--size <W>x<H>]
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
+  terse-host [<image|id> | --shell [<image|id>]] --drive <script|fifo|-> [--size <W>x<H>] [--renderer gpu|software]
+             [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [...]
   terse-host --version
   Every form takes --perf-log <dir>|off: where the performance record goes (RECORD.md; default: <data>/perf
   for a window, none otherwise; it never leaves this computer), and --perf-rule on|off: whether the rule
@@ -172,7 +176,14 @@ const USAGE: &str = "usage:
   (default 60), and how many took over 16.7 ms. No window is opened. --sweep-eye moves the eye every
   frame (round an ellipse 160 units to either side and 80 up and down, once every 120 frames), as a
   pointer moving over the window would, so 3D lists are projected again each frame.
-  Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the focused program as typed text.";
+  Paste with Ctrl+V or Shift+Insert: the clipboard's text goes to the focused program as typed text.
+  --drive runs the window driven by a script and watched (README, Driving the window; STATE.md 6.5):
+  keys as a keyboard gives them, the pointer in window pixels, the window's size; pictures as
+  presented, dumps of the terminal, page, vectors and state, a watch for pictures that change while
+  idle, expectations (exit status 1 if one fails). On Linux it starts a headless compositor (weston)
+  of its own: no window is shown on this desktop (TERSE_DRIVE_DISPLAY=current shows it here). The
+  script is a file, a FIFO (read again after each writer) or - (standard input); with no --store,
+  --config or --data, scratch directories are used and removed after; no relay unless --relay.";
 
 /// The `terse-host` command.
 pub fn main() -> ExitCode {
@@ -187,6 +198,8 @@ pub fn main() -> ExitCode {
 
 /// `terse-host` with these arguments (for tests that need its pictures).
 pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
+    let all_args = args.clone();
+    let mut drive_script: Option<String> = None;
     let mut image_path = None;
     let mut screenshot = None;
     let mut frames = None;
@@ -209,6 +222,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--screenshot" => screenshot = Some(it.next().ok_or(USAGE)?),
+            "--drive" => drive_script = Some(it.next().ok_or(USAGE)?),
             "--selftest" => selftest = true,
             "--bench-render" => bench = true,
             "--sweep-eye" => sweep = true,
@@ -334,9 +348,35 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     if (bench && (selftest || screenshot.is_some() || frames.is_none())) || (sweep && !bench) {
         return Err(USAGE.into());
     }
-    let windowed = !selftest && !bench && screenshot.is_none();
+    let driving = drive_script.is_some();
+    if driving && (bench || selftest || screenshot.is_some() || events.is_some() || frames.is_some() || demo) {
+        return Err(USAGE.into());
+    }
+    #[cfg(feature = "window")]
+    if let Some(path) = &drive_script {
+        drive::check(path)?;
+        // Never a window on this desktop: a compositor of its own.
+        if let Some(status) = drive::nest(&all_args, size) {
+            return status;
+        }
+    }
+    #[cfg(not(feature = "window"))]
+    let _ = &all_args;
+    // A drive never uses the user's directories unless told.
+    let scratch = match driving && (store.is_none() || config.is_none() || data.is_none()) {
+        #[cfg(feature = "window")]
+        true => {
+            let d = drive::scratch()?;
+            store = store.or(Some(d.join("store")));
+            config = config.or(Some(d.join("config")));
+            data = data.or(Some(d.join("data")));
+            Some(d)
+        }
+        _ => None,
+    };
+    let windowed = !selftest && !bench && screenshot.is_none() && !driving;
     // The rule acts in a window; a self-test only records unless told.
-    let rule = perf_rule.unwrap_or(windowed);
+    let rule = perf_rule.unwrap_or(windowed || driving);
     // No image: the built-in shell. --shell: the image named (if any) is
     // the shell.
     let shell = shell_flag || image_path.is_none();
@@ -349,7 +389,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let consent = match consent {
         Some(Consent::Ask) if selftest => return Err("--selftest cannot ask for consent (allow or deny)".into()),
         Some(c) => c,
-        None if windowed => Consent::Ask,
+        None if windowed || driving => Consent::Ask,
         None => Consent::Deny,
     };
     let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
@@ -368,7 +408,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     // directory's perf/; a self-test's only where --perf-log says.
     let perf = match perf_log {
         Some(p) => p,
-        None if windowed => Some(data.join("perf")),
+        None if windowed || driving => Some(data.join("perf")),
         None => None,
     };
     // The relay: in a window, found or started as README "Getting started"
@@ -473,11 +513,22 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             SelfTestStub
         };
         let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
-        return run_window(program, content, Some(test), looks);
+        return run_window(program, content, Some(test), None, looks);
     }
     if csv.is_some() {
         return Err(USAGE.into());
     }
+    #[cfg(feature = "window")]
+    if let Some(path) = &drive_script {
+        let looks = Looks { no_trails, force_phosphor, term_fonts, page_fonts, window: size, renderer, threads, look, eye, parallax, panels, perf: perf.clone(), started, check: None, rule };
+        let d = drive::Drive::new(path)?;
+        let status = run_window(program, content, None, Some(d), looks);
+        if let Some(d) = &scratch {
+            drive::remove_scratch(d);
+        }
+        return status;
+    }
+    let _ = scratch;
     let script = || -> Result<Script, String> {
         match &events {
             Some(path) => {
@@ -516,7 +567,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 }
                 looks.check = Some(check);
             }
-            run_window(program, content, None, looks)
+            run_window(program, content, None, None, looks)
         }
         _ => Err(USAGE.into()),
     }
@@ -535,15 +586,15 @@ pub struct Program {
 }
 
 #[cfg(feature = "window")]
-fn run_window(program: Program, content: Option<ContentService>, test: Option<selftest::SelfTest>, looks: Looks) -> Result<ExitCode, String> {
-    app::run(program, content, test, looks)
+fn run_window(program: Program, content: Option<ContentService>, test: Option<selftest::SelfTest>, drive: Option<drive::Drive>, looks: Looks) -> Result<ExitCode, String> {
+    app::run(program, content, test, drive, looks)
 }
 
 /// Without the window feature (the bootable image's build, which is to
 /// show its frames on a KMS/DRM display through `soft::FrameSink`) there
 /// is no window yet.
 #[cfg(not(feature = "window"))]
-fn run_window(_: Program, _: Option<ContentService>, _: Option<SelfTestStub>, _: Looks) -> Result<ExitCode, String> {
+fn run_window(_: Program, _: Option<ContentService>, _: Option<SelfTestStub>, _: Option<()>, _: Looks) -> Result<ExitCode, String> {
     Err("this terse-host was built without a window (feature \"window\"): use --screenshot or --bench-render".into())
 }
 

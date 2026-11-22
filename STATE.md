@@ -628,7 +628,34 @@ not be in frame order. Lines for a frame that is never run are ignored.
   `pagedown` (`4Eh`), `right`, `left`, `down`, `up` (`4Fh`–`52h`);
 - two or more decimal digits are a usage ID, 0–255 (`40` is `28h`;
   `05` is usage 5), and so is `0x` followed by a hexadecimal number up to
-  `FF` (`0x28`).
+  `FF` (`0x28`);
+- `lctrl`, `lshift`, `lalt`, `lmeta` are the modifier keys themselves
+  (`E0h`–`E3h`), which a window sends as keys too.
+
+**Sequential lines (an extension).** `terse run`, `terse-bus` and
+`terse-host` also read the following; an implementation that reads only
+the lines above (`tcore`) refuses a file that uses them, so the expected
+files of this repository do not.
+
+- A line may start with its command, without a frame number: it belongs
+  to the **current frame**, which is the frame of the line before it (0
+  for the first line). A numbered line sets the current frame.
+- `wait <n>` (no events) moves the current frame on by n (0 to
+  4,294,967,295).
+- `type <text>`: the rest of the line typed as a keyboard types it, one
+  character a frame from the current frame on: for each character a key
+  down with the key a US keyboard types it with (Shift held, modifier bit
+  0, for capitals and the shifted symbols), its text event, and the key
+  up, all in that frame (a character no key types, its text event alone;
+  a newline is Enter and a tab Tab, without text). The current frame
+  moves on by the number of characters.
+- The commands of 6.5 (`shot`, `dump`, `settle`, `watch`, `expect`,
+  `resize`, `pointer-px`, `click-px`, `drag`, `drag-px`, `hold`, `perf`,
+  `budget`, `say`, `sleep`, `quit`) are for a window: a headless run reads
+  them and does nothing (`terse run` says how many it passed over).
+
+So one script serves a headless run and a window: in each, the events of
+a frame arrive in that frame.
 
 ### 6.3 The screen dump (`--dump`)
 
@@ -664,3 +691,47 @@ withheld, SPEC §image). They end with:
 | 2 | the run did not start: a bad command line or events file, an image refused (SPEC §image: malformed, or a required device or version not provided), a driver that could not be started or whose handshake failed (`DEVICES.md` 1.1, 2) |
 | 3 | a driver failed while the machine ran (`DEVICES.md` 10) |
 | 4 | the host stopped the machine: a device did not keep up (SPEC §stopping, halted; `PERFORMANCE.md` R15); the message names the device and where the machine's snapshot from just before went |
+
+### 6.5 Driving a window (`terse-host --drive`)
+
+`terse-host --drive <script>` runs the image (or the system) in its window,
+in real time, with input from the script and reports on what it presents
+(README, Driving the window). The script is an events file (6.2, with the
+sequential lines); its lines are carried out in order, each in the frame it
+belongs to, and these differ from a headless run:
+
+- Input enters where the window system's does: `down`, `up` and `press`
+  press the modifier keys named as keys of their own first (`press g
+  ctrl` is Control down, G down, G up, Control up, the modifier state
+  changing as a window system reports it) and a key that types a character
+  on a US keyboard also gives its text, as a window does; `pointer` and
+  `click` positions are screen units, turned into window pixels at the
+  unit's centre and back through the window's mapping; `text` is text
+  events without a key (as an input method gives them); `home` is the F12
+  key.
+- A line that observes (`shot`, `dump`, `watch`, `settle`, `expect`,
+  `perf`, `budget`) looks at the first picture presented after its frame;
+  the next line waits for it.
+
+The commands of a window:
+
+| Command | Arguments | What it does |
+|---|---|---|
+| `pointer-px`, `click-px` | x, y (window pixels)[, buttons] | as `pointer` and `click`, at a pixel of the window |
+| `drag`, `drag-px` | x0, y0, x1, y1 | the primary button pressed at the first point, the pointer moved to the second over 8 frames, released in the 9th |
+| `hold` | key, frames | the key held down for that many frames, repeating as a keyboard does (after 30 frames, every 2) |
+| `resize` | width, height | asks for the window's inner size in pixels; the next line waits 3 frames |
+| `sleep` | milliseconds | the next line waits that long in real time |
+| `shot` | file | writes the picture presented, as PNG |
+| `dump` | `terminal`, `page`, `vectors` or `state`, optionally a machine handle, optionally `> file` | the terminal grid (6.3), the page as this host laid it out (each line in view: its top, height and x in screen units and its text), the vector lists (as `--dump-vectors`), or the frame, window and machines |
+| `watch` | frames, optionally `every <n>`, `save <dir>` | reports, after that many pictures, how many changed, where (a box of pixels) and by how much, how many were distinct, and blinks: 32 × 32 pixel tiles that changed and came back to what they were 2 to 4 pictures before |
+| `settle` | optionally `max <frames>` (600), `still <n>` (10) | waits until n pictures in a row are the same |
+| `expect idle` | frames, optionally `tolerance <pixels>` (0) | as `watch`; fails if a picture differs from the one before by more pixels than the tolerance, or blinks |
+| `expect <terminal\|page\|vectors\|state> contains\|lacks` | text (the rest of the line) | fails unless the dump contains (lacks) the text |
+| `expect budget` | percent | fails if a machine used more of a frame's budget (SPEC §frames) in any frame so far |
+| `expect no-slow` | — | fails if a frame was late (`PERFORMANCE.md` R14) or the rule acted |
+| `perf`, `budget` | — | the slow-frame notes so far; each machine's worst and last budget use since the last `budget` |
+| `say` | text | prints the text |
+| `quit` | — | ends the run (so does the end of a script file) |
+
+The run ends with status 1 if an expectation failed, else as the window's.
