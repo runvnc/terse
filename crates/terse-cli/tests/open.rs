@@ -334,7 +334,7 @@ fn article_opens_a_reader() {
     if !common::have_tools() {
         return;
     }
-    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n";
+    let script = "2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n6 press down\n6 press down\n6 press down\n7 press enter\n20 press space\n";
     let mut s = Sys::new(script, Setup { extra: vec![opener(&blob_id(SECOND))], ..Default::default() });
     s.run(50);
     assert_eq!(s.title(1), "opener");
@@ -354,7 +354,7 @@ fn no_free_handle() {
     for i in 0..7u32 {
         script += &format!("{f} home\n");
         f += 1;
-        let ups = if i < 6 { 4 + i } else { 7 + i };
+        let ups = if i < 6 { 5 + i } else { 8 + i };
         for _ in 0..ups {
             script += &format!("{f} press up\n");
             f += 1;
