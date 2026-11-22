@@ -52,6 +52,6 @@ It listens on the Unix socket `$XDG_RUNTIME_DIR/terse/node.sock` until you stop 
 
 ## What you have now
 
-A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:5fc8f4e4b85c47994b68d3fdf9ccbd426f316972b126353b9faf567d00dc60d8).
+A reader that fetches an article by its ID and knows it is genuine. Next, follow links and feeds: [Make a reader, step 3: links and feeds](terse:9e309ed175942813e44ac035c4554e91fc6b315b7726961e63005362dc51b8b3).
 
-The relay's messages are in NETWORK.md section 3 and [The network](terse:93b7543111cef7d2f5814bfd2a5c19ee4967d2efe3e32740c5eeacc08b6bf862).
+The relay's messages are in NETWORK.md section 3 and [The network](terse:1baef48333f2d077eacaf4f12ce8ba06bff2949710da16afec571d44b81738d7).

@@ -114,6 +114,7 @@ The ROM is the bytes of each loadable segment (program header `PT_LOAD` with a f
 | 8 | Machines | `8:0`; only the shell of a system gets it |
 | 9 | 3D vector display | `9:0` |
 | 10 | Full text | `10:0` |
+| 240-255 | experimental | `--optional 240:0=<name>` only |
 
 A device the image does not list is absent: its calls return `FFFF_FFFFh`. A host refuses an image that requires (`--device`) a device version it does not have. A device the program can do without is listed with `--optional` instead (any slot but 1 and 8): the image runs on hosts without it, where the device is absent, and asks at start whether it has it, with `terse_has_device(slot)` in C, the system device's `device` call; the answer never changes while the machine runs.
 
