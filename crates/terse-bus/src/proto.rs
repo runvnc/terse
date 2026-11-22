@@ -649,10 +649,15 @@ pub struct DeviceInfo {
     pub experimental: Vec<Experimental>,
 }
 
+/// The slot of an experimental driver's one entry in its HELLO reply's
+/// slot list (DEVICES.md 15.1): 0, no slot, since the device has a slot
+/// only in each machine (OPEN).
+pub const EXPERIMENTAL_ENTRY: u8 = 0;
+
 /// What an experimental driver declares of its device (DEVICES.md 15.1).
+/// It has no slot: each machine's slot for it is in its OPEN.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Experimental {
-    pub slot: u8,
     pub name: String,
     /// The most bytes its state section can have.
     pub state_max: u32,
@@ -670,12 +675,16 @@ pub mod limits {
 
 impl DeviceInfo {
     /// Checks an experimental driver's reply against DEVICES.md 15.1 and
-    /// 15.2: it serves exactly `slot`, as `name` (any valid name if
-    /// `name` is empty), within the limits.
-    pub fn check_experimental(&self, slot: u8, name: &str) -> Result<(), String> {
+    /// 15.2: one slot entry, slot 0 (the device has no slot of its own),
+    /// the device `name` (any valid name if `name` is empty), within the
+    /// limits.
+    pub fn check_experimental(&self, name: &str) -> Result<(), String> {
+        if self.slots.iter().any(|s| s.slot != EXPERIMENTAL_ENTRY) {
+            return Err("it answered for a slot: the earlier form of DEVICES.md 15.1, before a system's machines could share an experimental driver; it needs updating".into());
+        }
         let [x] = self.experimental.as_slice() else { return Err("it did not declare one experimental device (DEVICES.md 15.1)".into()) };
-        if x.slot != slot || self.slots.len() != 1 || self.slots[0].slot != slot {
-            return Err(format!("it answered for slots other than {slot}"));
+        if self.slots.len() != 1 {
+            return Err("it did not answer with one slot entry, 0, for its device".into());
         }
         if !terse_core::image::valid_experimental_name(&x.name) {
             return Err(format!("it calls its device {:?}, not a valid name", x.name));
@@ -722,10 +731,10 @@ pub struct Hello {
     /// The driver's bus file (section 4.2); empty if shared memory is not
     /// offered.
     pub bus_path: String,
-    /// The experimental devices asked for (DEVICES.md 15.1): slot and
-    /// name, an empty name asking the driver which it is. Empty for every
+    /// The experimental device asked for (DEVICES.md 15.1), by its name
+    /// alone (an empty name asks the driver which it is). Empty for every
     /// other driver, and then not sent.
-    pub experimental: Vec<(u8, String)>,
+    pub experimental: Vec<String>,
 }
 
 impl Hello {
@@ -734,8 +743,8 @@ impl Hello {
         w.u8(VERSION).u16(0).u32(self.flags).u8(self.slots.len() as u8).bytes(&self.slots).str(self.session_dir.as_bytes()).str(self.bus_path.as_bytes());
         if !self.experimental.is_empty() {
             w.u8(self.experimental.len() as u8);
-            for (slot, name) in &self.experimental {
-                w.u8(*slot).str(name.as_bytes());
+            for name in &self.experimental {
+                w.str(name.as_bytes());
             }
         }
         w.finish();
@@ -759,7 +768,7 @@ impl Hello {
         let mut experimental = Vec::new();
         if !r.clone().rest().is_empty() {
             for _ in 0..r.u8()? {
-                experimental.push((r.u8()?, r.string()?));
+                experimental.push(r.string()?);
             }
         }
         Ok(Hello { flags, slots, session_dir, bus_path, experimental })
@@ -802,7 +811,7 @@ impl DeviceInfo {
         if !self.experimental.is_empty() {
             w.u8(self.experimental.len() as u8);
             for x in &self.experimental {
-                w.u8(x.slot).str(x.name.as_bytes()).u32(x.state_max);
+                w.str(x.name.as_bytes()).u32(x.state_max);
             }
         }
         w.finish();
@@ -853,7 +862,7 @@ impl DeviceInfo {
             let mut x = r.clone();
             let mut read = || -> Result<Vec<Experimental>, Short> {
                 let n = x.u8()?;
-                (0..n).map(|_| Ok(Experimental { slot: x.u8()?, name: x.string()?, state_max: x.u32()? })).collect()
+                (0..n).map(|_| Ok(Experimental { name: x.string()?, state_max: x.u32()? })).collect()
             };
             if let Ok(v) = read() {
                 experimental = v;
@@ -995,37 +1004,41 @@ mod tests {
     /// DEVICES.md 15: an experimental driver's HELLO fields, and the limits.
     #[test]
     fn experimental_hello_and_limits() {
-        let h = Hello { flags: 0, slots: vec![240], session_dir: "/s".into(), bus_path: String::new(), experimental: vec![(240, "example.dice".into())] };
+        let h = Hello { flags: 0, slots: vec![], session_dir: "/s".into(), bus_path: String::new(), experimental: vec!["example.dice".into()] };
         let mut out = Vec::new();
         h.encode(&mut out);
         let back = Hello::decode(split(&out[4..]).unwrap().body).unwrap();
         assert_eq!(back.experimental, h.experimental);
-        // A HELLO with no experimental slot is byte for byte as before.
+        // The name alone, no slot: a count, the name.
         let plain = Hello { experimental: vec![], ..h.clone() };
         let mut p = Vec::new();
         plain.encode(&mut p);
-        assert_eq!(p.len() + 1 + 1 + 2 + 12, out.len());
+        assert_eq!(p.len() + 1 + 2 + 12, out.len());
+        assert_eq!(&out[out.len() - 15..], b"\x01\x0c\x00example.dice");
         assert!(Hello::decode(split(&p[4..]).unwrap().body).unwrap().experimental.is_empty());
         let roll = CallEntry::plain(1).check(0, 255);
         let hist = CallEntry::plain(2).buffer(0, 1, 1, 0, 64, access::WRITE).per4();
         let info = DeviceInfo {
             name: "dice".into(),
-            slots: vec![SlotInfo { slot: 240, version: 0, layers: vec![], table: vec![roll, hist] }],
-            experimental: vec![Experimental { slot: 240, name: "example.dice".into(), state_max: 72 }],
+            slots: vec![SlotInfo { slot: 0, version: 0, layers: vec![], table: vec![roll, hist] }],
+            experimental: vec![Experimental { name: "example.dice".into(), state_max: 72 }],
             ..Default::default()
         };
         let mut out = Vec::new();
         info.encode(TRANSPORT_SOCKET, &mut out);
         let (_, d) = DeviceInfo::decode(split(&out[4..]).unwrap().body).unwrap();
         assert_eq!(d.experimental, info.experimental);
-        assert_eq!(d.check_experimental(240, "example.dice"), Ok(()));
-        assert_eq!(d.check_experimental(240, ""), Ok(()));
-        assert!(d.check_experimental(240, "other.dice").is_err());
-        assert!(d.check_experimental(241, "example.dice").is_err());
+        assert_eq!(d.check_experimental("example.dice"), Ok(()));
+        assert_eq!(d.check_experimental(""), Ok(()));
+        assert!(d.check_experimental("other.dice").is_err());
+        // The earlier form, with the slot asked for in the slot entry.
+        let mut old = d.clone();
+        old.slots[0].slot = 240;
+        assert!(old.check_experimental("example.dice").unwrap_err().contains("earlier form"));
         let with = |f: &dyn Fn(&mut DeviceInfo)| {
             let mut d = info.clone();
             f(&mut d);
-            d.check_experimental(240, "example.dice")
+            d.check_experimental("example.dice")
         };
         assert!(with(&|d| d.experimental[0].state_max = 16_385).is_err());
         assert!(with(&|d| d.slots[0].table[1].buf_max = 4097).is_err());

@@ -8,7 +8,8 @@ different in any way.
 
 **Builds on** `SPEC.md`: the image header and optional devices (§image),
 `device` (§system), the call convention (§calls.convention), charges
-(§charges), profiles (§profiles) and conformance (§conformance);
+(§charges), profiles (§profiles), conformance (§conformance) and the
+Machines device (§machines: a shell and the machines it starts);
 `STATE.md` 1.13 (the experimental sections of the state); the device bus,
 `DEVICES.md` 15 (how a driver declares such a device), 2.2 (installing
 one) and 10 (a driver that fails).
@@ -43,7 +44,7 @@ will both pick 240. So an experimental device is identified by a
 **name**, which the image states and the driver announces (`DEVICES.md`
 15.1), and the slot is only the handle by which this one image's
 program calls it. Another image may call the same device on another
-slot.
+slot, and the two may run at once in one shell (§experimental.grants).
 
 A **name** is 1 to 30 bytes of `a`–`z`, `0`–`9`, `-` and `.`, starting
 with a letter. By convention it is `<who>.<what>`, the author's own word
@@ -99,7 +100,9 @@ installed in the drivers folder (`DEVICES.md` 2.2) or named for the run
 (`terse-bus --driver <name>=<command line>`). Otherwise it is not granted,
 and the program runs without it, as for any optional device (§image):
 `device` returns `FFFF_FFFFh` for its slot and every call to the slot
-returns `FFFF_FFFFh` at a charge of 4.
+returns `FFFF_FFFFh` at a charge of 4. The rule is the same for a machine
+run alone and for every machine of a system: the shell itself, and each
+machine it starts or restores (§machines).
 
 Like any grant, it is fixed at reset, is one byte of the state's grants
 (`STATE.md` 1.4: there for an experimental entry whether granted or not,
@@ -109,17 +112,37 @@ is part of snapshots and recordings.
 For a granted experimental device, `device` returns its version (the
 entry's low seven bits).
 
-**Where they are granted.** Only on a core with a device bus, and only to
-a single machine:
+**Where they are granted.** Only on a core with a device bus:
 
 - `terse run`, `terse-host` and `terse-bus --in-process` (the devices
   compiled in) never grant one: they have no drivers. They need no code
-  for it: an experimental slot is no device of theirs.
-- `terse-bus` with one machine grants it as above.
-- In a system (`terse-bus --shell`) no machine, the shell or one it
-  starts, is granted one in this version (§experimental.open).
+  for it: an experimental slot is no device of theirs. A shell there
+  starts such a program as any other, and it runs without the device.
+- `terse-bus` with one machine grants it as above, starting a driver for
+  each experimental device the image lists.
+- `terse-bus --shell` grants it as above to the shell and to every
+  machine the shell starts. The run starts every experimental driver it
+  has (each `--driver <name>=...` and each installed one, at most 16) when
+  it starts, since the set of drivers is fixed then and the machines are
+  not known (`DEVICES.md` 15.1); a machine is granted a device when one of
+  them serves its name in the version its image lists.
 - `native/core-c`'s `tcore` does not grant them: a minimal core need not
   (`DEVICES.md` 12).
+
+**Several machines, one driver.** In a system, one driver process serves
+every machine that has its device, each as an instance of its own
+(`DEVICES.md` 1.2), and each machine calls the device on the slot its own
+image gives it: one program may list `example.dice` on slot 240 and
+another on 241, and both run at once, each with its own state. The slot
+travels with each machine (in OPEN, and in the address of each of its
+calls: `DEVICES.md` 15.3); the driver is chosen by the name alone. Two
+machines never share a device's state, whichever slots they use, so a
+machine's results are the same as if it ran alone (§experimental.determinism).
+
+**Limits in a system.** At most 16 experimental drivers per run. A driver
+serves at most as many machines at once as a system has (the shell and 8,
+§machines); a ninth is refused by the Machines device as always ("no
+room"), never because of an experimental device.
 
 ## §experimental.calls Calls and charges
 
@@ -178,6 +201,12 @@ they were before experimental devices existed.
 A driver declares the most its section can be (at most 16,384) at the
 handshake, and fails if a section it gives is longer.
 
+A machine of a system has its own sections, from its own instance in the
+driver, in the order of its own image's header, whatever slot another
+machine gives the same device. So the state of a machine in a shell, its
+hash and its snapshots follow exactly these rules, as for a machine run
+alone.
+
 ## §experimental.determinism Determinism
 
 A Terse32 machine's state is a pure function of its image and its
@@ -193,7 +222,12 @@ must be a pure function of
 So it reads no clock, no random source, no file, no network and no
 environment for anything a machine can see, keeps nothing of one machine
 in another's, and does not depend on the budget field of CALL or on how
-calls are batched. It has **no inputs**: unlike the content and page
+calls are batched. In a system one driver sees the calls of several
+machines interleaved (in the system's order, `DEVICES.md` 1.3); since
+each machine's results depend only on its own calls, the order in which
+the other machines' calls come cannot change them, and a machine's state
+is the same in a shell as alone. Nor may a result depend on the slot the
+machine calls the device on: that is the image's handle, not an input. It has **no inputs**: unlike the content and page
 drivers it gives no events, no writes and no charge at BEGIN, and its
 input record (`DEVICES.md` 8) is empty, so a recording needs nothing
 from it. A program that wants chance seeds the device from `random`
@@ -227,10 +261,15 @@ As for any driver, unchanged. A driver that exits, closes its socket,
 does not answer within the reply timeout, answers ERROR or breaks the
 protocol (including the rules of `DEVICES.md` 15.3) stops the run with
 status 3 (`DEVICES.md` 10): its state is in it, and the device cannot be
-made absent after the program has seen it. A driver that answers too
+made absent after the program has seen it. In a system that is the whole
+run, as for a numbered device's driver. A driver that answers too
 slowly is timed, warned about and, with its machines saved, stopped
 (`PERFORMANCE.md` R14, R15; stopped state Halted with its slot, SPEC
-§stopping), and the record names it by the identity it gave in HELLO.
+§stopping), and the record names it by the identity it gave in HELLO
+(`dev240` to `dev255`, `DEVICES.md` 15.3). Its machines are every machine
+that uses it, whatever slot each calls it on: each is saved (the shell's
+machines in their automatic slots, §machines.snapshots) and halted with
+its own slot for the device.
 
 An installed driver that is missing, cannot be started or fails its
 handshake at the start of a run is a different case: no machine has seen
@@ -263,6 +302,19 @@ device is never taken for a conformance run, its files say so:
 
 A host without the driver refuses to restore either (the grants say the
 device was granted, and it cannot provide it: `STATE.md` 4).
+
+**In a system.** A shell's snapshots of its machines (its own slots 0–15,
+a saved session, and the automatic slots 16–23 the host fills when a
+device is slow) are the same files: version `1` for a machine that has
+an experimental device, `0` for one that does not, each machine marked
+by its own grants. Restoring one in a shell (`restore`, §machines.calls)
+on a host without the driver, or with a driver of another version, fails
+for that machine alone with reason 3, "needs a device", as for any
+optional device the machine was granted and this host cannot give; the
+other machines of a session are restored as usual. A shell whose own
+image lists an experimental device is never snapshotted (§machines.snapshots).
+There are no recordings of a system: `terse-bus --record` records a single
+machine.
 
 ## §experimental.graduation From experiment to device
 
@@ -304,12 +356,11 @@ the start of item 7's test.
 
 ## §experimental.open Not yet specified
 
-- **Experimental devices in a system.** A shell, and the machines it
-  starts, are not granted experimental devices. The slot is a per-image
-  handle, while the bus binds a driver to its slots once, in HELLO, for
-  every machine of a run; a system would need the binding per machine
-  (in OPEN). The smallest change: HELLO names the device without a slot,
-  and OPEN gives each machine's slot for it.
+- **Showing the device in a shell.** The Machines device's record of a
+  machine (§machines.calls `info`) says nothing of its grants, so a shell
+  cannot tell the user that a machine has an experimental device (and is
+  outside conformance). A flag in the record, set when the machine's
+  grants include one, would let the launcher mark it.
 - **Inputs.** An experimental device has none (no events, no
   completions). A device that senses something outside the machine (a
   sensor, a MIDI port) needs event types, which are SPEC's.

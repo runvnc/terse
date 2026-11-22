@@ -141,8 +141,14 @@ pub struct Proc {
     /// This frame's waits for it.
     pub acct: Acct,
     /// An experimental driver's device (DEVICES.md 15): its calls are
-    /// charged by the table, it has no inputs and never READs.
+    /// charged by the table, it has no inputs and never READs. It has no
+    /// slots of its own (`slots` is empty): each machine calls it on the
+    /// slot its image gives it.
     pub experimental: Option<proto::Experimental>,
+    /// What the record calls it (`dev<n>`, RECORD.md): its lowest slot, or
+    /// for an experimental driver 240 + its place among the run's
+    /// experimental drivers (DEVICES.md 15.3).
+    pub component: u8,
 }
 
 /// How to start the bus.
@@ -253,27 +259,30 @@ pub struct Wanted {
     /// An installed driver (DEVICES.md 2.2): what to do if it does not
     /// start or fails its handshake.
     pub installed: Option<Installed>,
-    /// An experimental driver (DEVICES.md 15): the name and version of the
-    /// device asked for on its one slot. An empty name asks the driver
-    /// which device it is (`terse drivers add`); the version is then not
-    /// checked.
-    pub experimental: Option<(String, u8)>,
+    /// An experimental driver (DEVICES.md 15; `slots` is then empty): the
+    /// name of the device asked for, and the version it must answer with
+    /// (`None`: whichever it serves; a machine is granted the device only
+    /// in that version). An empty name asks the driver which device it is
+    /// (`terse drivers add`).
+    pub experimental: Option<(String, Option<u8>)>,
 }
 
 /// An installed driver that was not used (DEVICES.md 2.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unused {
     pub name: String,
-    /// Its group's lowest slot.
+    /// Its group's lowest slot (0 for an experimental driver).
     pub slot: u8,
     pub why: String,
+    /// An experimental driver's device (DEVICES.md 15.1).
+    pub device: Option<String>,
 }
 
 impl Unused {
     /// The message for standard error.
     pub fn message(&self) -> String {
-        if terse_core::image::EXPERIMENTAL.contains(&self.slot) {
-            return format!("the installed driver {} for the experimental device on slot {} was not used: {}; the device is not granted", self.name, self.slot, self.why);
+        if let Some(d) = &self.device {
+            return format!("the installed driver {} for the experimental device {d} was not used: {}; the device is not granted", self.name, self.why);
         }
         format!("the installed driver {} for slot {} was not used: {}; using the shipped driver (terse drivers use {} default)", self.name, self.slot, self.why, self.slot)
     }
@@ -297,15 +306,17 @@ impl Bus {
     pub fn start(config: &BusConfig, drivers: &[Wanted]) -> Result<Bus, String> {
         let mut bus = Bus { procs: Vec::new(), by_slot: [None; 256], config: config.clone(), failed: None, open: 0, grace: Vec::new(), saving: false, notes: Vec::new() };
         let mut drivers = drivers.to_vec();
-        drivers.sort_by_key(|w| w.slots.iter().copied().min());
+        // The experimental drivers last, in the order given (DEVICES.md 15.3).
+        drivers.sort_by_key(|w| (w.experimental.is_some(), w.slots.iter().copied().min()));
+        let mut experimental = 0u8;
         for (i, want) in drivers.iter().enumerate() {
             let p = match (bus.start_one(i, want), &want.installed) {
                 (Ok(p), _) => p,
                 (Err(e), None) => return Err(e),
                 // DEVICES.md 15.1: an installed experimental driver that
                 // cannot be used leaves its device not granted.
-                (Err(e), Some(inst)) if want.experimental.is_some() => {
-                    bus.notes.push(Unused { name: inst.name.clone(), slot: want.slots[0], why: e });
+                (Err(e), Some(inst)) if let Some((device, _)) = &want.experimental => {
+                    bus.notes.push(Unused { name: inst.name.clone(), slot: 0, why: e, device: Some(device.clone()) });
                     continue;
                 }
                 // DEVICES.md 2.2: an installed driver that does not start or
@@ -315,10 +326,19 @@ impl Bus {
                     let Some(shipped) = &inst.shipped else {
                         return Err(format!("{e} (the installed driver {}; there is no shipped driver for slot {g})", inst.name));
                     };
-                    bus.notes.push(Unused { name: inst.name.clone(), slot: g, why: e });
+                    bus.notes.push(Unused { name: inst.name.clone(), slot: g, why: e, device: None });
                     bus.start_one(i, &Wanted { slots: want.slots.clone(), command: shipped.clone(), installed: None, experimental: None })?
                 }
             };
+            let mut p = p;
+            if let Some(x) = &p.experimental {
+                // One driver per device name (DEVICES.md 15.1).
+                if bus.procs.iter().any(|q| q.experimental.as_ref().is_some_and(|y| y.name == x.name)) {
+                    return Err(format!("two drivers for the experimental device {}", x.name));
+                }
+                p.component = terse_core::image::EXPERIMENTAL.start() + experimental;
+                experimental += 1;
+            }
             for &s in &p.slots {
                 if bus.by_slot[s as usize].is_some() {
                     return Err(format!("two drivers for slot {s}"));
@@ -340,7 +360,11 @@ impl Bus {
         let _ = std::fs::remove_file(config.session.join(format!("{name}.bus")));
         let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
         let (program, args) = want.command.split_first().ok_or(format!("slots {:?}: an empty command", want.slots))?;
-        let what = format!("slots {:?} ({program})", want.slots);
+        let what = match &want.experimental {
+            Some((name, _)) if !name.is_empty() => format!("the experimental device {name} ({program})"),
+            Some(_) => format!("an experimental device ({program})"),
+            None => format!("slots {:?} ({program})", want.slots),
+        };
         let mut cmd = Command::new(program);
         cmd.args(args).env("TERSE_BUS_SOCKET", &sock).stdin(Stdio::null());
         if let Some(cpu) = config.driver_cpus.get(i) {
@@ -378,7 +402,7 @@ impl Bus {
             slots: want.slots.clone(),
             session_dir: config.session.display().to_string(),
             bus_path: if config.shm { bus_path.display().to_string() } else { String::new() },
-            experimental: want.experimental.iter().map(|(name, _)| (want.slots[0], name.clone())).collect(),
+            experimental: want.experimental.iter().map(|(name, _)| name.clone()).collect(),
         };
         let mut out = Vec::new();
         hello.encode(&mut out);
@@ -401,10 +425,9 @@ impl Bus {
                 None
             }
             Some((name, version)) => {
-                let slot = want.slots[0];
-                let checked = info.check_experimental(slot, name).and_then(|_| match info.slots[0].version {
-                    v if name.is_empty() || v == *version => Ok(()),
-                    v => Err(format!("it serves {name} version {v}, not {version}")),
+                let checked = info.check_experimental(name).and_then(|_| match (info.slots[0].version, version) {
+                    (v, Some(want)) if v != *want && !name.is_empty() => Err(format!("it serves {name} version {v}, not {want}")),
+                    _ => Ok(()),
                 });
                 if let Err(e) = checked {
                     return Err(fail(&mut child, e));
@@ -420,7 +443,11 @@ impl Bus {
         // that does not answer for it does not give it (DEVICES.md 1.1).
         let full_text = terse_core::text::FULL_TEXT;
         let without_full_text: Vec<u8> = asked.iter().copied().filter(|&s| s != full_text).collect();
-        if (slots != asked && slots != without_full_text) ||(transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
+        let slots_ok = experimental.is_some() || slots == asked || slots == without_full_text;
+        if experimental.is_some() {
+            slots.clear();
+        }
+        if !slots_ok || (transport == proto::TRANSPORT_SHM && !config.shm) || transport > 1 {
             return Err(fail(&mut child, format!("it answered for slots {slots:?}, transport {transport}")));
         }
         // An installed driver answers with the versions it was installed
@@ -449,7 +476,9 @@ impl Bus {
             }
             tables.insert(s.slot, table);
         }
+        let component = slots.first().copied().unwrap_or(0);
         Ok(Proc {
+            component,
             info,
             transport,
             slots,
@@ -649,12 +678,19 @@ impl Bus {
     }
 
     /// Whether a driver gives the experimental device `d` named `name`, in
-    /// its version (DEVICES.md 15.1).
+    /// its version (DEVICES.md 15.1), on whatever slot the image gives it.
     pub fn provides_experimental(&self, d: &DeviceReq, name: &str) -> bool {
-        self.by_slot[d.slot as usize].is_some_and(|p| {
-            let x = &self.procs[p];
-            x.experimental.as_ref().is_some_and(|e| e.slot == d.slot && e.name == name) && x.info.slots.iter().any(|s| s.slot == d.slot && s.version == d.version)
-        })
+        self.experimental_proc(name, d.version).is_some()
+    }
+
+    /// The driver of the experimental device `name` in `version`.
+    pub fn experimental_proc(&self, name: &str, version: u8) -> Option<usize> {
+        self.procs.iter().position(|x| x.experimental.as_ref().is_some_and(|e| e.name == name) && x.info.slots.first().is_some_and(|s| s.version == version))
+    }
+
+    /// The driver the record calls `dev<component>`.
+    pub fn proc_of_component(&self, component: u8) -> Option<usize> {
+        self.procs.iter().position(|d| d.component == component)
     }
 
     /// Opens a machine instance on the drivers (OPEN): `image` with its
@@ -684,19 +720,28 @@ impl Bus {
             if d.slot == 1 || d.slot == terse_core::machines::SLOT || !has.has(d.slot) {
                 continue;
             }
-            let Some(p) = bus.by_slot[d.slot as usize] else {
-                return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: format!("no driver for device {}", d.slot) });
+            // An experimental slot goes to the driver for its name and
+            // version, whatever the slot (DEVICES.md 15.1); a numbered one
+            // to the driver of the slot.
+            let p = if d.experimental() {
+                let named = image.experimental_name(d.slot);
+                match named.as_deref().and_then(|n| bus.experimental_proc(n, d.version)) {
+                    Some(p) => p,
+                    None => {
+                        return Err(StartFailure {
+                            reason: failure::NEEDS_DEVICE,
+                            image: Some(image.id),
+                            message: format!("no driver for the experimental device {} version {} (slot {})", named.unwrap_or_default(), d.version, d.slot),
+                        });
+                    }
+                }
+            } else {
+                match bus.by_slot[d.slot as usize] {
+                    Some(p) => p,
+                    None => return Err(StartFailure { reason: failure::NEEDS_DEVICE, image: Some(image.id), message: format!("no driver for device {}", d.slot) }),
+                }
             };
-            // An experimental slot goes only to the driver for its name.
-            let named = image.experimental_name(d.slot);
-            if d.experimental() != bus.procs[p].experimental.is_some() || (d.experimental() && !named.as_deref().is_some_and(|n| bus.provides_experimental(d, n))) {
-                return Err(StartFailure {
-                    reason: failure::NEEDS_DEVICE,
-                    image: Some(image.id),
-                    message: format!("no driver for the experimental device {} on slot {}", named.unwrap_or_default(), d.slot),
-                });
-            }
-            let version = bus.procs[p].info.slots.iter().find(|s| s.slot == d.slot).map(|s| s.version);
+            let version = if d.experimental() { Some(d.version) } else { bus.procs[p].info.slots.iter().find(|s| s.slot == d.slot).map(|s| s.version) };
             if version != Some(d.version) {
                 return Err(StartFailure {
                     reason: failure::NEEDS_DEVICE,
@@ -728,7 +773,14 @@ impl Bus {
                 ram_len: memory.ram_len as u32,
                 memory_path: if shm { path.display().to_string() } else { String::new() },
                 // Only the devices the machine has (SPEC §image).
-                listed: image.devices.iter().filter(|d| has.has(d.slot) && bus.procs[p].slots.contains(&d.slot)).map(|d| (d.slot, d.version)).collect(),
+                // For an experimental driver: the slot this machine calls
+                // its device on, and the version its image lists.
+                listed: image
+                    .devices
+                    .iter()
+                    .filter(|d| has.has(d.slot) && (bus.procs[p].slots.contains(&d.slot) || (d.experimental() && slot_proc[d.slot as usize] == Some(p))))
+                    .map(|d| (d.slot, d.version))
+                    .collect(),
                 identity: identity.map(|i| (i.publisher, i.name.clone())),
                 rom: image.rom.clone(),
             };
@@ -839,6 +891,15 @@ impl Drop for Bus {
 }
 
 impl Proc {
+    /// The call table of `slot`: for an experimental driver, its one table,
+    /// whichever slot the machine calls it on.
+    fn table(&self, slot: u8) -> Option<&Vec<Option<CallEntry>>> {
+        match self.experimental {
+            Some(_) => self.tables.get(&proto::EXPERIMENTAL_ENTRY),
+            None => self.tables.get(&slot),
+        }
+    }
+
     /// Puts the batch (if any) after `out`'s contents.
     fn take_batch(&mut self) {
         if self.batch_count == 0 {
@@ -982,6 +1043,13 @@ impl BusDevices {
     /// The drivers serving this instance.
     pub fn procs(&self) -> &[usize] {
         &self.procs
+    }
+
+    /// The slot on which this machine calls the experimental driver `p`
+    /// (DEVICES.md 15.3), if it uses it.
+    pub fn experimental_slot(&self, p: usize) -> Option<u8> {
+        let mut slots = terse_core::image::EXPERIMENTAL;
+        slots.find(|&s| self.slot_proc[s as usize] == Some(p))
     }
 
     /// Device 3's state as the vector driver publishes it (`vector.list`):
@@ -1240,7 +1308,7 @@ impl Devices for BusDevices {
         for &p in &self.procs {
             self.dirty.set(self.dirty.get() | 1 << p);
             let d = &mut bus.procs[p];
-            let first = d.slots[0];
+            let first = d.component;
             d.out.clear();
             d.out.append(&mut d.held);
             d.take_batch();
@@ -1266,7 +1334,7 @@ impl Devices for BusDevices {
             let d = &mut bus.procs[p];
             d.acct.add(class, self.instance, waited.elapsed().as_nanos() as u64);
             d.stats.begin.add(start.elapsed());
-            let first = d.slots[0];
+            let first = d.component;
             // DEVICES.md 15.3: an experimental driver has no inputs.
             if d.experimental.is_some() && reply.get(4..).is_some_and(|b| b.len() != 16 || b.iter().any(|&x| x != 0)) {
                 let e = "an experimental driver gave inputs at BEGIN (DEVICES.md 15.3)".to_string();
@@ -1298,7 +1366,7 @@ impl Devices for BusDevices {
         let mut bus = self.bus.borrow_mut();
         let batching = bus.config.batching;
         let d = &mut bus.procs[p];
-        let Some(e) = d.tables.get(&slot).and_then(|t| t[function as usize]) else { return unknown };
+        let Some(e) = d.table(slot).and_then(|t| t[function as usize]) else { return unknown };
         // An answered call's base charge, also when a check fails (SPEC §charges).
         let base = e.base_extra();
         // DEVICES.md 5: the core's checks.
