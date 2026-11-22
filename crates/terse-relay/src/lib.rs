@@ -95,7 +95,11 @@ const MAX_RETRY: Duration = Duration::from_secs(30);
 /// How long a client may take over the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Most waiting blobs removed in one hold of the lock.
-const COLLECT_BATCH: usize = 64;
+pub const COLLECT_BATCH: usize = 64;
+/// How long a batch of [`Relay::collect`] may go on removing files under
+/// the lock (by the relay's clock): it ends after the first removal that
+/// takes it past this.
+pub const COLLECT_BATCH_TIME: Duration = Duration::from_millis(2);
 /// How often the maintenance thread runs.
 const TICK: Duration = Duration::from_millis(100);
 /// How often the write list's file is checked for changes.
@@ -284,6 +288,11 @@ pub struct Relay {
     writers: Option<Mutex<writers::Writers>>,
     /// Added to the clock (tests).
     clock_offset: AtomicU64,
+    /// The real time the clock stands still at, once stopped (tests):
+    /// the instant and the time since 1970 in ms.
+    frozen: Mutex<Option<(Instant, u64)>>,
+    /// Pings sent on connections (tests).
+    pings: AtomicUsize,
     refused: [AtomicUsize; 9],
     /// Waiting blobs removed, and their bytes; entries dropped for a
     /// feed's limits.
@@ -316,7 +325,8 @@ pub struct Connection {
     queue: Receiver<Vec<u8>>,
     dropped: Arc<AtomicBool>,
     peer: Arc<AtomicBool>,
-    /// When this connection's recent finds were answered.
+    /// When this connection's recent finds were answered (the relay's
+    /// clock: [`Relay::instant`]).
     finds: Mutex<VecDeque<Instant>>,
 }
 
@@ -374,6 +384,8 @@ impl Relay {
             new_feeds_total: Mutex::new(None),
             writers,
             clock_offset: AtomicU64::new(0),
+            frozen: Mutex::new(None),
+            pings: AtomicUsize::new(0),
             refused: std::array::from_fn(|_| AtomicUsize::new(0)),
             collected: AtomicU64::new(0),
             collected_bytes: AtomicU64::new(0),
@@ -429,15 +441,45 @@ impl Relay {
         h
     }
 
-    /// The relay's clock, in ms since 1970 (moved by [`Self::advance_clock`]).
+    /// The relay's clock, in ms since 1970 (moved by [`Self::advance_clock`],
+    /// stopped by [`Self::freeze_clock`]).
     pub fn now_ms(&self) -> u64 {
-        let real = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let real = match *self.frozen.lock().unwrap() {
+            Some((_, ms)) => ms,
+            None => SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+        };
         real + self.clock_offset.load(Ordering::Relaxed)
     }
 
-    /// Moves the relay's clock on (tests: rates and the waiting room).
+    /// The relay's clock as an instant, for intervals (a connection's
+    /// finds, its pings, a collection batch): the real monotonic clock
+    /// unless a test moved or stopped it.
+    pub fn instant(&self) -> Instant {
+        let real = match *self.frozen.lock().unwrap() {
+            Some((at, _)) => at,
+            None => Instant::now(),
+        };
+        real + Duration::from_millis(self.clock_offset.load(Ordering::Relaxed))
+    }
+
+    /// Moves the relay's clock on (tests: rates, the waiting room, pings).
     pub fn advance_clock(&self, by: Duration) {
         self.clock_offset.fetch_add(by.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Stops the relay's clock where it is (tests): from then on it moves
+    /// only by [`Self::advance_clock`], however long the test takes.
+    pub fn freeze_clock(&self) {
+        let mut frozen = self.frozen.lock().unwrap();
+        if frozen.is_none() {
+            let ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            *frozen = Some((Instant::now(), ms));
+        }
+    }
+
+    /// How many keepalive pings the relay has sent (tests).
+    pub fn pings_sent(&self) -> usize {
+        self.pings.load(Ordering::Relaxed)
     }
 
     pub fn policy(&self) -> &Policy {
@@ -532,44 +574,53 @@ impl Relay {
     /// lock is let go between batches, so connections are not held up);
     /// returns how many.
     pub fn collect(&self) -> usize {
-        let Some(h) = &self.holdings else { return 0 };
         let mut total = 0;
         loop {
-            let mut h = h.lock().unwrap();
-            let now = self.now_ms();
-            let ids = h.expired(now, COLLECT_BATCH);
-            // A batch also ends after 2 ms under the lock, however slow
-            // the disk is at removing files; what is left stays expired
-            // and is taken by the next batch.
-            let started = std::time::Instant::now();
-            let mut done = 0;
-            for id in &ids {
-                if done > 0 && started.elapsed() >= Duration::from_millis(2) {
-                    break;
-                }
-                done += 1;
-                // Unlinked under the lock: a put or an entry naming it
-                // waits, then finds it gone.
-                if let Some(w) = h.unwait(id) {
-                    match self.blobs.remove(id) {
-                        Ok(()) => {
-                            self.collected.fetch_add(1, Ordering::Relaxed);
-                            self.collected_bytes.fetch_add(u64::from(w.len), Ordering::Relaxed);
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => eprintln!("terse-relay: removing a waiting blob: {e}"),
-                    }
-                }
-            }
-            drop(h);
+            let (done, more) = self.collect_batch();
             total += done;
-            if done == ids.len() && ids.len() < COLLECT_BATCH {
+            if !more {
                 return total;
             }
             // The lock is not fair: give the connections waiting for it
             // their turn between batches.
             thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// One batch of [`Self::collect`], under one hold of the lock: at most
+    /// [`COLLECT_BATCH`] waiting blobs whose time is up, and none after the
+    /// first once [`COLLECT_BATCH_TIME`] has passed on the relay's clock.
+    /// Returns how many it removed and whether more may be expired.
+    pub fn collect_batch(&self) -> (usize, bool) {
+        let Some(h) = &self.holdings else { return (0, false) };
+        let mut h = h.lock().unwrap();
+        let now = self.now_ms();
+        let ids = h.expired(now, COLLECT_BATCH);
+        // A batch also ends after 2 ms under the lock, however slow
+        // the disk is at removing files; what is left stays expired
+        // and is taken by the next batch.
+        let started = self.instant();
+        let mut done = 0;
+        for id in &ids {
+            if done > 0 && self.instant().duration_since(started) >= COLLECT_BATCH_TIME {
+                break;
+            }
+            done += 1;
+            // Unlinked under the lock: a put or an entry naming it
+            // waits, then finds it gone.
+            if let Some(w) = h.unwait(id) {
+                match self.blobs.remove(id) {
+                    Ok(()) => {
+                        self.collected.fetch_add(1, Ordering::Relaxed);
+                        self.collected_bytes.fetch_add(u64::from(w.len), Ordering::Relaxed);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => eprintln!("terse-relay: removing a waiting blob: {e}"),
+                }
+            }
+        }
+        drop(h);
+        (done, !(done == ids.len() && ids.len() < COLLECT_BATCH))
     }
 
     /// Reads the write list again (if its file changed, unless `force`);
@@ -646,6 +697,12 @@ impl Relay {
     /// The number of connections marked as peers.
     pub fn peer_count(&self) -> usize {
         self.state.lock().unwrap().conns.values().filter(|c| c.peer.load(Ordering::Relaxed)).count()
+    }
+
+    /// The number of connections, not peers, subscribed to `feed` (tests:
+    /// a test waits for a subscription to be in place).
+    pub fn subscribers(&self, feed: &FeedKey) -> usize {
+        self.state.lock().unwrap().conns.values().filter(|c| !c.peer.load(Ordering::Relaxed) && c.feeds.contains(feed)).count()
     }
 
     pub fn connect(&self) -> Connection {
@@ -784,7 +841,7 @@ impl Relay {
     /// policy's rates) not used up; else the "try again" status. An
     /// allowed find is counted; refused and malformed ones are not.
     fn allow_find(&self, conn: &Connection) -> Result<(), u8> {
-        let now = Instant::now();
+        let now = self.instant();
         let mut finds = conn.finds.lock().unwrap();
         while finds.front().is_some_and(|&t| now.duration_since(t) >= Duration::from_secs(1)) {
             finds.pop_front();
@@ -1499,20 +1556,22 @@ fn serve_connection(
         }
         ws.send(Message::binary(m))
     };
-    let mut sent_at = Instant::now();
+    // The relay's clock, so that a test can move it on.
+    let mut sent_at = relay.instant();
     loop {
         if conn.dropped.load(Ordering::Relaxed) || relay.closing() {
             break;
         }
         for message in conn.queue.try_iter() {
             send(ws, message)?;
-            sent_at = Instant::now();
+            sent_at = relay.instant();
         }
         // A silent connection is kept alive through proxies that close
         // idle ones (NETWORK 3: the other side answers pings).
-        if relay.policy.ping_every.is_some_and(|every| sent_at.elapsed() >= every) {
+        if relay.policy.ping_every.is_some_and(|every| relay.instant().saturating_duration_since(sent_at) >= every) {
             ws.send(Message::Ping(Default::default()))?;
-            sent_at = Instant::now();
+            relay.pings.fetch_add(1, Ordering::Relaxed);
+            sent_at = relay.instant();
         }
         let answer = match ws.read() {
             Ok(Message::Binary(m)) => relay.respond(conn, &m),
@@ -1526,7 +1585,7 @@ fn serve_connection(
         match answer {
             Answer::Reply(r) => {
                 send(ws, r)?;
-                sent_at = Instant::now();
+                sent_at = relay.instant();
             }
             Answer::Nothing => {}
             Answer::Close => break,

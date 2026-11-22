@@ -148,11 +148,18 @@ fn find_merges_two_relays() {
 }
 
 /// A connection that searches more than 4 times a second is refused
-/// (NETWORK 4.7); a refused find does not count.
+/// (NETWORK 4.7); a refused find does not count. The relay's clock stands
+/// still unless the test moves it, so the finds are all in one second
+/// however slowly they are sent.
 #[test]
 fn find_rate_limit() {
     let dir = tempfile::tempdir().unwrap();
-    let url = serve(relay(dir.path(), 1024));
+    let r = Arc::new(relay(dir.path(), 1024));
+    r.freeze_clock();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let served = r.clone();
+    std::thread::spawn(move || terse_relay::serve(listener, served));
     let mut client = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
     client.connect().unwrap();
     let ask = |client: &mut RelayClient, n: usize| {
@@ -164,15 +171,17 @@ fn find_rate_limit() {
         replies.sort_by_key(|r| reqs.iter().position(|q| *q == r.0));
         replies.into_iter().map(|r| r.1).collect::<Vec<_>>()
     };
-    let start = std::time::Instant::now();
     let got = ask(&mut client, 6);
-    assert!(start.elapsed() < std::time::Duration::from_millis(900));
     let found = RelayReply::Found(Vec::new());
     assert_eq!(got[..4], [found.clone(), found.clone(), found.clone(), found.clone()]);
     // NETWORK 3.1: refused with a wait of at most a second.
     let later = RelayReply::Refused(terse_net::protocol::Refusal::TryLater(std::time::Duration::from_secs(1)));
-    assert_eq!(got[4..], [later.clone(), later]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(got[4..], [later.clone(), later.clone()]);
+    // Just short of a second later, still refused; a second after the
+    // first finds, they have left the window.
+    r.advance_clock(std::time::Duration::from_millis(999));
+    assert_eq!(ask(&mut client, 1), [later]);
+    r.advance_clock(std::time::Duration::from_millis(1));
     assert_eq!(ask(&mut client, 1), [found]);
     // Another connection has its own allowance.
     let mut other = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
