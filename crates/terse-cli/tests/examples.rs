@@ -91,9 +91,11 @@ fn tiny_programs(dir: &Path) -> Vec<PathBuf> {
     for name in ["guide-host-go", "guide-host-go-frames"] {
         for (_, body) in fences(&article(name)) {
             let Some(first) = body.first() else { continue };
-            let Some(file) = first.strip_prefix("xxd -r -p > ").and_then(|r| r.strip_suffix(" <<EOF")) else { continue };
+            let file = first.strip_prefix("xxd -r -p > ").and_then(|r| r.strip_suffix(" <<EOF"));
+            let Some(file) = file else { continue };
             let hex: String = body[1..].iter().take_while(|l| *l != "EOF").map(|l| l.trim()).collect();
-            let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+            let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+            let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(byte).collect();
             fs::write(dir.join(file), bytes).unwrap();
             made.push(dir.join(file));
         }
@@ -245,7 +247,8 @@ fn check_host(bin: &Path, other_terminal: Option<&Path>) {
 
     let faults = ["ebreak", "illegal", "misaligned", "load", "storerom", "fetch", "fetch2", "csr", "div", "hint"];
     let mut programs: Vec<String> = tiny.iter().map(path).collect();
-    programs.extend(faults.iter().map(|f| workspace().join(format!("native/core-c/tests/{f}.terse")).display().to_string()));
+    let fault_program = |f: &&str| workspace().join(format!("native/core-c/tests/{f}.terse")).display().to_string();
+    programs.extend(faults.iter().map(fault_program));
     for program in &programs {
         let expected = run(reference("terse"), &["run", program, "--frames", "10", "--hash"]);
         let ours = run(step(4), &[program, "10"]);
