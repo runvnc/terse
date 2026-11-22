@@ -714,8 +714,9 @@ belongs to, and these differ from a headless run:
   on a US keyboard also gives its text, as a window does; `pointer` and
   `click` positions are screen units, turned into window pixels at the
   unit's centre and back through the window's mapping; `text` is text
-  events without a key (as an input method gives them); `home` is the F12
-  key.
+  events without a key (as an input method or a paste gives them: no
+  faster than the focused machine's queue has room for, SPEC §events);
+  `home` is the F12 key.
 - A line that observes (`shot`, `dump`, `watch`, `settle`, `expect`,
   `perf`, `budget`) looks at the first picture presented after its frame;
   the next line waits for it.

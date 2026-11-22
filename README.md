@@ -389,13 +389,23 @@ the bytes are verified against the ID. `--store` defaults to
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
-`terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
+`terse-host [<image|id|link> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--consent ask|allow|deny] [--no-trails] [--force-phosphor] [--size <W>x<H>] [--relay ws://...|none]... [--no-feed-relays] [--no-prefetch] [--no-program-download] [--store <dir>] [--config <dir>] [--data <dir>] [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]`
 opens a window and runs at 60 frames/s of virtual time. With no image it runs the
 shell built into the binary (`programs/shell/shell.terse`, see [The shell](#the-shell)),
 which starts the built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef and sheet, also built in, and
 each `--builtin` image), all put into the store at start; `--shell <image>` uses
 another image as the shell. With an image named it runs that image alone, as a single
-machine, with every key (F12 included) going to it. With `--demo` it first sets up the
+machine, with every key (F12 included) going to it. Links on the command line: a
+`terse:` link may be given instead of an image (ARTICLE.md's forms, blanks at either
+end ignored). `terse:` and a blob ID is fetched (store, else relays): an image runs
+alone, as its ID would; any other blob (an article, a document) is given to the
+built-in shell as its argument (SPEC §system `argument`), which opens it as it opens
+a blob a machine asks for: an article in the reader, a document in its format's
+program. `terse:program/<key>/<name>` runs that program alone: a built-in (the zero
+key) by its title, another the current version of a feed this host holds. A
+`terse:feed/` link, a malformed link and a blob that cannot be fetched end with a
+message saying why (a feed: `terse feed subscribe`, or the reader's O); the reader's O
+opens all three forms in the window. With `--demo` it first sets up the
 sample articles ([Getting started](#getting-started)). `--size` is the window's size
 in pixels.
 The relays are found or started as Getting started says. `--no-prefetch` turns off

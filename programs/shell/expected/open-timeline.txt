@@ -58,4 +58,4 @@
 
 
 
- ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit           1/2
+ ↑↓ move  Enter open  / search  O link  F feeds  ? help  Esc quit           1/2

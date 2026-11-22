@@ -27,7 +27,7 @@
 
 
 
- ↑↓ move  Enter open  / search  F feeds  ? help  T test  Esc quit          1/11
+ ↑↓ move  Enter open  / search  O link  F feeds  ? help  Esc quit          1/11
 -- page: height 473, scroll 0 (stored 0), region 32 0 576 464 --
     8  20     0   sans16b |Timeline
    28  15     0   sans12 |11 articles  ·  3 feeds

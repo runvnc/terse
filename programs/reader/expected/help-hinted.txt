@@ -28,7 +28,7 @@
 
 
  0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
--- page: height 1369, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1409, scroll 0 (stored 0), region 64 0 512 464 --
    16  30     0   sans24b |Help
    62  22     0   sans17b |Your feed address
    92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926
@@ -43,8 +43,9 @@
   291  18    12   sans14b |Enter, click   open the article; a document (◆) is passed to the shell
   309  18    12   sans14 |to open
   331  18    12   sans14b |/   search
-  353  18    12   sans14b |F   feeds
-  375  18    12   sans14b |? or F1   this help
-  397  18    12   sans14b |T   publish a test article
-  419  18    12   sans14b |M   the Tersenet manual
-  441  18    12   sans14b |Esc   quit
+  353  18    12   sans14b |O   open a link: type or paste a terse: link to an article, a feed or a
+  371  18    12   sans14 |program, then Enter (Esc cancels)
+  393  18    12   sans14b |F   feeds
+  415  18    12   sans14b |? or F1   this help
+  437  18    12   sans14b |T   publish a test article
+  459  18    12   sans14b |M   the Tersenet manual

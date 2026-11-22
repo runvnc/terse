@@ -2579,7 +2579,78 @@ fn argument_opens_an_article() {
     run.machine.set_argument(Some(doc));
     run.frames(6);
     assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
-    assert_eq!(run.status(), " This needs the shell");
+    assert_eq!(run.status(), " This needs the shell: run terse-host with the link, or with no program");
+}
+
+/// O opens a link the user types or pastes (blanks and line breaks left
+/// out): an article by its ID (Esc goes back to where O was pressed), a
+/// feed's page with the hints of its address, a program asked of the
+/// shell; a malformed link is named as such, and one that cannot be
+/// fetched says so.
+#[test]
+fn open_a_pasted_link() {
+    let mut f = Fixture::populated();
+    let id = f.put(b"# Given by a friend\n\nPasted into the reader.\n");
+    let mut run = Run::new(&f, "10 press o\n");
+    run.machine.set_in_system(true);
+    run.frames(12);
+    assert!(row(&run.screen(), 28).starts_with(" Link:"), "{}", row(&run.screen(), 28));
+    assert_eq!(run.status(), " Paste or type a terse: link (article, feed, program)  Enter: open  Esc: cancel");
+    // A paste's blanks are left out.
+    run.text(&format!("terse: {}", grouped(&id)));
+    assert_eq!(row(&run.screen(), 28).trim_end(), format!(" Link: terse:{}", to_hex(&id)));
+    run.press("enter");
+    run.frames(10);
+    assert!(run.page_text().contains("Pasted into the reader."), "{}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "back where O was pressed: {}", run.page_text());
+
+    // Not links.
+    for (typed, said) in [
+        ("", " Type or paste a terse: link, or Esc to cancel"),
+        ("https://example.com", " Not a link: a Tersenet link begins with terse:"),
+        ("terse:1234", " Not a link: after terse: comes an article ID, feed/key or program/key/name"),
+        ("terse:feed/abc", " Not a feed link: terse:feed/ is followed by a key, 64 hex digits"),
+        (&format!("terse:feed/{}@a_b.example", to_hex(&bob().feed_key())), " Not a feed address: after @ give one or two relays, host or host:port"),
+        (&format!("terse:program/{}/", to_hex(&bob().feed_key())), " Not a program link: after the key's / comes the program's name"),
+        ("terse:program/abc/x", " Not a program link: after program/ come a key, 64 hex digits, and /"),
+        (&format!("terse:program/{}/a%zz", to_hex(&bob().feed_key())), " Not a program link: after the key's / comes the program's name"),
+    ] {
+        run.press("o");
+        run.text(typed);
+        run.press("enter");
+        assert_eq!(run.status(), said, "{typed}");
+        run.press("esc");
+    }
+
+    // A feed: its page, with the address's hints.
+    let carol = Identity::from_seed([99; 32]).feed_key();
+    run.press("o");
+    run.text(&format!("terse:feed/{}@relay.example", to_hex(&carol)));
+    run.press("enter");
+    run.frames(2);
+    assert_eq!(run.status(), " S subscribe  Esc back");
+    assert!(run.page_text().contains("relay.example"), "the address's hint: {}", run.page_text());
+    run.press("esc");
+    assert!(run.page_text().starts_with("Timeline\n"), "{}", run.page_text());
+
+    // A program: asked of the shell.
+    run.press("o");
+    run.text(&format!("terse:program/{}/Sketch%20pad", to_hex(&alice().feed_key())));
+    run.press("enter");
+    let mut want = alice().feed_key().to_vec();
+    want.push(10);
+    want.extend_from_slice(b"Sketch pad");
+    want.resize(81, 0);
+    assert_eq!(open_request(&run), Some((2, want)));
+    assert_eq!(run.status(), " Asked the shell to open it");
+
+    // An article nobody has.
+    run.press("o");
+    run.text(&format!("terse:{}", to_hex(&[7; 32])));
+    run.press("enter");
+    run.frames(10);
+    assert!(run.page_text().contains("Not found: neither this host nor its relays have this article."), "{}", run.page_text());
 }
 
 /// A program's key and a name with a space and a non-ASCII character,
@@ -2631,7 +2702,7 @@ fn program_links_ask_the_shell() {
     run.frames(16);
     run.press("tab");
     run.press("enter");
-    assert_eq!(run.status(), " This needs the shell");
+    assert_eq!(run.status(), " This needs the shell: run terse-host with the link, or with no program");
     assert!(open_request(&run).is_none());
     assert!(run.page_text().starts_with("Programs\n"));
 }

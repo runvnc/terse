@@ -614,8 +614,11 @@ machine's own and cost 4.
 - **`argument`** writes the machine's **argument**, the blob ID the shell
   gave it when it started it (§machines.calls), to the buffer, 32 bytes wholly
   in RAM (else `FFFF_FFFEh`), and returns 1; a machine that has none (the
-  shell gave none, it runs on its own, or it is the shell) gets 0 and
-  nothing is written. The argument never changes and is part of the
+  shell gave none, or it runs on its own) gets 0 and nothing is written.
+  The shell's own argument, if any, is given by its host: a blob the
+  host's user named for it to open (the reference host: a `terse:` link
+  on its command line), which a shell opens as it would a machine's
+  request to open that blob. The argument never changes and is part of the
   machine's state (`STATE.md` 1.14).
 - **`device`** returns the version of device `a0` if the machine has it:
   device 1, every device its image requires, and every optional device

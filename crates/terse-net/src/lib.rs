@@ -34,6 +34,7 @@ pub mod feeds;
 pub mod driverlist;
 pub mod fontlist;
 pub mod identity;
+pub mod link;
 pub mod local;
 pub mod manual;
 pub mod manual_site;

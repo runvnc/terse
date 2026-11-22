@@ -134,6 +134,7 @@ pub fn run(
     let title = if program.shell { "Tersenet".to_string() } else { format!("{} — Tersenet", program.image.title_lossy()) };
     let mut system = System::new(&program.image, program.shell, program.builtins);
     system.set_shell_identity(program.identity);
+    system.shell_mut().set_argument(program.argument);
     terse_net::snapshots::load_table(&mut system, &program.data);
     let looks_eye = looks.eye;
     let watch = crate::watch::HostWatch::new(
@@ -1206,7 +1207,8 @@ impl App {
                 };
                 self.key_input(PhysicalKey::Code(code), pressed, repeat, text.as_deref(), answer);
             }
-            Action::Text(t) => self.pending.extend(t.chars().map(Event::text)),
+            // As a paste: no faster than the focused machine's queue has room for.
+            Action::Text(t) => self.paste.extend(t.chars()),
             Action::Pointer { x, y, px } => {
                 let pos = if px {
                     PhysicalPosition::new(x, y)
