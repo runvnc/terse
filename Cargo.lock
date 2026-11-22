@@ -2914,6 +2914,7 @@ dependencies = [
  "fontdue",
  "getrandom 0.4.3",
  "gilrs",
+ "libloading",
  "memmap2",
  "png",
  "pollster",
