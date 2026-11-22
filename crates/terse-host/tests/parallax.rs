@@ -33,7 +33,9 @@ fn drive(dir: &Path, image: &Path, script: &str, renderer: &str) -> Output {
         .arg(image)
         .arg("--drive")
         .arg(&s)
-        .args(["--renderer", renderer, "--consent", "deny", "--mute"])
+        // The rule's notice over the bottom rows would make two pictures
+        // differ on a loaded machine: these tests are about the eye.
+        .args(["--renderer", renderer, "--consent", "deny", "--mute", "--perf-rule", "off"])
         .env("XDG_CACHE_HOME", dir.join("cache"))
         .env("XDG_CONFIG_HOME", dir.join("xdg-config"))
         .env("XDG_DATA_HOME", dir.join("xdg-data"))
