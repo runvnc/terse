@@ -554,7 +554,9 @@ ms p50). The record's writer is a thread of its own.
 **R15, the rule.** In order:
 
 1. **Shed optional work first.** A host sheds what it draws beyond what
-   a device requires (the reference: the phosphor look, §4 "The look").
+   a device requires (the reference: the phosphor look, §4 "The look";
+   a driver with a look of its own is told the level, `core.shed`,
+   `DEVICES.md` 7.1).
 2. **Warn.** After 3 late frames of one component within 60 frames (one
    second), the host tells the user, naming the device and its identity,
    and saying what happens next; the reference shows, as its own drawing
@@ -587,8 +589,36 @@ ms p50). The record's writer is a thread of its own.
    records every late frame, and never stops a machine for it
    (`RECORD.md` 4).
 4. **The host's own components** (the core, composing, presenting): a
-   host cannot stop itself usefully. It records them and shows them, as
-   for a warning.
+   host cannot stop itself usefully. It records every late frame, sheds
+   (step 1) and shows the warning **once**, as for a device: again only
+   after the component has gone 300 frames without a late frame (the
+   rule never asks for a stop of one). The reference prints, besides,
+   how many late frames each had when the run ends. A drawing that cannot
+   keep up at the window's size is answered by shedding, not by
+   announcing it frame after frame.
+
+**Resizing.** When the window's surface changes size (the user or a
+tiling compositor resizes it, a move to another monitor, the first
+frame), every driver makes new layer files and buffers and draws whole
+pictures, and the host composes and copies the whole window: that work
+is the host's request, not a component's misbehaviour. So a frame that
+would be blamed (R14) and is the first composed at a new size or one of
+the two after it is recorded with the verdict `resize` (`RECORD.md` 2)
+and counts toward neither the warning nor the stop. Only a change of
+the size the host composes counts (a configure that leaves it as it was
+excuses nothing), and the excuse is bounded: at most **120 frames within
+any 300** (two seconds of resizing in five). Three frames because the
+first is the reallocation and the next two the buffers a GPU or the
+system touch lazily and the window's double buffer at the new size (as
+a machine's first two frames are not counted). The bound because a
+window resized without end (a long drag, a compositor animating its
+tiles) changes size in every frame: without one, every frame would be
+excused. With it, a device late in every frame is warned about at most
+123 frames and stopped at most 130 frames after a resize began, however
+long it goes on (rather than at its 3rd and 10th), and then as usual;
+a device late only while reallocating is never warned about for a drag
+of up to two seconds. A driver cannot cause a resize, so it cannot use
+the excuse to hide.
 
 Why these numbers: one or two late frames are a hiccup a person barely
 sees, and the frames in which a machine starts may be slow for reasons
