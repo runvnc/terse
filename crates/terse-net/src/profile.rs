@@ -160,10 +160,16 @@ pub fn url_host(url: &str) -> Option<&str> {
     Some(authority.rsplit_once(':').map_or(authority, |(h, _)| h))
 }
 
-/// Whether a relay URL from a profile may be used: its host is not
+/// Whether a relay URL from the network (a profile's relay line, a hint)
+/// may be used: it is encrypted (`wss://`: a plain relay named by the
+/// network is used only when the user has it among their own relays,
+/// which serve every feed anyway, NETWORK 3), and its host is not
 /// `localhost` (or under `.localhost`) and, if an IP address, a public one.
 /// A host name is checked again once resolved ([`public_ip`]).
 pub fn usable_profile_relay(url: &str) -> bool {
+    if !url.starts_with("wss://") {
+        return false;
+    }
     let Some(host) = url_host(url) else { return false };
     let lower = host.to_ascii_lowercase();
     if host.is_empty() || lower == "localhost" || lower.ends_with(".localhost") {
@@ -324,10 +330,16 @@ mod tests {
 
     #[test]
     fn addresses() {
-        for url in ["ws://relay.example:7878", "ws://8.8.8.8:1", "ws://[2001:db8::1]:7", "wss://x.example/path"] {
+        for url in ["wss://relay.example:7878", "wss://8.8.8.8:1", "wss://[2001:db8::1]:7", "wss://x.example/path"] {
             assert!(usable_profile_relay(url), "{url}");
         }
         for url in [
+            // A plain relay named by the network: never (no downgrade).
+            "ws://relay.example:7878",
+            "ws://8.8.8.8:1",
+            "wss://127.0.0.1:7878",
+            "wss://localhost",
+            "wss://10.1.2.3",
             "ws://127.0.0.1:7878",
             "ws://localhost:1",
             "ws://a.localhost",

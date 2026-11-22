@@ -46,19 +46,23 @@ pub fn valid_url(url: &str) -> bool {
         && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// A relay as a person types it: a `ws://` or `wss://` URL as it is, or a
-/// host and maybe a port without a scheme, taken as `wss://` (over TLS, as
-/// public relays are reached: `relay.tersenet.org` is
-/// `wss://relay.tersenet.org`). `None` if it is neither.
+/// A relay as a person types it (NETWORK 3, "Encrypted by default"): a
+/// `ws://` or `wss://` URL as it is, or a host and maybe a port without a
+/// scheme, taken as `wss://` (`relay.tersenet.org` is
+/// `wss://relay.tersenet.org`; a port is only a port), except that
+/// `localhost` or a loopback address is taken as `ws://` (this machine:
+/// `127.0.0.1:7878` is `ws://127.0.0.1:7878`). `None` if it is neither.
 pub fn typed_url(text: &str) -> Option<String> {
     let t = text.trim();
     if valid_url(t) {
         return Some(t.to_string());
     }
-    if t.contains("://") || t.contains('/') {
+    if t.is_empty() || t.contains("://") || t.contains('/') {
         return None;
     }
-    let url = format!("wss://{t}");
+    let host = crate::relay::Endpoint::parse(&format!("wss://{t}")).ok()?.host;
+    let scheme = if terse_core::hints::loopback_text(&host) { "ws" } else { "wss" };
+    let url = format!("{scheme}://{t}");
     (valid_url(&url) && crate::relay::Endpoint::parse(&url).is_ok()).then_some(url)
 }
 
@@ -79,11 +83,11 @@ pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, Stri
         let Some(text) = read_optional(&path)? else { continue };
         let mut urls: Vec<String> = Vec::new();
         for (i, line) in text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()) {
-            if !valid_url(line) {
-                return Err(format!("{}:{}: not a ws:// or wss:// URL: {line}", path.display(), i + 1));
-            }
-            if !urls.iter().any(|u| u == line) {
-                urls.push(line.to_string());
+            let Some(url) = typed_url(line) else {
+                return Err(format!("{}:{}: not a relay (a wss:// or ws:// URL, or a host): {line}", path.display(), i + 1));
+            };
+            if !urls.contains(&url) {
+                urls.push(url);
             }
         }
         return Ok(Some((urls, path)));
@@ -159,10 +163,14 @@ pub fn find_relays(given: &[String], config: Option<&Path>, port: u16) -> Result
         [none] if none == "none" => return Ok(Found::Disabled),
         _ if given.iter().any(|u| u == "none") => return Err("--relay none cannot be combined with relays".into()),
         _ => {
-            if let Some(bad) = given.iter().find(|u| !valid_url(u)) {
-                return Err(format!("--relay {bad}: not a ws:// or wss:// URL"));
+            let mut urls = Vec::new();
+            for text in given {
+                let url = typed_url(text).ok_or(format!("--relay {text}: not a relay (a wss:// or ws:// URL, or a host)"))?;
+                if !urls.contains(&url) {
+                    urls.push(url);
+                }
             }
-            return Ok(Found::Given(given.to_vec()));
+            return Ok(Found::Given(urls));
         }
     }
     if let Some(config) = config
@@ -195,10 +203,23 @@ mod tests {
         assert_eq!(find_relays(&list(&["none"]), Some(config.path()), port).unwrap(), Found::Disabled);
         assert!(find_relays(&list(&["none", "ws://x:1"]), Some(config.path()), port).is_err());
         assert!(find_relays(&list(&["http://x"]), Some(config.path()), port).is_err());
-        // Typed without a scheme: over TLS.
+        // Typed without a scheme: encrypted, whatever the port.
         assert_eq!(typed_url("relay.tersenet.org").as_deref(), Some("wss://relay.tersenet.org"));
         assert_eq!(typed_url(" relay.example:8443 ").as_deref(), Some("wss://relay.example:8443"));
+        assert_eq!(typed_url("relay.example:7878").as_deref(), Some("wss://relay.example:7878"));
+        assert_eq!(typed_url("relay.example:80").as_deref(), Some("wss://relay.example:80"));
+        assert_eq!(typed_url("203.0.113.5:7878").as_deref(), Some("wss://203.0.113.5:7878"));
+        assert_eq!(typed_url("192.168.1.5:7878").as_deref(), Some("wss://192.168.1.5:7878"));
+        assert_eq!(typed_url("a.localhost:7878").as_deref(), Some("wss://a.localhost:7878"));
+        // Written with a scheme: as written.
         assert_eq!(typed_url("ws://relay.example:7878").as_deref(), Some("ws://relay.example:7878"));
+        assert_eq!(typed_url("wss://127.0.0.1:7878").as_deref(), Some("wss://127.0.0.1:7878"));
+        // Loopback without a scheme: plain (this machine).
+        assert_eq!(typed_url("127.0.0.1:7878").as_deref(), Some("ws://127.0.0.1:7878"));
+        assert_eq!(typed_url("127.1.2.3:9").as_deref(), Some("ws://127.1.2.3:9"));
+        assert_eq!(typed_url("localhost:7878").as_deref(), Some("ws://localhost:7878"));
+        assert_eq!(typed_url("LocalHost:7878").as_deref(), Some("ws://LocalHost:7878"));
+        assert_eq!(typed_url("[::1]:7878").as_deref(), Some("ws://[::1]:7878"));
         for bad in ["http://x", "", "a b", "relay.example/x", "[::1"] {
             assert_eq!(typed_url(bad), None, "{bad}");
         }
@@ -216,11 +237,18 @@ mod tests {
         assert_eq!(found.urls(), list(&["ws://a.example:1", "ws://b.example:2"]));
         let two = list(&["ws://x:1", "ws://y:2"]);
         assert_eq!(find_relays(&two, Some(config.path()), open).unwrap(), Found::Given(two.clone()));
+        // --relay and the list take hosts without a scheme as people type them.
+        let typed = list(&["relay.example", "127.0.0.1:7878"]);
+        let found = find_relays(&typed, Some(config.path()), open).unwrap();
+        assert_eq!(found, Found::Given(list(&["wss://relay.example", "ws://127.0.0.1:7878"])));
+        std::fs::write(config.path().join(RELAYS_FILE), "relay.example:9000\nlocalhost:7878\n").unwrap();
+        let found = find_relays(&[], Some(config.path()), open).unwrap();
+        assert_eq!(found.urls(), list(&["wss://relay.example:9000", "ws://localhost:7878"]));
         // An empty list falls through to the local relay.
         write_relays(config.path(), &[]).unwrap();
         assert_eq!(find_relays(&[], Some(config.path()), open).unwrap(), Found::Local(local_url(open)));
         assert!(write_relays(config.path(), &list(&["http://x"])).is_err());
-        std::fs::write(config.path().join(RELAYS_FILE), "garbage\n").unwrap();
+        std::fs::write(config.path().join(RELAYS_FILE), "garbage/x\n").unwrap();
         assert!(find_relays(&[], Some(config.path()), open).is_err());
         let many: Vec<String> = (0..10).map(|i| format!("ws://r{i}.example")).collect();
         assert_eq!(Found::Given(many).urls().len(), MAX_RELAYS);

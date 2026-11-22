@@ -10,99 +10,154 @@ address name
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 7878 ws://relay.example:7878
+  hint relay.example 443 wss://relay.example
 
 address name-and-port
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:7000"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 7000 ws://relay.example:7000
+  hint relay.example 7000 wss://relay.example:7000
 
 address two-hints
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example,203.0.113.7:9000"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 7878 ws://relay.example:7878
-  hint 203.0.113.7 9000 ws://203.0.113.7:9000
+  hint relay.example 443 wss://relay.example
+  hint 203.0.113.7 9000 wss://203.0.113.7:9000
 
-address tls-port-443
+address port-443
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:443"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
   hint relay.example 443 wss://relay.example
 
-address tls-and-plain
+address port-443-and-ipv6
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:443,[2001:db8::1]"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
   hint relay.example 443 wss://relay.example
-  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+  hint [2001:db8::1] 443 wss://[2001:db8::1]
 
 address port-80
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:80"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 80 wss://relay.example:80
+
+address port-7878
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 7878 wss://relay.example:7878
+
+address plain
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 7878 ws://relay.example:7878
+
+address plain-no-port
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
   hint relay.example 80 ws://relay.example:80
+
+address plain-ipv6
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:[2001:db8::1]:9000"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint [2001:db8::1] 9000 ws://[2001:db8::1]:9000
+
+address encrypted-and-plain
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example,ws:203.0.113.7:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 443 wss://relay.example
+  hint 203.0.113.7 7878 ws://203.0.113.7:7878
+
+address loopback
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@127.0.0.1:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint 127.0.0.1 7878 ws://127.0.0.1:7878
+
+address localhost
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@localhost:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint localhost 7878 ws://localhost:7878
+
+address loopback-ipv6
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[::1]:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint [::1] 7878 ws://[::1]:7878
+
+address under-localhost
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.localhost:7878"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint a.localhost 7878 wss://a.localhost:7878
 
 address ipv4
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@203.0.113.7"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint 203.0.113.7 7878 ws://203.0.113.7:7878
+  hint 203.0.113.7 443 wss://203.0.113.7
 
 address ipv6
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[2001:db8::1]:7878"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+  hint [2001:db8::1] 7878 wss://[2001:db8::1]:7878
 
 address ipv6-every-group
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[2001:DB8:0:0:0:0:0:1]"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+  hint [2001:db8::1] 443 wss://[2001:db8::1]
 
 address ipv6-all-zero
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[::]"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint [::] 7878 ws://[::]:7878
+  hint [::] 443 wss://[::]
 
 address capitals-in-name
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@Relay.Example"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint Relay.Example 7878 ws://Relay.Example:7878
+  hint Relay.Example 443 wss://Relay.Example
 
 address one-label
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay 7878 ws://relay:7878
+  hint relay 443 wss://relay
 
 address digit-first
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@1relay.example"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint 1relay.example 7878 ws://1relay.example:7878
+  hint 1relay.example 443 wss://1relay.example
 
 address port-1
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:1"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint a.example 1 ws://a.example:1
+  hint a.example 1 wss://a.example:1
 
 address port-65535
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.example:65535"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint a.example 65535 ws://a.example:65535
+  hint a.example 65535 wss://a.example:65535
 
 address hint-80-bytes
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   valid yes
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 7878 ws://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:7878
+  hint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 443 wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 address key-uppercase
   text "03A107BFF3CE10BE1D70DD18E74BC09967E4D6309BA50D5F1DDC8664125531B8"
@@ -251,6 +306,26 @@ address underscore
 
 address scheme
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws://a.example"
+  valid no
+  reason bad-name
+
+address scheme-wss
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@wss://a.example"
+  valid no
+  reason bad-port
+
+address wss-prefix
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@wss:a.example"
+  valid no
+  reason bad-port
+
+address plain-empty
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:"
+  valid no
+  reason bad-name
+
+address plain-twice
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:ws:a.example"
   valid no
   reason bad-port
 

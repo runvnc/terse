@@ -2791,6 +2791,50 @@ mod tests {
         }
     }
 
+    /// NETWORK 3, no downgrade: a plain relay named by the network (a
+    /// profile's relay line, a `ws:` hint) is never contacted; an
+    /// encrypted one is. The relays' hosts are public addresses, so the
+    /// rules of section 5.1 are the real ones here; the connector only
+    /// records what would be contacted.
+    #[test]
+    fn plain_relays_from_the_network_are_never_contacted() {
+        for (doc, hints, want) in [
+            (&b"listed: no\nrelay: ws://203.0.113.9:7878\n"[..], "ws:203.0.113.10:7878", None),
+            (&b"listed: no\nrelay: wss://203.0.113.9:7878\n"[..], "ws:203.0.113.10:7878", Some("wss://203.0.113.9:7878")),
+            (&b"listed: no\n"[..], "ws:203.0.113.10:7878,203.0.113.11:9000", Some("wss://203.0.113.11:9000")),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut node, sa) = node_with_fake(dir.path());
+            let contacted = Arc::new(Mutex::new(Vec::<String>::new()));
+            let seen = contacted.clone();
+            node.connect_feed_relay = Box::new(move |url| {
+                seen.lock().unwrap().push(url.to_string());
+                fake_relay().0
+            });
+            node.feed_relays_dirty = true;
+            let author = Identity::from_seed([31; 32]);
+            {
+                let mut s = sa.lock().unwrap();
+                s.blobs.insert(blob_id(doc), doc.to_vec());
+                s.held.push(Entry::profile(author.feed_key(), 1, 1, doc, "Author").sign(&author).unwrap().bytes);
+            }
+            node.set_subscriptions(Subscriptions::in_memory([]));
+            node.subscribe_with_hints(author.feed_key(), Some(hints)).unwrap();
+            // The own relay holds the profile only; without a relay line
+            // the hints are used once the own relay has answered.
+            if doc == b"listed: no\n" {
+                sa.lock().unwrap().held.clear();
+            }
+            poll_n(&mut node, 50);
+            let contacted = contacted.lock().unwrap().clone();
+            match want {
+                None => assert!(contacted.is_empty(), "{contacted:?}"),
+                Some(url) => assert_eq!(contacted, [url]),
+            }
+            assert!(!contacted.iter().any(|u| u.starts_with("ws://")), "{contacted:?}");
+        }
+    }
+
     /// Polls `n` times and returns the events.
     fn poll_n(node: &mut Node, n: usize) -> Vec<FeedEvent> {
         (0..n).flat_map(|_| {

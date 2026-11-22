@@ -84,8 +84,10 @@ Records `address <name>` with `text` (quoted: an address exactly as
 written, a key and maybe `@` and hints) and `valid`. A valid one gives
 its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
-shortest form), the port (7878 if the hint names none) and the relay's
-URL: `ws://host:port`, or `wss://host` for port 443. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+shortest form), the port (the default port of the scheme, 443 or 80, if
+the hint names none) and the relay's URL: `wss://host` (with `:port`
+unless 443) for a hint without `ws:`, `ws://host:port` for a `ws:` hint
+and for one whose host is `localhost` or a loopback address. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
 digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
 `key-not-canonical` is a point of large order written as y = p + 3, and
 `key-mixed-order`, which is valid, the test key plus a point of order 8),

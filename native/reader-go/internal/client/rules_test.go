@@ -467,7 +467,9 @@ func TestHintsNotSuppressedByRefusedProfileRelay(t *testing.T) {
 		suppress bool
 	}{
 		{"relay: ws://127.0.0.1:1\nrelay: ws://localhost:2\n", false},
-		{"relay: ws://127.0.0.1:1\nrelay: ws://relay.example:7001\n", true},
+		{"relay: ws://127.0.0.1:1\nrelay: wss://relay.example:7001\n", true},
+		// A plain relay named by the network is never used (NETWORK.md 3).
+		{"relay: ws://relay.example:7001\n", false},
 	} {
 		st := openStore(t)
 		opt := testOptions()
@@ -492,6 +494,43 @@ func TestHintsNotSuppressedByRefusedProfileRelay(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%q: %d connections made", tc.doc, n)
 		}
+	}
+}
+
+// A plain hint of a remote relay is never contacted (NETWORK.md 3: no
+// downgrade from the network), nor is a plain profile relay line.
+func TestPlainHintNeverContacted(t *testing.T) {
+	f := newFeed(t)
+	a, err := terse.ParseAddress(terse.KeyHex(f.key[:]) + "@ws:relay.example:7001,ws:203.0.113.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Hints[0].Encrypted() || a.Hints[0].URL() != "ws://relay.example:7001" || a.Hints[1].URL() != "ws://203.0.113.9:80" {
+		t.Fatalf("hints %+v", a.Hints)
+	}
+	st := openStore(t)
+	opt := testOptions()
+	opt.AllowPrivate = false
+	var logged []string
+	opt.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	cl := New(st, opt)
+	defer cl.Stop()
+	if _, err := st.Subscribe(a); err != nil {
+		t.Fatal(err)
+	}
+	addProfile(t, st, f, 1, "relay: ws://relay.example:7002\n")
+	if pr := cl.profileRelays(f.key); len(pr) != 0 {
+		t.Errorf("plain profile relays used: %v", pr)
+	}
+	cl.evaluateHints(f.key)
+	cl.mu.Lock()
+	n := len(cl.conns)
+	cl.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d connections made to plain relays named by the network", n)
+	}
+	if len(logged) != 2 || !strings.Contains(logged[0], "plain (unencrypted)") {
+		t.Errorf("logged %q", logged)
 	}
 }
 

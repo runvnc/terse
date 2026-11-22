@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! hint list = hint [ "," hint ]                    at most 161 bytes
-//! hint      = host [ ":" port ]                    at most 80 bytes
+//! hint      = [ "ws:" ] host [ ":" port ]          at most 80 bytes
 //! host      = name / IPv4 / "[" IPv6 "]"
 //! name      = label *( "." label ), the last label holding a letter
 //! label     = 1 to 63 of A-Z a-z 0-9 "-", not starting or ending with "-"
@@ -14,11 +14,13 @@
 //! IPv6      = 1 to 4 hex digits (either case) per group, 8 groups
 //!             separated by ":", or fewer with one "::" for one or more
 //!             zero groups; no dotted IPv4 part, no zone
-//! port      = 1 to 65535, decimal, no leading zero; 7878 if left out
+//! port      = 1 to 65535, decimal, no leading zero
 //! ```
 //!
-//! A hint names `ws://host:port`, except that port 443 names
-//! `wss://host` (WebSocket over TLS, NETWORK.md 4.9).
+//! A hint names an encrypted relay, `wss://host[:port]`; one starting
+//! with `ws:` names a plain relay, `ws://host:port`, and so does one whose
+//! host is `localhost` or a loopback address (NETWORK.md 3, 4.9). A port
+//! left out is the default port of the scheme.
 
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -29,10 +31,12 @@ pub const MAX_HINT: usize = 80;
 pub const MAX_HINTS: usize = 2;
 /// The longest hint list: two hints and the comma.
 pub const MAX_HINT_LIST: usize = MAX_HINTS * MAX_HINT + 1;
-/// The port of a hint that names none.
-pub const DEFAULT_PORT: u16 = 7878;
-/// The port of a hint that names a relay over TLS (`wss://`).
-pub const TLS_PORT: u16 = 443;
+/// The default port of `wss://`: an encrypted hint that names no port.
+pub const WSS_PORT: u16 = 443;
+/// The default port of `ws://`: a plain hint that names no port.
+pub const WS_PORT: u16 = 80;
+/// What starts a hint that names a plain relay.
+pub const PLAIN_PREFIX: &str = "ws:";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Host {
@@ -42,17 +46,58 @@ pub enum Host {
     V6(Ipv6Addr),
 }
 
-/// One hint: a relay's host and port.
+impl Host {
+    /// `localhost` or a loopback IP address: a host whose relay is on this
+    /// machine, reached plainly when no scheme is written (NETWORK.md 3).
+    /// Names under `.localhost` are not, since a resolver may send them on.
+    pub fn is_loopback(&self) -> bool {
+        match self {
+            Host::Name(n) => n.eq_ignore_ascii_case("localhost"),
+            Host::V4(a) => a.is_loopback(),
+            Host::V6(a) => a.is_loopback(),
+        }
+    }
+}
+
+/// Whether a host as a URL writes it (an IPv6 address in brackets) is
+/// `localhost` or a loopback IP address ([`Host::is_loopback`]).
+pub fn loopback_text(host: &str) -> bool {
+    let inner = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    host.eq_ignore_ascii_case("localhost") || inner.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// One hint: a relay's host and port (the default port of its scheme when
+/// the hint names none), and whether it was written `ws:`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Hint {
     pub host: Host,
     pub port: u16,
+    /// Written with `ws:`: a plain relay.
+    pub plain: bool,
 }
 
 impl Hint {
-    /// The relay's URL: `ws://host:port`, or `wss://host` for port 443.
+    /// Whether the relay is reached over TLS: not written `ws:`, and not on
+    /// a loopback host (NETWORK.md 3, 4.9).
+    pub fn encrypted(&self) -> bool {
+        !self.plain && !self.host.is_loopback()
+    }
+
+    /// The default port of the hint's scheme.
+    pub fn default_port(&self) -> u16 {
+        if self.encrypted() { WSS_PORT } else { WS_PORT }
+    }
+
+    /// The relay's URL: `wss://host` (with `:port` when it is not 443), or
+    /// `ws://host:port`.
     pub fn url(&self) -> String {
-        if self.port == TLS_PORT { format!("wss://{}", self.host_text()) } else { format!("ws://{}:{}", self.host_text(), self.port) }
+        if !self.encrypted() {
+            format!("ws://{}:{}", self.host_text(), self.port)
+        } else if self.port == WSS_PORT {
+            format!("wss://{}", self.host_text())
+        } else {
+            format!("wss://{}:{}", self.host_text(), self.port)
+        }
     }
 
     /// The host as a URL writes it (an IPv6 address in brackets).
@@ -65,10 +110,14 @@ impl Hint {
     }
 }
 
-/// The hint in its shortest text form: the port left out when it is 7878.
+/// The hint in its shortest text form: `ws:` for a plain relay that needs
+/// it, the port left out when it is the default of the scheme.
 impl fmt::Display for Hint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.port == DEFAULT_PORT { write!(f, "{}", self.host_text()) } else { write!(f, "{}:{}", self.host_text(), self.port) }
+        if self.plain && !self.host.is_loopback() {
+            f.write_str(PLAIN_PREFIX)?;
+        }
+        if self.port == self.default_port() { write!(f, "{}", self.host_text()) } else { write!(f, "{}:{}", self.host_text(), self.port) }
     }
 }
 
@@ -204,6 +253,11 @@ pub fn parse_hint(s: &[u8]) -> Result<Hint, Malformed> {
     if s.len() > MAX_HINT {
         return Err(Malformed::TooLong);
     }
+    let plain = s.starts_with(PLAIN_PREFIX.as_bytes());
+    let s = if plain { &s[PLAIN_PREFIX.len()..] } else { s };
+    if s.is_empty() {
+        return Err(Malformed::Name);
+    }
     let (host, rest) = if s[0] == b'[' {
         let close = s.iter().position(|&b| b == b']').ok_or(Malformed::Ipv6)?;
         (Host::V6(ipv6(&s[1..close]).ok_or(Malformed::Ipv6)?), &s[close + 1..])
@@ -212,11 +266,13 @@ pub fn parse_hint(s: &[u8]) -> Result<Hint, Malformed> {
         (name(&s[..colon])?, &s[colon..])
     };
     let port = match rest {
-        [] => DEFAULT_PORT,
-        [b':', p @ ..] => port(p)?,
+        [] => None,
+        [b':', p @ ..] => Some(port(p)?),
         _ => return Err(if matches!(host, Host::V6(_)) { Malformed::Ipv6 } else { Malformed::Port }),
     };
-    Ok(Hint { host, port })
+    let mut hint = Hint { host, port: 0, plain };
+    hint.port = port.unwrap_or(hint.default_port());
+    Ok(hint)
 }
 
 /// A hint list: one or two hints separated by a comma.
@@ -269,16 +325,34 @@ mod tests {
 
     #[test]
     fn forms() {
-        assert_eq!(ok("relay.example.org"), [Hint { host: Host::Name("relay.example.org".into()), port: 7878 }]);
-        assert_eq!(ok("Relay.Example:443")[0].port, 443);
-        assert_eq!(ok("a")[0].url(), "ws://a:7878");
-        // Port 443: over TLS.
+        // A bare host: encrypted, on the default port of wss://.
+        assert_eq!(ok("relay.example.org"), [Hint { host: Host::Name("relay.example.org".into()), port: 443, plain: false }]);
+        assert_eq!(ok("a")[0].url(), "wss://a");
+        // A port is only a port: still encrypted.
         assert_eq!(ok("Relay.Example:443")[0].url(), "wss://Relay.Example");
-        assert_eq!(ok("[2001:db8::1]:443")[0].url(), "wss://[2001:db8::1]");
-        assert_eq!(ok("a:80")[0].url(), "ws://a:80");
-        assert_eq!(ok("203.0.113.5:65535")[0], Hint { host: Host::V4(Ipv4Addr::new(203, 0, 113, 5)), port: 65535 });
+        assert_eq!(ok("Relay.Example:443")[0].to_string(), "Relay.Example");
+        assert_eq!(ok("relay.example:7878")[0].url(), "wss://relay.example:7878");
+        assert_eq!(ok("a:80")[0].url(), "wss://a:80");
+        assert_eq!(ok("[2001:db8::1]:8080")[0].url(), "wss://[2001:db8::1]:8080");
+        assert_eq!(ok("[2001:db8::1]")[0].url(), "wss://[2001:db8::1]");
+        // ws: names a plain relay, port 80 when none is given.
+        assert_eq!(ok("ws:relay.example:7878")[0].url(), "ws://relay.example:7878");
+        assert_eq!(ok("ws:relay.example:7878")[0].to_string(), "ws:relay.example:7878");
+        assert_eq!(ok("ws:relay.example")[0].url(), "ws://relay.example:80");
+        assert_eq!(ok("ws:[2001:db8::1]:9")[0].url(), "ws://[2001:db8::1]:9");
+        assert!(!ok("ws:a.example")[0].encrypted());
+        // Loopback without a scheme: plain (this machine).
+        assert_eq!(ok("127.0.0.1:7878")[0].url(), "ws://127.0.0.1:7878");
+        assert_eq!(ok("127.0.0.1:7878")[0].to_string(), "127.0.0.1:7878");
+        assert_eq!(ok("localhost:7878")[0].url(), "ws://localhost:7878");
+        assert_eq!(ok("[::1]:9")[0].url(), "ws://[::1]:9");
+        assert_eq!(ok("ws:127.0.0.1:7878")[0].to_string(), "127.0.0.1:7878");
+        // A name under .localhost is not loopback here.
+        assert_eq!(ok("a.localhost")[0].url(), "wss://a.localhost");
+        // Two hints of one host and port differ by encryption.
+        assert_ne!(ok("a.example:9")[0], ok("ws:a.example:9")[0]);
+        assert_eq!(ok("203.0.113.5:65535")[0], Hint { host: Host::V4(Ipv4Addr::new(203, 0, 113, 5)), port: 65535, plain: false });
         assert_eq!(ok("0.0.0.0")[0].host, Host::V4(Ipv4Addr::UNSPECIFIED));
-        assert_eq!(ok("[2001:db8::1]:8080")[0].url(), "ws://[2001:db8::1]:8080");
         assert_eq!(ok("[::]")[0].host, Host::V6(Ipv6Addr::UNSPECIFIED));
         assert_eq!(ok("[1:2:3:4:5:6:7:8]")[0].to_string(), "[1:2:3:4:5:6:7:8]");
         assert_eq!(ok("[1:2:3:4:5:6::8]")[0].to_string(), "[1:2:3:4:5:6:0:8]");
@@ -312,7 +386,10 @@ mod tests {
         assert_eq!(bad(".a"), Malformed::Name);
         assert_eq!(bad("a_b.example"), Malformed::Name);
         assert_eq!(bad(&format!("{}.e", "a".repeat(64))), Malformed::Name);
-        assert_eq!(bad("ws://a.example"), Malformed::Port);
+        assert_eq!(bad("ws://a.example"), Malformed::Name);
+        assert_eq!(bad("wss://a.example"), Malformed::Port);
+        assert_eq!(bad("ws:"), Malformed::Name);
+        assert_eq!(bad("wss:a.example"), Malformed::Port);
         assert_eq!(bad("a.example/x"), Malformed::Name);
         assert_eq!(bad("1.2.3"), Malformed::Address);
         assert_eq!(bad("1.2.3.256"), Malformed::Address);
@@ -352,5 +429,22 @@ mod tests {
         assert_eq!(h("..."), 0);
         assert_eq!(h("1.2.3"), 0);
         assert_eq!(h(&"a".repeat(81)), 0);
+        // A plain hint: the whole of it.
+        assert_eq!(h("ws:relay.example:7878."), 21);
+    }
+
+    /// What a parser of the earlier revision (no `ws:`; a host ends at the
+    /// first `:`) makes of a plain hint: the host `ws` and a port that is
+    /// not digits, so it is malformed, never some other relay.
+    #[test]
+    fn earlier_parsers_refuse_plain_hints() {
+        let earlier = |s: &str| {
+            let (host, port) = s.split_once(':').unwrap();
+            host == "ws" && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())
+        };
+        for hint in ["ws:relay.example:7878", "ws:127.0.0.1:7878", "ws:[::1]:9", "ws:a"] {
+            assert!(parse_hint(hint.as_bytes()).is_ok(), "{hint}");
+            assert!(!earlier(hint), "{hint}");
+        }
     }
 }

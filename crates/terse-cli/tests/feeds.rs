@@ -473,8 +473,10 @@ fn feed_addresses() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{key}\n"));
     assert!(String::from_utf8_lossy(&out.stderr).contains("only people who use the same relay as you"), "{out:?}");
-    let out = reader.feed(&["address", "--relay", "ws://relay.example:7878", "--relay", "ws://10.0.0.1:7878", "--relay", "ws://b.example:9000"], None);
-    assert_eq!(out, format!("{key}@relay.example,b.example:9000\n"));
+    // Encrypted relays only (NETWORK 4.9): a plain one is not given as a hint.
+    let relays = ["ws://plain.example:7878", "wss://relay.example", "wss://10.0.0.1:7878", "relay.example:443", "b.example:9000"];
+    let args: Vec<&str> = ["address"].into_iter().chain(relays.iter().flat_map(|r| ["--relay", r])).collect();
+    assert_eq!(reader.feed(&args, None), format!("{key}@relay.example,b.example:9000\n"));
 
     // Sync: a bare key no relay holds, and the hinted feed (its hint is
     // loopback, so not used), are reported.

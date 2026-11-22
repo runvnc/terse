@@ -96,11 +96,32 @@ receipt.
 
 **The WebSocket itself** (RFC 6455):
 
-- A relay URL is `ws://` (plain) or `wss://` (over TLS), a host, an
-  optional port (80 and 443 by default, as for any WebSocket URL; a hint
-  names 7878 when it gives none, section 4.9) and an optional path. The
-  client opens the WebSocket with the URL's path and query as written,
-  or `/` when it has none. A relay accepts any path.
+- A relay URL is `wss://` (encrypted: WebSocket over TLS) or `ws://`
+  (plain), a host, an optional port (the scheme's default when left
+  out, as for any WebSocket URL) and an optional path. The client opens
+  the WebSocket with the URL's path and query as written, or `/` when it
+  has none. A relay accepts any path.
+- **Encrypted by default.** A relay address written without a scheme
+  (typed by a person, given on a command line, in a configuration, or a
+  hint, section 4.9) names an encrypted relay: `wss://` and the address,
+  on the default port of `wss://` when it gives none. A port, when
+  written, is only a port: it says nothing about encryption. A plain
+  relay is written with its scheme, `ws://host:port`; it is meant for
+  the local machine, private networks and tests. The one exception: an
+  address without a scheme whose host is `localhost` or a loopback IP
+  address (127.0.0.0/8, `::1`) names a plain relay (`ws://`) on that
+  host, since its traffic never leaves the machine; written `wss://`, it
+  is encrypted. A client never takes `localhost` or a loopback address
+  from the network (section 5.1), so the exception cannot turn a relay
+  named by someone else into a plain one.
+- **No downgrade.** A client connects to a relay without encryption
+  only when its own user wrote that relay as a `ws://` relay (or as a
+  loopback address without a scheme): in its relay list, on its command
+  line, or in its settings. A relay named by the network (a `relay` line
+  of a profile, section 4.6, or a hint, section 4.9) that is plain is
+  not used unless the user wrote that same relay so; one that is
+  encrypted is never reached by a plain connection instead, and a
+  failed TLS handshake is never retried without TLS.
 - Over `wss://` the client checks the relay's certificate as a web
   browser does for `https://`: it must chain to a certificate authority
   the client trusts and be for the URL's host (RFC 6125). A client does
@@ -538,7 +559,7 @@ feed key with up to two **hints**, relays that should hold the feed:
 
     address   = key [ "@" hint [ "," hint ] ]
     key       = 64 lowercase hexadecimal digits
-    hint      = host [ ":" port ]                      at most 80 bytes
+    hint      = [ "ws:" ] host [ ":" port ]            at most 80 bytes
     host      = name / IPv4 / "[" IPv6 "]"
     name      = label *( "." label )                   the last label holds a letter
     label     = 1 to 63 of A-Z a-z 0-9 "-", not starting or ending with "-"
@@ -546,19 +567,35 @@ feed key with up to two **hints**, relays that should hold the feed:
     IPv6      = 8 groups of 1 to 4 hexadecimal digits (either case)
                 separated by ":", or fewer and one "::" standing for one
                 or more groups of zeros; no dotted IPv4 part, no zone
-    port      = 1 to 65535, decimal, without leading zeros; 7878 if left out
+    port      = 1 to 65535, decimal, without leading zeros
 
 For example `3fa9…c21e07@relay.example.org` or
 `3fa9…c21e07@relay.example.org:9000,[2001:db8::7]` (the key written in
 full). There are no blanks, no scheme and no path; a hint list is at
-most 161 bytes. A hint names the relay `ws://host:port` (plain
-WebSocket), except that a hint with port 443 names `wss://host`
-(WebSocket over TLS, on its default port): `relay.example.org:443` is
-`wss://relay.example.org`. A plain relay on port 443 cannot be named by
-a hint. (A reader of an earlier revision takes such a hint as
-`ws://host:443`, which fails to connect: for it the hint names a relay
-that cannot be reached.) Hint names compare without regard to case. The address of an article link is
-`terse:feed/<address>` (`ARTICLE.md` section 4.1).
+most 161 bytes. A hint names an encrypted relay, as an address without
+a scheme does (section 3): `relay.example.org` is
+`wss://relay.example.org` and `relay.example.org:9000` is
+`wss://relay.example.org:9000`. A hint that starts with `ws:` names a
+plain relay, `ws://host` with its port (the default port of `ws://` if
+it gives none): `ws:relay.example.org:7878` is
+`ws://relay.example.org:7878`. A hint whose host is `localhost` or a
+loopback address without `ws:` names a plain relay too (section 3);
+clients ignore such hints anyway (section 5.1). Whether a client may
+use a plain hint is section 3's question (no downgrade): only if its
+user wrote that relay as a plain one. Hint names compare without regard
+to case; two hints name the same relay when their hosts, ports (the
+default port of the scheme when left out) and encryption are the same.
+The address of an article link is `terse:feed/<address>` (`ARTICLE.md`
+section 4.1).
+
+Earlier revisions read a hint without a port as port 7878, and every
+hint as plain except one with port 443, which named `wss://host`. A
+reader of an earlier revision takes an encrypted hint of this revision
+as a plain relay, which fails to connect unless the host also serves a
+plain relay there; one written with port 443 means the same in both. A
+`ws:` hint is malformed for such a reader (its host would be `ws`): it
+refuses a typed address that holds one, and in an article it reads the
+link as the key alone.
 
 **A malformed address.** A client refuses an address that does not match
 this grammar when it is typed or given to it (the whole address is
@@ -610,9 +647,9 @@ entry received through one is verified like any other (section 4.2).
 **A client's own address.** A client shows its user their feed address
 with hints taken, in order, from the `relay` lines of their profile in
 force, then from its configured relays: those that can be written as a
-hint (`ws://` on a port other than 443, given or 80 by default, or
-`wss://` on port 443; no path but `/`) and whose host is not refused by section
-5.1, without repeats, at most two. If none is left, the address is the
+hint (`wss://`, with no path but `/`; the port is left out when it is
+the default) and whose host is not refused by section 5.1, without
+repeats, at most two. Plain relays are not given as hints. If none is left, the address is the
 bare key, and the client says that only people who use one of the same
 relays will find the feed.
 
@@ -631,7 +668,10 @@ under `.localhost`, or an address that is loopback, unspecified, private
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or
 link-local (169.254.0.0/16, fe80::/10), and does not connect if a host
 name resolves to any such address; it connects only to the addresses it
-checked, without resolving the name again. A client connects to all its
+checked, without resolving the name again. It also ignores a `relay`
+line or hint that names a plain relay (`ws://`, or a `ws:` hint) unless
+its user wrote that same relay as a plain one (section 3: no
+downgrade). A client connects to all its
 relays and, when a connection fails or drops, tries again after 1 s,
 doubling the wait up to 30 s. A relay that is still connecting does not
 hold up requests: they go to the relays that are connected. Only while
@@ -891,8 +931,6 @@ This section concerns only clients that run the Terse machine
   of it.
 - Relay discovery beyond configuration, the local relay, the `relay`
   lines of profiles and the hints of feed addresses (section 4.9).
-- A hint for a relay reached over TLS on a port other than 443, or for a
-  plain relay on port 443.
 - Direct connections between clients.
 - Abuse limits beyond those of section 5.3; a list of writers that its
   writers extend (vouching) instead of the relay's operator.

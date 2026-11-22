@@ -211,7 +211,11 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let typed = |text: &String| -> Result<String, String> {
         let url = terse_net::local::typed_url(text).ok_or(format!("not a relay: {text} (a ws:// or wss:// URL, or a host name)"))?;
         if !text.contains("://") {
-            eprintln!("terse: taken as {url} (over TLS; for a plain relay give ws://{text})");
+            if url.starts_with("ws://") {
+                eprintln!("terse: taken as {url} (plain: a relay on this machine; for TLS give wss://{text})");
+            } else {
+                eprintln!("terse: taken as {url} (encrypted; for a plain relay give ws://{text})");
+            }
         }
         Ok(url)
     };
@@ -441,7 +445,9 @@ fn subscribe(args: &[String], add: bool) -> Result<ExitCode, String> {
         let shown: Vec<String> = hints.iter().map(|h| h.to_string()).collect();
         println!("if your relays do not hold it, it is looked for on {}", shown.join(" and "));
         for h in &hints {
-            if !profile::usable_profile_relay(&h.url()) {
+            if !h.encrypted() && !h.host.is_loopback() {
+                eprintln!("terse: {h} names a plain (unencrypted) relay: that hint will not be used unless the relay is in your own list (NETWORK 3)");
+            } else if !profile::usable_profile_relay(&h.url()) {
                 eprintln!("terse: {h} is a loopback, private or link-local address: that hint will not be used (NETWORK 5.1)");
             }
         }

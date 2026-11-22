@@ -275,8 +275,8 @@ func TestRuleFeedHintsAreTheSubscriptions(t *testing.T) {
 	x := dialRaw(t, sock)
 	x.hello()
 	for _, c := range []struct{ address, hints, urls string }{
-		{sub.hex(), "relay.example:1", "[ws://relay.example:1]"},
-		{sub.hex() + "@other.example", "relay.example:1", "[ws://relay.example:1]"},
+		{sub.hex(), "relay.example:1", "[wss://relay.example:1]"},
+		{sub.hex() + "@other.example", "relay.example:1", "[wss://relay.example:1]"},
 		{other.hex(), "", "[]"},
 		{other.hex() + "@other.example:2", "", "[]"},
 	} {

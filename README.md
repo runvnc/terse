@@ -380,12 +380,15 @@ images were built with clang and LLD 23.1.4.
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
   prints it (exit status 1 if it is empty). A host given without `ws://` or
-  `wss://` is taken as `wss://host` (over TLS; README "Relays over TLS").
+  `wss://` is taken as `wss://host` (encrypted, whatever the port), and
+  `localhost` or a loopback address as `ws://` ("Encrypted unless written
+  otherwise").
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `ws://` or
-`wss://` ("Relays over TLS"). `--relay` may be given several times, and every command that takes it
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `wss://` or
+`ws://` URLs, or hosts without a scheme ("Relays over TLS", "Encrypted unless written
+otherwise"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
@@ -634,7 +637,7 @@ it), then run the relay on port 443 with
 (the files readable by its user; `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the
 unit for the port) and a renewal hook that reloads it:
 `--deploy-hook "systemctl reload terse-relay"`. People then use
-`wss://relay.example.org`, and the feed address hint `relay.example.org:443`.
+`wss://relay.example.org`, and the feed address hint `relay.example.org`.
 
 **Relays over TLS** (for everyone who uses one). A `wss://` relay's certificate is
 checked as a browser checks a web site's: it must come from a known certificate
@@ -645,10 +648,18 @@ self-hosted relay with a certificate from a private CA, name the CA's PEM file i
 `TERSE_RELAY_CA` (all four programs read it, and `terse-relay` for its `--peer`s). When
 a relay cannot be used, the programs say why: "the relay's certificate is not trusted",
 "the relay's certificate is for another name", "has expired", "this relay requires TLS
-(try wss://)", "this relay does not speak TLS (try ws://)". `terse relay add
-relay.tersenet.org` (a name without `ws://` or `wss://`) adds `wss://relay.tersenet.org`.
-A feed address hint names a relay over TLS by port 443: `relay.tersenet.org:443` is
-`wss://relay.tersenet.org` (NETWORK.md 4.9).
+(try wss://)", "this relay does not speak TLS (try ws://)".
+
+**Encrypted unless written otherwise** (NETWORK.md 3). A relay written without
+`ws://` or `wss://`, on the command line (`--relay`), in the relay list or as a feed
+address hint, is encrypted: `relay.tersenet.org` is `wss://relay.tersenet.org`, and
+`relay.example.org:9000` is `wss://relay.example.org:9000` (a port is only a port). A
+plain relay is written `ws://host:port` (a hint: `ws:host:port`); it is for this
+machine, a private network or tests. The one exception is this machine itself:
+`localhost:7878` or `127.0.0.1:7878` without a scheme is `ws://127.0.0.1:7878`, the
+local relay. A plain relay named by someone else (a `relay` line of a profile, a hint
+in a link) is never used: the programs connect without encryption only to relays you
+wrote so yourself.
 
 ## Feeds
 
@@ -679,7 +690,8 @@ Commands:
 - `feed subscribe <address>`, `feed unsubscribe <address>`, `feed subscriptions` (each
   feed's key, then its name if known: your nickname, else the name its profile declares,
   then the hints it was subscribed with). An address is a key, optionally `@` and one or
-  two relays (`host` or `host:port`, NETWORK.md 4.9), also as a `terse:feed/` link; the
+  two relays (`host` or `host:port`, encrypted; `ws:host:port` plain; NETWORK.md 4.9),
+  also as a `terse:feed/` link; the
   hints are kept in `<config>/subscription-hints`. `feed sync` follows a feed on its
   hinted relays when your relays hold none of it (public addresses only; not with
   `--no-feed-relays`), and says which feeds no relay held. `feed address` prints your
