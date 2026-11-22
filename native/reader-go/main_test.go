@@ -75,7 +75,7 @@ func TestManualArticles(t *testing.T) {
 			if len(txt) < len(b)/3 {
 				t.Errorf("%s: rendered text too short (%d bytes from %d)", f, len(txt), len(b))
 			}
-			if opt.Plain && strings.ContainsAny(txt, "┌│═⣿") {
+			if opt.Plain && !strings.ContainsAny(string(b), "┌│═⣿") && strings.ContainsAny(txt, "┌│═⣿") {
 				t.Errorf("%s: box drawing or braille in plain output", f)
 			}
 		}

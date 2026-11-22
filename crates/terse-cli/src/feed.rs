@@ -186,7 +186,7 @@ pub fn manual(args: &[String]) -> Result<ExitCode, String> {
                 crate::say_delivery(&mut node);
                 match done {
                     Done::Published { seq, blob } => println!("seq {seq} blob {} {name}", to_hex(&blob)),
-                    Done::Refused => return Err(format!("{name}: the relays refused the entry")),
+                    Done::Refused => return Err(format!("{name}: every relay refused the entry (each one's reason is above)")),
                     _ => return Err(format!("{name}: publish failed (store error, or no relay accepted it)")),
                 }
             }
@@ -207,7 +207,19 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
         eprintln!("terse: relays saved in {}", path.display());
         Ok(())
     };
-    match (command.as_str(), args.positional.as_slice()) {
+    // A relay typed without a scheme is taken as wss:// (over TLS).
+    let typed = |text: &String| -> Result<String, String> {
+        let url = terse_net::local::typed_url(text).ok_or(format!("not a relay: {text} (a ws:// or wss:// URL, or a host name)"))?;
+        if !text.contains("://") {
+            eprintln!("terse: taken as {url} (over TLS; for a plain relay give ws://{text})");
+        }
+        Ok(url)
+    };
+    let positional: Vec<String> = match command.as_str() {
+        "set" | "add" | "remove" => args.positional.iter().map(typed).collect::<Result<_, _>>()?,
+        _ => args.positional.clone(),
+    };
+    match (command.as_str(), positional.as_slice()) {
         ("set", [url]) => {
             save(std::slice::from_ref(url))?;
             println!("{url}");
@@ -344,7 +356,7 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
             println!("seq {seq} blob {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }
@@ -379,7 +391,7 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
             println!("seq {seq} program {name} image {}", to_hex(&blob));
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the entry (do they already hold a different entry with this seq?)".into()),
+        Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
         _ => Err("publish failed (store error, or no relay accepted it)".into()),
     }
 }
@@ -622,9 +634,10 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
                 return Err(format!("{relay}: cannot reach any relay, or the connections were lost"));
             }
             FeedEvent::Unreachable => {}
-            FeedEvent::Disconnected { url, retry_in } => {
+            FeedEvent::Disconnected { url, retry_in, why } => {
                 lost = true;
-                eprintln!("terse: {url}: not connected; retrying in {} s", retry_in.as_secs());
+                let why = why.map(|w| format!(" ({w})")).unwrap_or_default();
+                eprintln!("terse: {url}: not connected{why}; retrying in {} s", retry_in.as_secs());
             }
             FeedEvent::SubscribeRefused(key) => eprintln!("terse: the relay refused a subscription to {}", to_hex(&key)),
             FeedEvent::Subscribed(_) | FeedEvent::Published { .. } | FeedEvent::PublishFailed(_) => {}
@@ -851,7 +864,7 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
             println!("seq {seq} blob {} ({})", to_hex(&blob), if listed { "listed" } else { "unlisted" });
             Ok(ExitCode::SUCCESS)
         }
-        Done::Refused => Err("the relays refused the profile entry".into()),
+        Done::Refused => Err("every relay refused the profile entry (each one's reason is above)".into()),
         _ => Err("publishing the profile failed (store error, or no relay accepted it)".into()),
     }
 }

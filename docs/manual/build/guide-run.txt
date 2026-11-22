@@ -28,6 +28,7 @@ hello
 sketch
 holo
 reports
+reef
 Up, Down choose · Enter start · the home key comes back here
 ```
 
@@ -57,10 +58,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:6bcae353ed4363e427a08d1418ed4a8609ef072fb8bc98ac046cd42ee3bf247a) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:0e18ed3d7bbdff4ccd61ebc629f7cfb46136c3c399cafdba921f11ecd09ee783) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:6277bdb92c177ee06e138bfaabce91d0e855bf26f3eedfc4d13b7081a212f82a).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:7d2ac3bd556498996898fa3148860674e2adfd31e2eb1fb24e21108f4da22cc0).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:9294766419c5492ad33ed9e6bdf471fa771093eadd375afad06674578a0fba59).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:068eac105a9f5a4b7c4e895f3a78b215062f63631deb91b5f218bb27cbb189a1).

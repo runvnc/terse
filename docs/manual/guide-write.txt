@@ -42,7 +42,7 @@ terse feed publish hello.txt --title "Hello, Tersenet"
 seq 2 blob 5d86159d495906bb…ad537da380d
 ```
 
-The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.
+The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, `terse: taken by 1 of 1 relays: ws://127.0.0.1:7878`, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.
 
 ## See it
 

@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a host in Rust, step 1: run a program to its end - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-host-in-rust-step-1-run-a-program-to-its-end">Make a host in Rust, step 1: run a program to its end</h1>
+<p>This step reads a program file, sets up memory and runs the processor until the program calls <code>exit</code>. It is the library of the crate in <code>examples/host/rust</code> (modules <code>image</code>, <code>decode</code> and <code>cpu</code>) and the program <code>step1</code>. You need Rust 1.88 or later. The crate is a workspace of its own, apart from the Tersenet sources&#39; workspace.</p>
+<h2 id="the-program-file">The program file</h2>
+<p>A program file (<code>.terse</code>) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program&#39;s code and data. <code>load</code> checks the header and makes the processor at reset: the ROM at <code>0001_0000h</code>; the RAM, as many 8 KiB pages as the header asks for, all zero, at <code>0010_0000h</code>; <code>pc</code> on the first byte of ROM and the stack pointer <code>x2</code> at the end of RAM.</p>
+<pre>use crate::cpu::{Cpu, RAM_BASE, ROM_BASE};
+
+pub struct Device {
+    pub slot: u8,
+    pub version: u8,
+    pub optional: bool,
+}
+
+pub fn load(file: &amp;[u8]) -&gt; Result&lt;(Cpu, Vec&lt;Device&gt;), String&gt; {
+    if file.len() &lt; 32 || &amp;file[..6] != b&quot;TERS\0\x01&quot; {
+        return Err(&quot;not a Terse32 program&quot;.into());
+    }
+    let rom_len =
+        u32::from_le_bytes([file[6], file[7], file[8], 0]);
+    let (pages, count) = (file[9] as usize, file[10] as usize);
+    let size = 32 + 2 * count + rom_len as usize;
+    if !(1..=131072).contains(&amp;rom_len)
+        || !(1..=128).contains(&amp;pages)
+        || count &gt; 16
+        || file.len() != size
+    {
+        return Err(&quot;a malformed program file&quot;.into());
+    }
+    let devices = file[32..32 + 2 * count]
+        .chunks(2)
+        .map(|d| Device {
+            slot: d[0],
+            version: d[1] &amp; 0x7f,
+            optional: d[1] &amp; 0x80 != 0,
+        })
+        .collect();
+    let mut cpu = Cpu {
+        x: [0; 32],
+        pc: ROM_BASE,
+        rom: file[32 + 2 * count..].to_vec(),
+        ram: vec![0; pages * 8192],
+    };
+    cpu.x[2] = RAM_BASE + cpu.ram.len() as u32;
+    Ok((cpu, devices))
+}</pre>
+<p>The list of devices matters from step 3 on.</p>
+<h2 id="decoding">Decoding</h2>
+<p>The processor is RV32IMC: RISC-V&#39;s 32-bit integer instructions, multiply and divide (M) and 16-bit compressed forms of the common ones (C). <code>decode</code> takes a 32-bit instruction apart into its fields:</p>
+<pre>#[derive(Clone, Copy, Default)]
+pub struct Instruction {
+    pub op: u32,
+    pub f3: u32,
+    pub f7: u32,
+    pub rd: u32,
+    pub rs1: u32,
+    pub rs2: u32,
+    pub imm: u32,
+}
+
+pub fn sext(v: u32, bits: u32) -&gt; u32 {
+    ((v &lt;&lt; (32 - bits)) as i32 &gt;&gt; (32 - bits)) as u32
+}
+
+pub fn decode(i: u32) -&gt; Instruction {
+    let op = i &amp; 0x7f;
+    let imm = match op {
+        0x37 | 0x17 =&gt; i &amp; !0xfff,
+        0x6f =&gt; sext(
+            i &gt;&gt; 11 &amp; 0x100000
+                | i &amp; 0xff000
+                | i &gt;&gt; 9 &amp; 0x800
+                | i &gt;&gt; 20 &amp; 0x7fe,
+            21,
+        ),
+        0x63 =&gt; sext(
+            i &gt;&gt; 19 &amp; 0x1000
+                | i &lt;&lt; 4 &amp; 0x800
+                | i &gt;&gt; 20 &amp; 0x7e0
+                | i &gt;&gt; 7 &amp; 0x1e,
+            13,
+        ),
+        0x23 =&gt; sext(i &gt;&gt; 20 &amp; 0xfe0 | i &gt;&gt; 7 &amp; 31, 12),
+        _ =&gt; sext(i &gt;&gt; 20, 12),
+    };
+    Instruction {
+        op,
+        f3: i &gt;&gt; 12 &amp; 7,
+        f7: i &gt;&gt; 25,
+        rd: i &gt;&gt; 7 &amp; 31,
+        rs1: i &gt;&gt; 15 &amp; 31,
+        rs2: i &gt;&gt; 20 &amp; 31,
+        imm,
+    }
+}</pre>
+<p><code>expand</code> gives a 16-bit instruction the same fields, as the 32-bit instruction it stands for, so that one <code>execute</code> runs both. After the immediates, whose bits the 16-bit forms scatter, its first cases are:</p>
+<pre>    let none = Instruction::default();
+    let i = Instruction { rd, rs1: rd, ..none };
+    let compact = Instruction { rd: rdc, rs1: rdc, ..none };
+    match (c &amp; 3) &lt;&lt; 3 | c &gt;&gt; 13 {
+        0o00 if four != 0 =&gt; Instruction {
+            op: 0x13,
+            rd: rs2c,
+            rs1: 2,
+            imm: four,
+            ..none
+        },
+        0o02 =&gt; Instruction {
+            op: 0x03,
+            f3: 2,
+            rd: rs2c,
+            rs1: rdc,
+            imm: word,
+            ..none
+        },
+        0o06 =&gt; Instruction {
+            op: 0x23,
+            f3: 2,
+            rs1: rdc,
+            rs2: rs2c,
+            imm: word,
+            ..none
+        },
+        0o10 =&gt; Instruction { op: 0x13, imm, ..i },
+        0o11 =&gt; {
+            Instruction { op: 0x6f, rd: 1, imm: jump, ..none }
+        }
+        0o12 =&gt; Instruction { op: 0x13, rs1: 0, imm, ..i },</pre>
+<p>and so on for the other 16-bit forms, 140 lines in all. A form the machine does not have, or one the specification reserves, such as an immediate of zero where one is needed, comes out as <code>none</code>, whose opcode 0 is no instruction at all.</p>
+<h2 id="executing">Executing</h2>
+<p><code>step</code> fetches one instruction from ROM or RAM, 16 or 32 bits, and runs it. It returns what the instruction costs, which step 2 uses, and whether it was an <code>ecall</code>, or a fault:</p>
+<pre>    pub fn step(&amp;mut self) -&gt; Result&lt;(i64, bool), Fault&gt; {
+        let mut raw = self.parcel(self.pc)?;
+        let (instruction, next) = if raw &amp; 3 == 3 {
+            raw |= self.parcel(self.pc + 2)? &lt;&lt; 16;
+            (decode(raw), self.pc + 4)
+        } else {
+            (expand(raw), self.pc + 2)
+        };
+        let cost = if self.pc &gt;= RAM_BASE { 4 } else { 1 };
+        match self.execute(instruction, next) {
+            Err(f) if f.kind == Kind::Illegal =&gt; Err(Fault {
+                kind: Kind::Illegal,
+                address: self.pc,
+                encoding: raw,
+            }),
+            result =&gt; result.map(|ecall| (cost, ecall)),
+        }
+    }</pre>
+<p><code>execute</code> is one <code>match</code> on the opcode, with the encoding&#39;s checks as guards. Each arm gives the value for <code>rd</code> (never written to <code>x0</code>), if any, and moves <code>pc</code> on; anything no arm takes is an illegal instruction:</p>
+<pre>    fn execute(&amp;mut self, i: Instruction, mut next: u32)
+    -&gt; Result&lt;bool, Fault&gt; {
+        let (pc, link) = (self.pc, next);
+        let a = self.x[i.rs1 as usize];
+        let b = self.x[i.rs2 as usize];
+        let shifts = i.f3 &amp; 3 == 1;
+        let arithmetic = i.f3 == 5 &amp;&amp; i.f7 == 32;
+        let alternate = arithmetic || i.f3 == 0 &amp;&amp; i.f7 == 32;
+        let system = i.f3 | i.rd | i.rs1 == 0;
+        let value = match i.op {
+            0x37 =&gt; Some(i.imm),
+            0x17 =&gt; Some(pc.wrapping_add(i.imm)),
+            0x6f =&gt; {
+                next = pc.wrapping_add(i.imm);
+                Some(link)
+            }
+            0x67 if i.f3 == 0 =&gt; {
+                next = a.wrapping_add(i.imm) &amp; !1;
+                Some(link)
+            }
+            0x63 if i.f3 &gt;&gt; 1 != 1 =&gt; {
+                if branches(i.f3, a, b) {
+                    next = pc.wrapping_add(i.imm);
+                }
+                None
+            }
+            0x03 if matches!(i.f3, 0 | 1 | 2 | 4 | 5) =&gt; {
+                Some(self.load(a.wrapping_add(i.imm), i.f3)?)
+            }
+            0x23 if i.f3 &lt;= 2 =&gt; {
+                self.store(a.wrapping_add(i.imm), i.f3, b)?;
+                None
+            }
+            0x13 if !shifts || i.f7 == 0 || arithmetic =&gt; {
+                Some(alu(i.f3, arithmetic, a, i.imm))
+            }
+            0x33 if i.f7 == 1 =&gt; Some(muldiv(i.f3, a, b)),
+            0x33 if i.f7 == 0 || alternate =&gt; {
+                Some(alu(i.f3, alternate, a, b))
+            }
+            0x0f if i.f3 == 0 =&gt; None,
+            0x73 if system &amp;&amp; i.imm == 0 =&gt; None,
+            0x73 if system &amp;&amp; i.imm == 1 =&gt; {
+                return Err(Fault::at(Kind::Breakpoint, pc));
+            }
+            _ =&gt; return Err(Fault::at(Kind::Illegal, pc)),
+        };
+        if let Some(v) = value
+            &amp;&amp; i.rd != 0
+        {
+            self.x[i.rd as usize] = v;
+        }
+        self.pc = next;
+        Ok(i.op == 0x73)
+    }</pre>
+<p>All arithmetic wraps, as the processor&#39;s does. The rest of <code>cpu.rs</code> is <code>alu</code> and <code>muldiv</code> (division by zero gives RISC-V&#39;s answers, not a trap), the branch conditions, and memory: <code>access</code> faults on a load or store that is misaligned or outside RAM (and ROM, for a load), checking alignment first.</p>
+<p>A fault stops the machine with <code>pc</code> on the faulting instruction, which is not carried out: an encoding the machine does not have (<code>ebreak</code> and the CSR instructions among them), a fetch, load or store outside memory, or a misaligned load or store.</p>
+<h2 id="calls">Calls</h2>
+<p><code>ecall</code> calls a device: <code>a7</code> (<code>x17</code>) holds the device&#39;s slot × 256 + the function, <code>a0</code> to <code>a5</code> (<code>x10</code> to <code>x15</code>) the arguments, and the result goes in <code>a0</code>. This step has one call, <code>exit</code>, <code>106h</code>; every other call returns <code>FFFF_FFFFh</code>, as a call the machine does not have must:</p>
+<pre>use host::image::load;
+use std::error::Error;
+use std::process::exit;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+    let args: Vec&lt;String&gt; = std::env::args().collect();
+    let file = std::fs::read(&amp;args[1])?;
+    let (mut cpu, _) = load(&amp;file)?;
+    loop {
+        match cpu.step() {
+            Err(fault) =&gt; {
+                eprintln!(&quot;{fault}&quot;);
+                exit(1)
+            }
+            Ok((_, true)) if cpu.x[17] == 0x106 =&gt; {
+                exit((cpu.x[10] &amp; 0xff) as i32)
+            }
+            Ok((_, true)) =&gt; cpu.x[10] = u32::MAX,
+            Ok(_) =&gt; {}
+        }
+    }
+}</pre>
+<h2 id="run-it">Run it</h2>
+<p>Build all four steps at once:</p>
+<pre>cd examples/host/rust
+cargo build --release</pre>
+<p>A program that exits with code 7, <code>c.li a0, 7</code>, <code>addi a7, x0, 106h</code> and <code>ecall</code>, as a file:</p>
+<pre>xxd -r -p &gt; exit.terse &lt;&lt;EOF
+5445525300010a000001000000000000657869740000
+000000000000000000001d459308601073000000
+EOF
+target/release/step1 exit.terse
+echo $?</pre>
+<p>prints <code>7</code>. This one adds 100 + 99 + ... + 1 and exits with the sum&#39;s low byte:</p>
+<pre>xxd -r -p &gt; sum.terse &lt;&lt;EOF
+544552530001160000010000000000007375
+6d0000000000000000000000000001459302
+40061695fd12e39e02fe9308601073000000
+EOF
+target/release/step1 sum.terse
+echo $?</pre>
+<p>prints <code>186</code>. The reference gives the same: <code>terse run exit.terse --frames 1</code>, then <code>echo $?</code>.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Terse32 processor that runs a program to its end: <code>cpu.rs</code> (208 lines), <code>decode.rs</code> (183), <code>image.rs</code> (40) and <code>bin/step1.rs</code> (22). Next, make it keep time: <a href="guide-host-rust-frames.html">Make a host in Rust, step 2: frames and the budget</a>.</p>
+<ul>
+<li>The same step in Go: &quot;Make a host in Go, step 1: run a program to its end&quot;, the page before this one.</li>
+<li>Full implementations: <code>native/core-c/cpu.c</code> (C) and <code>crates/terse-core/src/cpu.rs</code> (the reference).</li>
+<li>The rules: <a href="machine.html">The Terse32 machine</a>, sections &quot;CPU&quot;, &quot;Memory map&quot;, &quot;Reset state&quot;, &quot;Stopping and faults&quot;, &quot;The image format&quot; and &quot;Calls&quot;.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-host-go.html">← Make a host in Go, step 1: run a program to its end</a><a rel="next" href="guide-host-go-frames.html">Make a host in Go, step 2: frames and the budget →</a></nav></footer>
+</body>
+</html>

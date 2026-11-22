@@ -12,15 +12,18 @@
 <article>
 <h1 id="find-and-play-a-game">Find and play a game</h1>
 <p>Reading is the heart of Tersenet; programs are the optional part. A program is small, at most 1 MiB of memory, and runs on a tiny virtual machine of its own, Terse32, inside the window. It cannot read your files, and the window asks you before it publishes anything in your name.</p>
-<h2 id="the-game-that-comes-with-tersenet">The game that comes with Tersenet</h2>
-<p>The launcher lists the programs built into the window. One of them is a game: sparks. Choose it and press Enter:</p>
+<h2 id="the-games-that-come-with-tersenet">The games that come with Tersenet</h2>
+<p>The launcher lists the programs built into the window. Two of them are games. Choose reef, Lumen Reef, and press Enter.</p>
+<p>You fly a lamp skiff at the edge of the Reef, drawn in glowing wireframe lines, and hold it against what comes out of the deep: kites that weave and fire sparks, rolling wheels, diving prongs and, every fourth stage, a Warden, a cube in a ring of four nodes. Between swarms you steer between slabs and through gates of light. Aiming is flying: the arrow keys or W A S D move the sight, and the skiff goes where it points, which is also how you dodge. Space, Z or Ctrl fires, as does the mouse button (the pointer aims); a game controller works too, the left stick aiming and A firing. Fire, or Enter, starts a game. Firing heats the guns. P or Esc pauses, V switches the display style. The game ends when your shields are gone.</p>
+<p>The other game is sparks:</p>
 <pre>  SPARKS    HIGH 0000         demo - Enter or Start to play
                                    S P A R K S
                      Collect the sparks, avoid the sweepers.
                      Arrows or stick: turn. Up or A: thrust.
                      Enter or Start: play.        Esc: quit.</pre>
-<p>Enter plays. Left and Right turn your craft, Up thrusts; a game controller works too. Your high score is kept on this computer, for the next time. F12 takes you back to the launcher while the game goes on in its tile; Enter on its line there, or a click on it, brings it back.</p>
+<p>Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. Lumen Reef has sound. If you hear nothing, Tersenet says why in a notice at the bottom of the window; <code>terse-host --hardware-check</code> names the sound output it found. Ctrl+Alt+minus and Ctrl+Alt+plus change the volume, Ctrl+Alt+M mutes it, and the volume is remembered. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.</p>
 <p>The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.</p>
+<p>Not built in, but in the Tersenet sources: sheet, a small spreadsheet. Start it with <code>terse-host programs/sheet/sheet.terse</code>. A cell holds a number, text or a formula starting with <code>=</code>: arithmetic, references such as <code>A1</code>, ranges such as <code>A1:A5</code>, and SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS and IF. Numbers are exact to four decimal places, so sums of money come out right. Ctrl+G shows a bar chart of the selection, Ctrl+L a line chart; Ctrl+S keeps the sheet on this computer for the next start, and Ctrl+P publishes it in your feed, after the window asks you.</p>
 <h2 id="games-from-other-people">Games from other people</h2>
 <p>Anyone can publish a program in their feed, as they publish an article. There are three ways to come across one:</p>
 <ul>
@@ -38,10 +41,10 @@
 <pre>Restore last session (1 program)</pre>
 <p>Enter restores it; D discards it. Nothing is saved without S, except what a program keeps for itself, such as the high score.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>The whole of Tersenet from the user&#39;s side: your own feed, other people&#39;s, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: <a href="guide-reader.html">Make a reader, step 1: show an article</a>.</p>
+<p>The whole of Tersenet from the user&#39;s side: your own feed, other people&#39;s, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: <a href="guide-reader.html">Make a reader</a>.</p>
 <p>The launcher, sessions and every prompt are in <a href="using.html">Using the shell</a>; publishing a program of your own is in <a href="running-programs.html">Running and publishing a program</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="guide-subscribe.html">← Subscribe to someone&#39;s feed</a><a rel="next" href="guide-reader.html">Make a reader, step 1: show an article →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="guide-subscribe.html">← Subscribe to someone&#39;s feed</a><a rel="next" href="guide-reader.html">Make a reader →</a></nav></footer>
 </body>
 </html>

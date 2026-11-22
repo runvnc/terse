@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader in Go, step 3: follow a feed - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-in-go-step-3-follow-a-feed">Make a reader in Go, step 3: follow a feed</h1>
+<p>A feed is one author&#39;s numbered series of entries. Each entry is small and signed with the author&#39;s key, and says, for example, &quot;number 1 of my feed is this blob, this size, with this title&quot;. The key is the feed&#39;s name: 64 hexadecimal digits. In this step your reader subscribes to a feed on a relay, checks every entry&#39;s signature, lists the titles of the articles, and opens one.</p>
+<h2 id="the-code">The code</h2>
+<p><code>follow/main.go</code>, with step 1&#39;s <code>article</code> and step 2&#39;s <code>relay</code> packages:</p>
+<pre>// Step 3: follow a feed and open one of its articles.
+package main
+
+import (
+    &quot;bytes&quot;
+    &quot;encoding/binary&quot;
+    &quot;encoding/hex&quot;
+    &quot;fmt&quot;
+    &quot;log&quot;
+    &quot;os&quot;
+    &quot;strconv&quot;
+
+    &quot;github.com/gorilla/websocket&quot;
+    tersenet &quot;github.com/runvnc/terse/sdk/go&quot;
+
+    &quot;reader/article&quot;
+    &quot;reader/relay&quot;
+)
+
+func main() {
+    key, err := hex.DecodeString(os.Args[2])
+    if err != nil || len(key) != 32 {
+        log.Fatal(&quot;a feed key is 64 hexadecimal digits&quot;)
+    }
+    url := os.Args[1]
+    conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    subscribe := append([]byte{0x04, 2, 0, 0, 0}, key...)
+    subscribe = append(subscribe, 0, 0, 0, 0)
+    err = conn.WriteMessage(websocket.BinaryMessage, subscribe)
+    if err != nil {
+        log.Fatal(err)
+    }
+    _, reply, err := conn.ReadMessage()
+    if err != nil || len(reply) &lt; 10 || reply[5] != 1 {
+        log.Fatal(&quot;the relay refused the subscription&quot;)
+    }
+    highest := binary.LittleEndian.Uint32(reply[6:])
+    articles := map[uint32][32]byte{}
+    for caughtUp := highest == 0; !caughtUp; {
+        _, message, err := conn.ReadMessage()
+        if err != nil {
+            log.Fatal(err)
+        }
+        if len(message) &lt; 37 || message[0] != 0x90 {
+            continue
+        }
+        entry := message[1:]
+        seq := binary.LittleEndian.Uint32(entry[32:])
+        caughtUp = seq &gt;= highest
+        e, err := tersenet.VerifyEntry(entry)
+        mine := err == nil &amp;&amp; bytes.Equal(e.Feed[:], key)
+        if mine &amp;&amp; e.Kind == 1 {
+            title := article.Visible(e.Title)
+            fmt.Printf(&quot;%d  %s\n&quot;, seq, title)
+            articles[seq] = e.Blob
+        }
+    }
+    if len(os.Args) &lt; 4 {
+        return
+    }
+    seq, _ := strconv.Atoi(os.Args[3])
+    id, ok := articles[uint32(seq)]
+    if !ok {
+        log.Fatal(&quot;no such article in the feed&quot;)
+    }
+    blob, err := relay.Get(conn, id)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println()
+    article.Show(blob)
+}</pre>
+<p>It is 75 lines; the whole program, with the <code>article</code> and <code>relay</code> packages, is 182. The entries are checked by one call to the Tersenet SDK for Go, <code>tersenet.VerifyEntry</code>, named in step 2&#39;s <code>go.mod</code>.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><code>main</code> connects and sends a Subscribe: the byte <code>04h</code>, a request number (here 2), the feed&#39;s key, and 4 bytes <code>after</code>, the highest entry number you already hold: 0, so the relay sends everything it has. Its reply starts with <code>84h</code> and gives, after a status byte, <code>highest</code>: the highest entry number it holds.</p>
+<p>Then the relay sends the feed&#39;s entries, oldest first, each in a message that starts with <code>90h</code>. The loop reads them until it has one numbered <code>highest</code> or more: then it has caught up. An entry is, in order: the feed&#39;s key (32 bytes), its number <code>seq</code> (4), a time (4), a kind (1: 1 for an article), the blob&#39;s size (3) and ID (32), a reply-to ID (32), the title&#39;s length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.</p>
+<p><code>tersenet.VerifyEntry</code> checks an entry by every rule the network sets and returns its fields, or an error naming the rule it breaks: the length, a title of at most 120 bytes and valid UTF-8, a <code>seq</code> from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile&#39;s or a program&#39;s title, and the signature. <code>main</code> keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one&#39;s number and title; any other entry is dropped, unseen.</p>
+<p>The signature is Ed25519, over the 13 bytes <code>terse-entry-0</code> followed by the entry without its signature, and it is checked strictly. Go&#39;s own <code>ed25519.Verify</code> is not enough: it accepts a key that is not the canonical encoding of its point, and a key or an R of small order, for which anyone can forge signatures. <a href="signatures.html">Signatures and valid entries</a> gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, <code>sdk/go/tersenet.go</code> in the Tersenet sources, 168 lines with its comments: read it. <code>vectors/entries.txt</code> holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.</p>
+<p>To open an entry, <code>main</code> gets its blob with step 2&#39;s <code>relay.Get</code>, which checks its hash and skips any entry the relay sends meanwhile, and shows it with <code>article.Show</code>.</p>
+<h2 id="getting-the-sdk">Getting the SDK</h2>
+<p>In a module of your own, <code>go get</code> adds it to <code>go.mod</code>:</p>
+<pre>go get github.com/runvnc/terse/sdk/go@v0.1.0</pre>
+<p>In the Tersenet sources, <code>go.work</code> beside <code>go.mod</code> replaces that version with the copy in <code>sdk/go</code>, so the examples build with the SDK they are tested with.</p>
+<h2 id="run-it">Run it</h2>
+<p>With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:</p>
+<pre>terse key new
+terse feed publish ../hello.txt --title Hello \
+  --relay ws&#58;//127.0.0.1:7979</pre>
+<p><code>terse key new</code> makes your key and prints it; if you made a profile in the user guide you have one already. <code>terse key show</code> prints it, so give it to the program:</p>
+<pre>go run ./follow ws&#58;//127.0.0.1:7979 $(terse key show)</pre>
+<pre>1  Hello</pre>
+<p>Add an entry&#39;s number to open it:</p>
+<pre>go run ./follow ws&#58;//127.0.0.1:7979 $(terse key show) 1</pre>
+<p>It prints the list again, an empty line, and the article as step 1 shows it.</p>
+<h2 id="what-it-leaves-out">What it leaves out</h2>
+<p>A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed&#39;s name with its key. It also notes when a blob&#39;s length is not the size its entry gives. tersereader, written from the specification alone, checks entries without the SDK, in <code>internal/terse/entry.go</code> and <code>internal/terse/key.go</code>, and does the rest in <code>internal/client/client.go</code>; a test checks that it and the SDK agree on thousands of altered entries. <a href="native-reader.html">Writing a reader without the machine</a> lists all a complete reader must do.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Tersenet reader in Go: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.</p>
+<ul>
+<li>The same step in Rust: <a href="guide-reader-feed-rust.html">Make a reader in Rust, step 3: follow a feed</a>.</li>
+<li>Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. <a href="guide-program.html">Write a program</a>.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-fetch-rust.html">← Make a reader in Rust, step 2: fetch an article</a><a rel="next" href="guide-reader-feed-rust.html">Make a reader in Rust, step 3: follow a feed →</a></nav></footer>
+</body>
+</html>

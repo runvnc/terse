@@ -71,7 +71,7 @@ const USAGE: &str = "usage:
              [--auto-download <bytes>] [--no-prefetch] [--no-program-download]
              (a node for readers on a local socket, LOCAL.md: it follows your subscriptions on your relays
              and serves them until stopped; Unix only)
-  terse relay add|remove|set <ws://host:port>
+  terse relay add|remove|set <wss://host | ws://host:port | host>   (a host alone: wss://host)
   terse relay list|show
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
   terse drivers list | add <file> [--slot <n>] [--name <name>] | remove <name> | use <slot> <name>|default
@@ -88,7 +88,8 @@ Relays: info, put, get, feed publish, feed sync, feed read, profile set, find an
 --relay options if given (several may be; `none`: no network), else the relays listed in
 <config>/relays (`terse relay add` and `set` write it; an older <config>/relay file is read
 if there is no list), else a relay running on this machine (ws://127.0.0.1:7878), else none
-(sync then fails). Puts and publishes go to every relay; gets ask them in turn. Feeds
+(sync then fails). A wss:// relay's certificate must be trusted: the usual authorities are
+built in; for a private CA, name its PEM file in TERSE_RELAY_CA. Puts and publishes go to every relay; gets ask them in turn. Feeds
 whose profile names relays are also followed there, unless --no-feed-relays. `run` uses
 relays only with --relay.
 
@@ -389,9 +390,17 @@ pub(crate) fn say_delivery(node: &mut Node) {
     for (url, d) in &delivery {
         let why = match d {
             Delivery::Accepted => continue,
-            Delivery::Refused => "refused it",
-            Delivery::Failed => "did not answer (connection lost or timed out)",
-            Delivery::NotConnected => "could not be connected",
+            // NETWORK 3.1: the relay's reason, in words.
+            Delivery::Refused(why) => format!("refused it: {}", why.describe()),
+            Delivery::BlobRefused(why) => {
+                eprintln!("terse: warning: {url} took the entry but refused its blob: {}", why.describe());
+                continue;
+            }
+            Delivery::Failed => "did not answer (connection lost or timed out)".into(),
+            Delivery::NotConnected => match node.relay_failure(url) {
+                Some(why) => format!("could not be connected: {why}"),
+                None => "could not be connected".into(),
+            },
         };
         eprintln!("terse: warning: not on {url}: it {why}");
     }

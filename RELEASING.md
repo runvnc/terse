@@ -12,11 +12,16 @@ The downloads are built by `.github/workflows/release.yml`, which runs
 | `tersereader-<v>-{linux,macos}-{amd64,arm64}.tar.gz` | ubuntu-24.04 | the Go terminal reader (`native/reader-go`), static |
 | `SHA256SUMS.txt` | | the SHA-256 of every file above |
 
-Each archive also has `LICENSE` and a `README.txt` from `packaging/<system>/`;
+Each archive also has `LICENSE`, `NOTICE.txt`, `TLS-LICENSES.txt` (the
+licences of the TLS libraries and root certificates built into the Rust
+programs, from `third_party/tls/`) and a `README.txt` from `packaging/<system>/`;
 the `terse-host` archives also have `FONTS-LICENSE.txt`, the licence of the
 DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
-fallback, `--renderer auto`) and with sound (`--features audio`).
+fallback, `--renderer auto`) and with sound (the `audio` feature, on by
+default: on Linux it loads libpulse-simple or libasound at run time, so the
+Linux build needs no ALSA headers and links no audio library; cpal on macOS
+and Windows).
 
 **The device bus** (`bus/`: `terse-bus` and the drivers `terse-dev-terminal`,
 `-vector`, `-content`, `-sound` and `-page`, for people who build or swap a
@@ -61,7 +66,11 @@ sources: `native/core-c` (`make && ./test.sh`), `native/driver-example/test.sh`,
 
 1. Set the version in `Cargo.toml` (`[workspace.package] version`; every crate
    takes it from there), run `scripts/cargo build` so `Cargo.lock` follows,
-   and commit. The workflow refuses a tag that differs from this version.
+   and commit. Refresh the trusted roots built in for `wss://` relays
+   (Mozilla's list, `webpki-roots`) in the same commit:
+   `scripts/cargo update -p webpki-roots` (a newer 1.x; check its licence
+   is still CDLA-Permissive-2.0, and copy its `LICENSE` over
+   `third_party/tls/webpki-roots-LICENSE` if it changed). The workflow refuses a tag that differs from this version.
 2. Tag and push:
 
        git tag v0.1.0
@@ -153,3 +162,15 @@ Nothing is signed by a certificate authority:
 The checksums prove a download is the file the workflow built, not who built
 it. Anyone who trusts GitHub's account security can compare them with the
 draft's.
+
+## The public relay
+
+A public relay runs the Linux `terse-relay` from a release (static, so it
+runs on any Linux server) with the limits of README "Running a public
+relay". `packaging/linux/terse-relay.service` is its systemd unit; it is in
+the source, not in the archives. To update the relay: copy the new
+`terse-relay` over `/usr/local/bin/terse-relay` and `systemctl restart
+terse-relay` (SIGTERM closes connections cleanly; clients reconnect within
+seconds, and the index of what the store holds is rebuilt at start). A
+release that changes how the relay limits or refuses says so in its notes,
+since it changes what publishers on the public relay see.

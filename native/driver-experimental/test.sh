@@ -89,6 +89,50 @@ grep -q "no driver for the experimental device example.dice" "$T/e" && ok "terse
 "$D/terse" run "$P" --frames 30 --dump $dirs 2> /dev/null > "$T/screen"
 grep -q "Not granted here" "$T/screen" && grep -q "A call to it now gives FFFFFFFF" "$T/screen" && ok "the program says so; a call returns FFFF_FFFFh" || { no "not-granted screen"; cat "$T/screen"; }
 
+echo "== in a shell: one driver for every machine, each on its own slot"
+# The demo three ways, each a built-in of the shell: example.dice on slot
+# 240 and on 241, and a device no driver serves (someone.else, 242).
+for x in "dice240 240 example.dice" "dice241 241 example.dice" "other242 242 someone.else"; do
+    set -- $x
+    "$D/terse" build "$here/demo.c" --title $1 --cflag -DDICE=$2 --optional $2:0=$3 -o "$T/$1.terse" 2> /dev/null || no "terse build $1"
+done
+B="--builtin $T/dice240.terse --builtin $T/dice241.terse --builtin $T/other242.terse"
+# The first built-in after the shipped eight, then the two after it.
+printf '2 press down\n2 press down\n2 press down\n2 press down\n3 press down\n4 press down\n5 press down\n6 press down\n8 press enter\n20 home\n21 press up\n22 press up\n24 press enter\n40 home\n41 press up\n42 press up\n44 press enter\n' > "$T/three"
+bus "$P" --driver "example.dice=$X" --frames 520 --dump > "$T/alone" 2>&1
+grep "^turn " "$T/alone" > "$T/alone.turns"
+# Each machine's screen of a --dump, to a file of its own.
+split_dump() { awk -v d="$2" '/^-- machine /{n++; f=d "." n; print > f; next} n{print > f}' "$1"; }
+bus --shell $B --driver "example.dice=$X" --events "$T/three" --frames 300 --dump > "$T/sys" 2> "$T/e"; a=$?
+split_dump "$T/sys" "$T/m"
+# At least $2 turns on machine screen $1, each one the alone run's.
+same() { grep "^turn " "$1" > "$1.turns"; [ "$(wc -l < "$1.turns")" -ge "$2" ] && ! grep -vxFf "$T/alone.turns" "$1.turns" | grep -q .; }
+[ $a -eq 0 ] && grep -q "running .* dice240 --" "$T/m.1" && grep -q "Granted, version 0, on slot 240" "$T/m.1" && same "$T/m.1" 7 \
+    && ok "started from the shell: granted, the same dice as alone ($(wc -l < "$T/m.1.turns") turns)" || { no "shell, dice240 ($a)"; cat "$T/e" "$T/sys"; }
+grep -q "Granted, version 0, on slot 241" "$T/m.2" && same "$T/m.2" 7 \
+    && ok "beside it, the same device on slot 241: its own state, the same dice" || { no "shell, dice241"; cat "$T/m.2"; }
+grep -q "running .* other242 --" "$T/m.3" && grep -q "Not granted here" "$T/m.3" && ok "beside them, a device no driver serves: not granted, runs" || { no "shell, other242"; cat "$T/m.3"; }
+bus --shell $B --events "$T/three" --frames 60 --dump > "$T/sys0" 2>&1
+[ "$(grep -c "Not granted here" "$T/sys0")" -eq 3 ] && ok "the same shell without the driver: none granted" || { no "shell without driver"; cat "$T/sys0"; }
+"$D/terse" run --shell $B --events "$T/three" --frames 60 --dump $dirs > "$T/sys1" 2>&1
+[ "$(grep -c "Not granted here" "$T/sys1")" -eq 3 ] && ok "terse run --shell (terse-host's devices): none granted, as before" || { no "terse run --shell"; cat "$T/sys1"; }
+
+echo "== a shell's session: saved, restored with and without the driver"
+rm -rf "$T/data"
+{ cat "$T/three"; printf '200 home\n201 press 1\n202 press s\n'; } > "$T/save"
+bus --shell $B --driver "example.dice=$X" --events "$T/save" --frames 210 --dump > "$T/sys" 2>&1
+v=""; for s in 00 01 02; do v="$v$(od -An -tu1 -j4 -N1 "$(find "$T/data/snapshots" -name $s | head -1)" | tr -d ' ')"; done
+grep -q "Session saved" "$T/sys" && [ "$v" = 110 ] && ok "session saved; the granted machines' snapshots are version 1, the other's 0" || { no "session ($v)"; cat "$T/sys"; }
+printf '4 press enter\n' > "$T/restore"
+bus --shell $B --driver "example.dice=$X" --events "$T/restore" --frames 300 --dump > "$T/sys" 2>&1
+split_dump "$T/sys" "$T/r"
+same "$T/r.1" 13 && same "$T/r.2" 13 && ok "restored with the driver: both go on with the dice of the run that never stopped" || { no "restored"; cat "$T/sys"; }
+bus --shell $B --events "$T/restore" --frames 20 --dump > "$T/sys" 2>&1
+"$D/terse" run --shell $B --events "$T/restore" --frames 20 --dump $dirs > "$T/sys1" 2>&1
+f() { grep "^-- machine" "$1" | awk '{print $4}' | tr '\n' ' '; }
+[ "$(f "$T/sys")" = "failed failed running " ] && [ "$(f "$T/sys1")" = "failed failed running " ] \
+    && ok "restored without the driver (terse-bus, terse run --shell): those two fail, needing a device; the third runs" || { no "restore without: $(f "$T/sys") / $(f "$T/sys1")"; }
+
 echo "== installed with terse drivers"
 "$D/terse" drivers add "$X" --config "$T/config" > "$T/add" 2>&1; a=$?
 [ $a -eq 0 ] && grep -q "example.dice (experimental, version 0" "$T/add" && grep -q "^experimental example.dice 0" "$T/config/drivers/dice-example/manifest" \

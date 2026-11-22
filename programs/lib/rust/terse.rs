@@ -2,7 +2,8 @@
 //! (SPEC.md, machine profile 1: RV32IMC). It is the Rust counterpart of
 //! programs/lib (crt0.S, terse.h, terse.c) for the program profile: device 1
 //! System (frames, time, random numbers, events, controllers, exit),
-//! device 2 Terminal and device 3, the 2D vector display. The names follow
+//! device 2 Terminal and device 3, the 2D vector display; and, for a shell,
+//! starting, placing and focusing machines (device 8). The names follow
 //! the C library's, without its `terse_` prefix (the crate's name says it).
 //!
 //! `terse build hello.rs` compiles this file as an rlib and the program
@@ -145,6 +146,9 @@ pub const CALL_VEC_CLEAR: u32 = 0x301;
 pub const CALL_VEC_STYLE: u32 = 0x302;
 pub const CALL_VEC_PERSISTENCE: u32 = 0x303;
 pub const CALL_VEC_FILL: u32 = 0x304;
+pub const CALL_MACH_PLACE: u32 = 0x802;
+pub const CALL_MACH_FOCUS: u32 = 0x804;
+pub const CALL_MACH_START_PROGRAM: u32 = 0x807;
 
 /// What a call to a device the machine does not have returns.
 pub const ERR_UNKNOWN: u32 = 0xFFFF_FFFF;
@@ -586,4 +590,32 @@ pub fn vec_persistence(p: u32) -> u8 {
 }
 pub fn vec_fill(f: u32) -> u8 {
     unsafe { call(CALL_VEC_FILL, f, 0, 0) as u8 }
+}
+
+// ------------------------------------------------- device 8, Machines
+
+/// For a shell (an image that lists device 8, SPEC §machines): starts the
+/// current version of the program `name` (1 to 48 bytes) published by the
+/// feed `key` (all zero: a program built into the host). Its handle, 1 to
+/// 8; 0 if none is free; ERR_BUFFER if the name is not a valid name.
+pub fn mach_start_named(key: &[u8; 32], name: &str) -> u32 {
+    if name.len() > 48 {
+        return ERR_BUFFER;
+    }
+    let mut record = [0u8; 33 + 48];
+    record[..32].copy_from_slice(key);
+    record[32] = name.len() as u8;
+    record[33..33 + name.len()].copy_from_slice(name.as_bytes());
+    unsafe { call(CALL_MACH_START_PROGRAM, record.as_ptr() as u32, 0, 0) }
+}
+
+/// Shows machine `h`'s screen in the rectangle of the shell's screen
+/// (scaled to fit, centred); a width or height of 0 hides it.
+pub fn mach_place(h: u32, x: u32, y: u32, w: u32, height: u32) -> u32 {
+    unsafe { call6(CALL_MACH_PLACE, h, x, y, w, height, 0) }
+}
+
+/// Sends the keyboard and controllers to machine `h` (0: the shell).
+pub fn mach_focus(h: u32) -> u32 {
+    unsafe { call(CALL_MACH_FOCUS, h, 0, 0) }
 }

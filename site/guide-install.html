@@ -36,10 +36,10 @@ tersenet: to remove it: the same command, ending sh -s uninstall</pre>
 <p>With Rust (rustup.rs) and git, on Linux, macOS or Windows:</p>
 <pre>git clone https&#58;//github.com/runvnc/terse
 cd terse
-cargo install --locked --path crates/terse-host --features audio
+cargo install --locked --path crates/terse-host
 cargo install --locked --path crates/terse-cli
 cargo install --locked --path crates/terse-relay</pre>
-<p>That puts the three programs in <code>~/.cargo/bin</code>. On Linux the window needs the ALSA (sound) and udev (game controllers) headers to build: <code>libasound2-dev libudev-dev pkg-config</code> on Debian and Ubuntu. Leave out <code>--features audio</code> for a window without sound.</p>
+<p>That puts the three programs in <code>~/.cargo/bin</code>. On Linux the window needs the udev headers (game controllers) to build: <code>libudev-dev pkg-config</code> on Debian and Ubuntu. Sound needs nothing to build: it is loaded when a program first plays.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>Tersenet installed. Next, start it: <a href="guide-run.html">Run Tersenet</a>.</p>
 </article>

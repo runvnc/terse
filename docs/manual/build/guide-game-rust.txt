@@ -1,0 +1,96 @@
+# Make a small game in Rust
+
+The game of "Make a small game", in Rust: a dot steered with the arrow keys, a ring to reach, and a score.
+
+## The program
+
+`chase.rs`:
+
+```rust examples/program/rust/chase.rs
+#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn near(a: i16, b: i16) -> bool {
+    (a - b).abs() < 12
+}
+
+fn show_score(score: u32) {
+    term_goto(0, 0);
+    term_puts("Score ");
+    term_put_dec(score);
+}
+
+fn main() {
+    let mut buf = [0u8; 64];
+    let (mut x, mut y, mut dx, mut dy) = (320i16, 240i16, 0, 0);
+    let (mut goal_x, mut goal_y) = (160i16, 120i16);
+    let mut score = 0;
+    show_score(score);
+    loop {
+        while let Some(e) = next_event() {
+            if e.kind != EV_KEY_DOWN {
+                continue;
+            }
+            (dx, dy) = match e.key() {
+                KEY_LEFT => (-2, 0),
+                KEY_RIGHT => (2, 0),
+                KEY_UP => (0, -2),
+                KEY_DOWN => (0, 2),
+                KEY_ESCAPE => exit(0),
+                _ => (dx, dy),
+            };
+        }
+        x = (x + dx).rem_euclid(640);
+        y = (y + dy).rem_euclid(480);
+        if near(x, goal_x) && near(y, goal_y) {
+            score += 1;
+            show_score(score);
+            goal_x = 40 + random_byte() as i16 * 2;
+            goal_y = 40 + random_byte() as i16 * 3 / 2;
+        }
+        let mut list = VecList::new(&mut buf);
+        list.move_to(x * VEC_UNIT, y * VEC_UNIT);
+        list.disc(4 * VEC_UNIT as u16);
+        list.move_to(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
+        list.circle(10 * VEC_UNIT as u16);
+        list.submit();
+        wait_frame();
+    }
+}
+```
+
+Build it with `terse build chase.rs` and play it with `terse-host chase.terse`.
+
+## What is different from C
+
+- The arrow keys set `(dx, dy)` with one `match`; a key that is not an arrow keeps the direction as it was.
+- `rem_euclid` wraps the dot round the edges: unlike `%`, it never gives a negative result, so no `+ 640` is needed.
+- `term_put_dec` writes the score's digits; C has no such call, so the C program has its own `put_number`.
+- `disc` and `circle` take a radius as `u16`, hence `as u16`.
+
+## Test it without a window
+
+With the `chase.txt` of the last page (left at frame 1, up at frame 81),
+
+```
+terse run chase.terse --frames 150 --events chase.txt \
+    --dump --dump-vectors
+```
+
+prints `Score 1` at the top of the grid and the same list as the C program:
+
+```
+-- vectors: 17 list bytes --
+disc 2560 1632 r 64 c ffffffff
+circle 640 640 r 160 w 16 c ffffffff
+```
+
+## What you have now
+
+The game in Rust, and with it the guide's part on programs. It is `examples/program/rust/chase.rs` in the Tersenet sources; the full games, `programs/sparks` and `programs/reef`, are in C. Next, a bigger step: [Make a host, step 1: run a program to its end](terse:7a7ebcdd4bf1179f22891d17a63be2b24d8a52fa3fc42ce2a51631b407ea7134), your own Terse32 machine that runs these programs.
+
+Everything the runtime gives is in [Rust programs](terse:92b8f93d809563e9ed28976eef6f1cb780ebf7fa9a393bdcacf895467564456b).

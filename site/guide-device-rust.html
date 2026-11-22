@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a device in Rust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-device-in-rust">Make a device in Rust</h1>
+<p>This driver is the terminal, device 2, in one file of Rust with no dependencies: <code>examples/device/rust/src/main.rs</code>, 347 lines, a crate and workspace of its own. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more.</p>
+<h2 id="the-call-table">The call table</h2>
+<p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function, in DEVICES.md section 5&#39;s layout. <code>Entry</code> has a field for each part of it, and <code>PLAIN</code> is a call with no buffer whose result is a constant 0. The table is the five calls <code>hello</code> makes:</p>
+<pre>const TABLE: [Entry; 5] = [
+    Entry {
+        function: 0,
+        flags: DEFERRED | BUFFERED,
+        length: 1,
+        scale: 1,
+        most: 4096,
+        access: READS | IN_ROM,
+        rule: 2,
+        rule_arg: 1,
+        per_byte: 2,
+        ..PLAIN
+    },
+    Entry {
+        function: 1,
+        charge_arg: 0,
+        low: 1,
+        high: 3,
+        add: 150,
+        ..PLAIN
+    },
+    Entry { function: 2, ..PLAIN },
+    Entry { function: 4, ..PLAIN },
+    Entry {
+        function: 7,
+        flags: DEFERRED | BUFFERED,
+        buffer: 1,
+        length: 2,
+        scale: 4,
+        most: 9600,
+        access: READS | IN_ROM,
+        checked: 0,
+        checked_most: 2399,
+        rule: 2,
+        rule_arg: 2,
+        per_four: 1,
+        ..PLAIN
+    },
+];</pre>
+<p><code>write</code> (0) has a buffer at <code>a0</code> of <code>a1</code> bytes, at most 4,096, read, which may be in ROM; it returns <code>a1</code> and costs 2 units a byte. <code>command</code> (1) costs 150 units for commands 1 to 3. <code>set_cursor</code> (2) and <code>set_colours</code> (4) cost nothing. <code>cells_write</code> (7) has a buffer at <code>a1</code> of <code>a2</code> cells of 4 bytes, <code>a0</code>, the first cell, at most 2,399; it returns <code>a2</code> and costs a unit per 4 bytes. All five are deferred: their result and charge follow from their arguments, so the core can work them out itself and send the calls later, in a batch.</p>
+<h2 id="the-terminal">The terminal</h2>
+<pre>struct Terminal {
+    grid: Vec&lt;u8&gt;,
+    col: usize,
+    row: usize,
+    fg: u8,
+    bg: u8,
+    shown: u8,
+    wrap: bool,
+    palette: Vec&lt;u8&gt;,
+}</pre>
+<p>At reset (<code>Terminal::new</code>) every cell is a space in colour 7 on 0, and the palette is xterm&#39;s 256 colours.</p>
+<pre>    fn write(&amp;mut self, text: &amp;[u8]) {
+        for c in String::from_utf8_lossy(text).chars() {
+            if c == &#39;\n&#39; {
+                self.newline();
+            }
+            if c &lt; &#39; &#39; || c == &#39;\x7f&#39; {
+                continue;
+            }
+            if self.wrap {
+                self.newline();
+            }
+            let code = match u16::try_from(c) {
+                Ok(0xffff) | Err(_) =&gt; 0xfffd,
+                Ok(code) =&gt; code,
+            };
+            self.put(self.row * COLUMNS + self.col, code);
+            if self.col == COLUMNS - 1 {
+                self.wrap = true;
+            } else {
+                self.col += 1;
+            }
+        }
+    }</pre>
+<p><code>write</code> decodes its bytes as UTF-8 with the standard library (<code>from_utf8_lossy</code>), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (<code>newline</code>).</p>
+<pre>    fn call(&amp;mut self, body: &amp;[u8]) -&gt; (u32, u32) {
+        let a = |i: usize| word(body, 4 + 4 * i);
+        let data = &amp;body[40..40 + word(body, 36) as usize];
+        match body[1] {
+            0 =&gt; {
+                self.write(data);
+                return (a(1), 2 * a(1));
+            }
+            1 if a(0) == 4 =&gt; {
+                let line = self.row * COLUMNS;
+                for col in self.col..COLUMNS {
+                    self.put(line + col, &#39; &#39; as u16);
+                }
+            }
+            1 if (1..=3).contains(&amp;a(0)) =&gt; return (0, 150),
+            2 =&gt; {
+                self.col = (a(0) as usize).min(COLUMNS - 1);
+                self.row = (a(1) as usize).min(ROWS - 1);
+                self.wrap = false;
+            }
+            4 =&gt; {
+                self.fg = u8::try_from(a(0)).unwrap_or(self.fg);
+                self.bg = u8::try_from(a(1)).unwrap_or(self.bg);
+            }
+            7 =&gt; {
+                let start = 4 * a(0) as usize;
+                let size = self.grid.len();
+                for (i, &amp;byte) in data.iter().enumerate() {
+                    self.grid[(start + i) % size] = byte;
+                }
+                return (a(2), (data.len() as u32).div_ceil(4));
+            }
+            _ =&gt; {}
+        }
+        (0, 0)
+    }
+
+    fn state(&amp;self) -&gt; Vec&lt;u8&gt; {
+        let mut state = self.grid.clone();
+        let (col, row) = (self.col as u8, self.row as u8);
+        state.extend([col, row, self.fg, self.bg, self.shown]);
+        state.push(self.wrap as u8);
+        state.extend(&amp;self.palette);
+        state.extend([0; 4]);
+        state
+    }</pre>
+<p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and 4 bytes for a UTF-8 character cut between two writes (none here).</p>
+<h2 id="the-messages">The messages</h2>
+<pre>fn hello(body: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
+    let name = &quot;terminal (Rust example)&quot;;
+    let mut reply = vec![0x81, 1, 0, 0, name.len() as u8, 0];
+    reply.extend(name.as_bytes());
+    reply.extend([0, 0, 0, 0, body[8]]);
+    for &amp;slot in &amp;body[9..9 + body[8] as usize] {
+        if slot != 2 {
+            reply.extend([slot, 0, 0, 0]);
+            continue;
+        }
+        reply.extend([2, 0, 0, TABLE.len() as u8]);
+        for entry in &amp;TABLE {
+            reply.extend(entry.encode());
+        }
+    }
+    reply.extend([0, 0, 0]);
+    reply
+}
+
+fn main() {
+    let path = env::var(&quot;TERSE_BUS_SOCKET&quot;).unwrap();
+    let mut stream = UnixStream::connect(path).unwrap();
+    let mut machines = HashMap::new();
+    loop {
+        let mut length = [0; 4];
+        if stream.read_exact(&amp;mut length).is_err() {
+            return;
+        }
+        let mut message = vec![0; word(&amp;length, 0) as usize];
+        if stream.read_exact(&amp;mut message).is_err() {
+            return;
+        }
+        let (address, body) = message.split_at(8);
+        let instance = word(address, 0);
+        let reply = match body[0] {
+            0x01 =&gt; hello(body),
+            0x03 =&gt; {
+                machines.insert(instance, Terminal::new());
+                vec![0x83, 1, 0, 0, 0, 0]
+            }
+            0x04 =&gt; {
+                machines.remove(&amp;instance);
+                continue;
+            }
+            0x10 =&gt; {
+                let t = machines.get_mut(&amp;instance).unwrap();
+                let (result, charge) = t.call(body);
+                let mut reply = vec![0x90, 0, 0, 0];
+                words(&amp;mut reply, &amp;[result, 0, charge, 0]);
+                reply
+            }
+            0x11 =&gt; {
+                let mut at = 8;
+                for _ in 0..word(body, 4) {
+                    let size = word(body, at) as usize;
+                    let call = &amp;body[at + 4..at + 4 + size];
+                    let t = machines.get_mut(&amp;word(call, 0));
+                    t.unwrap().call(&amp;call[8..]);
+                    at += 4 + size;
+                }
+                continue;
+            }
+            0x30 =&gt; {
+                let mut inputs = vec![0; 20];
+                inputs[0] = 0xb0;
+                inputs
+            }
+            0x31 =&gt; continue,
+            0x40 =&gt; {
+                let state = machines[&amp;instance].state();
+                let mut reply = vec![0xc0, 0, 0, 0];
+                words(&amp;mut reply, &amp;[state.len() as u32]);
+                reply.extend(state);
+                reply
+            }
+            0x60 =&gt; return,
+            _ =&gt; b&quot;\x7fnot handled&quot;.to_vec(),
+        };
+        let mut out = Vec::new();
+        words(&amp;mut out, &amp;[8 + reply.len() as u32]);
+        out.extend(address);
+        out.extend(&amp;reply);
+        if stream.write_all(&amp;out).is_err() || reply[0] == 0x7f {
+            return;
+        }
+    }
+}</pre>
+<p>The core starts the driver with the socket&#39;s path in <code>TERSE_BUS_SOCKET</code>. Each message is a length, an address (which machine, which slot) and a body whose first byte is its type; a reply carries the address of its request. HELLO: answer for the slots asked, 2 with its table and 10 (full text) with none. OPEN: a new machine, its terminal at reset; CLOSE drops it. CALL: carry it out and reply RESULT. BATCH: deferred calls, carried out in order, with no replies. BEGIN: no input, no charge. END: nothing. STATE: the state. SHUTDOWN, or the socket closed: exit. Anything else gets an ERROR, and the driver exits.</p>
+<h2 id="run-it">Run it</h2>
+<p>Build it, then run <code>hello</code> under the reference core with it, from the top folder of the sources (<code>cargo build --release -p terse-bus -p terse-devices</code> builds the core and the reference drivers):</p>
+<pre>cargo build --release \
+    --manifest-path examples/device/rust/Cargo.toml
+target/release/terse-bus programs/hello/hello.terse \
+    --frames 30 --hash \
+    --driver 2=$PWD/examples/device/rust/target/release/terminal</pre>
+<pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
+<p>the hash the reference terminal gives, and with <code>--hash-every 1</code>, the same 30 hashes. The hosts of &quot;Make a host&quot; take it too: this is a Go core with a Rust driver, from <code>examples/host/go</code> after <code>go build -o bin/ ./...</code>:</p>
+<pre>bin/step4 ../../../programs/hello/hello.terse 30 \
+    ../../device/rust/target/release/terminal</pre>
+<pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
+<h2 id="what-is-missing">What is missing</h2>
+<p>Enough for <code>hello</code>, not yet a terminal. A complete one also has: the other five calls (<code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, <code>palette_set</code>, <code>size</code>); commands 1 to 3, 5 and 6 (clear, scroll up and down, show and hide the cursor); in <code>write</code>, the control characters backspace, tab, carriage return and form feed, wide characters (two cells), and a UTF-8 character cut between two writes, kept in the state. It does not answer <code>--version</code> or RESTORE, so it cannot be installed or restore a snapshot.</p>
+<p>All of that is in <code>native/driver-example/terminal.c</code>, 583 lines of C. The reference terminal is <code>crates/terse-core/src/terminal.rs</code>, served by <code>crates/terse-devices/src/bin/terminal.rs</code>.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A device of your own, running under the reference core with the reference&#39;s hashes. Next, mix your parts with the reference&#39;s: <a href="guide-swap.html">Swap in your own part</a>.</p>
+<p>The same driver in Go: &quot;Make a device in Go&quot;, the page before this one. The rules: <a href="device-terminal.html">The terminal (device 2)</a>; DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-device-go.html">← Make a device in Go</a><a rel="next" href="guide-swap.html">Swap in your own part →</a></nav></footer>
+</body>
+</html>

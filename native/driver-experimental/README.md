@@ -4,7 +4,7 @@
 a memory, written as an **experimental driver** (`spec/experimental.md`,
 `DEVICES.md` 15). `demo.c` is a Tersenet program that rolls its dice when
 the host grants the device and says so on the terminal when it does not.
-C11 and POSIX, no dependencies; about 280 lines for the driver, 40 of them
+C11 and POSIX, no dependencies; about 340 lines for the driver, 40 of them
 the device.
 
     cc -std=c11 -O2 -Wall -Wextra -o dice dice.c
@@ -12,6 +12,7 @@ the device.
     terse-bus demo.terse --driver example.dice=$PWD/dice --frames 200 --dump
     terse run demo.terse --frames 30 --dump      # no dice: not granted
     terse drivers add dice                       # installed: no --driver needed
+    terse-bus --shell --builtin demo.terse       # in the launcher, granted
     ./test.sh                                    # everything below, checked
 
 ## The device
@@ -31,19 +32,25 @@ restored, and in a replay.
 ## What makes it experimental
 
 Compared with `../driver-example/terminal.c`, a numbered device, the
-driver differs in three places, marked `EXPERIMENTAL` in the file:
+driver differs in four places, marked `EXPERIMENTAL` in the file:
 
-1. **HELLO.** The core asks for one slot from 240 to 255 and names the
-   device it wants (`example.dice`); the driver answers for that slot
-   and, after its identity, with the device's name and the most bytes its
-   state can have. The slot is only the image's handle: another program
-   could list the same device on slot 251. (An empty name is `terse
+1. **HELLO.** The core asks for no slot: it names the device it wants
+   (`example.dice`). The driver answers with one slot entry, slot 0 (its
+   version and call table), and, after its identity, with the device's
+   name and the most bytes its state can have. (An empty name is `terse
    drivers add` asking which device this is.)
-2. **Charges.** Every call's charge is in its table entry, the answered
+2. **OPEN.** The slot is only each image's handle, so it comes per
+   machine: OPEN lists the one slot (240–255) on which that machine calls
+   the device, and that machine's calls, STATE and RESTORE carry it in
+   their address. In a shell one process serves every machine: one
+   program may call the dice on slot 240 and another on 241, each with
+   its own dice. (Build the second with `terse build demo.c --cflag
+   -DDICE=241 --optional 241:0=example.dice`.)
+3. **Charges.** Every call's charge is in its table entry, the answered
    calls' too, and the core charges by the table: a charge is a function
    of the arguments, never of the driver. `roll`'s RESULT must say 16,
    as declared, or the driver has broken the protocol.
-3. **State.** The section is the driver's own layout. The core keeps it
+4. **State.** The section is the driver's own layout. The core keeps it
    with its length after the numbered devices' sections (`STATE.md` 1.13)
    and gives it back in RESTORE, so snapshots and recordings work.
 
@@ -55,6 +62,13 @@ run` and `terse-host` always do.
 
 ## The test
 
+A driver built for the first form of the protocol (a slot in HELLO) is
+refused with a message saying so; install this one again.
+
+`TERSE_DICE_SLOW=sleep:<ms>:<from>` makes the driver slow on purpose (it
+sleeps in each machine's END from that machine's frame `<from>` on), for
+the host's rule for slow devices.
+
 `test.sh` builds both, then checks: refusals of a required or unnamed
 experimental device; two runs with the same hashes, batched or not, on
 shared memory or the socket; the screen; a snapshot taken at frame 100
@@ -65,4 +79,10 @@ a recording that replays (version 2); the same image not granted on
 with the same hash; installing with `terse drivers add`; and a driver
 that breaks each rule on purpose (`TERSE_DICE_BAD`): a buffer over 4,096
 bytes or another name refuses the run (status 2), a wrong charge, an input
-at BEGIN or a state section longer than declared stop it (status 3).
+at BEGIN or a state section longer than declared stop it (status 3). In
+a shell: the demo started from the launcher is granted and rolls the dice
+it rolls alone; beside it the same device on slot 241 has its own state,
+and a device no driver serves is not granted; without the driver, and in
+`terse run --shell`, none is; a saved session's granted machines are
+marked (version 1) and restored with their dice, and fail with "needs a
+device" where the driver is missing.

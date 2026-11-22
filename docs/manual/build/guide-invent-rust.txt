@@ -1,0 +1,60 @@
+# Invent a device: the program in Rust
+
+The program of "Invent a device", in Rust: it rolls a die of the experimental device `example.dice` every half second, or says that the host has no driver for it.
+
+## The program
+
+`roll.rs`:
+
+```rust examples/program/rust/roll.rs
+#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+const DICE: u32 = 240;
+const DICE_SEED: u32 = DICE << 8;
+const DICE_ROLL: u32 = DICE << 8 | 1;
+
+fn main() {
+    if device(DICE).is_none() {
+        term_puts("No dice here: run me with example.dice.\n");
+        loop {
+            wait_frame();
+        }
+    }
+    let mut seed = [0u8; 4];
+    random(&mut seed);
+    unsafe { call(DICE_SEED, u32::from_le_bytes(seed), 0, 0) };
+    loop {
+        for _ in 0..30 {
+            wait_frame();
+        }
+        term_puts("You rolled ");
+        term_put_dec(unsafe { call(DICE_ROLL, 6, 0, 0) });
+        term_puts(".\n");
+    }
+}
+```
+
+The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with `call`, the runtime's raw device call, which takes the call's number, `(240 << 8) | function` here, and three arguments. It is `unsafe` because a call may read or write the memory its arguments point to; `seed` and `roll` take only numbers. `device(DICE)` is `None` when the host did not grant the device.
+
+## Build it and run it
+
+With the driver built as on the last page:
+
+```
+terse build roll.rs --optional 240:0=example.dice
+terse-bus roll.terse --driver example.dice=$PWD/dice \
+    --frames 100 --dump
+```
+
+prints the C program's rolls, `You rolled 1.`, `2.` and `5.`, since the same seed gives the same dice whatever the language. `terse run roll.terse --frames 30 --dump`, with no driver, prints `No dice here: run me with example.dice.`
+
+## What you have now
+
+The program in Rust; and the end of the implementation guide. It is `examples/program/rust/roll.rs` in the Tersenet sources. What remains is the reference, which starts with [How Tersenet works](terse:9d98f07919a60db19319040e9288d1dae4d5aaa22aa7847d59cdc852370f182c).
+
+The rules of experimental devices are in [Experimental devices](terse:56f7cf8bc1c03d7fb37ef333522cecda02923cb56670a2f440b328f6e391771d), and every call of the runtime in [Rust programs](terse:92b8f93d809563e9ed28976eef6f1cb780ebf7fa9a393bdcacf895467564456b).

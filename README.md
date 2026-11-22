@@ -67,11 +67,12 @@ To check a download, compare it with `SHA256SUMS.txt` from the same release:
 `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` (macOS), or
 `Get-FileHash <file>` in PowerShell (Windows), compared by eye.
 
-To build from source instead, with a Rust toolchain (on Linux, the ALSA and
-udev headers too: `libasound2-dev libudev-dev pkg-config` on Debian and
-Ubuntu), install the three programs into `~/.cargo/bin`:
+To build from source instead, with a Rust toolchain (on Linux, the udev
+headers too, for game controllers: `libudev-dev pkg-config` on Debian and
+Ubuntu; sound needs nothing to build with), install the three programs into
+`~/.cargo/bin`:
 
-    cargo install --locked --path crates/terse-host --features audio
+    cargo install --locked --path crates/terse-host
     cargo install --locked --path crates/terse-cli
     cargo install --locked --path crates/terse-relay
 
@@ -167,10 +168,11 @@ press Enter and answer Y. An address with a relay (`key@their-host:7878`,
 NETWORK.md 4.9) lets your host find the feed there even if you never added
 that relay: it connects to it only if your own relays do not hold the
 feed, and only to a public address. Everything the other has published, and everything they publish
-from then on, appears in your timeline. The relay protocol is plain
-WebSocket (`ws://`) without encryption or accounts: anyone who can reach
-the relay can read and publish through it; entries are signed, so nobody
-can publish in your name.
+from then on, appears in your timeline. The relay protocol is
+WebSocket, plain (`ws://`) or over TLS (`wss://`, which public relays use so
+that nobody on the way sees what you read), without accounts: anyone who can
+reach the relay can read and publish through it; entries are signed, so
+nobody can publish in your name.
 
 ## How Tersenet is built
 
@@ -374,15 +376,16 @@ images were built with clang and LLD 23.1.4.
   that it is up to date, that a relay answers the session's messages as written, and
   that the reader shows every corpus article as the reference parser
   (`terse-net`'s `article_parse`) does.
-- `relay add <ws://host:port>` and `relay remove <url>` change the relay list in
+- `relay add <wss://host | ws://host:port | host>` and `relay remove <url>` change the relay list in
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
-  prints it (exit status 1 if it is empty).
+  prints it (exit status 1 if it is empty). A host given without `ws://` or
+  `wss://` is taken as `wss://host` (over TLS; README "Relays over TLS").
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Only `ws://` relays
-are supported. `--relay` may be given several times, and every command that takes it
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Relays are `ws://` or
+`wss://` ("Relays over TLS"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
@@ -407,7 +410,9 @@ host's prompt first, then F12 (the home key, with a shell), then to the machine 
 the focus. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
 newlines kept and other control characters dropped, fed in only as fast as the event
-queue has room, so none is lost. The screen
+queue has room, so none is lost. Ctrl+Alt+minus, Ctrl+Alt+plus (`=`) and Ctrl+Alt+M are
+the host's volume keys (down, up, mute; "Sound" below), and so are the keyboard's own
+volume keys if the desktop passes them on: no program receives them. The screen
 (SPEC §screen) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
@@ -461,7 +466,7 @@ the eye every frame (round an ellipse 160 units to either side and 80 up and dow
 once every 120 frames), as a pointer moving over a window would, so 3D lists are
 projected again each frame.
 
-`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws://host:port>]...`
+`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws(s)://host:port>]... [--tls-cert <pem> --tls-key <pem>]`
 serves a blob store and feeds over WebSocket (NETWORK.md sections 3, 4.3 and 4.7), one
 thread per connection. It keeps the newest `--feed-entries` entries of each feed
 (default 1024, at least 256), and always each feed's latest profile, in `<dir>/feeds`,
@@ -472,7 +477,11 @@ bytes it newly stores, follows on them the feeds its clients follow, and asks th
 a blob a client wants that it does not hold. Two relays only need one of them to name
 the other. It answers searches (`terse find`) from what it holds, articles in the
 order it stored them, newest first, and refuses a connection's fifth search within
-a second.
+a second. It pings a connection that has been silent for 30 s (`--ping-every`), and
+stops gracefully on SIGTERM. With `--tls-cert` and `--tls-key` it serves `wss://`
+(TLS) instead of `ws://`, and reads them again on SIGHUP ("Over TLS" below). Its other limits (bytes per feed, blobs no entry names,
+rates per address, a list of writers) are off unless given; `terse-relay --help`
+lists them and "Running a public relay" below says which to use.
 
 ## Trying the relay locally
 
@@ -486,6 +495,148 @@ a second.
     # prints fetch.terse's image ID; run it from an empty store:
     target/debug/terse run <id> --relay $U --store /tmp/terse-try/b --frames 10 --dump
     target/debug/terse-host <id> --relay $U --store /tmp/terse-try/b
+
+## Running a public relay
+
+A relay anyone can reach needs limits: blobs are stored by their hash, not by who sent
+them, and keys cost nothing to make, so without limits one person can fill it or use it
+as free file hosting. `--public` turns on the limits NETWORK.md section 5.3 allows,
+with these defaults (each can be given on its own, and changed):
+
+| Limit | `--public` | Option |
+|---|---|---|
+| Bytes of the blobs one feed's entries name (older entries are dropped to make room; the latest profile is kept) | 16 MiB | `--feed-bytes` |
+| Entries per feed | 1024 | `--feed-entries` |
+| How long a blob no entry names is kept; such a blob is not served | 1 hour | `--unreferenced-time` |
+| Such blobs in all, and per address | 256 MiB, 16 MiB | `--unreferenced-bytes`, `--unreferenced-bytes-per-address` |
+| Puts and publishes per address | 120 a minute | `--uploads-per-minute` |
+| Bytes put per address | 32 MiB an hour | `--upload-bytes-per-hour` |
+| Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
+| Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
+| Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
+
+An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
+a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`
+print it for each relay. Without a limit per feed in bytes, the entry limit and
+`--max-store-bytes` are all that bound a feed.
+
+**A list of writers.** `--writers <file>` takes entries only from the feeds listed in
+the file, one key (64 hex digits) a line, `#` comments; anyone can still read. The file
+is read again within 2 s of a change, or at once on SIGHUP; a file with a bad line is
+not taken (the relay says so and keeps the list it has). A put carries no key, so puts
+are taken from anyone into the room for blobs no entry names; an address that none of
+the listed feeds has published from in the last day has 1 MiB of it (one article) and
+such addresses have half the room in all. Since those blobs are not served and go after
+an hour, the list leaves nothing to host for free. Entries a peer sends are held to the
+list too.
+
+**Over TLS.** People reach a public relay with `wss://` (WebSocket over TLS), so that
+no one on the way can see which feeds and articles they read. (Nothing could be forged
+over plain `ws://` either: entries are signed and blobs are checked against their
+hashes. TLS is for privacy.) The relay can terminate TLS itself, with
+`--tls-cert <chain.pem> --tls-key <key.pem>` (PEM files, as certbot writes them; the
+relay reads them again on SIGHUP, so a renewal needs `systemctl reload terse-relay`,
+not a restart), or stay plain on a local port behind something that terminates it: a
+Cloudflare Tunnel (below), or any reverse proxy that passes WebSockets. Without
+`--tls-cert` the relay speaks plain `ws://`. A client that speaks the wrong one is told
+which to use ("this relay requires TLS (try wss://)", "this relay does not speak TLS
+(try ws://)").
+
+**Behind Cloudflare** (or another proxy), every connection comes from the proxy, so
+limits per address need the client's address from the proxy's header:
+`--trust-proxy <ranges>` believes `CF-Connecting-IP` (else `X-Forwarded-For`) on
+connections from those addresses only (`@<file>` reads them from a file, one a line).
+Never trust a range anyone else can connect from: the header is easy to forge. The
+relay pings a silent connection every 30 s, inside Cloudflare's 100 s idle limit.
+
+For the first public relay, `wss://relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of
+memory, 16 GB of disk free), with a list of writers, the relay listens on loopback only
+and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+(`cloudflared`) carries `wss://relay.tersenet.org` to it:
+
+    terse-relay --public --listen 127.0.0.1:7878 --store /var/lib/terse-relay/store \
+        --max-store-bytes 12G --max-connections 256 --writers /etc/terse-relay/writers \
+        --trust-proxy 127.0.0.1,::1 --status-file /run/terse-relay/status
+
+Why a tunnel: `cloudflared` connects out to Cloudflare, so the server opens no port at
+all (the firewall keeps denying everything but SSH), nothing can reach the relay
+around Cloudflare's edge, there are no Cloudflare address ranges to keep up to date,
+and the traffic between Cloudflare and the server is encrypted inside the tunnel.
+Cloudflare's SSL mode does not apply to a tunnel. The alternatives are worse for a
+small server: "Flexible" sends the traffic from Cloudflare to the server unencrypted
+across the internet, which undoes half the point; "Full (strict)" works (a Cloudflare
+Origin CA certificate given to `--tls-cert`, the relay on port 443, the firewall open
+to Cloudflare's ranges only), but needs that open port and the list of ranges kept
+current. `cloudflared` takes about 30–50 MB of memory.
+
+Why these numbers: 12 GB of blobs leaves the system, the logs, the entry files (one
+small file each) and a backup's staging room on a 16 GB disk. Memory is what bounds the
+connections: each is a thread, and while it receives a large put it holds up to about
+2 MiB, so 256 connections stay under 600 MB in the worst case (the unit's `MemoryMax`);
+idle ones cost far less. The relay's index of what it holds takes about 100 bytes per
+entry, and with a list of writers the entries are only the writers' (at most 1024 per
+feed), so it stays small; an open relay should watch the status line's entry count.
+Every connection comes through `cloudflared` on loopback, hence `--trust-proxy
+127.0.0.1,::1`: Cloudflare's edge sets `CF-Connecting-IP`, and only the tunnel can
+connect from there.
+
+`packaging/linux/terse-relay.service` is a systemd unit for this, with the steps to
+install it. Then:
+
+- **The tunnel** (Cloudflare's dashboard; nothing to keep on the server but a token):
+  1. Remove any DNS record for `relay.tersenet.org` (the tunnel makes its own).
+  2. Zero Trust, Networks, Tunnels, "Create a tunnel", type Cloudflared, name
+     `terse-relay`. On the server, install `cloudflared` as the page shows for Debian
+     and Ubuntu (Cloudflare's apt repository) and run the command it gives,
+     `sudo cloudflared service install <token>`: a systemd service that starts at boot.
+  3. Public hostname: subdomain `relay`, domain `tersenet.org`, service type `HTTP`, URL
+     `127.0.0.1:7878`. (HTTP, not HTTPS: the hop from `cloudflared` to the relay stays
+     on the machine.) Save; the DNS record appears, proxied.
+  4. Under the domain: SSL/TLS, Edge Certificates, "Always Use HTTPS" on, so a `ws://`
+     client is redirected (and told to use `wss://`) instead of talking in plain text;
+     Network, WebSockets on (it is by default).
+  5. Check from anywhere: `echo hello > /tmp/hello.txt; terse put /tmp/hello.txt --relay wss://relay.tersenet.org`
+     prints "taken by 1 of 1 relays" (a put needs no writer: it goes to the room for
+     blobs no entry names), or why the relay could not be connected.
+- **Firewall**: no rule to add; the server keeps denying every incoming connection but
+  SSH. `cloudflared` connects out on port 7844 (UDP, or TCP if UDP is blocked), which
+  ufw's default (outgoing allowed) permits.
+- **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
+  `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
+  entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
+  name a client by its /24 (IPv4) or /48 (IPv6) only. `systemctl status cloudflared`
+  for the tunnel.
+- **Backups**: the store directory is all there is (`<store>/feeds` holds the entries).
+  A blob or entry file is never changed once written, so copying it while the relay
+  runs is safe: `rsync -a --exclude '.*.tmp' /var/lib/terse-relay/store/ backup:`. A
+  restored relay rebuilds its index at start; blobs no entry names wait from their
+  file times. The writers file is in `/etc/terse-relay`.
+- **Stopping**: SIGTERM (`systemctl stop`) closes every connection with a close frame;
+  what was acknowledged is on disk already.
+
+**Without Cloudflare**, the relay terminates TLS itself with a certificate from Let's
+Encrypt: `sudo certbot certonly --standalone -d relay.example.org` (port 80 open for
+it), then run the relay on port 443 with
+`--tls-cert /etc/letsencrypt/live/relay.example.org/fullchain.pem --tls-key /etc/letsencrypt/live/relay.example.org/privkey.pem`
+(the files readable by its user; `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the
+unit for the port) and a renewal hook that reloads it:
+`--deploy-hook "systemctl reload terse-relay"`. People then use
+`wss://relay.example.org`, and the feed address hint `relay.example.org:443`.
+
+**Relays over TLS** (for everyone who uses one). A `wss://` relay's certificate is
+checked as a browser checks a web site's: it must come from a known certificate
+authority and be for the relay's name. `terse`, `terse-host` and `terse node` carry the
+usual authorities built in (Mozilla's list, the same on every system; a release
+updates it), and `tersereader` uses the system's. Nothing turns the check off. For a
+self-hosted relay with a certificate from a private CA, name the CA's PEM file in
+`TERSE_RELAY_CA` (all four programs read it, and `terse-relay` for its `--peer`s). When
+a relay cannot be used, the programs say why: "the relay's certificate is not trusted",
+"the relay's certificate is for another name", "has expired", "this relay requires TLS
+(try wss://)", "this relay does not speak TLS (try ws://)". `terse relay add
+relay.tersenet.org` (a name without `ws://` or `wss://`) adds `wss://relay.tersenet.org`.
+A feed address hint names a relay over TLS by port 443: `relay.tersenet.org:443` is
+`wss://relay.tersenet.org` (NETWORK.md 4.9).
 
 ## Feeds
 
@@ -1772,9 +1923,13 @@ is one, `example.dice`, with a program that uses it:
     terse-bus demo.terse --driver example.dice=$PWD/dice --frames 200 --dump
     terse drivers add dice               # installed: every terse-bus run grants it
 
-Only `terse-bus`, for a single machine, grants one; everywhere else (`terse run`,
-`terse-host`, a shell's machines) the program runs without it. A machine that has
-one is outside conformance, and its snapshots and recordings say so.
+Only `terse-bus` grants one: to a single machine, and in a shell (`terse-bus
+--shell`) to the shell and every program it starts, each with its own state, on
+whatever slot its image gives the device (one driver process serves them all).
+Everywhere else (`terse run`, `terse-host`) the program runs without it. A machine
+that has one is outside conformance, and its snapshots (a saved session's too) and
+recordings say so; restoring one where the driver is missing fails for that machine
+with "needs a device".
 
 ## Sparks
 
@@ -1867,14 +2022,34 @@ then it exits):
     terse run programs/tune/tune.terse --audio-out tune.wav     # write it, play nothing
 
 `terse-bus --audio-out` does the same with the device as a driver process
-(`terse-dev-sound`). `terse-host` plays the sound only when built with the `audio`
-feature (cpal, so ALSA, which PipeWire serves):
+(`terse-dev-sound`). `terse-host` and `terse-bus` play it in a window
+(`crates/terse-host/src/audio`): on Linux through PipeWire or PulseAudio
+(`libpulse-simple.so.0`), else ALSA (`libasound.so.2`), both loaded when a program
+first makes a sound, so building needs no audio headers and the binary links no
+audio library; on macOS and Windows through cpal (CoreAudio, WASAPI). The `audio`
+cargo feature is on by default (`--no-default-features` leaves it out, as the
+bootable image does).
 
-    scripts/cargo build --release -p terse-host --features audio
+If sound cannot be heard (no output found, the output stopped, a host built without
+sound), the window shows a notice and one line on standard error says why, once, and
+again only if the cause changes; the machines run exactly as before (SPEC
+§sound.presentation). `terse-host --hardware-check` opens and closes the output and
+says what it plays through, or why not; `--version` says what the build can play
+through. `TERSE_AUDIO` chooses: `auto` (default), `off` (play nothing, say nothing),
+`none` (as if no output were found), `pulse`, `pulse:<server>`, `alsa`,
+`alsa:<pcm>`; `--selftest` plays only when it is set, so tests never make a sound.
+`TERSE_AUDIO_STATS=1` prints the output's latency and underruns when it closes.
 
-Without the feature, and in `--selftest` or with `TERSE_AUDIO=off`, the device is
-there and runs as usual but nothing is heard; the audio output is opened only when a
-machine first gives samples. Tests: `crates/terse-core/src/sound.rs` (the
+The volume is the host's, applied on the way out (never to the machines or an
+`--audio-out` file): Ctrl+Alt+minus and Ctrl+Alt+plus (`=`) turn it down and up a
+tenth, Ctrl+Alt+M mutes, and so do the keyboard's volume keys where the desktop
+lets them reach the window. These keys are the host's: no program receives them. A
+short notice shows the new volume, which is kept in `<config>/sound`; `--volume
+<0-100>` and `--mute` set it for one run.
+
+A frame's sound reaches the sound server's sink about 27 ms after the frame (PERFORMANCE.md
+R18: at most 3 frames). `TERSE_AUDIO_TRACE=<file>` writes each frame's hand-over time,
+to measure that against a recording. Tests: `crates/terse-core/src/sound.rs` (the
 synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
 snapshot in the middle of a note, `--audio-out`, the reading profile),
 `crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the

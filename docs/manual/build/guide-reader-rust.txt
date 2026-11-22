@@ -1,0 +1,161 @@
+# Make a reader in Rust, step 1: show an article
+
+In this step you write the smallest Tersenet reader that is still correct: a Rust program that reads an article from a file and shows its headings and paragraphs on a terminal. It uses only Rust's standard library and no network yet.
+
+The program is in the Tersenet sources, in `examples/reader/rust`, so you can run it before you read it. It is one Cargo package, `reader`: a library with a module per step, and a program per step in `src/bin`. You need Rust 1.85 or later. (Make a reader in Go, step 1, is the same program in Go.)
+
+## An article
+
+This is `examples/reader/hello.txt`:
+
+```
+# Hello
+
+My first article. It has a heading, and this paragraph,
+which is written on two lines.
+
+## A subheading
+
+A reader joins the lines of a paragraph into one,
+then wraps it again to the width of its own column,
+so the lines you see may not be the lines written.
+```
+
+A line that starts with `# ` is a heading, and one that starts with `## ` a subheading. The other lines are paragraphs: blank lines separate them, and the lines of one paragraph are joined with spaces, then wrapped to the reader's width. That is all this step shows.
+
+## The code
+
+`src/lib.rs` lists the library's modules, this step's and the next:
+
+```
+pub mod article;
+pub mod relay;
+```
+
+`src/article.rs` shows an article:
+
+```
+const WIDTH: usize = 68;
+
+pub fn show(text: &[u8]) {
+    let text = String::from_utf8_lossy(text);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut paragraph = Vec::new();
+    for line in text.split('\n').chain([""]) {
+        let heading = match line.strip_prefix("# ") {
+            Some(text) => Some((text, '=')),
+            None => line.strip_prefix("## ").map(|t| (t, '-')),
+        };
+        let blank = line.chars().all(|c| " \t\r".contains(c));
+        if heading.is_none() && !blank {
+            paragraph.push(line);
+            continue;
+        }
+        if !paragraph.is_empty() {
+            block(&paragraph.join(" "), None);
+            paragraph.clear();
+        }
+        if let Some((text, rule)) = heading {
+            block(text, Some(rule));
+        }
+    }
+}
+
+fn block(text: &str, rule: Option<char>) {
+    let mut lines = wrap(text);
+    if let Some(rule) = rule {
+        let n = lines.join(" ").chars().count().min(WIDTH);
+        lines.push(rule.to_string().repeat(n));
+    }
+    println!("{}\n", lines.join("\n"));
+}
+
+fn wrap(text: &str) -> Vec<String> {
+    let mut lines = vec![String::new()];
+    let text = visible(text);
+    for word in text.split(' ').filter(|w| !w.is_empty()) {
+        let line = lines.last_mut().unwrap();
+        let n = line.chars().count() + 1 + word.chars().count();
+        if line.is_empty() {
+            line.push_str(word);
+        } else if n > WIDTH {
+            lines.push(word.to_string());
+        } else {
+            line.push(' ');
+            line.push_str(word);
+        }
+    }
+    lines
+}
+
+pub fn visible(text: &str) -> String {
+    text.chars()
+        .filter_map(|c| match c {
+            '\t' | '\r' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+```
+
+`src/bin/show.rs` is the program:
+
+```
+// Step 1: show an article from a file.
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    reader::article::show(&std::fs::read(&args[1])?);
+    Ok(())
+}
+```
+
+That is 70 lines in all.
+
+## How it works
+
+`show` first makes the text safe to show: `from_utf8_lossy` turns malformed UTF-8 into the replacement character, and a byte order mark at the very start is dropped, so that a `#` on the first line still counts.
+
+Then it reads the article a line at a time, with an empty line added at the end so that the last paragraph ends too. A line that starts with `# ` or `## ` is a heading. A blank line, one of only spaces, tabs and carriage returns, and a heading both end the current paragraph, which is shown, its lines joined with spaces; then the heading is shown. Any other line belongs to the paragraph.
+
+`block` wraps a block's text and, for a heading, underlines it: `=` under a heading and `-` under a subheading, so that a heading stands out more than a subheading, as the format asks. An empty line follows every block.
+
+`wrap` cuts the text into words at spaces and fills lines of up to 68 characters, the column the format recommends for a monospaced reader. A run of spaces becomes one, which the format allows.
+
+`visible` is how text is shown: a tab or a carriage return as a space, other control characters not at all.
+
+Run it:
+
+```
+cd examples/reader/rust
+cargo run -q --bin show ../hello.txt
+```
+
+The first time, Cargo also downloads and builds the libraries that steps 2 and 3 use. It prints:
+
+```
+Hello
+=====
+
+My first article. It has a heading, and this paragraph, which is
+written on two lines.
+
+A subheading
+------------
+
+A reader joins the lines of a paragraph into one, then wraps it
+again to the width of its own column, so the lines you see may not
+be the lines written.
+```
+
+## What it leaves out
+
+Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
+
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). In the reference implementation, `crates/terse-net/src/article_parse.rs` reads every construct, and the reference reader, `programs/reader`, shows them all.
+
+## What you have now
+
+A Rust program of 70 lines that shows the headings and paragraphs of any Tersenet article file.
+
+Next: [Make a reader in Rust, step 2: fetch an article](terse:4bee7aac1361a8fdfa985ecff8f4a3fa9df420947d59bdbbd9b659971e3c3855).

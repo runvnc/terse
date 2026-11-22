@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader in Rust, step 3: follow a feed - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-in-rust-step-3-follow-a-feed">Make a reader in Rust, step 3: follow a feed</h1>
+<p>A feed is one author&#39;s numbered series of entries. Each entry is small and signed with the author&#39;s key, and says, for example, &quot;number 1 of my feed is this blob, this size, with this title&quot;. The key is the feed&#39;s name: 64 hexadecimal digits. In this step your reader subscribes to a feed on a relay, checks every entry&#39;s signature, lists the titles of the articles, and opens one. (Make a reader in Go, step 3, is the same program in Go.)</p>
+<h2 id="the-code">The code</h2>
+<p><code>src/bin/follow.rs</code>, with step 1&#39;s <code>article</code> and step 2&#39;s <code>relay</code> modules:</p>
+<pre>// Step 3: follow a feed and open one of its articles.
+use reader::{article, relay};
+use std::collections::HashMap;
+use tungstenite::Message;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let args: Vec&lt;String&gt; = std::env::args().collect();
+    let key = relay::hex32(&amp;args[2])?;
+    let (mut socket, _) = tungstenite::connect(&amp;args[1])?;
+    let subscribe = [&amp;[0x04, 2, 0, 0, 0][..], &amp;key, &amp;[0; 4]];
+    socket.send(Message::binary(subscribe.concat()))?;
+    let reply = socket.read()?.into_data();
+    if reply.len() &lt; 10 || reply[5] != 1 {
+        return Err(&quot;the relay refused the subscription&quot;.into());
+    }
+    let highest = u32::from_le_bytes(reply[6..10].try_into()?);
+    let mut articles = HashMap::new();
+    let mut caught_up = highest == 0;
+    while !caught_up {
+        let message = socket.read()?.into_data();
+        if message.len() &lt; 37 || message[0] != 0x90 {
+            continue;
+        }
+        let entry = &amp;message[1..];
+        let seq = u32::from_le_bytes(entry[32..36].try_into()?);
+        caught_up = seq &gt;= highest;
+        let Ok(e) = tersenet::verify_entry(entry) else {
+            continue;
+        };
+        if e.feed == key &amp;&amp; e.kind == 1 {
+            println!(&quot;{seq}  {}&quot;, article::visible(e.title));
+            articles.insert(seq, e.blob);
+        }
+    }
+    let Some(seq) = args.get(3) else { return Ok(()) };
+    let Some(&amp;id) = articles.get(&amp;seq.parse::&lt;u32&gt;()?) else {
+        return Err(&quot;no such article in the feed&quot;.into());
+    };
+    let blob = relay::get(&amp;mut socket, id)?;
+    println!();
+    article::show(&amp;blob);
+    Ok(())
+}</pre>
+<p>It is 43 lines; the whole program, with <code>lib.rs</code>, <code>article.rs</code> and <code>relay.rs</code>, is 142. The entries are checked by one call to the Tersenet SDK for Rust, <code>tersenet::verify_entry</code>, named in step 2&#39;s <code>Cargo.toml</code>.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><code>main</code> connects and sends a Subscribe: the byte <code>04h</code>, a request number (here 2), the feed&#39;s key, and 4 bytes <code>after</code>, the highest entry number you already hold: 0, so the relay sends everything it has. Its reply starts with <code>84h</code> and gives, after a status byte, <code>highest</code>: the highest entry number it holds.</p>
+<p>Then the relay sends the feed&#39;s entries, oldest first, each in a message that starts with <code>90h</code>. The loop reads them until it has one numbered <code>highest</code> or more: then it has caught up. An entry is, in order: the feed&#39;s key (32 bytes), its number <code>seq</code> (4), a time (4), a kind (1: 1 for an article), the blob&#39;s size (3) and ID (32), a reply-to ID (32), the title&#39;s length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.</p>
+<p><code>tersenet::verify_entry</code> checks an entry by every rule the network sets and returns its fields, or the rule it breaks (<code>tersenet::Invalid</code>): the length, a title of at most 120 bytes and valid UTF-8, a <code>seq</code> from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile&#39;s or a program&#39;s title, and the signature. <code>main</code> keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one&#39;s number and title; any other entry is dropped, unseen.</p>
+<p>The signature is Ed25519, over the 13 bytes <code>terse-entry-0</code> followed by the entry without its signature, and it is checked strictly. <code>ed25519-dalek</code>&#39;s <code>verify_strict</code> comes close, but its <code>VerifyingKey::from_bytes</code> accepts a key that is not the canonical encoding of its point, and with the crate&#39;s <code>legacy_compatibility</code> feature, which any crate in a program can turn on, it accepts an S that is not below the group order. <a href="signatures.html">Signatures and valid entries</a> gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, <code>sdk/rust/src/lib.rs</code> in the Tersenet sources, 164 lines with its comments, built on <code>curve25519-dalek</code>: read it. <code>vectors/entries.txt</code> holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.</p>
+<p>To open an entry, <code>main</code> gets its blob with step 2&#39;s <code>relay::get</code>, which checks its hash and skips any entry the relay sends meanwhile, and shows it with <code>article::show</code>.</p>
+<h2 id="getting-the-sdk">Getting the SDK</h2>
+<p>In a package of your own, <code>cargo add tersenet</code> adds it to <code>Cargo.toml</code>. In the Tersenet sources, <code>.cargo/config.toml</code> beside <code>Cargo.toml</code> puts the copy in <code>sdk/rust</code> in its place, so the examples build with the SDK they are tested with.</p>
+<h2 id="run-it">Run it</h2>
+<p>With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:</p>
+<pre>terse key new
+terse feed publish ../hello.txt --title Hello \
+  --relay ws&#58;//127.0.0.1:7979</pre>
+<p><code>terse key new</code> makes your key and prints it; if you made a profile in the user guide you have one already. <code>terse key show</code> prints it, so give it to the program:</p>
+<pre>cargo run -q --bin follow ws&#58;//127.0.0.1:7979 \
+  $(terse key show)</pre>
+<pre>1  Hello</pre>
+<p>Add an entry&#39;s number to open it:</p>
+<pre>cargo run -q --bin follow ws&#58;//127.0.0.1:7979 \
+  $(terse key show) 1</pre>
+<p>It prints the list again, an empty line, and the article as step 1 shows it.</p>
+<h2 id="what-it-leaves-out">What it leaves out</h2>
+<p>A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed&#39;s name with its key. It also notes when a blob&#39;s length is not the size its entry gives. The reference implementation checks entries with the same SDK (<code>crates/terse-net/src/entry.rs</code>), and <code>node.rs</code> does the rest. <a href="native-reader.html">Writing a reader without the machine</a> lists all a complete reader must do.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A Tersenet reader in Rust: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.</p>
+<p>Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. <a href="guide-program.html">Write a program</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-feed-go.html">← Make a reader in Go, step 3: follow a feed</a><a rel="next" href="guide-program.html">Write a program in C →</a></nav></footer>
+</body>
+</html>

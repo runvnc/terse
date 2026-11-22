@@ -1,0 +1,111 @@
+# Make a reader in Rust, step 3: follow a feed
+
+A feed is one author's numbered series of entries. Each entry is small and signed with the author's key, and says, for example, "number 1 of my feed is this blob, this size, with this title". The key is the feed's name: 64 hexadecimal digits. In this step your reader subscribes to a feed on a relay, checks every entry's signature, lists the titles of the articles, and opens one. (Make a reader in Go, step 3, is the same program in Go.)
+
+## The code
+
+`src/bin/follow.rs`, with step 1's `article` and step 2's `relay` modules:
+
+```
+// Step 3: follow a feed and open one of its articles.
+use reader::{article, relay};
+use std::collections::HashMap;
+use tungstenite::Message;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let key = relay::hex32(&args[2])?;
+    let (mut socket, _) = tungstenite::connect(&args[1])?;
+    let subscribe = [&[0x04, 2, 0, 0, 0][..], &key, &[0; 4]];
+    socket.send(Message::binary(subscribe.concat()))?;
+    let reply = socket.read()?.into_data();
+    if reply.len() < 10 || reply[5] != 1 {
+        return Err("the relay refused the subscription".into());
+    }
+    let highest = u32::from_le_bytes(reply[6..10].try_into()?);
+    let mut articles = HashMap::new();
+    let mut caught_up = highest == 0;
+    while !caught_up {
+        let message = socket.read()?.into_data();
+        if message.len() < 37 || message[0] != 0x90 {
+            continue;
+        }
+        let entry = &message[1..];
+        let seq = u32::from_le_bytes(entry[32..36].try_into()?);
+        caught_up = seq >= highest;
+        let Ok(e) = tersenet::verify_entry(entry) else {
+            continue;
+        };
+        if e.feed == key && e.kind == 1 {
+            println!("{seq}  {}", article::visible(e.title));
+            articles.insert(seq, e.blob);
+        }
+    }
+    let Some(seq) = args.get(3) else { return Ok(()) };
+    let Some(&id) = articles.get(&seq.parse::<u32>()?) else {
+        return Err("no such article in the feed".into());
+    };
+    let blob = relay::get(&mut socket, id)?;
+    println!();
+    article::show(&blob);
+    Ok(())
+}
+```
+
+It is 43 lines; the whole program, with `lib.rs`, `article.rs` and `relay.rs`, is 142. The entries are checked by one call to the Tersenet SDK for Rust, `tersenet::verify_entry`, named in step 2's `Cargo.toml`.
+
+## How it works
+
+`main` connects and sends a Subscribe: the byte `04h`, a request number (here 2), the feed's key, and 4 bytes `after`, the highest entry number you already hold: 0, so the relay sends everything it has. Its reply starts with `84h` and gives, after a status byte, `highest`: the highest entry number it holds.
+
+Then the relay sends the feed's entries, oldest first, each in a message that starts with `90h`. The loop reads them until it has one numbered `highest` or more: then it has caught up. An entry is, in order: the feed's key (32 bytes), its number `seq` (4), a time (4), a kind (1: 1 for an article), the blob's size (3) and ID (32), a reply-to ID (32), the title's length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.
+
+`tersenet::verify_entry` checks an entry by every rule the network sets and returns its fields, or the rule it breaks (`tersenet::Invalid`): the length, a title of at most 120 bytes and valid UTF-8, a `seq` from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile's or a program's title, and the signature. `main` keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one's number and title; any other entry is dropped, unseen.
+
+The signature is Ed25519, over the 13 bytes `terse-entry-0` followed by the entry without its signature, and it is checked strictly. `ed25519-dalek`'s `verify_strict` comes close, but its `VerifyingKey::from_bytes` accepts a key that is not the canonical encoding of its point, and with the crate's `legacy_compatibility` feature, which any crate in a program can turn on, it accepts an S that is not below the group order. [Signatures and valid entries](terse:{signatures}) gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, `sdk/rust/src/lib.rs` in the Tersenet sources, 164 lines with its comments, built on `curve25519-dalek`: read it. `vectors/entries.txt` holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.
+
+To open an entry, `main` gets its blob with step 2's `relay::get`, which checks its hash and skips any entry the relay sends meanwhile, and shows it with `article::show`.
+
+## Getting the SDK
+
+In a package of your own, `cargo add tersenet` adds it to `Cargo.toml`. In the Tersenet sources, `.cargo/config.toml` beside `Cargo.toml` puts the copy in `sdk/rust` in its place, so the examples build with the SDK they are tested with.
+
+## Run it
+
+With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:
+
+```
+terse key new
+terse feed publish ../hello.txt --title Hello \
+  --relay ws://127.0.0.1:7979
+```
+
+`terse key new` makes your key and prints it; if you made a profile in the user guide you have one already. `terse key show` prints it, so give it to the program:
+
+```
+cargo run -q --bin follow ws://127.0.0.1:7979 \
+  $(terse key show)
+```
+
+```
+1  Hello
+```
+
+Add an entry's number to open it:
+
+```
+cargo run -q --bin follow ws://127.0.0.1:7979 \
+  $(terse key show) 1
+```
+
+It prints the list again, an empty line, and the article as step 1 shows it.
+
+## What it leaves out
+
+A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. The reference implementation checks entries with the same SDK (`crates/terse-net/src/entry.rs`), and `node.rs` does the rest. [Writing a reader without the machine](terse:{native-reader}) lists all a complete reader must do.
+
+## What you have now
+
+A Tersenet reader in Rust: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
+
+Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:{guide-program}).

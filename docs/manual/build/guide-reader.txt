@@ -1,72 +1,16 @@
-# Make a reader, step 1: show an article
+# Make a reader
 
-A Tersenet article is plain UTF-8 text that already reads well as it is. A reader's job is to show it a little better: headings larger, paragraphs wrapped to the window, links you can follow. You can write one in any language, with any way of putting text on a screen, and you do not need the Terse32 virtual machine at all: articles and the network are the whole of Tersenet's reading side.
+A Tersenet reader is any program that shows Tersenet articles to a person. An article is a plain text file that already reads well as it is; a reader shows it a little better, with headings that stand out and paragraphs wrapped to the window, and fetches articles and feeds from relays, checking that each is genuine. It needs no virtual machine: articles and the network are the whole of Tersenet's reading side.
 
-This first step needs no network either. You will show an article that is already a file on your computer.
+This guide builds a small reader in three steps, each a complete program you can run:
 
-## An article to start with
+- Step 1: show an article from a file, its headings and paragraphs.
+- Step 2: fetch an article from a relay by its ID, and check its hash.
+- Step 3: follow a feed: list its entries, check their signatures, open one.
 
-Save this as `hello.txt`:
+The programs are in the Tersenet sources, in `examples/reader`, in Go and in Rust. Each step is a page or two of code, with a well-known library for each of WebSocket, BLAKE3 and Ed25519. Pick a language:
 
-```
-# Hello
+- [Make a reader in Go, step 1: show an article](terse:78b7d0b34c6974d38a58bf317843f96e36968515e42224929098394c9a1ad8d4)
+- [Make a reader in Rust, step 1: show an article](terse:2a57573d021db88cf5dbb2ef612441213049c39298a5c8a93dd2fe9d2e75e210)
 
-My first article.
-Two lines, one paragraph.
-
-## A short list
-
-- one item
-- another, with `code` in it
-```
-
-## The rules you need first
-
-An article is a series of blocks. Blank lines separate them, and each block is known by how its first line starts:
-
-- `# ` starts a heading, and `## ` a subheading: one line each.
-- `- ` or `* ` starts a list item.
-- Four spaces or a tab start a preformatted line, shown as written in a monospaced face.
-- Three backquotes start a fence, which runs to the next line of three backquotes and is shown as written, like preformatted lines.
-- `|` starts a table row.
-- Any other line starts a paragraph. Its lines are joined with spaces, then wrapped to your width.
-
-Inside a line, text between two backquotes is a code span, and a link is a `terse:` address, bare or written as `[text](address)`. An article's address is `terse:` and 64 hexadecimal digits. Only `terse:` addresses are links: a web address is ordinary text.
-
-That is enough for a first version. Anything that matches no rule is ordinary text, shown as written. A reader that does not lay tables out yet may show a table's lines as a paragraph, and one that does not draw figures may show a figure as its text: the format allows both, so leave them for later.
-
-## Check yourself
-
-The Tersenet sources come with a test for exactly this. The folder `vectors/articles` holds 58 small articles, each `.txt` beside a `.dump` file that lists what a reader must find in it, one block or piece per line. For `hello.txt` it is:
-
-```
-heading
-  text "Hello"
-paragraph
-  text "My first article. Two lines, one paragraph."
-subheading
-  text "A short list"
-item
-  text "one item"
-item
-  text "another, with "
-  code "code"
-  text " in it"
-```
-
-Make your program print the same, and compare. The reader `tersereader` (in the sources as `native/reader-go`) prints it for any file:
-
-```
-tersereader --dump hello.txt --tokens
-tersereader --dump hello.txt
-```
-
-The second command shows the article laid out as text, with its links numbered: a good picture of what yours should do.
-
-`tersereader` is itself a reader written from the specifications alone. With the network left to a separate program, as step 2 shows, it is about 5,300 lines of Go. A reader is a project you can finish.
-
-## What you have now
-
-A program that shows Tersenet articles from files. Next, get them from the network: [Make a reader, step 2: fetch an article](terse:3cb5e31f6381b016d1ce2583b3880400bd205455e3585fb07dafe8df684d2bf7).
-
-The complete rules, with every edge case, are in ARTICLE.md; [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37) shows each construct as source and as shown.
+These programs are a start, not a whole reader: each page says what its program leaves out and where the complete readers do it.

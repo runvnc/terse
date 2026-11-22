@@ -46,6 +46,22 @@ pub fn valid_url(url: &str) -> bool {
         && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// A relay as a person types it: a `ws://` or `wss://` URL as it is, or a
+/// host and maybe a port without a scheme, taken as `wss://` (over TLS, as
+/// public relays are reached: `relay.tersenet.org` is
+/// `wss://relay.tersenet.org`). `None` if it is neither.
+pub fn typed_url(text: &str) -> Option<String> {
+    let t = text.trim();
+    if valid_url(t) {
+        return Some(t.to_string());
+    }
+    if t.contains("://") || t.contains('/') {
+        return None;
+    }
+    let url = format!("wss://{t}");
+    (valid_url(&url) && crate::relay::Endpoint::parse(&url).is_ok()).then_some(url)
+}
+
 fn read_optional(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(path) {
         Ok(t) => Ok(Some(t)),
@@ -179,6 +195,13 @@ mod tests {
         assert_eq!(find_relays(&list(&["none"]), Some(config.path()), port).unwrap(), Found::Disabled);
         assert!(find_relays(&list(&["none", "ws://x:1"]), Some(config.path()), port).is_err());
         assert!(find_relays(&list(&["http://x"]), Some(config.path()), port).is_err());
+        // Typed without a scheme: over TLS.
+        assert_eq!(typed_url("relay.tersenet.org").as_deref(), Some("wss://relay.tersenet.org"));
+        assert_eq!(typed_url(" relay.example:8443 ").as_deref(), Some("wss://relay.example:8443"));
+        assert_eq!(typed_url("ws://relay.example:7878").as_deref(), Some("ws://relay.example:7878"));
+        for bad in ["http://x", "", "a b", "relay.example/x", "[::1"] {
+            assert_eq!(typed_url(bad), None, "{bad}");
+        }
         let listener = std::net::TcpListener::bind(local_addr(0)).unwrap();
         let open = listener.local_addr().unwrap().port();
         assert_eq!(find_relays(&[], Some(config.path()), open).unwrap(), Found::Local(local_url(open)));

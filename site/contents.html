@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="contents">Contents</h1>
-<p>The manual has three parts. The user guide gets you from installing Tersenet to reading, publishing and following others, with no programming. The implementation guide builds the parts of Tersenet yourself: a reader, a program, a host, a device and a shell. Both are short steps, each one you can finish in a sitting. The reference is everything, complete and exact.</p>
+<p>The manual has three parts. The user guide gets you from installing Tersenet to reading, publishing and following others, with no programming. The implementation guide builds the parts of Tersenet yourself, from working source code: a reader, programs, a host, a device and a shell. Both are short steps, each one you can finish in a sitting. The reference is everything, complete and exact.</p>
 <h2 id="user-guide">User guide</h2>
 <ul>
 <li><a href="guide-install.html">Install Tersenet</a>: one command on Linux and macOS, a zip on Windows, or from the source.</li>
@@ -24,18 +24,36 @@
 </ul>
 <h2 id="implementation-guide">Implementation guide</h2>
 <ul>
-<li><a href="guide-reader.html">Make a reader, step 1: show an article</a>: the article format&#39;s first rules, and a test to check yourself.</li>
-<li><a href="guide-reader-fetch.html">Make a reader, step 2: fetch an article</a>: get an article from a relay and check that it is genuine.</li>
-<li><a href="guide-reader-feeds.html">Make a reader, step 3: links and feeds</a>: follow links, subscribe to a feed, check its signatures.</li>
-<li><a href="guide-program.html">Write a program</a>: a first Terse32 program, built and run in three commands.</li>
-<li><a href="guide-drawing.html">Draw a line and read a key</a>: the 2D vector display and keyboard events.</li>
-<li><a href="guide-host.html">Make a host, step 1: run a program to its end</a>: the program file, memory and the processor, until <code>exit</code>.</li>
-<li><a href="guide-host-frames.html">Make a host, step 2: frames and the budget</a>: 125,000 units a frame, <code>wait_frame</code> and the carry rule.</li>
-<li><a href="guide-host-driver.html">Make a host, step 3: a driver shows hello</a>: the reference terminal over the device bus.</li>
-<li><a href="guide-host-state.html">Make a host, step 4: prove it exact</a>: the state hash, snapshots and the conformance program.</li>
+<li><a href="guide-reader.html">Make a reader</a>: what a reader does, and a small one built in three steps, in Go or in Rust.</li>
+<li><a href="guide-reader-go.html">Make a reader in Go, step 1: show an article</a>: an article file&#39;s headings and paragraphs, with the standard library alone.</li>
+<li><a href="guide-reader-rust.html">Make a reader in Rust, step 1: show an article</a>: the same program in Rust.</li>
+<li><a href="guide-reader-fetch-go.html">Make a reader in Go, step 2: fetch an article</a>: get an article from a relay by its ID and check its BLAKE3 hash.</li>
+<li><a href="guide-reader-fetch-rust.html">Make a reader in Rust, step 2: fetch an article</a>: the same in Rust.</li>
+<li><a href="guide-reader-feed-go.html">Make a reader in Go, step 3: follow a feed</a>: subscribe to a feed, check its entries&#39; signatures strictly, open an article.</li>
+<li><a href="guide-reader-feed-rust.html">Make a reader in Rust, step 3: follow a feed</a>: the same in Rust.</li>
+<li><a href="guide-program.html">Write a program in C</a>: hello on the text grid, built, run in a window and tested without one; Go has no compiler for Terse32, so the program pages are in C and Rust.</li>
+<li><a href="guide-program-rust.html">Write a program in Rust</a>: the same program with the Rust runtime.</li>
+<li><a href="guide-drawing.html">Draw a line and read a key</a>: a line on the 2D vector display that the arrow keys move, in C.</li>
+<li><a href="guide-drawing-rust.html">Draw a line and read a key in Rust</a>: the same with <code>VecList</code>.</li>
+<li><a href="guide-game.html">Make a small game</a>: steer a dot to a ring, keep score; the way to sparks and Lumen Reef, in C.</li>
+<li><a href="guide-game-rust.html">Make a small game in Rust</a>: the same game in Rust.</li>
+<li><a href="guide-host.html">Make a host</a>: what a host is, and the four steps in Go and in Rust.</li>
+<li><a href="guide-host-go.html">Make a host in Go, step 1: run a program to its end</a>: the program file, memory and the processor, until <code>exit</code>.</li>
+<li><a href="guide-host-rust.html">Make a host in Rust, step 1: run a program to its end</a>: the same in Rust.</li>
+<li><a href="guide-host-go-frames.html">Make a host in Go, step 2: frames and the budget</a>: 125,000 units a frame, <code>wait_frame</code> and the carry rule.</li>
+<li><a href="guide-host-rust-frames.html">Make a host in Rust, step 2: frames and the budget</a>: the same in Rust.</li>
+<li><a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>: the reference terminal over the device bus.</li>
+<li><a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>: the same in Rust.</li>
+<li><a href="guide-host-go-state.html">Make a host in Go, step 4: prove it exact</a>: the state hash, equal to the reference&#39;s.</li>
+<li><a href="guide-host-rust-state.html">Make a host in Rust, step 4: prove it exact</a>: the same in Rust.</li>
 <li><a href="guide-device.html">Make a device</a>: a device as a separate program on the device bus.</li>
+<li><a href="guide-device-go.html">Make a device in Go</a>: a terminal driver enough for <code>hello</code>, under the reference core and the example hosts.</li>
+<li><a href="guide-device-rust.html">Make a device in Rust</a>: the same in Rust.</li>
 <li><a href="guide-swap.html">Swap in your own part</a>: your reader, core or device with the reference for everything else.</li>
-<li><a href="guide-shell.html">Make a shell</a>: the program that starts other machines and lays out their screens.</li>
+<li><a href="guide-shell.html">Make a shell</a>: a program that starts another machine and shows it (device 8), in C.</li>
+<li><a href="guide-shell-rust.html">Make a shell in Rust</a>: the same shell with the runtime&#39;s calls of device 8.</li>
+<li><a href="guide-invent.html">Invent a device</a>: an experimental device, its driver in C and a program in C that uses it.</li>
+<li><a href="guide-invent-rust.html">Invent a device: the program in Rust</a>: the same program in Rust, with raw calls.</li>
 </ul>
 <h2 id="reference">Reference</h2>
 <p>Tersenet as a whole:</p>
@@ -51,6 +69,7 @@
 <li><a href="writing-articles.html">Writing an article</a>: the article format, every construct shown as source and as shown.</li>
 <li><a href="native-reader.html">Writing a reader without the machine</a>: what a native reader must do to be a complete Tersenet client.</li>
 <li><a href="network.html">The network</a>: blobs and relays, feeds and entries, profiles, names and search, programs, mirroring relays.</li>
+<li><a href="signatures.html">Signatures and valid entries</a>: the entry&#39;s bytes, every rule and its reason, strict Ed25519 verification, what libraries do, the test vectors and the SDK.</li>
 </ul>
 <p>Programs:</p>
 <ul>
@@ -82,6 +101,7 @@
 <li><a href="device-machines-screens.html">Screens, panels and input (device 8)</a>: where machines&#39; screens go, flat or as panels in 3D.</li>
 <li><a href="device-vector3.html">The 3D vector display (device 9)</a>: lines, points and circles in a box, seen from the host&#39;s eye.</li>
 <li><a href="device-vector3-surfaces.html">Surfaces</a>: a program&#39;s own screen placed in its 3D scene.</li>
+<li><a href="experimental.html">Experimental devices</a>: slots 240 to 255, a name, optional only: a device tried out before it is specified.</li>
 </ul>
 </article>
 </main>

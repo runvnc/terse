@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a reader in Go, step 2: fetch an article - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-reader-in-go-step-2-fetch-an-article">Make a reader in Go, step 2: fetch an article</h1>
+<p>Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob&#39;s ID is its BLAKE3 hash, so whatever a relay sends, you can check that it is the blob you asked for. In this step your reader asks a relay for an article by its ID, checks it, and shows it with step 1&#39;s code.</p>
+<h2 id="the-libraries">The libraries</h2>
+<p><code>go.mod</code> names the module and the libraries steps 2 and 3 use:</p>
+<pre>module reader
+
+go 1.24.0
+
+require (
+    github.com/gorilla/websocket v1.5.3
+    github.com/runvnc/terse/sdk/go v0.1.0
+    lukechampine.com/blake3 v1.5.1
+)
+
+require (
+    filippo.io/edwards25519 v1.2.0 // indirect
+    github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+)</pre>
+<ul>
+<li><code>github.com/gorilla/websocket</code> is the most widely used WebSocket package for Go. It has no dependencies of its own and a plain blocking interface (dial, write a message, read a message), and it answers pings and joins fragmented messages by itself, as a Tersenet client must. It speaks <code>wss&#58;//</code> (over TLS, as public relays are) as well as <code>ws&#58;//</code>, with the system&#39;s certificate authorities.</li>
+<li><code>lukechampine.com/blake3</code> is a widely used BLAKE3 for Go; <code>blake3.Sum256</code> gives the 32-byte hash that is a blob&#39;s ID. It brings one small package of its own, <code>klauspost/cpuid</code>, to find the processor&#39;s fast instructions.</li>
+<li><code>github.com/runvnc/terse/sdk/go</code> is the Tersenet SDK for Go (package <code>tersenet</code>): step 3 checks entries with it. It brings <code>filippo.io/edwards25519</code>, the curve arithmetic Go&#39;s own <code>crypto/ed25519</code> is built on.</li>
+</ul>
+<p><code>go.sum</code>, beside it, pins their exact contents. Go downloads them the first time you build.</p>
+<h2 id="the-code">The code</h2>
+<p><code>relay/relay.go</code> gets a blob from a relay:</p>
+<pre>package relay
+
+import (
+    &quot;errors&quot;
+
+    &quot;github.com/gorilla/websocket&quot;
+    &quot;lukechampine.com/blake3&quot;
+)
+
+func Get(conn *websocket.Conn, id [32]byte) ([]byte, error) {
+    request := append([]byte{0x01, 1, 0, 0, 0}, id[:]...)
+    err := conn.WriteMessage(websocket.BinaryMessage, request)
+    if err != nil {
+        return nil, err
+    }
+    for {
+        _, reply, err := conn.ReadMessage()
+        switch {
+        case err != nil:
+            return nil, err
+        case len(reply) &lt; 6 || reply[0] != 0x81:
+            continue
+        case reply[5] != 1:
+            return nil, errors.New(&quot;the relay does not have it&quot;)
+        case blake3.Sum256(reply[6:]) != id:
+            return nil, errors.New(&quot;hash check failed&quot;)
+        }
+        return reply[6:], nil
+    }
+}</pre>
+<p><code>fetch/main.go</code> is the program:</p>
+<pre>// Step 2: fetch an article from a relay by its ID.
+package main
+
+import (
+    &quot;bytes&quot;
+    &quot;encoding/hex&quot;
+    &quot;log&quot;
+    &quot;os&quot;
+
+    &quot;github.com/gorilla/websocket&quot;
+
+    &quot;reader/article&quot;
+    &quot;reader/relay&quot;
+)
+
+func main() {
+    id, err := hex.DecodeString(os.Args[2])
+    if err != nil || len(id) != 32 {
+        log.Fatal(&quot;an ID is 64 hexadecimal digits&quot;)
+    }
+    url := os.Args[1]
+    conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    blob, err := relay.Get(conn, [32]byte(id))
+    if err != nil {
+        log.Fatal(err)
+    }
+    if bytes.HasPrefix(blob, []byte(&quot;TERS&quot;)) ||
+        bytes.HasPrefix(blob, []byte(&quot;TDOC&quot;)) {
+        log.Fatal(&quot;not an article&quot;)
+    }
+    article.Show(blob)
+}</pre>
+<p>They are 30 and 35 lines; the whole program, with step 1&#39;s <code>article</code> package, is 142.</p>
+<h2 id="how-it-works">How it works</h2>
+<p>A relay is a WebSocket server, and every message is one binary WebSocket message. To ask for a blob, <code>Get</code> sends a Get message: the byte <code>01h</code>, a request number of 4 bytes, least significant first (here always 1), and the blob&#39;s ID, 32 bytes.</p>
+<p>It then reads messages until the reply comes: one that starts with <code>81h</code>. Other messages are skipped; in step 3 the relay sends feed entries over the same connection. After the type and the request number comes a status byte: 1 found, followed by the blob&#39;s bytes; 2 not found; 3 refused.</p>
+<p>The hash check is the important line. Relays are not trusted, the hash is: if the BLAKE3 hash of the bytes is not the ID asked for, <code>Get</code> returns an error and the bytes are never shown.</p>
+<p><code>main</code> reads the relay&#39;s address and the ID, connects, and gets the blob. A blob that starts with <code>TERS</code> is a program and one that starts with <code>TDOC</code> a document: neither is an article, so neither is shown as text. Anything else it shows with <code>article.Show</code>.</p>
+<h2 id="run-it">Run it</h2>
+<p>You need a relay. <code>terse-relay</code> comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:</p>
+<pre>terse-relay --listen 127.0.0.1:7979 --store try-relay</pre>
+<p>It prints <code>listening on ws&#58;//127.0.0.1:7979</code> and keeps what it is given in the folder <code>try-relay</code>. Put the article on it, from <code>examples/reader/go</code>:</p>
+<pre>terse put ../hello.txt --relay ws&#58;//127.0.0.1:7979</pre>
+<pre>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7979
+e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8</pre>
+<p>The last line is the article&#39;s ID. <code>terse hash</code> prints the same ID without asking a relay, which saves typing it:</p>
+<pre>go run ./fetch ws&#58;//127.0.0.1:7979 $(terse hash ../hello.txt)</pre>
+<p>It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as <code>go.mod</code>, and it says so:</p>
+<pre>go run ./fetch ws&#58;//127.0.0.1:7979 $(terse hash go.mod)</pre>
+<pre>2026/11/21 23:22:50 the relay does not have it
+exit status 1</pre>
+<p><code>log.Fatal</code> puts the date and time before the message, and <code>go run</code> adds the exit status.</p>
+<h2 id="what-it-leaves-out">What it leaves out</h2>
+<p>The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is <code>internal/client/client.go</code>, with the store in <code>internal/store/store.go</code>. A reader may also leave all of the network to a node, a separate program it asks over a local socket; <a href="native-reader.html">Writing a reader without the machine</a> says how.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A reader that fetches an article by its ID and knows it is genuine.</p>
+<ul>
+<li>Next: <a href="guide-reader-feed-go.html">Make a reader in Go, step 3: follow a feed</a>.</li>
+<li>The same step in Rust: <a href="guide-reader-fetch-rust.html">Make a reader in Rust, step 2: fetch an article</a>.</li>
+<li>Every relay message: <a href="network.html">The network</a>.</li>
+</ul>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-reader-rust.html">← Make a reader in Rust, step 1: show an article</a><a rel="next" href="guide-reader-fetch-rust.html">Make a reader in Rust, step 2: fetch an article →</a></nav></footer>
+</body>
+</html>

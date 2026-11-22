@@ -21,7 +21,8 @@ use tungstenite::{Message, WebSocket};
 
 use crate::blob::{BlobId, MAX_BLOB};
 use crate::identity::FeedKey;
-use crate::protocol::{self, Reply, status};
+use crate::protocol::{self, Refusal, Reply, status};
+use crate::tls::{self, Stream};
 
 /// Largest WebSocket message either side accepts: a full blob plus headers,
 /// with room so that an oversize put still reaches the relay to be refused.
@@ -47,9 +48,9 @@ pub fn websocket_config() -> WebSocketConfig {
     WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE))
 }
 
-/// A `ws://` WebSocket over a blocking TCP stream (no TLS).
+/// A `ws://` or `wss://` WebSocket over a blocking TCP stream.
 pub struct WsTransport {
-    ws: WebSocket<TcpStream>,
+    ws: WebSocket<Stream>,
 }
 
 /// How long `try_recv` waits for a message.
@@ -66,6 +67,89 @@ fn is_timeout(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
 }
 
+/// Where a relay URL points: whether over TLS, the host as the URL writes
+/// it (an IPv6 address in brackets) and the port (80 for `ws://` and 443
+/// for `wss://` when it gives none, NETWORK 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Endpoint {
+    pub tls: bool,
+    pub host: String,
+    pub port: u16,
+}
+
+impl Endpoint {
+    pub fn parse(url: &str) -> io::Result<Self> {
+        let bad = |why: &str| io::Error::new(io::ErrorKind::InvalidInput, format!("{url}: {why}"));
+        let (tls, rest) = match (url.strip_prefix("ws://"), url.strip_prefix("wss://")) {
+            (Some(r), _) => (false, r),
+            (_, Some(r)) => (true, r),
+            _ => return Err(bad("not a ws:// or wss:// URL")),
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        let authority = authority.rsplit('@').next().unwrap_or_default();
+        let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+            let (inside, after) = v6.split_once(']').ok_or_else(|| bad("no ] after the IPv6 address"))?;
+            (format!("[{inside}]"), after.strip_prefix(':'))
+        } else {
+            match authority.split_once(':') {
+                Some((h, p)) => (h.to_string(), Some(p)),
+                None => (authority.to_string(), None),
+            }
+        };
+        if host.is_empty() || host == "[]" {
+            return Err(bad("no host"));
+        }
+        let port = match port {
+            None | Some("") if tls => 443,
+            None | Some("") => 80,
+            Some(p) => p.parse().map_err(|_| bad("bad port"))?,
+        };
+        Ok(Endpoint { tls, host, port })
+    }
+
+    /// `host:port`, for resolving.
+    pub fn authority(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+/// The words for a plain client that met a relay requiring TLS.
+const REQUIRES_TLS: &str = "this relay requires TLS (try wss://)";
+
+/// Why a WebSocket handshake failed, in words: a TLS answer to a plain
+/// request or a redirect to `https://` (the relay requires TLS), or an
+/// HTTP refusal.
+fn handshake_failure(url: &str, e: tungstenite::Error, sniffed: Option<u8>, tls: bool) -> io::Error {
+    use tungstenite::Error as E;
+    if !tls && sniffed.is_some_and(tls::is_tls_record) {
+        return io::Error::new(io::ErrorKind::InvalidData, format!("{url}: {REQUIRES_TLS}"));
+    }
+    match e {
+        E::Http(r) => {
+            let location = r.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or_default();
+            if !tls && r.status().is_redirection() && (location.starts_with("https://") || location.starts_with("wss://")) {
+                return io::Error::new(io::ErrorKind::InvalidData, format!("{url}: {REQUIRES_TLS}"));
+            }
+            // A TLS server's refusal of plain HTTP (nginx's and Cloudflare's
+            // "The plain HTTP request was sent to HTTPS port", Go's "Client
+            // sent an HTTP request to an HTTPS server").
+            let body = String::from_utf8_lossy(r.body().as_deref().unwrap_or_default()).to_ascii_lowercase();
+            if !tls && r.status() == 400 && ["https", "tls", "ssl"].iter().any(|w| body.contains(w)) {
+                return io::Error::new(io::ErrorKind::InvalidData, format!("{url}: {REQUIRES_TLS}"));
+            }
+            // NETWORK 3: 429 and 503 are a relay refusing for its limits.
+            let words = match r.status().as_u16() {
+                429 => "too many connections from this address; try again later".to_string(),
+                503 => "the relay has too many connections; try again later".into(),
+                _ => format!("WebSocket handshake refused (HTTP {})", r.status()),
+            };
+            io::Error::new(io::ErrorKind::ConnectionRefused, format!("{url}: {words}"))
+        }
+        E::Io(e) => io::Error::new(e.kind(), format!("{url}: WebSocket handshake failed: {e}")),
+        e => io::Error::other(format!("{url}: WebSocket handshake failed: {e}")),
+    }
+}
+
 impl WsTransport {
     pub fn connect(url: &str, timeout: Duration) -> io::Result<Self> {
         Self::connect_checked(url, timeout, false)
@@ -73,39 +157,51 @@ impl WsTransport {
 
     /// Connects; with `public_only`, refuses an address that is not public
     /// ([`crate::profile::public_ip`]) once the host name is resolved (for
-    /// relays named in profiles, NETWORK 5).
+    /// relays named in profiles, NETWORK 5). A `wss://` relay's
+    /// certificate must be trusted and be for its host ([`crate::tls`]).
+    /// Each step, the TLS handshake included, waits at most `timeout`;
+    /// [`RelayClient`] runs all of it on a thread of its own.
     pub fn connect_checked(url: &str, timeout: Duration, public_only: bool) -> io::Result<Self> {
-        let rest = url
-            .strip_prefix("ws://")
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{url}: only ws:// relays are supported")))?;
-        let authority = rest.split('/').next().unwrap_or_default();
-        let addrs: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
+        let end = Endpoint::parse(url)?;
+        let addrs: Vec<SocketAddr> =
+            end.authority().to_socket_addrs().map_err(|e| io::Error::new(e.kind(), format!("{url}: {e}")))?.collect();
         check_addrs(&addrs, public_only).map_err(|e| io::Error::new(e.kind(), format!("{url}: {e}")))?;
         // Only the addresses checked above are used; the name is not
         // resolved again.
         let mut last = io::Error::new(io::ErrorKind::NotFound, format!("{url}: no address"));
-        let mut stream = None;
+        let mut tcp = None;
         for addr in &addrs {
             match TcpStream::connect_timeout(addr, timeout) {
                 Ok(s) => {
-                    stream = Some(s);
+                    tcp = Some(s);
                     break;
                 }
-                Err(e) => last = e,
+                Err(e) => last = io::Error::new(e.kind(), format!("{url}: {e}")),
             }
         }
-        let stream = stream.ok_or(last)?;
-        stream.set_read_timeout(Some(timeout))?;
-        stream.set_write_timeout(Some(timeout))?;
-        stream.set_nodelay(true)?;
-        let (ws, _) = tungstenite::client::client_with_config(url, stream, Some(websocket_config()))
-            .map_err(|e| io::Error::other(format!("{url}: WebSocket handshake failed: {e}")))?;
-        ws.get_ref().set_read_timeout(Some(RECV_WAIT))?;
+        let tcp = tcp.ok_or(last)?;
+        tcp.set_read_timeout(Some(timeout))?;
+        tcp.set_write_timeout(Some(timeout))?;
+        tcp.set_nodelay(true)?;
+        let stream = if end.tls {
+            tls::connect(&end.host, tcp).map_err(|e| io::Error::new(e.kind(), format!("{url}: {e}")))?
+        } else {
+            tls::take_sniffed();
+            Stream::Plain { tcp, sniff: true }
+        };
+        let (mut ws, _) = tungstenite::client::client_with_config(url, stream, Some(websocket_config())).map_err(|e| match e {
+            tungstenite::HandshakeError::Failure(e) => handshake_failure(url, e, tls::take_sniffed(), end.tls),
+            tungstenite::HandshakeError::Interrupted(_) => {
+                io::Error::new(io::ErrorKind::TimedOut, format!("{url}: WebSocket handshake timed out"))
+            }
+        })?;
+        ws.get_mut().stop_sniffing();
+        ws.get_ref().tcp().set_read_timeout(Some(RECV_WAIT))?;
         Ok(WsTransport { ws })
     }
 
     /// The WebSocket (a relay's link to a peer uses it directly).
-    pub fn into_inner(self) -> WebSocket<TcpStream> {
+    pub fn into_inner(self) -> WebSocket<Stream> {
         self.ws
     }
 }
@@ -150,9 +246,9 @@ impl Transport for WsTransport {
     /// others already here and returns (waiting `RECV_WAIT` once more after
     /// every reply added that much to every request).
     fn try_recv_now(&mut self) -> io::Result<Option<Vec<u8>>> {
-        self.ws.get_ref().set_nonblocking(true)?;
+        self.ws.get_ref().tcp().set_nonblocking(true)?;
         let got = self.read();
-        self.ws.get_ref().set_nonblocking(false)?;
+        self.ws.get_ref().tcp().set_nonblocking(false)?;
         got
     }
 }
@@ -174,7 +270,8 @@ pub enum RelayReply {
     /// A lookup found an entry, not yet verified.
     LookedUp(Vec<u8>),
     NotFound,
-    Refused,
+    /// The relay refused, and why (NETWORK 3.1).
+    Refused(Refusal),
     /// Connection error, protocol error or timeout.
     Failed,
 }
@@ -191,6 +288,8 @@ pub struct RelayClient {
     attempt: Option<mpsc::Receiver<Attempt>>,
     /// Why the last attempt failed, not yet taken.
     failure: Option<io::Error>,
+    /// Why the last attempt failed, kept until one succeeds.
+    last_failure: Option<String>,
     transport: Option<Box<dyn Transport>>,
     timeout: Duration,
     next_req: u32,
@@ -214,6 +313,7 @@ impl RelayClient {
             background: false,
             attempt: None,
             failure: None,
+            last_failure: None,
             transport: None,
             timeout,
             next_req: 0,
@@ -349,9 +449,19 @@ impl RelayClient {
             Ok(t) => {
                 self.transport = Some(t);
                 self.generation += 1;
+                self.last_failure = None;
             }
-            Err(e) => self.failure = Some(e),
+            Err(e) => {
+                self.last_failure = Some(e.to_string());
+                self.failure = Some(e);
+            }
         }
+    }
+
+    /// Why the last attempt to connect failed, until one succeeds (an
+    /// untrusted certificate, say: README "Relays over TLS").
+    pub fn last_failure(&self) -> Option<&str> {
+        self.last_failure.as_deref()
     }
 
     /// Takes in the outcome of a background attempt, waiting at most `wait`.
@@ -443,13 +553,13 @@ impl RelayClient {
                 Some(Reply::Status { req, status: status::DONE, .. }) => (req, RelayReply::Done),
                 Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
                 Some(Reply::Found { req, status: status::DONE, entries }) => (req, RelayReply::Found(entries)),
-                Some(Reply::Found { req, .. }) => (req, RelayReply::Refused),
+                Some(Reply::Found { req, status, .. }) => (req, RelayReply::Refused(Refusal::of_status(status))),
                 Some(Reply::LookedUp { req, entry: Some(entry), .. }) => (req, RelayReply::LookedUp(entry)),
                 Some(Reply::LookedUp { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
-                Some(Reply::LookedUp { req, .. }) => (req, RelayReply::Refused),
+                Some(Reply::LookedUp { req, status, .. }) => (req, RelayReply::Refused(Refusal::of_status(status))),
                 Some(Reply::Get { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),
-                Some(Reply::Get { req, .. } | Reply::Put { req, .. } | Reply::Status { req, .. }) => {
-                    (req, RelayReply::Refused)
+                Some(Reply::Get { req, status, .. } | Reply::Put { req, status, .. } | Reply::Status { req, status, .. }) => {
+                    (req, RelayReply::Refused(Refusal::of_status(status)))
                 }
                 Some(Reply::Entry(entry)) => {
                     self.pushed.push(entry);
@@ -557,7 +667,20 @@ mod tests {
         relay.send(protocol::encode_entry(b"pushed")).unwrap();
         relay.send(protocol::encode_status_reply(protocol::PUBLISH_REPLY, p, status::REFUSED)).unwrap();
         relay.send(protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, u, status::DONE)).unwrap();
-        assert_eq!(c.poll(), [(s, RelayReply::Subscribed { highest: 12 }), (p, RelayReply::Refused), (u, RelayReply::Done)]);
+        assert_eq!(
+            c.poll(),
+            [(s, RelayReply::Subscribed { highest: 12 }), (p, RelayReply::Refused(Refusal::Unspecified)), (u, RelayReply::Done)]
+        );
+        // The reason of a refusal is kept (NETWORK 3.1).
+        let p = c.publish(b"entry");
+        let q = c.put(b"blob");
+        relay.send(protocol::encode_status_reply(protocol::PUBLISH_REPLY, p, status::NOT_WRITER)).unwrap();
+        relay.send(protocol::encode_put_reply(q, status::retry(Duration::from_secs(30)), &[0; 32])).unwrap();
+        assert_eq!(
+            c.poll(),
+            [(p, RelayReply::Refused(Refusal::NotWriter)), (q, RelayReply::Refused(Refusal::TryLater(Duration::from_secs(30))))]
+        );
+        sent.try_iter().count();
         assert_eq!(c.take_pushed(), [b"pushed".to_vec()]);
         // Entries arrive while nothing is waiting, too.
         relay.send(protocol::encode_entry(b"later")).unwrap();

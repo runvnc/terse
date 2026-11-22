@@ -8,8 +8,7 @@
 
 #[cfg(feature = "window")]
 mod app;
-#[cfg(feature = "audio")]
-mod audio;
+pub mod audio;
 pub mod consent;
 pub mod display;
 #[cfg(feature = "window")]
@@ -96,7 +95,7 @@ const USAGE: &str = "usage:
   terse-host [<image|id> | --shell <image|id>] [--builtin <image|id>]... [--demo] [--relay ws://...|none]...
              [--no-feed-relays] [--no-prefetch] [--no-program-download] [--consent ask|allow|deny] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor] [--size <W>x<H>]
-             [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto]
+             [--parallax off|pointer] [--eye <dx>,<dy>] [--panels perspective|flat|auto] [--volume <0-100>] [--mute]
   terse-host [<image|id> | --shell [<image|id>]] --screenshot <out.png> --frames <N> [--size <W>x<H>] [--eye <dx>,<dy>]
              [--events <file>] [--demo] [--consent ask|allow|deny] [--relay ws://...] [--store <dir>]
              [--config <dir>] [--data <dir>] [--no-trails] [--force-phosphor]
@@ -108,14 +107,24 @@ const USAGE: &str = "usage:
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
   terse-host [<image|id> | --shell [<image|id>]] --drive <script|fifo|-> [--size <W>x<H>] [--renderer gpu|software]
              [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [...]
-  terse-host --version
+  terse-host --version | --hardware-check
   Every form takes --perf-log <dir>|off: where the performance record goes (RECORD.md; default: <data>/perf
   for a window, none otherwise; it never leaves this computer), and --perf-rule on|off: whether the rule
   acts (PERFORMANCE.md R15; default on in a window, off for --selftest): the look is shed first; a machine
   that keeps making frames late is saved at 3 late frames within 60 and saved and stopped (halted) at 10
   within 300 (a machine alone: exit status 4); the host's own drawing is warned about and, with nothing
   left to shed, recorded as not keeping up. --version prints the host's name, version
-  and build identifier, then its fonts.
+  and build identifier, then its fonts and what it can play sound through. --hardware-check times the
+  drawing of the worst legal frames (PERFORMANCE.md R16) and opens and closes the sound output, saying
+  what it plays through or why there is none.
+  Sound (device 6, SPEC §sound) plays in a window through PipeWire or PulseAudio, else ALSA (Linux;
+  CoreAudio on macOS, WASAPI on Windows), opened when a program first makes a sound; if it cannot be
+  heard, a notice and one line on stderr say why, once. TERSE_AUDIO=off plays nothing and says nothing;
+  TERSE_AUDIO=pulse[:<server>] or alsa[:<pcm>] chooses the output (none: as if none were found);
+  --selftest plays only when TERSE_AUDIO is set. The volume (on the way out; the machines never know)
+  is kept in <config>/sound; Ctrl+Alt+minus and Ctrl+Alt+plus turn it down and up a tenth, Ctrl+Alt+M
+  mutes (and the keyboard's volume keys, if the desktop lets them through): keys the host keeps, which
+  no program receives. --volume and --mute set it for this run.
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
@@ -207,6 +216,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
     let mut version = false;
     let mut hardware_check = false;
+    let (mut volume, mut mute) = (None, false);
     let started = std::time::Instant::now();
     let mut perf_log: Option<Option<PathBuf>> = None;
     let mut perf_rule: Option<bool> = None;
@@ -287,6 +297,11 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
                 consent = Some(Consent::parse(&v).ok_or(format!("bad --consent {v} (ask, allow or deny)"))?);
             }
             "--no-trails" => no_trails = true,
+            "--volume" => {
+                let n = it.next().ok_or(USAGE)?;
+                volume = Some(n.parse::<u8>().ok().filter(|&v| v <= 100).ok_or_else(|| format!("bad volume {n} (0 to 100)"))?);
+            }
+            "--mute" => mute = true,
             "--force-phosphor" => force_phosphor = true,
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relays.push(it.next().ok_or(USAGE)?),
@@ -315,11 +330,17 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         let config = config.clone().or_else(default_config_dir);
         let (t, p) = (fonts::TerminalFonts::load(config.as_deref()), fonts::PageFonts::load(config.as_deref()));
         print!("{}\nfonts:\n{}", terse_perflog::Identity::this("terse-host").line(), fonts::describe(&t, &p));
+        println!("sound: {}", audio::compiled());
         return Ok(ExitCode::SUCCESS);
     }
     if hardware_check {
         // R16's check, printed (no cache): each worst legal frame's slowest
-        // drawing time and the verdict.
+        // drawing time and the verdict. First the sound: the output opened
+        // and closed again, no sample played.
+        match audio::probe() {
+            Ok(name) => println!("sound: plays through {name}"),
+            Err(s) => println!("sound: none: {} ({})", s.cause, s.detail),
+        }
         let looks = Looks {
             no_trails: false,
             force_phosphor: false,
@@ -393,6 +414,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         None => Consent::Deny,
     };
     let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
+    audio::configure(Some(config.clone()), volume, mute);
     // Every font is opened here, at start, and never again (SPEC
     // §responsiveness item 5).
     let term_fonts = fonts::TerminalFonts::load(Some(&config));

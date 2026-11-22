@@ -31,13 +31,23 @@ trap 'rm -rf "$stage_root"' EXIT
 export CARGO_PROFILE_RELEASE_STRIP=${CARGO_PROFILE_RELEASE_STRIP:-symbols}
 
 # The windowed host: GPU renderer with the software one as fallback
-# (--renderer auto, the default) and sound.
+# (--renderer auto, the default) and sound (a default feature, named anyway).
 host_features=(--features terse-host/audio)
 
 build() { # <target> <cargo args...>
     local target=$1
     shift
     "${cargo[@]}" build --release --locked --target "$target" "$@"
+}
+
+# The licences of the TLS libraries built into terse, terse-host and
+# terse-relay (NOTICE), as one file.
+tls_licences() {
+    for f in third_party/tls/*; do
+        printf '==> %s <==\n\n' "${f##*/}"
+        cat "$f"
+        printf '\n'
+    done
 }
 
 stage() { # <name>: a fresh directory named for the download
@@ -57,7 +67,8 @@ linux-x86_64 | linux-aarch64)
     arch=${platform#linux-}
     gnu="$arch-unknown-linux-gnu"
     musl="$arch-unknown-linux-musl"
-    # The host links the system's graphics, sound and input libraries:
+    # The host links the system's graphics and input libraries (sound it
+    # loads at run time):
     # glibc, on the oldest runner image the workflow can use.
     build "$gnu" -p terse-host "${host_features[@]}" "${bus_packages[@]}"
     # The command-line tools need nothing from the system: static (musl),
@@ -71,6 +82,8 @@ linux-x86_64 | linux-aarch64)
     mkdir "$dir/bus"
     for bin in "${bus_programs[@]}"; do cp "target/$gnu/release/$bin" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE"
+    cp NOTICE "$dir/NOTICE.txt"
+    tls_licences >"$dir/TLS-LICENSES.txt"
     cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/linux/README.txt >"$dir/README.txt"
     tar -C "$stage_root" -czf "$out/$name.tar.gz" --owner=0 --group=0 "$name"
@@ -107,6 +120,8 @@ macos)
     done
     codesign --force --sign - "$app"
     cp LICENSE "$dir/LICENSE"
+    cp NOTICE "$dir/NOTICE.txt"
+    tls_licences >"$dir/TLS-LICENSES.txt"
     cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/macos/README.txt >"$dir/README.txt"
     rm -f "$out/$name.zip"
@@ -124,6 +139,8 @@ windows-x86_64)
     mkdir "$dir/bus"
     for bin in "${bus_programs[@]}"; do cp "target/$t/release/$bin.exe" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE.txt"
+    sed 's/$/\r/' NOTICE >"$dir/NOTICE.txt"
+    tls_licences | sed 's/$/\r/' >"$dir/TLS-LICENSES.txt"
     sed 's/$/\r/' crates/terse-host/fonts/LICENSE >"$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/windows/README.txt | sed 's/$/\r/' >"$dir/README.txt"
     rm -f "$out/$name.zip"

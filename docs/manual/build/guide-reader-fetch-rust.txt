@@ -1,0 +1,151 @@
+# Make a reader in Rust, step 2: fetch an article
+
+Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob's ID is its BLAKE3 hash, so whatever a relay sends, you can check that it is the blob you asked for. In this step your reader asks a relay for an article by its ID, checks it, and shows it with step 1's code. (Make a reader in Go, step 2, is the same program in Go.)
+
+## The libraries
+
+`Cargo.toml` names the package and the libraries steps 2 and 3 use:
+
+```
+[package]
+name = "reader"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+blake3 = "1.8"
+tersenet = "0.1"
+tungstenite = "0.30"
+
+[workspace]
+```
+
+- `tungstenite` is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must. As listed it speaks plain `ws://`, which the local relay of these steps uses; for a `wss://` relay (over TLS, as public relays are), write `tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }` and add `rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }`, which picks the crypto that builds with nothing but a C compiler.
+- `blake3` is BLAKE3 by its authors; `blake3::hash` gives the 32-byte hash that is a blob's ID.
+- `tersenet` is the Tersenet SDK for Rust: step 3 checks entries with it. It brings `curve25519-dalek`, the curve arithmetic under the widely used `ed25519-dalek`, and `sha2`.
+
+The empty `[workspace]` keeps the package apart from the Tersenet sources around it. `Cargo.lock`, beside it, pins the versions the Tersenet sources themselves use.
+
+## The code
+
+`src/relay.rs` gets a blob from a relay:
+
+```
+use std::error::Error;
+use std::io::{Read, Write};
+use tungstenite::{Message, WebSocket};
+
+pub fn get(
+    relay: &mut WebSocket<impl Read + Write>,
+    id: [u8; 32],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let request = [&[0x01, 1, 0, 0, 0][..], &id].concat();
+    relay.send(Message::binary(request))?;
+    loop {
+        let reply = relay.read()?.into_data();
+        if reply.len() < 6 || reply[0] != 0x81 {
+            continue;
+        }
+        if reply[5] != 1 {
+            return Err("the relay does not have it".into());
+        }
+        if blake3::hash(&reply[6..]) != id {
+            return Err("hash check failed".into());
+        }
+        return Ok(reply[6..].to_vec());
+    }
+}
+
+pub fn hex32(hex: &str) -> Result<[u8; 32], Box<dyn Error>> {
+    if hex.len() != 64 || !hex.is_ascii() {
+        return Err("not 64 hexadecimal digits".into());
+    }
+    let mut bytes = [0; 32];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
+    }
+    Ok(bytes)
+}
+```
+
+`src/bin/fetch.rs` is the program:
+
+```
+// Step 2: fetch an article from a relay by its ID.
+use reader::{article, relay};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let id = relay::hex32(&args[2])?;
+    let (mut socket, _) = tungstenite::connect(&args[1])?;
+    let blob = relay::get(&mut socket, id)?;
+    if blob.starts_with(b"TERS") || blob.starts_with(b"TDOC") {
+        return Err("not an article".into());
+    }
+    article::show(&blob);
+    Ok(())
+}
+```
+
+They are 35 and 14 lines; the whole program, with step 1's `lib.rs` and `article.rs`, is 113.
+
+## How it works
+
+A relay is a WebSocket server, and every message is one binary WebSocket message. To ask for a blob, `get` sends a Get message: the byte `01h`, a request number of 4 bytes, least significant first (here always 1), and the blob's ID, 32 bytes.
+
+It then reads messages until the reply comes: one that starts with `81h`. Other messages are skipped; in step 3 the relay sends feed entries over the same connection. After the type and the request number comes a status byte: 1 found, followed by the blob's bytes; 2 not found; 3 refused.
+
+The hash check is the important line. Relays are not trusted, the hash is: if the BLAKE3 hash of the bytes is not the ID asked for, `get` returns an error and the bytes are never shown.
+
+`hex32` reads an ID, or in step 3 a feed key, written as 64 hexadecimal digits.
+
+`main` reads the relay's address and the ID, connects, and gets the blob. A blob that starts with `TERS` is a program and one that starts with `TDOC` a document: neither is an article, so neither is shown as text. Anything else it shows with `article::show`.
+
+## Run it
+
+You need a relay. `terse-relay` comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:
+
+```
+terse-relay --listen 127.0.0.1:7979 --store try-relay
+```
+
+It prints `listening on ws://127.0.0.1:7979` and keeps what it is given in the folder `try-relay`. Put the article on it, from `examples/reader/rust`:
+
+```
+terse put ../hello.txt --relay ws://127.0.0.1:7979
+```
+
+```
+terse: taken by 1 of 1 relays: ws://127.0.0.1:7979
+e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8
+```
+
+The last line is the article's ID. `terse hash` prints the same ID without asking a relay, which saves typing it:
+
+```
+cargo run -q --bin fetch ws://127.0.0.1:7979 \
+  $(terse hash ../hello.txt)
+```
+
+It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as `Cargo.toml`, and it says so:
+
+```
+cargo run -q --bin fetch ws://127.0.0.1:7979 \
+  $(terse hash Cargo.toml)
+```
+
+```
+Error: "the relay does not have it"
+```
+
+## What it leaves out
+
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:366289c7f2990017cb8e6c71ee66b36db468efe9a4dfc4ba790fb60a7cfb32f9) says how.
+
+## What you have now
+
+A reader that fetches an article by its ID and knows it is genuine.
+
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:2c348ede4ec60acacd98bb43bfef52026bdceaca25d91c3b90bf3a80b278cf21).
+- Every relay message: [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

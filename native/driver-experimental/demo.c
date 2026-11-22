@@ -7,11 +7,16 @@
  *     terse run demo.terse --frames 10 --dump         (no dice here)
  *
  * Slot 240 is only this image's handle for the device: the name in the
- * image is what a host matches to a driver. */
+ * image is what a host matches to a driver. Another image may call the
+ * same device on another slot, and both may run at once in a shell:
+ *
+ *     terse build demo.c --cflag -DDICE=241 --optional 241:0=example.dice */
 
 #include "terse.h"
 
+#ifndef DICE
 #define DICE 240                        /* the slot --optional gave it */
+#endif
 #define DICE_SEED (DICE << 8 | 0)
 #define DICE_ROLL (DICE << 8 | 1)
 #define DICE_HISTORY (DICE << 8 | 2)
@@ -51,6 +56,8 @@ int main(void)
     }
     term_puts("\nGranted, version ");
     put_num(version);
+    term_puts(", on slot ");
+    put_num(DICE);
     term_puts(".\n");
 
     /* Chance from the machine's own random bytes, which the host

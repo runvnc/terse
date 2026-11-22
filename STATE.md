@@ -309,7 +309,14 @@ image's header:
 | 4 | e | The device's section, as its driver gives it (`DEVICES.md` 15.3) |
 
 Only the driver knows what the bytes mean; this document fixes only
-where they go and their length. §conformance does not cover them
+where they go and their length.
+
+The same holds for every machine of a system, the shell and each machine
+it starts: a machine's sections are its own (its own instance in the
+driver, `DEVICES.md` 15.3), in the order of its own image's header,
+whatever slot another machine calls the same device on. So its snapshot
+(section 4, version `1`), in a shell's slots, a saved session or the
+automatic slots 16–23, is that of the same machine run alone. §conformance does not cover them
 (`spec/experimental.md` §experimental.conformance).
 
 ### 1.14 Argument (0 or 32 bytes)
