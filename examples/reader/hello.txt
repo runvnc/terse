@@ -1,0 +1,10 @@
+# Hello
+
+My first article. It has a heading, and this paragraph,
+which is written on two lines.
+
+## A subheading
+
+A reader joins the lines of a paragraph into one,
+then wraps it again to the width of its own column,
+so the lines you see may not be the lines written.
