@@ -85,6 +85,19 @@ func entryVector(t *testing.T, name string) *terse.Entry {
 	return nil
 }
 
+// socketDir is a temporary directory for a socket, in /tmp: a socket's
+// path holds at most 103 bytes, and t.TempDir() on macOS (under $TMPDIR,
+// in /var/folders) makes it longer.
+func socketDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "tr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
 // sessionNode is a node in the state local-session.txt starts from,
 // serving a socket in a temporary directory.
 func sessionNode(t *testing.T) (string, *node.Node) {
@@ -115,7 +128,7 @@ func sessionNode(t *testing.T) (string, *node.Node) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sock := filepath.Join(tmp, "run", "terse", "node.sock")
+	sock := filepath.Join(socketDir(t), "run", "terse", "node.sock")
 	ln, err := local.Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +261,7 @@ func TestTwoReaders(t *testing.T) {
 // The socket's directory is the user's alone and the socket 0600; a
 // directory open to others is refused; a second node does not start.
 func TestSocketPermissions(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := socketDir(t)
 	sock := filepath.Join(tmp, "run", "terse", "node.sock")
 	ln, err := local.Listen(sock)
 	if err != nil {
