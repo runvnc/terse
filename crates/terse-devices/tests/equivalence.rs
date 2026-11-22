@@ -556,6 +556,7 @@ fn crash_driver(dir: &Path, name: &str) -> String {
 fn driver_failures() {
     let tmp = tempfile::tempdir().unwrap();
     let hello = programs().join("hello/hello.terse").display().to_string();
+    terse_bus();
     let cases = [("crash-exit", "TERSE_CRASH=exit TERSE_CRASH_AT=40", "--driver-timeout", "5"), ("crash-hang", "TERSE_CRASH=hang TERSE_CRASH_AT=40", "--driver-timeout", "2")];
     for (name, env, opt, v) in cases {
         let exe = crash_driver(tmp.path(), name);
