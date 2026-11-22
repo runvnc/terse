@@ -1,14 +1,16 @@
 //! macOS: `proc_pid_rusage` (`RUSAGE_INFO_V4`, macOS 10.15 or later) for
 //! another process of the same user: its CPU time (user and system), the
-//! time its threads were runnable but not running (`ri_runnable_time`)
-//! and its resident size, in Mach absolute-time units converted with
-//! `mach_timebase_info` (they are not nanoseconds on Apple silicon). This
+//! time its threads waited for a CPU and its resident size, in Mach
+//! absolute-time units converted with `mach_timebase_info` (they are not
+//! nanoseconds on Apple silicon). `ri_runnable_time` is the time its
+//! threads were runnable, running included: the wait is that less the
+//! CPU time (as XNU's own tests read it, `tests/sched/setitimer.c`). This
 //! thread's CPU time from `CLOCK_THREAD_CPUTIME_ID`; for its run-queue
 //! wait, its whole process's (macOS gives no thread's), which can only
 //! excuse more frames as starved, never blame more. No memory-stall
 //! reading. `uname`, and `sysctl` for the memory and the CPU's name.
 //!
-//! Checked to compile only: not yet run on a Mac.
+//! Run on GitHub's macos-15 runners (Apple silicon, a virtual machine).
 
 use crate::probe::ProcSample;
 
@@ -66,14 +68,21 @@ impl Probe {
         (ticks as u128 * self.timebase.0 as u128 / self.timebase.1 as u128) as u64
     }
 
+    /// CPU time and run-queue wait (runnable, not running), in ns.
+    fn cpu_and_wait(&self, ri: &libc::rusage_info_v4) -> (u64, u64) {
+        let cpu = ri.ri_user_time + ri.ri_system_time;
+        (self.ns(cpu), self.ns(ri.ri_runnable_time.saturating_sub(cpu)))
+    }
+
     /// Whether the CPU time can be read (the process's, all its threads:
     /// macOS does not give one thread of another process).
     pub fn has_cpu(&self) -> bool {
         self.readable
     }
 
-    /// Whether the run-queue wait can be read (`ri_runnable_time`; for
-    /// this thread, its whole process's, which is at least the thread's).
+    /// Whether the run-queue wait can be read (`ri_runnable_time` less the
+    /// CPU time; for this thread, its whole process's, which is at least
+    /// the thread's).
     pub fn has_wait(&self) -> bool {
         self.readable
     }
@@ -86,12 +95,12 @@ impl Probe {
                 return None;
             }
             let ns = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
-            let wait_ns = rusage(self.pid).map_or(0, |ri| self.ns(ri.ri_runnable_time));
+            let wait_ns = rusage(self.pid).map_or(0, |ri| self.cpu_and_wait(&ri).1);
             return Some(ProcSample { cpu_ns: ns, run_ns: ns, wait_ns });
         }
         let ri = rusage(self.pid)?;
-        let cpu_ns = self.ns(ri.ri_user_time + ri.ri_system_time);
-        Some(ProcSample { cpu_ns, run_ns: cpu_ns, wait_ns: self.ns(ri.ri_runnable_time) })
+        let (cpu_ns, wait_ns) = self.cpu_and_wait(&ri);
+        Some(ProcSample { cpu_ns, run_ns: cpu_ns, wait_ns })
     }
 
     pub fn rss_kib(&self) -> Option<u64> {
