@@ -46,13 +46,13 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if len(message) < 41 || message[0] != 0x90 {
+		if len(message) < 37 || message[0] != 0x90 {
 			continue
 		}
 		entry := message[1:]
 		seq := binary.LittleEndian.Uint32(entry[32:])
 		caughtUp = seq >= highest
-		if entry[40] == 1 && valid(entry, key) {
+		if valid(entry, key) && entry[40] == 1 {
 			title := string(entry[109 : len(entry)-64])
 			fmt.Printf("%d  %s\n", seq, article.Visible(title))
 			articles[seq] = [32]byte(entry[44:76])

@@ -19,13 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut caught_up = highest == 0;
     while !caught_up {
         let message = socket.read()?.into_data();
-        if message.len() < 41 || message[0] != 0x90 {
+        if message.len() < 37 || message[0] != 0x90 {
             continue;
         }
         let entry = &message[1..];
         let seq = u32::from_le_bytes(entry[32..36].try_into()?);
         caught_up = seq >= highest;
-        if entry[40] == 1 && valid(entry, &key) {
+        if valid(entry, &key) && entry[40] == 1 {
             let title = &entry[109..entry.len() - 64];
             let title = String::from_utf8_lossy(title);
             println!("{seq}  {}", article::visible(&title));
