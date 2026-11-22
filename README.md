@@ -593,7 +593,9 @@ install it. Then:
   4. Under the domain: SSL/TLS, Edge Certificates, "Always Use HTTPS" on, so a `ws://`
      client is redirected (and told to use `wss://`) instead of talking in plain text;
      Network, WebSockets on (it is by default).
-  5. Check from anywhere: `terse info --relay wss://relay.tersenet.org`.
+  5. Check from anywhere: `echo hello > /tmp/hello.txt; terse put /tmp/hello.txt --relay wss://relay.tersenet.org`
+     prints "taken by 1 of 1 relays" (a put needs no writer: it goes to the room for
+     blobs no entry names), or why the relay could not be connected.
 - **Firewall**: no rule to add; the server keeps denying every incoming connection but
   SSH. `cloudflared` connects out on port 7844 (UDP, or TCP if UDP is blocked), which
   ufw's default (outgoing allowed) permits.
