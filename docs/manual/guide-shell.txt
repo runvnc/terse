@@ -53,6 +53,6 @@ From here a shell is a matter of taste: a list of programs to choose from (`mach
 
 ## What you have now
 
-A system of machines under your own shell. That is the end of the guide's part for implementers; the last page is for people who want to use Tersenet: [Using Tersenet](terse:{guide-using}).
+A system of machines under your own shell. That is the end of the implementation guide. What remains is the reference, which starts with [How Tersenet works](terse:{how-it-works}).
 
 Every call of device 8 is in [The Machines device](terse:{device-machines}), and panels, the 3D view and input routing in [Screens, panels and input](terse:{device-machines-screens}).
