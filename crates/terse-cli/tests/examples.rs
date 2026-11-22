@@ -247,9 +247,9 @@ fn check_host(bin: &Path, other_terminal: Option<&Path>) {
     let mut programs: Vec<String> = tiny.iter().map(path).collect();
     programs.extend(faults.iter().map(|f| workspace().join(format!("native/core-c/tests/{f}.terse")).display().to_string()));
     for program in &programs {
-        let reference = run(reference("terse"), &["run", program, "--frames", "10", "--hash"]);
+        let expected = run(reference("terse"), &["run", program, "--frames", "10", "--hash"]);
         let ours = run(step(4), &[program, "10"]);
-        assert_eq!(text(&ours.stdout), text(&reference.stdout), "step 4's hash of {program}: {}", text(&ours.stderr));
+        assert_eq!(text(&ours.stdout), text(&expected.stdout), "step 4's hash of {program}: {}", text(&ours.stderr));
     }
     let reference_hash = run(reference("terse"), &["run", &hello(), "--frames", "30", "--hash"]);
     for driver in &drivers {
