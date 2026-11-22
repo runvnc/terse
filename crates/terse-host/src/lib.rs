@@ -131,7 +131,9 @@ const USAGE: &str = "usage:
   no program receives. --volume and --mute set it for this run.
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
-  --parallax off keeps it still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
+  over a machine whose image lists device 9 (alone, or its tile or panel) it rests instead, so the
+  pointer is over what that program drew (spec/vector3d.md §vector3d.space); --parallax off keeps it
+  still. --eye <dx>,<dy> (screen units, each -160 to 160, default 0,0)
   puts the eye there for --screenshot and --bench-render (and keeps it there with --parallax off).
   --panels: how the software renderer draws the machines the shell shows as panels in its 3D
   scene (SPEC §vector3d.list Screen): in perspective (perspective, auto: the default) or flat, upright in

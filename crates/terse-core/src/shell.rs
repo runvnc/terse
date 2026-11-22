@@ -270,6 +270,27 @@ impl<D: Devices> System<D> {
             .collect()
     }
 
+    /// Whether a host that moves the eye with the pointer may follow it to
+    /// (`x`, `y`), in the shell's screen units (spec/vector3d.md
+    /// §vector3d.space): not over the picture or panel of a machine whose
+    /// image lists the 3D display (it may read the pointer and is not told
+    /// the eye), nor over a single machine's screen if it lists it.
+    pub fn eye_may_follow(&self, (x, y): (u16, u16)) -> bool {
+        if !self.is_system() {
+            return !self.shell.has_device(9);
+        }
+        let lists = |h: u8| self.child(h).and_then(|c| c.machine.as_ref()).is_some_and(|m| m.has_device(9));
+        if let Some(&(h, _)) = self.pictures().iter().rev().find(|(_, p)| map_into(*p, x, y).is_some()) {
+            return !lists(h);
+        }
+        if let Some(scene) = self.scene(self.eye)
+            && let Some((h, Some(_))) = crate::vector3::panel_hit(&scene.panels, self.eye, x as f64 + 0.5, y as f64 + 0.5)
+        {
+            return h == 0 || !lists(h);
+        }
+        true
+    }
+
     /// The frame counter of the shell's last frame (the view's progress is
     /// counted in it).
     fn shell_frame(&self) -> u32 {

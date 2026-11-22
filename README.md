@@ -444,7 +444,8 @@ and the process then ends by SIGTERM like `terse run`. `--no-trails` shows the
 phosphor style without its afterglow; `--force-phosphor` shows any program in
 the phosphor style (for trying it out; see [Phosphor style](#phosphor-style)).
 The 3D vector display is seen from an eye that follows the pointer (parallax; see
-[3D vector display](#3d-vector-display)); `--parallax off` keeps it still, at `--eye`.
+[3D vector display](#3d-vector-display)), except over a machine that lists the 3D
+display (spec/vector3d.md §vector3d.space); `--parallax off` keeps it still, at `--eye`.
 Text is drawn with the built-in fonts and those `terse fonts` lists (see
 [Fonts](#fonts)); `--version` prints them.
 Every form takes `--renderer gpu|software|auto`: the picture is drawn by the GPU
@@ -1677,7 +1678,10 @@ x′ = ex + (x − ex)·960 / (960 + z) (y′ likewise), so a point on the glass
 the 2D layers put it, from any eye. The host moves the eye up to 160 units each way
 (parallax): in a window it follows the pointer (the picture's centre is the
 reference eye, an edge the full 160 units, smoothed over a few frames; in the shell
-every tile has the same eye); `--parallax off` keeps it still, and `--eye <dx>,<dy>`
+every tile has the same eye), except while the pointer is over a machine whose image
+lists the 3D display (alone, or its tile or panel in the shell): there the eye rests,
+so that the pointer is over what the program drew, which it cannot map itself since it
+is not told the eye; `--parallax off` keeps it still, and `--eye <dx>,<dy>`
 places it for `--screenshot` and `--bench-render`. The program never learns where the
 eye is.
 

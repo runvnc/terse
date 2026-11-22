@@ -948,10 +948,13 @@ impl App {
             let io = &self.io;
             let layout = |serial: u32| io.get(&serial).and_then(|io| io.page.as_ref()).and_then(|w| w.shown.clone());
             // Parallax: the eye moves towards where the pointer says, a
-            // quarter of the way each frame, and rests exactly there.
+            // quarter of the way each frame, and rests exactly there; over a
+            // machine that lists the 3D display it goes back to rest
+            // (spec/vector3d.md §vector3d.space).
             if self.looks.parallax && self.selftest.is_none() {
                 let max = terse_core::vector3::MAX_EYE_OFFSET;
                 let target = match self.pointer_px {
+                    Some((x, y)) if !self.system.eye_may_follow(gfx.display().screen_pos(viewport, x, y)) => self.looks.eye,
                     Some((x, y)) => {
                         let (ux, uy) = gfx.display().screen_pos(viewport, x, y);
                         let w = terse_core::SCREEN_WIDTH as f32 / 2.0;
