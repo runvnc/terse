@@ -510,7 +510,11 @@ driver. A component is **late** in a frame only if (`RECORD.md` 4):
    most of any component's.
 
 Blocking on a disk, a lock or a sleep inside the frame loop is the
-component's fault (R8, R11 forbid it); being descheduled is not. The
+component's fault (R8, R11 forbid it); being descheduled is not. Nor is
+waiting for the window system to give back a buffer to draw into (its
+repaint pacing, like a vertical blank: no host component could shorten
+it): `terse-bus` leaves that wait out of the frame's time and its
+`present`. The
 allowance is a share of the frame, not milliseconds of the reference,
 so that it is the same on every computer; what depends on the hardware
 is whether a legal frame fits in it, which R16 checks at start. Half a

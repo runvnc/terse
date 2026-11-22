@@ -194,7 +194,13 @@ impl App {
             self.buffer_wait = start.elapsed().as_secs_f64() * 1000.0;
             let frame = self.comp.frame();
             let size = (frame.area.width() as u32, frame.area.height() as u32);
-            let damage = self.comp.damage().to_vec();
+            // The damage, as at most a few rectangles: many small ones (a
+            // tile row each) cost the window system more than they save.
+            let mut damage = self.comp.damage().to_vec();
+            if damage.len() > 4 {
+                let b = damage.iter().fold(damage[0], |a, r| terse_host::soft::base::IRect::new(a.x0.min(r.x0), a.y0.min(r.y0), a.x1.max(r.x1), a.y1.max(r.y1)));
+                damage = vec![b];
+            }
             // Only what changed is copied and presented: the buffer holds
             // the frame of `age` presents ago (softbuffer), so the damage
             // since then. A new size, or an older buffer, is copied whole.
@@ -257,7 +263,9 @@ impl App {
                 eprintln!("terse-bus: frames ran long: the phosphor look is shed to level {floor} of 3 while they do");
             }
         }
-        for line in self.bs.end_frame(present_took)? {
+        let wait = Duration::from_secs_f64(self.buffer_wait.min(present) / 1000.0);
+        self.bs.display_wait(wait);
+        for line in self.bs.end_frame(present_took.saturating_sub(wait))? {
             eprintln!("{line}");
         }
         self.presents.push(Instant::now());
@@ -458,8 +466,8 @@ impl App {
         let (w50, w99, wmax) = col(|l| l.buffer_wait);
         println!("selftest:   waiting for the window system to release a buffer p50 {w50:.3} ms, p99 {w99:.3} ms, max {wmax:.3} ms");
         println!("selftest: present interval p50 {i50:.3} ms, p99 {i99:.3} ms, max {imax:.3} ms");
-        let (t50, t99, tmax) = col(|l| l.emulate + l.compose + l.present);
-        println!("selftest: frame work (emulation + composition + present) p50 {t50:.3} ms, p99 {t99:.3} ms, max {tmax:.3} ms");
+        let (t50, t99, tmax) = col(|l| l.emulate + l.compose + l.present - l.buffer_wait.min(l.present));
+        println!("selftest: frame work (emulation + composition + present, less the window system's wait) p50 {t50:.3} ms, p99 {t99:.3} ms, max {tmax:.3} ms");
         if let Some(m) = &self.bs.monitor {
             println!("selftest: late frames {} (the record has who)", m.late);
         }

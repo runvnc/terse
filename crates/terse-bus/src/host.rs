@@ -448,6 +448,14 @@ impl BusSystem {
         }
     }
 
+    /// The frame's present waited `wait` for the window system to give a
+    /// buffer back (its pacing, left out of the frame's time, R14).
+    pub fn display_wait(&mut self, wait: std::time::Duration) {
+        if let Some(m) = &mut self.monitor {
+            m.display_wait(wait.as_nanos() as u64);
+        }
+    }
+
     /// At the end of a run: a line for each of the host's own components
     /// that was blamed for late frames (they are said only once as they
     /// happen).

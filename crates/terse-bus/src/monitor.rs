@@ -77,6 +77,8 @@ pub struct Monitor {
     /// the first composed at it (R15: the frames after a resize).
     surface: Option<(u32, u32)>,
     size_changed: bool,
+    /// This frame's wait for the window system's buffer.
+    display_wait_ns: u64,
     /// Late frames blamed on the host's own components (by component).
     pub own_late: std::collections::BTreeMap<Component, u64>,
 }
@@ -136,6 +138,7 @@ impl Monitor {
             overhead: Histogram::default(),
             surface: None,
             size_changed: false,
+            display_wait_ns: 0,
             own_late: Default::default(),
         }
     }
@@ -173,6 +176,12 @@ impl Monitor {
         }
     }
 
+    /// The frame's present waited this long for the window system to give
+    /// a buffer back: left out of the frame's time (R14).
+    pub fn display_wait(&mut self, ns: u64) {
+        self.display_wait_ns += ns;
+    }
+
     /// The machines' frames have run (composing follows).
     pub fn emulated(&mut self, bus: &Bus) {
         let waits = bus.procs.iter().map(|d| d.acct.frame_ns + d.acct.other_ns).sum();
@@ -185,7 +194,9 @@ impl Monitor {
     /// program of an instance.
     pub fn end(&mut self, bus: &Bus, present_ns: u64, image: impl Fn(u32) -> Option<[u8; 32]>) -> Vec<Action> {
         let end = Instant::now();
-        let wall = end.duration_since(self.t0).as_nanos() as u64;
+        // The wait for the window system to give a buffer back is its
+        // pacing (like a vertical blank), not the frame's work (R14).
+        let wall = (end.duration_since(self.t0).as_nanos() as u64).saturating_sub(std::mem::take(&mut self.display_wait_ns));
         let t = Instant::now();
         let (emul_end, waits_then) = self.emulated.unwrap_or((end, 0));
         let emul = emul_end.duration_since(self.t0).as_nanos() as u64;
