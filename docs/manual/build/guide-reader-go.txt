@@ -177,5 +177,5 @@ For an article of headings and paragraphs it is correct: the test `crates/terse-
 
 A Go program of 94 lines that shows the headings and paragraphs of any Tersenet article file.
 
-- Next: [Make a reader in Go, step 2: fetch an article](terse:7fb8dbfb67e4ec20454828215dc1f42542c854015b20e9ae6331bbdcc10c23fc).
-- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:e50523fdea2719afd4436e205e227e100c58dc8d18b8f1b47b3f0dcf0ca7f49b).
+- Next: [Make a reader in Go, step 2: fetch an article](terse:45c04ba07dfbf65dfdae067a2dab0b008329efb548c8e6c2fefa31546c0b1027).
+- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:7ae0887daae9c6fb40cca7450e887a94e9fe3e0d149f958ed8ecac19331614e5).

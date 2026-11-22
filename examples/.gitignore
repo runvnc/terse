@@ -1,0 +1,5 @@
+target/
+/host/go/bin/
+/host/*/fuzz/
+/host/*/*.terse
+/device/go/terminal
