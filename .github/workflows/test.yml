@@ -89,7 +89,7 @@ jobs:
       - name: Test the workspace
         env:
           TERSE_TEST_NO_SKIP: ${{ runner.os == 'Linux' && '1' || '' }}
-          TERSE_TEST_ALLOW_SKIP: gpu
+          TERSE_TEST_ALLOW_SKIP: gpu,weston
         run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, every end sleeping on the socket, no process timing

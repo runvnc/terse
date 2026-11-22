@@ -96,7 +96,7 @@ impl Weston {
 
 fn ready() -> Option<(Weston, tempfile::TempDir)> {
     let Some(w) = Weston::start() else {
-        eprintln!("skipped: no headless weston");
+        terse_testkit::skip!("weston", "no headless weston");
         return None;
     };
     Some((w, tempfile::tempdir().unwrap()))
@@ -265,12 +265,12 @@ fn the_first_frames_are_excused() {
 fn a_starved_machine_is_not_blamed() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     if !Path::new("/proc/self/schedstat").exists() || std::env::var("TERSE_PERF_PROBE").is_ok_and(|v| v == "none") {
-        eprintln!("skipped: the run-queue wait cannot be read");
+        terse_testkit::skip!("schedstat", "the run-queue wait cannot be read");
         return;
     }
     let cpu = "0";
     let Ok(mut hog) = Command::new("taskset").args(["-c", cpu, "sh", "-c", "while :; do :; done"]).stdout(Stdio::null()).spawn() else {
-        eprintln!("skipped: no taskset");
+        terse_testkit::skip!("taskset", "no taskset");
         return;
     };
     let Some((w, dir)) = ready() else {
