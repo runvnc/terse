@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Tersenet - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="install-tersenet">Install Tersenet</h1>
+<p>Tersenet is three programs: <code>terse-host</code>, the window where you read; <code>terse</code>, a command for publishing and managing feeds; and <code>terse-relay</code>, for sharing with other people. They need nothing else installed, and nobody gives out accounts: you will make your own identity on the way.</p>
+<h2 id="linux-and-macos">Linux and macOS</h2>
+<p>In a terminal:</p>
+<pre>curl -fsSL https&#58;//tersenet.org/install.sh | sh</pre>
+<p>The script finds the download for your system, checks it against the SHA-256 sums published with it, and copies the three programs into <code>~/.local/bin</code> (<code>TERSE_PREFIX=/some/folder</code> before <code>sh</code> puts them in its <code>bin</code> instead). It never asks for your password and changes nothing else. It is short, and you can read it first at the same address. It ends like this:</p>
+<pre>tersenet: checked its SHA-256
+tersenet: installed /home/me/.local/bin/terse-host
+tersenet: installed /home/me/.local/bin/terse
+tersenet: installed /home/me/.local/bin/terse-relay
+tersenet: terse 0.1.0 b3:0a38148f171f2b64
+tersenet: start it with: terse-host
+tersenet: to remove it: the same command, ending sh -s uninstall</pre>
+<p>If <code>~/.local/bin</code> is not on your <code>PATH</code>, it also prints the line to add for bash, zsh or fish; it does not edit your shell&#39;s files itself. Then check:</p>
+<pre>terse --version</pre>
+<p>If the script says it found no release, none has been published yet: build from the source, below.</p>
+<p>It runs on Linux on x86_64 or 64-bit ARM with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or newer), with Wayland or X11, and on macOS 11 or newer, Apple silicon or Intel.</p>
+<p>To remove the programs:</p>
+<pre>curl -fsSL https&#58;//tersenet.org/install.sh | sh -s uninstall</pre>
+<p>Your key and the feeds you follow stay in <code>~/.config/terse</code> until you delete that folder too.</p>
+<h2 id="windows">Windows</h2>
+<p>Download <code>terse-&lt;version&gt;-windows-x86_64.zip</code> from the releases page of the project on GitHub, github.com/runvnc/terse/releases. Right-click it, choose Extract All, and double-click <code>terse-host.exe</code> in the new folder. The files are not signed, so Windows may say &quot;Windows protected your PC&quot;: click More info, then Run anyway. It needs Windows 10 or newer.</p>
+<h2 id="from-the-source">From the source</h2>
+<p>With Rust (rustup.rs) and git, on Linux, macOS or Windows:</p>
+<pre>git clone https&#58;//github.com/runvnc/terse
+cd terse
+cargo install --locked --path crates/terse-host --features audio
+cargo install --locked --path crates/terse-cli
+cargo install --locked --path crates/terse-relay</pre>
+<p>That puts the three programs in <code>~/.cargo/bin</code>. On Linux the window needs the ALSA (sound) and udev (game controllers) headers to build: <code>libasound2-dev libudev-dev pkg-config</code> on Debian and Ubuntu. Leave out <code>--features audio</code> for a window without sound.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>Tersenet installed. Next, start it: <a href="guide-run.html">Run Tersenet</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="contents.html">← Contents</a><a rel="next" href="guide-run.html">Run Tersenet →</a></nav></footer>
+</body>
+</html>

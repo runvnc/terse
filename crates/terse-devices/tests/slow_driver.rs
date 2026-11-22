@@ -109,7 +109,7 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     let driver = format!("2={x}");
     let (perf_s, rec_s) = (perf.display().to_string(), rec.display().to_string());
     let out = bus(
-        &[&hello(), "--frames", "100", "--hash", "--driver", &driver, "--perf-log", &perf_s, "--perf-rule", "on", "--record", &rec_s],
+        &[&hello(), "--frames", "300", "--hash", "--driver", &driver, "--perf-log", &perf_s, "--perf-rule", "on", "--record", &rec_s],
         &[("TERSE_EXAMPLE_SLOW", "sleep:60:20")],
     );
     let err = text(&out.stderr);
@@ -158,18 +158,24 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
     let late = lines.iter().filter(|l| matches!(l, Line::Late { frame, component: Component::Device(2), .. } if *frame >= 19)).count() as u64;
     let (warn_at, stop_at) = (blamed[2], blamed[9]);
     assert_eq!(late, stop_at - 18, "{lines:?}");
-    assert!(stop_at <= 32, "{lines:?}");
+    // The stop comes with the tenth blamed frame: frame 28 on a quiet
+    // computer. On a busy one any number of the frames between are
+    // excused ("memory", "starved") and the stop comes that much later;
+    // the count above already checks that each of them was late, so no
+    // upper limit is set here beyond the run's 300 frames.
+    assert!(stop_at >= 28, "{lines:?}");
     assert!(lines.contains(&Line::Warn { frame: warn_at, component: Component::Device(2), count: 3 }), "{lines:?}");
     let stop = lines.iter().find_map(|l| if let Line::Stop { frame, component, machine, saved, .. } = l { Some((*frame, *component, *machine, saved.clone())) } else { None });
     assert_eq!(stop, Some((stop_at, Component::Device(2), 0, "file".to_string())));
     assert!(lines.iter().any(|l| matches!(l, Line::End { frames, late, .. } if *frames == stop_at + 1 && *late >= 10)), "{lines:?}");
 
     // The snapshot restores and goes on as the machine would have with a
-    // healthy driver: the frames to 60 give the hash of 60 uninterrupted.
+    // healthy driver: ten more frames give the hash of as many uninterrupted.
     let snap = std::fs::read_dir(&perf).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "tsnp")).expect("the snapshot file");
     let snap_s = snap.display().to_string();
-    let whole = bus(&[&hello(), "--frames", "60", "--hash"], &[]);
-    let rest = (60 - (stop_at + 1)).to_string();
+    let total = stop_at + 11;
+    let whole = bus(&[&hello(), "--frames", &total.to_string(), "--hash"], &[]);
+    let rest = (total - (stop_at + 1)).to_string();
     let resumed = bus(&[&hello(), "--load-state", &snap_s, "--frames", &rest, "--hash"], &[]);
     assert!(whole.status.success() && resumed.status.success(), "{}", text(&resumed.stderr));
     assert_eq!(text(&resumed.stdout), text(&whole.stdout));

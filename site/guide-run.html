@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run Tersenet - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="run-tersenet">Run Tersenet</h1>
+<p>Start the window from a terminal:</p>
+<pre>terse-host</pre>
+<p>(On Windows, double-click <code>terse-host.exe</code>.) A window opens, and the terminal shows a few lines about it. One says which relay it uses; unless you have set up others, it is one the window starts itself, which only this computer can reach:</p>
+<pre>terse-host: relay ws&#58;//127.0.0.1:7878 (started here, store …)</pre>
+<p>A relay is where articles are kept and passed on; this one keeps them in the folder <code>relay</code> in <code>~/.local/share/terse</code>. Leave the window open while you follow the next pages: the <code>terse</code> commands in them publish through this relay.</p>
+<h2 id="the-launcher">The launcher</h2>
+<p>The window opens on the launcher, a list of programs:</p>
+<pre>PROGRAMS
+Manual
+reader
+sparks
+fetch
+hello
+sketch
+holo
+reports
+Up, Down choose · Enter start · the home key comes back here</pre>
+<p>Up and Down move the cursor, which starts on &quot;reader&quot;. Enter starts the program under it in a tile of its own, and that program gets the keyboard.</p>
+<p>F12 is the home key. Wherever you are, F12 brings you back to the launcher; no program ever sees it. From there, Enter on another program starts it beside the first, and Esc goes back to the one you were using.</p>
+<h2 id="the-reader-and-this-manual">The reader and this manual</h2>
+<p>Choose &quot;reader&quot; and press Enter. The reader opens on your timeline, the newest articles of the feeds you follow. It is empty for now:</p>
+<pre>No articles yet
+The timeline shows the articles of the feeds this host
+subscribes to, newest first. New articles appear here as
+they arrive.
+Press F to see your feeds and subscribe to one by its key.
+Press T to publish a test article of your own; it shows up
+here.
+Press M to read the Tersenet manual.
+Press ? for help, Esc to quit.</pre>
+<p>Press M: the reader opens the first page of this manual. Tab moves to a link, Enter follows it and Esc goes back. &quot;Manual&quot; in the launcher does the same in one step. The manual is built into Tersenet, so it opens without a network.</p>
+<p>Press ? in the reader for every key of every view. Esc on the timeline stops the reader and brings back the launcher; its tile stays, marked <code>■</code>, until you press X there.</p>
+<h2 id="quit">Quit</h2>
+<p>Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: <a href="guide-games.html">Find and play a game</a> shows how.)</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: <a href="guide-profile.html">Create your profile</a>.</p>
+<p>Every key of the launcher, the layouts and the tiles is in <a href="using.html">Using the shell</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-install.html">← Install Tersenet</a><a rel="next" href="guide-profile.html">Create your profile →</a></nav></footer>
+</body>
+</html>

@@ -30,6 +30,42 @@ shot() {
     unset TERSE_MAME_PERSISTENCE
 }
 
+# The stroke fonts only (TERSE_MAME_FONT):
+#   crates/terse-mame-crt/pictures.sh <out dir> fonts
+# For each font: the text screen at 1x, 2x, 3x; its prose at 1x, 2x and
+# 3x enlarged to one size; the glyph rows at 5x; and the CPU specimen
+# sheet (every glyph of the basic repertoire, large; needs
+# `scripts/cargo build --release -p terse-mame-crt --example specimen`).
+if [ "${2:-}" = fonts ]; then
+    for f in arcade hershey drafting; do
+        export TERSE_MAME_FONT=$f TERSE_MAME_TIMES=1
+        for s in 640x480 1280x960 1920x1440 3200x2400; do
+            shot mame $f-text-${s%%x*} $s "$PT/text.terse" --frames 30
+        done
+        unset TERSE_MAME_FONT TERSE_MAME_TIMES
+        if command -v magick >/dev/null; then
+            (
+                cd "$out"
+                # The prose (rows 2 to 10) at 1x, 2x, 3x, each enlarged
+                # without smoothing to 3x's size.
+                magick mame-$f-text-640.png -crop 640x160+0+32 +repage -filter point -resize 300% prose-$f-1x.png
+                magick mame-$f-text-1280.png -crop 1280x320+0+64 +repage -filter point -resize 150% prose-$f-2x.png
+                magick mame-$f-text-1920.png -crop 1920x480+0+96 +repage prose-$f-3x.png
+                magick prose-$f-1x.png prose-$f-2x.png prose-$f-3x.png -append prose-$f.png
+                # The repertoire's rows (14 to 21: ASCII, Latin-1, signs,
+                # marks, blocks) at 5x.
+                magick mame-$f-text-3200.png -crop 3200x640+0+1120 +repage glyphs-$f-5x.png
+            )
+        fi
+    done
+    if [ -x "$rel/examples/specimen" ]; then
+        "$rel/examples/specimen" "$out/specimen"
+    fi
+    grep "terminal)" "$tmp/log" >"$out/times.txt" || true
+    cp "$tmp/log" "$out/run.log"
+    exit 0
+fi
+
 for m in mame ours; do
     shot $m pattern-640 640x480 "$PT/pattern.terse" --frames 200
     shot $m pattern-1280 1280x960 "$PT/pattern.terse" --frames 200

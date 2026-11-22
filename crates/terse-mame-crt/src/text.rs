@@ -4,7 +4,7 @@
 
 use terse_core::{COLS, ROWS, Terminal};
 
-use crate::stroke::{CELL_H, CELL_W, Stroke, strokes};
+use crate::stroke::{CELL_H, CELL_W, Font, Stroke, strokes_in};
 
 /// A stroke on the screen, in screen units, with its colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,8 +54,14 @@ pub fn cells(t: &Terminal) -> Vec<(u32, bool, u8, u8)> {
         .collect()
 }
 
-/// The strokes of the screen, row by row, and the cursor's.
+/// The strokes of the screen, row by row, and the cursor's, in this
+/// process's font (`TERSE_MAME_FONT`).
 pub fn screen(t: &Terminal) -> Vec<Lit> {
+    screen_in(t, Font::current())
+}
+
+/// [`screen`] in a given font.
+pub fn screen_in(t: &Terminal, font: Font) -> Vec<Lit> {
     let cells = cells(t);
     let palette = t.palette();
     let mut out = Vec::new();
@@ -67,7 +73,7 @@ pub fn screen(t: &Terminal) -> Vec<Lit> {
                 continue;
             }
             buf.clear();
-            strokes(code, wide, &mut buf);
+            strokes_in(font, code, wide, &mut buf);
             let (ox, oy) = (col as f32 * CELL_W, row as f32 * CELL_H);
             for s in &buf {
                 out.push(Lit { s: Stroke { x0: s.x0 + ox, y0: s.y0 + oy, x1: s.x1 + ox, y1: s.y1 + oy, ..*s }, rgb: palette[fg as usize] });

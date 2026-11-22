@@ -213,6 +213,9 @@ pub struct Machine<D: Devices = InProcess> {
     has: DeviceSet,
     /// Which of the image's optional devices were granted (STATE.md 1.4).
     grants: Grants,
+    /// The experimental devices the machine has (`spec/experimental.md`),
+    /// in header order: slot and version. Empty for nearly every machine.
+    experimental: Vec<(u8, u8)>,
     /// Device 8, only for the shell (SPEC §machines.shell).
     machines: Option<Machines>,
     /// The budget; zero or negative between frames (a negative remainder
@@ -234,7 +237,7 @@ pub struct Machine<D: Devices = InProcess> {
     /// whether the shell has been told of it (SPEC §system). Not machine state.
     open_request: Option<([u8; crate::machines::REQUEST_BYTES], bool)>,
     /// The blob ID the shell gave the machine before its first frame
-    /// (STATE.md 1.13).
+    /// (STATE.md 1.14).
     argument: Option<[u8; 32]>,
 }
 
@@ -360,14 +363,17 @@ impl<D: Devices> Machine<D> {
     /// those).
     pub fn with_devices(image: &Image, grants: Grants, memory: Memory, devices: D) -> Self {
         let ram_end = RAM_BASE + image.ram_pages as u32 * 8192;
+        let has = image.device_set(&grants);
+        let experimental = image.devices.iter().filter(|d| d.experimental() && has.has(d.slot)).map(|d| (d.slot, d.version)).collect();
         Machine {
             cpu: Cpu::new(ROM_BASE, ram_end),
             code: Code::new(&image.rom),
             memory,
             system: System::default(),
             devices,
-            has: image.device_set(&grants),
+            has,
             grants,
+            experimental,
             machines: None,
             budget: 0,
             stopped: None,
@@ -408,6 +414,13 @@ impl<D: Devices> Machine<D> {
     /// image lists it; only a shell is granted it, [`Machine::machines`]).
     pub fn has_device(&self, slot: u8) -> bool {
         self.has.has(slot)
+    }
+
+    /// Whether the machine has an experimental device (`spec/experimental.md`):
+    /// its state is then outside §conformance, and its snapshot files and
+    /// bus recordings say so.
+    pub fn has_experimental(&self) -> bool {
+        !self.experimental.is_empty()
     }
 
     /// Which of the image's optional devices the machine was granted.
@@ -662,8 +675,13 @@ impl<D: Devices> Machine<D> {
                         s @ 0..=255 => self.has.has(s as u8),
                         _ => false,
                     };
-                    // Every device of profile 1 is version 0.
-                    if present { 0 } else { ERR_UNKNOWN }
+                    // Every numbered device of profile 1 is version 0; an
+                    // experimental one has its entry's version.
+                    match self.experimental.iter().find(|e| e.0 as u32 == a0) {
+                        _ if !present => ERR_UNKNOWN,
+                        Some(&(_, v)) => v as u32,
+                        None => 0,
+                    }
                 }
                 call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
                     None => ERR_BUFFER,
@@ -725,6 +743,18 @@ impl<D: Devices> Machine<D> {
                 self.devices.write_state(slot, &mut out)?;
             }
         }
+        // STATE.md 1.13: each experimental device's section, with its length.
+        for i in 0..self.experimental.len() {
+            let slot = self.experimental[i].0;
+            let at = out.len();
+            out.extend_from_slice(&[0; 4]);
+            self.devices.write_state(slot, &mut out)?;
+            let n = out.len() - at - 4;
+            if n > crate::image::EXPERIMENTAL_STATE_MAX {
+                return Err(format!("the experimental device on slot {slot} gave a state section of {n} bytes, more than {}", crate::image::EXPERIMENTAL_STATE_MAX));
+            }
+            out[at..at + 4].copy_from_slice(&(n as u32).to_le_bytes());
+        }
         self.write_argument(&mut out);
         Ok(out)
     }
@@ -782,7 +812,7 @@ impl<D: Devices> Machine<D> {
         }
     }
 
-    /// STATE.md 1.13: only for a machine given an argument.
+    /// STATE.md 1.14: only for a machine given an argument.
     fn write_argument(&self, out: &mut Vec<u8>) {
         if let Some(id) = &self.argument {
             out.extend_from_slice(id);
@@ -984,6 +1014,17 @@ impl<D: Devices> Machine<D> {
             if self.has.has(slot) {
                 let n = self.devices.restore_state(slot, r.rest(), ram_len)?;
                 r.take(n)?;
+            }
+        }
+        // STATE.md 1.13: exactly the section, whose length is given.
+        for i in 0..self.experimental.len() {
+            let n = r.u32()? as usize;
+            if n > crate::image::EXPERIMENTAL_STATE_MAX {
+                return Err(bad("an experimental section too long"));
+            }
+            let section = r.take(n)?;
+            if self.devices.restore_state(self.experimental[i].0, section, ram_len)? != n {
+                return Err(bad("an experimental device took another length"));
             }
         }
         self.argument = match r.remaining() {

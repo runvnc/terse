@@ -41,11 +41,13 @@ conformant:
   and state are all specified and all in the state hash (`STATE.md` 1.12).
   There is no partial device.
 - **A small made-up device on an unused slot** is not either: slots 0, 5
-  and 11–255 are no devices in v0 (SPEC §image), so an image that lists
+  and 11–239 are no devices in v0 (SPEC §image), so an image that lists
   one optionally runs without it and one that requires it is refused, and
   neither core asks a driver for such a slot, even one named by
   `--driver` (DEVICES.md 2.1, rule 6). A new device is a SPEC change: a
   device document, and a row in every core's state table (DEVICES.md 1.7).
+  (Since then, slots 240–255 are for exactly this: an experimental device,
+  which its driver declares; `../driver-experimental` is one.)
 - **A complete terminal that draws nothing** is: it has every kind of
   call (deferred and answered, buffers read and written, a checked
   argument, a second result in `a1`), a state section, and an exact

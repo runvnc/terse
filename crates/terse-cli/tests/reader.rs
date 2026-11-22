@@ -2869,13 +2869,14 @@ fn manual_key_opens_the_index() {
     golden("manual-index", &view);
     assert!(view.contains("sans26b |Tersenet\n"), "{view}");
     assert!(!view.contains("sans21b |Tersenet\n"), "the heading is the title: {view}");
-    assert!(view.contains("[Write your own Tersenet reader"), "{view}");
-    assert!(view.contains("[Contents: a step-by-step guide"), "{view}");
-    // Following the first link opens the guide's first page; Esc comes back.
+    assert!(view.contains("[Install and try Tersenet]"), "{view}");
+    assert!(view.contains("[Write your own Tersenet reader]"), "{view}");
+    assert!(view.contains("[Contents]"), "{view}");
+    // Following the first link opens the user guide's first page; Esc comes back.
     run.press("tab");
     run.press("enter");
     run.frames(6);
-    assert!(run.view().contains("sans26b |Make a reader, step 1: show an article\n"), "{}", run.view());
+    assert!(run.view().contains("sans26b |Install Tersenet\n"), "{}", run.view());
     run.press("esc");
     run.frames(4);
     assert!(run.view().contains("sans26b |Tersenet\n"));

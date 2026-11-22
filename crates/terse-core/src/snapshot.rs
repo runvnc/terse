@@ -30,6 +30,9 @@ pub const INFO_BYTES: usize = 1 + 32 + IDENTITY_BYTES + 4 + 4;
 /// A snapshot file starts with these bytes (STATE.md 4).
 pub const MAGIC: &[u8; 4] = b"TSNP";
 pub const VERSION: u8 = 0;
+/// The version of a snapshot file of a machine that has an experimental
+/// device (`spec/experimental.md` §experimental.conformance); otherwise the same.
+pub const VERSION_EXPERIMENTAL: u8 = 1;
 /// Bytes of a snapshot file before the serialization's first 200 bytes.
 pub const FILE_HEAD: usize = 4 + 1 + IDENTITY_BYTES + 4 + 4;
 /// Offsets in the serialization (STATE.md 1).
@@ -41,9 +44,25 @@ const PAGE: usize = 8192;
 /// Bytes of the page map: one bit per RAM page, 128 pages at most.
 const PAGE_MAP: usize = 16;
 /// The longest serialization: header, CPU, frame loop, 1 MiB of RAM, a
-/// full queue, every device at its largest, and an argument.
-const MAX_STATE: usize =
-    200 + 1_048_576 + crate::image::MAX_DEVICES + 37 + 4 * 64 + 10_379 + 8 + 16_384 + 425 + 21 + 65_536 + 1 + 4 + 16_384 + crate::sound::MAX_STATE + 32;
+/// full queue, every device at its largest, 16 experimental sections at
+/// theirs, and an argument.
+const MAX_STATE: usize = 200
+    + 1_048_576
+    + crate::image::MAX_DEVICES
+    + 37
+    + 4 * 64
+    + 10_379
+    + 8
+    + 16_384
+    + 425
+    + 21
+    + 65_536
+    + 1
+    + 4
+    + 16_384
+    + crate::sound::MAX_STATE
+    + crate::image::MAX_DEVICES * (4 + crate::image::EXPERIMENTAL_STATE_MAX)
+    + 32;
 
 /// Why a snapshot or a serialization could not be restored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,7 +207,7 @@ impl SnapshotInfo {
     /// snapshot file (the rest is not checked).
     pub fn from_file_head(file: &[u8]) -> Option<SnapshotInfo> {
         let head = file.get(..FILE_HEAD + BEFORE_RAM)?;
-        if &head[..4] != MAGIC || head[4] != VERSION {
+        if &head[..4] != MAGIC || (head[4] != VERSION && head[4] != VERSION_EXPERIMENTAL) {
             return None;
         }
         let identity = identity_from_record(head[5..5 + IDENTITY_BYTES].try_into().unwrap()).ok()?;
@@ -212,18 +231,22 @@ pub struct Snapshot {
     pub state: Vec<u8>,
     pub identity: Option<ProgramId>,
     pub time: u32,
+    /// The machine has an experimental device: the file's version is 1
+    /// (`spec/experimental.md` §experimental.conformance).
+    pub experimental: bool,
 }
 
 impl Snapshot {
     /// The snapshot of `machine` now (between frames).
     pub fn of(machine: &Machine) -> Snapshot {
-        Snapshot { state: machine.state(), identity: machine.identity().cloned(), time: machine.system().time() }
+        Snapshot { state: machine.state(), identity: machine.identity().cloned(), time: machine.system().time(), experimental: machine.has_experimental() }
     }
 
     /// The snapshot of a machine with devices of any kind (its devices
     /// asked for their sections); an error is the devices'.
     pub fn try_of<D: crate::devices::Devices>(machine: &mut Machine<D>) -> Result<Snapshot, String> {
-        Ok(Snapshot { state: machine.try_state()?, identity: machine.identity().cloned(), time: machine.system().time() })
+        let experimental = machine.has_experimental();
+        Ok(Snapshot { state: machine.try_state()?, identity: machine.identity().cloned(), time: machine.system().time(), experimental })
     }
 
     pub fn image_id(&self) -> [u8; 32] {
@@ -252,14 +275,21 @@ impl Snapshot {
     /// The same on a host that provides the optional devices `provides`
     /// accepts ([`Machine::restore_where`]).
     pub fn restore_where(&self, image: &crate::Image, provides: impl Fn(&crate::DeviceReq) -> bool) -> Result<Machine, RestoreError> {
+        self.grants(image)?;
         let mut m = Machine::restore_where(image, &self.state, provides)?;
         m.set_identity(self.identity.clone());
         Ok(m)
     }
 
     /// The grants of the machine it was taken of (STATE.md 1.4).
+    /// A file's version must say whether the machine had an experimental
+    /// device.
     pub fn grants(&self, image: &crate::Image) -> Result<crate::image::Grants, RestoreError> {
-        grants_of(image, &self.state)
+        let grants = grants_of(image, &self.state)?;
+        if image.grants_experimental(&grants) != self.experimental {
+            return Err(bad("the version does not say whether the machine has an experimental device"));
+        }
+        Ok(grants)
     }
 
     /// The same with devices like `like`'s (a sibling of the machine whose
@@ -268,7 +298,7 @@ impl Snapshot {
         if self.image_id() != image.id {
             return Err(RestoreError::WrongImage);
         }
-        let grants = grants_of(image, &self.state)?;
+        let grants = self.grants(image)?;
         let mut m = like.new_machine(serial, image, Some(&grants), self.identity.as_ref()).map_err(|f| {
             if f.reason == crate::machines::failure::NEEDS_DEVICE { RestoreError::NeedsDevice(f.message) } else { bad("the devices could not be started") }
         })?;
@@ -284,7 +314,7 @@ impl Snapshot {
         let ram = &s[BEFORE_RAM..BEFORE_RAM + ram_len];
         let mut out = Vec::with_capacity(FILE_HEAD + s.len() + PAGE_MAP + 32);
         out.extend_from_slice(MAGIC);
-        out.push(VERSION);
+        out.push(if self.experimental { VERSION_EXPERIMENTAL } else { VERSION });
         out.extend_from_slice(&self.identity.as_ref().map_or([0; IDENTITY_BYTES], ProgramId::record));
         out.extend_from_slice(&self.time.to_le_bytes());
         out.extend_from_slice(&(s.len() as u32).to_le_bytes());
@@ -313,9 +343,11 @@ impl Snapshot {
         if r.take(4)? != MAGIC {
             return Err(bad("not a snapshot file"));
         }
-        if r.u8()? != VERSION {
-            return Err(bad("unknown snapshot version"));
-        }
+        let experimental = match r.u8()? {
+            VERSION => false,
+            VERSION_EXPERIMENTAL => true,
+            _ => return Err(bad("unknown snapshot version")),
+        };
         let identity = identity_from_record(&r.array()?)?;
         let time = r.u32()?;
         let n = r.u32()? as usize;
@@ -348,7 +380,7 @@ impl Snapshot {
         if &state[..IMAGE_AT] != STATE_DOMAIN {
             return Err(bad("not a terse-state-1 serialization"));
         }
-        let snapshot = Snapshot { state, identity, time };
+        let snapshot = Snapshot { state, identity, time, experimental };
         if snapshot.hash() != hash {
             return Err(bad("the state hash does not match"));
         }

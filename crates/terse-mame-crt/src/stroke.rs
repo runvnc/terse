@@ -1,7 +1,17 @@
-//! A stroke font for the terminal: each character as lines the beam
+//! The stroke fonts for the terminal: each character as lines the beam
 //! draws, as a vector monitor's character generator does, not as a bitmap.
+//! Three fonts ([`Font`], chosen by `TERSE_MAME_FONT`):
 //!
-//! Printable ASCII is the Hershey Roman Simplex font
+//! - **arcade** (the default, [`crate::arcade`]): a vector monitor's
+//!   character generator, a few long straight strokes per letter on a small
+//!   grid; original glyphs.
+//! - **hershey**: the Hershey Roman Simplex font, a plotter's curves.
+//! - **drafting**: Hershey's strokes simplified (fewer, longer segments) and
+//!   inclined, like single-stroke engineering lettering.
+//!
+//! In every font the box-drawing characters and block elements are the
+//! ones below. For the hershey and drafting fonts, printable ASCII is the
+//! Hershey Roman Simplex font
 //! (`third_party/hershey/futural.jhf`: "The Hershey Fonts were originally
 //! created by Dr. A. V. Hershey while working at the U. S. National Bureau
 //! of Standards. The format of the Font data in this distribution was
@@ -36,6 +46,48 @@ pub struct Stroke {
     pub y1: f32,
     pub width: f32,
     pub level: f32,
+}
+
+/// A stroke font (`TERSE_MAME_FONT`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Font {
+    Arcade,
+    Hershey,
+    Drafting,
+}
+
+impl Font {
+    pub const ALL: [Font; 3] = [Font::Arcade, Font::Hershey, Font::Drafting];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Font::Arcade => "arcade",
+            Font::Hershey => "hershey",
+            Font::Drafting => "drafting",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Font> {
+        Font::ALL.into_iter().find(|f| f.name().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// `TERSE_MAME_FONT` (arcade, hershey or drafting); arcade when unset,
+    /// empty or not a font's name (which is said on stderr).
+    pub fn from_env() -> Font {
+        match std::env::var("TERSE_MAME_FONT") {
+            Ok(v) if !v.trim().is_empty() => Font::parse(&v).unwrap_or_else(|| {
+                eprintln!("terse-dev-mame: TERSE_MAME_FONT={v:?} is not arcade, hershey or drafting: using arcade");
+                Font::Arcade
+            }),
+            _ => Font::Arcade,
+        }
+    }
+
+    /// The font of this process: [`Font::from_env`], read once.
+    pub fn current() -> Font {
+        static F: OnceLock<Font> = OnceLock::new();
+        *F.get_or_init(Font::from_env)
+    }
 }
 
 pub const CELL_W: f32 = 8.0;
@@ -161,6 +213,8 @@ fn hershey(c: char) -> Option<Vec<Poly>> {
     use Accent::*;
     let mut g: Vec<Poly>;
     Some(match c {
+        // Hershey's I is a bare stem, its l too: serifs tell them apart.
+        'I' => vec![vec![(0.0, -12.0), (0.0, 9.0)], vec![(-3.0, -12.0), (3.0, -12.0)], vec![(-3.0, 9.0), (3.0, 9.0)]],
         ' '..='~' => glyph(c),
         '\u{a0}' => Vec::new(),
         '¡' => turned('!', -1.5),
@@ -374,44 +428,136 @@ fn base(c: char, upper: char) -> char {
     if c.is_uppercase() { upper } else { upper.to_ascii_lowercase() }
 }
 
-/// The strokes of a character in a cell (the top left at (0, 0)); a wide
-/// character spans two cells. `None` for a blank.
+/// The strokes of a character in a cell (the top left at (0, 0)) in this
+/// process's font ([`Font::current`]); a wide character spans two cells.
+/// Nothing for a blank.
 pub fn strokes(code: u32, wide: bool, out: &mut Vec<Stroke>) {
-    let Some(c) = char::from_u32(code) else { return placeholder(wide, out) };
+    strokes_in(Font::current(), code, wide, out)
+}
+
+/// [`strokes`] in a given font.
+pub fn strokes_in(font: Font, code: u32, wide: bool, out: &mut Vec<Stroke>) {
+    let Some(c) = char::from_u32(code) else { return placeholder(font, wide, out) };
     if c == ' ' {
         return;
     }
     if (0x2500..=0x259F).contains(&code) {
         return boxes(code, out);
     }
-    let Some(polys) = (if wide { None } else { hershey(c) }) else { return placeholder(wide, out) };
-    cell_strokes(&polys, CELL_W, out);
+    if wide {
+        return placeholder(font, wide, out);
+    }
+    let drawn = match font {
+        Font::Arcade => crate::arcade::cell_strokes(c, CELL_W, out),
+        Font::Hershey | Font::Drafting => match hershey(c) {
+            Some(polys) => {
+                cell_strokes(&polys, CELL_W, font == Font::Drafting, out);
+                true
+            }
+            None => false,
+        },
+    };
+    if !drawn {
+        placeholder(font, wide, out)
+    }
 }
 
-fn cell_strokes(polys: &[Poly], cell_w: f32, out: &mut Vec<Stroke>) {
+/// The drafting font's slant: x moves right by this much per unit up.
+const SLANT: f32 = 0.22;
+/// The drafting font's widest ink, its slant included.
+const MAX_INK_DRAFTING: f32 = 6.6;
+/// How far a simplified drafting polyline may stray from Hershey's, in
+/// Hershey units (about half a screen unit).
+const SIMPLIFY: f32 = 1.0;
+
+/// Ramer–Douglas–Peucker: the points of `p` that keep it within `eps`.
+fn simplify(p: &[(f32, f32)], eps: f32) -> Poly {
+    if p.len() < 3 {
+        return p.to_vec();
+    }
+    let (a, b) = (p[0], p[p.len() - 1]);
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    let dist = |q: (f32, f32)| {
+        if len < 1e-6 { ((q.0 - a.0).powi(2) + (q.1 - a.1).powi(2)).sqrt() } else { ((q.0 - a.0) * dy - (q.1 - a.1) * dx).abs() / len }
+    };
+    let (i, d) = p[1..p.len() - 1].iter().enumerate().map(|(i, &q)| (i + 1, dist(q))).fold((0, -1.0), |m, x| if x.1 > m.1 { x } else { m });
+    if d <= eps {
+        return vec![a, b];
+    }
+    let mut left = simplify(&p[..=i], eps);
+    left.pop();
+    left.extend(simplify(&p[i..], eps));
+    left
+}
+
+/// The drafting font: Hershey's polylines simplified, then inclined about
+/// the capitals' middle and fitted to the cell's width.
+fn drafting_strokes(polys: &[Poly], cell_w: f32, out: &mut Vec<Stroke>) {
+    let polys: Vec<Poly> = polys.iter().map(|p| simplify(p, SIMPLIFY)).collect();
+    let y_of = |y: f32| BASELINE + (y - 9.0) * SY;
+    let mid_y = BASELINE - 5.0;
+    let lean = |x: f32, y: f32, sx: f32| x * sx + (mid_y - y_of(y)) * SLANT;
+    let bounds = |sx: f32| {
+        polys.iter().flatten().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &(x, y)| {
+            let v = lean(x, y, sx);
+            (lo.min(v), hi.max(v))
+        })
+    };
+    let max = MAX_INK_DRAFTING * cell_w / CELL_W;
+    let mut sx = SX * 0.92;
+    let (mut lo, mut hi) = bounds(sx);
+    for _ in 0..20 {
+        if !lo.is_finite() || hi - lo <= max {
+            break;
+        }
+        sx *= 0.94;
+        (lo, hi) = bounds(sx);
+    }
+    // The ink's centre on the cell's centre.
+    let centre = if lo.is_finite() { (lo + hi) / 2.0 } else { 0.0 };
+    let map = |(x, y): (f32, f32)| (cell_w / 2.0 + lean(x, y, sx) - centre, y_of(y));
+    push(&polys, map, out);
+}
+
+fn push(polys: &[Poly], map: impl Fn((f32, f32)) -> (f32, f32), out: &mut Vec<Stroke>) {
+    for p in polys {
+        if p.len() == 1 {
+            // A point: a short stroke (never one of no length).
+            let (x, y) = map(p[0]);
+            out.push(Stroke { x0: x, y0: y - 0.25, x1: x, y1: y + 0.25, width: 1.0, level: 1.0 });
+        }
+        for w in p.windows(2) {
+            let ((x0, y0), (x1, y1)) = (map(w[0]), map(w[1]));
+            if (x0, y0) != (x1, y1) {
+                out.push(Stroke { x0, y0, x1, y1, width: 1.0, level: 1.0 });
+            }
+        }
+    }
+}
+
+fn cell_strokes(polys: &[Poly], cell_w: f32, drafting: bool, out: &mut Vec<Stroke>) {
+    if drafting {
+        return drafting_strokes(polys, cell_w, out);
+    }
     let (lo, hi) = ink_x(polys);
     let sx = if (hi - lo) * SX > MAX_INK * cell_w / CELL_W { MAX_INK * cell_w / CELL_W / (hi - lo) } else { SX };
     let mid = (lo + hi) / 2.0;
     // Centre the ink when the glyph had to be narrowed, else the advance.
     let centre = if sx < SX { mid } else { 0.0 };
     let map = |(x, y): (f32, f32)| (cell_w / 2.0 + (x - centre) * sx, BASELINE + (y - 9.0) * SY);
-    for p in polys {
-        if p.len() == 1 {
-            let (x, y) = map(p[0]);
-            out.push(Stroke { x0: x, y0: y, x1: x, y1: y, width: 1.0, level: 1.0 });
-        }
-        for w in p.windows(2) {
-            let ((x0, y0), (x1, y1)) = (map(w[0]), map(w[1]));
-            out.push(Stroke { x0, y0, x1, y1, width: 1.0, level: 1.0 });
-        }
-    }
+    push(polys, map, out);
 }
 
-/// The replacement character, also for a character this font lacks (two
+/// The replacement character, also for a character a font lacks (two
 /// cells wide for a wide one).
-fn placeholder(wide: bool, out: &mut Vec<Stroke>) {
-    let polys = hershey('\u{fffd}').unwrap_or_default();
-    cell_strokes(&polys, if wide { 2.0 * CELL_W } else { CELL_W }, out);
+fn placeholder(font: Font, wide: bool, out: &mut Vec<Stroke>) {
+    let cell_w = if wide { 2.0 * CELL_W } else { CELL_W };
+    if font == Font::Arcade {
+        crate::arcade::cell_strokes('\u{fffd}', cell_w, out);
+    } else {
+        cell_strokes(&hershey('\u{fffd}').unwrap_or_default(), cell_w, font == Font::Drafting, out);
+    }
 }
 
 /// The arms of the box-drawing characters U+2500 to U+257F, four digits a
@@ -436,6 +582,13 @@ fn line(out: &mut Vec<Stroke>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32) {
 /// the cell: how a beam fills an area. `every` > 1 leaves lines out (the
 /// shades), `level` dims them.
 fn raster(out: &mut Vec<Stroke>, x0: f32, y0: f32, x1: f32, y1: f32, every: usize, level: f32) {
+    if x1 - x0 <= 1.0 {
+        // One unit wide (the one-eighth blocks): one vertical stroke, not
+        // rows of no length.
+        let x = (x0 + x1) / 2.0;
+        out.push(Stroke { x0: x, y0: y0 + 0.5, x1: x, y1: y1 - 0.5, width: 1.0, level });
+        return;
+    }
     let rows = (y1 - y0).round() as usize;
     for k in (0..rows).filter(|k| k % every == 0) {
         let y = y0 + k as f32 + 0.5;
@@ -565,55 +718,198 @@ fn boxes(code: u32, out: &mut Vec<Stroke>) {
 
 /// Every character of the terminal's basic repertoire (SPEC §terminal.text)
 /// that this font draws as itself (not as the replacement diamond).
+/// (In every font.)
 pub fn covers(code: u32) -> bool {
-    (0x2500..=0x259F).contains(&code) || char::from_u32(code).is_some_and(|c| hershey(c).is_some())
+    Font::ALL.into_iter().all(|f| covers_in(f, code))
+}
+
+/// [`covers`] for one font.
+pub fn covers_in(font: Font, code: u32) -> bool {
+    (0x2500..=0x259F).contains(&code)
+        || char::from_u32(code).is_some_and(|c| match font {
+            Font::Arcade => crate::arcade::glyph(c).is_some(),
+            Font::Hershey | Font::Drafting => hershey(c).is_some(),
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The basic repertoire, from `vectors/basic-text.txt`'s ranges.
+    fn repertoire() -> Vec<u32> {
+        let v = include_str!("../../../vectors/basic-text.txt");
+        let mut codes = Vec::new();
+        let mut inside = false;
+        for line in v.lines() {
+            let l = line.trim();
+            if l.starts_with("repertoire basic-text") {
+                inside = true;
+            } else if inside && let Some(r) = l.strip_prefix("range ") {
+                let (a, b) = r.split_once(' ').unwrap();
+                let (a, b) = (u32::from_str_radix(a, 16).unwrap(), u32::from_str_radix(b, 16).unwrap());
+                codes.extend(a..=b);
+            } else if inside && !l.is_empty() && !l.starts_with("count") {
+                break;
+            }
+        }
+        codes
+    }
+
+    fn glyph(font: Font, code: u32) -> Vec<Stroke> {
+        let mut s = Vec::new();
+        strokes_in(font, code, false, &mut s);
+        s
+    }
+
+    #[test]
+    fn font_names() {
+        for f in Font::ALL {
+            assert_eq!(Font::parse(f.name()), Some(f));
+        }
+        assert_eq!(Font::parse(" Hershey "), Some(Font::Hershey));
+        assert_eq!(Font::parse("courier"), None);
+    }
+
+    #[test]
+    fn the_fonts_differ() {
+        for c in "aAgR&".chars() {
+            let g: Vec<Vec<Stroke>> = Font::ALL.iter().map(|&f| glyph(f, c as u32)).collect();
+            assert_ne!(g[0], g[1], "{c}");
+            assert_ne!(g[0], g[2], "{c}");
+            assert_ne!(g[1], g[2], "{c}");
+        }
+        // The box drawing is the same in all.
+        assert_eq!(glyph(Font::Arcade, 0x253C), glyph(Font::Hershey, 0x253C));
+    }
+
     #[test]
     fn ascii_is_hershey() {
         assert_eq!(ascii().len(), 95);
         // 'H': two stems and a bar.
-        let mut s = Vec::new();
-        strokes('H' as u32, false, &mut s);
-        assert_eq!(s.len(), 3);
-        for st in &s {
-            for (x, y) in [(st.x0, st.y0), (st.x1, st.y1)] {
-                assert!((0.0..=CELL_W).contains(&x) && (0.0..=CELL_H).contains(&y), "{st:?}");
+        assert_eq!(glyph(Font::Hershey, 'H' as u32).len(), 3);
+        assert!(glyph(Font::Hershey, ' ' as u32).is_empty());
+        assert!(glyph(Font::Arcade, ' ' as u32).is_empty());
+    }
+
+    #[test]
+    fn basic_repertoire_is_covered() {
+        let codes = repertoire();
+        assert_eq!(codes.len(), 361);
+        for f in Font::ALL {
+            let diamond = glyph(f, 0xFFFD);
+            for &c in &codes {
+                assert!(covers_in(f, c), "{} U+{c:04X}", f.name());
+                let g = glyph(f, c);
+                if c != 0x20 && c != 0xA0 {
+                    assert!(!g.is_empty(), "{} U+{c:04X} blank", f.name());
+                }
+                if c != 0xFFFD {
+                    assert_ne!(g, diamond, "{} U+{c:04X} is the replacement", f.name());
+                }
             }
+            // Not in the repertoire: the replacement.
+            assert_eq!(glyph(f, 0x4E00), diamond);
         }
-        let mut s = Vec::new();
-        strokes(' ' as u32, false, &mut s);
-        assert!(s.is_empty());
     }
 
     #[test]
     fn every_glyph_stays_in_its_cell() {
-        for code in (0x20..0x7F).chain(0xA0..0x100).chain(0x2500..0x25A0).chain([0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2212, 0xFFFD]) {
-            assert!(covers(code), "U+{code:04X}");
+        for f in Font::ALL {
+            for code in repertoire() {
+                for st in glyph(f, code) {
+                    for (x, y) in [(st.x0, st.y0), (st.x1, st.y1)] {
+                        assert!((-0.01..=CELL_W + 0.01).contains(&x) && (-0.01..=CELL_H + 0.01).contains(&y), "{} U+{code:04X} {st:?}", f.name());
+                    }
+                }
+            }
             let mut s = Vec::new();
-            strokes(code, false, &mut s);
-            for st in &s {
-                for (x, y) in [(st.x0, st.y0), (st.x1, st.y1)] {
-                    assert!((-0.01..=CELL_W + 0.01).contains(&x) && (-0.01..=CELL_H + 0.01).contains(&y), "U+{code:04X} {st:?}");
+            strokes_in(f, 0x4E00, true, &mut s);
+            assert!(!s.is_empty());
+            for st in s {
+                assert!(st.x0.max(st.x1) <= 2.0 * CELL_W && st.x0.min(st.x1) >= 0.0 && st.y0.max(st.y1) <= CELL_H, "{} wide {st:?}", f.name());
+            }
+        }
+    }
+
+    #[test]
+    fn no_stroke_has_no_length() {
+        for f in Font::ALL {
+            for code in repertoire() {
+                for st in glyph(f, code) {
+                    assert!((st.x1 - st.x0).hypot(st.y1 - st.y0) > 0.1, "{} U+{code:04X} {st:?}", f.name());
                 }
             }
         }
     }
 
+    /// The arcade letters and digits keep to six pixels' width (1.5 to 6.5)
+    /// and the cap height to the descender (2.5 to 15.5).
     #[test]
-    fn basic_repertoire_is_covered() {
-        // vectors/basic-text.txt's ranges.
-        let ranges = [(0x20, 0x7E), (0xA0, 0xFF), (0x2013, 0x2014), (0x2018, 0x2019), (0x201C, 0x201D), (0x2022, 0x2022), (0x2026, 0x2026), (0x2212, 0x2212), (0x2500, 0x259F), (0xFFFD, 0xFFFD)];
-        let n: u32 = ranges.iter().map(|(a, b)| b - a + 1).sum();
-        assert_eq!(n, 361);
-        for (a, b) in ranges {
-            for c in a..=b {
-                assert!(covers(c), "U+{c:04X}");
+    fn arcade_letters_keep_to_the_grid() {
+        for c in ('A'..='Z').chain('a'..='z').chain('0'..='9') {
+            for st in glyph(Font::Arcade, c as u32) {
+                for (x, y) in [(st.x0, st.y0), (st.x1, st.y1)] {
+                    assert!((1.5..=6.5).contains(&x) && (2.5..=15.5).contains(&y), "{c} {st:?}");
+                }
             }
         }
     }
+
+    /// A straight line is one stroke: no polyline goes on in the same
+    /// direction from a vertex (where the beam would make a bead).
+    #[test]
+    fn arcade_beads_only_at_corners() {
+        for code in repertoire().into_iter().filter(|c| !(0x2500..=0x259F).contains(c)) {
+            let g = glyph(Font::Arcade, code);
+            for w in g.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                if (a.x1, a.y1) != (b.x0, b.y0) {
+                    continue;
+                }
+                let (ax, ay, bx, by) = (a.x1 - a.x0, a.y1 - a.y0, b.x1 - b.x0, b.y1 - b.y0);
+                let cross = ax * by - ay * bx;
+                let dot = ax * bx + ay * by;
+                assert!(cross.abs() > 1e-3 || dot < 0.0, "U+{code:04X} {a:?} {b:?}");
+            }
+        }
+    }
+
+    /// The pixels a glyph lights at 640 × 480 (one unit a pixel): those
+    /// whose centre is within 0.6 of a stroke.
+    fn pixels(s: &[Stroke]) -> Vec<bool> {
+        let mut px = vec![false; 8 * 16];
+        for (i, p) in px.iter_mut().enumerate() {
+            let (x, y) = ((i % 8) as f32 + 0.5, (i / 8) as f32 + 0.5);
+            *p = s.iter().any(|st| {
+                let (dx, dy) = (st.x1 - st.x0, st.y1 - st.y0);
+                let t = (((x - st.x0) * dx + (y - st.y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                (st.x0 + t * dx - x).hypot(st.y0 + t * dy - y) <= 0.6
+            });
+        }
+        px
+    }
+
+    const CONFUSABLE: [&str; 16] = ["0O", "1l", "1I", "lI", "5S", "8B", "2Z", "uv", "ce", "il", "DO", "6G", "gq", "nh", "o0", "Il"];
+
+    #[test]
+    fn confusable_pairs_differ() {
+        for f in Font::ALL {
+            for p in CONFUSABLE {
+                let mut c = p.chars();
+                let (a, b) = (c.next().unwrap(), c.next().unwrap());
+                assert_ne!(glyph(f, a as u32), glyph(f, b as u32), "{} {a} {b}", f.name());
+            }
+        }
+        // The arcade font: at one pixel a unit they differ by several pixels.
+        for p in CONFUSABLE {
+            let mut c = p.chars();
+            let (a, b) = (c.next().unwrap(), c.next().unwrap());
+            let (pa, pb) = (pixels(&glyph(Font::Arcade, a as u32)), pixels(&glyph(Font::Arcade, b as u32)));
+            let d = pa.iter().zip(&pb).filter(|(x, y)| x != y).count();
+            // (n and h: the ascender's four pixels.)
+            assert!(d >= 4, "{a} {b}: {d} pixels");
+        }
+    }
 }
+

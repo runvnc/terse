@@ -71,6 +71,10 @@ fn list(config: &Path) -> Result<ExitCode, String> {
     }
     for i in driverlist::list(config).iter().filter(|i| !used.contains(&i.name)) {
         match &i.manifest {
+            Ok(m) if m.experimental.is_some() => {
+                let (d, v) = m.experimental.clone().unwrap_or_default();
+                println!("{:<40} {} ({}; experimental, version {v})", format!("the experimental device {d}"), i.name, m.identity());
+            }
             Ok(m) => println!("not used: {} ({}; {}): terse drivers use {} {}", i.name, m.identity(), what(m.group()), m.group().first().unwrap_or(&0), i.name),
             Err(e) => println!("not used: {} ({e})", i.name),
         }
@@ -87,7 +91,7 @@ fn list(config: &Path) -> Result<ExitCode, String> {
 fn parse_probe(out: &str) -> Vec<Manifest> {
     let mut found = Vec::new();
     for block in out.split("\n\n").filter(|b| !b.trim().is_empty()) {
-        let mut m = Manifest { program: String::new(), slots: Vec::new(), name: String::new(), version: String::new(), build: String::new() };
+        let mut m = Manifest { program: String::new(), slots: Vec::new(), name: String::new(), version: String::new(), build: String::new(), experimental: None };
         for line in block.lines() {
             let (word, value) = line.split_once(' ').unwrap_or((line, ""));
             match word {
@@ -99,11 +103,13 @@ fn parse_probe(out: &str) -> Vec<Manifest> {
                         m.slots.push((s, v));
                     }
                 }
+                // DEVICES.md 15: an experimental driver's device.
+                "experimental" => m.experimental = value.split_once(' ').and_then(|(n, v)| Some((n.to_string(), v.parse().ok()?))),
                 _ => {}
             }
         }
         m.slots.sort_unstable();
-        if !m.slots.is_empty() {
+        if !m.slots.is_empty() || m.experimental.is_some() {
             found.push(m);
         }
     }
@@ -127,8 +133,21 @@ fn add(config: &Path, file: &str, slot: Option<&str>, name: Option<&str>) -> Res
         probe.args(["--slot", &g[0].to_string()]);
     }
     let out = probe.output().map_err(|e| format!("{}: {e}", bus.display()))?;
-    let found = parse_probe(&String::from_utf8_lossy(&out.stdout));
-    let refused = String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.starts_with("terse-bus: ")).map(|l| format!("  {}", &l[11..])).collect::<Vec<_>>().join("\n");
+    let mut found = parse_probe(&String::from_utf8_lossy(&out.stdout));
+    let mut refused = String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.starts_with("terse-bus: ")).map(|l| format!("  {}", &l[11..])).collect::<Vec<_>>().join("\n");
+    // DEVICES.md 2.2, 15.1: a driver for no group may be an experimental one.
+    if found.is_empty() && slot.is_none() {
+        let out = Command::new(&bus).arg("--probe-driver").arg(&path).arg("--experimental").output().map_err(|e| format!("{}: {e}", bus.display()))?;
+        found = parse_probe(&String::from_utf8_lossy(&out.stdout));
+        for l in String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.starts_with("terse-bus: ")) {
+            refused.push_str(&format!("\n  as an experimental device: {}", &l[11..]));
+        }
+    }
+    if let [m] = found.as_slice()
+        && m.experimental.is_some()
+    {
+        return add_experimental(config, &path, m.clone(), name);
+    }
     let mut m = match found.as_slice() {
         [] => return Err(format!("{} did not answer as a driver for any slots:\n{refused}", path.display())),
         [m] => m.clone(),
@@ -184,6 +203,53 @@ fn add(config: &Path, file: &str, slot: Option<&str>, name: Option<&str>) -> Res
         target.display(),
         what(group),
         group[0]
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Installs an experimental driver (DEVICES.md 2.2, 15.1): its manifest
+/// names the device; `use` has no line for it. One installed driver per
+/// device name.
+fn add_experimental(config: &Path, path: &Path, mut m: Manifest, name: Option<&str>) -> Result<ExitCode, String> {
+    let (device, version) = m.experimental.clone().unwrap_or_default();
+    let name = match name {
+        Some(n) if driverlist::valid_name(n) => n.to_string(),
+        Some(n) => return Err(format!("--name {n}: a name is 1 to 64 of a-z, 0-9, - and ., starting with a letter or digit, not `use`")),
+        None => driverlist::name_from(&m.name),
+    };
+    if let Some(other) = driverlist::list(config).into_iter().find(|i| i.name != name && i.manifest.as_ref().is_ok_and(|o| o.experimental.as_ref().is_some_and(|x| x.0 == device))) {
+        return Err(format!("the installed driver {} already serves the experimental device {device}: remove it first (terse drivers remove {})", other.name, other.name));
+    }
+    let program = path.file_name().and_then(|f| f.to_str()).filter(|f| *f != driverlist::MANIFEST).unwrap_or("driver").to_string();
+    m.program = program.clone();
+    println!("{}", path.display());
+    println!("  name     {}", m.name);
+    println!("  version  {}", if m.version.is_empty() { "-" } else { &m.version });
+    println!("  build    {}", if m.build.is_empty() { "-" } else { &m.build });
+    println!("  device   {device} (experimental, version {version}; spec/experimental.md)");
+    println!("{FULL_RIGHTS}");
+    let folder = driverlist::folder(config);
+    let target = folder.join(&name);
+    let tmp = folder.join(format!(".{name}.new"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let copied = tmp.join(&program);
+    std::fs::copy(path, &copied).map_err(|e| format!("{}: {e}", copied.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&copied, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}: {e}", copied.display()))?;
+    }
+    std::fs::write(tmp.join(driverlist::MANIFEST), m.encode()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let replaced = target.exists();
+    if replaced {
+        std::fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+    }
+    std::fs::rename(&tmp, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+    println!(
+        "{} {name} in {}: terse-bus grants {device} to programs that list it, from its next start (terse drivers remove {name} undoes it).",
+        if replaced { "Replaced" } else { "Installed" },
+        target.display()
     );
     Ok(ExitCode::SUCCESS)
 }

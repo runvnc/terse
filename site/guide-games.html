@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Find and play a game - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="find-and-play-a-game">Find and play a game</h1>
+<p>Reading is the heart of Tersenet; programs are the optional part. A program is small, at most 1 MiB of memory, and runs on a tiny virtual machine of its own, Terse32, inside the window. It cannot read your files, and the window asks you before it publishes anything in your name.</p>
+<h2 id="the-game-that-comes-with-tersenet">The game that comes with Tersenet</h2>
+<p>The launcher lists the programs built into the window. One of them is a game: sparks. Choose it and press Enter:</p>
+<pre>  SPARKS    HIGH 0000         demo - Enter or Start to play
+                                   S P A R K S
+                     Collect the sparks, avoid the sweepers.
+                     Arrows or stick: turn. Up or A: thrust.
+                     Enter or Start: play.        Esc: quit.</pre>
+<p>Enter plays. Left and Right turn your craft, Up thrusts; a game controller works too. Your high score is kept on this computer, for the next time. F12 takes you back to the launcher while the game goes on in its tile; Enter on its line there, or a click on it, brings it back.</p>
+<p>The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.</p>
+<h2 id="games-from-other-people">Games from other people</h2>
+<p>Anyone can publish a program in their feed, as they publish an article. There are three ways to come across one:</p>
+<ul>
+<li>In the launcher. Under FROM YOUR FEEDS it lists the programs of the feeds you follow, each with the name of the feed it came from. Enter starts one.</li>
+<li>In an article. Following a link to a program asks you first, in the bar at the top, naming the program and its publisher (here with the nickname from the last page), with Y/N at the end:</li>
+</ul>
+<pre>reader asks to start Sparks by Ana from choir 73670a…a9ee5f.</pre>
+<ul>
+<li>By search. <code>terse find --programs</code> and a name lists matching programs on your relays, with the publisher&#39;s key; subscribe to that feed, and the program is in your launcher.</li>
+</ul>
+<p>Y starts it in a tile of its own. A program from someone you do not know is still boxed in: it sees only its own screen, keyboard and the few things the window lets it ask for, and every request to publish or to follow a feed comes to you as a prompt. Say N to anything you did not expect.</p>
+<p>There is not much to find yet, though. Tersenet has no public relay and no catalogue of games, so for now you find programs the same way as feeds: through people you share a relay with.</p>
+<h2 id="keeping-your-place">Keeping your place</h2>
+<p>Machines in Tersenet can be saved whole. In the launcher, S saves the session: every program you have open, exactly where it is, mid-game included. The next time you start the window, the launcher&#39;s first line offers to bring it back:</p>
+<pre>Restore last session (1 program)</pre>
+<p>Enter restores it; D discards it. Nothing is saved without S, except what a program keeps for itself, such as the high score.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>The whole of Tersenet from the user&#39;s side: your own feed, other people&#39;s, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: <a href="guide-reader.html">Make a reader, step 1: show an article</a>.</p>
+<p>The launcher, sessions and every prompt are in <a href="using.html">Using the shell</a>; publishing a program of your own is in <a href="running-programs.html">Running and publishing a program</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-subscribe.html">← Subscribe to someone&#39;s feed</a><a rel="next" href="guide-reader.html">Make a reader, step 1: show an article →</a></nav></footer>
+</body>
+</html>

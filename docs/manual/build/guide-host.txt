@@ -64,6 +64,6 @@ In `tcore` the processor is 262 lines of C (`cpu.c`); the file and the memory ma
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end. Next, make it keep time: [Make a host, step 2: frames and the budget](terse:801f3e50f9629aadb3294013cba7e285bfe79fe9df205bac4499c8288d6660d5).
+A Terse32 processor that runs a program to its end. Next, make it keep time: [Make a host, step 2: frames and the budget](terse:4fba2229b6caed4f9664037ae0140d45a7827da3501149a0e6f82a784e90b071).
 
 The detail is in [The Terse32 machine](terse:aa17201e48f5830c3135cdf0e1f839fcb5df96ba9d2d3b5f422c94aaf1dba54b), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls" (SPEC §cpu, §memory, §reset, §stopping, §image, §calls.convention), and `exit` in [The system device](terse:253325568092d6f4aa67a99d66e8b9ec3e75a35aeb4afff9dc16d61cb6c9f5dc).

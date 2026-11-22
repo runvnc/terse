@@ -1,6 +1,6 @@
 # Using the shell
 
-`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:a26c9a330b01f98347566242b5b208ff0b2655cc7667473fc1f391209f330777) does the same for the reader.
+`terse-host` opens a window and runs a system of machines. The first of them is the shell, a Terse32 program like any other, which starts the others and shows them as tiles; one of the programs it offers is the reader, where you follow feeds and read articles such as this one. This article describes the shell from the user's side: the keys, the screens, and the prompts the host shows; [Using the reader](terse:0ab883909924b49a23471eb66aec2d0e7f55e5ef035c2ac20db1a430928c6cd6) does the same for the reader.
 
 ## Starting
 
@@ -77,4 +77,4 @@ Every prompt names the title of the program that asks. Y allows; N or Esc refuse
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:c45785ea9f4c07ffe8293d37347467f2e6b65f1882d033834684d3a326d0acc8). How the shell's devices work: [The machines device](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063). Feeds and consent from a program's side: [Feeds](terse:9cbb89a2324c05a5455b16e9afa48479958926b3cce38aaa6e76d9799e97d886).
+How articles are written: [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). How the shell's devices work: [The machines device](terse:bd84d519c77541a5c745e0d69a10a3e38f5e3d0e878eb27e002a9c1e0341b063). Feeds and consent from a program's side: [Feeds](terse:9cbb89a2324c05a5455b16e9afa48479958926b3cce38aaa6e76d9799e97d886).

@@ -510,7 +510,11 @@ driver. A component is **late** in a frame only if (`RECORD.md` 4):
    most of any component's.
 
 Blocking on a disk, a lock or a sleep inside the frame loop is the
-component's fault (R8, R11 forbid it); being descheduled is not. The
+component's fault (R8, R11 forbid it); being descheduled is not. Nor is
+waiting for the window system to give back a buffer to draw into (its
+repaint pacing, like a vertical blank: no host component could shorten
+it): `terse-bus` leaves that wait out of the frame's time and its
+`present`. The
 allowance is a share of the frame, not milliseconds of the reference,
 so that it is the same on every computer; what depends on the hardware
 is whether a legal frame fits in it, which R16 checks at start. Half a
@@ -554,7 +558,9 @@ ms p50). The record's writer is a thread of its own.
 **R15, the rule.** In order:
 
 1. **Shed optional work first.** A host sheds what it draws beyond what
-   a device requires (the reference: the phosphor look, §4 "The look").
+   a device requires (the reference: the phosphor look, §4 "The look";
+   a driver with a look of its own is told the level, `core.shed`,
+   `DEVICES.md` 7.1).
 2. **Warn.** After 3 late frames of one component within 60 frames (one
    second), the host tells the user, naming the device and its identity,
    and saying what happens next; the reference shows, as its own drawing
@@ -587,8 +593,57 @@ ms p50). The record's writer is a thread of its own.
    records every late frame, and never stops a machine for it
    (`RECORD.md` 4).
 4. **The host's own components** (the core, composing, presenting): a
-   host cannot stop itself usefully. It records them and shows them, as
-   for a warning.
+   host cannot stop itself usefully. It records every late frame, sheds
+   (step 1) and shows the warning **once**, as for a device: again only
+   after the component has gone 300 frames without a late frame (the
+   rule never asks for a stop of one). The reference prints, besides,
+   how many late frames each had when the run ends. A drawing that cannot
+   keep up at the window's size is answered by shedding, not by
+   announcing it frame after frame.
+
+**Resizing.** When the window's surface changes size (the user or a
+tiling compositor resizes it, a move to another monitor, the first
+frame), every driver makes new layer files and buffers and draws whole
+pictures, and the host composes and copies the whole window: that work
+is the host's request, not a component's misbehaviour. Two measures, in
+order:
+
+- **Hold while it changes.** While the size keeps changing, a host holds
+  its machines: no frame runs, nothing is drawn or presented by a driver,
+  and the window shows the last picture scaled to the new size. A frame
+  is held when the surface changed size within the last 6 frame periods
+  (0.1 s: it keeps still that long before anything is drawn at it), for
+  at most 60 periods in a row, and not again until 60 frames have run
+  since. Holding is exact: a frame not run is like a frame run late
+  (virtual time lags, SPEC §frames); the input waiting is given to the
+  first frame run. So a drag costs one reallocation at its end, not one
+  per frame, and nobody is measured while nothing runs.
+- **Excuse the frames just after.** So a frame that
+would be blamed (R14) and is the first composed at a new size or one of
+the two after it is recorded with the verdict `resize` (`RECORD.md` 2)
+and counts toward neither the warning nor the stop. Only a change of
+the size the host composes counts (a configure that leaves it as it was
+excuses nothing), and the excuse is bounded: at most **120 frames within
+any 300** (two seconds of resizing in five). Three frames because the
+first is the reallocation and the next two the buffers a GPU or the
+system touch lazily and the window's double buffer at the new size (as
+a machine's first two frames are not counted). The bound because a
+window resized without end (a long drag, a compositor animating its
+tiles) changes size in every frame: without one, every frame would be
+excused. With it, a device late in every frame is warned about at most
+123 frames run and stopped at most 130 frames run after a resize began,
+however long the resizing goes on (rather than at its 3rd and 10th);
+with the holds in between, within about 7 s of resizing without end
+(measured: `terse-bus --selftest --resize`, the slow example driver,
+warned at frame 146 and stopped at 154). A device late only while
+reallocating is not warned about for ordinary resizing. A driver cannot
+cause a resize, so it cannot use either measure to hide.
+
+Pausing alone was the other way: it cannot be unbounded (a compositor
+that resizes without end would stop the machines for ever), and the
+frames after it still reallocate; excusing alone lets every frame of a
+drag reallocate and be excused, which a slow device shares in. Together
+the work is done once and the excuse covers only that once.
 
 Why these numbers: one or two late frames are a hiccup a person barely
 sees, and the frames in which a machine starts may be slow for reasons

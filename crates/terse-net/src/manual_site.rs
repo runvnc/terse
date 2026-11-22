@@ -15,6 +15,11 @@
 //! cannot be followed on the web and is shown as its text and address.
 //! The output depends only on the articles, so the same sources give the
 //! same bytes.
+//!
+//! Besides the pages, [`site_dir`] copies the files of the manual's
+//! `site-files/` directory (for example `install.sh`, the install script
+//! the guide names) to the site as they are: text files only, no
+//! subdirectories.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -47,11 +52,33 @@ pub fn site(built: &[Built]) -> Vec<(String, String)> {
     out
 }
 
-/// Builds the manual in `dir` and writes its site to `out`; `.html` files
-/// of articles no longer listed are removed. Returns the files written.
+/// The directory of a manual's extra files, copied to its site as they are.
+pub const EXTRA_DIR: &str = "site-files";
+
+/// The extra files of the manual in `dir` (its `site-files/`, if any):
+/// (file name, contents), sorted by name.
+pub fn extra_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let extra = dir.join(EXTRA_DIR);
+    let mut files = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&extra) else { return Ok(files) };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let data = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            files.push((entry.file_name().to_string_lossy().into_owned(), data));
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Builds the manual in `dir` and writes its site to `out`, with the extra
+/// files of [`extra_files`]; `.html` files of articles no longer listed are
+/// removed. Returns the files written.
 pub fn site_dir(dir: &Path, out: &Path) -> Result<Vec<(String, String)>, String> {
     let built = crate::manual::build(&crate::manual::read_sources(dir)?)?;
-    let files = site(&built);
+    let mut files = site(&built);
+    files.extend(extra_files(dir)?);
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     for entry in std::fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
