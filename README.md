@@ -168,10 +168,11 @@ press Enter and answer Y. An address with a relay (`key@their-host:7878`,
 NETWORK.md 4.9) lets your host find the feed there even if you never added
 that relay: it connects to it only if your own relays do not hold the
 feed, and only to a public address. Everything the other has published, and everything they publish
-from then on, appears in your timeline. The relay protocol is plain
-WebSocket (`ws://`) without encryption or accounts: anyone who can reach
-the relay can read and publish through it; entries are signed, so nobody
-can publish in your name.
+from then on, appears in your timeline. The relay protocol is
+WebSocket, plain (`ws://`) or over TLS (`wss://`, which public relays use so
+that nobody on the way sees what you read), without accounts: anyone who can
+reach the relay can read and publish through it; entries are signed, so
+nobody can publish in your name.
 
 ## How Tersenet is built
 
@@ -375,15 +376,16 @@ images were built with clang and LLD 23.1.4.
   that it is up to date, that a relay answers the session's messages as written, and
   that the reader shows every corpus article as the reference parser
   (`terse-net`'s `article_parse`) does.
-- `relay add <ws://host:port>` and `relay remove <url>` change the relay list in
+- `relay add <wss://host | ws://host:port | host>` and `relay remove <url>` change the relay list in
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
-  prints it (exit status 1 if it is empty).
+  prints it (exit status 1 if it is empty). A host given without `ws://` or
+  `wss://` is taken as `wss://host` (over TLS; README "Relays over TLS").
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Only `ws://` relays
-are supported. `--relay` may be given several times, and every command that takes it
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`). Relays are `ws://` or
+`wss://` ("Relays over TLS"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
@@ -464,7 +466,7 @@ the eye every frame (round an ellipse 160 units to either side and 80 up and dow
 once every 120 frames), as a pointer moving over a window would, so 3D lists are
 projected again each frame.
 
-`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws://host:port>]...`
+`terse-relay [--listen 127.0.0.1:7878] --store <dir> [--max-store-bytes N] [--feed-entries N] [--peer <ws(s)://host:port>]... [--tls-cert <pem> --tls-key <pem>]`
 serves a blob store and feeds over WebSocket (NETWORK.md sections 3, 4.3 and 4.7), one
 thread per connection. It keeps the newest `--feed-entries` entries of each feed
 (default 1024, at least 256), and always each feed's latest profile, in `<dir>/feeds`,
@@ -476,7 +478,8 @@ a blob a client wants that it does not hold. Two relays only need one of them to
 the other. It answers searches (`terse find`) from what it holds, articles in the
 order it stored them, newest first, and refuses a connection's fifth search within
 a second. It pings a connection that has been silent for 30 s (`--ping-every`), and
-stops gracefully on SIGTERM. Its other limits (bytes per feed, blobs no entry names,
+stops gracefully on SIGTERM. With `--tls-cert` and `--tls-key` it serves `wss://`
+(TLS) instead of `ws://`, and reads them again on SIGHUP ("Over TLS" below). Its other limits (bytes per feed, blobs no entry names,
 rates per address, a list of writers) are off unless given; `terse-relay --help`
 lists them and "Running a public relay" below says which to use.
 
@@ -528,24 +531,44 @@ such addresses have half the room in all. Since those blobs are not served and g
 an hour, the list leaves nothing to host for free. Entries a peer sends are held to the
 list too.
 
+**Over TLS.** People reach a public relay with `wss://` (WebSocket over TLS), so that
+no one on the way can see which feeds and articles they read. (Nothing could be forged
+over plain `ws://` either: entries are signed and blobs are checked against their
+hashes. TLS is for privacy.) The relay can terminate TLS itself, with
+`--tls-cert <chain.pem> --tls-key <key.pem>` (PEM files, as certbot writes them; the
+relay reads them again on SIGHUP, so a renewal needs `systemctl reload terse-relay`,
+not a restart), or stay plain on a local port behind something that terminates it: a
+Cloudflare Tunnel (below), or any reverse proxy that passes WebSockets. Without
+`--tls-cert` the relay speaks plain `ws://`. A client that speaks the wrong one is told
+which to use ("this relay requires TLS (try wss://)", "this relay does not speak TLS
+(try ws://)").
+
 **Behind Cloudflare** (or another proxy), every connection comes from the proxy, so
 limits per address need the client's address from the proxy's header:
 `--trust-proxy <ranges>` believes `CF-Connecting-IP` (else `X-Forwarded-For`) on
 connections from those addresses only (`@<file>` reads them from a file, one a line).
 Never trust a range anyone else can connect from: the header is easy to forge. The
-reference clients speak plain `ws://`, so the proxy must pass plain HTTP: put the relay
-on a port Cloudflare proxies without TLS (80, 8080, 8880, 2052, 2082, 2086 or 2095), keep
-"Always Use HTTPS" off for its host name, and give people `ws://relay.example.org:8080`
-(and the feed address hint `relay.example.org:8080`). The relay pings a silent
-connection every 30 s, inside Cloudflare's 100 s idle limit.
+relay pings a silent connection every 30 s, inside Cloudflare's 100 s idle limit.
 
-For the first public relay, `relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of memory,
-16 GB of disk free, behind Cloudflare), with a list of writers:
+For the first public relay, `wss://relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of
+memory, 16 GB of disk free), with a list of writers, the relay listens on loopback only
+and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+(`cloudflared`) carries `wss://relay.tersenet.org` to it:
 
-    curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 > /etc/terse-relay/proxies
-    terse-relay --public --listen 0.0.0.0:8080 --store /var/lib/terse-relay/store \
+    terse-relay --public --listen 127.0.0.1:7878 --store /var/lib/terse-relay/store \
         --max-store-bytes 12G --max-connections 256 --writers /etc/terse-relay/writers \
-        --trust-proxy @/etc/terse-relay/proxies --status-file /run/terse-relay/status
+        --trust-proxy 127.0.0.1,::1 --status-file /run/terse-relay/status
+
+Why a tunnel: `cloudflared` connects out to Cloudflare, so the server opens no port at
+all (the firewall keeps denying everything but SSH), nothing can reach the relay
+around Cloudflare's edge, there are no Cloudflare address ranges to keep up to date,
+and the traffic between Cloudflare and the server is encrypted inside the tunnel.
+Cloudflare's SSL mode does not apply to a tunnel. The alternatives are worse for a
+small server: "Flexible" sends the traffic from Cloudflare to the server unencrypted
+across the internet, which undoes half the point; "Full (strict)" works (a Cloudflare
+Origin CA certificate given to `--tls-cert`, the relay on port 443, the firewall open
+to Cloudflare's ranges only), but needs that open port and the list of ranges kept
+current. `cloudflared` takes about 30–50 MB of memory.
 
 Why these numbers: 12 GB of blobs leaves the system, the logs, the entry files (one
 small file each) and a backup's staging room on a 16 GB disk. Memory is what bounds the
@@ -554,31 +577,66 @@ connections: each is a thread, and while it receives a large put it holds up to 
 idle ones cost far less. The relay's index of what it holds takes about 100 bytes per
 entry, and with a list of writers the entries are only the writers' (at most 1024 per
 feed), so it stays small; an open relay should watch the status line's entry count.
-Port 8080 is one Cloudflare proxies as plain HTTP (no TLS between client and
-Cloudflare), which the reference clients need.
+Every connection comes through `cloudflared` on loopback, hence `--trust-proxy
+127.0.0.1,::1`: Cloudflare's edge sets `CF-Connecting-IP`, and only the tunnel can
+connect from there.
 
 `packaging/linux/terse-relay.service` is a systemd unit for this, with the steps to
 install it. Then:
 
-- **Firewall**: only Cloudflare may reach port 8080, so no one can go around the
-  limits (or forge the header) by connecting directly. With ufw (Ubuntu's; the server
-  denies everything but SSH already):
-  `for r in $(cat /etc/terse-relay/proxies); do ufw allow proto tcp from $r to any port 8080 comment cloudflare; done`.
-  Cloudflare's ranges change rarely; when they do, update the file and the rules (and
-  restart the relay, which reads the file at start). In Cloudflare: the DNS record for
-  `relay.tersenet.org` proxied (orange cloud), and "Always Use HTTPS" off for it (a
-  Configuration Rule), or `ws://` clients get a redirect instead of a WebSocket.
+- **The tunnel** (Cloudflare's dashboard; nothing to keep on the server but a token):
+  1. Remove any DNS record for `relay.tersenet.org` (the tunnel makes its own).
+  2. Zero Trust, Networks, Tunnels, "Create a tunnel", type Cloudflared, name
+     `terse-relay`. On the server, install `cloudflared` as the page shows for Debian
+     and Ubuntu (Cloudflare's apt repository) and run the command it gives,
+     `sudo cloudflared service install <token>`: a systemd service that starts at boot.
+  3. Public hostname: subdomain `relay`, domain `tersenet.org`, service type `HTTP`, URL
+     `127.0.0.1:7878`. (HTTP, not HTTPS: the hop from `cloudflared` to the relay stays
+     on the machine.) Save; the DNS record appears, proxied.
+  4. Under the domain: SSL/TLS, Edge Certificates, "Always Use HTTPS" on, so a `ws://`
+     client is redirected (and told to use `wss://`) instead of talking in plain text;
+     Network, WebSockets on (it is by default).
+  5. Check from anywhere: `echo hello > /tmp/hello.txt; terse put /tmp/hello.txt --relay wss://relay.tersenet.org`
+     prints "taken by 1 of 1 relays" (a put needs no writer: it goes to the room for
+     blobs no entry names), or why the relay could not be connected.
+- **Firewall**: no rule to add; the server keeps denying every incoming connection but
+  SSH. `cloudflared` connects out on port 7844 (UDP, or TCP if UDP is blocked), which
+  ufw's default (outgoing allowed) permits.
 - **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
   `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
   entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
-  name a client by its /24 (IPv4) or /48 (IPv6) only.
+  name a client by its /24 (IPv4) or /48 (IPv6) only. `systemctl status cloudflared`
+  for the tunnel.
 - **Backups**: the store directory is all there is (`<store>/feeds` holds the entries).
   A blob or entry file is never changed once written, so copying it while the relay
   runs is safe: `rsync -a --exclude '.*.tmp' /var/lib/terse-relay/store/ backup:`. A
   restored relay rebuilds its index at start; blobs no entry names wait from their
-  file times. The writers file and the proxies file are in `/etc/terse-relay`.
+  file times. The writers file is in `/etc/terse-relay`.
 - **Stopping**: SIGTERM (`systemctl stop`) closes every connection with a close frame;
   what was acknowledged is on disk already.
+
+**Without Cloudflare**, the relay terminates TLS itself with a certificate from Let's
+Encrypt: `sudo certbot certonly --standalone -d relay.example.org` (port 80 open for
+it), then run the relay on port 443 with
+`--tls-cert /etc/letsencrypt/live/relay.example.org/fullchain.pem --tls-key /etc/letsencrypt/live/relay.example.org/privkey.pem`
+(the files readable by its user; `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the
+unit for the port) and a renewal hook that reloads it:
+`--deploy-hook "systemctl reload terse-relay"`. People then use
+`wss://relay.example.org`, and the feed address hint `relay.example.org:443`.
+
+**Relays over TLS** (for everyone who uses one). A `wss://` relay's certificate is
+checked as a browser checks a web site's: it must come from a known certificate
+authority and be for the relay's name. `terse`, `terse-host` and `terse node` carry the
+usual authorities built in (Mozilla's list, the same on every system; a release
+updates it), and `tersereader` uses the system's. Nothing turns the check off. For a
+self-hosted relay with a certificate from a private CA, name the CA's PEM file in
+`TERSE_RELAY_CA` (all four programs read it, and `terse-relay` for its `--peer`s). When
+a relay cannot be used, the programs say why: "the relay's certificate is not trusted",
+"the relay's certificate is for another name", "has expired", "this relay requires TLS
+(try wss://)", "this relay does not speak TLS (try ws://)". `terse relay add
+relay.tersenet.org` (a name without `ws://` or `wss://`) adds `wss://relay.tersenet.org`.
+A feed address hint names a relay over TLS by port 443: `relay.tersenet.org:443` is
+`wss://relay.tersenet.org` (NETWORK.md 4.9).
 
 ## Feeds
 

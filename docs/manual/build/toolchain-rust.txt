@@ -58,7 +58,7 @@ One file, about 590 lines, the counterpart of crt0.S, terse.h and terse.c for th
 - `call`, `call2`, `call6`: the raw `ecall`, `unsafe`; and safe functions named as in terse.h without its `terse_` prefix. System: `wait_frame`, `frame`, `time`, `exit`, `random`, `random_byte`, `device`, `has_full_text`. Events: `next_event` gives an `Event` with `kind`, `key()`, `modifiers()`, `char()`, `pointer()`, `buttons()`, `wheel()`; constants `EV_*`, `KEY_*`, `MOD_*`, `BUTTON_*`. Controllers: `pad_read` gives a `Pad`; `PAD_*`. The terminal: `term_write`, `term_puts`, `term_putc`, `term_put_char`, `term_put_dec`, `term_goto`, `term_color`, `term_fg`, `term_cmd`, `term_get_cursor`, `term_get_colours`, `cell`, `term_cells_write`, `term_cells_read`, `term_palette_set`, `term_fill`; `TERM_*`. The 2D vector display: `VecList`, a list builder over a buffer you own (`colour`, `width`, `origin`, `move_to`, `line_to`, `rect`, `circle`, `disc`, `tri`, `submit`); `vec_submit`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`; `VEC_*`. For a shell (device 8): `mach_start_named`, `mach_place`, `mach_focus`; its other calls through `call`. Functions that take buffers take slices, so they are safe: a device never touches memory it was not handed.
 - `Term`, which implements `core::fmt::Write`: `write!(Term, "{} points", n)`.
 
-The devices outside the program profile (content, the page, sound, the 3D display, machines) are not in the runtime; reach their calls with `call` and the numbers of the call table ([The Terse32 machine](terse:0ee972e6b3c375bc4268228020f0bd88703b7e306f1e526a0f7b9190f18e5d34); terse.h has them all).
+The devices outside the program profile (content, the page, sound, the 3D display, machines) are not in the runtime; reach their calls with `call` and the numbers of the call table ([The Terse32 machine](terse:f909d0839469c1653e0a8301d39269b0eb8ca8d9d8aa278a3af5ab982ffe61fd); terse.h has them all).
 
 ## What things cost
 
@@ -134,4 +134,4 @@ terse pack --rom game.bin --title game --ram-pages 4 \
 
 The linker script's path is relative to the package's root, where cargo runs the linker. This gives the same ROM as `terse build` for the same source (checked with hello.rs). A debug build (`opt-level = 0`) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 128 KiB of ROM or in a frame's budget.
 
-Next: [Building by hand, and other languages](terse:e7828cb927fabe5cc73e699360d8f0782ac1638f051152f94aa57612c5e63268).
+Next: [Building by hand, and other languages](terse:02c6914c18385584d2e3d7b036168202cdb55d7c5b378e5651489de00cc6484f).

@@ -207,7 +207,19 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
         eprintln!("terse: relays saved in {}", path.display());
         Ok(())
     };
-    match (command.as_str(), args.positional.as_slice()) {
+    // A relay typed without a scheme is taken as wss:// (over TLS).
+    let typed = |text: &String| -> Result<String, String> {
+        let url = terse_net::local::typed_url(text).ok_or(format!("not a relay: {text} (a ws:// or wss:// URL, or a host name)"))?;
+        if !text.contains("://") {
+            eprintln!("terse: taken as {url} (over TLS; for a plain relay give ws://{text})");
+        }
+        Ok(url)
+    };
+    let positional: Vec<String> = match command.as_str() {
+        "set" | "add" | "remove" => args.positional.iter().map(typed).collect::<Result<_, _>>()?,
+        _ => args.positional.clone(),
+    };
+    match (command.as_str(), positional.as_slice()) {
         ("set", [url]) => {
             save(std::slice::from_ref(url))?;
             println!("{url}");
@@ -622,9 +634,10 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
                 return Err(format!("{relay}: cannot reach any relay, or the connections were lost"));
             }
             FeedEvent::Unreachable => {}
-            FeedEvent::Disconnected { url, retry_in } => {
+            FeedEvent::Disconnected { url, retry_in, why } => {
                 lost = true;
-                eprintln!("terse: {url}: not connected; retrying in {} s", retry_in.as_secs());
+                let why = why.map(|w| format!(" ({w})")).unwrap_or_default();
+                eprintln!("terse: {url}: not connected{why}; retrying in {} s", retry_in.as_secs());
             }
             FeedEvent::SubscribeRefused(key) => eprintln!("terse: the relay refused a subscription to {}", to_hex(&key)),
             FeedEvent::Subscribed(_) | FeedEvent::Published { .. } | FeedEvent::PublishFailed(_) => {}

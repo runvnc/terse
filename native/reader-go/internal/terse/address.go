@@ -15,8 +15,14 @@ type Hint struct {
 	Text string // as written
 }
 
-// URL is the relay the hint names.
-func (h Hint) URL() string { return fmt.Sprintf("ws://%s:%d", h.Host, h.Port) }
+// URL is the relay the hint names: ws://host:port, or wss://host for
+// port 443 (NETWORK.md 4.9).
+func (h Hint) URL() string {
+	if h.Port == 443 {
+		return "wss://" + h.Host
+	}
+	return fmt.Sprintf("ws://%s:%d", h.Host, h.Port)
+}
 
 // Address is a parsed feed address.
 type Address struct {

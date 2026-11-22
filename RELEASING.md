@@ -12,7 +12,9 @@ The downloads are built by `.github/workflows/release.yml`, which runs
 | `tersereader-<v>-{linux,macos}-{amd64,arm64}.tar.gz` | ubuntu-24.04 | the Go terminal reader (`native/reader-go`), static |
 | `SHA256SUMS.txt` | | the SHA-256 of every file above |
 
-Each archive also has `LICENSE` and a `README.txt` from `packaging/<system>/`;
+Each archive also has `LICENSE`, `NOTICE.txt`, `TLS-LICENSES.txt` (the
+licences of the TLS libraries and root certificates built into the Rust
+programs, from `third_party/tls/`) and a `README.txt` from `packaging/<system>/`;
 the `terse-host` archives also have `FONTS-LICENSE.txt`, the licence of the
 DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
@@ -64,7 +66,11 @@ sources: `native/core-c` (`make && ./test.sh`), `native/driver-example/test.sh`,
 
 1. Set the version in `Cargo.toml` (`[workspace.package] version`; every crate
    takes it from there), run `scripts/cargo build` so `Cargo.lock` follows,
-   and commit. The workflow refuses a tag that differs from this version.
+   and commit. Refresh the trusted roots built in for `wss://` relays
+   (Mozilla's list, `webpki-roots`) in the same commit:
+   `scripts/cargo update -p webpki-roots` (a newer 1.x; check its licence
+   is still CDLA-Permissive-2.0, and copy its `LICENSE` over
+   `third_party/tls/webpki-roots-LICENSE` if it changed). The workflow refuses a tag that differs from this version.
 2. Tag and push:
 
        git tag v0.1.0

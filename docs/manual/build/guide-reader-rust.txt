@@ -158,4 +158,4 @@ For an article of headings and paragraphs it is correct: the test `crates/terse-
 
 A Rust program of 70 lines that shows the headings and paragraphs of any Tersenet article file.
 
-Next: [Make a reader in Rust, step 2: fetch an article](terse:520d0a012b1e8f5423463bacbae68e1618f9c00202a43d0926e9edde63e18dac).
+Next: [Make a reader in Rust, step 2: fetch an article](terse:a564803e1171afd9eb1b555346b708532098a1a9b33ce9e683aee6a700e8b14c).

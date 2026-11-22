@@ -25,6 +25,25 @@ address two-hints
   hint relay.example 7878 ws://relay.example:7878
   hint 203.0.113.7 9000 ws://203.0.113.7:9000
 
+address tls-port-443
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:443"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 443 wss://relay.example
+
+address tls-and-plain
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:443,[2001:db8::1]"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 443 wss://relay.example
+  hint [2001:db8::1] 7878 ws://[2001:db8::1]:7878
+
+address port-80
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example:80"
+  valid yes
+  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+  hint relay.example 80 ws://relay.example:80
+
 address ipv4
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@203.0.113.7"
   valid yes

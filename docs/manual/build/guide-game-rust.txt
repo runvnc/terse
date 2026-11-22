@@ -91,6 +91,6 @@ circle 640 640 r 160 w 16 c ffffffff
 
 ## What you have now
 
-The game in Rust, and with it the guide's part on programs. It is `examples/program/rust/chase.rs` in the Tersenet sources; the full games, `programs/sparks` and `programs/reef`, are in C. Next, a bigger step: [Make a host, step 1: run a program to its end](terse:6ec28298176e2bae82cf47d79cba758e450d4c77dd985854311bd854bd90423d), your own Terse32 machine that runs these programs.
+The game in Rust, and with it the guide's part on programs. It is `examples/program/rust/chase.rs` in the Tersenet sources; the full games, `programs/sparks` and `programs/reef`, are in C. Next, a bigger step: [Make a host, step 1: run a program to its end](terse:60838a175db4b94d52c4a0fcb193dfb19eba8e85ece4425fef0f6c624edeecf0), your own Terse32 machine that runs these programs.
 
-Everything the runtime gives is in [Rust programs](terse:9da515444d9b500b6588775f271fb1e647c7f7045fa23f383587d718b4fd6f2a).
+Everything the runtime gives is in [Rust programs](terse:b0f7a8cf2c12c611e9157b4f351395cdf0511b8a2192b87e5c0983d186d4a713).

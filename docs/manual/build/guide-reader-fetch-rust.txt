@@ -21,7 +21,7 @@ tungstenite = "0.30"
 [workspace]
 ```
 
-- `tungstenite` is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must.
+- `tungstenite` is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must. As listed it speaks plain `ws://`, which the local relay of these steps uses; for a `wss://` relay (over TLS, as public relays are), write `tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }` and add `rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }`, which picks the crypto that builds with nothing but a C compiler.
 - `blake3` is BLAKE3 by its authors; `blake3::hash` gives the 32-byte hash that is a blob's ID.
 - `tersenet` is the Tersenet SDK for Rust: step 3 checks entries with it. It brings `curve25519-dalek`, the curve arithmetic under the widely used `ed25519-dalek`, and `sha2`.
 
@@ -141,11 +141,11 @@ Error: "the relay does not have it"
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:1bc4f7b8fc7dee25a66e4fab2c23ab1f9724edb6bd91ceb8237fc98524ea0f6b) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:366289c7f2990017cb8e6c71ee66b36db468efe9a4dfc4ba790fb60a7cfb32f9) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Rust, step 3: follow a feed](terse:dfa89dd1f08372be3440d17f95657046684959192a2a654bae3003c4679fe283).
-- Every relay message: [The network](terse:503e11afbb308c4daba5d20a1f30eb0a3345d301a5b9f7e925b4a6bed79faa68).
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:5c35d916eddcb759947a356a8e7cb10257ed9111fc7e535e1cfedcc5dc89712e).
+- Every relay message: [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

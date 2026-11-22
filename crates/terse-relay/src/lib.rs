@@ -67,6 +67,7 @@ use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Document};
 use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS, status};
 use terse_net::relay::websocket_config;
+use terse_net::tls::{self, ServerConfig, Stream};
 use terse_net::timeline::Arrivals;
 use terse_net::{BlobStore, FeedKey, FeedStore};
 use tungstenite::Message;
@@ -303,6 +304,8 @@ pub struct Relay {
     /// Messages received on every connection, by type (for counting round
     /// trips: `terse perf`).
     received: [AtomicUsize; 256],
+    /// The certificate it serves `wss://` with (`--tls-cert`), if any.
+    tls: Mutex<Option<Arc<ServerConfig>>>,
 }
 
 /// One connection's share of the relay.
@@ -383,6 +386,7 @@ impl Relay {
             profiles: Mutex::new(profiles),
             peer_messages: std::array::from_fn(|_| AtomicUsize::new(0)),
             received: std::array::from_fn(|_| AtomicUsize::new(0)),
+            tls: Mutex::new(None),
         };
         if relay.policy.indexed() {
             relay.holdings = Some(Mutex::new(relay.build_index()));
@@ -466,6 +470,16 @@ impl Relay {
         Some(h.feeds.get(feed).map_or(0, |f| f.bytes))
     }
 
+    /// Serves `wss://` with this certificate from the next connection on
+    /// (connections already open keep theirs); `None`: plain `ws://`.
+    pub fn set_tls(&self, config: Option<Arc<ServerConfig>>) {
+        *self.tls.lock().unwrap() = config;
+    }
+
+    pub fn tls_config(&self) -> Option<Arc<ServerConfig>> {
+        self.tls.lock().unwrap().clone()
+    }
+
     /// Asks connections and peer links to close (a graceful stop).
     pub fn close(&self) {
         self.closing.store(true, Ordering::Relaxed);
@@ -524,7 +538,16 @@ impl Relay {
             let mut h = h.lock().unwrap();
             let now = self.now_ms();
             let ids = h.expired(now, COLLECT_BATCH);
+            // A batch also ends after 2 ms under the lock, however slow
+            // the disk is at removing files; what is left stays expired
+            // and is taken by the next batch.
+            let started = std::time::Instant::now();
+            let mut done = 0;
             for id in &ids {
+                if done > 0 && started.elapsed() >= Duration::from_millis(2) {
+                    break;
+                }
+                done += 1;
                 // Unlinked under the lock: a put or an entry naming it
                 // waits, then finds it gone.
                 if let Some(w) = h.unwait(id) {
@@ -539,13 +562,13 @@ impl Relay {
                 }
             }
             drop(h);
-            total += ids.len();
-            if ids.len() < COLLECT_BATCH {
+            total += done;
+            if done == ids.len() && ids.len() < COLLECT_BATCH {
                 return total;
             }
             // The lock is not fair: give the connections waiting for it
             // their turn between batches.
-            thread::sleep(Duration::from_micros(200));
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -1351,8 +1374,8 @@ pub fn connect_peers(relay: Arc<Relay>, urls: Vec<String>) {
 fn peer_link(url: &str, relay: &Relay) -> Result<(), String> {
     let transport = terse_net::relay::WsTransport::connect(url, WRITE_TIMEOUT).map_err(|e| e.to_string())?;
     let mut ws = transport.into_inner();
-    ws.get_ref().set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
-    ws.get_ref().set_write_timeout(Some(WRITE_TIMEOUT)).map_err(|e| e.to_string())?;
+    ws.get_ref().tcp().set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
+    ws.get_ref().tcp().set_write_timeout(Some(WRITE_TIMEOUT)).map_err(|e| e.to_string())?;
     ws.send(Message::binary(protocol::encode_peer())).map_err(|e| e.to_string())?;
     eprintln!("terse-relay: peer {url}: connected");
     let conn = relay.connect();
@@ -1387,6 +1410,26 @@ fn refusal(code: u16, text: &str) -> tungstenite::handshake::server::ErrorRespon
     r
 }
 
+/// The connection's stream: TLS when the relay has a certificate
+/// (`--tls-cert`). A client speaking the other way is told so before the
+/// connection closes: a plain request gets a TLS alert (from the TLS
+/// library), a TLS handshake gets an HTTP 400 (the client sees it is not
+/// TLS). Either way the client's error says which scheme to use.
+fn open_stream(tcp: TcpStream, tls: Option<Arc<ServerConfig>>) -> std::io::Result<Stream> {
+    let mut first = [0u8; 1];
+    // Waits for the client's first byte (HANDSHAKE_TIMEOUT at most).
+    let hello = tcp.peek(&mut first)? == 1 && tls::is_tls_hello(first[0]);
+    match tls {
+        Some(config) => tls::accept(config, tcp),
+        None if hello => {
+            let mut tcp = tcp;
+            tls::answer_and_close(&mut tcp, tls::NOT_TLS_ANSWER);
+            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "a TLS handshake, and this relay has no certificate"))
+        }
+        None => Ok(Stream::plain(tcp)),
+    }
+}
+
 /// Serves one connection; on an error, the client's address as it may be
 /// logged (truncated, [`limits::Group::for_log`]) and the error.
 fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::Error)> {
@@ -1399,6 +1442,7 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
         s.set_write_timeout(Some(WRITE_TIMEOUT))
     };
     setup(&stream).map_err(|e| (who.clone(), e.into()))?;
+    let stream = open_stream(stream, relay.tls_config()).map_err(|e| (who.clone(), e.into()))?;
     let counted = std::cell::Cell::new(None);
     let check = |request: &tungstenite::handshake::server::Request, response| {
         let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(String::from);
@@ -1428,8 +1472,8 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
         (who.clone(), e)
     })?;
     let ready = (|| {
-        ws.get_ref().set_read_timeout(Some(POLL))?;
-        ws.get_ref().set_write_timeout(Some(WRITE_TIMEOUT))
+        ws.get_ref().tcp().set_read_timeout(Some(POLL))?;
+        ws.get_ref().tcp().set_write_timeout(Some(WRITE_TIMEOUT))
     })();
     ready.map_err(|e| (who.clone(), e.into()))?;
     let conn = match &counted {
@@ -1443,11 +1487,11 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
 }
 
 fn serve_connection(
-    ws: &mut tungstenite::WebSocket<TcpStream>,
+    ws: &mut tungstenite::WebSocket<Stream>,
     relay: &Relay,
     conn: &Connection,
 ) -> Result<(), tungstenite::Error> {
-    let send = |ws: &mut tungstenite::WebSocket<TcpStream>, m: Vec<u8>| {
+    let send = |ws: &mut tungstenite::WebSocket<Stream>, m: Vec<u8>| {
         if conn.peer.load(Ordering::Relaxed)
             && let Some(&kind) = m.first()
         {

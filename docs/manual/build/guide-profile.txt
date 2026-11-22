@@ -50,7 +50,7 @@ In the reader you can do the same without a terminal: F opens your feeds, P asks
 terse feed address
 ```
 
-prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:5761e3d7f492e9c25cedc6773b8ca6f1825b832ee9ec9266be26afb2bf926a24) says how to share a relay. The reader's help page (?) shows the address too.
+prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:16e514a0deca537571994ee21b5d5e0bd674ee8f6fc4dc4b290c74e635fc5579) says how to share a relay. The reader's help page (?) shows the address too.
 
 ## What is kept where
 
@@ -64,6 +64,6 @@ On Windows the first is `%APPDATA%\terse` and the others are in `%LOCALAPPDATA%\
 
 ## What you have now
 
-A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:0ae06944f87a462ce296ae728ea707dd7b7d3bca1e97dfe5e40776d4af1218a8).
+A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:0ce2e90a3cb61f8f795e81fbc898fe9dcaba2b692301c58c8f4fbeed5ec8485b).
 
-Profiles, names and addresses in full are in [The network](terse:503e11afbb308c4daba5d20a1f30eb0a3345d301a5b9f7e925b4a6bed79faa68).
+Profiles, names and addresses in full are in [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).

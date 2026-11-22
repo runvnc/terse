@@ -165,8 +165,9 @@ pub enum FeedEvent {
     /// Connected to this relay; subscriptions are being renewed.
     Connected(String),
     /// Could not connect to this relay, or the connection was lost; the
-    /// next attempt is in `retry_in`.
-    Disconnected { url: String, retry_in: Duration },
+    /// next attempt is in `retry_in`. `why`: why the last attempt to
+    /// connect failed, in words, if one did.
+    Disconnected { url: String, retry_in: Duration, why: Option<String> },
     /// None of the host's own relays is connected.
     Unreachable,
     /// Every feed is caught up on every connected relay (NETWORK 4.3) and
@@ -250,6 +251,12 @@ impl Link {
             retry_in: FIRST_RETRY,
             catching_up: HashMap::new(),
         }
+    }
+
+    /// Why the last attempt to connect failed, without the URL.
+    fn failure(&self) -> Option<String> {
+        let why = self.client.last_failure()?;
+        Some(why.strip_prefix(&format!("{}: ", self.url)).unwrap_or(why).to_string())
     }
 
     fn serves(&self, feed: &FeedKey) -> bool {
@@ -521,6 +528,12 @@ impl Node {
     /// The URLs of the host's own relays.
     pub fn relay_urls(&self) -> Vec<String> {
         self.links.values().filter(|l| l.feeds.is_none()).map(|l| l.url.clone()).collect()
+    }
+
+    /// Why the last attempt to connect to a relay failed, in words, until
+    /// one succeeds.
+    pub fn relay_failure(&self, url: &str) -> Option<String> {
+        self.links.values().find(|l| l.url == url).and_then(Link::failure)
     }
 
     pub fn store(&self) -> &BlobStore {
@@ -1269,7 +1282,11 @@ impl Node {
                 if std::mem::take(&mut link.was_connected) {
                     link.retry_at = Some(now + link.retry_in);
                     link.catching_up.clear();
-                    self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
+                    self.events.push(FeedEvent::Disconnected {
+                        url: link.url.clone(),
+                        retry_in: link.retry_in,
+                        why: link.failure(),
+                    });
                 }
                 if link.client.connecting() {
                     continue;
@@ -1283,7 +1300,11 @@ impl Node {
                     failed = link.client.take_connect_failure().is_some();
                 }
                 if failed {
-                    self.events.push(FeedEvent::Disconnected { url: link.url.clone(), retry_in: link.retry_in });
+                    self.events.push(FeedEvent::Disconnected {
+                        url: link.url.clone(),
+                        retry_in: link.retry_in,
+                        why: link.failure(),
+                    });
                     link.retry_at = Some(now + link.retry_in);
                     link.retry_in = (link.retry_in * 2).min(MAX_RETRY);
                     continue;
@@ -1905,10 +1926,16 @@ impl Node {
 
     /// `fetch`, with failures as messages.
     pub fn fetch_bytes(&mut self, id: BlobId) -> Result<Vec<u8>, String> {
-        match self.fetch(id) {
+        let done = self.fetch(id);
+        // Relays that could not be connected, and why (an untrusted
+        // certificate, say), since they were not asked.
+        let unreached: Vec<String> =
+            self.links.values().filter_map(|l| l.failure().map(|why| format!("{}: {why}", l.url))).collect();
+        let note = if unreached.is_empty() { String::new() } else { format!(" (not connected: {})", unreached.join("; ")) };
+        match done {
             Done::Got(bytes) => Ok(bytes),
-            Done::NotFound => Err(format!("blob {} not found", to_hex(&id))),
-            _ => Err(format!("fetching blob {} failed", to_hex(&id))),
+            Done::NotFound => Err(format!("blob {} not found{note}", to_hex(&id))),
+            _ => Err(format!("fetching blob {} failed{note}", to_hex(&id))),
         }
     }
 
