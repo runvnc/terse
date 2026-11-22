@@ -401,7 +401,7 @@ impl SoftScreen {
     /// Takes the terminal (SPEC §terminal.presentation: presentation is up to the host).
     pub fn update(&mut self, terminal: &Terminal) {
         let (col, row) = terminal.cursor();
-        self.cursor = terminal.cursor_visible().then_some((col as u32, row as u32));
+        self.cursor = terminal.shows_cursor().then_some((col as u32, row as u32));
         if terminal.palette() != &self.palette {
             self.palette = *terminal.palette();
             for (i, &[r, g, b]) in self.palette.iter().enumerate() {
@@ -453,7 +453,7 @@ impl SoftScreen {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         bytes.hash(&mut h);
         terminal.palette().hash(&mut h);
-        (terminal.cursor_visible(), terminal.cursor()).hash(&mut h);
+        (terminal.shows_cursor(), terminal.cursor()).hash(&mut h);
         terminal.full_text().hash(&mut h);
         font.name().hash(&mut h);
         let key = h.finish() | 1;

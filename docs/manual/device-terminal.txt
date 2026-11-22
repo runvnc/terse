@@ -106,7 +106,7 @@ Later bytes of a sequence must be `80h`-`BFh`. Any other lead byte (`80h`-`C1h`,
 | `05h` | Show the cursor |
 | `06h` | Hide the cursor |
 
-"Cleared" means a space (`0020h`) with the current colours. For `04h`, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands `02h` to `06h` leave the cursor and pending wrap as they are; `01h` clears pending wrap. In terse.h the values are `TERM_CLEAR`, `TERM_SCROLL_UP`, `TERM_SCROLL_DOWN`, `TERM_CLEAR_EOL`, `TERM_CURSOR_ON` and `TERM_CURSOR_OFF`; `term_cmd` sends one.
+"Cleared" means a space (`0020h`) with the current colours. For `04h`, if the cursor is on the right half of a wide pair, the left half becomes a space and keeps its colours. Commands `02h` to `06h` leave the cursor and pending wrap as they are; `01h` clears pending wrap. In terse.h the values are `TERM_CLEAR`, `TERM_SCROLL_UP`, `TERM_SCROLL_DOWN`, `TERM_CLEAR_EOL`, `TERM_CURSOR_ON` and `TERM_CURSOR_OFF`; `term_cmd` sends one. A host draws the cursor only once the program has used the terminal since reset (any call that changes it), so a program that never touches the terminal shows none.
 
 ## Reset state and palette
 

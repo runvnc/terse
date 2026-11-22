@@ -872,7 +872,15 @@ bright colours, 16–231 the 6 × 6 × 6 colour cube, 232–255 the grey ramp.
 
 How the host draws the grid (font, size, cursor shape, smoothing) is not part
 of this spec and cannot be observed by the program, except which
-characters it must be able to draw (§terminal.text). §vector.layers says how the
+characters it must be able to draw (§terminal.text). The one rule on the
+cursor: a host draws it only when it is shown and the program has used the
+terminal since reset (made a call that changes it: `write`, `command`,
+`set_cursor`, `set_colours`, `cells_write`, `palette_set`; a terminal
+restored from a snapshot counts as used unless it is in the reset state,
+§terminal.reset). So a program that never uses the terminal, or has not yet
+(before its first frame), shows no cursor; nor does a blank grid a host
+draws in place of a machine's (one without the terminal, a plate,
+§machines.ink). §vector.layers says how the
 grid is combined with the vector display. Since the scrolls and clears inside
 a `write` are not charged, a host should make a scroll or a clear cost time
 proportional to one row, not to the whole grid (for example, rows kept as a
