@@ -400,6 +400,8 @@ pub(crate) fn say_delivery(node: &mut Node) {
 pub(crate) fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
     let mut node = Node::open(args.get("--store").map(PathBuf::from), relays, DEFAULT_TIMEOUT)?;
     node.set_feed_relays(!args.has("--no-feed-relays"));
+    // A command exits after its put or publish: every relay gets it first.
+    node.set_deliver_to_all(true);
     Ok(node)
 }
 

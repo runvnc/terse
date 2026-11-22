@@ -305,6 +305,8 @@ pub struct Node {
     /// What each relay did with the last put or entry every relay has
     /// answered.
     delivery: Vec<(String, Delivery)>,
+    /// See [`Node::set_deliver_to_all`].
+    deliver_to_all: bool,
     /// Operations waiting for a relay to be connected, and since when.
     deferred: Vec<Deferred>,
     deferred_since: Option<Instant>,
@@ -356,6 +358,7 @@ impl Node {
             waiting: HashMap::new(),
             ops: HashMap::new(),
             delivery: Vec::new(),
+            deliver_to_all: false,
             next_op: 0,
             ready: Vec::new(),
             subscriptions: Subscriptions::default(),
@@ -1820,11 +1823,25 @@ impl Node {
         std::mem::take(&mut self.delivery)
     }
 
-    /// For the blocking calls that send to the relays: waits until no relay
-    /// is still being connected (each is connected, or has failed to
-    /// connect), so that what is sent goes to every relay that can be
-    /// reached, not only to those that connected first.
+    /// Makes the blocking puts and publishes deliver to every relay: for a
+    /// program that exits after one (the `terse` commands). They then wait
+    /// until no relay is still being connected, and after the first
+    /// acceptance until every relay sent to has answered or failed (at
+    /// most the relay timeout), so that what is sent goes to every relay
+    /// that can be reached and none is cut off by the exit; see
+    /// [`Self::take_delivery`]. Off by default: a host that keeps running
+    /// is not held up by a relay that does not answer (NETWORK 5).
+    pub fn set_deliver_to_all(&mut self, on: bool) {
+        self.deliver_to_all = on;
+    }
+
+    /// With [`Self::set_deliver_to_all`], before a blocking call sends:
+    /// waits until no relay is still being connected (each is connected,
+    /// or has failed to connect).
     fn connect_all(&mut self) {
+        if !self.deliver_to_all {
+            return;
+        }
         loop {
             let done = self.poll();
             self.ready.extend(done);
@@ -1835,13 +1852,12 @@ impl Node {
         }
     }
 
-    /// For the blocking calls that send to the relays: `wait_for`, then
-    /// waits until every relay the put or entry went to has answered (or
-    /// failed), so that a program that exits next does not cut off a
-    /// relay still taking it.
+    /// `wait_for`; then, with [`Self::set_deliver_to_all`], waits until
+    /// every relay the put or entry went to has answered (or failed).
     fn wait_for_all(&mut self, token: Token) -> Done {
         let done = self.wait_for(token);
-        while self.ops.values().any(|op| matches!(op, Op::Put { .. } | Op::PublishBlob { .. } | Op::Entry { .. })) {
+        while self.deliver_to_all
+            && self.ops.values().any(|op| matches!(op, Op::Put { .. } | Op::PublishBlob { .. } | Op::Entry { .. })) {
             let more = self.poll();
             self.ready.extend(more);
         }
