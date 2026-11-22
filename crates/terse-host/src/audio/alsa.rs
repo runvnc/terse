@@ -36,8 +36,6 @@ struct Lib {
     recover: Recover,
     delay: Delay,
     close: Close,
-    /// snd_pcm_drain, of the same type.
-    drain: Close,
     strerror: StrError,
 }
 
@@ -56,7 +54,6 @@ fn lib() -> Result<&'static Lib, String> {
             recover: *l.get::<Recover>(b"snd_pcm_recover\0").map_err(|e| e.to_string())?,
             delay: *l.get::<Delay>(b"snd_pcm_delay\0").map_err(|e| e.to_string())?,
             close: *l.get::<Close>(b"snd_pcm_close\0").map_err(|e| e.to_string())?,
-            drain: *l.get::<Close>(b"snd_pcm_drain\0").map_err(|e| e.to_string())?,
             strerror: *l.get::<StrError>(b"snd_strerror\0").map_err(|e| e.to_string())?,
         };
         // ALSA's own messages (a missing device, a plugin with no server)
@@ -138,8 +135,13 @@ impl Writer for Alsa {
         (r >= 0).then(|| d.max(0) as u64 * 1_000_000 / RATE as u64)
     }
 
+    /// Waits for what is buffered to play (at most a fifth of a second).
+    /// Not snd_pcm_drain: through PipeWire's ALSA plugin it can wait
+    /// forever.
     fn drain(&mut self) {
-        unsafe { (self.lib.drain)(self.pcm) };
+        if let Some(d) = self.delay_us() {
+            std::thread::sleep(std::time::Duration::from_micros(d.min(200_000)));
+        }
     }
 
     fn underruns(&self) -> Option<u64> {

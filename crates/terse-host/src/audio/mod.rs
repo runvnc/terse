@@ -278,7 +278,15 @@ impl Drop for Output {
             self.shared.cv.notify_all();
         }
         let stats = match &mut self.keep {
-            Keep::Thread(t) => t.take().and_then(|t| t.join().ok()),
+            // A stuck output (a server that stopped answering) must not
+            // keep the host from exiting: half a second, then it is left.
+            Keep::Thread(t) => t.take().and_then(|t| {
+                let until = Instant::now() + Duration::from_millis(500);
+                while !t.is_finished() && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if t.is_finished() { t.join().ok() } else { None }
+            }),
             #[cfg(all(feature = "audio", not(target_os = "linux")))]
             Keep::Stream(_) => None,
         };
@@ -498,6 +506,11 @@ pub fn configure(config: Option<std::path::PathBuf>, volume: Option<u8>, mute: b
     let _ = SETTINGS.set((config, v));
 }
 
+/// Now, in seconds since 1970 (to compare with a recording's clock).
+fn epoch() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+}
+
 /// The host's sound: closed until a machine first makes a sound; says
 /// once why it cannot be heard, and again only when that changes.
 pub struct Audio {
@@ -508,6 +521,10 @@ pub struct Audio {
     /// No new try before then.
     retry_at: Option<Instant>,
     volume: Volume,
+    /// `TERSE_AUDIO_TRACE`: a line for each frame handed to the output
+    /// (the pairs handed over before it, the time, the first sound in it),
+    /// to compare with a recording of the output; and the pairs so far.
+    trace: Option<(std::fs::File, u64)>,
     /// Where a changed volume is kept.
     config: Option<std::path::PathBuf>,
 }
@@ -515,7 +532,7 @@ pub struct Audio {
 impl Audio {
     pub fn new(choice: Choice) -> Audio {
         let (config, volume) = SETTINGS.get().cloned().unwrap_or_default();
-        Audio { choice, output: None, told: None, retry_at: None, volume, config }
+        Audio { choice, output: None, told: None, retry_at: None, volume, trace: None, config }
     }
 
     /// A volume key: the volume changed and kept; what to show.
@@ -557,6 +574,7 @@ impl Audio {
             match o.dead() {
                 None => {
                     o.push(s);
+                    self.trace(s);
                     return None;
                 }
                 Some(e) => {
@@ -577,11 +595,12 @@ impl Audio {
                     eprintln!("terse-host: sound: playing again, through {}", o.name);
                 }
                 o.push(s);
+                self.trace = std::env::var_os("TERSE_AUDIO_TRACE").and_then(|p| std::fs::File::create(p).ok()).map(|f| (f, 0));
+                self.trace(s);
                 if std::env::var_os("TERSE_AUDIO_STATS").is_some() {
                     // For measuring the latency against a recording of the
                     // output: when the first sound left the host.
-                    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-                    eprintln!("terse-host: sound stats: first sound handed to {} at {:.6}", o.name, t.as_secs_f64());
+                    eprintln!("terse-host: sound stats: first sound handed to {} at {:.6}", o.name, epoch());
                 }
                 self.output = Some(o);
                 self.retry_at = None;
@@ -591,6 +610,15 @@ impl Audio {
                 self.retry_at = Some(Instant::now() + RETRY);
                 self.tell(e)
             }
+        }
+    }
+
+    fn trace(&mut self, s: &[i16]) {
+        use std::io::Write;
+        if let Some((f, n)) = &mut self.trace {
+            let first = s.iter().position(|&x| x != 0).map_or(-1, |i| (i / 2) as i64);
+            let _ = writeln!(f, "{n} {:.6} {first}", epoch());
+            *n += s.len() as u64 / 2;
         }
     }
 
