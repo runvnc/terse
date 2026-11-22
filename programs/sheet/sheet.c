@@ -1983,7 +1983,7 @@ static void edit_window(uint32_t room, uint32_t *from, uint32_t *to)
 {
     uint32_t w = 0, s = ecaret, e = ecaret;
     if (est_width(ebuf, elen) > room)
-        room -= 180; /* an ellipsis at each end */
+        room -= 240; /* an ellipsis (1 em) at each end */
     while (s) {
         uint32_t p = s - 1, cw;
         while (p && (ebuf[p] & 0xC0) == 0x80)
@@ -2114,7 +2114,7 @@ static void build_doc(void)
             if (c == sel && editing) {
                 /* The entry being typed, in its cell too. */
                 uint32_t s, e;
-                edit_window(CELL_WIDTH - 40, &s, &e);
+                edit_window(CELL_WIDTH - 60, &s, &e);
                 doc_colour(25, 25, 25);
                 if (s)
                     text("\xE2\x80\xA6");
