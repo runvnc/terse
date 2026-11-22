@@ -1,0 +1,22 @@
+# programs/sheet in the window (scripts/drive-shots.py): the example
+# with its chart, still while nobody types; then the panels' count set to
+# 77 and the posts' to twice that, by a formula.
+settle max 300
+expect idle 120
+shot sheet-1-example.png
+press down
+wait 6
+press down
+wait 6
+press right
+wait 6
+type 77
+press enter
+wait 20
+type =B3*2
+press enter
+settle max 300
+shot sheet-2-typed.png
+expect page contains 154
+perf
+quit

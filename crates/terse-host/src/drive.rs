@@ -12,10 +12,12 @@
 //! without a frame number, `wait`, `type`) and the commands of 6.5:
 //! pictures, dumps, watching frames for changes, expectations.
 //!
-//! On Linux it never shows a window on the desktop it is started from: it
-//! starts a headless Wayland compositor of its own (weston) and runs
-//! itself in it ([`nest`]); `TERSE_DRIVE_DISPLAY=current` uses the current
-//! display instead (a CI machine's, or another platform's).
+//! It never shows a window on the desktop it is started from unless told
+//! to ([`display`]): on Linux it starts a headless Wayland compositor of
+//! its own (weston) and runs itself in it ([`nest`]); on Windows and macOS,
+//! which have no headless display of their own, it refuses. Only
+//! `TERSE_DRIVE_DISPLAY=current` uses the current display (a CI machine's,
+//! whose desktop nobody uses).
 //!
 //! The script comes from a file, run to its end, or from a FIFO or `-`
 //! (standard input) line by line as written, for an agent driving it by
@@ -1121,18 +1123,49 @@ fn compare(now: &Picture, prev: &Picture, history: &VecDeque<Picture>, frame: u3
     (change, blink)
 }
 
+/// Where a drive's window goes ([`display`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Display {
+    /// In a headless compositor of its own (Linux: weston).
+    Nest,
+    /// On the display it was started from: asked for
+    /// (`TERSE_DRIVE_DISPLAY=current`), or already inside its own.
+    Current,
+    /// Nowhere: the system has no headless display of its own (Windows,
+    /// macOS), and a window on this desktop was not asked for.
+    Refuse,
+}
+
+/// The rule: a drive never shows a window on the desktop it was started
+/// from unless `TERSE_DRIVE_DISPLAY=current` says so (meant for a CI
+/// machine, whose desktop nobody uses). On Linux it nests in weston; on a
+/// system with no headless display of its own it refuses.
+pub fn display(linux: bool, nested: bool, current: bool) -> Display {
+    if nested || current {
+        Display::Current
+    } else if linux {
+        Display::Nest
+    } else {
+        Display::Refuse
+    }
+}
+
 /// Runs `terse-host` again with `args` inside a headless Wayland compositor
 /// of its own (weston), so no window is shown on this desktop; returns its
-/// exit status. `None`: not needed here (another platform, or
-/// `TERSE_DRIVE_DISPLAY=current`, or already inside).
+/// exit status. `None`: the window goes on the current display
+/// (`TERSE_DRIVE_DISPLAY=current`, or already inside). An error where it
+/// would have to show a window on this desktop without being asked to.
 pub fn nest(args: &[String], size: Option<(u32, u32)>) -> Option<Result<ExitCode, String>> {
-    if !cfg!(target_os = "linux") || std::env::var_os("TERSE_DRIVE_NESTED").is_some() {
-        return None;
+    let nested_already = std::env::var_os("TERSE_DRIVE_NESTED").is_some();
+    let current = std::env::var("TERSE_DRIVE_DISPLAY").is_ok_and(|v| v == "current");
+    match display(cfg!(target_os = "linux"), nested_already, current) {
+        Display::Current => None,
+        Display::Nest => Some(nested(args, size)),
+        Display::Refuse => Some(Err(format!(
+            "--drive: {} has no headless display of its own, and a window on this desktop was not asked for; on a machine whose desktop nobody uses (CI), set TERSE_DRIVE_DISPLAY=current",
+            std::env::consts::OS
+        ))),
     }
-    if std::env::var("TERSE_DRIVE_DISPLAY").is_ok_and(|v| v == "current") {
-        return None;
-    }
-    Some(nested(args, size))
 }
 
 fn nested(args: &[String], size: Option<(u32, u32)>) -> Result<ExitCode, String> {
@@ -1223,6 +1256,17 @@ pub fn remove_scratch(d: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_on_this_desktop_only_when_asked_for() {
+        // Linux: a compositor of its own, unless asked, or already in it.
+        assert_eq!(display(true, false, false), Display::Nest);
+        assert_eq!(display(true, false, true), Display::Current);
+        assert_eq!(display(true, true, false), Display::Current);
+        // Windows, macOS: no headless display, so nothing unless asked.
+        assert_eq!(display(false, false, false), Display::Refuse);
+        assert_eq!(display(false, false, true), Display::Current);
+    }
 
     #[test]
     fn lines_check() {

@@ -1,0 +1,15 @@
+# programs/hello in the window (scripts/drive-shots.py): its first
+# screen, then text typed as a keyboard gives it.
+wait 10
+shot hello-1-start.png
+type Hi there
+wait 5
+expect terminal contains Hi there
+press enter
+type Shift and digits 123
+wait 5
+expect terminal contains Shift and digits 123
+wait 10
+shot hello-2-typed.png
+perf
+quit

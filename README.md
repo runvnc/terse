@@ -949,10 +949,14 @@ sticks are -127 to 127, x then y, and the right stick defaults to `0 0`.
 `terse-host [<image> | --shell] --drive <script|fifo|->` runs the program in the
 real window (the renderer chosen, the page laid out on its thread, figures
 rasterised beside the frames, 60 frames a second of real time) with input
-from a script, and reports what was presented. On Linux it starts a headless
-weston of its own and runs inside it, so no window appears on the desktop
-(`TERSE_DRIVE_DISPLAY=current` uses the current display: for CI on other
-systems). Without `--store`, `--config`, `--data` it uses scratch directories,
+from a script, and reports what was presented. It never opens a window on
+the desktop it is started from unless told to: on Linux it starts a headless
+weston of its own and runs inside it, so no window appears; on Windows and
+macOS, which have no such display, it refuses. `TERSE_DRIVE_DISPLAY=current`
+uses the current display, and a window shows there: set it only on a machine
+whose desktop nobody uses (a CI runner; `.github/workflows/test.yml` drives
+hello, sparks and the sheet so on Linux, macOS and Windows and keeps the
+pictures). Without `--store`, `--config`, `--data` it uses scratch directories,
 removed afterwards; no relay without `--relay`; consent is asked as in a window
 (answer with `press y`).
 

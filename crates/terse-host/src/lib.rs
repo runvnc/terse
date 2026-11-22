@@ -199,8 +199,9 @@ const USAGE: &str = "usage:
   --drive runs the window driven by a script and watched (README, Driving the window; STATE.md 6.5):
   keys as a keyboard gives them, the pointer in window pixels, the window's size; pictures as
   presented, dumps of the terminal, page, vectors and state, a watch for pictures that change while
-  idle, expectations (exit status 1 if one fails). On Linux it starts a headless compositor (weston)
-  of its own: no window is shown on this desktop (TERSE_DRIVE_DISPLAY=current shows it here). The
+  idle, expectations (exit status 1 if one fails). No window is shown on this desktop: on Linux it
+  starts a headless compositor (weston) of its own; on Windows and macOS it refuses, unless
+  TERSE_DRIVE_DISPLAY=current, which shows the window here (for a CI machine only). The
   script is a file, a FIFO (read again after each writer) or - (standard input); with no --store,
   --config or --data, scratch directories are used and removed after; no relay unless --relay.";
 
