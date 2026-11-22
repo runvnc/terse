@@ -4,10 +4,10 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## User guide
 
-- [Install Tersenet](terse:eb9983e66b52fa6809627ac98432d7f4ee23379c5edc3c510ab52b30443f0386): one command on Linux and macOS, a zip on Windows, or from the source.
-- [Run Tersenet](terse:e90e5a45ca9eafaef79e789244430a82c402ca4241675d84ef8f02eec9b73865): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:f7b20a4eac8898a85a05fcfc1a5859119daf88f39368896c4e0252748332f1aa): your key, your name and your address; no account needed.
-- [Write and publish an article](terse:371c78d5ff6429a9e4301813c5512fe6cf700cf8dd6f71af57f88668dcce9021): a plain text file, how it compares with Markdown, and your feed.
+- [Install Tersenet](terse:321f512ed312d8a3eb04e68ea4b2963df6b72039aadc67ca7d33fd595f9cb428): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:2dcf5e6420a6903df0b5bee9e65e624cce0e7b9e5182ef230c2584ff27d0d6c8): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:3f9c9b3997aeefeb9e4f892834a72c1bd4f7114c55c24ffb74132f4c0cacd910): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:a9a47944b739913583181e776d0b8998c0dd46e69a17cf6dd4be999a460564a5): a plain text file, how it compares with Markdown, and your feed.
 - [Read articles and follow links](terse:7655870119588a77dd6048a4240c2dba2f94d5ca230a8f72b0ce7eabea1c1c49): the timeline, links and search.
 - [Subscribe to someone's feed](terse:83300d6363d615eeed98e44b034d9048aaaf63a207b9519f4b0a19d25d563e74): a shared relay, by address or by name, nicknames.
 - [Find and play a game](terse:4b14f0131681f1d61fe2fd41a079fa2561ef911e116b5a028d2ae701715549a5): the built-in game, programs from feeds and links, saving your place.

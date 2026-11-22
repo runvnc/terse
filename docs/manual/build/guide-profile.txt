@@ -64,6 +64,6 @@ On macOS they are the same folders. On Windows the first is `%APPDATA%\terse` an
 
 ## What you have now
 
-A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:371c78d5ff6429a9e4301813c5512fe6cf700cf8dd6f71af57f88668dcce9021).
+A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:a9a47944b739913583181e776d0b8998c0dd46e69a17cf6dd4be999a460564a5).
 
 Profiles, names and addresses in full are in [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).
