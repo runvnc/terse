@@ -1417,9 +1417,11 @@ impl ApplicationHandler for App {
                     let can_shed = !self.looks.look.no_shed && self.governor.can_shed();
                     if let Some(judged) = self.watch.presented(acquire, render, can_shed) {
                         if self.drive.is_some()
-                            && let Some(l) = judged.late.as_ref().filter(|_| judged.excused.is_none())
+                            && let Some(l) = judged.late.as_ref().filter(|l| judged.excused.is_none() && l.verdict == terse_perflog::Verdict::Blamed)
                         {
-                            self.note_slow(format!("late frame: {l:?}"));
+                            // Late by this host's or a machine's doing (not
+                            // starved by other work on the computer).
+                            self.note_slow(format!("late frame {}: {:?} took {:.1} ms", l.frame, l.top.component, l.wall_ns as f64 / 1e6));
                         }
                         if self.looks.rule {
                             self.act(event_loop, judged.acts);

@@ -133,3 +133,33 @@ fn a_changing_picture_is_caught_and_a_still_one_is_not() {
         assert!(out.contains("ok: expect idle 60") && !out.contains("blinks"), "{renderer}: {}", text(&o));
     }
 }
+
+/// A document whose words change every 10 frames under the same figure
+/// (as a spreadsheet's do under its chart): the words change, the figure
+/// never blinks (SPEC §page.layout: a host keeps a figure shown across
+/// layouts; it used to vanish for the frames each new layout's figure took
+/// to rasterise).
+#[test]
+fn a_figure_does_not_blink_when_the_words_around_it_change() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    if !have_weston() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut cycle = vec![Some("one")];
+    cycle.extend([None; 9]);
+    cycle.push(Some("two"));
+    cycle.extend([None; 9]);
+    let image = page_image(dir.path(), "words", &cycle);
+    for renderer in ["software", "gpu"] {
+        let o = drive(dir.path(), &image, "wait 30\nwatch 150\nwait 160\nquit\n", renderer);
+        if renderer == "gpu" && String::from_utf8_lossy(&o.stderr).contains("no graphics adapter") {
+            terse_testkit::skip!("gpu", "no graphics adapter in the compositor");
+            continue;
+        }
+        let out = String::from_utf8_lossy(&o.stdout).to_string();
+        assert!(o.status.success(), "{renderer}: {}", text(&o));
+        assert!(out.contains("watch 150: 150 pictures") && out.contains(" changed"), "{renderer}: {}", text(&o));
+        assert!(!out.contains("blinks"), "{renderer}: the figure blinked: {}", text(&o));
+    }
+}

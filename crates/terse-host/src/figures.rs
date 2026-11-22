@@ -7,12 +7,22 @@ use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use terse_core::page::{DEFAULT_STROKE_WIDTH, FigurePath, LayoutKey, Segment};
+use terse_core::page::{DEFAULT_STROKE_WIDTH, FigurePath, Segment};
 use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-/// A figure rasterised for one look: the layout it belongs to, its index
-/// there, the pixel size and whether it is drawn as outlines.
-pub type FigureKey = (LayoutKey, usize, (u32, u32), bool);
+/// A figure rasterised for one look: what it draws ([`figure_id`]: the
+/// same figure in another layout of the document has the same key, so it
+/// is not rasterised again and never blinks), the pixel size and whether
+/// it is drawn as outlines.
+pub type FigureKey = (u64, (u32, u32), bool);
+
+/// What a figure draws, as a number: its size, colour and path commands.
+pub fn figure_id(f: &terse_core::page::Figure) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (f.width, f.height, f.rgb, &f.path).hash(&mut h);
+    h.finish()
+}
 
 /// Rasterises `paths` into a `size` pixel image, premultiplied RGBA, at
 /// `scale` pixels per screen unit (coordinates are sixteenths). Paths are
@@ -79,8 +89,8 @@ pub struct Done {
 /// Runs `job` (on any thread).
 pub fn run(job: &Job) -> Done {
     let start = std::time::Instant::now();
-    let (w, h) = job.key.2;
-    let data = rasterize(&job.paths, (w, h), job.scale, job.key.3)
+    let (w, h) = job.key.1;
+    let data = rasterize(&job.paths, (w, h), job.scale, job.key.2)
         .map(Pixmap::take)
         .unwrap_or_else(|| vec![0; (w.max(1) * h.max(1) * 4) as usize]);
     Done { key: job.key, data, ms: start.elapsed().as_secs_f64() * 1000.0 }

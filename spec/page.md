@@ -292,6 +292,14 @@ layout; and the caps of §page.document bound the work of drawing each figure,
 which a host may also do outside the frames and only for the figures near
 the view (showing a figure some frames late).
 
+A new layout never makes a figure blink: a figure that draws the same
+(the same size, colour and path commands) as one shown before is shown
+at once in the new layout, and while a changed figure is being drawn the
+figure shown in its place before stays there. (A program re-submits its
+document whenever its text changes, a spreadsheet at every key; a chart
+in it that vanished for the frames its figure took to draw flashed at
+every key.)
+
 ## §page.events Events
 
 The device's events (§events):

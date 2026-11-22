@@ -447,6 +447,10 @@ impl Drive {
     /// The host noted a slow frame or acted on one (PERFORMANCE.md R15):
     /// a late frame is counted, an act said.
     pub fn slow_frame(&mut self, note: String) {
+        if note.starts_with("the look shed") {
+            // Presentation only: said, not counted as slow.
+            return self.say(&format!("frame {}: {note}", self.frame));
+        }
         if note.starts_with("late frame") {
             self.late += 1;
         } else {
