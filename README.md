@@ -2494,7 +2494,7 @@ Host cost per budget unit, for a frame spent entirely in one kind of call
 | `cells_write` 8 / 2,400 cells, `cells_read` 2,400 | 2.4 / 0.23 / 0.20 | 0.56 / 0.05 / 0.05 |
 | `palette_set` 256 | 1.2 | 0.28 |
 | vector `submit` 100 / 16,384 bytes | 1.4 / 0.21 | 0.32 / 0.05 |
-| content put 16 KiB (8 accepted a frame) / 1 MiB | 4.1 / 1.3 | 0.94 / 0.30 |
+| content put 16 KiB (8 accepted a frame) / 888 KiB (1 MiB − 8 KiB when measured) | 4.1 / 1.3 | 0.94 / 0.30 |
 | content get, 16 KiB delivered per completion | 4.0 | 0.93 |
 
 ## Licence
