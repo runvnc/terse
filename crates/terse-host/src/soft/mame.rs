@@ -190,10 +190,15 @@ fn prep(b: &BeamInstance, halo: f32) -> Prep {
 }
 
 /// The interval of `x` where `lo ≤ k + m·x ≤ hi`, intersected with `iv`.
+/// A pixel centre exactly on an edge belongs to the quad as the GPU's
+/// rasteriser decides (its top-left rule): on a left edge yes, a right edge
+/// no (the caller takes the interval as half open), on a horizontal edge
+/// yes if it is the top one: `dy` is how the value grows with y.
 #[inline]
-fn within(iv: (f32, f32), k: f32, m: f32, lo: f32, hi: f32) -> (f32, f32) {
+fn within(iv: (f32, f32), k: f32, m: f32, lo: f32, hi: f32, dy: f32) -> (f32, f32) {
     if m.abs() < 1e-12 {
-        return if k >= lo && k <= hi { iv } else { (1.0, 0.0) };
+        let inside = if dy >= 0.0 { k >= lo && k < hi } else { k > lo && k <= hi };
+        return if inside { iv } else { (1.0, 0.0) };
     }
     let (a, b) = ((lo - k) / m, (hi - k) / m);
     let (a, b) = if a <= b { (a, b) } else { (b, a) };
@@ -224,14 +229,15 @@ fn draw_beam(p: &Prep, f: &Frame, acc: &mut [f32], masks: &mut [Mask], y0: usize
         // along = ra + dir.x · cx, across = rc + nrm.x · cx.
         let ra = ry * p.dir[1] - p.p0[0] * p.dir[0];
         let rc = ry * p.nrm[1] - p.p0[0] * p.nrm[0];
-        let iv = within((f32::MIN, f32::MAX), ra, p.dir[0], -pad, p.len + pad);
-        let iv = within(iv, rc, p.nrm[0], -pad, pad);
+        let iv = within((f32::MIN, f32::MAX), ra, p.dir[0], -pad, p.len + pad, p.dir[1]);
+        let iv = within(iv, rc, p.nrm[0], -pad, pad, p.nrm[1]);
         if iv.0 > iv.1 {
             continue;
         }
         // Pixels whose centre (x + ½) is inside.
         let xa = ((iv.0 - 0.5).ceil() as i32).max(p.cols.0).max(0);
-        let xb = ((iv.1 - 0.5).floor() as i32 + 1).min(p.cols.1).min(width as i32);
+        // Half open: a centre on the right edge is not inside.
+        let xb = ((iv.1 - 0.5).ceil() as i32).min(p.cols.1).min(width as i32);
         if xa >= xb {
             continue;
         }

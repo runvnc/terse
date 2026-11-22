@@ -65,7 +65,11 @@ struct Drawn {
     cursor: Option<(usize, usize)>,
     /// Drawn as light (`core.light`).
     light: bool,
+    /// The core draws these by the beam (`core.strokes`).
+    strokes: Option<Font>,
 }
+
+use terse_host::mame::stroke::Font;
 
 /// Glyphs of one cell size, shared by every machine drawn at it.
 struct Glyphs {
@@ -120,6 +124,9 @@ struct Inst {
     status: String,
     /// Light mode (`core.light`).
     light: bool,
+    /// In light mode, the characters the core draws by the beam in this
+    /// stroke font (`core.strokes`) are left out, and the cursor.
+    strokes: Option<Font>,
     drawn: Option<Drawn>,
 }
 
@@ -203,8 +210,21 @@ impl TerminalDriver {
         let g = self.atlases.get_mut(&p.cell).unwrap();
         let i = self.inst.get_mut(&instance).ok_or("no such instance")?;
         let t = shown(&i.t, &i.status);
-        let cells = cells(&t, g, &mut self.generations);
-        let cursor = t.cursor_visible().then(|| (t.cursor().0 as usize, t.cursor().1 as usize));
+        let mut cells = cells(&t, g, &mut self.generations);
+        let mut cursor = t.cursor_visible().then(|| (t.cursor().0 as usize, t.cursor().1 as usize));
+        // The characters the core draws by the beam (DEVICES.md 7.1,
+        // `core.strokes`): not drawn here, nor the cursor.
+        let strokes = if i.light { i.strokes } else { None };
+        if let Some(font) = strokes {
+            let mut stroked = Vec::new();
+            terse_host::mame::text::screen_covered(&t, font, &mut stroked);
+            for (c, &s) in cells.iter_mut().zip(&stroked) {
+                if s {
+                    c.0 = 0;
+                }
+            }
+            cursor = None;
+        }
         let palette = *t.palette();
         let cell_px = g.cell;
         let mut fresh = false;
@@ -227,6 +247,7 @@ impl TerminalDriver {
                 palette,
                 cursor: None,
                 light: i.light,
+                strokes,
             });
             fresh = true;
         }
@@ -234,7 +255,7 @@ impl TerminalDriver {
         // What changed: the whole picture, or rows of cells and the cursor.
         let mut damage: Vec<IRect> = Vec::new();
         let light = i.light;
-        if fresh || d.palette != palette || d.atlas != g.generation || d.light != light {
+        if fresh || d.palette != palette || d.atlas != g.generation || d.light != light || d.strokes != strokes {
             damage.push(IRect::of_size(p.picture));
         } else {
             for row in 0..ROWS {
@@ -306,6 +327,7 @@ impl TerminalDriver {
         d.cursor = cursor;
         d.atlas = g.generation;
         d.light = light;
+        d.strokes = strokes;
         let all = damage.iter().fold(IRect::EMPTY, |a, &b| union(a, b));
         let dmg = if all.is_empty() { Vec::new() } else { vec![rect(all)] };
         Ok(PresentOut {
@@ -347,8 +369,8 @@ impl Device for TerminalDriver {
             .into_iter()
             .filter(|s| session.asks(s.slot))
             .collect(),
-            publishes: Vec::new(),
-            subscribes: vec![property::STATUS.into(), property::LIGHT.into()],
+            publishes: vec![property::TERMINAL.into()],
+            subscribes: vec![property::STATUS.into(), property::LIGHT.into(), property::STROKES.into()],
             services: Vec::new(),
             ..Default::default()
         }
@@ -356,7 +378,7 @@ impl Device for TerminalDriver {
 
     fn open(&mut self, instance: u32, open: &Open, _: &Session) -> Result<(), String> {
         let full_text = open.listed.iter().any(|&(s, _)| s == terse_core::text::FULL_TEXT);
-        self.inst.insert(instance, Inst { t: Terminal::with_full_text(full_text), status: String::new(), light: false, drawn: None });
+        self.inst.insert(instance, Inst { t: Terminal::with_full_text(full_text), status: String::new(), light: false, strokes: None, drawn: None });
         Ok(())
     }
 
@@ -469,7 +491,21 @@ impl Device for TerminalDriver {
         match name {
             property::STATUS => i.status = String::from_utf8_lossy(value).into_owned(),
             property::LIGHT => i.light = value.first().is_some_and(|&v| v != 0),
+            property::STROKES => i.strokes = std::str::from_utf8(value).ok().and_then(Font::parse),
             _ => {}
+        }
+    }
+
+    fn get(&mut self, instance: u32, name: &str) -> Option<Vec<u8>> {
+        let i = self.inst.get(&instance)?;
+        match name {
+            property::TERMINAL => {
+                let mut out = Vec::new();
+                i.t.write_state(&mut out);
+                out.push(i.t.full_text() as u8);
+                Some(out)
+            }
+            _ => None,
         }
     }
 

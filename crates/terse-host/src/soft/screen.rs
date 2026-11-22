@@ -744,7 +744,7 @@ impl SoftScreen {
         screen.lines(shapes, &mut lines);
         let beam_width = settings.params.beam_width;
         let mut beams = instances(&lines, beam_width);
-        if layers.is_none() && !self.strokes.is_empty() {
+        if !self.strokes.is_empty() {
             let text: Vec<Line> = self
                 .strokes
                 .iter()
