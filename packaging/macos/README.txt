@@ -2,7 +2,8 @@ Tersenet @VERSION@ for macOS (Apple silicon and Intel, macOS 11 or newer)
 =======================================================================
 
 Tersenet is a way to share formatted text, with diagrams where they help,
-without web browsers, ads or tracking. https://github.com/runvnc/terse
+without web browsers, ads or tracking. https://tersenet.org
+Source: https://github.com/runvnc/terse
 
 In this folder
 --------------
